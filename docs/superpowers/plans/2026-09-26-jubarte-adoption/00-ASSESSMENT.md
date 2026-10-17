@@ -7,6 +7,16 @@
 > documents the 2026-09-26 assessment behind the implemented corrections;
 > the gaps it left open on purpose are marked closed in place where
 > release/0.10 closed them. Not itself a to-do list.
+>
+> **ID contract (2026-10-17, `aba48bd5`):** this assessment predates the
+> settled identity grammar,
+> `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md` (v3,
+> `jubarte.ids/2`, schema 2; merged `4612a155`, PR #570; **not yet
+> implemented**). Wherever it names a paragraph `id` or an
+> `id`/`index`/text selector, today's wire carries the 13 October short
+> id (`p12`, `header1.p2`, `t0.row1.cell2`) under a schema-1 `id` field;
+> schema 2 replaces that with a paired `short_id`/`long_id` and drops the
+> numeric `index` selector, in one cutover.
 
 Written 2026-09-26 after reading, in this order: the four hand-rolled session
 files (`file_logs.jsonl`, `run_pipeline.sh`, `notes_spacing.py`, `redline.py`),
@@ -119,7 +129,9 @@ on the inspection tests added here, not on RESULTS.md. Say so.
 - `ParagraphInfo { index, text, page_break }` is too thin to address a
   paragraph. Correction: add `id`, `style`, `numbered`, `in_table` and
   formatting spans (`runs`), and a Markdown projection that prints the id in
-  front of each paragraph.
+  front of each paragraph. (That `id` is today's short id — `p12`,
+  `header1.p2`; the v3 contract turns it into a `short_id`/`long_id`
+  pair.)
 - Task C2 (ZIP admission limits) is correctly specified and correctly marked
   as not implemented by the patch. It remains open work.
 
@@ -157,7 +169,10 @@ on the inspection tests added here, not on RESULTS.md. Say so.
   optional; an unguarded plan relies on unique anchors alone and its report
   says so); agents will get it wrong on smart quotes
   and pay tokens for it. Correction: drop it; `paragraph` accepts an id, an
-  index, or a unique `starts_with`/`contains` selector.
+  index, or a unique `starts_with`/`contains` selector. (Current selectors:
+  a short-id string, `{"id": ...}`, `{"index": N}`, `starts_with`/`contains`;
+  the contract's schema-2 cutover retires `{"index"}` and moves addresses to
+  a typed short-or-long field.)
 - Replacement text is inserted into the first affected `w:t`, so it inherits
   that run's formatting. That is the right default and it removes the `RPR`
   constants from `redline.py`. Insert-paragraph runs need explicit bold and
@@ -193,7 +208,7 @@ on the inspection tests added here, not on RESULTS.md. Say so.
 
 | Tool | Skill use | Replacement | Status after this branch |
 |---|---|---|---|
-| pandoc | `pandoc -t markdown file.docx` to read | `jubarte text file.docx` (Markdown with paragraph ids); `jubarte inspect --json` | implemented; body, headers, footers and notes as stories with their own ids; text boxes reported in `summary` only |
+| pandoc | `pandoc -t markdown file.docx` to read | `jubarte text file.docx` (Markdown with short paragraph ids — `p12`, `header1.p2`); `jubarte inspect --json` | implemented; body, headers, footers and notes as stories with their own ids; text boxes reported in `summary` only |
 | pandoc | `--track-changes=accept` | `jubarte accept` (RevisionProcessor port) | already existed |
 | soffice | `--convert-to pdf` | `jubarte convert --pdf` | already existed; page count and page starts added to the report |
 | soffice | `accept_changes.py` macro | `jubarte accept` | already existed |
@@ -221,7 +236,7 @@ on the inspection tests added here, not on RESULTS.md. Say so.
 |---|---|---|
 | Parser progress, checked XML | `src/xmllinq/parse.rs` | `checked_xml_tests` |
 | Rich paragraph projection, limitations instead of errors, Markdown | `src/inspect.rs` | unit tests in module |
-| Plan JSON v1, selectors, text ops, paragraph ops, comments, compare, report | `src/edit.rs` | unit tests in module, `tests/edit_plan.rs` |
+| Plan JSON (schema 1 today; the contract's schema-2 cutover is staged, not implemented), selectors, text ops, paragraph ops, comments, compare, report | `src/edit.rs` | unit tests in module, `tests/edit_plan.rs` |
 | PNG pages from the layout display list | `src/convert/raster.rs` | unit tests in module, `tests/convert_docx_to_png.rs` |
 | CLI parity | `src/bin/jubarte.rs` | `tests/m_cli_agent.rs` |
 | Python facade, native exports, module CLI | `jubarte-python/` | `jubarte-python/tests/` |

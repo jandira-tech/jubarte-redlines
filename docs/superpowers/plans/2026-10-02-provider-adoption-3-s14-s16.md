@@ -13,6 +13,27 @@ SPDX-License-Identifier: AGPL-3.0-only
 > **Baseline:** `main` at `b420d64` (2026-10-02); the verified facts, gates
 > and license position are in plan 1
 > ([2026-10-02-provider-adoption-1-s01-s10.md](2026-10-02-provider-adoption-1-s01-s10.md)).
+>
+> **Status (2026-10-17): all three tasks shipped.** Task 1 (S14) #313
+> `6d37f66c` (`3710c59d`); control ids were later corrected to `ccN` /
+> `pN.ccK` (`7b7f8f06`, PR #488 `a8f8fe6c`) — the `body:sdt:N` this plan
+> first wrote is refused. Task 2 (S15) #296 `1ee4c381` (`98d6731c`), but
+> the CLI shipped as **`jubarte validate --rules a11y,style,structure`**,
+> not a separate `jubarte audit` command (`src/audit.rs` is the rule
+> engine; `Document.audit()` and the WASM export exist). Task 3 (S16)
+> #280 `329e82f9` (`97dc1e68`): `jubarte-mcp`, `gemini-extension.json`,
+> `GEMINI.md` are all in the tree; `docx_text` returns the agent view
+> (`<!-- pN -->` id lines), never `[body:p:N]`.
+>
+> **ID spelling note:** snippets below have been updated to current
+> spellings (`pN`, `story.pN` like `header1.p1`, `ccN`/`pN.ccK`,
+> `<!-- pN -->` id lines, `location`/`paragraph_ids` holding `pN`);
+> the plan was written against the retired `body`-prefixed grammar. The
+> v3 short/long-ID contract
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> docs in `4612a155`) is **not implemented on any branch**: when it
+> lands, `paragraph_ids`-style fields become paired
+> `short_id`/`long_id` references.
 
 **Goal:** Fill content controls (S14), audit documents for accessibility and
 style defects (S15), and ship an MCP server plus a Gemini CLI extension
@@ -39,7 +60,7 @@ Gemini CLI by a manifest at the repository root so the existing
 | Google: Gemini CLI reads `.docx` as binary (issue #20298, reported in the mapping document); `UseJunior/safe-docx` is the MCP extension on geminicli.com/extensions | no jubarte MCP server | `gemini extensions install https://github.com/jandira-tech/jubarte-redlines`: MCP tools plus the skill, one install |
 | Anthropic Claude Code and OpenAI Codex both load MCP servers from a config file | CLI only | the same `jubarte-mcp` server over stdio, with path containment |
 | ChatGPT container `content_controls.py` (reported, not verified) | detection only in `inspect` (`limitations: content_control`) | `inspect` lists controls with tag, alias, kind and choices; `fill_control` writes them |
-| ChatGPT container `a11y_audit.py`, `style_lint`/`style_normalize`; Z.ai `postcheck.py` (reported, not verified) | nothing | `jubarte audit FILE --json`: eight rules with codes, paragraph ids and severities |
+| ChatGPT container `a11y_audit.py`, `style_lint`/`style_normalize`; Z.ai `postcheck.py` (reported, not verified) | nothing | `jubarte validate --rules a11y,style,structure FILE --json`: audit rules with codes, paragraph ids and severities |
 
 ## Dependencies
 
@@ -52,6 +73,12 @@ Gemini CLI by a manifest at the repository root so the existing
 ---
 
 ### Task 1: S14, content controls: list and fill
+
+> **Status (2026-10-17): shipped** (#313 `6d37f66c`, `3710c59d`), with the
+> control-id spelling later corrected to `ccN` / `pN.ccK` (`7b7f8f06`,
+> PR #488 `a8f8fe6c`; `body:sdt:N` is refused). `Snapshot.controls`,
+> `fill_control`, `LOCKED_CONTROL`, `UNSUPPORTED_STRUCTURE` all exist;
+> `ContentControl.paragraph_ids` holds `pN` ids.
 
 **Files:**
 - Modify: `src/inspect.rs:108-135` (`Snapshot.controls: Vec<ContentControl>`), `:684` (the `sdt` arm records the control), new `fn collect_controls(dom, body) -> Vec<ContentControl>`
@@ -81,7 +108,7 @@ pub struct ContentControl {
     pub kind: String,
     /// Visible text of the control's content.
     pub text: String,
-    /// Paragraphs the control spans (`body:p:N`), empty for a run-level control.
+    /// Paragraphs the control spans (`pN`), empty for a run-level control.
     pub paragraph_ids: Vec<String>,
     /// `w:lock` is `contentLocked` or `sdtContentLocked`.
     pub locked: bool,
@@ -208,6 +235,13 @@ copy and its PNG.
 
 ### Task 2: S15, `jubarte audit`: accessibility, style and structure rules
 
+> **Status (2026-10-17): shipped** (#296 `1ee4c381`, `98d6731c`) — under a
+> different surface than sketched: the rules run through
+> **`jubarte validate --rules a11y,style,structure`** (and `--strict`),
+> not a standalone `jubarte audit` subcommand; `src/audit.rs`,
+> `Document.audit()` and the WASM audit export exist. `AuditFinding` is
+> as designed (`location` holds `pN`/`story.pN` or a part name).
+
 **Files:**
 - Create: `src/audit.rs`
 - Modify: `src/lib.rs`, `src/bin/jubarte.rs` (`Command::Audit`), `src/capabilities.rs` (`operations.audit`, `audit_rules: Vec<String>`)
@@ -226,7 +260,8 @@ pub struct AuditFinding {
     pub rule_set: String,
     /// `error`, `warning` or `info`.
     pub severity: String,
-    /// `body:p:N`, a story paragraph id, or a part name.
+    /// A paragraph id (`p12`), a story paragraph id (`header1.p1`), or
+    /// a part name when no paragraph applies.
     pub location: String,
     pub message: String,
 }
@@ -248,8 +283,9 @@ Rules, each with the fact it reads:
 | `STALE_FIELD_CACHE` | structure | warning | a TOC field with no result, or a `NUMPAGES` result that is not `layout_facts().page_count` (plan 1 Task 7) |
 | `FONT_SUBSTITUTED` | structure | info | `RenderReport.fonts` has a `substituted` entry (plan 1 Task 5) |
 
-`jubarte audit FILE [--json] [--rules a11y,style,structure | CODE,...]`
-exits 0 with no findings, 2 with any `error`, 0 otherwise (warnings do not
+`jubarte validate FILE --rules a11y,style,structure [--json]` (shipped
+surface; the plan sketched `jubarte audit`) exits 0 with no findings, 2
+with any `error`, 0 otherwise (warnings do not
 fail a CI step unless `--strict`). The two rules that need a layout pass
 (`STALE_FIELD_CACHE`, `FONT_SUBSTITUTED`) run only when selected or when no
 `--rules` is given, and the report says `layout: true` when they ran.
@@ -273,8 +309,8 @@ fn literal_bullet_and_heading_skip() {
         + r#"<w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Deep</w:t></w:r></w:p>"#
         + &para("• item");
     let found = audit(&docx(&body), &["a11y", "style"]).unwrap();
-    assert!(found.iter().any(|f| f.code == "HEADING_SKIP" && f.location == "body:p:1"), "{found:?}");
-    assert!(found.iter().any(|f| f.code == "LITERAL_BULLET" && f.location == "body:p:2"), "{found:?}");
+    assert!(found.iter().any(|f| f.code == "HEADING_SKIP" && f.location == "p1"), "{found:?}");
+    assert!(found.iter().any(|f| f.code == "LITERAL_BULLET" && f.location == "p2"), "{found:?}");
 }
 
 #[test]
@@ -309,7 +345,7 @@ fn an_empty_toc_is_a_stale_cache() {
 `src/audit.rs` over `inspect::Opened` (admitted) and the `Paragraph`
 projections; `styles.xml` read once for `MISSING_LANG` and
 `DIRECT_FORMATTING_OVERRIDES_STYLE`; CLI; bindings. **Step 4: Pass.**
-**Step 5: Docs**: skill §3 adds "`jubarte audit file.docx --json` lists
+**Step 5: Docs**: skill §3 adds "`jubarte validate file.docx --rules a11y,style,structure --json` lists
 heading skips, images without alt text, tables without a header row, literal
 bullets, spacer paragraphs, stale TOC and page-count caches, and substituted
 fonts; `--strict` makes warnings fail." **Step 6: Commit**
@@ -323,6 +359,12 @@ the regression test for their creation path.
 ---
 
 ### Task 3: S16, MCP server and Gemini CLI extension
+
+> **Status (2026-10-17): shipped** (#280 `329e82f9`, `97dc1e68`, symlink
+> hardening `ceed0339`): `jubarte_redlines/mcp_server.py`,
+> `gemini-extension.json`, `GEMINI.md` and the bump-version sync are in
+> the tree. `docx_text` returns `read`'s agent view — `<!-- pN -->` id
+> lines — and `inspect_json` exists on `Document`.
 
 **Files:**
 - Create: `jubarte-python/python/jubarte_redlines/mcp_server.py`
@@ -366,7 +408,7 @@ reads):
 | Tool | Arguments | Returns |
 |---|---|---|
 | `docx_capabilities` | | the manifest dict |
-| `docx_text` | `path` | Markdown with `[body:p:N]` ids |
+| `docx_text` | `path` | the agent view: Markdown with `<!-- pN -->` id lines |
 | `docx_inspect` | `path` | the snapshot dict (`summary`, `paragraphs`, `stories`, `controls`) |
 | `docx_edit` | `path`, `plan` (dict), `out_dir`, `pdf=False`, `png_dpi=None`, `overwrite=False` | `{clean, redline, patch, report}` paths and the report dict; a refusal returns `is_error` with the `EditPlanError` payload |
 | `docx_render` | `path`, `out_dir`, `dpi=96`, `pages=None`, `pdf=False` | page PNG paths and the render report |
@@ -430,7 +472,7 @@ def test_text_reads_a_file_under_root_and_refuses_one_outside(tmp_path: Path) ->
             bad = await client.call_tool("docx_text", {"path": str(outside)})
             return ok, bad
     ok, bad = run(go())
-    assert not ok.is_error and "[body:p:0] inside text" in ok.content[0].text
+    assert not ok.is_error and "<!-- p0 -->\ninside text\n" in ok.content[0].text
     assert bad.is_error and "outside root" in bad.content[0].text
 
 
@@ -438,7 +480,7 @@ def test_edit_writes_outputs_under_out_dir_and_never_overwrites(tmp_path: Path) 
     src = tmp_path / "c.docx"
     src.write_bytes(make_document("The fee is ten."))
     plan = {"schema_version": 1, "author": "Agent", "operations": [
-        {"kind": "replace", "paragraph": "body:p:0", "find": "ten", "replacement": "twelve"}]}
+        {"kind": "replace", "paragraph": "p0", "find": "ten", "replacement": "twelve"}]}
 
     async def go():
         async with Client(build_server(root=tmp_path)) as client:
@@ -513,7 +555,7 @@ def build_server(*, root: Path) -> MCPServer:
 
     @mcp.tool()
     def docx_text(path: str) -> str:
-        """The document as Markdown with [body:p:N] paragraph ids, the coordinates an edit plan uses."""
+        """The document as Markdown with <!-- pN --> paragraph ids, the coordinates an edit plan uses."""
         return read(contained(path)).markdown()
 
     @mcp.tool()

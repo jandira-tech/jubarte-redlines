@@ -8,6 +8,16 @@
 > still AGPL-3.0-only. R1 is partial — CI tests the npm CLI and
 > `scripts/release.sh` smoke-tests the npm artifacts, but there are no
 > installed-wheel or sdist consumer gates.
+>
+> **ID contract (2026-10-17, `aba48bd5`):** the v3 identity contract
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> `jubarte.ids/2`, merged `4612a155`, PR #570) is documentation-only so
+> far — `main` still ships schema 1 (`id`/`ref`/`at` fields, `{"index"}`
+> selectors, colon-form spellings like `body:p:N` refused on input). Its
+> schema-2 cutover is one release in the implementation plan, so R3's
+> manifest/capability checks must record `id_contract` and the advertised
+> id spellings alongside engine version; no release may claim the paired
+> contract until that cutover ships.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -117,7 +127,7 @@ Refactor `scripts/release.sh` to prepare a release and watch CI; remove `UV_PUBL
 
 A release manifest records schema version, source commit, engine version, build workflow/run identifier, toolchain, target triple, artifact filename/SHA-256, license expression, capability list, font resources and test-report hashes. Artifact names are relative basenames; no local user paths. A manifest with matching hashes proves what was built/tested, not that all behavior is correct.
 
-Capability JSON should include separate booleans/versions for compare, revisions, PDF, inspection, edit kinds and runtime-specific font/resource features. Full/slim package capability differences are intentional. Reject a request for an unavailable feature before loading a missing export or starting a write.
+Capability JSON should include separate booleans/versions for compare, revisions, PDF, inspection, edit kinds and runtime-specific font/resource features. Full/slim package capability differences are intentional. Reject a request for an unavailable feature before loading a missing export or starting a write. (Today `capabilities --json` emits `schema_version: 1` plus the current id-spelling samples — `p12`, `header1.p2`, `t0.row1.cell2`, `r12`, `c5`; after the schema-2 cutover the manifest advertises the contract grammar — `header1.p0`, `t0.row1.cell2.ps1`, `s0`, `toc0` — and the envelope's `id_contract: "jubarte.ids/2"`.)
 
 Test deterministic manifest generation with in-memory byte maps, exact expected digest and strict version/license/capability mismatch cases. Keep artifact I/O in integration tests. Compare package versions across root Cargo, Python Cargo, npm package, generated package metadata and engine stamp; static source version matches do not prove a stale WASM binary was rebuilt.
 

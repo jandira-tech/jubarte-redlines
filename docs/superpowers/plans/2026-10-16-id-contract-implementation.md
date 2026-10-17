@@ -12,6 +12,23 @@ outright, no migration tool is built, no deprecated-ids table is kept. The plan 
 `2026-10-13-ids-consolidation.md`, whose tasks 2 to 4 (one set of id types, every option through
 them, grammar completion) are restated here against the contract's grammar.
 
+> **Status (reconciled 2026-10-17, local `aba48bd5`).** Task 0 partially done:
+> the contract and review note landed on `main` as `4612a155` (docs PR #570,
+> merge `b5bdccbd`); the plan pointer is in the contract header. **Tasks 1–9
+> have not started** — no `feat/ids-v3-grammar` branch, none of
+> `tests/{id_grammar,id_long,inventory,id_resolution,md_anchored,md_writer_labels,presenters}.rs`
+> exists, `SCHEMA_VERSION` is still 1 (`inspect.rs:32`). The rebase premise is
+> stale: the "open stack" this plan expected to rebase (#509 … #557) has since
+> *merged* — #515/#535–#540/#550 are in this checkout and #557 (`4f6a82c7`)
+> landed on `origin/main` after it — so task 1 branches from current `main`,
+> not `fix/md-fp-530-revisions`. Consequence: the `#557 disagreement` section
+> below is now about *reverting landed code* (#557's unconditional reuse and
+> the `named_numbers`/`asked_for` validity exception are in `origin/main`), and
+> every `file:line` anchor in this plan needs re-surveying against post-#557
+> `main`. The transitional behavior the survey describes (`noid`, `r43+43`,
+> `.pN` cell paragraphs, colon longs in JSON, `Select::parse` open ranges and
+> comma lists, `SCHEMA_VERSION 1` DTOs) is still what `main` ships.
+
 ## How it ships
 
 - **Base.** The contract lands on `main` first, as a docs-only commit, with the review note moved
@@ -139,17 +156,20 @@ split, is in "Open with Arthur".
 
 ## Tasks
 
-### 0. Land the contract, rebase the stack, branch
+### 0. Land the contract, rebase the stack, branch — partially done
 
 - `main` ← the contract and the review note (`git mv 2026-10-16-id-contract-review.md
   docs/superpowers/specs/`), plus a one-line "Plan:" pointer in the contract's header to this file.
+  [Done: `4612a155` (PR #570, merge `b5bdccbd`) landed contract v3, the review note and this plan.]
 - Rebase #509 … #557 on `main`. Conflicts fall on `AGENTS.md`, `CHANGELOG.md` and nothing else,
-  since the contract adds only docs.
+  since the contract adds only docs. [Moot: the stack merged instead — #515, #535, #536, #537,
+  #538, #539, #540, #550 are on `main`, and #557 (`4f6a82c7`) is on `origin/main`.]
 - Branch `feat/ids-v3-grammar` from `fix/md-fp-530-revisions`; every later task branches from the
-  previous task's branch.
+  previous task's branch. [Not done; with the stack merged, branch from `main` post-#557.]
 - Done when: `git merge-base --is-ancestor main fix/md-fp-530-revisions` is true and
   `cargo nextest run --all-features --profile ci -E 'not test(markdown_and_docx_round_trip_exactly)'`
   is green at the tip. Record the `md_fixed_point` id verdicts at the tip as the plan's baseline.
+  [Baseline still unrecorded — take it on post-#557 `main`.]
 
 ### 1. The short grammar (contract §2, §10 "Complete short syntax vectors"; stage Urgent 1)
 

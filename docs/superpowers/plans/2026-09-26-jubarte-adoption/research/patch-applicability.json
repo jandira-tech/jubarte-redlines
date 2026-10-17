@@ -1,4 +1,5 @@
 {
+  "note": "Historical record, measured 2026-09-26 against HEAD fee94110. The patches checked here predate the v3 ID contract (docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md, jubarte.ids/2, merged 4612a155, not yet implemented) and the 13 October short-id settlement: their payloads carry retired spellings (body:p:N, body:rev:N, noid, {\"index\"} selectors, schema_version: 1). 0001/0002/0005/0006 are superseded by later source (see VALIDATION.md); none applies to current main (aba48bd5).",
   "head": "fee94110a956aafeaf835c81ca592cffb4a2eb53",
   "results": [
     {

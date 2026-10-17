@@ -447,7 +447,9 @@ impl Select {
     /// paragraph or a table, as the settled short ids spell them
     /// ([`crate::ids::ShortId`]), or a range of paragraphs, which may be
     /// open at one end (`p17-` to the end, `-p1` from the start). An expired
-    /// spelling (`12`) is refused with its settled one.
+    /// spelling (`12`) is refused with its settled one. The open ends are
+    /// transitional: the 17 October 2026 contract retires them (closed
+    /// `pN-pM` ranges only); commas stay option-level separators.
     pub fn parse(spec: &str) -> Result<Self, String> {
         use crate::ids::{ShortId, Step, Story};
         // The refusal of `item`, naming the settled spelling when known.

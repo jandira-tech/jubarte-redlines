@@ -522,9 +522,19 @@ comment only from a reference in the main story.
 ### Tags
 
 A tag is `r<ids> @<handle>`: `r0 @AC`, or `r1+2 @AC` for two Word marks of one
-logical change. The ids are `w:id` values: `r12` is the change with `w:id` 12; a change in
+logical change. The number is the change's `w:id` when that is one canonical
+decimal: `r12` is the change with `w:id` 12; a change in
 another story names it, `footnotes.r3 @AC` or `header1.r1 @AC`. Several
 authors' tags on one id line are joined by `; ` (`rev r1 @AC; r2 @JD`).
+Three fallback spellings are transitional: two marks Word wrote with one
+`w:id` print the number twice (`r43+43`), a mark with no `w:id` prints
+`noid`, and one whose value no short spelling reads back prints its colon
+id (`body:rev:007`). The 17 October 2026 short-and-long-ID contract
+([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
+§4) retires all three — `rN` becomes an allocated label that keeps the
+source number only when it is canonical, inside Word's `int` range and
+unambiguous, so a pair sharing one `w:id` prints `r0+1` — but the change is
+staged in the contract's plan, not landed.
 
 ```text
 {++quarterly++}{>>r0 @AC<<}
@@ -635,9 +645,19 @@ escaped (`\{SELLER}`).
 Not read back yet: `source:` names no base document, an untagged note
 after a tagged one on the same anchor is a new comment, not a reply, and
 the applier (`jubarte compare contract.docx view.md`, `apply_markdown`)
-reads CriticMarkup as text. The contract it will honour: everything the
-view does not state comes from `source:` by id, and a tagged change is
-kept when unchanged, accepted or rejected when the agent removed its text.
+reads CriticMarkup as text. The contract that governs the missing mode is
+§7, "Anchored Markdown edits", of
+[superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md)
+(moved there from the 13 October settlement's §5.3): when `source:` and
+`sha256:` name a file beside the Markdown and the digest matches,
+`convert` anchors on it (`--standalone` opts out, a mismatch is
+`STALE_SOURCE`), an id line resolves through the pinned snapshot's
+inventory, a block without one is new, a source block the Markdown drops
+is deleted, and everything the view does not state comes from `source:`
+byte for byte — a tagged change is kept when unchanged, accepted or
+rejected when the agent removed its text. It is staged in
+docs/superpowers/plans/2026-10-16-id-contract-implementation.md, not
+implemented.
 
 ### Literal marks and anchors
 

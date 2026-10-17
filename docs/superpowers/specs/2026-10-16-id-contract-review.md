@@ -4,7 +4,19 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Review: "Jubarte short and long ID contract" v2 (17 October 2026) against three goals
+# Review: "Jubarte short and long ID contract" v2 (17 October 2026) against three goals — historical, superseded by v3
+
+> **Status (audited 2026-10-18, `main` @ `aba48bd5`).** This reviewed contract **version 2**. The
+> current contract is **version 3** —
+> [2026-10-17-short-and-long-id-contract.md](2026-10-17-short-and-long-id-contract.md), added in
+> `4612a155` and merged by `b5bdccbd` (PR #570) — and its "Changes in version 3" plus the Decisions
+> section below record how every item here was resolved (`j:key` → `j:short`, `cell.psN` kept as an
+> alias, stages reordered, anchored mode moved into §7, `read -p` commas split at the option level,
+> `md_fixed_point` and `committed_views_match_the_view` named as cutover gates). Neither version is
+> implemented: `main` still runs the 13 October transitional grammar, so every "current code" row in
+> the verification table — `noid`, `story:rev:` fallback, bare `header1`, `r43+43`, `.pN` cell
+> paragraphs, open ranges, `usize` steps — still describes `main` today, except where a note says
+> otherwise. No engine source was changed by this review.
 
 Reviewed on branch `feat/md-table-grid-default` at 7c996819, 2026-10-16. The contract's
 baseline `d6fce6e7` (`fix/md-roundtrip-fidelity`) is not an ancestor of this branch (121
@@ -26,19 +38,30 @@ every story alias back into its conventional part URI. The code does this today
 (`src/markdown/xml.rs:449-470`, `src/markdown/write.rs:3879-3925`), so the fixed point holds by
 implementation, not by contract. Add the rule and goal 3 is covered as far as IDs go; the rest
 of goal 3 is content fidelity, which the contract rightly leaves to the 13 October spec.
+**→ Resolved in v3: the writer's rule is now contract text (v3 §7 "The writer's rule", §9 Urgent 4,
+§10 "Writer labels" gate) — Decision 1A below. The `xml.rs`/`write.rs` behaviour it pins is still
+what `main` does.**
 
 Three design decisions in the contract I would change, and two orderings:
 
 - `psN` means two different things: a canonical identity in text boxes and a non-canonical
-  selector in cells. One token, two meanings.
+  selector in cells. One token, two meanings. **→ v3: kept `cell.psN` as an alias that normalises to
+  the story-wide `pN` (Decision 2, discussed).**
 - The synthetic long key is a SHA-256 of a positional path plus the file digest: 64 hex
   characters that encode the same information as the path itself, and that change on a re-zip.
+  **→ v3: withdrawn entirely — Word's own number is the key, else `PART.ELEMENT.j:short.SHORT`
+  (Decision 3).**
 - The text-box grammar (`p14.box0.ps0`) has no producer and no consumer: the view prints box
   paragraphs without ids, `edit` refuses them, and the writer has no text-box output at all.
+  **→ v3 §7/§9: parse but resolve `UNSUPPORTED_TARGET` until the Future stage (Decision 5A). Still
+  true on `main`.**
 - The long-ID subsystem (codec, `pkg:` URIs, `j:key`) is staged "Urgent 1" while no command
-  accepts a long ID as input. None of the three goals consumes it.
+  accepts a long ID as input. None of the three goals consumes it. **→ v3 §9: reordered — the long
+  codec and paired JSON moved to ASAP 3, after short syntax, inventory, presenters and the writer
+  rule (Decision 4A).**
 - Anchored md → docx (13 October §5.3), the real "modify precisely" path, is assumed in §7 but
-  neither implemented nor staged.
+  neither implemented nor staged. **→ v3 §7 + §9 ASAP 2: moved into the contract and staged
+  (Decision 7B). Still unimplemented.**
 
 Everything else I checked holds up: the hash framing recomputes exactly, the grammar is
 internally consistent, the alias allocator is a fixed point after one pass, and every "current
@@ -67,7 +90,7 @@ remove (two `w:ins` carriers sharing one `w:id`, item 6).
 | Shared-id substitution pairs (`r43+43`) occur in real views | 2 in the committed views (`43+43`, `55+55`) | `tests/fixtures/md-roundtrip/*.md` |
 | Legacy ids (`noid`, `:rev:`, `:p:`) in committed views | none | same |
 | `sections:` YAML numbers from 2 and omits the first | true, already noted as drift on 13 Oct | `tests/fixtures/md-roundtrip/ids-sections.md` |
-| `md_fixed_point` gate state | red at the baseline per the 2026-10-16 handoff; not rerun here | `Markdown Round-Trip Handoff.md` |
+| `md_fixed_point` gate state | red at the baseline per the 2026-10-16 handoff; not rerun here **→ still red on `main` @ `aba48bd5` (CI run 39005997156): 14 fixtures fail md-side, 5 documents docx-side** | `Markdown Round-Trip Handoff.md` |
 | Live round trip, 17 documents (`/tmp/jub-contract/rt.sh`) | 12 fixed points: the 6 edge docs probed, `received`, `all`, `potpourri`, `file_170`, `quadratic`, `e4ccea1362_mcdoc`. 5 differ: `Strict01` (+1 paragraph from a `wne:txbxContent` text box, every later `pN` shifts), `ac6cd8d92f` (text box, `style_changes`, note `fmt` lost), `f8d8b26ec9` (image and two heading styles), `docx_lots_of_comments…` (one deletion), `5331b981b7_…cicerodo` (shared `w:id`, below) | `/tmp/jub-contract/rt/*/md{1,2}.md` |
 | Shared `w:id` does not round-trip today | `w:id="43"` on two `w:ins` and `"55"` on two `w:del`; md1 prints `r43+43`, `r55+55`; the writer gives the second carrier a fresh id; md2 prints `r43` plus `rev r66` on the id line | `tests/corpus/…/5331b981b7_redline_cicerodo_v_plate_30.docx` |
 | `read -p` today | accepts `p0,p1` and `p1-`; refuses `header1`, `t0.row0.cell0`, `.ps1`, `body:p:3` (hint `p3`) | probe on `edge-cells.docx` |
@@ -144,7 +167,10 @@ reasons (nested changes, code fences, escaping, text boxes flattened into body p
 The schema-2 cutover will rewrite every committed view (`header1` → `header1.p0`, `sections:`
 keys, every `.pN` under a cell in `read -p` docs). The contract should list
 `tests/md_fixed_point.rs` and `committed_views_match_the_view` as cutover gates in §10 so the
-id change lands together with the view regeneration, not before it.
+id change lands together with the view regeneration, not before it. **→ Done in v3: both are named
+cutover gates (v3 §9: "every id verdict of every listed document is `correct` before schema 2 is
+released"; §10 "Writer labels"). The gate is still red on `main` — the content failures named here
+are exactly what remains.**
 
 ## Changes proposed, three alternatives each
 
@@ -315,18 +341,25 @@ explicit test tuples" but gives tuples for two of them. The other 46 cannot be c
 - Two numeric ranges for one attribute: a `w:id` of `4294967295` is preserved as a short label
   (canonical `u32`, §4) but is not a native long key (`0..=2147483647`, §5), so `r4294967295`
   prints beside a `j:key`. Consistent, but surprising. One range (`0..=2147483647` for both)
-  removes the wrinkle; Word reads `w:id` as a signed 32-bit value anyway.
+  removes the wrinkle; Word reads `w:id` as a signed 32-bit value anyway. **→ Resolved in v3 the
+  other way: every `w:id` key takes Word's full *signed* `int` range (the v2 `0` floor is gone),
+  and `4294967295` — above `int` — is allocated `r0` with long id `document.w:ins.j:short.r0`; the
+  label and the long id then agree (see "Questions 1 and 2, closed" below). `j:key` is withdrawn.**
 - Header aliases: a document whose only header is `/word/header3.xml` prints `header3`, as
   today. Fine, but the agent view should not be read as "there are three headers".
 - `header0` is allocated to nonconventional parts. It is Word-valid and round-trips, but it
   is a name Word itself never writes; worth one line in the docs.
 - The contract's line references point at `d6fce6e7` on `fix/md-roundtrip-fidelity`. The
   branch this review ran on diverges by 121 commits. Pin the contract to the branch that will
-  implement it, or make the references commit-independent (function names).
+  implement it, or make the references commit-independent (function names). **→ Partially done:
+  v3's header names the commits it was checked against (`7c996819`, `aba48bd5`), but its inline
+  "current code" links still point at `d6fce6e7` blobs — the deep links remain pinned to the old
+  baseline.**
 - The 13 October spec §4.3 decided "a table is its first row's key; a cell is its row's key
   plus `.cellN`". The contract overrides this with own `w:tbl` and `w:tc` keys. That is the
   better rule; the contract should say it supersedes 13 October §4.3 explicitly, since it
-  claims to supersede only "conflicting ID clauses".
+  claims to supersede only "conflicting ID clauses". **→ Done: v3's header names the §4.3
+  dependent-keys rule among the superseded clauses.**
 
 ## What I did not do
 

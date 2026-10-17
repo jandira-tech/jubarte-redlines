@@ -5,6 +5,14 @@
 > below.** Unrecorded there: the Python `diff` API — `Document.diff`,
 > module-level `jubarte_redlines.diff` and `EditResult.diff` (2f2584f1,
 > unreleased main).
+>
+> **ID contract (2026-10-17, `aba48bd5`):** the revision fields and plan
+> wire below are the schema-1 surface. The v3 contract
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**)
+> makes Python pass through Rust's paired `short_id`/`long_id` references —
+> Python never constructs an ID — and retires the `id`/`ref` fields,
+> `{"index"}` selectors and `schema_version: 1` plans in one cutover.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -79,7 +87,7 @@ These names are implemented by proposed patch 0002, not yet by the current packa
 | `Document.to_bytes()` | Returns the held immutable bytes, no serialization or copy |
 | `Document.compare(modified, *, author, options=None)` | Calls existing native compare; returns a new Document; does not change legacy existing-revision behavior |
 | `Document.accept()` / `.reject()` | Return new Documents after package-wide revision processing |
-| `Document.revisions()` | Tuple of frozen `Revision` with nested frozen `FormatChange`; no claim of stable revision IDs |
+| `Document.revisions()` | Tuple of frozen `Revision` with nested frozen `FormatChange`; no claim of stable revision IDs. Still true under the contract — IDs are snapshot-scoped; schema 2 pairs each revision as `rN` plus its `long_id` and replaces `move_group_id`/`is_move_source` with named move fields (`move_name`/`move_side`, implementation plan task 7) |
 | `Document.to_pdf(*, options=None)` | PDF bytes; same renderer defaults as existing `docx_to_pdf` |
 | `CompareOptions(date=None)` | Preserve native fixed default; explicit offset-aware string/datetime normalized to UTC without reading clock |
 | `PdfOptions(compress=False, revisions="conventional", revision_palette=None)` | Typed explicit settings, reject contradictory custom-palette inputs before native work |
@@ -124,7 +132,7 @@ git commit -m "feat(python): add immutable document facade and typed revision re
 
 **Files:** modify `jubarte-python/src/lib.rs`, `_native.pyi`, `document.py`, `models.py`; create `jubarte-python/tests/test_reports.py`.
 
-Define frozen `Paragraph(index: int, text: str, page_break: bool)`, `FontResolution(requested: str, physical: str, step: str, bold: bool, italic: bool, synthetic: bool)`, `PdfResult(data: bytes, page_count: int, fonts: tuple[FontResolution,...])`. Preserve existing `to_pdf()` bytes result; add `render()` for the richer report. A proposed call is `report = doc.render(options=PdfOptions(revisions="word"))`; `report.data` is PDF bytes and `report.fonts` exposes substitutions.
+Define frozen `Paragraph(index: int, text: str, page_break: bool)`, `FontResolution(requested: str, physical: str, step: str, bold: bool, italic: bool, synthetic: bool)`, `PdfResult(data: bytes, page_count: int, fonts: tuple[FontResolution,...])`. (As superseded by the shipped `Snapshot` types, `Paragraph` is `{index, id, text, style, numbered, in_table, page_break, runs, limitations}` — `id` is the short id `p12`/`header1.p2`; schema 2 pairs it as `short_id`/`long_id`.) Preserve existing `to_pdf()` bytes result; add `render()` for the richer report. A proposed call is `report = doc.render(options=PdfOptions(revisions="word"))`; `report.data` is PDF bytes and `report.fonts` exposes substitutions.
 
 Use native `inspect::paragraphs`, `inspect::summary`, `convert::docx_to_pdf_report`, and `convert::pdf_page_count` rather than implement XML parsing/PDF heuristics in Python. Convert native DTOs to Python tuples/classes with explicit fields, or validate one versioned internal wire shape. `FontStep::as_str()` supplies its existing label. Engine-generated JSON is an internal transport, not a caller schema to interpret with an LLM.
 

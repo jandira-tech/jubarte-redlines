@@ -1,5 +1,12 @@
 # Consolidated review: `docs/superpowers/plans/2026-10-09-agent-text-view.md`
 
+> **Status (2026-10-18).** Review evidence — the `body:rev:N`/`body:p:N`/
+> `[body:p:N]` spellings cited below describe the transitional ids as they
+> were on 2026-10-09 (and as the code still emits them in JSON and
+> `inspect::render_markdown`). The 17 October contract v3
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> unimplemented) retires those spellings at the schema-2 cutover.
+
 Reviewed 2026-10-09 against the working tree of this checkout. The plan was
 split into six chunks and each chunk was reviewed by a separate agent whose
 brief was to check everything upside down — every file path, line anchor,

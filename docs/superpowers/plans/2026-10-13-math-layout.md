@@ -6,6 +6,19 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Office Math layout, step 1
 
+> **Status (reconciled 2026-10-17, `main` `aba48bd5`): landed.** All five tasks
+> shipped. `tests/fixtures/fonts/STIXTwoMath.otf` + `STIXTwoMath-OFL.txt` are
+> vendored (REUSE annotations in `REUSE.toml`); `src/convert/math_font.rs`
+> (`MathFont`, MATH constants, `stretch_vertical`, `MathFontGuard`) and
+> `src/convert/math_layout.rs` (`layout_omml` → `MathBox`) exist; the painter
+> wires the box in `src/convert/mod.rs:890` and `omml_rad_emits_a_radical_sign`
+> (`mod.rs:49694`) plus the box/delimiter tests are green. Commits: `b7efd120`
+> (red geometry tests), `fa79035f` (layout), `2cbb07f4` (paint), with fixes
+> `d1c73feb`, `63685e9d`, `ea15974f` and the math-branch merges `f0ad8c65`,
+> `8f5b4e3c`. The "later steps" list (scripts on MATH shifts, n-ary limits,
+> matrices, eqArr, accents, mu spacing) is still open and partially advanced by
+> later math work; no id-contract impact.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Lay out OMML bar fractions (`m:f`), radicals (`m:rad`), and stretchy delimiters (`m:d`) as a 2D box, using the OpenType MATH table of the font actually in use, and paint them as real glyph runs plus rules.
