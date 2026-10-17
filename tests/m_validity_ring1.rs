@@ -1019,6 +1019,44 @@ fn probe_orphan_comment_anchors() {
     );
 }
 
+/// The comments part is the first comments relationship whose target
+/// part exists: a stale relationship to a missing part must not hide a
+/// later live one (`notes.xml` here), and Word opens the package either
+/// way — this is not a Word-invalid shape. The stale relationship itself
+/// is still disclosed as a metadata lead, never word-fatal.
+#[test]
+fn probe_comments_relationships_tried_in_order() {
+    let bytes = zip_with_parts(&[("word/document.xml", COMMENT_DOCUMENT)]);
+    let mut pkg = PartFs::open(&bytes).expect("open package");
+    // Stale first: a relationship that names a part the package lacks.
+    pkg.add_document_relationship(
+        "word/document.xml",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+        "notes-old.xml",
+    );
+    pkg.set_part("word/notes.xml", COMMENTS.as_bytes().to_vec());
+    pkg.add_content_type_override(
+        "/word/notes.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+    );
+    pkg.add_document_relationship(
+        "word/document.xml",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+        "notes.xml",
+    );
+    let report = check_word_valid_package(&pkg.to_zip().expect("serialize package"));
+    // The comment defined in `notes.xml` anchors cleanly: no orphan or
+    // unanchored findings, and nothing Word-fatal — only the stale
+    // relationship's metadata lead remains.
+    assert_eq!(
+        codes(&report),
+        [("COMMENT_METADATA_MISMATCH", false)],
+        "{:?}",
+        report.findings
+    );
+    assert!(report.findings.iter().all(|f| !f.word_fatal));
+}
+
 /// Repair drops the range markers that name no comment and keeps the rest.
 #[test]
 fn repair_drops_orphan_range_markers() {
