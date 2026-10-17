@@ -333,6 +333,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A header or footer keeps its own text colour, borders and alignment.**
+  The view prints a story whose paragraphs carry them paragraph by paragraph
+  (`id: header1`, then `p0: {text: …, center, color: "595959", border: bottom
+  single 0.5pt 8496B0 space 4pt}`), and the writer writes each back. Demo.docx's
+  grey, ruled header had come back as plain black text, and a footer whose
+  second paragraph was left-aligned came back centred.
+
 - **Markdown views keep a section's column line and line grid.** `page:` and
   `sections:` print `column line` (`w:cols w:sep`) and `line grid 15.6pt`
   (`w:docGrid`; also `line and char grid`, `char grid`, `char space N`), and

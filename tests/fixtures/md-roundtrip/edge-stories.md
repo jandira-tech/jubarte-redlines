@@ -14,7 +14,11 @@ styles:
 headers:
   default: {id: header1, text: "Kept {--gone--}{>>header1.r20 @AL<<}{++added++}{>>header1.r21 @AL<<}", fmt: header1.r22 @AL}
 footers:
-  default: {id: footer1, text: ["Page {++{PAGE}1{/}++}{>>footer1.r23 @AL<<}", "{--Draft--}{>>footer1.r24 @BC<<} v2"], center, rev: break-del footer1.r25 @BC in footer1.p1}
+  default:
+    id: footer1
+    p0: {text: "Page {++{PAGE}1{/}++}{>>footer1.r23 @AL<<}", center}
+    p1: {text: "{--Draft--}{>>footer1.r24 @BC<<} v2"}
+    rev: break-del footer1.r25 @BC in footer1.p1
 ---
 
 <!-- p0 -->

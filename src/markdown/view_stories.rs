@@ -44,8 +44,13 @@ pub(super) struct Story {
     pub text: String,
     /// The paragraphs after it (`text: [first, second]`).
     pub more: Vec<String>,
-    /// `center` or `right`; `None` for left.
+    /// `center`, `right`, a stated `left` or `justify`; `None` when the
+    /// paragraphs name none.
     pub align: Option<&'static str>,
+    /// Each paragraph's own formatting from `paragraph` on, when the view
+    /// prints the story paragraph by paragraph (`p0: {text: …, color: …}`);
+    /// empty when `align` is every paragraph's.
+    pub formats: Vec<ParaFormat>,
     /// The paragraphs' style ids when not Word's for the story: one for
     /// all (`style: Normal`), or one per paragraph from the part's first
     /// (`styles: [Header, ListParagraph]`). `Normal` writes no `w:pStyle`.
@@ -56,6 +61,54 @@ pub(super) struct Story {
     /// changes (`fmt: header1.r22 @AL`).
     pub rev: Vec<String>,
     pub fmt: Vec<String>,
+}
+
+/// One header or footer paragraph's own formatting.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ParaFormat {
+    /// `center`, `right`, a stated `left` or `justify`; `None` when it
+    /// names none.
+    pub align: Option<&'static str>,
+    /// Its text runs' colour (`w:color`).
+    pub color: Option<String>,
+    /// Its borders (`w:pBdr`).
+    pub border: Option<super::borders::Sides>,
+}
+
+impl ParaFormat {
+    /// The `center`/`right`, `color:` and `border:` of a `pN: {…}` entry;
+    /// `None` when its border does not read.
+    fn read(entries: &[(String, Value)]) -> Option<Self> {
+        let text_of = |key: &str| {
+            entries.iter().find_map(|(k, v)| match v {
+                Value::Text(t) if k == key => Some(t.as_str()),
+                _ => None,
+            })
+        };
+        let flag = |key: &str| entries.iter().any(|(k, v)| k == key && *v == Value::Flag);
+        let border = match text_of("border") {
+            Some(text) => Some(super::borders::parse(
+                text,
+                &super::borders::PARAGRAPH_SIDES,
+            )?),
+            None => None,
+        };
+        Some(Self {
+            align: align_of(flag),
+            color: text_of("color")
+                .filter(|c| c.chars().all(|c| c.is_ascii_alphanumeric()))
+                .map(str::to_string),
+            border,
+        })
+    }
+}
+
+/// The alignment the entry names: `center`, `right`, or a stated `left`
+/// or `justify`; `None` when it names none (the style's applies).
+fn align_of(flag: impl Fn(&str) -> bool) -> Option<&'static str> {
+    ["center", "right", "left", "justify"]
+        .into_iter()
+        .find(|&word| flag(word))
 }
 
 /// Who made a story's changes: each handle's name and date, and the
@@ -336,12 +389,51 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
         })
     };
     let flag = |key: &str| entries.iter().any(|(k, v)| k == key && *v == Value::Flag);
-    let (part, paragraph) = story_id(text_of("id")?)?;
+    let (part, mut paragraph) = story_id(text_of("id")?)?;
+    // Paragraph by paragraph: `p0: {text: …, center, color: …}`, in order,
+    // a paragraph none names empty.
+    let mut numbered: Vec<(usize, &Vec<(String, Value)>)> = entries
+        .iter()
+        .filter_map(|(k, v)| match v {
+            Value::Map(map) => Some((k.strip_prefix('p')?.parse().ok()?, map)),
+            _ => None,
+        })
+        .collect();
+    numbered.sort_by_key(|(n, _)| *n);
+    let mut formats = Vec::new();
     // The writer reads the front matter with CriticMarkup encoded.
-    let mut texts: Vec<String> = match entries.iter().find(|(k, _)| k == "text") {
-        Some((_, Value::List(items))) => items.iter().map(|t| super::critic::restore(t)).collect(),
-        _ => vec![super::critic::restore(text_of("text").unwrap_or(""))],
-    };
+    let mut texts: Vec<String> =
+        if let (Some(&(low, _)), Some(&(high, _))) = (numbered.first(), numbered.last()) {
+            if high > MOST_PARAGRAPH {
+                return None;
+            }
+            paragraph = low;
+            let mut texts = Vec::new();
+            for n in low..=high {
+                match numbered.iter().find(|(k, _)| *k == n) {
+                    Some((_, map)) => {
+                        let text = map.iter().find_map(|(k, v)| match v {
+                            Value::Text(t) if k == "text" => Some(t.as_str()),
+                            _ => None,
+                        });
+                        texts.push(super::critic::restore(text.unwrap_or("")));
+                        formats.push(ParaFormat::read(map)?);
+                    }
+                    None => {
+                        texts.push(String::new());
+                        formats.push(ParaFormat::default());
+                    }
+                }
+            }
+            texts
+        } else {
+            match entries.iter().find(|(k, _)| k == "text") {
+                Some((_, Value::List(items))) => {
+                    items.iter().map(|t| super::critic::restore(t)).collect()
+                }
+                _ => vec![super::critic::restore(text_of("text").unwrap_or(""))],
+            }
+        };
     if texts.is_empty() {
         texts.push(String::new());
     }
@@ -366,13 +458,11 @@ fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<St
                 .map(|s| vec![s.to_string()])
                 .unwrap_or_default(),
         },
-        align: if flag("center") {
-            Some("center")
-        } else if flag("right") {
-            Some("right")
-        } else {
-            None
+        align: match formats.first() {
+            Some(format) => format.align,
+            None => align_of(flag),
         },
+        formats,
         active: !flag("inactive"),
     })
 }
@@ -408,11 +498,40 @@ impl Stories {
 }
 
 /// The first section's stories, from the YAML header's `headers:` and
-/// `footers:` blocks (`  first: {id: header3, text: …}  # comment`).
+/// `footers:` blocks (`  first: {id: header3, text: …}  # comment`). A
+/// story printed paragraph by paragraph is a block of its own: `  default:`
+/// then its entries indented below (`    id: header1`, `    p0: {…}`).
 pub(super) fn first_section(yaml: &str) -> Stories {
     let mut stories = Stories::default();
     let mut kind = None;
+    // The block being read: its kind, type and entries.
+    let mut block: Option<(&'static str, String, Vec<String>)> = None;
+    let flush = |stories: &mut Stories, block: &mut Option<(&'static str, String, Vec<String>)>| {
+        if let Some((kind, ty, items)) = block.take() {
+            // A block mapping's flag carries a value (`inactive: true`).
+            let items: Vec<String> = items
+                .into_iter()
+                .map(|item| match item.as_str() {
+                    "inactive: true" => "inactive".to_string(),
+                    _ => item,
+                })
+                .collect();
+            stories.entry(kind, &ty, &format!("{{{}}}", items.join(", ")));
+        }
+    };
     for line in yaml.lines() {
+        // A YAML comment (`  # …`) is no part of the value.
+        let bare = super::view_styles::without_comment(line);
+        if line.starts_with("    ") && block.is_some() {
+            if let Some((_, _, items)) = block.as_mut() {
+                let item = bare.trim();
+                if !item.is_empty() {
+                    items.push(item.to_string());
+                }
+            }
+            continue;
+        }
+        flush(&mut stories, &mut block);
         if !line.starts_with(' ') {
             kind = match line.trim_end() {
                 "headers:" => Some("header"),
@@ -422,12 +541,14 @@ pub(super) fn first_section(yaml: &str) -> Stories {
             continue;
         }
         let Some(kind) = kind else { continue };
-        // A YAML comment (`  # …`) is no part of the value.
-        let line = super::view_styles::without_comment(line);
-        if let Some((ty, value)) = line.trim().split_once(": ") {
+        let bare = bare.trim();
+        if let Some((ty, value)) = bare.split_once(": ") {
             stories.entry(kind, ty, value);
+        } else if let Some(ty) = bare.strip_suffix(':') {
+            block = Some((kind, ty.to_string(), Vec::new()));
         }
     }
+    flush(&mut stories, &mut block);
     stories
 }
 
@@ -1025,7 +1146,22 @@ fn story_part(
         } else {
             format!("<w:pStyle w:val=\"{}\"/>", super::xml::escape(style))
         };
-        if let Some(align) = story.align.filter(|_| index >= story.paragraph) {
+        // A story printed paragraph by paragraph gives each its own
+        // borders, alignment and colour; else `align` is every one's.
+        let own = index
+            .checked_sub(story.paragraph)
+            .and_then(|k| story.formats.get(k));
+        if let Some(sides) = own.and_then(|f| f.border.as_ref()) {
+            let _ = write!(base, "<w:pBdr>{}</w:pBdr>", super::borders::xml(sides));
+        }
+        let align = match own {
+            Some(format) => format.align,
+            None if story.formats.is_empty() => story.align,
+            None => None,
+        };
+        if let Some(align) = align.filter(|_| index >= story.paragraph) {
+            // Word's value for justified is `both`.
+            let align = if align == "justify" { "both" } else { align };
             let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
         }
         let mut properties = base.clone();
@@ -1048,11 +1184,16 @@ fn story_part(
                 marks.mark("w:pPrChange", Some(tag), 0)
             );
         }
-        let _ = write!(
-            body,
-            "<w:p><w:pPr>{properties}</w:pPr>{}",
-            runs(text, marks)
-        );
+        let mut content = runs(text, marks);
+        if let Some(color) = own.and_then(|f| f.color.as_deref()) {
+            // `w:color` is the only run property the writer gives a story's
+            // runs, so it opens each run's `w:rPr`.
+            content = content.replace(
+                "<w:r>",
+                &format!("<w:r><w:rPr><w:color w:val=\"{color}\"/></w:rPr>"),
+            );
+        }
+        let _ = write!(body, "<w:p><w:pPr>{properties}</w:pPr>{content}");
         if index == last {
             for tag in &unplaced {
                 let _ = write!(body, "<{}/>", marks.mark("w:ins", Some(tag), 0));
