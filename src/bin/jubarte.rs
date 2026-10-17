@@ -896,6 +896,13 @@ enum Mode {
 /// Options for `edit` and `add`.
 struct EditJob<'a> {
     file: &'a Path,
+    /// The plan's path when `--plan` named one: an input of the command,
+    /// protected from output aliases like `file` (V2-05).
+    plan: Option<&'a Path>,
+    /// `-o` named the document. When it did not, the default name of a
+    /// `X_modified.docx` input is that input itself: the documented
+    /// in-place iteration, not an output alias (V2-05).
+    explicit_output: bool,
     /// One document, or the bundle directory.
     target: &'a EditTarget,
     mode: Mode,
@@ -961,12 +968,6 @@ fn run_edit(
         EditTarget::Single(path) => return write_edited(job, path, &result, notes, source, plan),
         EditTarget::Bundle(dir) => dir,
     };
-    if dir.exists() && !job.force {
-        return Err(fail(format!(
-            "output directory '{}' already exists (use --force to replace its files)",
-            dir.display()
-        )));
-    }
     let input_dir = job
         .file
         .parent()
@@ -1016,8 +1017,6 @@ fn run_edit(
         });
         insert_before_summary(&mut jsonl, &render_line.to_string());
     }
-    std::fs::create_dir_all(out_dir)
-        .map_err(|e| fail(format!("creating {}: {e}", out_dir.display())))?;
     let name = job.file.file_name().map_or_else(
         || job.file.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -1059,17 +1058,62 @@ fn run_edit(
             outputs.push((png_name(name, i, count), png));
         }
     }
-    let mut saved = Vec::new();
-    for (name, bytes) in &outputs {
-        let path = out_dir.join(name);
-        std::fs::write(&path, bytes)
-            .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
-        saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
-    }
+    // The report names every member and closes with the summary; both are
+    // settled before anything is staged.
+    let saved: Vec<_> = outputs
+        .iter()
+        .map(|(name, bytes)| {
+            serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)})
+        })
+        .collect();
     let save_line = serde_json::json!({"ev": "save", "dir": slash_path(out_dir), "outputs": saved});
     insert_before_summary(&mut jsonl, &save_line.to_string());
-    std::fs::write(out_dir.join("report.jsonl"), &jsonl)
-        .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
+    let summary = jsonl.lines().last().unwrap_or("").to_string();
+    outputs.push(("report.jsonl".into(), jsonl.into_bytes()));
+    // V2-05: a bundle member that is an input refuses the publication;
+    // otherwise the bundle is staged in a sibling temp directory and
+    // published as a new directory — never merged into the existing one.
+    let inputs = job_inputs(job);
+    for (name, _) in &outputs {
+        refuse_output_alias(&out_dir.join(name), &inputs)?;
+    }
+    refuse_bundle_input_containment(out_dir, &inputs)?;
+    let paths: Vec<PathBuf> = outputs.iter().map(|(name, _)| out_dir.join(name)).collect();
+    refuse_output_collisions(&paths)?;
+    if out_dir.symlink_metadata().is_ok() && !job.force {
+        return Err(taken_output(out_dir));
+    }
+    if job.force {
+        refuse_foreign_bundle_contents(out_dir)?;
+    }
+    let stage = stage_bundle_dir(out_dir).map_err(fail)?;
+    for (name, bytes) in &outputs {
+        if let Err(e) = std::fs::write(stage.join(name), bytes) {
+            let _ = std::fs::remove_dir_all(&stage);
+            return Err(fail(format!(
+                "writing {}: {e}",
+                out_dir.join(name).display()
+            )));
+        }
+    }
+    publish_dir(&stage, out_dir, job.force, || {
+        for path in &paths {
+            refuse_output_alias(path, &inputs)?;
+        }
+        refuse_bundle_input_containment(out_dir, &inputs)?;
+        refuse_output_collisions(&paths)?;
+        if job.force {
+            refuse_foreign_bundle_contents(out_dir)?;
+        }
+        recheck_edit_source(job.file, source)
+    })?;
+    let committed = |e: String| {
+        fail(format!(
+            "committed {} ({} files), but reporting the result failed: {e}",
+            slash_path(out_dir),
+            outputs.len()
+        ))
+    };
     if job.quiet {
         return Ok(());
     }
@@ -1079,38 +1123,29 @@ fn run_edit(
         && let Ok(text) =
             jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
     {
-        let names: Vec<&str> = outputs
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .chain(["report.jsonl"])
-            .collect();
-        eprintln!(
+        let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
+        edit_status(format_args!(
             "wrote {} ({} files: {})",
             out_dir.display(),
             names.len(),
             names.join(", ")
-        );
+        ));
         for note in edit_notes(notes, &result) {
-            eprintln!("{note}");
+            edit_status(format_args!("{note}"));
         }
-        return write_stdout(&text).map_err(fail);
+        return write_stdout(&text).map_err(committed);
     }
-    let summary = jsonl.lines().last().unwrap_or("").to_string();
-    outln!("{summary}");
-    let names: Vec<&str> = outputs
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .chain(["report.jsonl"])
-        .collect();
+    write_stdout(format!("{summary}\n")).map_err(committed)?;
+    let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
     // The status lines on stderr (D6); the summary and the view are data.
-    eprintln!(
+    edit_status(format_args!(
         "wrote {} ({} files: {})",
         out_dir.display(),
         names.len(),
         names.join(", ")
-    );
+    ));
     for note in edit_notes(notes, &result) {
-        eprintln!("{note}");
+        edit_status(format_args!("{note}"));
     }
     // The changed blocks, as the agent view reads them back: the tracked
     // redline, or in editing mode its accepted text.
@@ -1127,9 +1162,11 @@ fn run_edit(
         // An identifier agents read back: `/` on every OS (#568).
         Some(&slash_path(&out_dir.join(shown))),
     ) {
-        Ok(view) => write_stdout(&view).map_err(fail),
+        Ok(view) => write_stdout(&view).map_err(committed),
         Err(e) => {
-            eprintln!("warning: the changed blocks cannot be shown: {e}");
+            edit_status(format_args!(
+                "warning: the changed blocks cannot be shown: {e}"
+            ));
             Ok(())
         }
     }
@@ -1140,10 +1177,427 @@ fn taken_output(path: &Path) -> (u8, String) {
     (
         EXIT_USAGE,
         format!(
-            "output '{}' already exists (use --force to overwrite)",
+            "OUTPUT_EXISTS: output '{}' already exists (use --force to overwrite)",
             path.display()
         ),
     )
+}
+
+/// The inputs an output of `edit` or `add` must never overwrite (V2-05).
+fn job_inputs<'a>(job: &EditJob<'a>) -> Vec<(&'a Path, &'static str)> {
+    let mut inputs: Vec<(&'a Path, &'static str)> = vec![(job.file, "the input")];
+    if let Some(plan) = job.plan {
+        inputs.push((plan, "the plan"));
+    }
+    inputs
+}
+
+/// Exit 2, stable code `OUTPUT_ALIAS`: an output that names an input
+/// through another spelling, a symlink or a hard link, refused before
+/// anything is written (V2-05). `same_path` compares device and inode for
+/// existing paths (volume serial and file index on Windows) and keys a
+/// path not written yet by its canonicalized parent and lowercase name;
+/// there a hard link under a third name is not visible, but a hard link is
+/// an existing directory entry, so every alias of an existing input is
+/// seen.
+fn refuse_output_alias(output: &Path, inputs: &[(&Path, &str)]) -> Result<(), (u8, String)> {
+    for (input, what) in inputs {
+        if same_path(output, input) {
+            return Err((
+                EXIT_USAGE,
+                format!(
+                    "OUTPUT_ALIAS: the output '{}' is the same file as {what} '{}'",
+                    output.display(),
+                    input.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// --force authorizes an output replacement, never an input alias. The
+/// historical implicit X_modified.docx iteration remains permitted.
+fn refuse_edit_output_alias(job: &EditJob<'_>, output: &Path) -> Result<(), (u8, String)> {
+    let inplace_default = !job.explicit_output && output == job.file;
+    let inputs: Vec<(&Path, &str)> = job_inputs(job)
+        .into_iter()
+        .filter(|(input, _)| !inplace_default || *input != job.file)
+        .collect();
+    refuse_output_alias(output, &inputs)
+}
+
+/// Compare the exact preparation bytes with a fresh read of the named
+/// source. Never replace the preparation bytes with this second read.
+fn recheck_edit_source(file: &Path, source: &[u8]) -> Result<(), (u8, String)> {
+    let current =
+        std::fs::read(file).map_err(|e| (1, format!("rechecking {}: {e}", file.display())))?;
+    if jubarte::inspect::source_sha256(source) != jubarte::inspect::source_sha256(&current) {
+        return Err((
+            EXIT_PLAN_REFUSED,
+            format!(
+                "SOURCE_CHANGED: '{}' changed since the edit was prepared; nothing was published",
+                file.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// No two roles of a publication may resolve to the same output file.
+fn refuse_output_collisions(paths: &[PathBuf]) -> Result<(), (u8, String)> {
+    for (index, output) in paths.iter().enumerate() {
+        let previous: Vec<(&Path, &str)> = paths[..index]
+            .iter()
+            .map(|path| (path.as_path(), "another output"))
+            .collect();
+        refuse_output_alias(output, &previous)?;
+    }
+    Ok(())
+}
+
+/// A wholesale directory replacement must never remove an input's name.
+fn refuse_bundle_input_containment(
+    dir: &Path,
+    inputs: &[(&Path, &str)],
+) -> Result<(), (u8, String)> {
+    if let Ok(canonical_dir) = std::fs::canonicalize(dir) {
+        for (input, what) in inputs {
+            if std::fs::canonicalize(input).is_ok_and(|path| path.starts_with(&canonical_dir)) {
+                return Err((
+                    EXIT_USAGE,
+                    format!(
+                        "OUTPUT_ALIAS: the output directory '{}' contains {what} '{}'",
+                        dir.display(),
+                        input.display()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Post-commit status is best effort: a closed stderr cannot undo a commit
+/// or prevent its result from reaching stdout.
+fn edit_status(line: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "{line}");
+}
+
+/// `paths` comma-separated, with the `/` spelling the views use.
+fn comma_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| slash_path(p))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A staging path beside `dest`: the same filesystem, so the commit is a
+/// rename; hidden; unique to this process (`n` breaks a tie with the
+/// survivor of an interrupted run).
+fn staging_path(dest: &Path, n: usize) -> PathBuf {
+    let dir = dest
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut name = std::ffi::OsString::from(".");
+    name.push(dest.file_name().unwrap_or(std::ffi::OsStr::new("out")));
+    name.push(format!(".jubarte-tmp-{}-{n}", std::process::id()));
+    dir.join(name)
+}
+
+/// `bytes` staged in a temp file beside `path`, ready for the rename
+/// commit. A failure removes the temp file again.
+fn stage_file(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    for n in 0..100 {
+        let tmp = staging_path(path, n);
+        match std::fs::File::create_new(&tmp)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, bytes))
+        {
+            Ok(()) => return Ok(tmp),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("writing {}: {e}", path.display()));
+            }
+        }
+    }
+    Err(format!("writing {}: no free staging name", path.display()))
+}
+
+/// Test-only synchronization for filesystem races in debug Unix builds.
+/// JUBARTE_TEST_PUBLICATION_HOOK names a local Unix socket owned by the
+/// integration test. Send the phase/PID, then wait for one release byte.
+/// No hook is available in release builds; no environment variable means
+/// no socket access. This never changes the prepared document bytes.
+#[cfg(all(unix, debug_assertions))]
+fn publication_test_hook(phase: &str) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let Some(socket) = std::env::var_os("JUBARTE_TEST_PUBLICATION_HOOK") else {
+        return Ok(());
+    };
+    let hook = || -> std::io::Result<()> {
+        let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
+        writeln!(stream, "{phase} {}", std::process::id())?;
+        stream.read_exact(&mut [0])
+    };
+    hook().map_err(|e| format!("test-only publication hook: {e}"))
+}
+
+#[cfg(not(all(unix, debug_assertions)))]
+fn publication_test_hook(_phase: &str) -> Result<(), String> {
+    Ok(())
+}
+
+/// Stage every output before committing any of them. Without --force,
+/// hard-link the staged inode into its destination atomically: even an
+/// entry appearing after the recheck cannot be clobbered. A mid-publication
+/// failure names the artifacts already committed, without rolling them back.
+fn publish_files(
+    outputs: &[(PathBuf, &[u8])],
+    job: &EditJob<'_>,
+    source: &[u8],
+) -> Result<Vec<PathBuf>, (u8, String)> {
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut committed: Vec<PathBuf> = Vec::new();
+    let publish = |staged: &mut Vec<(PathBuf, PathBuf)>, committed: &mut Vec<PathBuf>| {
+        for (path, bytes) in outputs {
+            let tmp = stage_file(path, bytes).map_err(|e| (1, e))?;
+            staged.push((tmp, path.clone()));
+        }
+        publication_test_hook("staged").map_err(|e| (1, e))?;
+        // Recheck all destinations before the first primary commits, so a
+        // newly unsafe derivative cannot leave a primary behind.
+        for (path, _) in outputs {
+            refuse_edit_output_alias(job, path)?;
+        }
+        refuse_output_collisions(
+            &outputs
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>(),
+        )?;
+        if !job.force
+            && let Some((path, _)) = outputs
+                .iter()
+                .find(|(path, _)| path.symlink_metadata().is_ok())
+        {
+            return Err(taken_output(path));
+        }
+        for (tmp, path) in staged.iter() {
+            refuse_edit_output_alias(job, path)?;
+            if committed.is_empty() {
+                recheck_edit_source(job.file, source)?;
+            }
+            publication_test_hook("checked").map_err(|e| (1, e))?;
+            let linked = if job.force {
+                std::fs::rename(tmp, path)
+                    .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
+                false
+            } else {
+                match std::fs::hard_link(tmp, path) {
+                    Ok(()) => true,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        return Err(taken_output(path));
+                    }
+                    // Some filesystems cannot create hard links. Only on
+                    // those, fall back to a fresh check followed by rename.
+                    Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+                        refuse_edit_output_alias(job, path)?;
+                        if path.symlink_metadata().is_ok() {
+                            return Err(taken_output(path));
+                        }
+                        if committed.is_empty() {
+                            recheck_edit_source(job.file, source)?;
+                        }
+                        std::fs::rename(tmp, path)
+                            .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
+                        false
+                    }
+                    Err(e) => return Err((1, format!("committing {}: {e}", path.display()))),
+                }
+            };
+            committed.push(path.to_path_buf());
+            if linked {
+                std::fs::remove_file(tmp)
+                    .map_err(|e| (1, format!("removing staging file {}: {e}", tmp.display())))?;
+            }
+        }
+        Ok(())
+    };
+    let outcome = publish(&mut staged, &mut committed);
+    // All precommit refusals, including the source guard and test hook,
+    // remove staging. A committed artifact is never rolled back.
+    for (tmp, _) in &staged {
+        let _ = std::fs::remove_file(tmp);
+    }
+    if let Err((code, mut message)) = outcome {
+        if !committed.is_empty() {
+            message += &format!(" (already committed: {})", comma_paths(&committed));
+        }
+        return Err((code, message));
+    }
+    Ok(committed)
+}
+
+/// Exit 2, stable code `OUTPUT_DIR_NOT_EMPTY`: `--force` replaces an
+/// existing `--out-dir` wholesale only when it is an earlier jubarte bundle,
+/// every entry named by its `report.jsonl` save line (V2-05), or when it
+/// is empty (no earlier bundle/report is required). Anything else
+/// in it (a user's file, an input under a subdirectory) would be deleted by
+/// the replacement, so the publication refuses before staging.
+fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
+    let mut ours: std::collections::BTreeSet<String> = ["report.jsonl".to_string()].into();
+    if let Ok(report) = std::fs::read_to_string(dir.join("report.jsonl")) {
+        let saved = report
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|line| line["ev"] == "save")
+            .flat_map(|line| line["outputs"].as_array().cloned().unwrap_or_default());
+        ours.extend(saved.filter_map(|o| o["f"].as_str().map(str::to_string)));
+    }
+    let mut foreign: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| !ours.contains(name))
+        .collect();
+    foreign.extend(
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| format!("{}/", e.file_name().to_string_lossy())),
+    );
+    if foreign.is_empty() {
+        return Ok(());
+    }
+    foreign.sort();
+    Err((
+        EXIT_USAGE,
+        format!(
+            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); --force replaces only a jubarte bundle, so move those files or name another --out-dir",
+            dir.display(),
+            foreign.join(", ")
+        ),
+    ))
+}
+
+/// The sibling temp directory a bundle is staged in (V2-05). Its parent
+/// chain is created first, as `--out-dir` has always allowed nested names.
+fn stage_bundle_dir(dir: &Path) -> Result<PathBuf, String> {
+    if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    }
+    for n in 0..100 {
+        let stage = staging_path(dir, n);
+        match std::fs::create_dir(&stage) {
+            Ok(()) => return Ok(stage),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("creating {}: {e}", dir.display())),
+        }
+    }
+    Err(format!("creating {}: no free staging name", dir.display()))
+}
+
+/// Publish the staged bundle as `dir` (V2-05): a rename when `dir` is
+/// free; under --force over an existing directory, a swap that replaces it
+/// wholesale — never a merge into its files. On a failure `dir` keeps what
+/// it held and the staging directory is removed.
+fn publish_dir(
+    stage: &Path,
+    dir: &Path,
+    force: bool,
+    recheck: impl Fn() -> Result<(), (u8, String)>,
+) -> Result<(), (u8, String)> {
+    let failed = |error: (u8, String)| {
+        let _ = std::fs::remove_dir_all(stage);
+        error
+    };
+    publication_test_hook("staged").map_err(|e| failed((1, e)))?;
+    if dir.symlink_metadata().is_err() {
+        recheck().map_err(failed)?;
+        return std::fs::rename(stage, dir)
+            .map_err(|e| failed((1, format!("publishing {}: {e}", dir.display()))));
+    }
+    // Alias checks precede a no-clobber refusal, here as in preflight.
+    recheck().map_err(failed)?;
+    if !force {
+        return Err(failed(taken_output(dir)));
+    }
+    if !dir.is_dir() {
+        return Err(failed((
+            1,
+            format!(
+                "--out-dir '{}' is an existing file, not a directory",
+                dir.display()
+            ),
+        )));
+    }
+    let mut aside = None;
+    for n in 100..200 {
+        let candidate = staging_path(dir, n);
+        if candidate.symlink_metadata().is_ok() {
+            continue;
+        }
+        // The source guard runs immediately before the first commit rename.
+        recheck().map_err(failed)?;
+        match std::fs::rename(dir, &candidate) {
+            Ok(()) => {
+                aside = Some(candidate);
+                break;
+            }
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
+                continue;
+            }
+            Err(e) => return Err(failed((1, format!("moving aside {}: {e}", dir.display())))),
+        }
+    }
+    let aside = aside.ok_or_else(|| {
+        failed((
+            1,
+            format!("moving aside {}: no free staging name", dir.display()),
+        ))
+    })?;
+    if let Err(error) = recheck() {
+        let _ = std::fs::remove_dir_all(stage);
+        let _ = std::fs::rename(&aside, dir);
+        return Err(error);
+    }
+    if let Err(e) = std::fs::rename(stage, dir) {
+        let _ = std::fs::remove_dir_all(stage);
+        let _ = std::fs::rename(&aside, dir);
+        return Err((1, format!("publishing {}: {e}", dir.display())));
+    }
+    // The old directory is replaced, not merged: drop what it held.
+    let dropped = if aside
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        std::fs::remove_file(&aside)
+    } else {
+        std::fs::remove_dir_all(&aside)
+    };
+    if let Err(e) = dropped {
+        edit_status(format_args!(
+            "warning: the replaced directory could not be removed; its contents remain at {}: {e}",
+            aside.display()
+        ));
+    }
+    Ok(())
 }
 
 /// The `note:` lines of an applied edit: the flags' notes, then each
@@ -1214,17 +1668,6 @@ fn write_edited(
         Mode::Editing => &result.clean,
     };
     let mut outputs: Vec<(PathBuf, &[u8])> = vec![(path.to_path_buf(), document)];
-    // FILE itself (`X_modified.docx` edited again, or `-o FILE`) exists, so
-    // it is replaced only with --force (D15). The PNG names wait for the
-    // page count.
-    let pdf = job.pdf.then(|| path.with_extension("pdf"));
-    if !job.force
-        && let Some(taken) = std::iter::once(path.to_path_buf())
-            .chain(pdf)
-            .find(|p| p.exists())
-    {
-        return Err(taken_output(&taken));
-    }
     // Render before writing, so a failed render writes nothing.
     let rendered = if job.pdf || job.png {
         let options = jubarte::convert::PdfOptions {
@@ -1263,34 +1706,55 @@ fn write_edited(
             outputs.push((dir.join(png_name(&stem, i, png_count)), png));
         }
     }
+    // V2-05: never write over an input, whatever spelling or link named
+    // it; --force authorizes replacing an output, never an input. The
+    // in-place default (`X_modified.docx` edited again, without -o) is the
+    // command's own name for its input, not an alias of it.
+    for (output, _) in &outputs {
+        refuse_edit_output_alias(job, output)?;
+    }
+    refuse_output_collisions(
+        &outputs
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>(),
+    )?;
     // The PNG names are known only now: nothing is written over a file.
     if !job.force
-        && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.exists())
+        && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.symlink_metadata().is_ok())
     {
         return Err(taken_output(taken));
     }
-    for (output, bytes) in &outputs {
-        std::fs::write(output, bytes)
-            .map_err(|e| fail(format!("writing {}: {e}", output.display())))?;
-    }
+    // Stage beside each destination, then commit without clobbering unless
+    // --force was requested; a precommit failure leaves nothing behind.
+    let committed = publish_files(&outputs, job, source)?;
     if job.quiet {
         return Ok(());
     }
-    eprintln!("{}", wrote_line(path, Format::Docx, document.len(), None));
+    edit_status(format_args!(
+        "{}",
+        wrote_line(path, Format::Docx, document.len(), None)
+    ));
     if let Some(pages) = pdf_pages {
         let pdf = path.with_extension("pdf");
         let bytes = outputs
             .iter()
             .find(|(p, _)| *p == pdf)
             .map_or(0, |(_, b)| b.len());
-        eprintln!("{}", wrote_line(&pdf, Format::Pdf, bytes, Some(pages)));
+        edit_status(format_args!(
+            "{}",
+            wrote_line(&pdf, Format::Pdf, bytes, Some(pages))
+        ));
     }
     if png_count > 0 {
         let pattern = dir.join(format!("{stem}-page-NN.png"));
-        eprintln!("{}", wrote_png_line(&pattern, png_count, job.dpi));
+        edit_status(format_args!(
+            "{}",
+            wrote_png_line(&pattern, png_count, job.dpi)
+        ));
     }
     for note in edit_notes(notes, result) {
-        eprintln!("{note}");
+        edit_status(format_args!("{note}"));
     }
     // The file is written: a view that cannot be read back is a warning,
     // not a failed edit. A pure accept/reject prints the resolved lines.
@@ -1303,9 +1767,16 @@ fn write_edited(
         // An identifier agents read back: `/` on every OS (#568).
         Some(&slash_path(path)),
     ) {
-        Ok(text) => write_stdout(&text).map_err(fail),
+        // V2-05: the commit stands when the report fails; say what it
+        // wrote.
+        Ok(text) => write_stdout(&text).map_err(|e| {
+            fail(format!(
+                "committed {}, but reporting the result failed: {e}",
+                comma_paths(&committed)
+            ))
+        }),
         Err(e) => {
-            eprintln!("warning: {e}");
+            edit_status(format_args!("warning: {e}"));
             Ok(())
         }
     }
@@ -1371,6 +1842,8 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     let target = flags.options.target(flags.file);
     let job = EditJob {
         file: flags.file,
+        plan: flags.plan,
+        explicit_output: flags.options.output.is_some(),
         target: &target,
         mode: if flags.options.editing_mode {
             Mode::Editing
@@ -2435,6 +2908,21 @@ fn cli_main() -> ExitCode {
         std::iter::once(std::ffi::OsString::from("jubarte")).chain(std::env::args_os().skip(1)),
     )
     .unwrap_or_else(|error| {
+        // The shared parser rejects non-DOCX edit outputs before execution.
+        // Preserve that refusal, but identify colliding publication roles
+        // with the same stable code as the executor (C9).
+        if error.kind() == clap::error::ErrorKind::ArgumentConflict
+            && let Ok(raw) = <Cli as clap::Parser>::try_parse_from(std::env::args_os())
+            && let Some(Command::Edit {
+                options, pdf: true, ..
+            }) = raw.command
+            && let Some(output) = options.output
+            && let Err((code, message)) =
+                refuse_output_collisions(&[output.clone(), output.with_extension("pdf")])
+        {
+            eprintln!("error: {message}");
+            std::process::exit(i32::from(code));
+        }
         // A removed flag names what replaced it; clap's tip may name a
         // lookalike.
         if let Some((old, now)) =
