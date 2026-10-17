@@ -207,7 +207,9 @@ pub struct DeliveryOptions {
     /// Bundle roles: document,patch,report (primary document always included).
     #[arg(long, value_delimiter = ',', value_parser = ["document", "patch", "report"])]
     pub emit: Vec<String>,
-    /// Optional expectation contract (requires an implemented expectation evaluator).
+    /// Optional expectation contract, evaluated on the prepared primary
+    /// before publication (PlanV2 requests only; use `jubarte check` for a
+    /// standalone pass over a published output).
     #[arg(long, value_name = "FILE")]
     pub expect: Option<PathBuf>,
     /// Redundant source digest must agree with a plan's embedded digest.

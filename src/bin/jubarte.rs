@@ -30,6 +30,8 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
+#[path = "jubarte/check.rs"]
+mod check;
 #[path = "jubarte/edit_template.rs"]
 mod edit_template;
 #[path = "jubarte/edit_typed.rs"]
@@ -147,6 +149,16 @@ fn pdf_options(
         revisions: revision_style(render.revisions, render.revision_palette.as_deref())?,
         ..jubarte::convert::PdfOptions::default()
     }))
+}
+
+/// The absolute form of a CLI path: the real path when it exists, else the
+/// working directory joined with it. Error envelopes use it to name the
+/// file the caller supplied even when its bytes were never read (#1084
+/// review F5; proposal §11 keeps `source.path` absolute).
+fn absolute(path: &Path) -> String {
+    let path = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
+    slash_path(&path)
 }
 
 /// Whether two CLI paths name the same file. Two existing paths are compared
@@ -3067,6 +3079,9 @@ fn cli_main() -> ExitCode {
             action: jubarte::cli::edit_template::TemplateAction::Template(options),
         })) => return edit_template::run(&options, quiet),
         Some(Command::TypedEdit(typed)) => return edit_typed::run(&typed, quiet),
+        Some(Command::Check { file, expect, json }) => {
+            return check::run(&file, expect.as_deref(), json, quiet);
+        }
         Some(Command::Compare(compare)) => {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }

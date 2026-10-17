@@ -35,6 +35,13 @@ pub struct V2EditResult {
     pub dependent_comments: Vec<u32>,
     /// Explicit global-policy effects on history remaining after selections.
     pub remaining_revisions: ResolvedRevisions,
+    /// Source paragraph → chosen-primary paragraph correspondence for the
+    /// optional `--expect` evaluation (V2-13). The entries carry the
+    /// source's own short ids and output indices addressing the reopened
+    /// primary's projection; merged, split and removed targets refuse in
+    /// the checker, never silently pass. When the primary is the exact
+    /// source bytes this is the identity correspondence over the source.
+    pub correspondence: crate::expect::SourceToOutputCorrespondence,
 }
 
 /// Apply a bound PlanV2 in memory, using one immutable working baseline.
@@ -159,23 +166,51 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     super::prepared::check_dom_realized(&tx, true)?;
     let (clean, _) = tx.finish()?;
     super::prepared::check_serialized_stories(&tx, &clean)?;
-    let result = if plan.policy.track == Track::On {
-        tracked::result_v2(&tx, clean)?
+    // The tracked primary is the replay's emission, so its paragraph walk
+    // comes back with it; the direct primary is the serialized transaction
+    // DOM, walked below. Either way the walk is taken from the DOM that
+    // produced the primary bytes, not by re-matching text.
+    let (result, primary_base, primary_output) = if plan.policy.track == Track::On {
+        let (result, paragraphs) = tracked::result_v2_with_paragraphs(&tx, clean)?;
+        (result, paragraphs.base, paragraphs.output)
     } else {
         let report = tx.report(true);
-        super::EditResult {
-            redline: clean.clone(),
-            clean,
-            report,
-        }
+        let base = tx.paragraph_nodes.clone();
+        let output = tx.paragraph_walk();
+        (
+            super::EditResult {
+                redline: clean.clone(),
+                clean,
+                report,
+            },
+            base,
+            output,
+        )
     };
     let mut report = result.report;
     report.existing_revisions = plan.policy.existing_revisions;
     report.guarded = true;
-    let (clean, redline) = if effect {
-        (result.clean, result.redline)
+    let (clean, redline, correspondence) = if effect {
+        let correspondence = expectation_correspondence(
+            &model,
+            &tx,
+            &result.redline,
+            &primary_base,
+            &primary_output,
+            plan.policy.text_view,
+        )?;
+        (result.clean, result.redline, correspondence)
     } else {
-        (source.to_vec(), source.to_vec())
+        // A no-effect primary is the exact source bytes; the identity
+        // correspondence over the source is the output walk.
+        let identity = crate::expect::identity_correspondence(source).map_err(|e| {
+            err(
+                "INVALID_DOCUMENT",
+                None,
+                format!("cannot build expectations correspondence: {e}"),
+            )
+        })?;
+        (source.to_vec(), source.to_vec(), identity)
     };
     preserve_history(&working, &clean)?;
     preserve_history(&working, &redline)?;
@@ -186,7 +221,279 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
         dependent_revisions,
         dependent_comments,
         remaining_revisions,
+        correspondence,
     })
+}
+
+/// Map every source paragraph onto the chosen primary's projection, from
+/// what preparation already knows: [`origin::Origin`] follows each source
+/// paragraph through the plan's revision settlement by its tag (merges and
+/// removals included), and the transaction's own paragraph nodes place the
+/// survivors in the emitted primary. Exact one-to-one targets map
+/// one-to-one; a settled paragraph several source paragraphs merged into
+/// carries that count so the checker refuses them as merged; paragraphs
+/// removed by settlement or by `delete_paragraph` map to nothing and
+/// refuse as split. Inserted paragraphs are simply absent: no expectation
+/// can reference them through this correspondence. On top of the
+/// settlement mapping, the primary's own text view adjusts the survivors:
+/// see [`refuse_removed_final_paragraphs`].
+fn expectation_correspondence(
+    model: &SourceModel,
+    tx: &Transaction<'_>,
+    primary: &[u8],
+    primary_base: &[NodeId],
+    primary_output: &[NodeId],
+    view: v2::TextView,
+) -> Result<crate::expect::SourceToOutputCorrespondence, EditError> {
+    let mut position: std::collections::HashMap<NodeId, usize> =
+        std::collections::HashMap::with_capacity(primary_output.len());
+    for (index, &node) in primary_output.iter().enumerate() {
+        position.insert(node, index);
+    }
+    let output_of = |working: usize| -> Option<usize> {
+        primary_base
+            .get(working)
+            .and_then(|&node| position.get(&node).copied())
+    };
+    let ids = model.ids();
+    let count = model.loaded.paragraph_nodes.len();
+    let mut entries = Vec::with_capacity(count);
+    match &tx.origin {
+        Some(origin) => {
+            // How many source paragraphs each settled paragraph received:
+            // one kept plus any merged in. A many-to-one settled paragraph
+            // refuses every member as merged.
+            let mut members: BTreeMap<usize, usize> = BTreeMap::new();
+            for source in 0..count {
+                if let origin::Fate::Kept(post) | origin::Fate::Merged(post) = origin.fate(source) {
+                    *members.entry(post).or_default() += 1;
+                }
+            }
+            for source in 0..count {
+                let id = ids.id(source);
+                match origin.fate(source) {
+                    origin::Fate::Gone => {
+                        entries.push(crate::expect::CorrespondenceEntry::split(id));
+                    }
+                    origin::Fate::Kept(post) | origin::Fate::Merged(post) => {
+                        match output_of(post) {
+                            Some(output) if members[&post] == 1 => {
+                                entries.push(crate::expect::CorrespondenceEntry::one_to_one(
+                                    id, output,
+                                ));
+                            }
+                            Some(output) => {
+                                let many = vec![output; members[&post]];
+                                entries.push(crate::expect::CorrespondenceEntry::merged(id, &many));
+                            }
+                            None => {
+                                entries.push(crate::expect::CorrespondenceEntry::split(id));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+            // No settlement: the working walk is the source's own, so the
+            // transaction's paragraph nodes place each source paragraph.
+            for source in 0..count {
+                let id = ids.id(source);
+                match output_of(source) {
+                    Some(output) => {
+                        entries.push(crate::expect::CorrespondenceEntry::one_to_one(id, output));
+                    }
+                    None => {
+                        entries.push(crate::expect::CorrespondenceEntry::split(id));
+                    }
+                }
+            }
+        }
+    }
+    // The view the expectations judge in (this profile's schema admits
+    // `final` only, the plan's own working projection). Under `final` a
+    // paragraph whose mark is tracked-deleted is not a final-view
+    // paragraph of its own; the mirror for tracked-inserted marks under
+    // an `original` view lands with that view.
+    match view {
+        v2::TextView::Final => {
+            refuse_removed_final_paragraphs(primary, primary_output.len(), &mut entries)?;
+        }
+    }
+    crate::expect::SourceToOutputCorrespondence::from_entries(entries).map_err(|e| {
+        err(
+            "INTERNAL",
+            None,
+            format!("expectations correspondence: {e}"),
+        )
+    })
+}
+
+/// One emitted primary paragraph's final-view disposition: whether its
+/// paragraph mark is tracked-deleted, and whether any of its content
+/// survives the final projection.
+struct FinalView {
+    deleted_mark: bool,
+    survives: bool,
+}
+
+/// Rewrite one-to-one entries whose output paragraph is not a paragraph of
+/// the view the expectations judge in (#1084 review F2, proposal §10: "A
+/// missing or unresolved mapped paragraph is not a passing absence
+/// assertion"). A paragraph whose mark is tracked-deleted
+/// (`w:pPr/w:rPr/w:del|moveFrom`, the elements [`tracked`] writes) does
+/// not exist as its own final paragraph: with no surviving content it is
+/// removed, so its sources map to nothing and refuse split; with
+/// surviving content it merges into the next paragraph without a deleted
+/// mark, and every source sharing that merged paragraph refuses merged
+/// (the settlement merge encoding: one entry per source, the shared index
+/// repeated). Judged structurally off the emitted primary's own XML,
+/// never by matching text.
+fn refuse_removed_final_paragraphs(
+    primary: &[u8],
+    walk: usize,
+    entries: &mut [crate::expect::CorrespondenceEntry],
+) -> Result<(), EditError> {
+    let states = final_view_states(primary)?;
+    if states.len() != walk {
+        return Err(err(
+            "INTERNAL",
+            None,
+            format!(
+                "the primary's paragraph walk holds {walk} paragraphs but its \
+                 reopened bytes project {}",
+                states.len()
+            ),
+        ));
+    }
+    // The first follower without a deleted mark: where a merging
+    // paragraph's text lands in the final view.
+    let chain_end = |start: usize| -> Option<usize> {
+        (start + 1..states.len()).find(|&end| !states[end].deleted_mark)
+    };
+    let mut landing: Vec<Option<Option<usize>>> = Vec::with_capacity(entries.len());
+    let mut redirected = Vec::with_capacity(entries.len());
+    for entry in entries.iter() {
+        landing.push(match entry.output.as_slice() {
+            // Only exact one-to-one targets are rewritten; settlement
+            // splits and merges already refuse honestly.
+            [index] => {
+                let landing = match &states[*index] {
+                    FinalView {
+                        deleted_mark: false,
+                        ..
+                    } => Some(Some(*index)),
+                    FinalView {
+                        deleted_mark: true,
+                        survives: false,
+                    } => Some(None),
+                    FinalView {
+                        deleted_mark: true,
+                        survives: true,
+                    } => Some(chain_end(*index)),
+                };
+                redirected.push(landing.is_some_and(|landing| landing != Some(*index)));
+                landing
+            }
+            _ => {
+                redirected.push(false);
+                None
+            }
+        });
+    }
+    let mut shares = vec![0usize; states.len()];
+    for landing in landing.iter().flatten().flatten() {
+        shares[*landing] += 1;
+    }
+    for ((entry, landing), redirected) in entries.iter_mut().zip(landing).zip(redirected) {
+        let Some(landing) = landing else { continue };
+        let Some(final_index) = landing else {
+            entry.output.clear();
+            continue;
+        };
+        // A redirected source merged into another final paragraph: the
+        // chain-end paragraph is not its own, even when that paragraph is
+        // an insertion no source entry names, so it refuses merged — the
+        // settlement encoding for a shared final paragraph.
+        let group = shares[final_index].max(usize::from(redirected) + 1);
+        entry.output = vec![final_index; group];
+    }
+    Ok(())
+}
+
+/// The primary's paragraphs in the checker's projection order (the body's,
+/// then each story part's, the order [`crate::expect::evaluate`] reopens
+/// bytes in), with each one's final-view disposition.
+fn final_view_states(primary: &[u8]) -> Result<Vec<FinalView>, EditError> {
+    let opened = Opened::open(primary).map_err(open_error)?;
+    let mut states: Vec<FinalView> = crate::inspect::body_paragraph_nodes(&opened.dom, opened.body)
+        .into_iter()
+        .map(|node| paragraph_final_state(&opened.dom, node))
+        .collect();
+    for (_, _, part) in opened.story_parts() {
+        let (dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part).map_err(open_error)?;
+        states.extend(
+            crate::inspect::story_paragraph_nodes(&dom, root)
+                .into_iter()
+                .map(|node| paragraph_final_state(&dom, node)),
+        );
+    }
+    Ok(states)
+}
+
+fn paragraph_final_state(dom: &Dom, paragraph: NodeId) -> FinalView {
+    FinalView {
+        deleted_mark: mark_deleted(dom, paragraph),
+        survives: final_run(dom, paragraph),
+    }
+}
+
+/// Whether the paragraph's mark (`w:pPr/w:rPr`) is tracked-deleted
+/// (`w:del` or `w:moveFrom`), the same elements `tracked::mark` writes.
+fn mark_deleted(dom: &Dom, paragraph: NodeId) -> bool {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            dom.elements(rpr, None).iter().any(|&child| {
+                dom.name(child).is_some_and(|name| {
+                    name.namespace_name() == W::URI
+                        && matches!(name.local_name(), "del" | "moveFrom")
+                })
+            })
+        })
+}
+
+/// Whether any run of the paragraph survives the final view: a run outside
+/// every deletion container (`w:del`/`w:moveFrom`) that carries content
+/// besides its own properties.
+fn final_run(dom: &Dom, paragraph: NodeId) -> bool {
+    dom.descendants(paragraph, Some(&W::r()))
+        .iter()
+        .any(|&run| {
+            !inside_deletion(dom, paragraph, run)
+                && dom
+                    .elements(run, None)
+                    .iter()
+                    .any(|&child| !dom.name_is(child, &W::r_pr()))
+        })
+}
+
+/// Whether `node` sits inside a deletion container between the paragraph
+/// and itself.
+fn inside_deletion(dom: &Dom, paragraph: NodeId, node: NodeId) -> bool {
+    let mut cursor = node;
+    while let Some(parent) = dom.parent(cursor) {
+        if parent == paragraph {
+            return false;
+        }
+        if dom.name(parent).is_some_and(|name| {
+            name.namespace_name() == W::URI && matches!(name.local_name(), "del" | "moveFrom")
+        }) {
+            return true;
+        }
+        cursor = parent;
+    }
+    false
 }
 
 fn legacy(plan: &PlanV2) -> EditPlan {

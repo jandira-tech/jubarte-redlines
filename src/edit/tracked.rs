@@ -168,10 +168,40 @@ pub(super) fn result(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult,
     result_with_order(tx, clean, false)
 }
 
-/// V2 gives simultaneous inserts at one source position array order. Keep
-/// that emission policy separate from the historical v1 replay contract.
-pub(super) fn result_v2(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult, EditError> {
-    result_with_order(tx, clean, true)
+/// The tracked primary's paragraph identity, for the v2 expectations
+/// correspondence: `base` walks the replay's starting DOM (positionally the
+/// transaction's own `paragraph_nodes`, both loaded from the same base
+/// bytes), and `output` walks it again after the tracked emission — in the
+/// checker's projection order, so output indices address the reopened
+/// redline's paragraphs.
+#[derive(Clone, Debug)]
+pub(super) struct TrackedParagraphs {
+    /// The replay's base paragraphs, one per transaction paragraph.
+    pub(super) base: Vec<NodeId>,
+    /// The emitted redline's paragraphs, in projection order.
+    pub(super) output: Vec<NodeId>,
+}
+
+/// As [`result_v2`], also returning the tracked primary's paragraph walks
+/// (see [`TrackedParagraphs`]).
+pub(super) fn result_v2_with_paragraphs(
+    tx: &Transaction<'_>,
+    clean: Vec<u8>,
+) -> Result<(EditResult, TrackedParagraphs), EditError> {
+    let (redline, floor, paragraphs) = redline(tx, true)?;
+    let mut report = tx.report(true);
+    report.paragraphs.to = crate::inspect::paragraphs(&clean)
+        .map(|p| p.len())
+        .unwrap_or(report.paragraphs.from);
+    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
+    Ok((
+        EditResult {
+            clean,
+            redline,
+            report,
+        },
+        paragraphs,
+    ))
 }
 
 fn result_with_order(
@@ -179,7 +209,7 @@ fn result_with_order(
     clean: Vec<u8>,
     array_order: bool,
 ) -> Result<EditResult, EditError> {
-    let (redline, floor) = redline(tx, array_order)?;
+    let (redline, floor, _) = redline(tx, array_order)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -194,9 +224,15 @@ fn result_with_order(
 
 /// Replay `tx`'s resolved operations on a fresh copy of its base as tracked
 /// changes. `tx` has been applied, so its outcomes hold the comment ids.
-/// Returns the redline and the first id its own revisions took: every
-/// source revision's id is below it.
-fn redline(tx: &Transaction<'_>, array_order: bool) -> Result<(Vec<u8>, u64), EditError> {
+/// Returns the redline, the first id its own revisions took (every
+/// source revision's id is below it) and the replay's paragraph walks
+/// ([`TrackedParagraphs`]); the walk is taken after the emission and
+/// before `finish`, which serializes stories and only ever removes
+/// bookmarks or comment definitions, never a `w:p`.
+fn redline(
+    tx: &Transaction<'_>,
+    array_order: bool,
+) -> Result<(Vec<u8>, u64, TrackedParagraphs), EditError> {
     let plan = EditPlan {
         source_sha256: None,
         date: Some(tx.date.clone()),
@@ -241,8 +277,10 @@ fn redline(tx: &Transaction<'_>, array_order: bool) -> Result<(Vec<u8>, u64), Ed
     }
     t.comments = comments;
     t.reply_parents = tx.reply_parents.clone();
+    let base = t.paragraph_nodes.clone();
+    let output = t.paragraph_walk();
     let (redline, _) = t.finish()?;
-    Ok((redline, floor))
+    Ok((redline, floor, TrackedParagraphs { base, output }))
 }
 
 /// Counts of the redline's changes stamped with `author` and `date` whose

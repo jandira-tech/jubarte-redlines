@@ -330,6 +330,12 @@ pub struct Error {
     pub retryable: Option<bool>,
     /// Known primary publication state; unknown never authorizes retry.
     pub commit_state: CommitState,
+    /// The bounded expectation report behind this failure, when the error
+    /// is an expectation verdict (`EXPECTATION_FAILED`, ...). Kept beside
+    /// the error so a refused envelope still discloses which checks ran,
+    /// refused or stayed unassessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expectations: Option<crate::expect::ExpectationReport>,
 }
 
 impl Error {
@@ -360,6 +366,7 @@ impl Error {
             next_actions: Vec::new(),
             retryable: None,
             commit_state: CommitState::Unknown,
+            expectations: None,
         }
     }
 
@@ -614,6 +621,12 @@ pub struct ResultData {
     /// Generator-only coverage and bounded working readiness; never plan authority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<serde_json::Value>,
+    /// The bounded expectation report when `--expect` was evaluated: the
+    /// receipt (path, digest, schema version, checks run/refused/
+    /// unsupported, targets, text view, declared provenance) plus the
+    /// per-check outcomes. Absent when no expectations were supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expectations: Option<crate::expect::ExpectationReport>,
 }
 
 /// Invalid combinations of (phase, effect, predicted_effect).
@@ -679,6 +692,7 @@ impl ResultData {
             counts: Counts::default(),
             verification: Verification::default(),
             generation: None,
+            expectations: None,
         }
     }
 
@@ -695,6 +709,7 @@ impl ResultData {
             counts: Counts::default(),
             verification: Verification::default(),
             generation: None,
+            expectations: None,
         }
     }
 

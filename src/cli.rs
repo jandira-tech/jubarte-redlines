@@ -1409,6 +1409,34 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Check a document against a source-bound expectation contract.
+    ///
+    /// The only profile this build supports is `--expect`: an optional,
+    /// separately supplied, hash-bound expectations file whose typed
+    /// paragraph-text predicates (exact equality, containment, absence)
+    /// are evaluated on FILE's own final projection. The other check
+    /// profiles (integrity, quality, layout, baseline tracking) are #961;
+    /// `jubarte validate` remains the validity audit. Passing checks and
+    /// natural-language requirements without executable checks never claim
+    /// the task complete.
+    #[command(after_help = "Examples:\n  \
+        jubarte check revised.docx --expect expectations.json\n  \
+        jubarte check revised.docx --expect expectations.json --json\n\n\
+        The expectations' source.sha256 must name FILE's own bytes: an\n\
+        expectation file bound to the pre-edit source refuses as stale on\n\
+        the edited output. Use the output-bound copy an `edit apply --expect`\n\
+        receipt carries to re-check a published output.")]
+    Check {
+        /// The document (.docx) whose own digest the expectations must name.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Expectation contract (the only supported profile in this build).
+        #[arg(long, value_name = "FILE")]
+        expect: Option<PathBuf>,
+        /// One result envelope, including refusals.
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove authors, editing IDs, metadata and comments before sharing.
     #[command(after_help = "Examples:\n  \
         jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \
@@ -3073,8 +3101,13 @@ pub fn edit_arguments(
     edit_actions::route(&hoist_quiet(command, arguments), command)
 }
 
-/// Requested protocol on a recognized typed edit route, respecting values and `--`.
-pub fn typed_edit_protocol(arguments: &[std::ffi::OsString]) -> Option<(String, bool)> {
+/// Requested protocol on a recognized typed edit route, respecting values and `--`:
+/// the action name, whether the protocol is JSONL (else JSON), and the FILE
+/// operand the tokens named when they carried one before the grammar failure
+/// (used to keep the usage envelope's `source.path` honest).
+pub fn typed_edit_protocol(
+    arguments: &[std::ffi::OsString],
+) -> Option<(String, bool, Option<String>)> {
     let model = top_level_command();
     let routed = edit_arguments(&model, arguments);
     if routed.get(1).is_none_or(|a| a != "__edit-v2") {
@@ -3093,15 +3126,32 @@ pub fn typed_edit_protocol(arguments: &[std::ffi::OsString]) -> Option<(String, 
     let mut rest = &tokens[at + 1..];
     let mut json = false;
     let mut jsonl = false;
+    let mut file = None;
     while !rest.is_empty() {
         let (options, next) = spelled_options(command, rest);
         for option in options {
             json |= option.name == "--json";
             jsonl |= option.name == "--jsonl";
         }
+        // The action's leading positional is its FILE operand.
+        if file.is_none()
+            && let Some(operand) = rest.get(next)
+        {
+            file = Some(operand.to_string());
+        }
         rest = rest.get(next + 1..).unwrap_or_default();
     }
-    (json || jsonl).then(|| (action.to_string(), jsonl))
+    (json || jsonl).then(|| (action.to_string(), jsonl, file))
+}
+
+/// The first positional operand the tokens name for `cmd`, when they carry
+/// one before any grammar failure: options and their values are skipped
+/// through the command model's own spelling, so an option's value is never
+/// mistaken for the operand. Recognized-mode usage envelopes use it to name
+/// the file the caller supplied (proposal §11: `source` keeps the path).
+pub fn first_positional(cmd: &clap::Command, tokens: &[&str]) -> Option<String> {
+    let (_, at) = spelled_options(cmd, tokens);
+    tokens.get(at).map(ToString::to_string)
 }
 
 impl Cli {

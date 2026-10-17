@@ -29,12 +29,6 @@ fn read(path: &Path) -> Result<Vec<u8>, Failure> {
 fn alias(path: &Path, input: &Path) -> Result<(), Failure> {
     refuse_output_alias(path, &[(input, "the source")]).map_err(|(_, m)| failure("OUTPUT_ALIAS", m))
 }
-fn absolute(path: &Path) -> String {
-    slash_path(
-        &std::fs::canonicalize(path)
-            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path)),
-    )
-}
 fn generate(
     options: &TemplateOptions,
     source: &[u8],
@@ -206,9 +200,12 @@ pub(super) fn run(options: &TemplateOptions, quiet: bool) -> ExitCode {
     let (receipt, raw) = match outcome {
         Ok(ok) => ok,
         Err(error) => {
-            let source = source
-                .as_ref()
-                .map_or_else(|_| Source::from_digest(""), |s| Source::new(s));
+            // The receipt names the file the caller supplied whether or
+            // not its bytes were read (#1084 review F5).
+            let source = source.as_ref().map_or_else(
+                |_| path_only(&options.file),
+                |s| Source::new(s).with_path(absolute(&options.file)),
+            );
             let receipt = if matches!(
                 error.code.as_str(),
                 "IO_ERROR" | "OUTPUT_ALIAS" | "OUTPUT_EXISTS" | "USAGE"
@@ -277,6 +274,12 @@ pub(super) fn run(options: &TemplateOptions, quiet: bool) -> ExitCode {
     ExitCode::from(code)
 }
 
+/// The source file's `Source` for failures that never read its bytes: the
+/// user-named path, no invented digest (#1084 review F5).
+fn path_only(file: &Path) -> Source {
+    Source::from_digest("").with_path(absolute(file))
+}
+
 /// Recognized machine mode applies even to invalid generator syntax.
 pub(super) fn usage(argv: &[String], error: &clap::Error) -> bool {
     if matches!(
@@ -289,7 +292,8 @@ pub(super) fn usage(argv: &[String], error: &clap::Error) -> bool {
         .chain(argv.iter().map(String::as_str))
         .map(Into::into)
         .collect();
-    let routed = jubarte::cli::edit_actions::route(&args, &jubarte::cli::top_level_command());
+    let model = jubarte::cli::top_level_command();
+    let routed = jubarte::cli::edit_actions::route(&args, &model);
     if !routed.iter().any(|a| a == "__edit-template") {
         return false;
     }
@@ -297,9 +301,30 @@ pub(super) fn usage(argv: &[String], error: &clap::Error) -> bool {
     if !jsonl && !argv.iter().any(|a| a == "--json") {
         return false;
     }
+    // Name the file the tokens carried when they named one, the same way
+    // the typed edit usage envelope does (#1084 review F5): after the
+    // dispatch's own action word, the leading positional is FILE.
+    let file = routed
+        .iter()
+        .position(|a| a == "__edit-template")
+        .zip(model.find_subcommand("__edit-template"))
+        .and_then(|(at, dispatch)| {
+            let tokens: Vec<&str> = routed
+                .iter()
+                .skip(at + 1)
+                .filter_map(|a| a.to_str())
+                .take_while(|a| *a != "--")
+                .collect();
+            let command = dispatch.find_subcommand(tokens.first().copied()?)?;
+            jubarte::cli::first_positional(command, tokens.get(1..).unwrap_or_default())
+        });
+    let source = match file {
+        Some(file) => Source::from_digest("").with_path(absolute(Path::new(&file))),
+        None => Source::from_digest(""),
+    };
     let receipt = Envelope::new_error(
         "edit template",
-        Source::from_digest(""),
+        source,
         *failure(
             "USAGE",
             error
