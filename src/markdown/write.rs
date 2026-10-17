@@ -155,6 +155,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     }
     let mut document = writer.finish();
     document.warnings.splice(..0, critic_warnings);
+    document.index_wrapping_parents();
     document
 }
 

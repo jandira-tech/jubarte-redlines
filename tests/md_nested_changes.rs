@@ -1163,6 +1163,64 @@ fn review_1111_split_names_every_full_parent_chain() {
 }
 
 #[test]
+fn split_revision_parent_choice_is_deterministic() {
+    // Revision 3 has two named parents and one piece with none. Vary the
+    // bare piece's position to exercise both preceding and smallest serials.
+    let pieces = [
+        r#"<w:p><w:ins w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
+        <w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+        <w:r><w:delText>a</w:delText></w:r></w:del></w:ins></w:p>"#,
+        r#"<w:p><w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+        <w:r><w:delText>b</w:delText></w:r></w:del></w:p>"#,
+        r#"<w:p><w:ins w:id="2" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z">
+        <w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+        <w:r><w:delText>c</w:delText></w:r></w:del></w:ins></w:p>"#,
+    ];
+    for (name, order, outer_ids, bare_parent) in [
+        ("between", [0, 1, 2], ["1", "4", "2"], "Ana Lima"),
+        ("before", [1, 0, 2], ["1", "4", "2"], "Ana Lima"),
+        ("after", [0, 2, 1], ["1", "2", "4"], "Cy Dee"),
+    ] {
+        let source = docx(&order.map(|at| pieces[at]).concat());
+        let view = agent(&source);
+        let first = written(&view);
+        for attempt in 1..64 {
+            let next = written(&view);
+            assert!(
+                next == first,
+                "{name}: split revision parent choice changed on write {attempt}:\nfirst: {}\nnext: {}",
+                part_string(&first, "word/document.xml").unwrap(),
+                part_string(&next, "word/document.xml").unwrap(),
+            );
+        }
+        let document = part_string(&first, "word/document.xml").unwrap();
+        let paragraphs = document
+            .split("<w:p>")
+            .skip(1)
+            .map(|part| part.split("</w:p>").next().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(paragraphs.len(), 3, "{name}: {document}");
+        for ((paragraph, outer_id), piece) in paragraphs.iter().zip(outer_ids).zip(order) {
+            // Word repeats revision 3 across paragraphs. Check each tree
+            // separately: the helper also rejects duplicate ids within it.
+            assert_revision_tree(
+                &format!("<w:p>{paragraph}</w:p>"),
+                &[("w:ins", outer_id, None), ("w:del", "3", Some(outer_id))],
+            );
+            let parent = match piece {
+                0 => "Ana Lima",
+                1 => bare_parent,
+                _ => "Cy Dee",
+            };
+            assert!(
+                paragraph.contains(&format!(r#"w:author="{parent}""#)),
+                "{name}: {paragraph}"
+            );
+        }
+    }
+}
+
+#[test]
 fn live_insertion_keeps_a_same_author_deletion() {
     let source = live_insertion_with_deletions("tail");
     let document = part_string(&source, "word/document.xml")

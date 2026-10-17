@@ -352,6 +352,9 @@ pub(super) struct Document {
     /// the note's own change: the change it sits inside (`{--x--}{>>r3 @BO
     /// on r1 @AL<<}` is a deletion inside an insertion), innermost first.
     pub wraps: HashMap<u32, Change>,
+    /// Named parents indexed by revision ids, then inner serial. Built after
+    /// parsing, so rendering can find another piece without scanning wraps.
+    pub(super) wrapping_parents: HashMap<Vec<u32>, BTreeMap<u32, Change>>,
     /// The date the last mark of a change takes, when its author's view
     /// dates them with a range (`2026-03-02..2026-03-04`).
     pub range_ends: HashMap<u32, String>,
@@ -381,6 +384,18 @@ pub(super) struct Document {
 }
 
 impl Document {
+    pub(super) fn index_wrapping_parents(&mut self) {
+        self.wrapping_parents.clear();
+        for (&inner, &outer) in &self.wraps {
+            if let Some(ids) = self.revision_ids.get(&inner).filter(|ids| !ids.is_empty()) {
+                self.wrapping_parents
+                    .entry(ids.clone())
+                    .or_default()
+                    .insert(inner, outer);
+            }
+        }
+    }
+
     /// The `w:sectPr` of section `number` (from 1) as the view names its
     /// page: its own, else the first section's, else `fallback`.
     pub(super) fn section(&self, number: usize, fallback: &str) -> String {
@@ -1385,18 +1400,20 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
 }
 
 /// The named parents, including those another piece of the same revision names.
+/// An explicit parent wins; otherwise use the nearest preceding inner serial
+/// with the same ids, or the smallest serial if no piece precedes this one.
 fn wrapping_chain(document: &Document, change: Change) -> Vec<Change> {
     let mut chain = Vec::new();
     let mut serial = change.1;
     loop {
         let outer = document.wraps.get(&serial).or_else(|| {
-            let ids = document
-                .revision_ids
-                .get(&serial)
-                .filter(|ids| !ids.is_empty())?;
-            document.wraps.iter().find_map(|(inner, outer)| {
-                (document.revision_ids.get(inner) == Some(ids)).then_some(outer)
-            })
+            let ids = document.revision_ids.get(&serial)?;
+            let pieces = document.wrapping_parents.get(ids)?;
+            pieces
+                .range(..serial)
+                .next_back()
+                .or_else(|| pieces.first_key_value())
+                .map(|(_, outer)| outer)
         });
         let Some(&outer) = outer else {
             break;
