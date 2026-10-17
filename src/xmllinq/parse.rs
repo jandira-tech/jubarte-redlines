@@ -28,6 +28,41 @@ use std::collections::HashMap;
 
 use super::{Dom, NodeId, XDeclaration, XName, XNamespace};
 
+// ── tag policy budgets (N01/N02) ────────────────────────────────────────────
+// The permissive DOM parser cannot refuse input (its contract predates
+// admission), so every checked entry path — `validate_xml`, the package
+// admission scan (`admission::check_xml_depth`), and `try_parse_xdocument` —
+// enforces these bounds *before* a DOM node or attribute is constructed.
+// The numbers are deliberately far above anything a legal WordprocessingML
+// part needs; they exist to stop pathological width, not to shape content.
+
+/// Attributes (namespace declarations included) on one element. 256 matches
+/// quick-xml's namespace-declaration default and the OPC metadata budget.
+pub(crate) const MAX_ELEMENT_ATTRIBUTES: usize = 256;
+/// Bytes in one element or attribute name.
+pub(crate) const MAX_NAME_BYTES: usize = 4096;
+/// Bytes in one attribute value.
+pub(crate) const MAX_ATTRIBUTE_VALUE_BYTES: usize = 256 * 1024;
+/// Total attribute bytes (names + values) on one element.
+pub(crate) const MAX_TAG_ATTRIBUTE_BYTES: usize = 1024 * 1024;
+/// Bytes in one namespace URI.
+pub(crate) const MAX_NAMESPACE_URI_BYTES: usize = 8192;
+/// Bytes in one namespace prefix.
+pub(crate) const MAX_NAMESPACE_PREFIX_BYTES: usize = 256;
+/// Bindings live in one lexical scope (all levels, shadowed included).
+pub(crate) const MAX_LIVE_NS_BINDINGS: usize = 256;
+/// Total prefix+URI bytes declared by xmlns attributes in one document.
+pub(crate) const MAX_NS_DECLARED_BYTES: usize = 1024 * 1024;
+
+/// N02 mechanism counter: bytes of (prefix, uri) pairs the parser's
+/// namespace scope has recorded. The scoped-overlay scope only ever records
+/// what an element declares; a parent-map clone would inflate this by the
+/// live-set size on every nested declaration.
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub(crate) static NS_SCOPE_DECLARED_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 /// Parse an XML string into a Document node allocated into `dom`. The
 /// parser is permissive on real-world OOXML inputs (truncated closing
 /// tags, missing `?>` terminators, mixed-quote attribute values) — see
@@ -49,10 +84,237 @@ pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId {
     p.parse_document()
 }
 
+/// Checked parse: enforce [`validate_xml`] (well-formedness plus the tag
+/// and namespace budgets) before the permissive parser builds the DOM.
+/// Use this on any path where a refusal is meaningful; callers that must
+/// stay permissive (the port's contract) keep [`parse_xdocument`].
+///
+/// # Errors
+///
+/// Returns the [`validate_xml`] error string unchanged.
+pub fn try_parse_xdocument(dom: &mut Dom, xml: &str) -> Result<NodeId, String> {
+    validate_xml(xml)?;
+    Ok(parse_xdocument(dom, xml))
+}
+
 struct Parser<'a> {
     dom: &'a mut Dom,
     c: Vec<char>,
     pos: usize,
+}
+
+/// In-scope namespace bindings as an overlay stack (N02): one `HashMap`
+/// holds the live prefix → URI bindings, and each element's declarations
+/// push overrides that `pop` restores — where the old port cloned the
+/// entire parent map on every element that declared an `xmlns`, this pays
+/// only the declared bytes, and nested rebinding never re-copies ancestors.
+/// `pop(mark)` restores exactly the bindings pushed since `mark`, in
+/// reverse order, so shadowed outer bindings survive intact.
+#[derive(Default)]
+struct NsScope {
+    bindings: HashMap<String, String>,
+    /// (prefix, value it replaced if any, declared bytes of the push) — a
+    /// per-element mark is an index into this stack.
+    undo: Vec<(String, Option<String>, usize)>,
+    /// Prefix+URI bytes of every binding currently stacked (shadowed
+    /// bindings still hold memory, so they stay counted until popped).
+    live_bytes: usize,
+    /// Bindings currently stacked, shadowed ones included.
+    live_bindings: usize,
+}
+
+impl NsScope {
+    fn get(&self, prefix: &str) -> Option<&String> {
+        self.bindings.get(prefix)
+    }
+
+    fn mark(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Record `prefix → uri` as a declaration owned by the current element.
+    fn push(&mut self, prefix: &str, uri: &str) {
+        let bytes = prefix.len() + uri.len();
+        let prior = self.bindings.insert(prefix.to_string(), uri.to_string());
+        self.undo.push((prefix.to_string(), prior, bytes));
+        self.live_bytes += bytes;
+        self.live_bindings += 1;
+        #[cfg(test)]
+        NS_SCOPE_DECLARED_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Restore the scope to `mark`, undoing every push since then.
+    fn pop(&mut self, mark: usize) {
+        while self.undo.len() > mark {
+            let Some((prefix, prior, bytes)) = self.undo.pop() else {
+                break;
+            };
+            match prior {
+                Some(old) => {
+                    self.bindings.insert(prefix, old);
+                }
+                None => {
+                    self.bindings.remove(&prefix);
+                }
+            }
+            self.live_bytes = self.live_bytes.saturating_sub(bytes);
+            self.live_bindings = self.live_bindings.saturating_sub(1);
+        }
+    }
+}
+
+/// The checked gate's per-document tag policy (N01/N02): tag width,
+/// attribute counts and sizes, namespace budgets, and expanded-name
+/// duplicate detection. Shared by `validate_xml` and the package admission
+/// scan; `try_parse_xdocument` gets it through `validate_xml`.
+pub(crate) struct TagPolicy {
+    scope: NsScope,
+    /// Undo marks of open elements, parallel to the reader's depth.
+    marks: Vec<usize>,
+    /// Cumulative declared prefix+URI bytes across the document.
+    declared_bytes: usize,
+}
+
+impl TagPolicy {
+    pub(crate) fn new() -> Self {
+        TagPolicy {
+            scope: NsScope::default(),
+            marks: Vec::new(),
+            declared_bytes: 0,
+        }
+    }
+
+    /// Check one open tag and push its declarations until [`Self::close`].
+    ///
+    /// # Errors
+    ///
+    /// A `String` naming the budget or rule the tag violates.
+    pub(crate) fn open(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+        let mark = self.scope.mark();
+        self.check_tag(tag).inspect_err(|_| self.scope.pop(mark))?;
+        self.marks.push(mark);
+        Ok(())
+    }
+
+    /// Check a self-closing tag; its declarations never outlive the tag.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub(crate) fn empty(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+        let mark = self.scope.mark();
+        let result = self.check_tag(tag);
+        self.scope.pop(mark);
+        result
+    }
+
+    /// Pop the declarations of the innermost open element. Safe to call
+    /// once per `End` event the reader reports.
+    pub(crate) fn close(&mut self) {
+        if let Some(mark) = self.marks.pop() {
+            self.scope.pop(mark);
+        }
+    }
+
+    fn check_tag(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+        let tag_name = tag.name();
+        if tag_name.as_ref().len() > MAX_NAME_BYTES {
+            return Err(format!("XML name exceeds {MAX_NAME_BYTES} bytes"));
+        }
+        let mut count = 0usize;
+        let mut tag_bytes = tag_name.as_ref().len();
+        // (raw key, normalized value) for a second pass after the
+        // declarations land in scope.
+        let mut seen: Vec<(String, String)> = Vec::new();
+        for attribute in tag.attributes() {
+            let attribute = attribute.map_err(|e| e.to_string())?;
+            count += 1;
+            if count > MAX_ELEMENT_ATTRIBUTES {
+                return Err(format!(
+                    "element exceeds {MAX_ELEMENT_ATTRIBUTES} attributes"
+                ));
+            }
+            let key = attribute.key.as_ref().to_string();
+            if key.len() > MAX_NAME_BYTES {
+                return Err(format!("XML name exceeds {MAX_NAME_BYTES} bytes"));
+            }
+            let value = attribute
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .map_err(|e| e.to_string())?
+                .into_owned();
+            if value.len() > MAX_ATTRIBUTE_VALUE_BYTES {
+                return Err(format!(
+                    "attribute value exceeds {MAX_ATTRIBUTE_VALUE_BYTES} bytes"
+                ));
+            }
+            tag_bytes += key.len() + value.len();
+            if tag_bytes > MAX_TAG_ATTRIBUTE_BYTES {
+                return Err(format!(
+                    "element exceeds {MAX_TAG_ATTRIBUTE_BYTES} attribute bytes"
+                ));
+            }
+            if key == "xmlns" {
+                self.declare("", &value)?;
+            } else if let Some(prefix) = key.strip_prefix("xmlns:") {
+                self.declare(prefix, &value)?;
+            }
+            seen.push((key, value));
+        }
+        // Two differently-spelled attributes that expand to the same name
+        // collapse in the DOM (and confuse every downstream differ) — a
+        // shape Word also rejects.
+        let mut expanded = std::collections::HashSet::with_capacity(seen.len());
+        for (key, _) in &seen {
+            if !expanded.insert(self.expand(key)) {
+                return Err(format!("attribute {key} repeats an expanded name"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Push one `xmlns` declaration under the namespace budgets.
+    fn declare(&mut self, prefix: &str, uri: &str) -> Result<(), String> {
+        if prefix.len() > MAX_NAMESPACE_PREFIX_BYTES {
+            return Err(format!(
+                "namespace prefix exceeds {MAX_NAMESPACE_PREFIX_BYTES} bytes"
+            ));
+        }
+        if uri.len() > MAX_NAMESPACE_URI_BYTES {
+            return Err(format!(
+                "namespace URI exceeds {MAX_NAMESPACE_URI_BYTES} bytes"
+            ));
+        }
+        if self.scope.live_bindings + 1 > MAX_LIVE_NS_BINDINGS {
+            return Err(format!(
+                "in-scope namespace bindings exceed {MAX_LIVE_NS_BINDINGS}"
+            ));
+        }
+        self.declared_bytes += prefix.len() + uri.len();
+        if self.declared_bytes > MAX_NS_DECLARED_BYTES {
+            return Err(format!(
+                "namespace declarations exceed {MAX_NS_DECLARED_BYTES} bytes"
+            ));
+        }
+        self.scope.push(prefix, uri);
+        Ok(())
+    }
+
+    /// Expand an attribute name the way the DOM parser's `resolve` does:
+    /// `xmlns:*` and `xml:*` map to their reserved URIs, other prefixes go
+    /// through the in-scope bindings (unbound → empty), and unprefixed
+    /// attributes never take the default namespace.
+    fn expand<'a>(&self, key: &'a str) -> (String, &'a str) {
+        if let Some(colon) = key.find(':') {
+            let (prefix, local) = (&key[..colon], &key[colon + 1..]);
+            let uri = match prefix {
+                "xmlns" => "http://www.w3.org/2000/xmlns/",
+                "xml" => "http://www.w3.org/XML/1998/namespace",
+                _ => self.scope.get(prefix).map_or("", String::as_str),
+            };
+            return (uri.to_string(), local);
+        }
+        (String::new(), key)
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -137,6 +399,9 @@ impl<'a> Parser<'a> {
 
     fn parse_document(&mut self) -> NodeId {
         let doc = self.dom.new_document();
+        // N02: one overlay stack serves every top-level element; marks are
+        // balanced, so it is empty again between roots.
+        let mut scope = NsScope::default();
         let len = self.len();
         while self.pos < len {
             self.skip_ws();
@@ -178,8 +443,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let scope: HashMap<String, String> = HashMap::new();
-                let el = self.parse_element(&scope);
+                let el = self.parse_element(&mut scope);
                 self.dom.add(doc, el);
                 continue;
             }
@@ -188,7 +452,7 @@ impl<'a> Parser<'a> {
         doc
     }
 
-    fn parse_element(&mut self, ns_scope: &HashMap<String, String>) -> NodeId {
+    fn parse_element(&mut self, scope: &mut NsScope) -> NodeId {
         // at '<'
         self.pos += 1; // consume '<'
         let raw_name = self.read_name();
@@ -222,34 +486,33 @@ impl<'a> Parser<'a> {
             raw_attrs.push((aname, unescape_xml_text(&avalue)));
         }
 
-        // Build local namespace scope.
-        // PARSE-02: only clone the parent HashMap when this element declares
-        // xmlns / xmlns:*; the common OOXML interior path reuses the parent
-        // scope by reference (no HashMap clone per element).
-        let mut local_scope_owned: Option<HashMap<String, String>> = None;
+        // N02: this element's xmlns / xmlns:* attributes push onto the
+        // overlay scope (marks restore them on every return path below) —
+        // no parent-map clone, and shadowing is last-declaration-wins, as
+        // the cloned HashMap gave before.
+        let mark = scope.mark();
         for (name, value) in &raw_attrs {
             if name == "xmlns" {
-                local_scope_owned
-                    .get_or_insert_with(|| ns_scope.clone())
-                    .insert(String::new(), value.clone());
+                scope.push("", value);
             } else if let Some(prefix) = name.strip_prefix("xmlns:") {
-                local_scope_owned
-                    .get_or_insert_with(|| ns_scope.clone())
-                    .insert(prefix.to_string(), value.clone());
+                scope.push(prefix, value);
             }
         }
-        let local_scope: &HashMap<String, String> = local_scope_owned.as_ref().unwrap_or(ns_scope);
 
-        let el_name = resolve(&raw_name, false, local_scope);
+        let el_name = resolve(&raw_name, false, scope);
         let el = self.dom.new_element(el_name);
-        for (name, value) in &raw_attrs {
-            let an = resolve(name, true, local_scope);
-            self.dom.set_attribute_value(el, &an, Some(value));
-        }
+        // N01: one bulk insert — a hash index of the expanded names — rather
+        // than N calls each re-scanning the growing attribute Vec.
+        let attrs: Vec<(XName, String)> = raw_attrs
+            .iter()
+            .map(|(name, value)| (resolve(name, true, scope), value.clone()))
+            .collect();
+        self.dom.set_attributes(el, attrs);
 
         self.skip_ws();
         if self.cur() == '/' {
             self.pos += 2; // '/' '>'
+            scope.pop(mark);
             return el;
         }
         self.pos += 1; // '>'
@@ -287,7 +550,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let child = self.parse_element(local_scope);
+                let child = self.parse_element(scope);
                 self.dom.add(el, child);
                 continue;
             }
@@ -301,6 +564,7 @@ impl<'a> Parser<'a> {
                 self.dom.add(el, t);
             }
         }
+        scope.pop(mark);
         el
     }
 
@@ -327,7 +591,7 @@ impl<'a> Parser<'a> {
 
 /// Resolve a qualified name against the in-scope namespaces. Mirrors the TS
 /// `resolve` closure exactly.
-fn resolve(qn: &str, is_attr: bool, local_scope: &HashMap<String, String>) -> XName {
+fn resolve(qn: &str, is_attr: bool, local_scope: &NsScope) -> XName {
     if let Some(colon) = qn.find(':') {
         let prefix = &qn[..colon];
         let local = &qn[colon + 1..];
@@ -482,6 +746,7 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
     const MAX_DEPTH: usize = 256;
     let mut reader = Reader::from_str(xml);
     reader.config_mut().check_end_names = true;
+    let mut policy = TagPolicy::new();
     let mut depth = 0usize;
     let mut roots = 0usize;
     loop {
@@ -490,7 +755,7 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
                 return Err("multiple XML roots".to_string());
             }
             Event::Start(e) => {
-                check_attributes(&e)?;
+                policy.open(&e)?;
                 if depth == 0 {
                     roots += 1;
                 }
@@ -500,13 +765,14 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
                 }
             }
             Event::Empty(e) => {
-                check_attributes(&e)?;
+                policy.empty(&e)?;
                 if depth == 0 {
                     roots += 1;
                 }
             }
             Event::End(_) => {
                 depth = depth.checked_sub(1).ok_or("unmatched XML end tag")?;
+                policy.close();
             }
             Event::DocType(_) => return Err("DTD declarations are unsupported".to_string()),
             Event::GeneralRef(reference) => {
@@ -529,16 +795,6 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
             _ => {}
         }
     }
-}
-
-fn check_attributes(start: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
-    for attribute in start.attributes() {
-        let attribute = attribute.map_err(|e| e.to_string())?;
-        attribute
-            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -660,5 +916,247 @@ mod xml_lexical_boundary_contract_tests {
         let root = dom.root(document).unwrap();
         assert_eq!(dom.value(root), "owned");
         assert!(validate_xml("<?xml-stylesheet type='text/css'?>\n<p>owned</p><?tail?>").is_ok());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tag_policy_tests {
+    //! N01/N02: the checked gate (`validate_xml`, `try_parse_xdocument`, and
+    //! `admission::check_xml_depth`) bounds tag width and namespace budgets
+    //! before the permissive DOM parser ever touches the bytes, and the
+    //! parser inserts attributes in bulk (linear) instead of N linear scans.
+
+    use super::*;
+    use crate::xmllinq::ATTR_NAME_PROBES;
+
+    fn xml_with_attrs(count: usize) -> String {
+        let attrs = (0..count)
+            .map(|i| format!(" a{i}='v{i}'"))
+            .collect::<String>();
+        format!("<a{attrs}/>")
+    }
+
+    #[test]
+    fn element_attribute_count_is_capped_at_the_boundary() {
+        assert_eq!(
+            validate_xml(&xml_with_attrs(MAX_ELEMENT_ATTRIBUTES)),
+            Ok(())
+        );
+        for xml in [
+            xml_with_attrs(MAX_ELEMENT_ATTRIBUTES + 1),
+            "<a b='v' xmlns:p='urn:x' xmlns:q='urn:x' p:c='1' q:c='2'/>".to_string(),
+            format!("<a {}='v'/>", "n".repeat(MAX_NAME_BYTES + 1)),
+            format!("<a b='{}'/>", "v".repeat(MAX_ATTRIBUTE_VALUE_BYTES + 1)),
+        ] {
+            assert!(validate_xml(&xml).is_err(), "{xml}");
+            let mut dom = Dom::new();
+            assert!(
+                try_parse_xdocument(&mut dom, &xml).is_err(),
+                "try_parse must refuse {xml}"
+            );
+        }
+    }
+
+    #[test]
+    fn tag_whole_width_is_bounded() {
+        // 256 names × ~4 KiB values exceeds the per-tag attribute-byte
+        // budget while every individual cap still passes.
+        let attrs = (0..MAX_ELEMENT_ATTRIBUTES)
+            .map(|i| format!(" a{i}='{}'", "v".repeat(4096)))
+            .collect::<String>();
+        assert!(validate_xml(&format!("<a{attrs}/>")).is_err());
+    }
+
+    #[test]
+    fn namespace_declaration_budgets_reject_before_dom_insertion() {
+        let uri = "u".repeat(MAX_NAMESPACE_URI_BYTES + 1);
+        assert!(validate_xml(&format!("<a xmlns:p='{uri}'/>")).is_err());
+        let prefix = "p".repeat(MAX_NAMESPACE_PREFIX_BYTES + 1);
+        assert!(validate_xml(&format!("<a xmlns:{prefix}='u'/>")).is_err());
+        // Two nested scopes of 128 live bindings each stay under the live
+        // binding cap; a single element declaring more than the live cap
+        // refuses.
+        let many = (0..MAX_LIVE_NS_BINDINGS + 1)
+            .map(|i| format!(" xmlns:p{i}='urn:{i}'"))
+            .collect::<String>();
+        assert!(validate_xml(&format!("<a{many}/>")).is_err());
+        // Rebinding the same prefix keeps one live binding per level: nesting
+        // MAX_LIVE_NS_BINDINGS-deep with a fresh xmlns:p per level is legal.
+        let mut deep = String::new();
+        for i in 0..MAX_LIVE_NS_BINDINGS {
+            deep.push_str(&format!("<e xmlns:p='urn:{i}'>"));
+        }
+        for _ in 0..MAX_LIVE_NS_BINDINGS {
+            deep.push_str("</e>");
+        }
+        assert_eq!(validate_xml(&deep), Ok(()));
+        // Cumulative declared bytes across the part refuse even when every
+        // single declaration is inside the per-element budgets (Empty
+        // elements release their live bindings, so only the aggregate byte
+        // budget can trip).
+        let heavy: String = {
+            let mut s = String::from("<a>");
+            for i in 0..(MAX_NS_DECLARED_BYTES / 2048 + 8) {
+                s.push_str(&format!("<e xmlns:p{i}='{}'/>", "u".repeat(4000)));
+            }
+            s.push_str("</a>");
+            s
+        };
+        assert!(validate_xml(&heavy).is_err());
+    }
+
+    #[test]
+    fn the_dom_parser_keeps_every_attribute_and_its_order() {
+        let mut dom = Dom::new();
+        let document = parse_xdocument(
+            &mut dom,
+            "<r a='1' b='2' xmlns:x='urn:x' x:c='3' c='4' z='last'/>",
+        );
+        let root = dom.root(document).unwrap();
+        let names: Vec<String> = (0..dom.attr_count(root))
+            .map(|i| dom.attr_at(root, i).0.local_name().to_string())
+            .collect();
+        assert_eq!(names, ["a", "b", "x", "c", "c", "z"]);
+    }
+
+    #[test]
+    fn parsed_attributes_insert_in_bulk_not_quadratic_scans() {
+        // N01 mechanism evidence: inserting N attributes through
+        // `set_attribute_value` walks the growing Vec — sum 1..N name
+        // comparisons. The bulk path (`set_attributes`, used by the parser)
+        // probes a hash index once per attribute.
+        const N: usize = 96;
+        let xml = xml_with_attrs(N);
+
+        let before = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst);
+        let mut dom = Dom::new();
+        let document = parse_xdocument(&mut dom, &xml);
+        let parsed = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst) - before;
+        let root = dom.root(document).unwrap();
+        assert_eq!(dom.attr_count(root), N);
+        assert!(
+            parsed <= N,
+            "bulk insert probed {parsed} times for {N} attributes"
+        );
+
+        // Control: the incremental editing API still costs sum(0..N) probes.
+        let before = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst);
+        let manual = dom.new_element(crate::xmllinq::XName::get("m", ""));
+        for i in 0..N {
+            dom.set_attribute_value(
+                manual,
+                &crate::xmllinq::XName::get(&format!("a{i}"), ""),
+                Some("v"),
+            );
+        }
+        let incremental = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst) - before;
+        assert_eq!(incremental, N * (N - 1) / 2);
+    }
+
+    #[test]
+    fn duplicate_expanded_names_keep_declaration_order_and_last_value_wins() {
+        let mut dom = Dom::new();
+        let document = parse_xdocument(
+            &mut dom,
+            "<r xmlns:p='urn:x' xmlns:q='urn:x' p:a='first' q:a='second'/>",
+        );
+        let root = dom.root(document).unwrap();
+        // q:a expands to the same {urn:x}a, so it folds into p:a's slot —
+        // same outcome as sequential set_attribute_value calls.
+        assert_eq!(dom.attr_count(root), 3);
+        let name = crate::xmllinq::XName::get("a", "urn:x");
+        assert_eq!(dom.attribute(root, &name), Some("second"));
+        // Declaration order is kept for the surviving attributes.
+        let locals: Vec<String> = (0..dom.attr_count(root))
+            .map(|i| dom.attr_at(root, i).0.local_name().to_string())
+            .collect();
+        assert_eq!(locals, ["p", "q", "a"]);
+        // The checked path refuses the same document.
+        assert!(
+            validate_xml("<r xmlns:p='urn:x' xmlns:q='urn:x' p:a='first' q:a='second'/>").is_err()
+        );
+    }
+
+    #[test]
+    fn nested_rebinding_shadows_and_restores() {
+        let mut dom = Dom::new();
+        let document = parse_xdocument(
+            &mut dom,
+            "<a xmlns:p='urn:outer'><b xmlns:p='urn:inner'><p:x/><c/></b><p:y xmlns=''/></a>",
+        );
+        let a = dom.root(document).unwrap();
+        let b = dom
+            .element(a, &crate::xmllinq::XName::get("b", ""))
+            .unwrap();
+        let x = dom
+            .element(b, &crate::xmllinq::XName::get("x", "urn:inner"))
+            .unwrap();
+        assert_eq!(dom.name(x).unwrap().namespace_name(), "urn:inner");
+        // After </b>, p rebinds to urn:outer for siblings of b.
+        let y = dom
+            .element(a, &crate::xmllinq::XName::get("y", "urn:outer"))
+            .unwrap();
+        assert_eq!(dom.name(y).unwrap().namespace_name(), "urn:outer");
+        // The empty default xmlns disables the default namespace inside y.
+        let _ = x;
+    }
+
+    #[test]
+    fn deep_rebinding_scope_grows_only_with_declared_bytes() {
+        // N02 mechanism evidence: the scope tracks only what this element
+        // declares — walking down never re-copies ancestor bindings.
+        const DEPTH: usize = 64;
+        let mut xml = String::new();
+        for i in 0..DEPTH {
+            xml.push_str(&format!("<e xmlns:p='urn:{i}' xmlns:q='urn:q{i}'>"));
+        }
+        for _ in 0..DEPTH {
+            xml.push_str("</e>");
+        }
+        let before = NS_SCOPE_DECLARED_BYTES.load(std::sync::atomic::Ordering::SeqCst);
+        let mut dom = Dom::new();
+        let document = parse_xdocument(&mut dom, &xml);
+        let inserted = NS_SCOPE_DECLARED_BYTES.load(std::sync::atomic::Ordering::SeqCst) - before;
+        // p -> urn:{i} is 1 + 4 + digits bytes; q -> urn:q{i} is
+        // 1 + 5 + digits.
+        let declared: usize = (0..DEPTH).map(|i| 11 + 2 * i.to_string().len()).sum();
+        assert_eq!(
+            inserted, declared,
+            "scope must record declared bytes only, never cloned ancestor maps"
+        );
+        let deepest = {
+            let mut cur = dom.root(document).unwrap();
+            for _ in 0..DEPTH - 1 {
+                cur = dom
+                    .element(cur, &crate::xmllinq::XName::get("e", ""))
+                    .unwrap();
+            }
+            cur
+        };
+        assert_eq!(dom.name(deepest).unwrap().local_name(), "e");
+    }
+
+    #[test]
+    fn normal_documents_parse_unchanged_through_try_parse() {
+        let mut dom = Dom::new();
+        let document = try_parse_xdocument(
+            &mut dom,
+            "<w:p xmlns:w='urn:wml' xml:space='preserve'><w:r w:val='1'/></w:p>",
+        )
+        .expect("normal document parses");
+        let root = dom.root(document).unwrap();
+        assert_eq!(dom.name(root).unwrap().namespace_name(), "urn:wml");
+        assert_eq!(
+            dom.attribute(root, &crate::xmllinq::XNamespace::xml().name("space")),
+            Some("preserve")
+        );
+        let r = dom
+            .element(root, &crate::xmllinq::XName::get("r", "urn:wml"))
+            .unwrap();
+        assert_eq!(
+            dom.attribute(r, &crate::xmllinq::XName::get("val", "urn:wml")),
+            Some("1")
+        );
     }
 }

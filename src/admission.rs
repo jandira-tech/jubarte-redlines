@@ -550,26 +550,35 @@ fn part_text(xml: &[u8]) -> Cow<'_, str> {
     }
 }
 
-/// Well-formed enough to scan, and no deeper than `max_depth` elements.
+/// Well-formed enough to scan, no deeper than `max_depth` elements, and
+/// inside the tag/namespace policy (`xmllinq::parse::TagPolicy`) so no part
+/// reaching the permissive DOM parser can carry pathological attribute or
+/// namespace-declaration widths.
 fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), AdmissionError> {
     let invalid =
         |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().check_end_names = true;
+    let mut policy = crate::xmllinq::parse::TagPolicy::new();
     let mut depth = 0usize;
     loop {
         match reader.read_event() {
-            Ok(Event::Start(_)) => {
+            Ok(Event::Start(tag)) => {
+                policy.open(&tag).map_err(invalid)?;
                 depth = depth.saturating_add(1);
                 if depth > max_depth {
                     return Err(invalid(format!("XML nests deeper than {max_depth}")));
                 }
             }
+            Ok(Event::Empty(tag)) => {
+                policy.empty(&tag).map_err(invalid)?;
+            }
             Ok(Event::End(_)) => {
                 depth = depth
                     .checked_sub(1)
                     .ok_or_else(|| invalid("end tag with no open element".to_string()))?;
+                policy.close();
             }
             Ok(Event::Eof) if depth > 0 => {
                 return Err(invalid(format!("{depth} element(s) left unclosed")));
@@ -1066,6 +1075,45 @@ mod tests {
         }
         let fine = docx_with(&[("word/fine.xml", b"<a><b/><c></c></a>")]);
         assert!(admit(&fine, InputLimits::default()).is_ok());
+    }
+
+    /// N01/N02: parts reaching the DOM parser carry bounded tag width and
+    /// namespace budgets — the admission scan refuses them before any node
+    /// or attribute is constructed, whatever the part is named.
+    #[test]
+    fn pathological_tags_and_namespaces_are_refused_at_admission() {
+        let wide_attrs = format!(
+            "<a{}/>",
+            (0..300).map(|i| format!(" a{i}='v'")).collect::<String>()
+        );
+        let alias = "<a xmlns:p='urn:x' xmlns:q='urn:x' p:b='1' q:b='2'/>";
+        let big_uri = format!("<a xmlns:p='{}'/>", "u".repeat(9000));
+        let many_live = format!(
+            "<a{}/>",
+            (0..300)
+                .map(|i| format!(" xmlns:p{i}='urn:{i}'"))
+                .collect::<String>()
+        );
+        for (name, xml) in [
+            ("word/wide.xml", wide_attrs.as_str()),
+            ("word/alias.xml", alias),
+            ("word/uri.xml", big_uri.as_str()),
+            ("word/rels/live.rels", many_live.as_str()),
+        ] {
+            let bytes = docx_with(&[(name, xml.as_bytes())]);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::InvalidXml,
+                "{xml}"
+            );
+        }
+        // The exact boundaries still admit.
+        let at_cap = format!(
+            "<a{}/>",
+            (0..256).map(|i| format!(" a{i}='v'")).collect::<String>()
+        );
+        let bytes = docx_with(&[("word/capped.xml", at_cap.as_bytes())]);
+        assert!(admit(&bytes, InputLimits::default()).is_ok());
     }
 
     #[test]
