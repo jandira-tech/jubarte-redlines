@@ -333,8 +333,13 @@ impl Origin {
                 (g < paragraph_nodes.len()).then_some(g)
             })
             .collect();
+        let content_free: Vec<bool> = settled_nodes
+            .iter()
+            .map(|&p| paragraph_holds_no_content(&settled.dom, p))
+            .collect();
         let exact = exact_correspondence(
             &tags,
+            &content_free,
             settled_story,
             &paragraph_story,
             paragraph_nodes.len(),
@@ -482,15 +487,53 @@ impl Origin {
     }
 }
 
-/// Follow unique source tags. Settlement keeps, removes or merges source
-/// paragraphs, and a merged paragraph carries no tag: an untagged settled
-/// paragraph holds the text of sources whose tags vanished beside it. When
-/// no source between its tagged neighbours (in source order, within one
-/// story) vanished, the untagged paragraph came from no source paragraph, so
-/// one of those neighbours was split, and neither is exact. A split beside a
-/// merge stays undetected: tags alone cannot tell the two apart.
+/// Whether a settled paragraph holds only properties and content-free markers.
+/// Properties hold formatting; WordprocessingML bookmark, comment, proofing,
+/// permission, move and custom-XML range markers hold positions, not content.
+/// Markers must be leaves. Runs, fields, drawings, wrappers, unknown elements
+/// and non-element nodes are conservatively content, even with no visible text.
+fn paragraph_holds_no_content(dom: &Dom, paragraph: NodeId) -> bool {
+    dom.nodes(paragraph).into_iter().all(|child| {
+        dom.name(child).is_some_and(|name| {
+            name.namespace_name() == W::URI
+                && (name.local_name() == "pPr"
+                    || (dom.nodes(child).is_empty()
+                        && matches!(
+                            name.local_name(),
+                            "bookmarkStart"
+                                | "bookmarkEnd"
+                                | "commentRangeStart"
+                                | "commentRangeEnd"
+                                | "proofErr"
+                                | "permStart"
+                                | "permEnd"
+                                | "moveFromRangeStart"
+                                | "moveFromRangeEnd"
+                                | "moveToRangeStart"
+                                | "moveToRangeEnd"
+                                | "customXmlDelRangeStart"
+                                | "customXmlDelRangeEnd"
+                                | "customXmlInsRangeStart"
+                                | "customXmlInsRangeEnd"
+                                | "customXmlMoveFromRangeStart"
+                                | "customXmlMoveFromRangeEnd"
+                                | "customXmlMoveToRangeStart"
+                                | "customXmlMoveToRangeEnd"
+                        )))
+        })
+    })
+}
+
+/// Follow unique source tags. Content-free untagged settled paragraphs cannot
+/// hold split-off content and never make their tagged neighbours inexact.
+/// For each story's untagged run holding content, refuse its tagged neighbours
+/// unless a source tag between them (or at that story's edge) vanished.
+/// This assumes settled order follows source order; see #1105. A split beside
+/// a merge or a deleted source stays undetected: tag absence cannot prove who
+/// owns an untagged paragraph's content.
 fn exact_correspondence(
     tags: &[Option<usize>],
+    content_free: &[bool],
     settled_story: &[(usize, usize)],
     paragraph_story: &[(usize, usize)],
     sources: usize,
@@ -523,10 +566,10 @@ fn exact_correspondence(
             continue;
         }
         let start = post;
-        while post < tags.len() && tags[post].is_none() {
+        let same_story = |other: usize| settled_story[other].0 == settled_story[start].0;
+        while post < tags.len() && tags[post].is_none() && same_story(post) {
             post += 1;
         }
-        let same_story = |other: usize| settled_story[other].0 == settled_story[start].0;
         let before = start
             .checked_sub(1)
             .filter(|&p| same_story(p))
@@ -534,7 +577,7 @@ fn exact_correspondence(
         let after = (post < tags.len() && same_story(post))
             .then_some(post)
             .and_then(|p| tags[p]);
-        if !explained(before, after) {
+        if content_free[start..post].iter().any(|&empty| !empty) && !explained(before, after) {
             for g in [before, after].into_iter().flatten() {
                 exact[g] = None;
             }
@@ -659,6 +702,7 @@ mod tests {
             fates: vec![Fate::Kept(0), Fate::Kept(2), Fate::Kept(3)],
             exact: exact_correspondence(
                 &[Some(0), None, Some(1), Some(2)],
+                &[false; 4],
                 &[(0, 0), (0, 1), (0, 2), (0, 3)],
                 &[(0, 0), (0, 1), (0, 2)],
                 3,
@@ -679,6 +723,7 @@ mod tests {
         assert_eq!(
             exact_correspondence(
                 &[Some(0), Some(1), Some(2)],
+                &[false; 3],
                 &[(0, 0), (0, 1), (1, 0)],
                 &[(0, 0), (0, 1), (1, 0)],
                 3
@@ -690,12 +735,13 @@ mod tests {
     #[test]
     fn exact_correspondence_refuses_merges_and_duplicate_tags() {
         assert_eq!(
-            exact_correspondence(&[None], &[(0, 0)], &[(0, 0), (0, 1)], 2),
+            exact_correspondence(&[None], &[false; 1], &[(0, 0)], &[(0, 0), (0, 1)], 2),
             [None, None]
         );
         assert_eq!(
             exact_correspondence(
                 &[Some(0), Some(0), Some(0)],
+                &[false; 3],
                 &[(0, 0), (0, 1), (0, 2)],
                 &[(0, 0)],
                 1
@@ -712,6 +758,7 @@ mod tests {
         assert_eq!(
             exact_correspondence(
                 &[Some(0), None, Some(3)],
+                &[false; 3],
                 &[(0, 0), (0, 1), (0, 2)],
                 &[(0, 0), (0, 1), (0, 2), (0, 3)],
                 4
@@ -721,7 +768,13 @@ mod tests {
         // An emptied cell's repair paragraph sits where the cell's only
         // source vanished; at a story edge the same holds.
         assert_eq!(
-            exact_correspondence(&[None, Some(1)], &[(0, 0), (0, 1)], &[(0, 0), (0, 1)], 2),
+            exact_correspondence(
+                &[None, Some(1)],
+                &[false; 2],
+                &[(0, 0), (0, 1)],
+                &[(0, 0), (0, 1)],
+                2
+            ),
             [None, Some(1)]
         );
     }
@@ -731,6 +784,7 @@ mod tests {
         assert_eq!(
             exact_correspondence(
                 &[Some(0), None, Some(1), Some(2), Some(3)],
+                &[false; 5],
                 &[(0, 0), (0, 1), (0, 2), (0, 3), (1, 0)],
                 &[(0, 0), (0, 1), (0, 2), (1, 0)],
                 4
@@ -761,8 +815,134 @@ mod tests {
                 vec![None, None, Some(4)],
             ),
         ] {
-            assert_eq!(exact_correspondence(&tags, &stories, &sources, 3), expected);
+            assert_eq!(
+                exact_correspondence(&tags, &vec![false; tags.len()], &stories, &sources, 3),
+                expected
+            );
         }
+    }
+
+    #[test]
+    fn exact_correspondence_keeps_neighbours_of_content_free_repairs() {
+        for (empty, expected) in [
+            (true, [Some(0), Some(2), Some(3)]),
+            (false, [None, None, Some(3)]),
+        ] {
+            assert_eq!(
+                exact_correspondence(
+                    &[Some(0), None, Some(1), Some(2)],
+                    &[false, empty, false, false],
+                    &[(0, 0), (0, 1), (0, 2), (0, 3)],
+                    &[(0, 0), (0, 1), (0, 2)],
+                    3,
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn settled_paragraph_content_free_markers_hold_no_content() {
+        let mut dom = Dom::new();
+        let p = dom.new_element(W::p());
+        assert!(paragraph_holds_no_content(&dom, p));
+        for local in [
+            "pPr",
+            "bookmarkStart",
+            "bookmarkEnd",
+            "commentRangeStart",
+            "commentRangeEnd",
+            "proofErr",
+            "permStart",
+            "permEnd",
+            "moveFromRangeStart",
+            "moveFromRangeEnd",
+            "moveToRangeStart",
+            "moveToRangeEnd",
+            "customXmlDelRangeStart",
+            "customXmlDelRangeEnd",
+            "customXmlInsRangeStart",
+            "customXmlInsRangeEnd",
+            "customXmlMoveFromRangeStart",
+            "customXmlMoveFromRangeEnd",
+            "customXmlMoveToRangeStart",
+            "customXmlMoveToRangeEnd",
+        ] {
+            let child = dom.new_element(W::name(local));
+            dom.add(p, child);
+            assert!(paragraph_holds_no_content(&dom, p), "{local}");
+        }
+    }
+
+    #[test]
+    fn settled_paragraph_unprojected_content_is_not_content_free() {
+        let mut dom = Dom::new();
+        for name in [
+            W::r(),
+            W::name("fldSimple"),
+            W::drawing(),
+            W::sdt(),
+            W::name("futureContent"),
+            W14::name("bookmarkStart"),
+        ] {
+            let p = dom.new_element(W::p());
+            let child = dom.new_element(name.clone());
+            dom.add(p, child);
+            assert!(!paragraph_holds_no_content(&dom, p), "{name:?}");
+        }
+        let p = dom.new_element(W::p());
+        let marker = dom.new_element(W::bookmark_start());
+        let run = dom.new_element(W::r());
+        dom.add(marker, run);
+        dom.add(p, marker);
+        assert!(!paragraph_holds_no_content(&dom, p));
+        for child in [dom.new_text(" "), dom.new_comment("comment")] {
+            let p = dom.new_element(W::p());
+            dom.add(p, child);
+            assert!(!paragraph_holds_no_content(&dom, p));
+        }
+    }
+
+    #[test]
+    fn exact_correspondence_checks_split_runs_in_each_story() {
+        assert_eq!(
+            exact_correspondence(
+                &[Some(0), None, None, Some(1)],
+                &[false; 4],
+                &[(0, 0), (0, 1), (1, 0), (1, 1)],
+                &[(0, 0), (1, 0)],
+                2,
+            ),
+            [None, None]
+        );
+    }
+
+    #[test]
+    fn exact_correspondence_checks_split_runs_across_an_untagged_story() {
+        assert_eq!(
+            exact_correspondence(
+                &[Some(0), None, None, None, Some(2)],
+                &[false; 5],
+                &[(0, 0), (0, 1), (1, 0), (2, 0), (2, 1)],
+                &[(0, 0), (1, 0), (2, 0)],
+                3,
+            ),
+            [None, None, None]
+        );
+    }
+
+    #[test]
+    fn exact_correspondence_keeps_the_neighbour_of_a_trailing_merge() {
+        assert_eq!(
+            exact_correspondence(
+                &[Some(0), None],
+                &[false; 2],
+                &[(0, 0), (0, 1)],
+                &[(0, 0), (0, 1), (0, 2)],
+                3,
+            ),
+            [Some(0), None, None]
+        );
     }
 
     #[test]

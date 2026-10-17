@@ -151,6 +151,30 @@ fn rewrite_requires_one_to_one_working_paragraph() {
     }
 }
 #[test]
+fn rewrite_survives_empty_cell_repair_without_a_vanished_source() {
+    let s = docx(&format!(
+        r#"{}<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid>
+        <w:tr><w:tc><w:tcPr/>
+        <w:customXmlDelRangeStart w:id="9" {STAMP}/>
+        <w:sdt><w:sdtPr><w:id w:val="10"/></w:sdtPr><w:sdtContent/></w:sdt>
+        <w:customXmlDelRangeEnd w:id="9"/>
+        </w:tc></w:tr></w:tbl>{}<w:p>{}</w:p>"#,
+        para("Before"),
+        para("After"),
+        insertion(7, "Trigger")
+    ));
+    assert_eq!(texts(&s), ["Before", "After", "Trigger"]);
+    let mut q = plan(&s, json!([rewrite(0, "Before", "Correct")]));
+    q["policy"]["existing_revisions"] = json!("accept");
+    let result = run(&s, &q);
+    assert!(result.is_ok(), "rewrite failed: {result:?}");
+    let out = result.unwrap();
+    assert_eq!(texts(&out.clean), ["Correct", "", "After", "Trigger"]);
+    assert_word_valid_package(&out.redline);
+    assert_word_valid_package(&out.clean);
+}
+
+#[test]
 fn revision_decisions_do_not_expand_body_scope() {
     let s = source();
     let mut q = plan(&s, json!([replace(0, "45", "60")]));
