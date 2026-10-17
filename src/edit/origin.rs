@@ -218,7 +218,7 @@ impl Ids<'_> {
 
 /// Where a source paragraph went when the plan's revisions were settled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Fate {
+pub(super) enum Fate {
     /// Unchanged: this settled paragraph.
     Kept(usize),
     /// Merged with its neighbours into this settled paragraph.
@@ -457,6 +457,12 @@ impl Origin {
                 0,
             )),
         }
+    }
+
+    /// The [`Fate`] of source paragraph `source`: kept one to one, merged
+    /// into a settled paragraph, or gone with its text.
+    pub(super) fn fate(&self, source: usize) -> Fate {
+        self.fates[source]
     }
 
     /// Every source id that names another paragraph, or none, once the

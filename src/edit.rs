@@ -58,6 +58,9 @@ mod whole;
 pub mod v2;
 pub mod v2_apply;
 
+/// `read --for-edit`: the working document, hashes and readiness (V2-10).
+pub mod for_edit;
+
 /// Exact v2 literal-anchor candidates and selection; v1 retains its fallbacks.
 pub use anchor::{v2_candidates, v2_select, v2_select_all};
 /// v2 anchor selection with structured, bounded, actionable refusals.
