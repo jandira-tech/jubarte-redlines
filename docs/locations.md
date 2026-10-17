@@ -24,7 +24,7 @@ Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with n
 
 | Owner | Field | Flag | Value | value_parser | Read by (CLI layer) | Doc |
 |-|-|-|-|-|-|-|
-| ReadArgs | `paragraphs` | `-p, --paragraphs` | SPEC | (none) | `bin::jubarte::selection` | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated. |
+| ReadArgs | `paragraphs` | `-p, --paragraphs` | SPEC | (none) | `bin::jubarte::selection` | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`). |
 | Command::Edit | `location` | `-p, --location` | WHERE | (none) | `cli::flag_operations` | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept or --reject). Each -p starts an operation; the flags after it belong to it. |
 | Command::Add | `location` | `-p, --location` | WHERE | (none) | `cli::flag_operations` | Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply. Each -p starts an operation; the flags after it belong to it. |
 | Selection | `ids` | `--id` | ID | (none) | `bin::jubarte::Selection::filter`, `bin::jubarte::refused`, `cli::validate_matches` | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. |
@@ -88,8 +88,8 @@ Fixtures: `tests/fixtures/agent-view/received.docx`, `tests/fixtures/from-docx/c
 
 | Shape | Examples | Names | Printed by |
 |-|-|-|-|
+| `Box` | `Box` |  | view id line |
 | `cN` | `c0`, `c5`, `c6` | comment | comments (id); comments (reply to); read --json comments[].ref; view note; view note (reply to) |
-| `drawings` | `drawings` |  | view id line |
 | `endnotes` | `endnotes` | endnotes paragraph; endnotes story | read --json stories[].id; read --json stories[].paragraphs[].id |
 | `endnotes.pN` | `endnotes.p1`, `endnotes.p2` | endnotes paragraph | changes (paragraph); read --json changes[].paragraph; read --json stories[].paragraphs[].id |
 | `endnotes.pN-pN` | `endnotes.p0-p2` |  | view id line |
@@ -114,8 +114,8 @@ One id of each printed shape, given back to the tasks that take an id (`--paragr
 
 | Id | Fixture | read -p (picked) | edit -p (picked) | add -p (picked) | accept --id (picked) |
 |-|-|-|-|-|-|
+| `Box` | hard-tables.docx | 2 error: Box: expected pN, pN-pM or tN | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): Box: expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or toc0 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): Box: expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or toc0 | 2 error: Box: expected a change id such as r12, r1+2 or header1.r1 |
 | `c0` | hard-notes.docx | 2 error: c0: expected pN, pN-pM or tN | 0 → p5 footnotes.p3 | 0 → p5 footnotes.p3 | 2 error: c0: expected a change id such as r12, r1+2 or header1.r1 |
-| `drawings` | hard-tables.docx | 2 error: drawings: expected pN, pN-pM or tN | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): drawings: expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or toc0 | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): drawings: expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or toc0 | 2 error: drawings: expected a change id such as r12, r1+2 or header1.r1 |
 | `endnotes` | received.docx | 2 error: endnotes: expected pN, pN-pM or tN | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): paragraph index 0 does not exist in endnotes (0 paragraphs) | 3 error: plan refused: ANCHOR_NOT_FOUND (op-1): paragraph index 0 does not exist in endnotes (0 paragraphs) | 2 error: endnotes: expected a change id such as r12, r1+2 or header1.r1 |
 | `endnotes.p1` | hard-notes.docx | 2 error: endnotes.p1: expected pN, pN-pM or tN | 0 → endnotes.p0-p2; +endnotes.r6 +endnotes.r7 | 0 → endnotes.p0-p3; +endnotes.r7 +endnotes.r6 | 2 error: endnotes.p1: expected a change id such as r12, r1+2 or header1.r1 |
 | `endnotes.p0-p2` | hard-notes.docx | 2 error: endnotes.p0-p2: expected pN, pN-pM or tN | 2 error: -p endnotes.p0-p2: a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet | 2 error: -p endnotes.p0-p2: a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of contents yet | 2 error: endnotes.p0-p2: expected a change id such as r12, r1+2 or header1.r1 |

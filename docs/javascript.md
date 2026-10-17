@@ -67,10 +67,11 @@ fonts; redline output is identical. The size saving is now small: in
 Generated from `jubarte-wasm/npm/node/jubarte_wasm.d.ts` — the exact
 signatures and doc comments the package ships.
 
-The identity fields the models carry are the schema-1 wire shape: a `ref`
-beside an `id` (`ref` is the short id), numeric comment ids and
-`Snapshot.schema_version == 1`. The 17 October 2026 short-and-long-ID
-contract
+The identity fields the models carry are the schema-1 wire shape: `id` and
+`ref` both hold the short id (`r12`, `header1.r1`, `c5` — the colon
+fallback `body:rev:007` only when no short spelling reads back; `9872a374`,
+`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 1`.
+The 17 October 2026 short-and-long-ID contract
 ([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
 staged in
 [superpowers/plans/2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md))
@@ -78,7 +79,17 @@ replaces them with paired `short_id`/`long_id` references at the schema-2
 cutover and retires the transitional spellings — `noid`, colon ids
 (`body:rev:12`), nested `.pN` inside cells and text boxes
 (`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
-the fields and spellings below are the current truth.
+the fields the wire carries today are the ones named above.
+
+> **Stale-artifact note (2026-10-19).** The generated sections below —
+> this API reference and the CLI `--help` block at the end — quote the
+> committed 0.12.x artifacts, which were built before the short-id
+> migration: the `.d.ts`'s `body:rev:1`, `body:p:N` and `[body:p:N]`
+> examples and the `-p` help's `p17-`/`-p3` describe spellings the current
+> engine refuses on input, accepts only transitionally, or no longer
+> advertises (`src/cli.rs`). The source comments the next package build
+> will carry already say `pN`, `[pN]` and "settled spelling"
+> (`jubarte-wasm/src/lib.rs:181-186`, `:304-306`, `:965-966`).
 
 <!-- gen:wasm-api:start -->
 Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the slim entry points drop `docxToPdf` and `pdfPageCount`).

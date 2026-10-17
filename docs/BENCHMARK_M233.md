@@ -8,6 +8,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 Generated 2026-07-16 06:01 UTC. Binary content-hash pin: **jubarte-rust@9fcc4289e375**.
 
+> **Re-checked 2026-10-19 (`aba48bd5`, 0.12.0):** still a historical stamp;
+> every path the reproduce recipe names (`jubarte-rust-inproc/`,
+> `tools/perf/run_abba_matrix.sh`) is still in-tree. It names no document
+> ids — nothing the 17 October 2026 identity contract touches.
+>
 > **Re-checked 2026-09-26 (0.9.2):** the numbers below still describe the M233
 > pin only — this is a historical stamp, not the headline table. The public
 > `script_redlines` lane has since moved to the 763-doc corpus `5ed816028d99`:

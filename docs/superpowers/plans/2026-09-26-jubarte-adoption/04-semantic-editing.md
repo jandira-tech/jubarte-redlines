@@ -19,12 +19,11 @@
 > then pairs every JSON reference as `short_id`/`long_id`, makes `psN`
 > the scoped-paragraph spelling (`t0.row1.cell2.ps1`), renames `id`/`ref`/
 > `at`/`comment_id`/`operation_id` out of document-identity use, retires
-> `{"index"}`, and refuses the colon forms outright. The `body:p:N` spellings in the plan examples below are
-> the transitional colon ids — plan `paragraph` fields take the short `pN`
-> today, and the 17 October contract v3
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`)
-> replaces the colon form with the four-field long id at the schema-2
-> cutover.
+> `{"index"}` in favor of typed addresses; the long form the contract
+> pairs with every `short_id` is the four-field
+> `PART.ELEMENT.ATTRIBUTE.VALUE` spelling, not the colon ids. The plan
+> example below is updated to today's `p18`; the colon spelling it
+> replaces is noted there.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

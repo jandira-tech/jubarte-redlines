@@ -8,7 +8,7 @@
 //! comment's head (`c5 @AC: `, `c6 @AS re c5: `, `c7 @AC resolved: `).
 //! `jubarte read` writes them (`from_docx::agent`, `from_docx::header`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::xml::Label;
 
@@ -611,17 +611,21 @@ pub(super) struct TableLine {
     pub fmt: Option<Tag>,
     /// Word's `w:tblGridChange`, which names no author (`r17 @??`).
     pub grid_fmt: Option<u32>,
-    pub row_fmt: HashMap<usize, Tag>,
-    pub cell_fmt: HashMap<(usize, usize), Tag>,
+    /// These maps are `BTreeMap`s, not `HashMap`s: the writer walks them to
+    /// stamp dates, and an author's first undated mark takes the range's last
+    /// day — a `HashMap`'s random order would pick the winner per process
+    /// (#534).
+    pub row_fmt: BTreeMap<usize, Tag>,
+    pub cell_fmt: BTreeMap<(usize, usize), Tag>,
     /// The cell paragraphs' formatting changes (`fmt r9 @AL in p4`), by
     /// paragraph number.
     pub para_fmt: HashMap<usize, Vec<Tag>>,
     /// A row's own insertion or deletion, when it has no text to show it
     /// (`rev r6 @AC in t0.row1`, `rev-del …`): whether it is inserted.
-    pub row_marks: HashMap<usize, (bool, Tag)>,
+    pub row_marks: BTreeMap<usize, (bool, Tag)>,
     /// A cell's own insertion, deletion or merge (`rev r5 @AC in
     /// t0.row1.cell2`, `rev-del …`, `rev-merge …`).
-    pub cell_marks: HashMap<(usize, usize), (CellMark, Tag)>,
+    pub cell_marks: BTreeMap<(usize, usize), (CellMark, Tag)>,
     /// The grid columns each row leaves out before and after its cells
     /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
     pub gaps: HashMap<usize, (usize, usize)>,
@@ -769,11 +773,11 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         in_comment: false,
         fmt: None,
         grid_fmt: None,
-        row_fmt: HashMap::new(),
-        cell_fmt: HashMap::new(),
+        row_fmt: BTreeMap::new(),
+        cell_fmt: BTreeMap::new(),
         para_fmt: HashMap::new(),
-        row_marks: HashMap::new(),
-        cell_marks: HashMap::new(),
+        row_marks: BTreeMap::new(),
+        cell_marks: BTreeMap::new(),
         gaps: HashMap::new(),
     };
     for (i, clause) in split_clauses(rest).into_iter().enumerate() {

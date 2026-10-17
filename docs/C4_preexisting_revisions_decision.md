@@ -6,10 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # C4 decision memo — pre-existing tracked changes (`suggesting_*`) — reviewed 2026-09-26
 
-**Status:** **DEFERRED — waiting on Arthur** (re-checked 2026-10-01: still no
-option pick, still deferred; `accept(redline) ≡ B` remains the shipped
-contract through 0.10.1, so the C4 fixtures are still the open residual in
-`docs/bench_classes.md`)
+**Status:** **DEFERRED — waiting on Arthur** (re-checked 2026-10-01 and
+2026-10-19 at `aba48bd5`/0.12.0: still no option pick, still deferred;
+`accept(redline) ≡ B` remains the shipped contract, so the C4 fixtures are
+still the open residual in `docs/bench_classes.md`)
 **Date:** 2026-07-16
 **Class:** C4-preexisting-revisions (`suggesting_*` fixtures)
 **Plan task:** B4

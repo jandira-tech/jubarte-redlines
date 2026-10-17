@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-> **Status: LIVING — maintained as of 2026-10-01 (bd262981).** Facts below were verified against this commit; the next editor re-verifies before trusting. The study is pinned against `b493cb58` (2026-10-01); the section 4 questions are undecided — pending decisions, not commitments — and no `src/markdown/projection/` module exists yet (re-verified at bd262981).
+> **Status: LIVING — maintained as of 2026-10-01 (bd262981); re-checked 2026-10-19 (`aba48bd5`).** Facts below were verified against this commit; the next editor re-verifies before trusting. The study is pinned against `b493cb58` (2026-10-01); the section 4 questions are undecided — pending decisions, not commitments — and no `src/markdown/projection/` module exists yet (re-verified at `aba48bd5`).
 >
-> **ID note (2026-10-18):** the `body:p:N` / `[body:p:N]` spellings mapped below describe `inspect::render_markdown` and friends as they still behave — they are the transitional schema-1 identity layer. The 17 October 2026 short-and-long-ID contract (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, unimplemented) replaces them with the four-field long-ID / `short_id`+`long_id` pair at cutover.
+> **ID note (2026-10-18, corrected 2026-10-19 at `aba48bd5`):** the `body:p:N` / `{story}:p:{index}` spellings mapped below no longer describe printed output — `6fc0ab0e` moved `inspect`, `comments`, `audit` and `fields` to short ids, so `inspect::render_markdown` prints `[p12]`, `[header1]` (a story's paragraph 0 — v3 makes it `header1.p0`) and `[header1.p2]` (`src/inspect.rs:451-472`; `ids::paragraph_id`/`short_paragraph`, `src/ids.rs:404-451`). The colon family survives only internally (the `{story}:p:{index}` template `short_paragraph` consumes) and as a fallback for values with no short spelling (`ChangeId::short`, `src/ids.rs:155-171`; e.g. `body:rev:007`). In `--json` the schema-1 fields remain: `id`/`ref` both hold that short-or-fallback id (`9872a374`, `52e96ced`), comment ids are numeric, `SCHEMA_VERSION` is 1 — the 17 October 2026 contract (unimplemented) replaces them with paired `short_id`/`long_id` references under `schema_version: 2` and retires the colon family outright.
 
 # C# Markdown Projection → Rust Mapping Study (Swarm Report)
 
@@ -58,7 +58,8 @@ Headline findings:
    `AnchorIndex`, no `AnchorIdMap`/Abbreviated/Sequential/dual-keying anywhere
    in `src/`. `src/unid.rs` exists but serves the comparer only (counter path,
    no deterministic mode, no lookup-by-unid). Rust addresses content
-   positionally (`{story}:p:{index}` in `src/inspect.rs` + SHA-256 snapshot
+   positionally (`{story}:p:{index}` in `src/inspect.rs` at the pin — the
+   short `p{index}`/`{story}.p{index}` since `6fc0ab0e` — + SHA-256 snapshot
    guards in `src/edit.rs`), which is snapshot-scoped, not stable.
 2. **Different lineage.** Rust's Word→Markdown path (`src/markdown/from_docx/`)
    derives from the anymd project (MIT), not from Docxodus. It is body-only
@@ -93,7 +94,7 @@ configuration; Rust has only a two-knob `MarkdownOptions` (tracked-changes mode
 | C# construct | Rust counterpart | Status | Note |
 | --- | --- | --- | --- |
 | `ProjectionScopes` [Flags] (WmlToMarkdownConverter.cs:19-29) | hardwired scopes: `src/markdown/from_docx/mod.rs:100-122` (body+notes+comments, no headers/footers); `src/inspect.rs:191-198,117-133` (body+header/footer/note stories, no comments) | missing | No [Flags]/bitflags selection anywhere; each projection fixes its own scope set; neither equals `All`. |
-| `AnchorRenderMode` (:34-42) | `inspect::render_markdown` (`src/inspect.rs:215-236`) always emits block ids `[body:p:N]` | divergent | Block-style only, not toggleable; no inline span anchors, no None. |
+| `AnchorRenderMode` (:34-42) | `inspect::render_markdown` (`src/inspect.rs:215-236` at the pin; now `:451-472`) always emits block ids — `[body:p:N]` at the pin, `[pN]`/`[{story}.pN]` since `6fc0ab0e` | divergent | Block-style only, not toggleable; no inline span anchors, no None. |
 | `TableRenderMode` (:47-55) | `markdown_table` (`src/markdown/from_docx/mod.rs:241-266`), flattening at :1029-1042 | missing | Always GFM with flattening/loss; no opaque-anchor fallback. |
 | `TrackedChangeMode` (:60-68) | `markdown::TrackChanges` (`src/markdown/mod.rs:52-73`, All/Accept/Reject) → `from_docx::Revisions` (`from_docx/mod.rs:25-34`, Markup/Accept/Reject) | partial | `RenderInline`≈`All`/`Markup` (CriticMarkup `{+ins+}`/`{-del-}` plus author/date attribution — richer); `Accept`≈`Accept`; `StripDeletions` absent; Rust adds `Reject`. Defaults differ: C# `Accept`, Rust `All`. |
 | `WmlToMarkdownConverterSettings` (:74-134) | `MarkdownOptions` (`src/markdown/mod.rs:146-156`) + `from_docx::Options` (`from_docx/mod.rs:36-42`) | partial | 2 of 10 knobs. |
@@ -103,7 +104,7 @@ configuration; Rust has only a two-knob `MarkdownOptions` (tracked-changes mode
 | `ResolveNumbering` (:111, default true) | always-on: `Numbering::parse` (from_docx/mod.rs:94-99), `list_marker` (:737-746) | partial | Semantics = always true; no off-switch. |
 | `ImageUriBuilder` (:118, never invoked) | `MarkdownOptions::extract_media` (mod.rs:152-155) → `media::Extracted` (`src/markdown/from_docx/media.rs:17-57`) | divergent | C# is a dead placeholder; Rust actually extracts bytes. No URI-shaping callback; no CLI flag. |
 | `EmptyParagraphMode` (:128, :137-147) | from_docx: blank paragraphs skipped (`from_docx/mod.rs:707-727`); inspect: anchor-only line kept (`src/inspect.rs:903-906`) | divergent | Two hardwired behaviors ≈ Suppress vs AnchorOnly; no `MarkedEmpty` (∅). |
-| `AnchorIdRendering` (:151-171) | positional ids `{story}:p:{index}` (`src/inspect.rs:35`; `unified.rs` `Locator::Paragraph`) | missing | Opposite philosophy: no Unids, no abbreviated/sequential token budgeting. |
+| `AnchorIdRendering` (:151-171) | positional ids `{story}:p:{index}` (`src/inspect.rs:35`; `unified.rs` `Locator::Paragraph`) — short `pN`/`{story}.pN` since `6fc0ab0e` | missing | Opposite philosophy: no Unids, no abbreviated/sequential token budgeting. |
 
 - **Fidelity: 0.3** — TrackedChanges maps well; the anchor core (Scopes,
   AnchorRenderMode, AnchorIdRendering, TableRenderMode/TableInlineCellMax,
@@ -117,7 +118,7 @@ configuration; Rust has only a two-knob `MarkdownOptions` (tracked-changes mode
 
 Summary: None of `Anchor`/`AnchorTarget`/`MarkdownProjection`/
 `WmlDocument.ConvertToMarkdown` exists in Rust; jubarte addresses content by
-story+index ids (`body:p:3`) instead of unid anchors, and its markdown
+story+index ids (`body:p:3` at the pin; `p3`, `header1.p2` since `6fc0ab0e`) instead of unid anchors, and its markdown
 projection returns bare text with no addressable index.
 
 | C# construct | Rust counterpart | Status | Note |
@@ -165,7 +166,7 @@ Unid consumers while Rust uses one process-wide counter.
 Summary: The C# anchor-index loop (unid-keyed multi-kind index over per-part
 scopes, with Abbreviated/Sequential id rendering and dual-key aliasing) has no
 direct Rust counterpart; the nearest analogue is `src/inspect.rs`'s positional
-`story:p:index` addressing, plus a deterministic-unid module used only by the
+`story:p:index` addressing at the pin (`pN`/`{story}.pN` since `6fc0ab0e`), plus a deterministic-unid module used only by the
 comparer lineage.
 
 | C# construct | Rust counterpart | Status | Note |
@@ -175,7 +176,7 @@ comparer lineage.
 | Boilerplate skip-set (:460–472) | `src/inspect.rs:531-544`; `src/comparer/footnotes.rs:733-742` `is_structural_note` | partial | Rust enumerates 3 named types; C# tests `type != null && type != "normal"` (equivalent in practice given ECMA's closed enum). |
 | Walk + `KindFor` kinds (:474–478) | `src/inspect.rs:522-528` (`w:p` only, textbox paragraphs excluded) | partial | Only kind `p`. |
 | Suppress empty-paragraph drop (:484–488) | — (empty paragraphs keep ids) | missing | |
-| id `kind:scope:unid` + first-wins (:489–490) | `src/inspect.rs:564` `format!("{story}:p:{index}")` | analogous | Positional 0-based; collision impossible by construction. |
+| id `kind:scope:unid` + first-wins (:489–490) | `src/inspect.rs:564` `format!("{story}:p:{index}")` at the pin — now `ids::paragraph_id`/`short_paragraph` short ids (`src/ids.rs:404-451`) | analogous | Positional 0-based; collision impossible by construction. |
 | TextPreview / AutoNumberPrefix (:497–500) | full `text`; `numbered: bool` (`src/inspect.rs:561,567`) | partial | No truncation, no resolved number. |
 | Abbreviated (:514–541) | — | missing | |
 | Sequential insertion-order (:543–557) | enumerate over Vec (`src/inspect.rs:550-575`) | analogous | 0-based, p-only, per-story; order-safe by construction. |
@@ -344,7 +345,7 @@ stream over the package and inspection is a per-paragraph positional model.
 | Byte-equivalence contract (cs:10–34) | — | missing | Nearest basis: `from_docx::convert`. |
 | `IrMarkdownResult` (cs:39–46) | `Converted { markdown, media }` (`mod.rs:59-63`) | analogous | |
 | `BuildAnchorIndex` scope walk (cs:64–98) | `Opened::story_parts()` (`src/inspect.rs:406-418`) | partial | Sorted by (len, name) — not oracle order; no anchors built. |
-| `AddIndexEntry` (cs:154–173) | — | missing | Positional `body:p:{index}` instead. |
+| `AddIndexEntry` (cs:154–173) | — | missing | Positional `p{index}` instead (`body:p:{index}` at the pin). |
 | `IndexNoteScope` (cs:179–195) | notes keyed `HashMap<(is_endnote, w:id), Element>` (`mod.rs:100–116`) | analogous | w:id keying exists; no Unid map. |
 | `ProjectionAnchors` facts (cs:100–129) | — | missing | Retention is ownership in Rust; fact capture is a natural design. |
 | (context) atom IR | `AtomBlock`/`ComparisonUnitAtom` (`src/comparer/atoms.rs:109/122/300`) | different purpose | Proof the repo can hold a retained IR. |
@@ -488,7 +489,8 @@ split as the C#, WmlToMarkdownConverter.cs:446–450). Effort **M**, priority
 - Integration: reuse `Opened`/`story_parts`/`parse_part` read-only; keep C#
   scope names (`hdr1`, `ftr1`, `fn`, `en`, `cmt`) for oracle parity; write-back
   via `pkg.set_part` + `to_zip`. Keep `{story}:p:{index}` as the edit-selector
-  namespace; add `Selector::Unid` (untagged serde so old plans still parse) and
+  namespace (written at the pin — the selector grammar is now the short
+  `pN`/`{story}.pN` family, `6fc0ab0e`/`e7a4a776`); add `Selector::Unid` (untagged serde so old plans still parse) and
   optionally cross-register positional aliases in `AnchorIndex`.
 - Tests: golden id/index snapshots; stability across re-runs and native vs
   WASM; idempotence; zip-entry-reordered package → identical ids; comparer

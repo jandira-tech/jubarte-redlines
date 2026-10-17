@@ -297,7 +297,7 @@ print or parse today:
   today names both the story and its paragraph 0
   (`paragraph_id("header1", 0)` prints `header1`, `src/ids.rs`); under v3
   the paragraph is `header1.p0` and the bare name is the story only;
-- open ranges `p17-` and `-p1`, which `Pick::parse`
+- open ranges `p17-` and `-p1`, which `Select::parse`
   (`src/markdown/mod.rs`) still accepts — closed ranges only after
   cutover;
 - `r43+43` as a *printed* form (`1bf166f7` emits it when two revisions

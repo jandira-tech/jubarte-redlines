@@ -2245,3 +2245,22 @@ fn scholar_numbers_the_pages_unless_a_story_holds_the_number() {
     assert!(footers.contains("Template footer"), "{footers}");
     assert!(!footers.contains(" PAGE "), "{footers}");
 }
+
+/// md -> docx is a function of its input (#534): undated marks of an author
+/// dated `first..last` stamp their first `last` day on whichever mark the
+/// `row_marks`/`cell_marks`/`row_fmt`/`cell_fmt` maps hand to `format_mark`
+/// first, so a `HashMap`'s random order must not reach the bytes.
+#[test]
+fn converting_the_same_markdown_is_deterministic() {
+    let source = std::fs::read_to_string("tests/fixtures/md-roundtrip/potpourri.md")
+        .expect("the committed fixture");
+    let first = markdown_to_docx(&source, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    for _ in 0..40 {
+        let docx = markdown_to_docx(&source, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        assert_eq!(first, docx, "the same Markdown wrote a different docx");
+    }
+}

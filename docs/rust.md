@@ -351,7 +351,9 @@ Read options:
           M -->` lines
 
   -p, --paragraphs <SPEC>
-          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+          Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
+          `-p3` spellings still parse, transitionally; the 17 October 2026 contract
+          retires them — spell the end, `p17-p20`)
 
       --head <N>
           Only the first N blocks (a table is one block)
@@ -943,7 +945,9 @@ Read options:
           M -->` lines
 
   -p, --paragraphs <SPEC>
-          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+          Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
+          `-p3` spellings still parse, transitionally; the 17 October 2026 contract
+          retires them — spell the end, `p17-p20`)
 
       --head <N>
           Only the first N blocks (a table is one block)

@@ -41,7 +41,7 @@ Read, edit, compare and render Word documents
 | `--comments` |  | <MODE> | inline | inline, none | hidden; under "Read options"; conflicts --json --tables | Comments inline (default) or hidden, with their ids on the id line of the paragraph that holds them |
 | `--dates` |  |  | false |  | hidden; under "Read options"; conflicts --json --tables | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
 | `--no-page-markers` |  |  | false |  | hidden; under "Read options"; conflicts --json --tables | Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of M -->` lines |
-| `-p, --paragraphs` |  | <SPEC> |  |  | hidden; under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
+| `-p, --paragraphs` |  | <SPEC> |  |  | hidden; under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`) |
 | `--head` |  | <N> |  |  | hidden; under "Read options"; conflicts --changed --paragraphs --tables --tail | Only the first N blocks (a table is one block) |
 | `--tail` |  | <N> |  |  | hidden; under "Read options"; conflicts --changed --head --paragraphs --tables | Only the last N blocks |
 | `--changed` |  |  | false |  | hidden; under "Read options"; conflicts --head --paragraphs --tables --tail | Only the blocks with a tracked change or a comment |
@@ -81,7 +81,7 @@ Compare documents: print the redline as the agent view, or write it with -o
 | `--comments` |  | <MODE> | inline | inline, none | under "Read options"; conflicts --json --tables | Comments inline (default) or hidden, with their ids on the id line of the paragraph that holds them |
 | `--dates` |  |  | false |  | under "Read options"; conflicts --json --tables | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
 | `--no-page-markers` |  |  | false |  | under "Read options"; conflicts --json --tables | Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of M -->` lines |
-| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
+| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`) |
 | `--head` |  | <N> |  |  | under "Read options"; conflicts --changed --paragraphs --tables --tail | Only the first N blocks (a table is one block) |
 | `--tail` |  | <N> |  |  | under "Read options"; conflicts --changed --head --paragraphs --tables | Only the last N blocks |
 | `--changed` |  |  | false |  | under "Read options"; conflicts --head --paragraphs --tables --tail | Only the blocks with a tracked change or a comment |
@@ -215,7 +215,7 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 | `--comments` |  | <MODE> | inline | inline, none | under "Read options"; conflicts --json --tables | Comments inline (default) or hidden, with their ids on the id line of the paragraph that holds them |
 | `--dates` |  |  | false |  | under "Read options"; conflicts --json --tables | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
 | `--no-page-markers` |  |  | false |  | under "Read options"; conflicts --json --tables | Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of M -->` lines |
-| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
+| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`) |
 | `--head` |  | <N> |  |  | under "Read options"; conflicts --changed --paragraphs --tables --tail | Only the first N blocks (a table is one block) |
 | `--tail` |  | <N> |  |  | under "Read options"; conflicts --changed --head --paragraphs --tables | Only the last N blocks |
 | `--changed` |  |  | false |  | under "Read options"; conflicts --head --paragraphs --tables --tail | Only the blocks with a tracked change or a comment |

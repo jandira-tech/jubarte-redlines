@@ -682,13 +682,17 @@ struct TablePlan {
     /// The formatting changes the line names.
     fmt: Option<view_notes::Tag>,
     grid_fmt: Option<u32>,
-    row_fmt: HashMap<usize, view_notes::Tag>,
-    cell_fmt: HashMap<(usize, usize), view_notes::Tag>,
+    /// These four are `BTreeMap`s: `table_formats` walks them calling
+    /// `format_mark`, and the first undated mark of an author dated
+    /// `first..last` takes the range's last day — a `HashMap`'s random order
+    /// made that winner, and the docx, different per process (#534).
+    row_fmt: BTreeMap<usize, view_notes::Tag>,
+    cell_fmt: BTreeMap<(usize, usize), view_notes::Tag>,
     /// The cell paragraphs' formatting changes, by paragraph number.
     para_fmt: HashMap<usize, Vec<view_notes::Tag>>,
     /// Rows' and cells' own changes the text does not show.
-    row_marks: HashMap<usize, (bool, view_notes::Tag)>,
-    cell_marks: HashMap<(usize, usize), (view_notes::CellMark, view_notes::Tag)>,
+    row_marks: BTreeMap<usize, (bool, view_notes::Tag)>,
+    cell_marks: BTreeMap<(usize, usize), (view_notes::CellMark, view_notes::Tag)>,
 }
 
 /// One row of a [`TablePlan`].
@@ -2685,7 +2689,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         );
         let grid = plan.grid_fmt;
         let (row_marks, cell_marks) = if self.resolved {
-            (HashMap::new(), HashMap::new())
+            (BTreeMap::new(), BTreeMap::new())
         } else {
             (plan.row_marks.clone(), plan.cell_marks.clone())
         };

@@ -6,7 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 > **Status: SNAPSHOT — ledger frozen as of 2026-07-15 (authored 2026-07-13,
 > revised 2026-07-14; imported into this repository later; re-checked
-> 2026-10-01, `bd262981`).** This file is a dated record, not a live plan:
+> 2026-10-01, `bd262981`, and 2026-10-19, `aba48bd5` — every artifact named
+> below is still in-tree, and the ledger names no document ids, so the 17
+> October 2026 identity contract does not touch it).** This file is a dated
+> record, not a live plan:
 > do not resume or append to it. Current truth lives in TODO.md (backlog)
 > and CHANGELOG.md (shipped). Sections still binding: the Q0/Q1 quality
 > ratchet (never hide a quality change inside a performance change), the

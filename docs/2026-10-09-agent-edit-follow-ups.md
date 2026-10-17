@@ -1,16 +1,51 @@
 # Agent Edit Follow-ups Implementation Plan
 
-> **Status (audited 2026-10-18, `main` @ `aba48bd5`).** This plan's `pid:` /
-> `--pids` / `paraId`-as-location proposal was **never implemented** — no
-> `pid:` selector or `--pids` flag exists; `-p` takes the short `pN` grammar.
-> The short/long ID contract v3
+> **Status (audited 2026-10-18, re-audited 2026-10-19, `main` @ `aba48bd5`).**
+> This plan's `pid:` / `--pids` / `paraId`-as-location proposal was **never
+> implemented** — no `pid:` selector or `--pids` flag exists; `-p` takes the
+> short `pN` grammar. The short/long ID contract v3
 > (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, docs-only
 > in `4612a155`, unimplemented) confirms that absence is intentional: `pid:` is
-> a third identity representation, which the contract forbids. The digest idea
-> shipped in plan form (`source_sha256` / `STALE_SOURCE`, `src/edit.rs`) and the
-> view prints `source:`/`sha256:` pins; `--nth` and `edit --digest` never
-> shipped. The `body:p:N` spellings in the examples below are the transitional
-> colon forms v3 §7 retires.
+> a third identity representation, which the contract forbids — `w14:paraId`
+> instead becomes the long ID's attribute (`document.w:p.w14:paraId.…`), never
+> a selector or a printed field of its own.
+>
+> Per task, at `aba48bd5`:
+>
+> - **Task 1** (failed anchor hands back the paragraph): **not shipped as
+>   written** — `EditOutcome.paragraph_text` does not exist. What landed
+>   instead: typed `ANCHOR_NOT_FOUND` / `AMBIGUOUS_ANCHOR` errors that echo
+>   the anchor escaped, and `anchor_given` / `anchor_read_as` in the op
+>   report (`9592d916`), which name what a successful anchor normalized to.
+> - **Task 2** (`--nth`): **not shipped**. The plan-level equivalent did:
+>   `occurrence` on `replace`/`delete`/`insert`/`comment`/`format_run`
+>   (`src/edit.rs`; red test `da15ab5e`, semantics `d31f4b1d`). There is no
+>   CLI flag.
+> - **Task 3** (`edit --digest`): **the CLI flag never shipped**, but the
+>   mechanism did: `EditPlan.source_sha256` refuses a mismatched source with
+>   `STALE_SOURCE` (`src/edit.rs:1549,1961`), and the view prints
+>   `source:`/`sha256:` pins (`src/markdown/from_docx/header.rs:310-313`).
+> - **Task 4** (`pid:` / `--pids` / `paraId` locations): **never
+>   implemented — withdrawn by contract.** v3 §1's "no third identity
+>   representation" forbids a `pid:` selector, a `pid` id-line clause and a
+>   `pid` JSON field; the report shape the task's test asserted
+>   (`"at":"body:p:0","pid":"…"`) is doubly retired — a string `at` standing
+>   for a reference and a bare `pid` are both forbidden JSON shapes (v3 §1),
+>   and `body:p:N` is the colon family v3 §7 retires.
+> - **Task 5** (comment anchors not detached silently): **landed
+>   differently** — thread operations on a comment whose anchor the plan's
+>   revisions removed refuse with `UNKNOWN_COMMENT` and "its anchor was text
+>   they removed" (`src/edit.rs:3328-3335`). The general `COMMENT_ANCHOR`
+>   check and the `allow_detach` opt-out never shipped.
+> - **Task 6** (`move_paragraph`, `--move-after`/`--move-before`): **not
+>   shipped** — `OperationKind` has no move variant. The adjacent
+>   `paragraph_ids()`/`ParagraphMove` report (`a771637f`, B11) only says
+>   where a source paragraph id went once revisions settle; it is not a move
+>   operation.
+>
+> The `body:p:N` spellings in the examples below are the transitional colon
+> forms v3 §7 retires; where a test asserts one (`body:p:0`), the current
+> print is the short `p0`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

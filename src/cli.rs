@@ -76,7 +76,9 @@ pub struct ReadArgs {
     /// `<!-- page N of M -->` lines.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
-    /// Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated.
+    /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
+    /// `p17-` / `-p3` spellings still parse, transitionally; the 17 October
+    /// 2026 contract retires them — spell the end, `p17-p20`).
     #[arg(
         short = 'p',
         long = "paragraphs",

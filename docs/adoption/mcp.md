@@ -28,7 +28,7 @@ pip install 'jubarte-redlines[mcp]' && jubarte-mcp --root .
 | `docx_compare` | `original`, `modified`, `out`, `author`, `date=null`, `overwrite=false` | `out` and the change list |
 | `docx_changes` | `path` | every tracked change, with its short `id` (`r12`, also in `ref`) accept and reject select by, and its `paragraph` |
 | `docx_accept`, `docx_reject` | `path`, `out`, `ids=null` (`r12`, `header1.r1`, as the CLI prints them), `authors=null`, `kinds=null`, `overwrite=false` | `out` and the number of changes left |
-| `docx_validate` | `path`, `original=null`, `author=null`, `rules=null` (sets `word`, `edits`, `a11y`, `style`, `structure` or codes) | findings; one at a paragraph carries its `ref` (`p5` for `body:p:5`) |
+| `docx_validate` | `path`, `original=null`, `author=null`, `rules=null` (sets `word`, `edits`, `a11y`, `style`, `structure` or codes) | findings; one at a paragraph carries its id in `location` and `ref` (`p5`, `header1.p1`; 0.12 printed `body:p:5` in `location`) |
 | `docx_comments` | `path` | comment records |
 | `docx_audit` | `path`, `rules=null` (rule sets `a11y`, `style`, `structure` or codes) | accessibility, style and structure findings, each with its paragraph id |
 
@@ -44,11 +44,13 @@ A refused edit plan returns an error whose text holds the engine's JSON:
 `code` (`ANCHOR_NOT_FOUND`, `STALE_SOURCE`, ...), `operation`, `message` and
 every operation's `outcomes`. Nothing is written in that case.
 
-> **Ids.** The `id`/`ref` pairs and colon spellings (`body:p:5`) the tools
-> return are the transitional schema-1 wire shape. The 17 October 2026
-> short-and-long-ID contract
+> **Ids.** The `id`/`ref` pairs the tools return both hold the short id
+> (`r12`, `p5`, `c5`); colon spellings (`body:p:5`, `body:rev:007`) survive
+> only as a fallback for values with no short spelling. That is the
+> transitional schema-1 wire shape. The 17 October 2026 short-and-long-ID
+> contract
 > ([`../superpowers/specs/2026-10-17-short-and-long-id-contract.md`](../superpowers/specs/2026-10-17-short-and-long-id-contract.md),
-> unimplemented) replaces them with paired `short_id`/`long_id` references at
+> unimplemented) replaces it with paired `short_id`/`long_id` references at
 > the schema-2 cutover. Until then, the table above is the current truth.
 
 ## Security model

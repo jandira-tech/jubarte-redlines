@@ -89,6 +89,16 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 (or, for `docxToPdf`, `.pdf`) packages; `getRevisions` returns a JSON
 `string`, `pdfPageCount` a `number`, and `initPanicHook` returns nothing.
 
+> **Id spellings.** The `body:rev:12` / `body:p:N` / `[body:p:N]` /
+> `header1:p:N` forms in this table describe the shipped 0.12.x build,
+> which predates the short-id migration: current source prints short ids
+> (`r12`, `p5`, `header1.p2`; `6fc0ab0e`, `9872a374`, `52e96ced`), keeps
+> the colon family only as a fallback for values with no short spelling,
+> and refuses the expired forms on input. The 17 October 2026
+> short-and-long-ID contract (unimplemented at that build and now)
+> replaces `id`/`ref` with paired `short_id`/`long_id` references at the
+> schema-2 cutover.
+
 | Function | Signature | Description |
 |---|---|---|
 | `compareDocuments` | `(original, modified, author, inputLimitsJson?) → Uint8Array` | Compare two DOCX files → redline DOCX with tracked changes attributed to `author`. `inputLimitsJson` overrides the admission budget (see below). |

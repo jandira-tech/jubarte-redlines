@@ -6,6 +6,23 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # jubarte's Markdown dialect on one page
 
+> **Identity note (re-checked 2026-10-19, `aba48bd5`):** every id form this
+> page lists — `pN`, `tN`, `tN.rowR.cellC`, `headerN`/`footerN`,
+> `part.pN`, `rN`, `story.rN`, `r1+2`, `cN`, `cN.text`, closed `pN-pM`
+> ranges — is the current short grammar and survives into the 17 October
+> 2026 short-and-long-ID contract v3
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> documentation-only in `4612a155`, **not implemented**). Today's
+> divergences from that contract live outside this page's examples: `noid`
+> for an unnumbered change, `r43+43` for carriers sharing one `w:id`, a
+> story's paragraph 0 printed as the bare story alias (`header1`, not
+> `header1.p0`), the colon fallback (`body:rev:007`) for values with no
+> short spelling, nested `.pN` inside cells and text boxes
+> (`t0.row1.cell2.p1` — the contract's `psN`), open ranges `p17-`/`-p3`
+> (`read -p` still parses them transitionally), and schema-1 JSON (`id`,
+> `ref`, `at`, numeric comment ids) where the contract wants paired
+> `short_id`/`long_id` under `schema_version: 2`.
+
 CommonMark + GitHub tables, strikethrough, task lists and footnotes, then
 CriticMarkup for changes, then the agent view's YAML header and id lines.
 [MARKDOWN.md](MARKDOWN.md) has the details.
