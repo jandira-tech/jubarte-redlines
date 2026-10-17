@@ -12,19 +12,9 @@
 
 //! OPC (Open Packaging Conventions) layer — M1.5.
 //!
-//! OPC surface (oxml-opc 0.14.2, migrated for #524):
-//! `oxml_opc::OpcPackage` already provides everything `opc-partfs.ts` needs, at
-//! the BYTE level — so the plan's Step-5 fallback (porting opc-partfs over `zip`)
-//! is NOT required:
-//!   - `from_reader` / `write_to`   → open from bytes / write the zip back
-//!   - `get_part` / `set_part`      → byte-level read / replace / add a part
-//!   - `parts: HashMap`             → enumerate parts
-//!   - `get_part_rels` / `get_or_create_part_rels` + `Relationships::add`
-//!     → parse / resolve / add relationships
-//!   - `resolve_rel_target`         → relative target resolution
-//!   - `content_types.content_type_for` / `add_default` / `add_override`
-//!     → read / mutate `[Content_Types].xml`
-//!   - `main_document_part`         → the package → main-document rel
+//! Uses `oxml_opc::OpcPackage` for byte-level parts, content types and target
+//! resolution, with local relationship storage and metadata readers to retain
+//! the adapter's refusal, repair and canonical serialization contracts.
 //!
 //! oxml-opc keys parts/rels with a LEADING SLASH (`/word/document.xml`). This
 //! adapter accepts the docxodus / opc-partfs style (no leading slash,
@@ -34,9 +24,47 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
+use std::ops::{Deref, DerefMut};
 
 use oxml_opc::{ContentTypes, OpcPackage};
-pub use oxml_opc::{OpcError, Relationship, Relationships};
+pub use oxml_opc::{OpcError, Relationship};
+
+/// Relationships with this crate's per-record refusal contract: oxml-opc skips
+/// elements outside the relationships namespace, while this crate also reads
+/// legacy unnamespaced records and refuses a record missing a required
+/// attribute. Direct parsing uses the same reader as [`PartFs::open`].
+#[derive(Clone, Debug, Default)]
+pub struct Relationships(oxml_opc::Relationships);
+
+impl Relationships {
+    /// An empty collection whose generated IDs start at `rId1`.
+    pub fn new() -> Self {
+        Self(oxml_opc::Relationships::new())
+    }
+
+    /// Read a relationships part with the package reader's refusal contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OpcError`] for malformed XML or an invalid relationship record.
+    pub fn from_xml(xml: &[u8]) -> Result<Self, OpcError> {
+        read_relationships(xml)
+    }
+}
+
+impl Deref for Relationships {
+    type Target = oxml_opc::Relationships;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Relationships {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 /// Input the engine refuses before or while reading it, as an `Err` the
 /// caller can handle rather than a panic, which would abort a WASM instance
@@ -152,7 +180,7 @@ fn read_relationships(xml: &[u8]) -> Result<Relationships, OpcError> {
         "http://schemas.openxmlformats.org/package/2006/relationships",
         &["Relationship"],
     )? {
-        for item in Relationships::from_xml(&record)?.items {
+        for item in oxml_opc::Relationships::from_xml(&record)?.items {
             items.push(item);
         }
     }
@@ -193,9 +221,9 @@ fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
     Ok(types)
 }
 
-/// Populate upstream public types without invoking its newer whole-package
+/// Populate parts and local relationships without invoking upstream's whole-package
 /// normalization and duplicate-refusal policies ahead of the adapter's repairs.
-fn read_package(bytes: &[u8]) -> Result<OpcPackage, OpcError> {
+fn read_package(bytes: &[u8]) -> Result<PartFs, OpcError> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
     let mut parts = HashMap::new();
     for index in 0..archive.len() {
@@ -208,8 +236,14 @@ fn read_package(bytes: &[u8]) -> Result<OpcPackage, OpcError> {
         entry.read_to_end(&mut data)?;
         parts.insert(name, data);
     }
-    let mut package = OpcPackage::new();
-    package.content_types = read_content_types(
+    let mut package = PartFs {
+        pkg: OpcPackage::new(),
+        package_rels: Relationships::new(),
+        part_rels: HashMap::new(),
+        source_order: HashMap::new(),
+        repaired_duplicate_ids: Vec::new(),
+    };
+    package.pkg.content_types = read_content_types(
         &parts
             .remove("[Content_Types].xml")
             .ok_or_else(|| OpcError::PartNotFound("[Content_Types].xml".to_string()))?,
@@ -225,7 +259,7 @@ fn read_package(bytes: &[u8]) -> Result<OpcPackage, OpcError> {
                 .part_rels
                 .insert(norm(&owner), read_relationships(&data)?);
         } else {
-            package.parts.insert(norm(&name), data);
+            package.pkg.parts.insert(norm(&name), data);
         }
     }
     Ok(package)
@@ -334,7 +368,10 @@ fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
 
 /// Thin adapter over `oxml_opc::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
+    // Only parts and content types live upstream; its relationship maps stay empty.
     pkg: OpcPackage,
+    package_rels: Relationships,
+    part_rels: HashMap<String, Relationships>,
     /// Each source zip entry's position, so `to_zip` writes the package back
     /// in the source's order rather than the hash maps' run-to-run order.
     source_order: HashMap<String, usize>,
@@ -378,17 +415,17 @@ impl PartFs {
             bytes,
             crate::admission::InputLimits::compare().max_part_bytes,
         )?;
-        let mut pkg = read_package(bytes)?;
+        let mut fs = read_package(bytes)?;
         let mut repaired_duplicate_ids: Vec<(String, String)> =
-            drop_repeated_relationships(&mut pkg.package_rels)?
+            drop_repeated_relationships(&mut fs.package_rels)?
                 .into_iter()
                 .map(|id| (String::new(), id))
                 .collect();
-        let mut owners: Vec<&String> = pkg.part_rels.keys().collect();
+        let mut owners: Vec<&String> = fs.part_rels.keys().collect();
         owners.sort();
         let owners: Vec<String> = owners.into_iter().cloned().collect();
         for owner in owners {
-            if let Some(rels) = pkg.part_rels.get_mut(&owner) {
+            if let Some(rels) = fs.part_rels.get_mut(&owner) {
                 let part = owner.trim_start_matches('/').to_string();
                 repaired_duplicate_ids.extend(
                     drop_repeated_relationships(rels)?
@@ -398,18 +435,15 @@ impl PartFs {
             }
         }
         let archive = ZipArchive::new(Cursor::new(bytes))?;
-        let source_order = (0..archive.len())
+        fs.source_order = (0..archive.len())
             .filter_map(|i| {
                 archive
                     .name_for_index(i)
                     .map(|name| name.map(|name| (name.into_owned(), i)))
             })
             .collect::<Result<_, _>>()?;
-        Ok(PartFs {
-            pkg,
-            source_order,
-            repaired_duplicate_ids,
-        })
+        fs.repaired_duplicate_ids = repaired_duplicate_ids;
+        Ok(fs)
     }
 
     /// `(part, Id)` of each relationship the source repeated identically,
@@ -444,9 +478,9 @@ impl PartFs {
             && let Ok(rels) = read_relationships(&data)
         {
             if owner.is_empty() {
-                self.pkg.package_rels = rels;
+                self.package_rels = rels;
             } else {
-                self.pkg.part_rels.insert(norm(&owner), rels);
+                self.part_rels.insert(norm(&owner), rels);
             }
             return;
         }
@@ -487,13 +521,12 @@ impl PartFs {
         zip.start_file("[Content_Types].xml", options)?;
         zip.write_all(&ct_xml)?;
 
-        let pkg_rels_xml = self.pkg.package_rels.to_xml()?;
+        let pkg_rels_xml = self.package_rels.to_xml()?;
         zip.start_file("_rels/.rels", options)?;
         zip.write_all(&pkg_rels_xml)?;
 
         // Source entries keep their places; added ones follow, by name.
         let mut entries: Vec<(Cow<str>, ZipEntry)> = self
-            .pkg
             .part_rels
             .iter()
             .map(|(part, rels)| {
@@ -605,21 +638,17 @@ impl PartFs {
     /// No-op when the source part has no relationships part yet — must not
     /// invent an empty `.rels` entry just to remove from it (PR #81 review).
     pub fn remove_relationships_by_type(&mut self, source_part: &str, rel_type: &str) {
-        let key = norm(source_part);
-        if self.pkg.get_part_rels(&key).is_none() {
-            return;
+        if let Some(key) = self.part_rels_key(source_part).cloned()
+            && let Some(rels) = self.part_rels.get_mut(&key)
+        {
+            rels.items.retain(|r| r.rel_type != rel_type);
         }
-        let rels = self.pkg.get_or_create_part_rels(&key);
-        rels.items.retain(|r| r.rel_type != rel_type);
     }
 
     /// Remove every package-level relationship (`_rels/.rels`) of the given
     /// type. The parts they target are left to the caller.
     pub fn remove_package_relationships_by_type(&mut self, rel_type: &str) {
-        self.pkg
-            .package_rels
-            .items
-            .retain(|r| r.rel_type != rel_type);
+        self.package_rels.items.retain(|r| r.rel_type != rel_type);
     }
 
     /// Remove the relationship `rel_id` of `source_part` and, unless another
@@ -628,8 +657,10 @@ impl PartFs {
     /// (a header's images) nothing else targets any more. No-op for an
     /// unknown or external relationship.
     pub fn remove_related_part(&mut self, source_part: &str, rel_id: &str) {
-        let key = norm(source_part);
-        let Some(target) = self.pkg.get_part_rels(&key).and_then(|rels| {
+        let Some(key) = self.part_rels_key(source_part).cloned() else {
+            return;
+        };
+        let Some(target) = self.part_rels.get(&key).and_then(|rels| {
             rels.items
                 .iter()
                 .find(|r| r.id == rel_id && r.target_mode.as_deref() != Some("External"))
@@ -638,10 +669,9 @@ impl PartFs {
             return;
         };
         let part = self.resolve_rel_target(source_part, &target);
-        self.pkg
-            .get_or_create_part_rels(&key)
-            .items
-            .retain(|r| r.id != rel_id);
+        if let Some(rels) = self.part_rels.get_mut(&key) {
+            rels.items.retain(|r| r.id != rel_id);
+        }
         self.remove_untargeted_part(&part);
     }
 
@@ -655,12 +685,11 @@ impl PartFs {
             return;
         }
         let still_targeted = self
-            .pkg
             .part_rels
             .iter()
             .filter(|(source, _)| **source != key)
             .map(|(source, rels)| (source.as_str(), rels))
-            .chain(std::iter::once(("/", &self.pkg.package_rels)))
+            .chain(std::iter::once(("/", &self.package_rels)))
             .any(|(source, rels)| {
                 rels.items.iter().any(|r| {
                     r.target_mode.as_deref() != Some("External")
@@ -672,7 +701,6 @@ impl PartFs {
         }
         self.pkg.parts.remove(&key);
         let targets: Vec<String> = self
-            .pkg
             .part_rels
             .remove(&key)
             .map(|rels| {
@@ -691,7 +719,17 @@ impl PartFs {
 
     /// `readRelsFor(part)` — the relationships of a part, if any.
     pub fn read_rels_for(&self, part_name: &str) -> Option<&Relationships> {
-        self.pkg.get_part_rels(&norm(part_name))
+        self.part_rels.get(self.part_rels_key(part_name)?)
+    }
+
+    // Preserve upstream's case-insensitive, normalized lookup and deterministic
+    // spelling choice when more than one stored owner has the same identity.
+    fn part_rels_key(&self, part_name: &str) -> Option<&String> {
+        let key = resolve_rel_target("", part_name);
+        self.part_rels
+            .keys()
+            .filter(|candidate| resolve_rel_target("", candidate).eq_ignore_ascii_case(&key))
+            .min()
     }
 
     /// `addDocumentRelationship(...)` — add a relationship to a part, returning
@@ -707,12 +745,12 @@ impl PartFs {
 
     /// The package's own relationships (`_rels/.rels`).
     pub fn package_relationships(&self) -> &Relationships {
-        &self.pkg.package_rels
+        &self.package_rels
     }
 
     /// Add a package-level relationship, returning its id.
     pub fn add_package_relationship(&mut self, rel_type: &str, target: &str) -> String {
-        self.pkg.package_rels.add(rel_type, target)
+        self.package_rels.add(rel_type, target)
     }
 
     /// A part's relationships, created empty when missing. Created through
@@ -721,7 +759,7 @@ impl PartFs {
     fn part_rels_mut(&mut self, source_part: &str) -> &mut Relationships {
         use std::collections::hash_map::Entry;
         // Not `or_default()`: the derived `Default` is the rId0 counter.
-        match self.pkg.part_rels.entry(norm(source_part)) {
+        match self.part_rels.entry(norm(source_part)) {
             Entry::Occupied(rels) => rels.into_mut(),
             Entry::Vacant(slot) => slot.insert(Relationships::new()),
         }
@@ -754,7 +792,9 @@ impl PartFs {
 
     /// The main document part name (docxodus style).
     pub fn main_document_part(&self) -> Option<String> {
-        self.pkg.main_document_part().map(|s| denorm(&s))
+        self.package_rels
+            .get_by_type(oxml_opc::relationship::rel_types::DOCUMENT)
+            .map(|rel| denorm(&rel.target))
     }
 }
 
@@ -801,6 +841,53 @@ mod tests {
     const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
     const HYPERLINK: &str =
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+
+    #[test]
+    fn public_and_package_relationship_readers_agree() {
+        for namespace in [format!(r#" xmlns="{RELS_NS}""#), String::new()] {
+            let document_type = oxml_opc::relationship::rel_types::DOCUMENT;
+            let document_target = if namespace.is_empty() {
+                "/word/document.xml"
+            } else {
+                "word/document.xml"
+            };
+            let xml = format!(
+                r#"<Relationships{namespace}><Relationship Id="rId7" Type="{HYPERLINK}" Target="https://example.com/?a=1&amp;b=2" TargetMode="External"></Relationship><Relationship Id="rId2" Type="{document_type}" Target="{document_target}"/></Relationships>"#
+            );
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            for (name, data) in [
+                ("[Content_Types].xml", "<Types/>"),
+                ("_rels/.rels", xml.as_str()),
+                ("word/document.xml", "<document/>"),
+                ("word/_rels/document.xml.rels", xml.as_str()),
+            ] {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(data.as_bytes()).unwrap();
+            }
+            let bytes = writer.finish().unwrap().into_inner();
+            let fs = PartFs::open(&bytes).unwrap();
+            let mut direct = Relationships::from_xml(xml.as_bytes()).unwrap();
+            assert_eq!(direct.items.len(), 2);
+            assert_eq!(direct.items, fs.package_relationships().items);
+            for owner in ["word/document.xml", "/WORD/folder/../document.xml"] {
+                assert_eq!(direct.items, fs.read_rels_for(owner).unwrap().items);
+            }
+            assert_eq!(
+                fs.main_document_part().as_deref(),
+                Some("word/document.xml")
+            );
+            assert_eq!(
+                direct.to_xml().unwrap(),
+                fs.read_rels_for("word/document.xml")
+                    .unwrap()
+                    .to_xml()
+                    .unwrap()
+            );
+            assert_eq!(direct.add("image", "media/b.png"), "rId8");
+        }
+    }
 
     fn package_with_header_rels() -> PartFs {
         let mut buf = Vec::new();
