@@ -2555,3 +2555,15 @@ fn typed_edit_help_and_facade_use_the_public_route() {
         .is_ok()
     );
 }
+
+#[test]
+fn review_09_no_file_action_plan_spelling_keeps_valid_legacy_grammar() {
+    for action in ["apply", "replace"] {
+        let cli = Cli::try_parse_from(["jubarte", "edit", action, "--plan", "p.json"]).unwrap();
+        let Some(Command::Edit { file, plan, .. }) = cli.command else {
+            panic!("valid legacy grammar wins");
+        };
+        assert_eq!(file, Path::new(action));
+        assert_eq!(plan.as_deref(), Some(Path::new("p.json")));
+    }
+}

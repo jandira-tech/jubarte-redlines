@@ -3052,6 +3052,45 @@ const RENDER_ONLY: [&str; 7] = [
     "revision_palette",
 ];
 
+/// Normalize edit routing identically for parsing and usage-error reporting.
+pub fn edit_arguments(
+    command: &clap::Command,
+    arguments: &[std::ffi::OsString],
+) -> Vec<std::ffi::OsString> {
+    edit_actions::route(&hoist_quiet(command, arguments), command)
+}
+
+/// Requested protocol on a recognized typed edit route, respecting values and `--`.
+pub fn typed_edit_protocol(arguments: &[std::ffi::OsString]) -> Option<(String, bool)> {
+    let model = top_level_command();
+    let routed = edit_arguments(&model, arguments);
+    if routed.get(1).is_none_or(|a| a != "__edit-v2") {
+        return None;
+    }
+    let typed = model.find_subcommand("__edit-v2")?;
+    let tokens: Vec<_> = routed
+        .iter()
+        .skip(2)
+        .filter_map(|a| a.to_str())
+        .take_while(|a| *a != "--")
+        .collect();
+    let (_, at) = spelled_options(typed, &tokens);
+    let action = *tokens.get(at)?;
+    let command = typed.find_subcommand(action)?;
+    let mut rest = &tokens[at + 1..];
+    let mut json = false;
+    let mut jsonl = false;
+    while !rest.is_empty() {
+        let (options, next) = spelled_options(command, rest);
+        for option in options {
+            json |= option.name == "--json";
+            jsonl |= option.name == "--jsonl";
+        }
+        rest = rest.get(next + 1..).unwrap_or_default();
+    }
+    (json || jsonl).then(|| (action.to_string(), jsonl))
+}
+
 impl Cli {
     /// Parse native arguments with clap and validate cross-option constraints.
     pub fn try_parse_from<I, T>(arguments: I) -> Result<Self, clap::Error>
@@ -3061,8 +3100,7 @@ impl Cli {
     {
         let mut command = top_level_command();
         let arguments: Vec<std::ffi::OsString> = arguments.into_iter().map(Into::into).collect();
-        let arguments = hoist_quiet(&command, &arguments);
-        let arguments = edit_actions::route(&arguments, &command);
+        let arguments = edit_arguments(&command, &arguments);
         let matches = command
             .try_get_matches_from_mut(arguments.clone())
             .map_err(|e| {

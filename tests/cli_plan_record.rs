@@ -1226,3 +1226,673 @@ fn typed_recognized_usage_errors_use_the_requested_result_protocol() {
         assert!(err.is_empty(), "{err}");
     }
 }
+
+#[test]
+fn review_01_usage_protocol_respects_hoisting_values_and_separator() {
+    let dir = tempfile::tempdir().unwrap();
+    for prefix in [vec![], vec!["-q"]] {
+        for mode in ["--json", "--jsonl"] {
+            let args = [
+                prefix.clone(),
+                vec![
+                    "edit", "replace", "f.docx", "--find", "x", "--text", "y", mode,
+                ],
+            ]
+            .concat();
+            let (code, out, err) = run(dir.path(), &args);
+            assert_eq!(code, 64, "{args:?}: {out} {err}");
+            assert!(out.contains("USAGE"), "{out}");
+            assert!(err.is_empty(), "{err}");
+        }
+    }
+    for tail in [
+        vec!["--", "--json"],
+        vec!["--text", "--json"],
+        vec!["--text-file", "--jsonl"],
+    ] {
+        let args = [vec!["edit", "replace", "f.docx", "--find", "x"], tail].concat();
+        let (code, out, err) = run(dir.path(), &args);
+        assert_eq!(code, 2, "{args:?}: {out} {err}");
+        assert!(out.is_empty(), "{args:?}: {out}");
+    }
+}
+
+#[test]
+fn review_04_dry_run_conflicts_with_destinations() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    for destination in ["-o", "--out-dir"] {
+        let (code, out, err) = run(
+            dir.path(),
+            &[
+                "edit",
+                "rewrite",
+                "letter.docx",
+                "--at",
+                "p0",
+                "--text",
+                "new",
+                "--dry-run",
+                destination,
+                "unused",
+                "--json",
+            ],
+        );
+        assert_eq!(code, 64, "{out} {err}");
+        assert!(out.contains("USAGE"), "{out}");
+        assert!(!dir.path().join("unused").exists());
+    }
+}
+
+#[test]
+fn review_05_anchor_codes_agree_across_scopes() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    for scope in [vec![], vec!["--at", "p2"]] {
+        for (selection, expected) in [
+            (vec!["--occurrence", "2"], "AMBIGUOUS_ANCHOR"),
+            (
+                vec!["--all-matches", "--expect-count", "1"],
+                "ANCHOR_NOT_FOUND",
+            ),
+        ] {
+            let find = if selection[0] == "--all-matches" {
+                "absent"
+            } else {
+                "fee"
+            };
+            let args = [
+                vec![
+                    "edit",
+                    "replace",
+                    "letter.docx",
+                    "--find",
+                    find,
+                    "--text",
+                    "x",
+                    "--dry-run",
+                    "--json",
+                ],
+                scope.clone(),
+                selection,
+            ]
+            .concat();
+            let (code, out, err) = run(dir.path(), &args);
+            assert_ne!(code, 0, "{out} {err}");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&out).unwrap()["error"]["code"],
+                expected,
+                "{out} {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn review_06_unknown_story_names_inventory() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--story",
+            "header99",
+            "--find",
+            "fee",
+            "--text",
+            "x",
+            "--dry-run",
+            "--json",
+        ],
+    );
+    assert_ne!(code, 0, "{out} {err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(value["error"]["code"], "ANCHOR_NOT_FOUND");
+    assert_eq!(value["error"]["target"], "header99");
+    assert!(
+        value["error"]["message"].as_str().unwrap().contains("body"),
+        "{out}"
+    );
+    assert!(out.contains("header99"), "{out}");
+}
+
+#[test]
+fn review_07_effective_options_resolve_policy_and_delivery() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p0",
+            "--text",
+            "new",
+            "--author",
+            "Alice",
+            "--datetime",
+            "2026-10-17T12:00:00Z",
+            "--track",
+            "off",
+            "--existing-revisions",
+            "keep",
+            "--force",
+            "-o",
+            "out.docx",
+            "--emit",
+            "document",
+            "--report",
+            "receipt.json",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let options = &value["effective_options"];
+    for (key, expected) in [
+        ("author", serde_json::json!("Alice")),
+        ("datetime", serde_json::json!("2026-10-17T12:00:00Z")),
+        ("track", serde_json::json!("off")),
+        ("existing_revisions", serde_json::json!("keep")),
+        ("force", serde_json::json!(true)),
+        ("dry_run", serde_json::json!(false)),
+        ("emit", serde_json::json!(["document"])),
+    ] {
+        assert_eq!(options[key], expected, "{key}: {out}");
+    }
+    assert!(
+        options["report"]
+            .as_str()
+            .unwrap()
+            .ends_with("receipt.json")
+    );
+    assert!(options["source_binding"].is_string());
+    assert!(options["request_sha256"].is_string());
+}
+
+#[cfg(unix)]
+#[test]
+fn review_08_broken_symlink_bundle_is_output_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    std::os::unix::fs::symlink("missing", dir.path().join("bundle")).unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p0",
+            "--text",
+            "new",
+            "--out-dir",
+            "bundle",
+            "--json",
+        ],
+    );
+    assert_ne!(code, 0, "{out} {err}");
+    assert!(out.contains("OUTPUT_EXISTS"), "{out} {err}");
+}
+
+#[test]
+fn review_09_missing_legacy_action_filename_suggests_typed_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    for action in ["apply", "replace"] {
+        let (code, out, err) = run(dir.path(), &["edit", action, "--plan", "p.json"]);
+        assert_ne!(code, 0, "{out} {err}");
+        assert!(
+            err.contains("jubarte edit apply FILE --plan PLAN"),
+            "{out} {err}"
+        );
+        // Creating the legacy FILE must retain the legacy grammar.
+        letter(dir.path(), action, "fee");
+        let (code, out, err) = run(dir.path(), &["edit", action, "--plan", "p.json"]);
+        assert_ne!(code, 0, "{out} {err}");
+        assert!(
+            !err.contains("jubarte edit apply FILE --plan PLAN"),
+            "{out} {err}"
+        );
+    }
+}
+
+#[test]
+fn review_10_text_file_rejects_cr_and_leading_bom_with_offsets() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    for (payload, offset, character) in [("é\r\nb", "1", "U+000D"), ("\u{feff}text", "0", "U+FEFF")]
+    {
+        std::fs::write(dir.path().join("payload.txt"), payload).unwrap();
+        let (code, out, err) = run(
+            dir.path(),
+            &[
+                "edit",
+                "rewrite",
+                "letter.docx",
+                "--at",
+                "p0",
+                "--text-file",
+                "payload.txt",
+                "--track",
+                "off",
+                "-o",
+                "out.docx",
+                "--json",
+            ],
+        );
+        assert_ne!(code, 0, "{out} {err}");
+        assert!(out.contains("INVALID_EDIT"), "{out} {err}");
+        assert!(
+            out.contains(character) && out.contains(&format!("character offset {offset}")),
+            "{out} {err}"
+        );
+        if character == "U+000D" {
+            assert!(out.contains("LF"), "{out}");
+        }
+        assert!(!dir.path().join("out.docx").exists());
+    }
+    std::fs::write(dir.path().join("payload.txt"), "a\u{feff}b").unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p0",
+            "--text-file",
+            "payload.txt",
+            "--track",
+            "off",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let paragraphs =
+        jubarte::inspect::paragraphs(&std::fs::read(dir.path().join("out.docx")).unwrap()).unwrap();
+    assert_eq!(paragraphs[0].text, "a\u{feff}b");
+}
+
+#[test]
+fn review_02_receipt_discloses_computed_candidate_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = docx(
+        &(para("fee")
+            + r#"<w:p><w:r><w:t>note</w:t></w:r><w:r><w:commentReference w:id="0"/></w:r></w:p>"#),
+    );
+    std::fs::write(dir.path().join("letter.docx"), &source).unwrap();
+    let baseline = jubarte::validate::validate(&source).unwrap();
+    assert!(!baseline.is_empty());
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "--track",
+            "off",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let verification = &value["data"]["verification"];
+    assert_eq!(
+        verification["baseline_findings"],
+        serde_json::to_value(&baseline).unwrap(),
+        "{out}"
+    );
+    let candidate =
+        jubarte::validate::validate(&std::fs::read(dir.path().join("out.docx")).unwrap()).unwrap();
+    assert_eq!(
+        verification["unresolved_findings"],
+        serde_json::to_value(&candidate).unwrap(),
+        "{out}"
+    );
+    assert_eq!(verification["introduced_findings"], serde_json::json!([]));
+    assert_eq!(verification["integrity"], "passed");
+    assert_eq!(verification["operation_postconditions"], "passed");
+}
+
+#[test]
+fn review_10_inline_hash_preconditions_cover_all_actions() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let source = std::fs::read(dir.path().join("letter.docx")).unwrap();
+    let hash = source_sha256(&source);
+    for action in [
+        vec!["replace", "--find", "fee", "--text", "cost"],
+        vec!["rewrite", "--at", "p0", "--text", "new"],
+        vec![
+            "insert", "--kind", "text", "--at", "p0", "--edge", "end", "--text", "new",
+        ],
+        vec!["delete", "--at", "p2", "--find", "fee"],
+    ] {
+        for (digest, expected) in [
+            (hash.as_str(), 0),
+            (
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                3,
+            ),
+        ] {
+            let args = [
+                vec!["edit"],
+                action.clone(),
+                vec![
+                    "letter.docx",
+                    "--expect-sha256",
+                    digest,
+                    "--dry-run",
+                    "--json",
+                ],
+            ]
+            .concat();
+            let (code, out, err) = run(dir.path(), &args);
+            assert_eq!(code, expected, "{action:?}: {out} {err}");
+            if expected != 0 {
+                assert!(out.contains("STALE_SOURCE"), "{out}");
+            }
+        }
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("letter.docx")).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn review_10_derived_patch_alias_refuses_before_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    std::fs::write(dir.path().join("out.diff"), "cost").unwrap();
+    let original = std::fs::read(dir.path().join("letter.docx")).unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text-file",
+            "out.diff",
+            "-o",
+            "out.docx",
+            "--emit",
+            "patch",
+            "--force",
+            "--json",
+        ],
+    );
+    assert_ne!(code, 0, "{out} {err}");
+    assert!(out.contains("OUTPUT_ALIAS"), "{out} {err}");
+    assert!(!dir.path().join("out.docx").exists());
+    assert_eq!(std::fs::read(dir.path().join("out.diff")).unwrap(), b"cost");
+    assert_eq!(
+        std::fs::read(dir.path().join("letter.docx")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn review_10_unbound_v1_publishes_with_disclosed_waiver() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let plan = br#"{"schema_version":1,"author":"Legacy","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p2","find":"fee","replacement":"cost"}]}"#;
+    std::fs::write(dir.path().join("v1.json"), plan).unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "apply",
+            "letter.docx",
+            "--plan",
+            "v1.json",
+            "--allow-unbound-plan",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        value["effective_options"]["source_binding"],
+        "unbound_legacy"
+    );
+    assert_eq!(value["data"]["phase"], "committed");
+    assert_eq!(value["effective_options"]["author"], "Legacy");
+    assert_eq!(value["effective_options"]["track"], "on");
+    assert_eq!(std::fs::read(dir.path().join("v1.json")).unwrap(), plan);
+    let paragraphs =
+        jubarte::inspect::paragraphs(&std::fs::read(dir.path().join("out.docx")).unwrap()).unwrap();
+    assert_eq!(paragraphs[2].text, "cost");
+}
+
+#[test]
+fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
+    let dir = tempfile::tempdir().unwrap();
+    for action in ["replace", "rewrite", "insert", "delete", "apply"] {
+        let (code, out, err) = run(dir.path(), &["edit", action, "--help"]);
+        assert_eq!(code, 0, "{action}: {out} {err}");
+        assert!(out.contains(&format!("jubarte edit {action}")), "{out}");
+        assert!(!out.contains("__edit-v2"), "{out}");
+        assert!(err.is_empty(), "{err}");
+    }
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+        ],
+    );
+    assert_eq!(code, 2, "{out} {err}");
+    assert!(out.is_empty());
+    assert!(err.contains("writes require"), "{err}");
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert_eq!(
+        out,
+        format!(
+            "edit replace: changed; wrote {}\n",
+            dir.path()
+                .join("out.docx")
+                .canonicalize()
+                .unwrap()
+                .display()
+        )
+    );
+    assert!(err.is_empty(), "{err}");
+}
+
+#[test]
+fn review_02_every_introduced_nonblocking_finding_is_a_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = docx(
+        r#"<w:p><w:commentRangeStart w:id="9"/><w:r><w:t>remove</w:t></w:r></w:p><w:p><w:r><w:t>keep</w:t></w:r><w:commentRangeEnd w:id="9"/></w:p>"#,
+    );
+    std::fs::write(dir.path().join("letter.docx"), &source).unwrap();
+    let baseline = jubarte::validate::validate(&source).unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "delete",
+            "letter.docx",
+            "--at",
+            "p0",
+            "--whole-block",
+            "--track",
+            "off",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let candidate =
+        jubarte::validate::validate(&std::fs::read(dir.path().join("out.docx")).unwrap()).unwrap();
+    let introduced = jubarte::edit::introduced_findings(&baseline, &candidate);
+    assert!(
+        !introduced.is_empty(),
+        "fixture must introduce a nonblocking finding: {baseline:?} -> {candidate:?}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        value["data"]["verification"]["introduced_findings"],
+        serde_json::to_value(&introduced).unwrap()
+    );
+    for finding in introduced {
+        assert!(!finding.word_fatal);
+        assert!(
+            value["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w.as_str().unwrap().contains(&finding.code)),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn review_10_leading_bom_text_file_is_an_encoding_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    std::fs::write(dir.path().join("payload.txt"), "\u{feff}text").unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p0",
+            "--text-file",
+            "payload.txt",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_ne!(code, 0, "{out} {err}");
+    assert!(
+        out.contains("INVALID_EDIT")
+            && out.contains("U+FEFF")
+            && out.contains("character offset 0"),
+        "{out} {err}"
+    );
+    assert!(!dir.path().join("out.docx").exists());
+}
+
+#[test]
+fn review_07_defaults_and_saved_plan_options_are_resolved() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p0",
+            "--text",
+            "new",
+            "--dry-run",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let options = &value["effective_options"];
+    assert_eq!(options["author"], "Jubarte");
+    assert!(options["datetime"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(options["track"], "on");
+    assert_eq!(options["existing_revisions"], "keep");
+    assert_eq!(options["emit"], serde_json::json!(["document"]));
+    assert_eq!(options["force"], false);
+    assert_eq!(options["dry_run"], true);
+    assert!(options["report"].is_null());
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "letter.docx",
+            "--at",
+            "p0",
+            "--text",
+            "new",
+            "--author",
+            "Frozen",
+            "--datetime",
+            "2026-10-17T12:00:00Z",
+            "--track",
+            "off",
+            "--save-plan",
+            "v2.json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "apply",
+            "letter.docx",
+            "--plan",
+            "v2.json",
+            "--out-dir",
+            "bundle",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let options = &value["effective_options"];
+    assert_eq!(options["author"], "Frozen");
+    assert_eq!(options["datetime"], "2026-10-17T12:00:00Z");
+    assert_eq!(options["track"], "off");
+    assert_eq!(
+        options["emit"],
+        serde_json::json!(["document", "patch", "report"])
+    );
+    assert!(
+        options["report"]
+            .as_str()
+            .unwrap()
+            .ends_with("bundle/report.json")
+    );
+}

@@ -155,18 +155,10 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     let effect = !tx.resolved.is_empty()
         || !tx.resolved_revisions.is_empty()
         || !remaining_revisions.is_empty();
-    let expected = composed_text(&tx);
     tx.apply()?;
-    for (para, want) in expected {
-        if v2::logical_text(&tx.opened.dom, tx.paragraph_nodes[para])? != want {
-            return Err(err(
-                "EFFECT_NOT_REALIZED",
-                None,
-                "engine did not realize exact composed working text",
-            ));
-        }
-    }
+    super::prepared::check_dom_realized(&tx, true)?;
     let (clean, _) = tx.finish()?;
+    super::prepared::check_serialized_stories(&tx, &clean)?;
     let result = if plan.policy.track == Track::On {
         tracked::result_v2(&tx, clean)?
     } else {
@@ -1363,35 +1355,6 @@ fn exact_rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)> {
                     new_chars[to].iter().collect(),
                 )
             })
-        })
-        .collect()
-}
-fn composed_text(tx: &Transaction<'_>) -> BTreeMap<usize, String> {
-    let mut edits: BTreeMap<usize, Vec<(usize, usize, String)>> = BTreeMap::new();
-    for (_, r) in &tx.resolved {
-        if let Resolved::Text {
-            para,
-            start,
-            end,
-            replacement,
-            ..
-        } = r
-        {
-            edits
-                .entry(*para)
-                .or_default()
-                .push((*start, *end, replacement.clone()));
-        }
-    }
-    edits
-        .into_iter()
-        .map(|(p, mut edits)| {
-            edits.sort_by_key(|&(start, end, _)| (start, end));
-            let mut text = tx.projections[p].text.clone();
-            for (start, end, replacement) in edits.into_iter().rev() {
-                text.replace_range(start..end, &replacement);
-            }
-            (p, text)
         })
         .collect()
 }

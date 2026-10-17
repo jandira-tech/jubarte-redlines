@@ -5109,6 +5109,8 @@ impl<'p> Transaction<'p> {
             .pkg
             .to_zip()
             .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
+        #[cfg(test)]
+        let clean = prepared::tests::serialized_candidate(clean);
         Ok((clean, marked))
     }
 
