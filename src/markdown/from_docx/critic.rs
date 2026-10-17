@@ -149,8 +149,30 @@ enum Leaf {
     },
     /// Markdown built by the converter (images, math, note references).
     Raw(String),
-    /// The inside of a `{>>…<<}` comment, already escaped.
-    Comment(String),
+    /// The inside of a `{>>…<<}` comment, in each of the forms its
+    /// contexts print.
+    Comment(Note),
+}
+
+/// A comment's note, as each of its contexts prints it: the prose around
+/// its anchor, and the code block it is anchored in, whose fence unwinds
+/// only the escape that form's text uses (#518).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Note {
+    pub(crate) prose: String,
+    pub(crate) code: String,
+}
+
+impl Note {
+    /// A note whose text no context changes: it holds nothing either
+    /// escape touches.
+    #[cfg(test)]
+    pub(crate) fn same(text: &str) -> Self {
+        Self {
+            prose: text.to_string(),
+            code: text.to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,9 +299,8 @@ impl Critic {
         self.tokens.truncate(len);
     }
 
-    pub(crate) fn comment(&mut self, note: &str) {
-        self.tokens
-            .push(Token::Leaf(Leaf::Comment(note.to_string())));
+    pub(crate) fn comment(&mut self, note: &Note) {
+        self.tokens.push(Token::Leaf(Leaf::Comment(note.clone())));
     }
 
     /// Opens a span; `by` is the attribution of an insertion or deletion.
@@ -601,8 +622,13 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 link: None,
                 marker: None,
             }),
-            (Node::Leaf(Leaf::Comment(inner)), _) => {
+            (Node::Leaf(Leaf::Comment(comment)), _) => {
                 *ids += 1;
+                let inner = if escaping.code_block {
+                    &comment.code
+                } else {
+                    &comment.prose
+                };
                 marker(out, &note(inner), *ids);
             }
         }
@@ -1133,7 +1159,7 @@ mod tests {
                 // `by+Ana (d)`: an insertion or deletion made by Ana at d.
                 op if op.starts_with("by") => critic.open(kind(&op[2..]), Some(value)),
                 "close" => critic.close(kind(value)),
-                "note" => critic.comment(value),
+                "note" => critic.comment(&Note::same(value)),
                 "raw" => critic.raw(value),
                 _ => text(&mut critic, value),
             }
@@ -1447,7 +1473,7 @@ mod tests {
         critic.raw(" ");
         critic.close(Ins);
         assert!(critic.is_blank());
-        critic.comment("note");
+        critic.comment(&Note::same("note"));
         assert!(!critic.is_blank());
         let mut raw = Critic::default();
         raw.raw("![x](y)");
@@ -1839,7 +1865,7 @@ mod tests {
         critic.push("varied ", false, false, None);
         critic.push("Emphasis lives here. ", true, true, None);
         critic.close(Sc);
-        critic.comment("c2 @AS: Testing.");
+        critic.comment(&Note::same("c2 @AS: Testing."));
         critic.push("See note.", true, true, None);
         assert_eq!(
             md(critic),
@@ -1848,7 +1874,7 @@ mod tests {
         // A note alone between two bold runs still joins them.
         let mut critic = Critic::default();
         critic.push("bold ", true, false, None);
-        critic.comment("c0 @AS: Here.");
+        critic.comment(&Note::same("c0 @AS: Here."));
         critic.push("text", true, false, None);
         assert_eq!(md(critic), "**bold {>>c0 @AS: Here.<<}text**");
     }
@@ -1899,6 +1925,24 @@ mod tests {
             ]),
             "{--x {\\++ y--}"
         );
+    }
+
+    #[test]
+    fn a_note_prints_the_form_its_context_escapes() {
+        // A note anchored in a code block is written inside its fence, where
+        // the writer unwinds only the fence's escape (#518): the prose form
+        // would double its backslashes on every round trip.
+        let note = Note {
+            prose: r"prose \ and \* form".to_string(),
+            code: r"code \ and * form".to_string(),
+        };
+        let mut prose = Critic::default();
+        prose.comment(&note);
+        assert_eq!(md(prose), r"{>>prose \ and \* form<<}");
+        let mut code = Critic::default();
+        code.set_code_block();
+        code.comment(&note);
+        assert_eq!(md(code), r"{>>code \ and * form<<}");
     }
 
     #[test]

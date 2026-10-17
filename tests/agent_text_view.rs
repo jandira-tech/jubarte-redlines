@@ -1787,6 +1787,69 @@ fn indented_code_keeps_its_text_verbatim() {
     }
 }
 
+/// A comment anchored in a code block prints its note inside the fence,
+/// where only the fence's escape is unwound (#518): the note keeps its
+/// backslashes and markup characters across round trips instead of
+/// doubling them, so the view and the comment are fixed points.
+#[test]
+fn a_note_anchored_in_a_code_block_round_trips_its_text() {
+    let body_xml = format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t xml:space="preserve">code </w:t></w:r><w:commentRangeStart w:id="1"/><w:r><w:t xml:space="preserve">line one</w:t></w:r><w:commentRangeEnd w:id="1"/>{}<w:r><w:t xml:space="preserve"> more</w:t></w:r></w:p>"#,
+        reference(1)
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+        comment(
+            1,
+            "Ann Counsel",
+            "AC",
+            "2026-10-01T09:00:00Z",
+            "0A0A0A0A",
+            r"note with {++x++} and \ and ++}"
+        )
+    );
+    let bytes = common::docx::docx_with(
+        &body_xml,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    );
+    let note_texts = |docx: &[u8]| {
+        common::docx::part_string(docx, "word/comments.xml")
+            .unwrap()
+            .split("<w:t")
+            .skip(1)
+            .filter_map(|t| {
+                t.split_once("</")
+                    .and_then(|(head, _)| head.split_once('>'))
+            })
+            .map(|(_, text)| text.to_string())
+            .collect::<Vec<_>>()
+    };
+    let mut markdown = docx_to_markdown(&bytes, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    assert!(markdown.contains("code {==line one==}{>>"), "{markdown}");
+    for generation in 0..3 {
+        let docx = markdown_to_docx(&markdown, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        assert_eq!(
+            note_texts(&docx),
+            [r"note with {++x++} and \ and ++}"],
+            "generation {generation}"
+        );
+        let next = docx_to_markdown(&docx, &MarkdownOptions::default())
+            .unwrap()
+            .markdown;
+        assert_eq!(next, markdown, "generation {generation}");
+        markdown = next;
+    }
+}
+
 /// `--commonmark` escapes CriticMarkup and Markdown syntax as the agent
 /// view does (#519): Word text that reads like markup round-trips through
 /// both views as itself, with no change invented.

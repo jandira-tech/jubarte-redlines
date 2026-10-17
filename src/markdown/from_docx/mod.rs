@@ -2198,10 +2198,10 @@ struct Writer<'a> {
     revisions: Vec<Change>,
     /// Comment id → its `w:comment` element.
     comments: HashMap<String, Element>,
-    /// Comment id → the inside of its `{>>…<<}` note, rendered at first use so
-    /// that anything numbered inside it (a footnote) is numbered where the
-    /// comment is.
-    notes: HashMap<String, String>,
+    /// Comment id → the inside of its `{>>…<<}` note, in each of the forms
+    /// its contexts print, rendered at first use so that anything numbered
+    /// inside it (a footnote) is numbered where the comment is.
+    notes: HashMap<String, critic::Note>,
     /// Comments with a `commentReference`, where their note goes. Others get
     /// their note where their range ends.
     referenced: HashSet<String>,
@@ -2219,7 +2219,7 @@ struct Writer<'a> {
     hidden_ranges: Vec<String>,
     /// Notes of unreferenced comments whose range ended between paragraphs;
     /// they open the next paragraph.
-    pending_notes: Vec<String>,
+    pending_notes: Vec<critic::Note>,
     /// Writing a comment's own text, where a `{>>…<<}` cannot appear: tracked
     /// changes keep their marks but not their author, and comment anchors are
     /// ignored.
@@ -2264,11 +2264,12 @@ struct Writer<'a> {
 }
 
 impl Writer<'_> {
-    /// The notes waiting for the next paragraph, as CriticMarkup comments.
+    /// The notes waiting for the next paragraph, as CriticMarkup comments:
+    /// their block is prose, whatever their anchor was.
     fn take_notes(&mut self) -> String {
         std::mem::take(&mut self.pending_notes)
             .iter()
-            .map(|note| format!("{{>>{note}<<}}"))
+            .map(|note| format!("{{>>{}<<}}", note.prose))
             .collect()
     }
 
@@ -3551,7 +3552,7 @@ impl Writer<'_> {
     /// A comment's note, rendered the first time it is needed. Its text is
     /// written apart from the document around its anchor: no tracked change
     /// or comment range there applies to it.
-    fn note(&mut self, id: &str) -> Option<String> {
+    fn note(&mut self, id: &str) -> Option<critic::Note> {
         if let Some(note) = self.notes.get(id) {
             return Some(note.clone());
         }
@@ -3559,36 +3560,58 @@ impl Writer<'_> {
         let revisions = std::mem::take(&mut self.revisions);
         let open_comments = std::mem::take(&mut self.open_comments);
         self.in_comment = true;
+        let paragraphs: Vec<_> = comment.children_named("p").collect();
+        let prose = self.note_text(&paragraphs, false);
+        let code = self.note_text(&paragraphs, true);
+        self.in_comment = false;
+        self.revisions = revisions;
+        self.open_comments = open_comments;
+        let note = if self.agent {
+            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
+                .then(|| comment.attr("date"))
+                .flatten();
+            let head = |text: String| {
+                let mut inner = agent::comment_head(
+                    id,
+                    comment.attr("author"),
+                    date,
+                    &self.handles,
+                    &self.threads,
+                );
+                inner.push_str(&text);
+                inner
+            };
+            critic::Note {
+                prose: head(prose),
+                code: head(code),
+            }
+        } else {
+            critic::Note {
+                prose: comment_note(comment.attr("author"), comment.attr("date"), &prose),
+                code: comment_note(comment.attr("author"), comment.attr("date"), &code),
+            }
+        };
+        self.notes.insert(id.to_string(), note.clone());
+        Some(note)
+    }
+
+    /// The note's paragraphs as one line of text. `code` renders them as
+    /// the code block the note is anchored in: a fence holds the text as
+    /// written and unwinds only the escape that form uses, so the note
+    /// round-trips there too (#518).
+    fn note_text(&mut self, paragraphs: &[&Element], code: bool) -> String {
         let mut parts = Vec::new();
-        for p in comment.children_named("p") {
-            let (inline, extra) = self.paragraph_inline(p);
+        for p in paragraphs {
+            let (mut inline, extra) = self.paragraph_inline(p);
+            if code {
+                inline.set_code_block();
+            }
             let mark = self.paragraph_mark(p).filter(|_| extra.is_empty());
             let inline = inline.into_inline();
             parts.push((inline.render(true), mark, inline.edges()));
             parts.extend(extra.into_iter().map(|block| (block, None, (false, false))));
         }
-        self.in_comment = false;
-        self.revisions = revisions;
-        self.open_comments = open_comments;
-        let text = critic::join_marked(parts, " ").replace('\n', " ");
-        let note = if self.agent {
-            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
-                .then(|| comment.attr("date"))
-                .flatten();
-            let mut inner = agent::comment_head(
-                id,
-                comment.attr("author"),
-                date,
-                &self.handles,
-                &self.threads,
-            );
-            inner.push_str(&text);
-            inner
-        } else {
-            comment_note(comment.attr("author"), comment.attr("date"), &text)
-        };
-        self.notes.insert(id.to_string(), note.clone());
-        Some(note)
+        critic::join_marked(parts, " ").replace('\n', " ")
     }
 }
 
