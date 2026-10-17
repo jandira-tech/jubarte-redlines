@@ -36,6 +36,13 @@ runs:
         echo "MBX_GC_MAX_TOTAL_SIZE=20GiB" >> "$GITHUB_ENV"
         mbx clean --under "$GITHUB_WORKSPACE"
         MBX_GC_MAX_TOTAL_SIZE=20GiB mbx gc
+    # Each of the 482 files in tests/ links its own binary, and with the dev
+    # profile's full debug info one job's target reached 38-72 GiB on
+    # 2026-10-17. Line tables keep file:line in backtraces at a fraction of
+    # the size and link time. Set here so every cached job shares the keys.
+    - name: build with line tables only
+      shell: bash
+      run: echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
     # The Cargo shim puts every `cargo` behind mbx, including the ones
     # scripts, maturin and cargo-llvm-cov start, so steps keep plain `cargo`.
     - name: route cargo through mbx
