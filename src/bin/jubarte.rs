@@ -2045,6 +2045,7 @@ fn run_convert_any(
                 job.options.comments == jubarte::convert::CommentPlacement::End,
                 "--move-comments",
             ),
+            (job.options.comment_notes, "--comment-notes"),
             (job.options.changed_only, "--changed-pages"),
             (job.pages.is_some(), "--pages"),
         ] {
