@@ -53,6 +53,9 @@ mod tracked;
 mod watermark;
 mod whole;
 
+/// Source-bound PlanV2 text-and-review requests and exact logical text codec.
+pub mod v2;
+
 /// Which content control a `fill_control` operation fills.
 pub use controls::ControlSelector;
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
