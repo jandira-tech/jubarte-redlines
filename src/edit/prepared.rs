@@ -15,9 +15,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::{
-    EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, Transaction,
-    check_update_fields, comment_holds_kept_text, comment_text_of, revision_counts, sections,
-    tracked, whole,
+    EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, StoryPart,
+    Transaction, check_update_fields, comment_holds_kept_text, comment_text_of, controls,
+    revision_counts, sections, tracked, whole,
 };
 use crate::comparer::WmlComparerSettings;
 use crate::inspect::{body_paragraph_nodes, project_paragraph, source_sha256};
@@ -204,10 +204,9 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
     }
     // A text edit that meant to change the text is an effect even when the
     // engine wrote nothing for it.
-    if expected_texts(tx, false)
-        .into_iter()
-        .any(|(p, e)| e.text != tx.projections[p].text)
-    {
+    if expected_texts(tx, false).into_iter().any(|(p, e)| {
+        matches!(e.scope, ExpectedScope::Paragraph) && e.text != tx.projections[p].text
+    }) {
         return Effect::Changed;
     }
     Effect::Unchanged
@@ -217,7 +216,11 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
 /// baseline discloses without blocking; an introduced blocking finding
 /// fails preparation.
 fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateChecks, EditError> {
-    let baseline = validate::validate(source).unwrap_or_default();
+    // A source the validator cannot read gives no trustworthy baseline:
+    // an empty one would call every candidate finding introduced, so with
+    // no baseline nothing is claimed introduced (the candidate's own
+    // validation below still gates what the edit produced).
+    let baseline = validate::validate(source).ok();
     let mut introduced = Vec::new();
     for bytes in [&result.clean, &result.redline] {
         let findings = validate::validate(bytes).map_err(|e| {
@@ -227,7 +230,10 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
                 format!("the serialized candidate cannot be validated: {e}"),
             )
         })?;
-        for finding in introduced_findings(&baseline, &findings) {
+        let Some(baseline) = &baseline else {
+            continue;
+        };
+        for finding in introduced_findings(baseline, &findings) {
             if blocking(&finding) {
                 return Err(err(
                     "CANDIDATE_INVALID",
@@ -247,7 +253,7 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
         }
     }
     Ok(CandidateChecks {
-        baseline,
+        baseline: baseline.unwrap_or_default(),
         introduced,
     })
 }
@@ -262,18 +268,34 @@ struct ExpectedText {
     /// Compare without U+FFFC placeholders: a `rewrite` keeps the
     /// paragraph's symbols wherever they sit.
     ignore_symbols: bool,
+    /// What `text` covers.
+    scope: ExpectedScope,
+}
+
+/// The part of a paragraph an [`ExpectedText`] covers.
+#[derive(Clone, Copy)]
+enum ExpectedScope {
+    /// The paragraph's projected text.
+    Paragraph,
+    /// The content of a content control: the value indexes
+    /// `Transaction::controls`. A `fill_control` replaces its control's
+    /// projected text, which the span composition cannot predict, so the
+    /// fill's own requested value is the postcondition instead.
+    Control(usize),
 }
 
 /// The exact text each paragraph must read as in the candidate: resolution
 /// composed over the base projection, or, under `exact`, the `rewrite`'s
 /// requested text itself — so a requested change the algorithm normalizes
 /// away is detected instead of passing as a no-op.
-fn expected_texts(tx: &Transaction<'_>, exact: bool) -> BTreeMap<usize, ExpectedText> {
-    /// `para` → (first op id, `(start, end, replacement)` spans).
-    type Spans = (String, Vec<(usize, usize, String)>);
+fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText)> {
+    /// `para` → (first op id, `(start, end, replacement, op)` spans).
+    type Spans = (String, Vec<(usize, usize, String, usize)>);
     let mut edits: BTreeMap<usize, Spans> = BTreeMap::new();
     let mut merges = Vec::new();
     let mut filled: HashSet<usize> = HashSet::new();
+    // `(para, control, requested text, op id)` — a fill's own postcondition.
+    let mut fills = Vec::new();
     for (op, resolved) in &tx.resolved {
         match resolved {
             Resolved::Text {
@@ -286,7 +308,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> BTreeMap<usize, Expected
                 let entry = edits
                     .entry(*para)
                     .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
-                entry.1.push((*start, *end, replacement.clone()));
+                entry.1.push((*start, *end, replacement.clone(), *op));
             }
             Resolved::MergeParagraphs {
                 para,
@@ -295,11 +317,21 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> BTreeMap<usize, Expected
             } => {
                 merges.push((*para, *next, separator.clone(), tx.outcomes[*op].id.clone()));
             }
-            // A fill replaces its control's projected text, which the
-            // composition cannot predict; the fill's own resolution already
-            // refused the bad cases, so these paragraphs carry no composed
-            // postcondition.
-            Resolved::FillControl { paragraphs, .. } => {
+            Resolved::FillControl {
+                control,
+                paragraphs,
+                value,
+                ..
+            } => {
+                let text = match value {
+                    controls::FillValue::Text(text) | controls::FillValue::Date { text, .. } => {
+                        text.clone()
+                    }
+                    controls::FillValue::Checked { glyph, .. } => glyph.to_string(),
+                };
+                for para in paragraphs {
+                    fills.push((*para, *control, text.clone(), tx.outcomes[*op].id.clone()));
+                }
                 filled.extend(paragraphs.iter().copied());
             }
             _ => {}
@@ -307,33 +339,59 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> BTreeMap<usize, Expected
     }
     let mut expected = BTreeMap::new();
     for (para, (op, mut spans)) in edits {
-        if exact && let Some(text) = rewrite_text(tx, para) {
-            expected.insert(
-                para,
+        let rewrite = if exact { rewrite_text(tx, para) } else { None };
+        let rewrite_op = rewrite.as_ref().map(|&(op, _)| op);
+        let base = &tx.projections[para].text;
+        spans.sort_by_key(|&(start, ..)| start);
+        let mut text = String::with_capacity(base.len());
+        // The rewrite's own spans alone, composed on the base: a rewrite
+        // beside co-resident edits must still realize its request, or the
+        // failure is the rewrite's, not the composed text's.
+        let mut own = String::with_capacity(base.len());
+        let mut at = 0;
+        let mut own_at = 0;
+        for (start, end, replacement, span_op) in spans {
+            text.push_str(&base[at..start]);
+            text.push_str(&replacement);
+            at = end;
+            if Some(span_op) == rewrite_op {
+                own.push_str(&base[own_at..start]);
+                own.push_str(&replacement);
+                own_at = end;
+            }
+        }
+        text.push_str(&base[at..]);
+        own.push_str(&base[own_at..]);
+        if let Some((rewrite_op, requested)) = rewrite {
+            let entry = if own == requested {
+                // The rewrite's own edits realize its request: the
+                // postcondition is the full composition — the request with
+                // every co-resident edit applied — never the bare request
+                // discarding a neighbour's effect.
                 ExpectedText {
                     op,
                     text,
                     ignore_symbols: true,
-                },
-            );
+                    scope: ExpectedScope::Paragraph,
+                }
+            } else {
+                ExpectedText {
+                    op: tx.outcomes[rewrite_op].id.clone(),
+                    text: requested,
+                    ignore_symbols: true,
+                    scope: ExpectedScope::Paragraph,
+                }
+            };
+            expected.insert(para, entry);
             continue;
         }
-        let base = &tx.projections[para].text;
-        spans.sort_by_key(|&(start, ..)| start);
-        let mut text = String::with_capacity(base.len());
-        let mut at = 0;
-        for (start, end, replacement) in spans {
-            text.push_str(&base[at..start]);
-            text.push_str(&replacement);
-            at = end;
-        }
-        text.push_str(&base[at..]);
         expected.insert(
             para,
             ExpectedText {
                 op,
                 text,
                 ignore_symbols: false,
+                scope: ExpectedScope::Paragraph,
             },
         );
     }
@@ -353,6 +411,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> BTreeMap<usize, Expected
                 op: tx.outcomes[i].id.clone(),
                 text: text.clone(),
                 ignore_symbols: true,
+                scope: ExpectedScope::Paragraph,
             });
         }
     }
@@ -371,6 +430,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> BTreeMap<usize, Expected
                 op,
                 text: format!("{first}{separator}{survivor}"),
                 ignore_symbols: false,
+                scope: ExpectedScope::Paragraph,
             },
         );
         expected.remove(&para);
@@ -378,13 +438,26 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> BTreeMap<usize, Expected
     for para in filled {
         expected.remove(&para);
     }
-    expected
+    let mut out: Vec<(usize, ExpectedText)> = expected.into_iter().collect();
+    for (para, control, text, op) in fills {
+        out.push((
+            para,
+            ExpectedText {
+                op,
+                text,
+                ignore_symbols: false,
+                scope: ExpectedScope::Control(control),
+            },
+        ));
+    }
+    out.sort_by_key(|(para, _)| *para);
+    out
 }
 
-/// The text a `rewrite` on `para` asks for, or `None` when no rewrite op
-/// resolved onto it (`cN.text` rewrites excluded: their target is the
-/// covered span, not the paragraph).
-fn rewrite_text(tx: &Transaction<'_>, para: usize) -> Option<String> {
+/// The first `rewrite` op on `para` and the text it asks for, or `None`
+/// when no rewrite op resolved onto it (`cN.text` rewrites excluded: their
+/// target is the covered span, not the paragraph).
+fn rewrite_text(tx: &Transaction<'_>, para: usize) -> Option<(usize, String)> {
     tx.plan.operations.iter().enumerate().find_map(|(i, op)| {
         let OperationKind::Rewrite {
             paragraph, text, ..
@@ -395,7 +468,7 @@ fn rewrite_text(tx: &Transaction<'_>, para: usize) -> Option<String> {
         if comment_text_of(paragraph).is_some() {
             return None;
         }
-        (outcome_paragraph(tx, i) == Some(para)).then(|| text.clone())
+        (outcome_paragraph(tx, i) == Some(para)).then(|| (i, text.clone()))
     })
 }
 
@@ -428,8 +501,12 @@ fn check_dom_realized(tx: &Transaction<'_>, exact: bool) -> Result<(), EditError
             // merge survivors are checked on their own entry.
             continue;
         }
-        let node = tx.paragraph_nodes[para];
-        let realized = project_paragraph(&tx.opened.dom, node).text;
+        let realized = match expected.scope {
+            ExpectedScope::Paragraph => {
+                project_paragraph(&tx.opened.dom, tx.paragraph_nodes[para]).text
+            }
+            ExpectedScope::Control(control) => control_text(&tx.opened.dom, tx.controls[control]),
+        };
         let (want, got) = if expected.ignore_symbols {
             (
                 expected.text.replace('\u{FFFC}', ""),
@@ -457,10 +534,18 @@ fn check_dom_realized(tx: &Transaction<'_>, exact: bool) -> Result<(), EditError
     Ok(())
 }
 
-/// The serialized body's paragraphs read exactly as the DOM they were
-/// written from: a character the writer dropped or restated is
-/// `POSTCONDITION_FAILED`.
-fn check_serialized_body(tx: &Transaction<'_>, clean: &[u8]) -> Result<(), EditError> {
+/// The projected text of a content control (`w:sdtContent` content).
+fn control_text(dom: &crate::xmllinq::Dom, sdt: crate::xmllinq::NodeId) -> String {
+    dom.element(sdt, &crate::namespaces::W::sdt_content())
+        .map(|content| project_paragraph(dom, content).text)
+        .unwrap_or_default()
+}
+
+/// The serialized paragraphs of every story the plan wrote read exactly
+/// as the DOM they were written from — the body always, plus each header,
+/// footer and notes story an operation touched: a character the writer
+/// dropped or restated is `POSTCONDITION_FAILED`.
+fn check_serialized_stories(tx: &Transaction<'_>, clean: &[u8]) -> Result<(), EditError> {
     let post = body_paragraph_nodes(&tx.opened.dom, tx.opened.body);
     let reopened = crate::inspect::paragraphs(clean)
         .map_err(|e| err("POSTCONDITION_FAILED", None, e.to_string()))?;
@@ -488,6 +573,52 @@ fn check_serialized_body(tx: &Transaction<'_>, clean: &[u8]) -> Result<(), EditE
             ));
         }
     }
+    let written: Vec<usize> = tx
+        .written_stories
+        .iter()
+        .copied()
+        .filter(|&story| story != 0)
+        .collect();
+    if written.is_empty() {
+        return Ok(());
+    }
+    let reopened = crate::inspect::stories(clean)
+        .map_err(|e| err("POSTCONDITION_FAILED", None, e.to_string()))?;
+    for story in written {
+        let StoryPart { part, root, .. } = &tx.stories[story];
+        let post = crate::inspect::story_paragraph_nodes(&tx.opened.dom, *root);
+        let Some(reopened) = reopened.iter().find(|s| &s.part == part) else {
+            return Err(err(
+                codes::POSTCONDITION_FAILED,
+                None,
+                format!("the serialized candidate lost the {part} story"),
+            ));
+        };
+        if reopened.paragraphs.len() != post.len() {
+            return Err(err(
+                codes::POSTCONDITION_FAILED,
+                None,
+                format!(
+                    "the serialized candidate holds {} {part} paragraphs, the prepared document {}",
+                    reopened.paragraphs.len(),
+                    post.len(),
+                ),
+            ));
+        }
+        for (node, paragraph) in post.iter().zip(&reopened.paragraphs) {
+            let expected = project_paragraph(&tx.opened.dom, *node).text;
+            if expected != paragraph.text {
+                return Err(err(
+                    codes::POSTCONDITION_FAILED,
+                    None,
+                    format!(
+                        "the serialized candidate's paragraph {} reads differently than prepared",
+                        paragraph.id,
+                    ),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -500,7 +631,7 @@ fn produce(tx: &mut Transaction<'_>, emit: bool) -> Result<EditResult, EditError
     // The candidate the DOM produced, checked before `update_fields`
     // (which legitimately rewrites it: filled TOC entries, NUMPAGES) or
     // the comparer ever sees it.
-    check_serialized_body(tx, &clean)?;
+    check_serialized_stories(tx, &clean)?;
     if plan.existing_revisions == ExistingRevisions::Keep
         || (emit && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
     {
@@ -586,4 +717,57 @@ fn produce(tx: &mut Transaction<'_>, emit: bool) -> Result<EditResult, EditError
 /// An [`EditError`] as `super::err` builds it.
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {
     super::err(code, operation, message)
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::super::{
+        EditReport, EditResult, ExistingRevisions, ParagraphDelta, deeper_boundary_fixture,
+    };
+    use super::*;
+
+    fn result_of(clean: Vec<u8>) -> EditResult {
+        EditResult {
+            clean: clean.clone(),
+            redline: clean,
+            report: EditReport {
+                schema_version: 1,
+                ok: true,
+                source_sha256: String::new(),
+                base_sha256: String::new(),
+                guarded: false,
+                author: "T".into(),
+                date: "2026-10-17T12:00:00Z".into(),
+                existing_revisions: ExistingRevisions::Refuse,
+                resolved_revisions: Default::default(),
+                paragraph_ids: Vec::new(),
+                paragraphs: ParagraphDelta::default(),
+                operations: Vec::new(),
+                comments_added: 0,
+                revisions: Default::default(),
+                fields: Vec::new(),
+            },
+        }
+    }
+
+    /// A source the full validator cannot read must not become an empty
+    /// baseline that calls every candidate finding introduced: with no
+    /// trustworthy baseline nothing is claimed introduced, while the
+    /// candidate's own validation still runs (fail-safe disclosure, not
+    /// a fabricated verdict).
+    #[test]
+    fn unvalidatable_source_never_claims_findings_introduced() {
+        let orphan = deeper_boundary_fixture::docx(
+            r#"<w:p><w:r><w:t>x</w:t></w:r><w:r><w:commentReference w:id="0"/></w:r></w:p>"#,
+        );
+        let findings = crate::validate::validate(&orphan).unwrap();
+        assert!(
+            findings.iter().any(|f| f.code == "COMMENT_ANCHOR_ORPHAN"),
+            "{findings:?}"
+        );
+        let checks = check_candidates(b"not a zip at all", &result_of(orphan)).unwrap();
+        assert!(checks.introduced.is_empty(), "{:?}", checks.introduced);
+        assert!(checks.baseline.is_empty());
+    }
 }

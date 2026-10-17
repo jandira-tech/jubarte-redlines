@@ -1081,23 +1081,26 @@ const COMMENT_FAMILY: [(&str, &str, &str); 4] = [
 
 const COMMENTS_PART: &str = "word/comments.xml";
 
-/// The comments part as Word finds it: the part the main part relates to
-/// with the comments relationship type (`word/comments.xml` is only the
+/// The comments part as Word finds it: the first relationship of the
+/// comments type whose target part exists (`word/comments.xml` is only the
 /// conventional name — Word follows the relationship, so a differently
 /// named part is the comments part), else the conventional name when it
-/// exists unlinked.
+/// exists unlinked. A relationship whose target is missing does not stop
+/// the walk: a later live relationship still names the part.
 fn comments_part(pkg: &PartFs, main: &str) -> Option<String> {
     if let Some(name) = pkg
         .read_rels_for(main)
         .into_iter()
         .flat_map(|relationships| &relationships.items)
-        .find(|r| r.rel_type == COMMENT_FAMILY[0].2 && r.target_mode.as_deref() != Some("External"))
+        .filter(|r| {
+            r.rel_type == COMMENT_FAMILY[0].2 && r.target_mode.as_deref() != Some("External")
+        })
         .map(|r| {
             pkg.resolve_rel_target(main, &r.target)
                 .trim_start_matches('/')
                 .to_string()
         })
-        .filter(|name| pkg.part_bytes(name).is_some())
+        .find(|name| pkg.part_bytes(name).is_some())
     {
         return Some(name);
     }
