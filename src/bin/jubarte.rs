@@ -779,6 +779,69 @@ fn run_read_tables(file: &Path) -> Result<(), String> {
     write_stdout(jubarte::inspect::tables_text(&tables))
 }
 
+/// `read --for-edit` (V2-10): the working document template/apply
+/// derive — exact working text, `before_sha256`, paired targets and
+/// per-operation readiness — as JSON on stdout or in a `.json` file.
+/// Usage failures exit 2, a refused basis 3, I/O 1.
+fn run_for_edit(
+    file: &Path,
+    args: &ReadArgs,
+    output: Option<&Path>,
+    force: bool,
+    quiet: bool,
+) -> Result<(), ConvertFailure> {
+    use jubarte::cli::{ExistingArg, TrackArg};
+    use jubarte::edit::ExistingRevisions;
+    use jubarte::edit::for_edit::{ForEditRequest, for_edit};
+    let request = ForEditRequest {
+        select: args.paragraphs.clone(),
+        head: args.head,
+        tail: args.tail,
+        find: args.find.clone(),
+        regex: args.regex.clone(),
+        ignore_case: args.ignore_case,
+        changed: args.changed,
+        by: args.by.clone(),
+        context: args.context.unwrap_or(0),
+        limit: args.limit,
+        max_chars: args.max_chars,
+        all: args.all,
+        cursor: args.cursor.clone(),
+        accept: args.accept_change.clone(),
+        reject: args.reject_change.clone(),
+        existing_revisions: args
+            .existing_revisions
+            .and_then(ExistingArg::plan_value)
+            .unwrap_or(ExistingRevisions::Keep),
+        track: args.track.unwrap_or(TrackArg::On) == TrackArg::On,
+    };
+    let refused = |e: jubarte::edit::EditError| {
+        let code = if e.code == "USAGE" {
+            EXIT_USAGE
+        } else {
+            EXIT_PLAN_REFUSED
+        };
+        ConvertFailure {
+            code,
+            message: format!("{e}"),
+        }
+    };
+    let bytes = read_word(file).map_err(ConvertFailure::from)?;
+    let result = for_edit(&bytes, &request).map_err(refused)?;
+    let json =
+        serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
+    if let Some(path) = output {
+        ensure_writable(path, force).map_err(ConvertFailure::from)?;
+        std::fs::write(path, &json)
+            .map_err(|e| ConvertFailure::from(format!("writing {}: {e}", path.display())))?;
+        if !quiet {
+            eprintln!("{}", wrote_line(path, Format::Json, json.len(), None));
+        }
+        return Ok(());
+    }
+    write_stdout(json).map_err(ConvertFailure::from)
+}
+
 /// `read`: the agent view, with page markers from the layout pass unless
 /// `--no-page-markers` skips it; or the snapshot (`--json`), or the grids
 /// (`--tables`). `-o FILE.md` writes the view, `-o FILE.json` the snapshot.
@@ -789,6 +852,9 @@ fn run_text(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
+    if args.for_edit {
+        return run_for_edit(file, args, output, force, quiet);
+    }
     if args.tables {
         return Ok(run_read_tables(file)?);
     }

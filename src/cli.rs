@@ -82,6 +82,7 @@ pub struct ReadArgs {
     #[arg(
         short = 'p',
         long = "paragraphs",
+        visible_alias = "select",
         value_name = "SPEC",
         conflicts_with_all = ["head", "tail"],
         help_heading = "Read options"
@@ -139,6 +140,116 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub tables: bool,
+    /// The working document template/apply derive, as JSON: source hash,
+    /// paired target ids, exact logical working text with `before_sha256`
+    /// and readiness per operation and range. The selection (-p/--select,
+    /// --head, --tail, --changed, --by, --find, --regex) resolves on the
+    /// original source and freezes before the decisions settle it.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "json", "tables", "track_changes", "comments", "dates", "no_page_markers",
+        ],
+        help_heading = "Read options"
+    )]
+    pub for_edit: bool,
+    /// --for-edit: the working view after accepting this revision
+    /// (repeatable; it does not modify FILE).
+    #[arg(
+        long,
+        value_name = "ID",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub accept_change: Vec<String>,
+    /// --for-edit: the working view after rejecting this revision
+    /// (repeatable; it does not modify FILE).
+    #[arg(
+        long,
+        value_name = "ID",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub reject_change: Vec<String>,
+    /// --for-edit: the remaining-revision policy of the working basis
+    /// (default keep, matching new plans).
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub existing_revisions: Option<ExistingArg>,
+    /// --for-edit: readiness for tracked (on, the default) or direct
+    /// (off) new edits.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "CHOICE",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub track: Option<TrackArg>,
+    /// --for-edit: literal search of the original final text.
+    #[arg(
+        long,
+        value_name = "TEXT",
+        requires = "for_edit",
+        conflicts_with = "regex",
+        help_heading = "Read options"
+    )]
+    pub find: Option<String>,
+    /// --for-edit: regex search of the original final text; conflicts
+    /// with --find.
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub regex: Option<String>,
+    /// --for-edit: case-insensitive --find/--regex.
+    #[arg(long, requires = "for_edit", help_heading = "Read options")]
+    pub ignore_case: bool,
+    /// --for-edit: this many read-only original-source neighbours around
+    /// each row.
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub context: Option<usize>,
+    /// --for-edit: primary records a page returns (default 100).
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub limit: Option<usize>,
+    /// --for-edit: the text budget a page shares (default 24000);
+    /// a truncated row's preview is never complete text.
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub max_chars: Option<usize>,
+    /// --for-edit: continue an earlier bounded query (bound to its
+    /// source, selection, filters and working basis).
+    #[arg(
+        long,
+        value_name = "TOKEN",
+        requires = "for_edit",
+        help_heading = "Read options"
+    )]
+    pub cursor: Option<String>,
+    /// --for-edit: no presentation limits (admission limits still hold).
+    #[arg(long, requires = "for_edit", help_heading = "Read options")]
+    pub all: bool,
 }
 
 /// `--comments` of `read`.
@@ -150,6 +261,17 @@ pub enum CommentsArg {
     Inline,
     /// Comments hidden; their ids on the id lines.
     None,
+}
+
+/// `--track` of `read --for-edit`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TrackArg {
+    /// The new edits are tracked.
+    #[default]
+    On,
+    /// The new edits land directly.
+    Off,
 }
 
 /// Options `edit` and `add` share.
@@ -2535,6 +2657,9 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
     let kind = output_format(Task::Read, Some(output), None)?.unwrap_or(Format::Md);
     if given("tables") {
         return Err("--tables prints the grids; drop -o".to_string());
+    }
+    if given("for_edit") && kind != Format::Json {
+        return Err("--for-edit prints JSON: name the file FILE.json or drop -o".to_string());
     }
     if given("json") && kind != Format::Json {
         return Err("--json writes the snapshot: name the file FILE.json".to_string());
