@@ -2557,3 +2557,32 @@ fn outline_levels_past_the_heading_styles_survive() {
     assert!(!document.contains("w:pStyle"), "{document}");
     assert_eq!(view, once);
 }
+
+/// An empty paragraph that states its own outline level keeps it: the
+/// pooling `<!-- p1-p2 empty -->` is for paragraphs with nothing to say,
+/// and a `w:outlineLvl` is something to say (#549).
+#[test]
+fn an_empty_paragraph_keeps_its_own_outline_level() {
+    let one = r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:p>"#;
+    let two = r#"<w:p><w:pPr><w:outlineLvl w:val="2"/></w:pPr></w:p>"#;
+    let body =
+        format!("<w:p><w:r><w:t>S.</w:t></w:r></w:p>{one}{two}<w:p><w:r><w:t>E.</w:t></w:r></w:p>");
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    assert!(view.contains("<!-- p1 outline 2, empty -->"), "{view}");
+    assert!(view.contains("<!-- p2 outline 3, empty -->"), "{view}");
+    assert!(!view.contains("p1-p2"), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert_eq!(
+        document.matches(r#"<w:outlineLvl w:val="1"/>"#).count(),
+        1,
+        "{document}"
+    );
+    assert_eq!(
+        document.matches(r#"<w:outlineLvl w:val="2"/>"#).count(),
+        1,
+        "{document}"
+    );
+    assert_eq!(view, once);
+}

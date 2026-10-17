@@ -2643,6 +2643,7 @@ impl Writer<'_> {
             if empty
                 && !numbered
                 && style.is_none()
+                && own_outline.is_none()
                 && comments.is_empty()
                 && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
