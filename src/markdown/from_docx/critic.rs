@@ -316,10 +316,20 @@ impl Critic {
         self
     }
 
-    /// True when there is no visible text and no comment.
+    /// True when there is no visible text and no comment. Underline,
+    /// highlight and strike show on a space, so a run of spaces carrying
+    /// one is visible: a signature line of underlined spaces is not a
+    /// blank paragraph. Other whitespace (a tab) renders to nothing the
+    /// marks could hold, so it stays blank.
     pub(crate) fn is_blank(&self) -> bool {
         self.tokens.iter().all(|token| match token {
-            Token::Leaf(Leaf::Text { text, .. } | Leaf::Raw(text)) => text.trim().is_empty(),
+            Token::Leaf(Leaf::Text { text, marks, .. }) => {
+                let marked = marks.underline || marks.highlight || marks.strike;
+                let spaces = !text.is_empty() && text.chars().all(|c| c == ' ');
+                let visible = !text.trim().is_empty() || (spaces && marked);
+                !visible
+            }
+            Token::Leaf(Leaf::Raw(text)) => text.trim().is_empty(),
             Token::Leaf(Leaf::Comment(_)) => false,
             Token::Open(..) | Token::Close(_) => true,
         })
