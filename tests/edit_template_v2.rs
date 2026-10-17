@@ -2025,3 +2025,771 @@ fn requested_containing_comment_survives_interior_paragraph_deletion() {
         }
     }
 }
+
+// V2-12: exercise generation and consumption through the production CLI.
+mod generator {
+    use super::*;
+    use std::{
+        path::Path,
+        process::{Command, Output},
+    };
+    const EXAMPLE: &[u8] = include_bytes!("fixtures/edit-v2/example-source.docx");
+    const DATE: &str = "2026-10-17T07:00:00Z";
+
+    fn cli(args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(args)
+            .output()
+            .unwrap()
+    }
+    fn value(output: &Output) -> Value {
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+            panic!(
+                "{e}: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    }
+    fn ok(output: &Output) -> Value {
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        value(output)
+    }
+    fn path(p: &Path) -> &str {
+        p.to_str().unwrap()
+    }
+    fn generate(source: &[u8], flags: &[&str]) -> Value {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, source).unwrap();
+        let mut args = vec![
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            "-",
+            "--datetime",
+            DATE,
+        ];
+        args.extend_from_slice(flags);
+        ok(&cli(&args))
+    }
+    fn saved(dir: &Path, source: &[u8]) -> (std::path::PathBuf, std::path::PathBuf, Value) {
+        let input = dir.join("source.docx");
+        let plan = dir.join("edits.json");
+        std::fs::write(&input, source).unwrap();
+        let receipt = ok(&cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&plan),
+            "--datetime",
+            DATE,
+            "--json",
+        ]));
+        (input, plan, receipt)
+    }
+    #[test]
+    fn generate_unchanged_plain_paragraph_matches_design() {
+        let actual = generate(EXAMPLE, &[]);
+        let expected: Value =
+            serde_json::from_str(include_str!("fixtures/edit-v2/template.generated.json")).unwrap();
+        assert_eq!(
+            actual, expected,
+            "fixed datetime and identical fixture bytes require exact design parity"
+        );
+        assert!(!actual.to_string().contains("run_operation"));
+    }
+    #[test]
+    fn generate_change_apply_inspect_documented_final_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let (input, plan_path, receipt) = saved(dir.path(), EXAMPLE);
+        assert_eq!(receipt["data"]["phase"], "generated");
+        assert_eq!(receipt["data"]["effect"], "not_applied");
+        assert_eq!(receipt["artifacts"][0]["media_role"], "plan");
+        assert_eq!(
+            receipt["artifacts"][0]["sha256"],
+            source_sha256(&std::fs::read(&plan_path).unwrap())
+        );
+        let mut plan: Value = serde_json::from_slice(&std::fs::read(&plan_path).unwrap()).unwrap();
+        plan["operations"][0]["text"] = json!("Payment is due within 45 days.");
+        plan["operations"][1]["text"] = json!("The fee is due; the charge is payable.");
+        let anchor = plan["operations"][0]["target"].clone();
+        plan["operations"].as_array_mut().unwrap().push(json!({"kind":"insert_paragraph", "target":anchor, "position":"after", "text":"Invoices must state the payment due date."}));
+        std::fs::write(&plan_path, plan.to_string()).unwrap();
+        let output = dir.path().join("revised.docx");
+        let result = ok(&cli(&[
+            "edit",
+            "apply",
+            path(&input),
+            "--plan",
+            path(&plan_path),
+            "-o",
+            path(&output),
+            "--json",
+        ]));
+        assert_eq!(result["data"]["effect"], "changed");
+        let bytes = std::fs::read(&output).unwrap();
+        assert_eq!(
+            texts(&bytes),
+            [
+                "Payment is due within 45 days.",
+                "Invoices must state the payment due date.",
+                "The fee is due; the charge is payable.",
+                "One  space.",
+                "Notice is due within 30\u{a0}days."
+            ]
+        );
+        assert_word_valid_package(&bytes);
+        let changes = list_changes(&bytes).unwrap();
+        assert!(!changes.is_empty());
+        assert!(
+            changes
+                .iter()
+                .all(|c| c.author.as_deref() == Some("Jubarte"))
+        );
+        let xml = part_string(&bytes, "word/document.xml").unwrap();
+        assert!(xml.contains("w:ins") && xml.contains("w:del"));
+        assert_eq!(std::fs::read(&input).unwrap(), EXAMPLE);
+        assert_eq!(
+            std::fs::read_to_string(&plan_path).unwrap(),
+            plan.to_string()
+        );
+    }
+    #[test]
+    fn unchanged_copy_and_require_change_are_distinct() {
+        let dir = tempfile::tempdir().unwrap();
+        let (input, plan, _) = saved(dir.path(), EXAMPLE);
+        let output = dir.path().join("copy.docx");
+        let args = [
+            "edit",
+            "apply",
+            path(&input),
+            "--plan",
+            path(&plan),
+            "-o",
+            path(&output),
+            "--json",
+        ];
+        let receipt = ok(&cli(&args));
+        assert_eq!(receipt["data"]["phase"], "committed");
+        assert_eq!(receipt["data"]["effect"], "unchanged");
+        assert_eq!(std::fs::read(&output).unwrap(), EXAMPLE);
+        std::fs::remove_file(&output).unwrap();
+        let mut required = args.to_vec();
+        required.push("--require-change");
+        let refusal = cli(&required);
+        assert!(!refusal.status.success());
+        assert_eq!(value(&refusal)["error"]["code"], "NO_CHANGES_REQUESTED");
+        assert!(!output.exists());
+    }
+    #[test]
+    fn selection_and_source_context_remain_bound_to_original() {
+        let plan = generate(EXAMPLE, &["--select", "p0,p0-p1", "--context", "1"]);
+        assert_eq!(plan["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(plan["scope"]["kind"], "selected");
+        assert_eq!(plan["scope"]["targets"], json!([p(0), p(1)]));
+        assert_eq!(plan["source_context"][0]["target"], p(2));
+        assert_eq!(plan["source_context"][0]["text"], "One  space.");
+        let mut q = plan.clone();
+        q["source_context"][0]["text"] = json!("Changed observation");
+        assert_eq!(run(EXAMPLE, &q).unwrap_err().code, "SOURCE_CONTEXT_CHANGED");
+        q.as_object_mut().unwrap().remove("source_context");
+        assert_eq!(run(EXAMPLE, &q).unwrap().redline, EXAMPLE);
+        // Supplied coverage cannot authorize a direct target outside scope.
+        q["coverage"]["eligible_paragraphs"] = json!(999);
+        q["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(replace(3, "Notice", "Wrong"));
+        assert_eq!(run(EXAMPLE, &q).unwrap_err().code, "OUT_OF_SCOPE");
+    }
+    #[test]
+    fn table_traversal_deduplicates_canonical_cell_paragraphs() {
+        let s = docx(
+            &(para("Before")
+                + r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>Cell A</w:t></w:r></w:p><w:p><w:r><w:t>Cell B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+                + &para("After")),
+        );
+        let q = generate(&s, &["--select", "t0,t0.row0.cell0,p1,p2"]);
+        assert_eq!(q["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(q["operations"][0]["target"], p(1));
+        assert_eq!(q["operations"][1]["target"], p(2));
+        let mut q = q;
+        q["operations"][1]["text"] = json!("New cell");
+        assert_eq!(
+            texts(&run(&s, &q).unwrap().clean),
+            ["Before", "Cell A", "New cell", "After"]
+        );
+    }
+    #[test]
+    fn conditional_rows_use_shared_readiness_and_mixed_executor() {
+        let s = source();
+        let dir = tempfile::tempdir().unwrap();
+        let (input, plan_path, receipt) = saved(dir.path(), &s);
+        assert_eq!(
+            receipt["data"]["generation"]["coverage"]["conditional_paragraphs"],
+            2
+        );
+        let mut q: Value = serde_json::from_slice(&std::fs::read(plan_path).unwrap()).unwrap();
+        assert_eq!(q["operations"][0]["text"], "Pay 45 days, Delaware law.");
+        q["operations"][0]["text"] = json!("Pay 60 days, Delaware law.");
+        q["coverage"]["conditional_paragraphs"] = json!(0);
+        assert!(
+            run(&s, &q).is_err(),
+            "coverage never frees a revision-blocked span"
+        );
+        let q = generate(&s, &["--select", "p0", "--accept-change", "r7"]);
+        assert_eq!(q["resolve_revisions"]["accept"], json!([r(7)]));
+        let mut q = q;
+        q["operations"].as_array_mut().unwrap().extend([replace(0,"45","60"), json!({"kind":"replace","target":p(0),"find":"Delaware","text":"New York","attached_comment":{"text":"Agreed"}})]);
+        let out = run(&s, &q).unwrap();
+        assert_eq!(texts(&out.clean)[0], "Pay 60 days, New York law.");
+        assert_eq!(
+            jubarte::comments::list_comments(&out.redline)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            list_changes(&out.redline)
+                .unwrap()
+                .iter()
+                .any(|c| c.id == "r8")
+        );
+        assert_eq!(std::fs::read(input).unwrap(), s);
+    }
+    #[test]
+    fn source_context_survives_changed_decisions_and_stale_baselines_refuse() {
+        let s = source();
+        let mut q = generate(&s, &["--find", "Last", "--context", "2"]);
+        q["resolve_revisions"]["reject"] = json!([r(7)]);
+        assert!(
+            run(&s, &q).is_ok(),
+            "original source observations do not become working observations"
+        );
+        let mut q = generate(&s, &["--select", "p0"]);
+        q["resolve_revisions"]["reject"] = json!([r(7)]);
+        assert_eq!(run(&s, &q).unwrap_err().code, "WORKING_BASE_CHANGED");
+    }
+    #[test]
+    fn unrepresentable_and_removed_rows_are_inventory_not_rewrites() {
+        let s = docx(
+            &(r#"<w:p><w:r><w:t>Text</w:t><w:drawing/></w:r></w:p>"#.to_string() + &para("Plain")),
+        );
+        let q = generate(&s, &[]);
+        assert_eq!(q["operations"].as_array().unwrap().len(), 1);
+        assert_eq!(q["coverage"]["opaque_regions"], 1);
+        assert!(
+            q["source_context"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["kind"] == "opaque" && c["target"] == p(0))
+        );
+        assert_eq!(run(&s, &q).unwrap().redline, s);
+        let only_opaque = generate(&s, &["--select", "p0"]);
+        assert_eq!(only_opaque["operations"], json!([]));
+        assert_eq!(only_opaque["coverage"]["eligible_paragraphs"], 0);
+        let s = docx(&format!(
+            "{}<w:p><w:pPr><w:rPr><w:del w:id=\"8\" {STAMP}/></w:rPr></w:pPr><w:del w:id=\"9\" {STAMP}><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>{}",
+            para("start"),
+            para("end")
+        ));
+        let q = generate(&s, &["--existing-revisions", "accept"]);
+        // The following paragraph loses its exact tag too: the strict V2-06
+        // correspondence excludes it even though its text still says "end".
+        assert_eq!(q["operations"].as_array().unwrap().len(), 1);
+        assert_eq!(q["operations"][0]["target"], p(0));
+        assert!(q["source_context"].as_array().unwrap().iter().any(|c| {
+            c["target"] == p(2)
+                && c["reason_codes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("merged"))
+        }));
+        assert!(q["source_context"].as_array().unwrap().iter().any(|c| {
+            c["target"] == p(1)
+                && c["reason_codes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("removed"))
+        }));
+    }
+    #[test]
+    fn plan_publication_receipt_dry_run_and_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let (input, plan, _) = saved(dir.path(), EXAMPLE);
+        let before = std::fs::read(&plan).unwrap();
+        let receipt = ok(&cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&plan),
+            "--dry-run",
+            "--json",
+        ]));
+        assert_eq!(receipt["data"]["phase"], "generated");
+        assert_eq!(receipt["data"]["effect"], "not_applied");
+        assert!(
+            serde_json::from_value::<jubarte::result::Envelope>(receipt.clone())
+                .unwrap()
+                .artifacts
+                .is_empty()
+        );
+        assert_eq!(std::fs::read(&plan).unwrap(), before);
+        let receipt = cli(&["edit", "template", path(&input), "--dry-run", "--jsonl"]);
+        assert!(receipt.status.success());
+        let stream =
+            jubarte::result::read_jsonl_stream(std::str::from_utf8(&receipt.stdout).unwrap())
+                .unwrap();
+        assert_eq!(
+            stream.terminal.data.unwrap().phase,
+            Some(jubarte::result::Phase::Generated)
+        );
+        let result = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&plan),
+            "--json",
+        ]);
+        assert_eq!(value(&result)["error"]["code"], "OUTPUT_EXISTS");
+        ok(&cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&plan),
+            "--force",
+            "--json",
+        ]));
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|e| {
+            !e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("jubarte-tmp")
+        }));
+    }
+    #[test]
+    fn empty_selection_and_output_alias_never_publish() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        let output = dir.path().join("plan.json");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--find",
+            "absent",
+            "-o",
+            path(&output),
+            "--json",
+        ]);
+        assert_eq!(value(&out)["error"]["code"], "EMPTY_SELECTION");
+        assert!(!output.exists());
+        let alias = dir.path().join("alias.json");
+        std::fs::hard_link(&input, &alias).unwrap();
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&alias),
+            "--force",
+            "--json",
+        ]);
+        assert_eq!(value(&out)["error"]["code"], "OUTPUT_ALIAS");
+        assert_eq!(std::fs::read(input).unwrap(), EXAMPLE);
+    }
+    #[test]
+    fn generator_output_forms_reject_activation_and_plan_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        for extra in [
+            vec!["-o", "-", "--json"],
+            vec!["-o", "-", "--jsonl"],
+            vec!["-o", "-", "--dry-run"],
+            vec!["--runs", "--json"],
+            vec!["--scaffold", "delete", "--json"],
+            vec!["--format", "jsonl", "--json"],
+            vec!["--json"],
+        ] {
+            let mut args = vec!["edit", "template", path(&input)];
+            args.extend(extra);
+            let out = cli(&args);
+            assert!(!out.status.success());
+            if args.contains(&"--json") || args.contains(&"--jsonl") {
+                let receipt = if args.contains(&"--jsonl") {
+                    serde_json::to_value(
+                        jubarte::result::read_jsonl_stream(
+                            std::str::from_utf8(&out.stdout).unwrap(),
+                        )
+                        .unwrap()
+                        .terminal,
+                    )
+                    .unwrap()
+                } else {
+                    value(&out)
+                };
+                assert_eq!(receipt["error"]["code"], "USAGE");
+            }
+        }
+    }
+    #[test]
+    fn generator_covers_all_stories_and_complete_long_selected_scope() {
+        use common::docx::{Part, docx_with_sect};
+        let s = docx_with_sect(
+            &para("Body"),
+            &[Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Header</w:t></w:r></w:p></w:hdr>"#,
+            }],
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+        );
+        let q = generate(&s, &[]);
+        assert_eq!(q["scope"], json!({"kind":"all"}));
+        assert_eq!(q["operations"].as_array().unwrap().len(), 2);
+        let q = generate(&s, &["--story", "header1"]);
+        assert_eq!(q["operations"].as_array().unwrap().len(), 1);
+        assert_eq!(q["operations"][0]["text"], "Header");
+        assert_eq!(q["scope"]["kind"], "selected");
+        assert_eq!(run(&s, &q).unwrap().redline, s);
+        let q = generate(&s, &["--select", "header1"]);
+        assert_eq!(q["operations"].as_array().unwrap().len(), 1);
+        let s = docx(
+            &(0..130)
+                .map(|n| para(&format!("{n}: {}", "words ".repeat(100))))
+                .collect::<String>(),
+        );
+        let q = generate(&s, &[]);
+        assert_eq!(
+            q["operations"].as_array().unwrap().len(),
+            130,
+            "read presentation limits cannot truncate a plan"
+        );
+        assert_eq!(
+            q["operations"][129]["text"],
+            format!("129: {}", "words ".repeat(100))
+        );
+        assert_eq!(q["coverage"]["traversal_complete"], true);
+    }
+    #[test]
+    fn design_edited_example_remains_valid_for_bound_source() {
+        for (sample, expected) in [
+            (
+                include_str!("fixtures/edit-v2/template.edited.json"),
+                "Payment is due within 45 days.",
+            ),
+            (
+                include_str!("fixtures/edit-v2/template.exact-replace.json"),
+                "Payment is due within 45 days.",
+            ),
+            (
+                include_str!("fixtures/edit-v2/template.with-comment.json"),
+                "Payment is due within 45 days.",
+            ),
+            (
+                include_str!("fixtures/edit-v2/template.composed.json"),
+                "Payment is due within 30 days.",
+            ),
+        ] {
+            let q: Value = serde_json::from_str(sample).unwrap();
+            let output = run(EXAMPLE, &q).unwrap();
+            assert_eq!(texts(&output.clean)[0], expected);
+            assert_word_valid_package(&output.redline);
+        }
+    }
+    #[test]
+    fn merged_selection_is_read_only_and_removed_rows_request_no_mutation() {
+        let s = merged_source();
+        let q = generate(&s, &["--select", "p0,p1", "--accept-change", "r1"]);
+        assert_eq!(q["operations"], json!([]));
+        assert_eq!(q["coverage"]["context_paragraphs"], 2);
+        assert!(q["source_context"].as_array().unwrap().iter().any(|c| {
+            c["reason_codes"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("merged"))
+        }));
+        let mut q = generate(EXAMPLE, &[]);
+        q["operations"] = json!([]);
+        assert_eq!(run(EXAMPLE, &q).unwrap().redline, EXAMPLE);
+        let mut q = generate(EXAMPLE, &["--select", "p0"]);
+        q["operations"][0]["text"] = json!("");
+        let out = run(EXAMPLE, &q).unwrap();
+        assert_eq!(texts(&out.clean).len(), 4);
+        assert_eq!(texts(&out.clean)[0], "");
+    }
+    #[test]
+    fn opaque_neighbour_context_is_not_an_exact_text_observation() {
+        let s = docx(
+            &(r#"<w:p><w:r><w:t>Opaque</w:t><w:drawing/></w:r></w:p>"#.to_string()
+                + &para("Selected")),
+        );
+        let q = generate(&s, &["--select", "p1", "--context", "1"]);
+        assert_eq!(
+            run(&s, &q).unwrap().redline,
+            s,
+            "a generated plan must verify all its own observations"
+        );
+        assert!(
+            q["source_context"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["target"] == p(0) && c["kind"] == "opaque" && c.get("text").is_none())
+        );
+        assert_eq!(q["coverage"]["opaque_regions"], 1);
+    }
+    #[test]
+    fn repeated_authors_union_original_marks_before_settlement() {
+        let s = docx(&format!(
+            "<w:p>{}</w:p><w:p>{}</w:p>{}",
+            insertion(7, "Other"),
+            insertion(8, "Third").replace("Other", "Third"),
+            para("Plain")
+        ));
+        let q = generate(
+            &s,
+            &[
+                "--changed",
+                "--by",
+                "Other",
+                "--by",
+                "Third",
+                "--existing-revisions",
+                "accept",
+            ],
+        );
+        assert_eq!(q["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(q["scope"]["targets"], json!([p(0), p(1)]));
+        assert_eq!(q["coverage"]["conditional_paragraphs"], 0);
+    }
+    #[test]
+    fn original_comment_bodies_are_inventory_and_never_mutations() {
+        let s = comment_source();
+        let q = generate(&s, &[]);
+        let context = q["source_context"].as_array().unwrap();
+        let comment = context
+            .iter()
+            .find(|c| c["kind"] == "comment")
+            .expect("existing comments are source context");
+        assert_eq!(
+            comment["text"],
+            jubarte::comments::list_comments(&s).unwrap()[0].text
+        );
+        assert_eq!(run(&s, &q).unwrap().redline, s);
+        let mut changed = q.clone();
+        changed["source_context"][0]["text"] = json!("Changed comment observation");
+        assert_eq!(
+            run(&s, &changed).unwrap_err().code,
+            "SOURCE_CONTEXT_CHANGED"
+        );
+        let mut removed = q;
+        removed.as_object_mut().unwrap().remove("source_context");
+        assert_eq!(run(&s, &removed).unwrap().redline, s);
+    }
+    #[test]
+    fn generated_baselines_are_source_specific_and_readiness_is_not_plan_authority() {
+        let s = docx(&para("Different source.\t\nExact whitespace."));
+        let mut q = generate(&s, &[]);
+        assert_eq!(
+            q["operations"][0]["text"],
+            "Different source.\t\nExact whitespace."
+        );
+        assert_eq!(
+            q["operations"][0]["before_sha256"],
+            source_sha256("Different source.\t\nExact whitespace.".as_bytes())
+        );
+        assert_eq!(q["source"]["sha256"], source_sha256(&s));
+        assert_eq!(run(&s, &q).unwrap().redline, s);
+        q["operations"][0]["readiness"] = json!({"status":"available", "editable":true});
+        assert_eq!(
+            PlanV2::from_json(&q.to_string()).unwrap_err().code,
+            "INVALID_PLAN"
+        );
+    }
+    #[test]
+    fn human_receipt_report_and_quiet_generation_keep_protocols_distinct() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        let output = dir.path().join("plan.json");
+        let report = dir.path().join("receipt.json");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&output),
+            "--report",
+            path(&report),
+        ]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert!(text.contains("4 rows, 0 conditional"));
+        assert!(
+            !text.contains("Payment is due"),
+            "receipt must not dump the plan"
+        );
+        let receipt: Value = serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+        assert_eq!(receipt["data"]["effect"], "not_applied");
+        assert_eq!(
+            receipt["artifacts"][0]["sha256"],
+            source_sha256(&std::fs::read(&output).unwrap())
+        );
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&output),
+            "--force",
+            "--quiet",
+        ]);
+        assert!(out.status.success());
+        assert!(out.stdout.is_empty());
+        let out = cli(&["edit", "template", path(&input), "-o", "-", "--quiet"]);
+        assert_eq!(ok(&out)["operations"].as_array().unwrap().len(), 4);
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--dry-run",
+            "--report",
+            path(&report),
+            "--json",
+        ]);
+        assert!(out.status.success());
+        assert_eq!(value(&out)["data"]["phase"], "generated");
+        let stale = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&output),
+            "--force",
+            "--expect-sha256",
+            &"0".repeat(64),
+            "--json",
+        ]);
+        assert_eq!(value(&stale)["error"]["code"], "STALE_SOURCE");
+        let alias = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&output),
+            "--report",
+            path(&output),
+            "--json",
+        ]);
+        assert_eq!(value(&alias)["error"]["code"], "OUTPUT_ALIAS");
+        let missing = cli(&[
+            "edit",
+            "template",
+            "/nonexistent/v2-12.docx",
+            "--dry-run",
+            "--json",
+        ]);
+        assert_eq!(value(&missing)["error"]["code"], "IO_ERROR");
+    }
+
+    #[test]
+    fn generated_revision_pairs_are_resolved_not_guessed() {
+        let s = source();
+        let short = generate(&s, &["--accept-change", "r7", "--track", "off"]);
+        let long = generate(
+            &s,
+            &["--accept-change", "document.w:ins.w:id.7", "--track", "off"],
+        );
+        assert_eq!(short, long);
+        assert_eq!(short["policy"]["track"], "off");
+        assert_eq!(texts(&run(&s, &short).unwrap().redline), texts(&s));
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, &s).unwrap();
+        for (id, code) in [("r999", "INVALID_TARGET"), ("ps0", "INVALID_ID")] {
+            let out = cli(&[
+                "edit",
+                "template",
+                path(&input),
+                "--accept-change",
+                id,
+                "--dry-run",
+                "--json",
+            ]);
+            assert_eq!(value(&out)["error"]["code"], code);
+        }
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--existing-revisions",
+            "refuse",
+            "--dry-run",
+            "--json",
+        ]);
+        assert_eq!(value(&out)["error"]["code"], "EXISTING_REVISIONS");
+    }
+    #[test]
+    fn raw_plan_stdout_and_explicit_report_have_separate_destinations() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        let report = dir.path().join("receipt.json");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            "-",
+            "--report",
+            path(&report),
+        ]);
+        let plan = ok(&out);
+        assert_eq!(plan["operations"].as_array().unwrap().len(), 4);
+        let receipt: Value = serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+        assert_eq!(receipt["data"]["phase"], "generated");
+        assert_eq!(receipt["data"]["effect"], "not_applied");
+        assert!(
+            receipt.get("artifacts").is_none(),
+            "stdout is not a committed plan file"
+        );
+    }
+    #[test]
+    fn compact_receipt_bounds_blocker_references_and_discloses_truncation() {
+        let s = docx(&format!(
+            "<w:p>{}</w:p>",
+            (0..20).map(|n| insertion(n, "x")).collect::<String>()
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        let (_, _, receipt) = saved(dir.path(), &s);
+        let facts = &receipt["data"]["generation"];
+        let row = &facts["working_readiness"][0];
+        assert_eq!(row["blocker_count"], 20);
+        assert_eq!(row["blockers"].as_array().unwrap().len(), 8);
+        assert!(row["readiness"].as_array().unwrap().iter().all(|r| {
+            r.get("blockers")
+                .is_none_or(|b| b.as_array().unwrap().len() <= 8)
+        }));
+        assert_eq!(facts["readiness_complete"], false);
+    }
+}

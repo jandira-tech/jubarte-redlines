@@ -599,6 +599,9 @@ pub struct ResultData {
     pub counts: Counts,
     /// Verification block.
     pub verification: Verification,
+    /// Generator-only coverage and bounded working readiness; never plan authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<serde_json::Value>,
 }
 
 /// Invalid combinations of (phase, effect, predicted_effect).
@@ -650,6 +653,7 @@ impl ResultData {
             predicted_effect: None,
             counts: Counts::default(),
             verification: Verification::default(),
+            generation: None,
         }
     }
 
@@ -665,6 +669,7 @@ impl ResultData {
             predicted_effect: None,
             counts: Counts::default(),
             verification: Verification::default(),
+            generation: None,
         }
     }
 

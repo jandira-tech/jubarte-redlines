@@ -6,13 +6,12 @@
 
 use super::{
     ExistingRevisions,
-    for_edit::{ForEditRequest, for_edit, revision_pair},
+    for_edit::{ForEditRequest, for_edit},
     v2::{self, PlanV2, Target},
 };
 use crate::cli::edit_actions::EditAction;
-use crate::inspect::{Opened, source_sha256};
+use crate::inspect::source_sha256;
 use crate::result::Error;
-use crate::xmllinq::Dom;
 
 fn refusal(code: &str, message: impl Into<String>) -> Box<Error> {
     Box::new(Error::new(code).with_message(message))
@@ -27,66 +26,6 @@ fn pair(p: &super::for_edit::TargetPair) -> Target {
         short_id: p.short_id.clone(),
         long_id: p.long_id.clone(),
     }
-}
-
-/// Freeze original-source revision references using the same ID codec as apply.
-fn decisions(source: &[u8], ids: &[String]) -> Result<Vec<Target>, Box<Error>> {
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let opened = Opened::open(source).map_err(|e| refusal("INVALID_DOCUMENT", e.to_string()))?;
-    let mut inventory = Vec::new();
-    for (part, _) in crate::revision_processor::revision_bearing_parts(&opened.pkg) {
-        let Some(xml) = opened.pkg.part_string(&part) else {
-            continue;
-        };
-        let mut dom = Dom::new();
-        let document = dom.parse_xdocument(&xml);
-        let Some(root) = dom.root(document) else {
-            continue;
-        };
-        for node in dom.descendants(root, None) {
-            if dom.name(node).is_some_and(|n| {
-                crate::revision_processor::tracked_revisions_elements().contains(&n)
-            }) {
-                let stem = crate::ids::part_story(&part);
-                let story = if part == opened.main { "body" } else { &stem };
-                inventory.push(revision_pair(&dom, node, story, &part));
-            }
-        }
-    }
-    let mut selected = Vec::new();
-    for id in ids {
-        // A supplied long ID is resolved by exact identity, never reconstructed.
-        let hits: Vec<_> = if id.contains(':') && inventory.iter().any(|p| p.long_id == *id) {
-            inventory.iter().filter(|p| p.long_id == *id).collect()
-        } else {
-            let parsed = crate::ids::parse_change_ids(id)
-                .map_err(|e| refusal("INVALID_ID", e.to_string()))?;
-            let mut hits = Vec::new();
-            for cid in parsed {
-                let found: Vec<_> = inventory
-                    .iter()
-                    .filter(|p| p.short_id == cid.short())
-                    .collect();
-                if found.len() != 1 {
-                    return Err(refusal(
-                        "INVALID_TARGET",
-                        format!("revision {id} does not identify one original-source carrier"),
-                    ));
-                }
-                hits.extend(found);
-            }
-            hits
-        };
-        for hit in hits {
-            let target = pair(hit);
-            if !selected.contains(&target) {
-                selected.push(target);
-            }
-        }
-    }
-    Ok(selected)
 }
 
 /// Compile against exact working text, preserving supplied payload characters.
@@ -109,8 +48,10 @@ pub fn compile(
         "reject" => ExistingRevisions::Reject,
         _ => ExistingRevisions::Refuse,
     };
-    let accept = decisions(source, &inline.accept_change)?;
-    let reject = decisions(source, &inline.reject_change)?;
+    let accept =
+        super::source_refs::decisions(source, &inline.accept_change).map_err(edit_error)?;
+    let reject =
+        super::source_refs::decisions(source, &inline.reject_change).map_err(edit_error)?;
     // Select all original identities, then match anchors in their working text.
     let view = for_edit(
         source,

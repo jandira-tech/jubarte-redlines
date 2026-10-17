@@ -37,6 +37,8 @@ use super::{
 pub struct ForEditRequest {
     /// Printed IDs or closed ranges (`p5`, `p4-p7`, `t0`), resolved on S.
     pub select: Option<String>,
+    /// Original story ID, or all (the default).
+    pub story: Option<String>,
     /// First N body paragraphs.
     pub head: Option<usize>,
     /// Last N body paragraphs.
@@ -51,6 +53,8 @@ pub struct ForEditRequest {
     pub changed: bool,
     /// `--changed` author filter (a handle or full name).
     pub by: Option<String>,
+    /// Additional author filters, unioned with by for original marks.
+    pub by_any: Vec<String>,
     /// Read-only original-S neighbours around matches.
     pub context: usize,
     /// Primary records per page (default 100); ignored under `all`.
@@ -76,6 +80,7 @@ impl Default for ForEditRequest {
     fn default() -> Self {
         Self {
             select: None,
+            story: None,
             head: None,
             tail: None,
             find: None,
@@ -83,6 +88,7 @@ impl Default for ForEditRequest {
             ignore_case: false,
             changed: false,
             by: None,
+            by_any: Vec::new(),
             context: 0,
             limit: None,
             max_chars: None,
@@ -417,6 +423,7 @@ fn basis_digest(source: &[u8], request: &ForEditRequest, selection: &Selection) 
         "accept": request.accept,
         "reject": request.reject,
         "select": request.select,
+        "story": request.story,
         "head": request.head,
         "tail": request.tail,
         "find": request.find,
@@ -424,6 +431,7 @@ fn basis_digest(source: &[u8], request: &ForEditRequest, selection: &Selection) 
         "ignore_case": request.ignore_case,
         "changed": request.changed,
         "by": request.by,
+        "by_any": request.by_any,
         "context": request.context,
         "frozen": selection.selected,
     });
@@ -497,8 +505,27 @@ impl Selection {
         let total = s_loaded.paragraph_nodes.len();
         let mut filters: Vec<(&'static str, HashSet<usize>)> = Vec::new();
 
+        if let Some(story) = request.story.as_deref().filter(|s| *s != "all") {
+            let si = s_loaded
+                .stories
+                .iter()
+                .position(|s| s.id == story)
+                .ok_or_else(|| {
+                    super::err("USAGE", None, format!("unknown source story {story}"))
+                })?;
+            filters.push((
+                "story",
+                s_loaded
+                    .paragraph_story
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pair)| pair.0 == si)
+                    .map(|(g, _)| g)
+                    .collect(),
+            ));
+        }
         if let Some(spec) = &request.select {
-            filters.push(("ids", id_selection(spec, s_opened, s_loaded)?));
+            filters.push(("ids", id_selection(spec, source)?));
         }
         if let Some(head) = request.head {
             filters.push((
@@ -575,78 +602,8 @@ impl Selection {
 
 /// The paragraphs `spec` names: `pN`/`pN-pM` closed ranges and `tN`
 /// whole tables, against the body's own numbering on S.
-fn id_selection(
-    spec: &str,
-    s_opened: &Opened,
-    s_loaded: &Loaded,
-) -> Result<HashSet<usize>, EditError> {
-    let usage = |message: String| super::err("USAGE", None, message);
-    let select = crate::markdown::Select::parse(spec).map_err(usage)?;
-    let crate::markdown::Select::Picks(picks) = select else {
-        return Err(super::err("USAGE", None, "unsupported selection"));
-    };
-    let body: Vec<usize> = s_loaded
-        .paragraph_story
-        .iter()
-        .enumerate()
-        .filter(|(_, pair)| pair.0 == 0)
-        .map(|(g, _)| g)
-        .collect();
-    let mut out = HashSet::new();
-    for pick in picks {
-        match pick {
-            crate::markdown::Pick::Paragraphs { from, to } => {
-                let to = to.unwrap_or(body.len().saturating_sub(1));
-                if from >= body.len() || to >= body.len() {
-                    return Err(super::err(
-                        "USAGE",
-                        None,
-                        format!(
-                            "p{} is past the last paragraph p{}",
-                            from.max(to),
-                            body.len().saturating_sub(1)
-                        ),
-                    ));
-                }
-                out.extend(body[from..=to].iter().copied());
-            }
-            crate::markdown::Pick::Table(t) => {
-                let tables: Vec<NodeId> = s_opened
-                    .dom
-                    .descendants(s_opened.body, Some(&W::tbl()))
-                    .into_iter()
-                    .filter(|&tbl| {
-                        !s_opened
-                            .dom
-                            .ancestors(tbl, None)
-                            .iter()
-                            .any(|&a| s_opened.dom.name_is(a, &W::tbl()))
-                    })
-                    .collect();
-                let Some(&table) = tables.get(t) else {
-                    return Err(super::err(
-                        "USAGE",
-                        None,
-                        format!("t{t} is not a table of this document"),
-                    ));
-                };
-                let inside: HashSet<NodeId> = s_opened
-                    .dom
-                    .descendants(table, Some(&W::p()))
-                    .into_iter()
-                    .collect();
-                out.extend(
-                    s_loaded
-                        .paragraph_nodes
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, p)| inside.contains(p))
-                        .map(|(g, _)| g),
-                );
-            }
-        }
-    }
-    Ok(out)
+fn id_selection(spec: &str, source: &[u8]) -> Result<HashSet<usize>, EditError> {
+    super::v2_apply::SourceModel::new(source)?.selected_paragraphs(spec)
 }
 
 /// The paragraphs whose original final logical text the search matches.
@@ -708,20 +665,27 @@ fn changed_selection(
     let global = |at: (usize, usize)| -> Option<usize> {
         s_loaded.paragraph_story.iter().position(|&pair| pair == at)
     };
-    let author = request.by.as_deref().map(str::trim);
+    let authors: Vec<&str> = request
+        .by
+        .iter()
+        .chain(&request.by_any)
+        .map(|a| a.trim())
+        .collect();
     let by = |name: Option<&str>, initials: Option<&str>| -> bool {
-        let Some(want) = author else {
+        if authors.is_empty() {
             return true;
-        };
-        let want = want.strip_prefix('@').unwrap_or(want);
-        name.is_some_and(|a| a == want)
-            || initials.is_some_and(|i| i == want)
-            || name.is_some_and(|a| {
-                a.split_whitespace()
-                    .filter_map(|w| w.chars().next())
-                    .collect::<String>()
-                    .eq_ignore_ascii_case(want)
-            })
+        }
+        authors.iter().any(|want| {
+            let want = want.strip_prefix('@').unwrap_or(want);
+            name.is_some_and(|a| a == want)
+                || initials.is_some_and(|i| i == want)
+                || name.is_some_and(|a| {
+                    a.split_whitespace()
+                        .filter_map(|w| w.chars().next())
+                        .collect::<String>()
+                        .eq_ignore_ascii_case(want)
+                })
+        })
     };
     let mut out = HashSet::new();
     let changes = crate::changes::list_changes(source)
@@ -1507,11 +1471,16 @@ fn context_of(
         let text = project_paragraph(&s_opened.dom, node).text;
         let value = TextValue::bounded(&text, *budget);
         *budget = budget.saturating_sub(value.chars());
+        let representable = v2::logical_text(&s_opened.dom, node).is_ok();
         out.push(SourceContextRow {
-            kind: "paragraph".to_string(),
+            kind: if representable { "paragraph" } else { "opaque" }.to_string(),
             target: native.pair(&s_opened.dom, story, part, &short_id, node),
             value,
-            reason_codes: vec!["context".to_string()],
+            reason_codes: if representable {
+                vec!["context".to_string()]
+            } else {
+                vec!["context".to_string(), "unsupported_text_codec".to_string()]
+            },
         });
     }
     out
@@ -1531,7 +1500,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
     if request.find.is_some() && request.regex.is_some() {
         return Err(super::err("USAGE", None, "--find and --regex conflict"));
     }
-    if request.by.is_some() && !request.changed {
+    if (request.by.is_some() || !request.by_any.is_empty()) && !request.changed {
         return Err(super::err("USAGE", None, "--by needs --changed"));
     }
     let probe = Opened::open(source).map_err(super::open_error)?;
@@ -1574,7 +1543,13 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         let ids: Vec<String> = stories.iter().map(|s| s.id.clone()).collect();
         let origin = Origin::build(source, &plan, &ids, &paragraph_story)?;
         (0..s_loaded.paragraph_nodes.len())
-            .map(|g| origin.fate(g))
+            .map(|g| match origin.exact(g) {
+                Ok(post) => Fate::Kept(post),
+                Err(_) => match origin.fate(g) {
+                    Fate::Kept(post) | Fate::Merged(post) => Fate::Merged(post),
+                    Fate::Gone => Fate::Gone,
+                },
+            })
             .collect()
     } else {
         (0..s_loaded.paragraph_nodes.len())

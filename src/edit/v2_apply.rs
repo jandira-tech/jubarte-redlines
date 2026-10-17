@@ -259,7 +259,7 @@ fn has_history(bytes: &[u8]) -> Result<bool, EditError> {
     Ok(false)
 }
 
-struct SourceModel {
+pub(super) struct SourceModel {
     opened: Opened,
     loaded: Loaded,
     changes: Vec<Change>,
@@ -362,7 +362,7 @@ struct Mapped {
     paragraphs: Vec<usize>,
 }
 impl SourceModel {
-    fn new(bytes: &[u8]) -> Result<Self, EditError> {
+    pub(super) fn new(bytes: &[u8]) -> Result<Self, EditError> {
         let mut opened = Opened::open(bytes).map_err(open_error)?;
         let loaded = load_stories(&mut opened)?;
         let changes = changes(bytes)?;
@@ -439,46 +439,8 @@ impl SourceModel {
                     .iter()
                     .position(|s| s.id == story)
                     .ok_or_else(bad)?;
-                let root = self.loaded.stories[si].root;
                 let dom = &self.opened.dom;
-                let container = match path.as_slice() {
-                    [Step::Table(n), rest @ ..]
-                        if rest.is_empty()
-                            || matches!(rest, [Step::Row(_)] | [Step::Row(_), Step::Cell(_)]) =>
-                    {
-                        let tables = dom
-                            .descendants(root, Some(&W::tbl()))
-                            .into_iter()
-                            .filter(|&t| {
-                                dom.ancestors(t, Some(&W::tc())).is_empty()
-                                    && !crate::inspect::in_text_box(dom, t)
-                            })
-                            .collect::<Vec<_>>();
-                        let mut node = *tables.get(*n).ok_or_else(bad)?;
-                        for step in rest {
-                            let (name, n) = match step {
-                                Step::Row(n) => (W::name("tr"), n),
-                                Step::Cell(n) => (W::tc(), n),
-                                _ => return Err(bad()),
-                            };
-                            node = *dom.elements(node, Some(&name)).get(*n).ok_or_else(bad)?;
-                        }
-                        Some(node)
-                    }
-                    path if path
-                        .last()
-                        .is_some_and(|step| matches!(step, Step::ContentControl(_)))
-                        && story == "body" =>
-                    {
-                        let records = crate::inspect::collect_controls(dom, root);
-                        let nodes = crate::inspect::body_control_nodes(dom, root);
-                        records
-                            .iter()
-                            .position(|c| c.id == target.short_id)
-                            .and_then(|n| nodes.get(n).copied())
-                    }
-                    _ => None,
-                };
+                let container = self.container_node(si, path, &target.short_id);
                 if let Some(node) = container {
                     self.check_pair(target, si, node, None)?;
                     let descendants = dom.descendants(node, Some(&W::p()));
@@ -520,13 +482,61 @@ impl SourceModel {
             _ => Err(bad()),
         }
     }
-    fn check_pair(
+    fn container_node(
         &self,
-        target: &Target,
+        si: usize,
+        path: &[Step],
+        short_id: &str,
+    ) -> Option<crate::xmllinq::NodeId> {
+        let root = self.loaded.stories[si].root;
+        let dom = &self.opened.dom;
+        match path {
+            [Step::Table(n), rest @ ..]
+                if rest.is_empty()
+                    || matches!(rest, [Step::Row(_)] | [Step::Row(_), Step::Cell(_)]) =>
+            {
+                let tables = dom
+                    .descendants(root, Some(&W::tbl()))
+                    .into_iter()
+                    .filter(|&t| {
+                        dom.ancestors(t, Some(&W::tc())).is_empty()
+                            && !crate::inspect::in_text_box(dom, t)
+                    })
+                    .collect::<Vec<_>>();
+                let mut node = *tables.get(*n)?;
+                for step in rest {
+                    let (name, n) = match step {
+                        Step::Row(n) => (W::name("tr"), n),
+                        Step::Cell(n) => (W::tc(), n),
+                        _ => return None,
+                    };
+                    node = *dom.elements(node, Some(&name)).get(*n)?;
+                }
+                Some(node)
+            }
+            path if path
+                .last()
+                .is_some_and(|step| matches!(step, Step::ContentControl(_)))
+                && self.loaded.stories[si].id == "body" =>
+            {
+                let records = crate::inspect::collect_controls(dom, root);
+                let nodes = crate::inspect::body_control_nodes(dom, root);
+                records
+                    .iter()
+                    .position(|c| c.id == short_id)
+                    .and_then(|n| nodes.get(n).copied())
+            }
+            _ => None,
+        }
+    }
+
+    fn pair(
+        &self,
+        short_id: &str,
         story: usize,
-        node: NodeId,
+        node: crate::xmllinq::NodeId,
         canonical: Option<&str>,
-    ) -> Result<(), EditError> {
+    ) -> Result<Target, EditError> {
         let dom = &self.opened.dom;
         let name = dom
             .name(node)
@@ -537,15 +547,128 @@ impl SourceModel {
         let (attribute, value) = if unique {
             ("w14:paraId", encode(key.unwrap_or_default()))
         } else {
-            ("j:short", encode(canonical.unwrap_or(&target.short_id)))
+            ("j:short", encode(canonical.unwrap_or(short_id)))
         };
-        let expected = format!(
+        let long_id = format!(
             "{}.w:{}.{}.{}",
             part_token(&self.loaded.stories[story].part),
             name.local_name(),
             attribute,
             value
         );
+        Ok(Target {
+            short_id: short_id.to_string(),
+            long_id,
+        })
+    }
+
+    /// Resolve a printed source selector through the same compiled entity and
+    /// descendant resolver used by apply's scope enforcement.
+    pub(super) fn selected_paragraphs(
+        &self,
+        spec: &str,
+    ) -> Result<std::collections::HashSet<usize>, EditError> {
+        let mut out = std::collections::HashSet::new();
+        for item in spec.split(',').map(str::trim) {
+            let parsed = item.parse::<ShortId>().map_err(|_| {
+                err(
+                    "USAGE",
+                    None,
+                    "--select requires printed source IDs or closed paragraph ranges",
+                )
+            })?;
+            if let ShortId::Range { first, last } = parsed {
+                let mut end = *first.clone();
+                let ShortId::Block { ref mut path, .. } = end else {
+                    unreachable!("range begins at a block")
+                };
+                let Some(step @ Step::Paragraph(_)) = path.last_mut() else {
+                    return Err(err("USAGE", None, "ranges require paragraph endpoints"));
+                };
+                *step = Step::Paragraph(last);
+                let from = first.to_string();
+                let to = end.to_string();
+                let first = self.selector_pair(&from)?;
+                let last = self.selector_pair(&to)?;
+                let (Entity::Paragraph(a), Entity::Paragraph(b)) =
+                    (self.entity(&first)?, self.entity(&last)?)
+                else {
+                    return Err(err("USAGE", None, "ranges require two paragraph IDs"));
+                };
+                if self.loaded.paragraph_story[a].0 != self.loaded.paragraph_story[b].0 || a > b {
+                    return Err(err(
+                        "USAGE",
+                        None,
+                        "ranges must be ordered paragraphs in the same story",
+                    ));
+                }
+                out.extend(a..=b);
+            } else {
+                let pair = self.selector_pair(item)?;
+                match self.entity(&pair)? {
+                    Entity::Paragraph(g) => {
+                        out.insert(g);
+                    }
+                    Entity::Container(members, _) => out.extend(members),
+                    _ => {
+                        return Err(err(
+                            "USAGE",
+                            None,
+                            "--select requires paragraphs or supported containers",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn selector_pair(&self, id: &str) -> Result<Target, EditError> {
+        let bad = || {
+            err(
+                "USAGE",
+                None,
+                format!("{id} is not a supported original-source paragraph or container"),
+            )
+        };
+        let ShortId::Block { story, path } = id.parse::<ShortId>().map_err(|_| bad())? else {
+            return Err(bad());
+        };
+        let story = match &story {
+            Story::Body => "body",
+            Story::Part(stem) => stem.as_str(),
+        };
+        let si = self
+            .loaded
+            .stories
+            .iter()
+            .position(|s| s.id == story)
+            .ok_or_else(bad)?;
+        if let Some(node) = self.container_node(si, &path, id) {
+            return self.pair(id, si, node, None);
+        }
+        let g = self
+            .ids()
+            .position(&Selector::Name(id.to_string()))
+            .map_err(miss)?
+            .map_err(|_| bad())?;
+        let canonical = self.ids().id(g);
+        self.pair(
+            &canonical,
+            si,
+            self.loaded.paragraph_nodes[g],
+            Some(&canonical),
+        )
+    }
+
+    fn check_pair(
+        &self,
+        target: &Target,
+        story: usize,
+        node: NodeId,
+        canonical: Option<&str>,
+    ) -> Result<(), EditError> {
+        let expected = self.pair(&target.short_id, story, node, canonical)?.long_id;
         if target.long_id != expected {
             return Err(err(
                 "TARGET_ID_MISMATCH",

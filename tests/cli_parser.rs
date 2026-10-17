@@ -2555,3 +2555,39 @@ fn typed_edit_help_and_facade_use_the_public_route() {
         .is_ok()
     );
 }
+
+#[test]
+fn edit_template_help_names_the_public_route_and_preserves_legacy_filenames() {
+    let help = Cli::try_parse_from(["jubarte", "edit", "template", "--help"])
+        .unwrap_err()
+        .to_string();
+    assert!(help.contains("jubarte edit template"), "{help}");
+    assert!(!help.contains("__edit-template"), "{help}");
+    for forbidden in ["--runs", "run_operation", "--scaffold"] {
+        assert!(!help.contains(forbidden), "{help}");
+    }
+    assert!(
+        Cli::try_parse_from([
+            "jubarte",
+            "edit",
+            "template",
+            "-p",
+            "p0",
+            "--content",
+            "legacy"
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "jubarte",
+            "edit",
+            "./template",
+            "-p",
+            "p0",
+            "--content",
+            "legacy"
+        ])
+        .is_ok()
+    );
+}
