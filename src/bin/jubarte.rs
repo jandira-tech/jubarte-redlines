@@ -30,6 +30,8 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
+#[path = "jubarte/check.rs"]
+mod check;
 #[path = "jubarte/edit_template.rs"]
 mod edit_template;
 #[path = "jubarte/edit_typed.rs"]
@@ -3067,6 +3069,9 @@ fn cli_main() -> ExitCode {
             action: jubarte::cli::edit_template::TemplateAction::Template(options),
         })) => return edit_template::run(&options, quiet),
         Some(Command::TypedEdit(typed)) => return edit_typed::run(&typed, quiet),
+        Some(Command::Check { file, expect, json }) => {
+            return check::run(&file, expect.as_deref(), json, quiet);
+        }
         Some(Command::Compare(compare)) => {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }

@@ -138,6 +138,11 @@ pub struct PreparedEdit {
     pub primary_effect: Effect,
     /// Baseline and introduced findings on the primary's basis.
     pub checks: CandidateChecks,
+    /// Source paragraph → chosen-primary correspondence for `--expect`
+    /// (V2-13). `None` on the v1 path, whose published primary is a
+    /// comparer redline with no tracked correspondence: a v1 plan plus
+    /// `--expect` refuses instead of guessing.
+    pub correspondence: Option<crate::expect::SourceToOutputCorrespondence>,
 }
 
 /// Run the shared preparation: resolve, apply, choose the primary bytes,
@@ -188,6 +193,7 @@ pub fn prepare(
         primary_bytes,
         primary_effect: effect,
         checks,
+        correspondence: None,
     })
 }
 
@@ -807,6 +813,7 @@ pub fn prepare_v2(
         primary_effect: effect,
         result,
         checks,
+        correspondence: Some(applied.correspondence),
     })
 }
 

@@ -35,6 +35,13 @@ pub struct V2EditResult {
     pub dependent_comments: Vec<u32>,
     /// Explicit global-policy effects on history remaining after selections.
     pub remaining_revisions: ResolvedRevisions,
+    /// Source paragraph → chosen-primary paragraph correspondence for the
+    /// optional `--expect` evaluation (V2-13). The entries carry the
+    /// source's own short ids and output indices addressing the reopened
+    /// primary's projection; merged, split and removed targets refuse in
+    /// the checker, never silently pass. When the primary is the exact
+    /// source bytes this is the identity correspondence over the source.
+    pub correspondence: crate::expect::SourceToOutputCorrespondence,
 }
 
 /// Apply a bound PlanV2 in memory, using one immutable working baseline.
@@ -159,23 +166,45 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     super::prepared::check_dom_realized(&tx, true)?;
     let (clean, _) = tx.finish()?;
     super::prepared::check_serialized_stories(&tx, &clean)?;
-    let result = if plan.policy.track == Track::On {
-        tracked::result_v2(&tx, clean)?
+    // The tracked primary is the replay's emission, so its paragraph walk
+    // comes back with it; the direct primary is the serialized transaction
+    // DOM, walked below. Either way the walk is taken from the DOM that
+    // produced the primary bytes, not by re-matching text.
+    let (result, primary_base, primary_output) = if plan.policy.track == Track::On {
+        let (result, paragraphs) = tracked::result_v2_with_paragraphs(&tx, clean)?;
+        (result, paragraphs.base, paragraphs.output)
     } else {
         let report = tx.report(true);
-        super::EditResult {
-            redline: clean.clone(),
-            clean,
-            report,
-        }
+        let base = tx.paragraph_nodes.clone();
+        let output = tx.paragraph_walk();
+        (
+            super::EditResult {
+                redline: clean.clone(),
+                clean,
+                report,
+            },
+            base,
+            output,
+        )
     };
     let mut report = result.report;
     report.existing_revisions = plan.policy.existing_revisions;
     report.guarded = true;
-    let (clean, redline) = if effect {
-        (result.clean, result.redline)
+    let (clean, redline, correspondence) = if effect {
+        let correspondence =
+            expectation_correspondence(&model, &tx, &primary_base, &primary_output)?;
+        (result.clean, result.redline, correspondence)
     } else {
-        (source.to_vec(), source.to_vec())
+        // A no-effect primary is the exact source bytes; the identity
+        // correspondence over the source is the output walk.
+        let identity = crate::expect::identity_correspondence(source).map_err(|e| {
+            err(
+                "INVALID_DOCUMENT",
+                None,
+                format!("cannot build expectations correspondence: {e}"),
+            )
+        })?;
+        (source.to_vec(), source.to_vec(), identity)
     };
     preserve_history(&working, &clean)?;
     preserve_history(&working, &redline)?;
@@ -186,6 +215,97 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
         dependent_revisions,
         dependent_comments,
         remaining_revisions,
+        correspondence,
+    })
+}
+
+/// Map every source paragraph onto the chosen primary's projection, from
+/// what preparation already knows: [`origin::Origin`] follows each source
+/// paragraph through the plan's revision settlement by its tag (merges and
+/// removals included), and the transaction's own paragraph nodes place the
+/// survivors in the emitted primary. Exact one-to-one targets map
+/// one-to-one; a settled paragraph several source paragraphs merged into
+/// carries that count so the checker refuses them as merged; paragraphs
+/// removed by settlement or by `delete_paragraph` map to nothing and
+/// refuse as split. Inserted paragraphs are simply absent: no expectation
+/// can reference them through this correspondence.
+fn expectation_correspondence(
+    model: &SourceModel,
+    tx: &Transaction<'_>,
+    primary_base: &[NodeId],
+    primary_output: &[NodeId],
+) -> Result<crate::expect::SourceToOutputCorrespondence, EditError> {
+    let mut position: std::collections::HashMap<NodeId, usize> =
+        std::collections::HashMap::with_capacity(primary_output.len());
+    for (index, &node) in primary_output.iter().enumerate() {
+        position.insert(node, index);
+    }
+    let output_of = |working: usize| -> Option<usize> {
+        primary_base
+            .get(working)
+            .and_then(|&node| position.get(&node).copied())
+    };
+    let ids = model.ids();
+    let count = model.loaded.paragraph_nodes.len();
+    let mut entries = Vec::with_capacity(count);
+    match &tx.origin {
+        Some(origin) => {
+            // How many source paragraphs each settled paragraph received:
+            // one kept plus any merged in. A many-to-one settled paragraph
+            // refuses every member as merged.
+            let mut members: BTreeMap<usize, usize> = BTreeMap::new();
+            for source in 0..count {
+                if let origin::Fate::Kept(post) | origin::Fate::Merged(post) = origin.fate(source) {
+                    *members.entry(post).or_default() += 1;
+                }
+            }
+            for source in 0..count {
+                let id = ids.id(source);
+                match origin.fate(source) {
+                    origin::Fate::Gone => {
+                        entries.push(crate::expect::CorrespondenceEntry::split(id));
+                    }
+                    origin::Fate::Kept(post) | origin::Fate::Merged(post) => {
+                        match output_of(post) {
+                            Some(output) if members[&post] == 1 => {
+                                entries.push(crate::expect::CorrespondenceEntry::one_to_one(
+                                    id, output,
+                                ));
+                            }
+                            Some(output) => {
+                                let many = vec![output; members[&post]];
+                                entries.push(crate::expect::CorrespondenceEntry::merged(id, &many));
+                            }
+                            None => {
+                                entries.push(crate::expect::CorrespondenceEntry::split(id));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+            // No settlement: the working walk is the source's own, so the
+            // transaction's paragraph nodes place each source paragraph.
+            for source in 0..count {
+                let id = ids.id(source);
+                match output_of(source) {
+                    Some(output) => {
+                        entries.push(crate::expect::CorrespondenceEntry::one_to_one(id, output));
+                    }
+                    None => {
+                        entries.push(crate::expect::CorrespondenceEntry::split(id));
+                    }
+                }
+            }
+        }
+    }
+    crate::expect::SourceToOutputCorrespondence::from_entries(entries).map_err(|e| {
+        err(
+            "INTERNAL",
+            None,
+            format!("expectations correspondence: {e}"),
+        )
     })
 }
 
