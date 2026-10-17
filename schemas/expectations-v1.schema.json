@@ -129,9 +129,9 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:jubarte:proposal:expectations-v1",
-  "title": "Proposed Jubarte expectations v1 — paragraph text predicates",
-  "$comment": "Design artifact only. Keys must be unique (compiler check). Empty checks means UNASSESSED, not passed. Apply binds references to original source and evaluates on actual primary bytes. Standalone check requires references/hash for the inspected file. A separate file does not prove independent authorship, legal adequacy, secure redaction or full task completion.",
+  "$id": "urn:jubarte:expectations-v1:paragraph-text",
+  "title": "Jubarte expectations v1 — paragraph text predicates",
+  "$comment": "Production library parsing contract, derived from the design artifact docs/design/cli-v2/jubarte-expectations-v1.schema.json; every constraint is the design's. Keys must be unique (compiler check). Empty checks means UNASSESSED, not passed. Apply binds references to original source and evaluates on actual primary bytes. Standalone check requires references/hash for the inspected file. A separate file does not prove independent authorship, legal adequacy, secure redaction or full task completion.",
   "$defs": {
     "target": {
       "type": "object",
