@@ -44,6 +44,13 @@ A refused edit plan returns an error whose text holds the engine's JSON:
 `code` (`ANCHOR_NOT_FOUND`, `STALE_SOURCE`, ...), `operation`, `message` and
 every operation's `outcomes`. Nothing is written in that case.
 
+> **Ids.** The `id`/`ref` pairs and colon spellings (`body:p:5`) the tools
+> return are the transitional schema-1 wire shape. The 17 October 2026
+> short-and-long-ID contract
+> ([`../superpowers/specs/2026-10-17-short-and-long-id-contract.md`](../superpowers/specs/2026-10-17-short-and-long-id-contract.md),
+> unimplemented) replaces them with paired `short_id`/`long_id` references at
+> the schema-2 cutover. Until then, the table above is the current truth.
+
 ## Security model
 
 The server is a file-system tool that reads untrusted documents and untrusted

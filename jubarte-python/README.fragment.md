@@ -110,7 +110,7 @@ operation mutating it or writing files:
 from jubarte_redlines import read, EditPlan, diff
 
 doc = read("contract.docx")
-doc.markdown()    # body and every header/footer/notes story, [pN] ids
+doc.markdown()    # body and every header/footer/notes story, <!-- pN --> id lines
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations) + tables
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change, with the id accept/reject and plans take

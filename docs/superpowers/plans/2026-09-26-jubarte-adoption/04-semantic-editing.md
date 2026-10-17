@@ -7,6 +7,24 @@
 > covers the need. Post-plan, unrecorded below: `resolve_revisions`
 > (0.10.1), `patch.diff` edit output and `delete_paragraph` comment hunks
 > (unreleased main).
+>
+> **ID contract (2026-10-17, `aba48bd5`):** the `body:p:N` selector and the
+> `id`-named fields below are retired spellings. Today's wire speaks the
+> 13 October short ids (`p12`, `header1.p2`, `t0.row1.cell2`, `r12`,
+> `c5`, `s0`, `toc0`; `{"id"}`/`{"index"}`/`starts_with`/`contains`
+> selectors; `schema_version: 1` plans), and `body:p:N` is refused on
+> input with the settled spelling as a hint. The v3 contract
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**)
+> then pairs every JSON reference as `short_id`/`long_id`, makes `psN`
+> the scoped-paragraph spelling (`t0.row1.cell2.ps1`), renames `id`/`ref`/
+> `at`/`comment_id`/`operation_id` out of document-identity use, retires
+> `{"index"}`, and refuses the colon forms outright. The `body:p:N` spellings in the plan examples below are
+> the transitional colon ids — plan `paragraph` fields take the short `pN`
+> today, and the 17 October contract v3
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`)
+> replaces the colon form with the four-field long id at the schema-2
+> cutover.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -109,7 +127,7 @@ The download recipe is a browser example, not a unit test; use an appropriate us
 
 ## Portable contract
 
-`Snapshot` contains `schema_version:1`, source SHA-256, ordered `Paragraph` records and warnings. `Paragraph` contains opaque `id`, `story`, `part`, `index`, `text`, `style_id`, `numbering`, `editable_operations` and `limitations`. `ParagraphCollection.unique` is a client convenience that requires exactly one matching paragraph and returns it; zero/multiple matches are typed errors. It does not mutate or find “the nearest” text.
+`Snapshot` contains `schema_version:1`, source SHA-256, ordered `Paragraph` records and warnings. `Paragraph` contains opaque `id`, `story`, `part`, `index`, `text`, `style_id`, `numbering`, `editable_operations` and `limitations`. (As shipped, `Paragraph` is `{index, id, text, style, numbered, in_table, page_break, runs, limitations}` — `id` holds the short id `p12`/`header1.p2`, and story/part context comes from the snapshot's `stories` list. Under the contract `id` becomes the paired `short_id`/`long_id`.) `ParagraphCollection.unique` is a client convenience that requires exactly one matching paragraph and returns it; zero/multiple matches are typed errors. It does not mutate or find “the nearest” text.
 
 `EditPlan` contains schema version, source hash, author, timestamp, `existing_revisions` policy and ordered operations. `for_snapshot`/`plan` capture the hash and immutable metadata. Each builder returns a new plan. User-visible ordering establishes report order; resolution remains source-relative. Wire field names use snake_case; TypeScript/Python builders translate language spelling only, not document semantics.
 
@@ -123,20 +141,27 @@ A minimal exact plan:
   "date": "2026-09-26T14:30:00Z",
   "existing_revisions": "refuse",
   "operations": [
-    {"id":"op-1","kind":"replace","paragraph":"body:p:18","find":"retained experts","replacement":"retained experts and court reporters"}
+    {"id":"op-1","kind":"replace","paragraph":"p18","find":"retained experts","replacement":"retained experts and court reporters"}
   ]
 }
 ```
+
+(`"paragraph":"p18"` is the current schema-1 spelling; the patch this plan
+supersedes wrote the retired colon form `body:p:18`, which today's parser
+refuses with `p18` as the hint. Under the contract the operation's `id`
+becomes an explicit `label`, `paragraph` takes a typed short-or-long
+address, `{"index"}` is removed, and every reference in the report is a
+`short_id`/`long_id` pair.)
 
 The hash above illustrates the field shape, not the supplied Acme file's hash. Production plans must derive it from actual bytes; no hardcoded sample hash may pass validation.
 
 `Preview` contains `ok`, immutable per-operation outcomes, warnings, capabilities and input/plan digests. It stores the computed edited snapshot; `build` reuses that snapshot, not a second anchor-resolution pass. `raise_for_errors` raises an aggregate `EditPlanError` with structured details. `build` returns `ReviewBundle` with clean DOCX, optional redline/PDFs and report; it must not write. A schema/code capability mismatch fails before edits. `write_new_directory` creates a staged sibling directory, writes all requested files, then exposes a complete bundle only if every requested generation succeeded. Refuse an existing destination. Single-file rename atomicity does not imply cross-filesystem or multi-file atomicity; keep staging on the same filesystem.
 
-`EditOutcome` has `operation_id`, status, match count, source anchors, resulting anchors if stable, warnings and error code. A failed plan returns no success DOCX. Do not promise one comparer revision per requested operation: a replace can generate multiple insert/delete/move/format records. Report the plan outcomes and resulting Word revisions separately.
+`EditOutcome` has `operation_id`, status, match count, source anchors, resulting anchors if stable, warnings and error code. (Shipped today as `id`; under the contract the correlation label keeps an explicit name — `operation_label`, spelled `label` in the implementation plan — while `paragraph`/`comment` references become `IdRef` pairs and the JSONL `at` field goes.) A failed plan returns no success DOCX. Do not promise one comparer revision per requested operation: a replace can generate multiple insert/delete/move/format records. Report the plan outcomes and resulting Word revisions separately.
 
 ## Anchor and conflict rules
 
-- IDs are valid for one exact byte snapshot, not a persistent document identity across Word saves. Validate source SHA-256 first, then full paragraph/range expectation.
+- IDs are valid for one exact byte snapshot, not a persistent document identity across Word saves. Validate source SHA-256 first, then full paragraph/range expectation. (The contract keeps this — IDs are snapshot-scoped and `STALE_SOURCE` is the digest-mismatch error; its `j:short` long IDs are likewise not persistent addresses.)
 - Exact raw Unicode is the source coordinate system. The core may store byte offsets, but never expose them as JS string indexes. Emoji, combining accents, RTL, NBSP and tabs have dedicated fixtures.
 - `find` must be nonempty. Default occurrence count is exactly one; count overlapping candidates too. `aaa` contains two occurrences of `aa`, so it is ambiguous.
 - Resolve every operation against the untouched source before mutation. Overlapping replacements/deletions fail; identical offsets for two inserts require explicit ordered grouping, not arbitrary sort order.

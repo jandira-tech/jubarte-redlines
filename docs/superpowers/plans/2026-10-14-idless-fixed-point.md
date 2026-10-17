@@ -5,6 +5,23 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Plan: Markdown without id lines is a fixed point (2026-10-14)
 
+> **Status (reconciled 2026-10-17, `main` `aba48bd5`): largely landed.** The
+> squares fix shipped — no comment note icon unless `--comment-notes` is passed
+> (`f8932ae1`; opt-in rule in AGENTS.md). L1/L2/G3 (list indents, legend indent
+> + `contextual spacing` + keep-lines, inherit-don't-write-out) landed in
+> `b65ae450` (`view_styles.rs` now parses `hanging`/`contextual spacing`/`indent`;
+> `md_reader_id_lines.rs::an_idless_file_keeps_list_indent_keep_lines_and_a_bare_normal`).
+> W1 (run spacing after breaks) landed on `fix/md-run-spaces` (`214888bb`).
+> E2 (empty emphasis), E3 (math spacing) and literal-delimiter escaping landed
+> in `92001276`. K1 (paren-URL links print `<URL>`), K2 (mailto autolink text)
+> and K3 (the lost code span) landed in `762c21be`. E1's code-block CriticMarkup
+> escaping was already `e51092ce`. The idless A→B→C→D chain tests live in
+> `tests/md_reader_id_lines.rs` (`idless_chain`, `idless_views`) and
+> `tests/md_plain_round_trip.rs`. **Open:** the full 75-file G1+G2 gate with
+> `visual-diff` page equality (item 6) is not a suite test — the landed gates
+> are per-fixture chain assertions, not the 75/75 sweep; L3's nested-bullet
+> glyph cycle and K4's re-measure are unverified remnants.
+
 Arthur's chain, measured on the 75 test Markdown files that carry no id line:
 
     A (Markdown, no id lines) --convert--> B (docx)
@@ -72,9 +89,11 @@ come back.
 7. K1, K2, K3 (links, mailto, code span); re-measure K4.
 8. The gate test (item 6), required: 75/75 on G1 and G2.
 
-## Found on the way: squares at comment references
+## Found on the way: squares at comment references — landed
 
 jubarte's PDF draws a yellow square at each comment reference, over the
 next letters (`the|m`, `en|d`), in every revision style, Word's included.
 Word draws nothing there in a PDF. Fix: draw no box at a comment
 reference; the range tint and the balloon stay.
+[Shipped as `f8932ae1`: no PDF comment note icon at all unless the opt-in
+`--comment-notes` / `PdfOptions::comment_notes` is passed.]

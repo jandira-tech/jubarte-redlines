@@ -9,7 +9,15 @@ debug
 !src/debug/
 target
 **/target/
-
+.pytest_cache/
+.ruff_cache/
+archive/
+planning/
+.issues/
+.crush/
+.cursor/
+docs/archive/
+#docs/superpowers/
 # Release signing (docs/SELF_UPDATE.md): only public keys are ever committed.
 /keys/*
 !/keys/*.pub
@@ -110,3 +118,7 @@ Claude outputs/
 .dirac-cache/
 report.json
 .probe/
+
+# Local issue archive: scripts/fetch_issues.py downloads GitHub issues here.
+/scripts/fetch_issues.py
+.issues/

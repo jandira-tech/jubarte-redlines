@@ -160,6 +160,7 @@ pub(super) fn assemble(
         let styles = with_styles(&styles, &wanted);
         let styles = with_named_styles(&styles, &named);
         let styles = super::view_styles::apply(&styles, &document.style_specs);
+        let styles = super::view_styles::with_style_changes(&styles, &document.style_changes);
         let theme = related(&package, &main, "/theme")
             .and_then(|part| package.part_string(&part))
             .unwrap_or_else(|| crate::word_default_theme::WORD_DEFAULT_THEME.to_string());
@@ -517,7 +518,7 @@ fn with_table_styles(
             if let Some(style) = built_in_table_style(id, theme) {
                 return style;
             }
-            let borders = border.map_or_else(String::new, |sz| {
+            let borders = (*border).map_or_else(String::new, |sz| {
                 let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
                     .iter()
                     .map(|side| {
@@ -556,6 +557,18 @@ const WORD_TABLE_STYLES: &str = include_str!("word_table_styles.tsv");
 /// Tables (`GridTable4-Accent1`, `ListTable6Colorful`), named as Word names
 /// it (`Grid Table 4 Accent 1`), its colours from `theme`.
 fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
+    let (name, body) = built_in(id)?;
+    Some(format!(
+        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
+        escape(id),
+        escape(&name),
+        with_theme_colours(&body, theme)
+    ))
+}
+
+/// `id` as Word names it and its unstyled body, when it is one of the
+/// built-in Grid or List Tables.
+fn built_in(id: &str) -> Option<(String, String)> {
     let (family, accent) = match id.split_once("-Accent") {
         Some((family, n)) if matches!(n, "1" | "2" | "3" | "4" | "5" | "6") => (family, Some(n)),
         Some(_) => return None,
@@ -592,12 +605,7 @@ fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
         name.push_str(" Accent ");
         name.push_str(n);
     }
-    Some(format!(
-        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
-        escape(id),
-        escape(&name),
-        with_theme_colours(&body, theme)
-    ))
+    Some((name, body))
 }
 
 /// Whether `id` is one of Word's built-in Grid or List Tables, which the
@@ -1482,11 +1490,18 @@ impl Relate for PartRelate<'_, '_, '_> {
                 part
             }
         };
-        self.package.add_document_relationship(
-            &self.part,
-            &format!("{RELS}/image"),
-            &relative_rel_target(&self.part, &target),
-        )
+        // A picture used twice is one part and one relationship to it.
+        let rel_target = relative_rel_target(&self.part, &target);
+        if let Some(rels) = self.package.read_rels_for(&self.part)
+            && let Some(rel) = rels
+                .items
+                .iter()
+                .find(|r| r.rel_type == format!("{RELS}/image") && r.target == rel_target)
+        {
+            return rel.id.clone();
+        }
+        self.package
+            .add_document_relationship(&self.part, &format!("{RELS}/image"), &rel_target)
     }
 
     fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {

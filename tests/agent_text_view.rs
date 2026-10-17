@@ -802,8 +802,9 @@ fn changes_without_text_name_their_ids() {
         "{out}"
     );
     assert!(
-        lines
-            .contains(&"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC}"),
+        lines.contains(
+            &"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC in header1}"
+        ),
         "{out}"
     );
     assert!(
@@ -878,7 +879,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     let lines = header_lines(&out);
     assert!(
         lines.iter().any(|l| l.starts_with(
-            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC}"
+            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC in header1}"
         ) && l.ends_with("# defined, but different first page is off")),
         "{out}"
     );
@@ -961,9 +962,10 @@ fn a_styles_only_author_gets_a_handle() {
     assert!(!out.contains("@??"), "{out}");
 }
 
-/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in a
-/// text box with no text to tag, or in Word's Fallback copy with no Choice
-/// twin) is named on the header's `unplaced:` line, by paragraph.
+/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in
+/// Word's Fallback copy with no Choice twin, or inside a drawing the view
+/// carries whole as a `drawing:` payload, whose atomic token no mark can
+/// name) is named on the header's `unplaced:` line, by paragraph.
 #[test]
 fn changes_printed_nowhere_else_are_unplaced() {
     let body = format!(
@@ -1007,9 +1009,16 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .unwrap_or_else(|| panic!("no unplaced line in {out}"));
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
     assert!(unplaced.contains("r21 @AC in p0"), "{out}");
+    // The shown branch's text box prints its content as comment lines
+    // beside the drawing, so the Choice branch's own insertion is placed
+    // there (`<!-- Box{++Choice++}{>>r20 @AC<<} -->`), not unplaced.
+    assert!(
+        out.contains("<!-- Box{++Choice++}{>>r20 @AC<<} -->"),
+        "{out}"
+    );
     assert!(!unplaced.contains("r20"), "{out}");
     // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
-    assert!(unplaced.contains(r#""r22 @?? in p0""#), "{out}");
+    assert!(unplaced.contains(r#""del r22 @?? in p0""#), "{out}");
     let yaml = header_yaml(&out);
     assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(3), "{out}");
     for view in [TrackChanges::Accept, TrackChanges::Reject] {
@@ -1027,22 +1036,24 @@ fn changes_printed_nowhere_else_are_unplaced() {
 /// A textless change inside a printed container is not shown by the
 /// container's tag: accepting the inserted row keeps the row and leaves
 /// the deleted drawing tracked, so the drawing's own id must be printed.
+/// Since 54621454 carries the deleted `w:drawing` whole, that id prints
+/// inside the cell, in the drawing's own `{--![][d1]--}` mark where
+/// Word's markup places the deletion — not on the `unplaced:` line the
+/// view used when it could not carry a drawing at all.
 #[test]
-fn a_textless_change_in_a_printed_row_is_unplaced() {
-    let body = format!(
+fn a_textless_change_in_a_printed_row_prints_its_own_tag() {
+    let body_xml = format!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
         ins(3, "Ann Counsel", "Cell")
     );
-    let out = agent(&docx(&body));
-    let lines = header_lines(&out);
-    let unplaced = lines
-        .iter()
-        .find(|l| l.starts_with("unplaced: "))
-        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
-    assert!(unplaced.contains("r2 @AC"), "{out}");
-    // The row's own tag and the cell text's print, so neither is unplaced.
-    assert!(!unplaced.contains("r1 "), "{out}");
-    assert!(!unplaced.contains("r3 "), "{out}");
+    let out = agent(&docx(&body_xml));
+    // The deleted drawing is carried whole, so its own mark and tag sit in
+    // the cell: not the row's tag, not the cell text's.
+    assert!(body(&out).contains("{--![][d1]--}{>>r2 @AC<<}"), "{out}");
+    assert!(out.contains("rev r1 @AC in t0.row0"), "{out}");
+    assert!(body(&out).contains("{++Cell++}{>>r3 @AC<<}"), "{out}");
+    // Every change prints, so none lands on the `unplaced:` line.
+    assert!(!out.contains("unplaced:"), "{out}");
 }
 
 /// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
@@ -1588,7 +1599,8 @@ fn link_entity_and_heading_syntax_in_text_reads_back_as_text() {
 fn code_reads_as_code_spans_and_fences() {
     // `VerbatimChar` runs print as code spans and a `SourceCode` paragraph
     // as a fence: their text stays as written, unescaped and with its
-    // spaces, so it reads back the same.
+    // spaces, so it reads back the same. A fence's content is literal, so
+    // a marked run's marks print nowhere inside it.
     let code = |t: &str| {
         format!(
             r#"<w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t xml:space="preserve">{t}</w:t></w:r>"#
@@ -1600,14 +1612,14 @@ fn code_reads_as_code_spans_and_fences() {
             code("a*b  c"),
             code("x`y")
         ),
-        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t>fn main() {</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">    println!("*hi*");</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>}</w:t></w:r></w:p>"#.to_string(),
+        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t>fn main() {</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">    println!("*hi*");</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>}</w:t></w:r><w:r><w:br/></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>underlined</w:t></w:r></w:p>"#.to_string(),
     ]
     .concat();
     let full = agent(&docx(&p));
     let view = body(&full);
     assert_eq!(
         view,
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nRun `a*b  c` or ``x`y``.\n\n<!-- p1 SourceCode -->\n```\nfn main() {\n    println!(\"*hi*\");\n}\n```\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nRun `a*b  c` or ``x`y``.\n\n<!-- p1 SourceCode -->\n```\nfn main() {\n    println!(\"*hi*\");\n}\nunderlined\n```\n"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()
@@ -4139,7 +4151,10 @@ fn the_golden_headers_parse_as_yaml() {
 }
 
 /// pi review av2 F2: a revision in a text box counts once in the header, as
-/// the body shows it once: the `mc:Choice` shape, not its VML fallback copy.
+/// Word shows it once: the same `w:id` in the `mc:Choice` shape and its VML
+/// fallback copy is one revision. The body carries the whole
+/// `mc:AlternateContent` as one payload (54621454), so the revision prints
+/// in no mark and is named once on `unplaced:`.
 #[test]
 fn header_counts_a_text_box_revision_once() {
     let story = ins(7, "Ann Counsel", "boxed");
@@ -4147,8 +4162,19 @@ fn header_counts_a_text_box_revision_once() {
         r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p>{story}</w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{story}</w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#
     );
     let view = agent(&docx(&boxed));
+    // One shape, not one per branch: the whole AlternateContent is a
+    // single payload token, and the revision it holds is named once.
+    assert_eq!(view.matches("![][d1]").count(), 1, "{view}");
+    // The shown branch's box prints once, as comment lines beside the
+    // drawing, never the Fallback copy: its revision is placed there.
     assert_eq!(view.matches("{++boxed++}").count(), 1, "{view}");
     let lines = header_lines(&view);
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("unplaced: ") && l.contains("r7")),
+        "{view}"
+    );
     assert!(
         lines.iter().any(|l| l.starts_with("revisions: 1 ")),
         "{lines:?}"
@@ -5529,8 +5555,13 @@ fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
     }
 }
 
+/// PR #392, restated for the drawing payload (54621454): Word renders one
+/// branch of an `mc:AlternateContent`; the view carries the element whole
+/// as one atomic payload, so no branch's text prints, while every listed
+/// change — the Choice's and the Fallback's alike — keeps its author a
+/// handle and is named, by paragraph, on `unplaced:`.
 #[test]
-fn pr392_alternate_content_renders_one_branch_and_names_every_listed_author() {
+fn pr392_alternate_content_carries_one_payload_and_names_every_listed_author() {
     let choice = format!(
         r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
         ins(1, "Ann Counsel", "Chosen")
@@ -5539,32 +5570,48 @@ fn pr392_alternate_content_renders_one_branch_and_names_every_listed_author() {
         r#"<mc:Fallback><w:pict><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:pict></mc:Fallback>"#,
         ins(2, "Bob Day", "Fallback")
     );
-    for (branches, kept, absent, handle, author) in [
+    for (branches, kept, absent, handle, author, unplaced) in [
         (
             format!("{choice}{fallback}"),
             "Chosen",
             "Fallback",
             "AC",
             "Ann Counsel",
+            vec!["r2 @BD in p0"],
         ),
-        (fallback, "Fallback", "Chosen", "BD", "Bob Day"),
+        (fallback, "Fallback", "Chosen", "BD", "Bob Day", vec![]),
     ] {
         let bytes = docx(&format!(
             r#"<w:p>{}<w:r><mc:AlternateContent>{branches}</mc:AlternateContent></w:r></w:p>"#,
             run("Host")
         ));
         let view = agent(&bytes);
+        // One payload for the whole element, not one token per branch; the
+        // branch Word shows prints its box once, as comment lines beside
+        // the drawing, and the other branch's text never prints.
+        assert_eq!(body(&view).matches("![][d1]").count(), 1, "{view}");
         assert_eq!(
             body(&view).matches(&format!("{{++{kept}++}}")).count(),
             1,
             "{view}"
         );
         assert!(!body(&view).contains(absent), "{view}");
+        // The hidden branch's change prints nowhere: it is named on
+        // `unplaced:`; the shown branch's is placed in its box.
+        let lines = header_lines(&view);
+        let unplaced_line = lines
+            .iter()
+            .find(|l| l.starts_with("unplaced: "))
+            .map_or("", |l| &**l);
+        for entry in &unplaced {
+            assert!(unplaced_line.contains(entry), "{entry}: {view}");
+        }
+        assert!(!unplaced_line.contains(&format!("@{handle}")), "{view}");
         let yaml = header_yaml(&view);
         assert_eq!(yaml["authors"][handle].as_str(), Some(author), "{view}");
         // A Fallback change that is no twin of the Choice's (another text)
-        // is still a change of the file: listed and counted (D8), though
-        // the view shows the Choice only.
+        // is still a change of the file: listed and counted (D8), carried
+        // in the payload and named on `unplaced:`.
         let changes = jubarte::changes::list_changes(&bytes).unwrap();
         let listed = changes.len();
         // Handles name the authors of the listed changes: a Fallback

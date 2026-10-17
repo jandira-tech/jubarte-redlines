@@ -1,5 +1,17 @@
 # Agent Edit Follow-ups Implementation Plan
 
+> **Status (audited 2026-10-18, `main` @ `aba48bd5`).** This plan's `pid:` /
+> `--pids` / `paraId`-as-location proposal was **never implemented** — no
+> `pid:` selector or `--pids` flag exists; `-p` takes the short `pN` grammar.
+> The short/long ID contract v3
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, docs-only
+> in `4612a155`, unimplemented) confirms that absence is intentional: `pid:` is
+> a third identity representation, which the contract forbids. The digest idea
+> shipped in plan form (`source_sha256` / `STALE_SOURCE`, `src/edit.rs`) and the
+> view prints `source:`/`sha256:` pins; `--nth` and `edit --digest` never
+> shipped. The `body:p:N` spellings in the examples below are the transitional
+> colon forms v3 §7 retires.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Six additions to the agent view and the flag-driven `edit`/`add` of `docs/superpowers/plans/2026-10-09-agent-text-view.md` (Tasks 1-20, all merged before this plan starts), taken from how a collaborative document-editing API behaves: a failed anchor hands back the paragraph it searched; `--nth` picks a repeated anchor; the view carries the file's digest and `edit --digest` refuses a file that changed since it was read; stable paragraph ids (`w14:paraId`) as locations; comment anchors protected from silent detachment; a paragraph move.

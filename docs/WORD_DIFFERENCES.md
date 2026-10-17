@@ -187,7 +187,14 @@ The other 3 of the 32 are not differences:
   number around them, and bookmarks above them.
 - **Which is better.** Ours. Ids never reach the page, and `edit` reports
   each comment by the id its redline holds. A reading-order pass was built,
-  validator-clean, and taken out for that reason.
+  validator-clean, and taken out for that reason. These are the `w:id`
+  source keys; the agent-facing `cN`/`rN` labels make the same choice under
+  the id contract — a canonical source id stays the label, while a
+  duplicated, missing or noncanonical key gets a deterministically
+  allocated label
+  (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`; the
+  allocation half is not implemented yet — a keyless revision still prints
+  `noid`).
 - **Status.** Not copied.
 
 ### 10. Watermark shape size and colour

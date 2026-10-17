@@ -12,6 +12,7 @@
 //! properties are not read.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 
 mod agent;
 mod critic;
@@ -388,6 +389,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         hidden_ranges: Vec::new(),
         pending_notes: Vec::new(),
         in_comment: false,
+        in_box: false,
         agent: options.ids,
         comments_inline: options.comments,
         resolved: accept.is_some(),
@@ -587,11 +589,20 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 let (rev, fmt) =
                     agent::story_unshown(note, &story, &def, &HashSet::new(), &writer.handles);
                 let mut clauses = Vec::new();
-                if !rev.is_empty() {
-                    clauses.push(format!("rev {}", rev.join("; ")));
+                for inserted in [true, false] {
+                    let tags: Vec<&str> = rev
+                        .iter()
+                        .filter(|(ins, _)| *ins == inserted)
+                        .map(|(_, tag)| tag.as_str())
+                        .collect();
+                    if !tags.is_empty() {
+                        let word = if inserted { "rev" } else { "rev-del" };
+                        clauses.push(format!("{word} {}", tags.join("; ")));
+                    }
                 }
                 if !fmt.is_empty() {
-                    clauses.push(format!("fmt {}", fmt.join("; ")));
+                    let tags: Vec<&str> = fmt.iter().map(|(_, tag)| tag.as_str()).collect();
+                    clauses.push(format!("fmt {}", tags.join("; ")));
                 }
                 if !clauses.is_empty() {
                     def.push_str(&format!(" <!-- {} -->", clauses.join(", ")));
@@ -1014,17 +1025,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             },
                         )
                         .collect();
-                    // The legend describes the paragraph styles the stories
-                    // use, as the body's, so the view writes them as the
-                    // original did (a character style's id stays bare).
+                    // The legend describes the styles the stories use, as
+                    // the body's, so the view writes them as the original
+                    // did; a character style's `, named` carries its
+                    // w:name for `pstyle` to resolve.
                     for style in &styles {
                         if style != default_style.as_deref().unwrap_or("Normal")
                             && !matches!(style.as_str(), "Header" | "Footer")
                             && styles_root.as_ref().is_some_and(|root| {
-                                root.children_named("style").any(|s| {
-                                    s.attr("type") == Some("paragraph")
-                                        && s.attr("styleId") == Some(style.as_str())
-                                })
+                                root.children_named("style")
+                                    .any(|s| s.attr("styleId") == Some(style.as_str()))
                             })
                             && !heading_styles.iter().any(|(_, h)| h == style)
                             && !other_styles.contains(style)
@@ -1047,7 +1057,24 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         let (mut marks, ids) = agent::story_paragraph_marks(&root, &stem, &handles);
                         let (rev, fmt) =
                             agent::story_unshown(&root, &stem, &shown.join("\n"), &ids, &handles);
-                        marks.extend(rev);
+                        // A deletion names its kind (`del footer1.r3 @BC`):
+                        // a bare tag reads back as an insertion.
+                        marks.extend(rev.into_iter().map(|(inserted, tag)| {
+                            if inserted { tag } else { format!("del {tag}") }
+                        }));
+                        // A formatting change names the paragraph it is in
+                        // (`footer1.r1657 @AB in footer1.p1`), or reads
+                        // positionally when outside every paragraph.
+                        let fmt = fmt
+                            .into_iter()
+                            .map(|(at, tag)| match at {
+                                Some(index) => format!(
+                                    "{tag} in {}",
+                                    crate::ids::short_paragraph(&format!("{stem}:p:{index}"))
+                                ),
+                                None => tag,
+                            })
+                            .collect();
                         (marks, fmt)
                     } else {
                         (Vec::new(), Vec::new())
@@ -1119,8 +1146,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     }
                     let (rev, fmt) =
                         agent::story_unshown(note, story, "", &HashSet::new(), &handles);
-                    note_changes.0.extend(rev);
-                    note_changes.1.extend(fmt);
+                    note_changes
+                        .0
+                        .extend(rev.into_iter().map(|(inserted, tag)| {
+                            if inserted { tag } else { format!("del {tag}") }
+                        }));
+                    note_changes.1.extend(fmt.into_iter().map(|(_, tag)| tag));
                 }
             }
         }
@@ -2293,6 +2324,10 @@ struct Writer<'a> {
     /// changes keep their marks but not their author, and comment anchors are
     /// ignored.
     in_comment: bool,
+    /// Writing a drawn text box's content for its comment lines: a drawing
+    /// inside it prints no payload token (the captured drawing already holds
+    /// it) and a box nested inside it is walked through, not printed twice.
+    in_box: bool,
     /// Agent view (`Options::ids`).
     agent: bool,
     /// Agent view: comments inline, or hidden and listed on id lines.
@@ -2671,7 +2706,7 @@ impl Writer<'_> {
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
             } else if code_block {
                 list.reset();
-                blocks.push_paragraph("", &fenced(&inline.render(false)), false, edges);
+                blocks.push_paragraph("", &fenced(&inline.render_code()), false, edges);
             } else {
                 list.reset();
                 let text = self.block_text(&inline.render(true));
@@ -3312,10 +3347,17 @@ impl Writer<'_> {
         out: &mut Critic,
         extra: &mut Vec<String>,
     ) {
+        if self.in_box {
+            // Inside a drawn box's content: the capturing drawing already
+            // holds this one; print only what the layer can say in words.
+            self.drawing_text(element, out, extra);
+            return;
+        }
         if self.in_comment {
             self.drawing_text(element, out, extra);
             return;
         }
+        self.box_comments(element, extra);
         let mut plain_image = false;
         if drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
@@ -3348,12 +3390,61 @@ impl Writer<'_> {
         }
     }
 
-    /// A drawing's printable content inside a comment: its text boxes as
-    /// extra blocks (a text box is a story of its own, so comment ranges
-    /// around its anchor do not cover it) and its image's alt text.
+    /// The `txbxContent` Word renders of `element` — under an
+    /// `mc:AlternateContent`, only the shown branch's, never the
+    /// `mc:Fallback` copy — each rendered as a block of `<!-- -->` comment
+    /// lines pushed to `extra`. The drawing's `dN` payload already carries
+    /// the text, so printing it as a real paragraph would write it twice;
+    /// the comment keeps the view readable without cost to the write.
+    fn box_comments(&mut self, element: &Element, extra: &mut Vec<String>) {
+        let mut boxes = Vec::new();
+        let root = match element
+            .child("Choice")
+            .or_else(|| element.child("Fallback"))
+        {
+            Some(branch) => branch,
+            None => element,
+        };
+        root.find_all("txbxContent", &mut boxes);
+        if boxes.is_empty() {
+            return;
+        }
+        let open_comments = std::mem::take(&mut self.open_comments);
+        let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
+        let in_box = std::mem::replace(&mut self.in_box, true);
+        for content in boxes {
+            let mut blocks = Blocks::new();
+            let mut list = ListIndent::default();
+            self.blocks(content, &mut blocks, &mut list);
+            let block = blocks.finish();
+            let mut comment = String::new();
+            for line in block.lines() {
+                // A line ending `-->` would close the comment early.
+                let line = line.replace("-->", "-- >");
+                if line.is_empty() {
+                    comment.push('\n');
+                } else {
+                    let _ = writeln!(comment, "<!-- {line} -->");
+                }
+            }
+            extra.push(comment.trim_end_matches('\n').to_string());
+        }
+        self.in_box = in_box;
+        self.open_comments = open_comments;
+        self.hidden_ranges = hidden_ranges;
+    }
+
+    /// A drawing's printable content inside a comment or a drawn text box:
+    /// its text boxes as extra blocks (a text box is a story of its own, so
+    /// comment ranges around its anchor do not cover it) and its image's
+    /// alt text.
     fn drawing_text(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
-        drawing.find_all("txbxContent", &mut boxes);
+        // Inside a drawn box's content, `blocks` already walked a nested
+        // box through: printing it again as a block would show it twice.
+        if !self.in_box {
+            drawing.find_all("txbxContent", &mut boxes);
+        }
         let open_comments = std::mem::take(&mut self.open_comments);
         let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
         for content in boxes {

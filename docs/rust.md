@@ -85,6 +85,24 @@ Every Word-package argument and return is `&[u8]`/`Vec<u8>` holding the
 complete package — no temp files, no processes. Markdown text is `&str`/`String`
 instead, e.g. `markdown::diff_markdown(old: &str, new: &str) -> String`.
 
+### Ids today and the 17 October contract
+
+The ids these APIs and the CLI print and take are the settled short ids
+(`p12`, `header1.p2`, `footnotes.p3`, `r12`, `r1+2`, `c5`, `c5.text`,
+`t0.row1.cell2`); `inspect::inspect_json` keeps the schema-1 fields (`id`,
+`ref`, numeric comment ids; `inspect::SCHEMA_VERSION` is `1`), and a few
+transitional spellings survive: `noid` for a change with no `w:id`, a colon
+id (`body:rev:007`) when no short spelling reads back, and nested `.pN`
+inside cells and text boxes (`t0.row1.cell2.p1`, `p14.box0.p0`). The
+short-and-long-ID contract
+([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
+staged in
+[superpowers/plans/2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md))
+is not implemented: it scopes cell and text-box paragraphs as `psN`,
+allocates labels for the fallback cases, moves JSON to paired
+`short_id`/`long_id` references under `schema_version: 2`, and retires the
+colon family, `noid` and open ranges (`p17-`, `-p3`).
+
 ### Selective change resolution
 
 `ChangeFilter` selects by public `ids`, `authors` and `kinds` fields

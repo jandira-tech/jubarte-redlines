@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Handoff: Plan 1, Task 7 (S6, field and TOC refresh), branch `adopt/s6-fields`
+# Handoff: Plan 1, Task 7 (S6, field and TOC refresh), branch `adopt/s6-fields` — resolved
 
 > **Status, later on 2026-10-02:** implemented on this branch in the commits
 > after this file (PR #275). The three review corrections are in the code:
@@ -16,16 +16,34 @@ SPDX-License-Identifier: AGPL-3.0-only
 > only in this session, not on the full suite). Deviations from the design below:
 > `paragraph_pages` was not added (nothing in S6 reads it); field marks that
 > share a run are split first (a corpus TOC placeholder panicked otherwise).
+>
+> **Status, audited 2026-10-18 (`main` @ `aba48bd5`):** merged to `main` by `fb3e225f`
+> (PR #275; commits `11d94187`, `a21a7259`, `d5fc514f`, `80ba1ba2`, `4da94d3e`). Every
+> deliverable below shipped, except the CLI landed in a different shape: there is no
+> `jubarte fields update` subcommand — the refresh runs as `convert --update-fields`
+> (`cli.rs`), which prints one line per field and reports `{page_count, fields}`.
+> `fields::update_fields` (`src/fields.rs:115`), `convert::layout_facts` +
+> `LayoutFacts` (`src/convert/mod.rs:742`), `EditPlan.update_fields`,
+> `OperationKind::InsertToc` + the `check_operation_keys` row, `capabilities`
+> `operations.fields`, `tests/fields_update.rs`, Python `update_fields` /
+> `EditPlan.insert_toc` / `EditPlan.update_fields`, and WASM `updateFields` all
+> exist today. `PAGE` is still never materialized and `w:updateFields` is still
+> never set. The `body:p:N` note in "What the layout already does" remains true of
+> `inspect`'s internal numbering; it is not public short-ID syntax (public
+> selectors have been `pN` since `c3b906ed`/`6fc0ab0e`, and the short/long ID
+> contract v3 — `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> unimplemented — retires colon forms entirely).
 
 Written 2026-10-02 at the end of a session that was cut off before any code
 was written. Everything below was read from the tree at `b420d64` (main) or
 from the plan branch; nothing is from memory. No subagents were spawned, so
 there is no agent work to fold in.
 
-## State of the branch
+## State of the branch — historical
 
 - `adopt/s6-fields` is `main` at `b420d64` plus this handoff file. No source
-  changes, no tests, no spike yet.
+  changes, no tests, no spike yet. **→ Superseded: the work is on `main` since
+  `fb3e225f` (PR #275); the branch state below is the snapshot at handoff.**
 - Toolchain present in the container: cargo 1.97.0, rustc 1.97.0, uv 0.8.17.
   `cargo build` has not been run yet, so the first build is cold.
 - The plan is not on main. Get it with:
@@ -52,14 +70,15 @@ Deliverables, all additive, nothing outside the task:
    indexed like `inspect::paragraphs`, from one layout pass.
 3. `OperationKind::InsertToc { paragraph, position, levels, title }` and a
    plan-level `update_fields: bool`; `check_operation_keys` row.
-4. CLI `jubarte fields update FILE -o OUT [--json]`.
+4. CLI `jubarte fields update FILE -o OUT [--json]`. **→ shipped as
+   `convert --update-fields` instead of a `fields` subcommand.**
 5. `capabilities`: `operations.fields` and `"insert_toc"` in
-   `edit_operations`.
+   `edit_operations`. **→ shipped.**
 6. Python `Document.update_fields()`, `EditPlan.insert_toc(...)`,
-   `EditPlan(update_fields=True)`; WASM `updateFields`.
+   `EditPlan(update_fields=True)`; WASM `updateFields`. **→ shipped.**
 7. `tests/fields_update.rs` (the plan's Step 1 test, adapted), docs:
    skill §2, CHANGELOG under `## [Unreleased]`, `docs/WORD_DIFFERENCES.md`
-   caveat (page numbers are jubarte's layout, not Word's).
+   caveat (page numbers are jubarte's layout, not Word's). **→ shipped.**
 
 The brief says to start with a spike proving the layout's `bookmark_pages`
 map is populated for body bookmarks after `layout()`, and to record the
@@ -127,7 +146,9 @@ the `src/convert/mod.rs` change as small as possible.
 - `inspect::body_paragraph_nodes` (src/inspect.rs:523): every `w:p` under
   the body in document order, text boxes excluded, table cells INCLUDED;
   `paragraphs_of` numbers them `body:p:N`. `paragraph_pages` must follow
-  this order.
+  this order. **→ Still true: `inspect` keeps `body:p:N` internally today
+  (the transitional colon form v3 §7 retires); it is not the public selector
+  grammar, which is `pN` since `c3b906ed`/`6fc0ab0e`.**
 
 ## Design decided (not yet implemented)
 

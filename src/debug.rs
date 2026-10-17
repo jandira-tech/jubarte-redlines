@@ -170,18 +170,15 @@ struct Package {
 impl Package {
     fn open(bytes: &[u8]) -> Result<Self, String> {
         // Read Strict packages as the Transitional the checks describe, as
-        // the comparer does at load — and only those: whether a package IS
-        // Strict is decided by its main part's namespace, so a Transitional
-        // file that merely quotes a Strict URI in its text is reported as
-        // the bytes it carries (#531).
-        let translated = if crate::strict_translation::main_part_is_strict(bytes) {
-            Some(crate::strict_translation::strict_to_transitional_docx(
-                bytes,
-            ))
-        } else {
-            None
-        };
-        let bytes = translated.as_deref().unwrap_or(bytes);
+        // the comparer does at load. The rewrite touches namespace
+        // declarations and relationship types alone and hands a package
+        // with none of them back byte-identical, so a Transitional file
+        // that merely quotes a Strict URI in its text is reported as the
+        // bytes it carries (#531), while a package whose subparts alone
+        // are Strict is translated too, as before the main-part gate
+        // (#561).
+        let translated = crate::strict_translation::strict_to_transitional_docx(bytes);
+        let bytes = translated.as_slice();
         let mut zip =
             zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
         let mut entries = Vec::with_capacity(zip.len());
@@ -3470,6 +3467,36 @@ mod tests {
                 "{check:?}: the report rewrote the file's prose: {out}"
             );
         }
+    }
+
+    /// A hybrid package — a Transitional main part with Strict subparts —
+    /// is read through the translation too, as before the main-part gate:
+    /// the checks describe the Transitional twin of every part that
+    /// carries Strict namespaces, not only of packages whose main part
+    /// does (#561 review defect 3).
+    #[test]
+    fn hybrid_packages_translate_their_strict_subparts() {
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(CLEAN)),
+            (
+                "customXml/item1.xml",
+                r#"<b:data xmlns:b="http://purl.oclc.org/ooxml/wordprocessingml/main"/>"#,
+            ),
+        ]);
+        let package = Package::open(&pkg).unwrap();
+        let item = package
+            .entries
+            .iter()
+            .find(|e| e.name == "customXml/item1.xml")
+            .unwrap();
+        let text = String::from_utf8_lossy(&item.data);
+        assert!(
+            text.contains("http://schemas.openxmlformats.org/wordprocessingml/2006/main"),
+            "the Strict subpart reaches the checks translated: {text}"
+        );
+        assert!(!text.contains("purl.oclc.org"), "{text}");
     }
 
     /// PR #247 review: `behindDoc="true"` is behind the text, like `"1"`.
