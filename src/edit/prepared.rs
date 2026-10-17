@@ -704,18 +704,91 @@ pub(super) fn check_serialized_stories(
     Ok(())
 }
 
-/// The application half of the old `apply_plan`, unchanged: the candidate
-/// is produced exactly as before so the clean copy and redline stay
-/// byte-identical.
-///
-/// `role` names the publication primary whose serialized-story
-/// postcondition this function runs. `Clean` keeps the existing
-/// pre-`update_fields` behavior, so a green-field defect in clean is
-/// caught before field refreshes legitimately rewrite the bytes.
-/// `Redline` describes the chosen primary as the redline: the published
-/// bytes — built either via emission under `existing_revisions "keep"` or
-/// the comparer otherwise — are checked against the prepared DOM, so a
-/// redline-only defect is `POSTCONDITION_FAILED` before publication.
+/// Compare the published redline's accepted text with the final clean copy.
+fn check_redline_stories(
+    tx: &Transaction<'_>,
+    clean: &[u8],
+    redline: &[u8],
+) -> Result<(), EditError> {
+    fn compare(
+        part: &str,
+        clean: &[crate::inspect::Paragraph],
+        redline: &[crate::inspect::Paragraph],
+    ) -> Result<(), EditError> {
+        if clean.len() != redline.len() {
+            return Err(err(
+                codes::POSTCONDITION_FAILED,
+                None,
+                format!(
+                    "the accepted redline's {part} paragraph {} differs: {} paragraphs, the clean candidate {}",
+                    clean.len().min(redline.len()),
+                    redline.len(),
+                    clean.len(),
+                ),
+            ));
+        }
+        for (expected, actual) in clean.iter().zip(redline) {
+            if expected.text != actual.text {
+                return Err(err(
+                    codes::POSTCONDITION_FAILED,
+                    None,
+                    format!(
+                        "the accepted redline's {part} paragraph {} reads differently than the clean candidate",
+                        expected.id,
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    // Under keep, even the clean copy retains the source's revisions.
+    // Settle both copies for comparison without changing the published bytes.
+    let accept = |bytes: &[u8]| {
+        crate::document_comparer::accept_revisions(bytes)
+            .map_err(|e| err(codes::POSTCONDITION_FAILED, None, e.to_string()))
+    };
+    let clean = accept(clean)?;
+    let redline = accept(redline)?;
+    let paragraphs = |bytes: &[u8]| {
+        crate::inspect::paragraphs(bytes)
+            .map_err(|e| err(codes::POSTCONDITION_FAILED, None, e.to_string()))
+    };
+    compare(
+        &tx.opened.main,
+        &paragraphs(&clean)?,
+        &paragraphs(&redline)?,
+    )?;
+    if tx.written_stories.iter().all(|&story| story == 0) {
+        return Ok(());
+    }
+    let stories = |bytes: &[u8]| {
+        crate::inspect::stories(bytes)
+            .map_err(|e| err(codes::POSTCONDITION_FAILED, None, e.to_string()))
+    };
+    let clean = stories(&clean)?;
+    let redline = stories(&redline)?;
+    for &story in &tx.written_stories {
+        if story == 0 {
+            continue;
+        }
+        let part = &tx.stories[story].part;
+        let expected = clean.iter().find(|s| &s.part == part);
+        let actual = redline.iter().find(|s| &s.part == part);
+        let (Some(expected), Some(actual)) = (expected, actual) else {
+            return Err(err(
+                codes::POSTCONDITION_FAILED,
+                None,
+                format!("the accepted candidates lost the {part} story at paragraph 0"),
+            ));
+        };
+        compare(part, &expected.paragraphs, &actual.paragraphs)?;
+    }
+    Ok(())
+}
+
+/// Serialize and check the prepared DOM before field updates, then check
+/// the published redline against the final clean candidate.
 fn produce(
     tx: &mut Transaction<'_>,
     emit: bool,
@@ -723,29 +796,16 @@ fn produce(
 ) -> Result<EditResult, EditError> {
     let plan = tx.plan;
     let (mut clean, mut marked) = tx.finish()?;
-    let check_redline_after = matches!(role, PrimaryRole::Redline);
-    // `Clean`: the candidate the DOM produced, checked before `update_fields`
-    // (which legitimately rewrites it: filled TOC entries, NUMPAGES) or
-    // the comparer ever sees it. `Redline`: defer the check onto the
-    // redline; clean is the redline's foundation, so post-`update_fields`
-    // differences don't slip past the primary check.
-    if !check_redline_after {
-        check_serialized_stories(tx, &clean)?;
-    }
+    check_serialized_stories(tx, &clean)?;
     if plan.existing_revisions == ExistingRevisions::Keep
         || (emit && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
     {
         let result = tracked::result(tx, clean)?;
-        let redline = self::redline_hook::replace(result.redline);
-        tx.check_redactions(&[&result.clean, &redline])?;
-        if check_redline_after {
-            check_serialized_stories(tx, &redline)?;
+        tx.check_redactions(&[&result.clean, &result.redline])?;
+        if role == PrimaryRole::Redline {
+            check_redline_stories(tx, &result.clean, &result.redline)?;
         }
-        return Ok(EditResult {
-            clean: result.clean,
-            redline,
-            report: result.report,
-        });
+        return Ok(result);
     }
     let mut fields = Vec::new();
     if plan.update_fields {
@@ -808,7 +868,6 @@ fn produce(
         redline = crate::settings::apply_settings_to_docx(&redline, request)
             .map_err(|m| err("PACKAGE_WRITE", None, m))?;
     }
-    let redline = self::redline_hook::replace(redline);
     tx.check_redactions(&[&clean, &redline])?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
@@ -816,8 +875,8 @@ fn produce(
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline);
     report.fields = fields;
-    if check_redline_after {
-        check_serialized_stories(tx, &redline)?;
+    if role == PrimaryRole::Redline {
+        check_redline_stories(tx, &clean, &redline)?;
     }
     Ok(EditResult {
         clean,
@@ -829,40 +888,6 @@ fn produce(
 /// An [`EditError`] as `super::err` builds it.
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {
     super::err(code, operation, message)
-}
-
-/// A redline-text fake: only the current test thread sees it. Tests
-/// that need a redline-only defect set this to a docx whose paragraph
-/// text disagrees with the prepared DOM's projection, then call
-/// `prepare` with `PrimaryRole::Redline` so the chosen-primary check
-/// sees the redline and refuses. Lives in its own `pub` module so
-/// integration tests in `tests/` can wire the hook.
-///
-/// The module is always compiled (the `pub fn` set/reset are
-/// integration-test entry points), but only the `pub(crate) fn replace`
-/// is invoked — and only inside `cfg(test)` blocks in `produce`, so a
-/// production binary never reaches the thread-local.
-pub mod redline_hook {
-    thread_local! {
-        static SERIALIZED_REDLINE: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
-    }
-
-    /// Run the production path with this thread's redline replacement.
-    /// `None` (the default) returns the bytes `produce` built; otherwise
-    /// the test's bytes stand in.
-    pub(crate) fn replace(bytes: Vec<u8>) -> Vec<u8> {
-        SERIALIZED_REDLINE.with(|redline| redline.borrow().clone().unwrap_or(bytes))
-    }
-
-    /// Set this test thread's redline replacement.
-    pub fn set(bytes: Vec<u8>) {
-        SERIALIZED_REDLINE.with(|redline| *redline.borrow_mut() = Some(bytes));
-    }
-
-    /// Clear this test thread's redline replacement.
-    pub fn reset() {
-        SERIALIZED_REDLINE.with(|redline| *redline.borrow_mut() = None);
-    }
 }
 
 /// Prepare a PlanV2 through the existing source/working-baseline adapter and
@@ -988,6 +1013,99 @@ pub(crate) mod tests {
             .verification();
         assert_eq!(checked.integrity, "passed");
         assert_eq!(checked.operation_postconditions, "passed");
+    }
+
+    #[test]
+    fn redline_only_defects_name_the_story_and_paragraph() {
+        use deeper_boundary_fixture::{Part, R_NS, W_NS, docx_with_sect, para};
+
+        let kinds = ["header", "footer", "footnotes", "endnotes"];
+        let names = [
+            "word/header1.xml",
+            "word/footer1.xml",
+            "word/footnotes.xml",
+            "word/endnotes.xml",
+        ];
+        let roots = ["hdr", "ftr", "footnotes", "endnotes"];
+        let xmls: Vec<_> = roots
+            .iter()
+            .map(|root| {
+                let text = para("old");
+                let content = match *root {
+                    "footnotes" => format!(r#"<w:footnote w:id="1">{text}</w:footnote>"#),
+                    "endnotes" => format!(r#"<w:endnote w:id="1">{text}</w:endnote>"#),
+                    _ => text,
+                };
+                format!(r#"<w:{root} xmlns:w="{W_NS}">{content}</w:{root}>"#)
+            })
+            .collect();
+        let rels: Vec<_> = kinds.iter().map(|k| format!("{R_NS}/{k}")).collect();
+        let types: Vec<_> = kinds
+            .iter()
+            .map(|k| {
+                format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{k}+xml")
+            })
+            .collect();
+        let parts: Vec<_> = (0..kinds.len())
+            .map(|i| Part {
+                name: names[i],
+                content_type: &types[i],
+                rel_type: &rels[i],
+                xml: &xmls[i],
+            })
+            .collect();
+        let source = docx_with_sect(
+            &(para("old")
+                + r#"<w:p><w:r><w:footnoteReference w:id="1"/><w:endnoteReference w:id="1"/></w:r></w:p>"#),
+            &parts,
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#,
+        );
+        let mut operations = vec![
+            serde_json::json!({"kind":"replace", "paragraph":"p0", "find":"old", "replacement":"new"}),
+        ];
+        for story in crate::inspect::stories(&source).unwrap() {
+            operations.push(serde_json::json!({"kind":"replace", "paragraph":story.paragraphs[0].id, "find":"old", "replacement":"new"}));
+        }
+        let plan = EditPlan::from_json(&serde_json::json!({
+            "schema_version":1, "author":"T", "date":"2026-10-17T12:00:00Z", "operations":operations,
+        }).to_string()).unwrap();
+        let mut tx = Transaction::start(&source, &plan).unwrap();
+        tx.resolve().unwrap();
+        tx.apply().unwrap();
+        let (clean, _) = tx.finish().unwrap();
+        assert!(check_redline_stories(&tx, &clean, &clean).is_ok());
+        let mut failures = Vec::new();
+        for part in std::iter::once("word/document.xml").chain(names) {
+            for defect in ["text", "count", "missing"] {
+                if part == "word/document.xml" && defect == "missing" {
+                    continue;
+                }
+                let mut pkg = crate::opc::PartFs::open(&clean).unwrap();
+                let xml = pkg.part_string(part).unwrap();
+                if defect == "missing" {
+                    pkg.remove_related_part(
+                        "word/document.xml",
+                        &format!("rIdX{}", names.iter().position(|p| *p == part).unwrap()),
+                    );
+                } else {
+                    let broken = if defect == "text" {
+                        xml.replace("new", "WRONG")
+                    } else {
+                        xml.replace("</w:p>", "</w:p><w:p/>")
+                    };
+                    pkg.set_part(part, broken.into_bytes());
+                }
+                let redline = pkg.to_zip().unwrap();
+                match check_redline_stories(&tx, &clean, &redline) {
+                    Err(e)
+                        if e.code == codes::POSTCONDITION_FAILED
+                            && e.message.contains(part)
+                            && e.message.contains("paragraph") => {}
+                    outcome => failures.push(format!("{part} {defect}: {outcome:?}")),
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     thread_local! {

@@ -1955,3 +1955,125 @@ fn review_07_defaults_and_saved_plan_options_are_resolved() {
             .ends_with("bundle/report.json")
     );
 }
+
+fn typed_v1_tracked_apply(source: &[u8], mut plan: serde_json::Value) -> Result<Vec<u8>, String> {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    plan["schema_version"] = serde_json::json!(1);
+    plan["source_sha256"] = serde_json::json!(source_sha256(source));
+    plan["author"] = serde_json::json!("Editor");
+    plan["date"] = serde_json::json!("2026-10-17T12:00:00Z");
+    std::fs::write(dir.join("source.docx"), source).unwrap();
+    std::fs::write(dir.join("v1.json"), plan.to_string()).unwrap();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "apply",
+            "source.docx",
+            "--plan",
+            "v1.json",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    if code != 0 {
+        assert!(!dir.join("out.docx").exists());
+        return Err(format!("exit {code}: {out} {err}"));
+    }
+    let receipt: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let bytes = std::fs::read(dir.join("out.docx")).unwrap();
+    let artifacts: Vec<_> = receipt["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["media_role"] == "document")
+        .collect();
+    assert_eq!(artifacts.len(), 1, "{receipt}");
+    assert_eq!(artifacts[0]["sha256"], source_sha256(&bytes));
+    assert_eq!(artifacts[0]["committed"], true);
+    assert!(!jubarte::changes::list_changes(&bytes).unwrap().is_empty());
+    Ok(bytes)
+}
+
+#[test]
+fn review_typed_v1_tracked_apply_refreshes_stale_fields() {
+    let source = docx(
+        &(para("One")
+            + r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#
+            + r#"<w:p><w:r><w:t xml:space="preserve">Pages: </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>9</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#),
+    );
+    let result = typed_v1_tracked_apply(
+        &source,
+        serde_json::json!({
+            "update_fields": true,
+            "operations": [{"kind":"replace", "paragraph":"p0", "find":"One", "replacement":"Uno"}],
+        }),
+    );
+    assert!(
+        result.is_ok(),
+        "stale field refresh must succeed: {result:?}"
+    );
+    let accepted = jubarte::document_comparer::accept_revisions(&result.unwrap()).unwrap();
+    let texts: Vec<_> = jubarte::inspect::paragraphs(&accepted)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.text)
+        .collect();
+    assert_eq!(texts, ["Uno", "", "Pages: 2"]);
+}
+
+#[test]
+fn review_typed_v1_tracked_paragraph_edits_publish_verified_bytes() {
+    let revision = r#"<w:p><w:ins w:id="7" w:author="Other" w:date="2026-09-01T00:00:00Z"><w:r><w:t>Earlier insertion.</w:t></w:r></w:ins></w:p>"#;
+    let mut failures = Vec::new();
+    for keep in [false, true] {
+        let source =
+            docx(&(para("alpha beta") + &para("Kept.") + if keep { revision } else { "" }));
+        for (name, operation, mut expected) in [
+            (
+                "insert",
+                serde_json::json!({"kind":"insert_paragraph", "paragraph":"p0", "position":"after", "runs":[{"text":"Inserted."}]}),
+                vec!["alpha beta", "Inserted.", "Kept."],
+            ),
+            (
+                "delete",
+                serde_json::json!({"kind":"delete_paragraph", "paragraph":"p0"}),
+                vec!["Kept."],
+            ),
+            (
+                "replace",
+                serde_json::json!({"kind":"replace", "paragraph":"p0", "find":"alpha", "replacement":"ALPHA"}),
+                vec!["ALPHA beta", "Kept."],
+            ),
+        ] {
+            let mut plan = serde_json::json!({"operations": [operation]});
+            if keep {
+                plan["existing_revisions"] = serde_json::json!("keep");
+                expected.push("Earlier insertion.");
+            }
+            match typed_v1_tracked_apply(&source, plan) {
+                Ok(bytes) => {
+                    let accepted = jubarte::document_comparer::accept_revisions(&bytes).unwrap();
+                    let texts: Vec<_> = jubarte::inspect::paragraphs(&accepted)
+                        .unwrap()
+                        .into_iter()
+                        .map(|p| p.text)
+                        .collect();
+                    assert_eq!(texts, expected, "{name}, keep={keep}");
+                    if keep {
+                        assert!(
+                            jubarte::changes::list_changes(&bytes)
+                                .unwrap()
+                                .iter()
+                                .any(|c| c.author.as_deref() == Some("Other"))
+                        );
+                    }
+                }
+                Err(error) => failures.push(format!("{name}, keep={keep}: {error}")),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
