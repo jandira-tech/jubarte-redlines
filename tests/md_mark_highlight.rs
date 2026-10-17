@@ -236,6 +236,11 @@ fn a_colour_class_reads_without_regard_to_case() {
     assert_eq!(highlight_colours(&again), vec!["cyan"], "{again}");
     let again = document(&write("x <mark class=\"hl-DARKBLUE\">lit</mark> y\n"));
     assert_eq!(highlight_colours(&again), vec!["darkBlue"], "{again}");
+    // The prefix too: `HL-Cyan` is `hl-cyan`.
+    let again = document(&write("x <mark class=\"HL-Cyan\">lit</mark> y\n"));
+    assert_eq!(highlight_colours(&again), vec!["cyan"], "{again}");
+    let again = document(&write("x <mark class=\"Hl-green\">lit</mark> y\n"));
+    assert_eq!(highlight_colours(&again), vec!["green"], "{again}");
 }
 
 /// The text of every run with highlight that the writer wrote, in order.

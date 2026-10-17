@@ -1287,10 +1287,13 @@ pub(super) fn parser_options() -> Options {
 
 /// A `class="hl-<colour>"` value: `<colour>` one of Word's 16 named
 /// highlight colours (`yellow`, `green`, `cyan`, …, `lightGray`, `black`,
-/// `white`), read without regard to case (a hand-edited `hl-Cyan` is
-/// `cyan`). Anything else is the default yellow.
+/// `white`), read without regard to case, the prefix's included (a
+/// hand-edited `HL-Cyan` is `cyan`). Anything else is the default yellow.
 fn hl_color_class(class: &str) -> Option<&'static str> {
-    let colour = class.strip_prefix("hl-")?;
+    let colour = class
+        .get(..3)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("hl-"))
+        .map(|_| &class[3..])?;
     crate::edit::HIGHLIGHTS
         .iter()
         .copied()
