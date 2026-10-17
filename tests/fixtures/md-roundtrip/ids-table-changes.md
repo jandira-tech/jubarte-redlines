@@ -21,16 +21,16 @@ footers:
 ---
 
 <!-- p0 fmt r4 @AS; r5 @AS; r6 @AS; r9 @AS -->
-==file\_=={~~**176**~>==177==~~}{>>r8+7 @AS<<}==.docx==
+<mark>file\_</mark>{~~**176**~><mark>177</mark>~~}{>>r8+7 @AS<<}<mark>.docx</mark>
 
 <!-- p1 break-ins r10 @AS -->
-{++==Yellow Highlight Demo==++}{>>r11 @AS<<}
+{++<mark>Yellow Highlight Demo</mark>++}{>>r11 @AS<<}
 
 <!-- p2 break-ins r12 @AS -->
-{++==This document demonstrates yellow text highlighting.==++}{>>r13 @AS<<}
+{++<mark>This document demonstrates yellow text highlighting.</mark>++}{>>r13 @AS<<}
 
 <!-- p3 break-del r14 @AS, in c16 -->
-{++==Highlighted text stands out for easy reference and review.==++}{>>r15 @AS<<}{=={--**eigenpal/docx-editor**         --}{>>r18 @AS<<}==}
+{++<mark>Highlighted text stands out for easy reference and review.</mark>++}{>>r15 @AS<<}{=={--**eigenpal/docx-editor**         --}{>>r18 @AS<<}==}
 
 <!-- p4 break-del r19 @AS, in c16 -->
 {=={--Project Charter & Contributor Agreement         --}{>>r20 @AS<<}==}

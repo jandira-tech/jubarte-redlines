@@ -727,7 +727,9 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
             if on { (open, close) } else { ("", "") }
         };
         let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
-        let (h_open, h_close) = pair(marks.highlight, "==", "==");
+        // `<mark>`, not `==`: `{==…==}` is a comment's scope, and `==`
+        // beside it or beside a text `=` reads as neither.
+        let (h_open, h_close) = pair(marks.highlight, "<mark>", "</mark>");
         // `~~` reads where CommonMark lets it open and close; a mark
         // beside it is punctuation, else `<s>` says the same.
         let beside = marks.bold || marks.italic || marks.underline || marks.highlight;

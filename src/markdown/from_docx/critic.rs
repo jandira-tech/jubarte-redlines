@@ -35,7 +35,8 @@ use super::ooxml::{Inline, Marks};
 pub(crate) enum Mark {
     Insertion,
     Deletion,
-    Highlight,
+    /// A comment's scope, `{==…==}`.
+    Scope,
 }
 
 impl Mark {
@@ -43,7 +44,7 @@ impl Mark {
         match self {
             Self::Insertion => ("{++", "++}"),
             Self::Deletion => ("{--", "--}"),
-            Self::Highlight => ("{==", "==}"),
+            Self::Scope => ("{==", "==}"),
         }
     }
 
@@ -398,7 +399,7 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
             continue;
         };
         let mut comments = Vec::new();
-        let nodes = if mark == Mark::Highlight {
+        let nodes = if mark == Mark::Scope {
             lift_comments(nodes, &mut comments)
         } else {
             nodes
@@ -947,7 +948,7 @@ pub(crate) fn join_paragraphs(parts: Vec<Part>, separator: &str, keep_empty: boo
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
-    use Mark::{Deletion as Del, Highlight as Hl, Insertion as Ins};
+    use Mark::{Deletion as Del, Insertion as Ins, Scope as Sc};
 
     fn text(critic: &mut Critic, t: &str) {
         critic.push(t, false, false, None);
@@ -979,7 +980,7 @@ mod tests {
         match value {
             "+" => Ins,
             "-" => Del,
-            _ => Hl,
+            _ => Sc,
         }
     }
 
@@ -1638,10 +1639,10 @@ mod tests {
         // file_170: a highlight begun before the bold ends with the bold's
         // last run; the notes after its end stay outside the bold too.
         let mut critic = Critic::default();
-        critic.open(Hl, None);
+        critic.open(Sc, None);
         critic.push("varied ", false, false, None);
         critic.push("Emphasis lives here. ", true, true, None);
-        critic.close(Hl);
+        critic.close(Sc);
         critic.comment("c2 @AS: Testing.");
         critic.push("See note.", true, true, None);
         assert_eq!(

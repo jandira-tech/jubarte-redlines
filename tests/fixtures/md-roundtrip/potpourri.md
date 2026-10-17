@@ -45,7 +45,7 @@ This document is intentionally varied. It mixes headings, body copy, inline form
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
 
 <!-- p5 -->
-**Bold blue,** **_italic red,_** **_<u>underlined green,&#32;</u>_**<b><i><u>==yellow-highlighted,&#32;==</u></i></b>**_<u>==~~strikethrough,&#32;~~==</u>_**<b><i><u>==~~`monospace.`~~==</u></i></b>
+**Bold blue,** **_italic red,_** **_<u>underlined green,&#32;</u>_**<b><i><u><mark>yellow-highlighted,&#32;</mark></u></i></b>**_<u><mark>~~strikethrough,&#32;~~</mark></u>_**<b><i><u><mark>~~`monospace.`~~</mark></u></i></b>
 
 <!-- p6 -->
 # 2. Lists
@@ -136,7 +136,7 @@ _— end of sample —_
 {++Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.++}{>>r14 @ASR<<}
 
 <!-- p53 break-ins r15 @ASR -->
-{++**Bold blue,** **_italic red,_** **_<u>underlined green,&#32;</u>_**<b><i><u>==yellow-highlighted,&#32;==</u></i></b>**_<u>==~~strikethrough,&#32;~~==</u>_**<b><i><u>==~~`monospace.`~~==</u></i></b>++}{>>r16 @ASR<<}
+{++**Bold blue,** **_italic red,_** **_<u>underlined green,&#32;</u>_**<b><i><u><mark>yellow-highlighted,&#32;</mark></u></i></b>**_<u><mark>~~strikethrough,&#32;~~</mark></u>_**<b><i><u><mark>~~`monospace.`~~</mark></u></i></b>++}{>>r16 @ASR<<}
 
 <!-- p54 break-ins r17 @ASR -->
 # {++2. Lists++}{>>r18 @ASR<<}
@@ -229,7 +229,7 @@ This document is intentionally {--varied. It mixes headings, body copy, inline f
 Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.
 
 <!-- p102 -->
-**Bold blue,** **_italic red,_** **_<u>underlined green,&#32;</u>_**<b><i><u>==yellow-highlighted,&#32;==</u></i></b>**_<u>==~~strikethrough,&#32;~~==</u>_**<b><i><u>==~~`monospace.`~~==</u></i></b>
+**Bold blue,** **_italic red,_** **_<u>underlined green,&#32;</u>_**<b><i><u><mark>yellow-highlighted,&#32;</mark></u></i></b>**_<u><mark>~~strikethrough,&#32;~~</mark></u>_**<b><i><u><mark>~~`monospace.`~~</mark></u></i></b>
 
 <!-- p103 -->
 # 2. Lists

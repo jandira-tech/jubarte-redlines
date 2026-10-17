@@ -94,7 +94,7 @@ CLI reads them.
 | `#` to `######` | `Heading1` to `Heading6` |
 | paragraph | `Normal` |
 | `**bold**`, `*italic*`, `~~struck~~` | bold, italic, strikethrough |
-| `==marked==` | yellow highlight; `==` beside a space, inside a longer `=` run, escaped or unclosed in its paragraph is text. The agent view prints a highlight of any colour this way, and strike as `~~struck~~` |
+| `==marked==` | yellow highlight; `==` beside a space, inside a longer `=` run, escaped or unclosed in its paragraph is text. The agent view prints a highlight of any colour as `<mark>marked</mark>`, so `{==…==}` is only ever a comment's scope, and strike as `~~struck~~`; the spaces at a highlighted, underlined or struck stretch's edges stay inside its marks as `&#32;` |
 | `{REF _Ref1 \h}Section 2{/}` | a field (`fldChar begin`, `instrText`, `separate`, the result, `end`). The code must start with a field name ECMA-376 lists (any case) and close with `{/}` in the same paragraph, so a placeholder such as `{Client Name}` stays text; `\{` makes a brace literal. A code that begins its paragraph's text (after any `#`, list or `>` marker) may close in a later paragraph, the paragraphs between being its result: a table of contents, `{TOC \o "1-3"}` at the start of its first entry and `{/}` after its last. The agent view prints a body field this way when it has no field inside its code, is not a hyperlink, and either closes in its paragraph or begins its first paragraph with only paragraphs (no table, no tracked change around its marks) up to its end; otherwise it prints the result only |
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
@@ -185,7 +185,7 @@ cross emphasis, links and paragraph breaks.
 | `{++new++}` | inserted text |
 | `{--old--}` | deleted text |
 | `{~~old~>new~~}` | deleted, then inserted text |
-| `{==text==}{>>note<<}` | a comment on `text` |
+| `{==text==}{>>note<<}` | a comment on `text` (`text` is the comment's scope, Word's `commentRangeStart` to `commentRangeEnd`) |
 | `{++new++}{>>note<<}` | a comment on the change |
 | `{>>note<<}` alone | a comment at that point |
 | `{>>note<<}` in a footnote, header or footer | Word allows comments only in the body: in a footnote the comment moves to the note's reference mark, in a header or footer it is dropped and its text kept; both warn |
@@ -339,7 +339,7 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - `in c5`: with comments inline, the comment threads whose range runs on
   past the paragraph. CriticMarkup cannot span paragraphs, so such a range
   repeats `{==…==}` in each and shows its note only where it ends; the
-  clause says which thread a highlight belongs to.
+  clause says which thread a scope belongs to.
 - Empty paragraphs: `<!-- p19 empty -->`, consecutive ones
   `<!-- p19-p23 empty -->`. An empty paragraph that holds a tracked mark, a
   formatting change, a resolved revision or a hidden comment keeps its own
@@ -665,7 +665,7 @@ note.
 - A table is one block for `-p`, `--head` and `--tail`.
 - With comments inline, a comment range between two changes by one author
   splits their note (`{>>r7 @AC<<}` … `{>>r8 @AC<<}`): CriticMarkup cannot
-  nest a highlight inside a change. The resolved views say `rev r7+8 @AC`;
+  nest a comment's scope inside a change. The resolved views say `rev r7+8 @AC`;
   both ids name the same revisions.
 
 ## Diffs
@@ -692,7 +692,7 @@ Payment is due in [-30-]{+45+} days.
   paragraph in the new version; `@@ -[p12] @@` is a paragraph
   removed, in the old one. A change in a text box is shown at the
   paragraph that holds the box.
-- A change is `[-old-]{+new+}`. Highlights and comments stay CriticMarkup:
+- A change is `[-old-]{+new+}`. Comments and their scopes stay CriticMarkup:
   `{==text==}{>>Name (date): comment<<}`.
 - The `+++` line names who made the changes and when, once. A change by
   anyone else (a tracked change already in a Word document) is followed

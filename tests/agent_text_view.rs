@@ -1542,14 +1542,15 @@ fn underline_renders_inside_bold_in_the_agent_view_only() {
 
 #[test]
 fn highlight_and_strike_render_in_the_agent_view() {
-    // Spec §3: `==x==` is a highlight of any colour and `~~x~~` a strike.
+    // Spec §3: `<mark>x</mark>` is a highlight of any colour and `~~x~~` a
+    // strike.
     // Text that holds `==` or `~~` itself is escaped, so it stays text.
     let p = r#"<w:p><w:r><w:t xml:space="preserve">pay </w:t></w:r><w:r><w:rPr><w:b/><w:highlight w:val="cyan"/></w:rPr><w:t>now</w:t></w:r><w:r><w:t xml:space="preserve">, </w:t></w:r><w:r><w:rPr><w:strike/></w:rPr><w:t>later</w:t></w:r><w:r><w:t xml:space="preserve">, </w:t></w:r><w:r><w:rPr><w:highlight w:val="none"/><w:strike w:val="0"/></w:rPr><w:t>a==b ~~c</w:t></w:r></w:p>"#;
     let full = agent(&docx(p));
     let view = body(&full);
     assert_eq!(
         view,
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\npay **==now==**, ~~later~~, a\\=\\=b \\~\\~c\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\npay **<mark>now</mark>**, ~~later~~, a\\=\\=b \\~\\~c\n"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()

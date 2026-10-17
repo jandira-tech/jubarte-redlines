@@ -36,7 +36,7 @@ Normal text, **bold text**, _italic text_, **_bold and italic_**.
 <u>Single underline</u>, <u>double underline</u>, <u>wavy underline</u>.
 
 <!-- p6 -->
-~~Strikethrough text~~, ==highlighted text==, SMALL CAPS TEXT.
+~~Strikethrough text~~, <mark>highlighted text</mark>, SMALL CAPS TEXT.
 
 <!-- p7 -->
 Mathematical notation: x<sup>2</sup> + y = H<sub>2</sub>O
@@ -96,7 +96,7 @@ Verdana font (screen-optimized)
 **Purple text** | **Teal text** | **Brown text** | **Gray text**
 
 <!-- p26 -->
-==Yellow highlight== | ==Green highlight== | ==Cyan highlight==
+<mark>Yellow highlight</mark> | <mark>Green highlight</mark> | <mark>Cyan highlight</mark>
 
 <!-- p27 2 -->
 # 4. Styles from styles.xml

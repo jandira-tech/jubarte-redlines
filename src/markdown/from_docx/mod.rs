@@ -1492,7 +1492,7 @@ fn text_follows_reference(note: &Element, changes: &[Change]) -> bool {
     let kind: &[&str] = match changes.iter().rev().find_map(|(mark, _)| match mark {
         Mark::Insertion => Some(true),
         Mark::Deletion => Some(false),
-        Mark::Highlight => None,
+        Mark::Scope => None,
     }) {
         Some(true) => &["ins", "moveTo"],
         Some(false) => &["del", "moveFrom"],
@@ -2379,14 +2379,14 @@ impl Writer<'_> {
             (true, None) => {
                 self.open_comments.push(id.to_string());
                 if let Some(out) = out {
-                    out.open(Mark::Highlight, None);
+                    out.open(Mark::Scope, None);
                 }
             }
             (false, Some(at)) => {
                 self.open_comments.remove(at);
                 match out {
                     Some(out) => {
-                        out.close(Mark::Highlight);
+                        out.close(Mark::Scope);
                         // Inside a change the note waits for the reference:
                         // `{++…{>>note<<}…++}` is no range's comment.
                         let unprinted = if self.revisions.is_empty() {
@@ -2849,7 +2849,7 @@ impl Writer<'_> {
         // A note's label goes inside its tracked changes, before any comment.
         let start = inline.len();
         for _ in &self.open_comments {
-            inline.open(Mark::Highlight, None);
+            inline.open(Mark::Scope, None);
         }
         let closing = std::mem::replace(&mut self.closing_fields, closing_fields(p));
         self.inline(p, None, base, &mut fields, &mut inline, &mut extra);

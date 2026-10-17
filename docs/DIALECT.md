@@ -15,7 +15,7 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | Write | Word | Notes |
 | --- | --- | --- |
 | `**b**` `*i*` `~~s~~` `` `c` `` | bold, italic, strike, `VerbatimChar` | `__b__` is bold too (CommonMark); a `VerbatimChar` run reads back as `` `c` ``, a `SourceCode` paragraph as a fence |
-| `==h==` | highlight (yellow) | any colour reads as `==h==` in the agent view, which also prints `~~s~~` and `<u>u</u>` |
+| `==h==` | highlight (yellow) | the agent view prints a highlight of any colour as `<mark>h</mark>` (`{==…==}` is a comment's scope), strike as `~~s~~` and underline as `<u>u</u>` |
 | `{DATE \@ "MMMM d, yyyy"}March 1, 2026{/}` | field: its code, then its result | ECMA-376 field names only, closed by `{/}` in the paragraph, or in a later one when the code begins its paragraph's text (a table of contents: the paragraphs between are its result); `{Client Name}` stays text, `\{PAGE}` and `\{/}` are literal. The agent view prints body fields this way, except hyperlinks (links) and fields with a field in their code, which show their result |
 | `<u>u</u>` `<sup>2</sup>` `<sub>2</sub>` `<br>` | underline, superscript, subscript, line break | what the reader prints |
 | `<b>` `<i>` `<s>` `<code>` `<mark>` (and `<strong>` `<em>` `<del>`), `<a href>` | bold, italic, strike, code, highlight, link | read only; other tags warn, and an HTML block keeps only its text |
@@ -32,7 +32,7 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | Write | Word |
 | --- | --- |
 | `{++new++}` `{--old--}` `{~~old~>new~~}` | insertion, deletion, substitution |
-| `{==text==}{>>note<<}`, `{>>note<<}` | comment on text, comment at a point |
+| `{==text==}{>>note<<}`, `{>>note<<}` | comment on text (its scope), comment at a point |
 | `{==text==}` alone | highlight |
 | `\{++` | literal text (also `--no-critic`) |
 

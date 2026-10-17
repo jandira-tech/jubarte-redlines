@@ -58,14 +58,14 @@ pub(super) enum Content {
     FieldEnd,
 }
 
-/// A run: content, formatting, the change it belongs to and the highlight
-/// group it is in.
+/// A run: content, formatting, the change it belongs to and the comment
+/// scope (`{==…==}`) group it is in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Run {
     pub content: Content,
     pub format: RunFormat,
     pub change: Option<Change>,
-    pub highlight: Option<usize>,
+    pub scope: Option<usize>,
 }
 
 /// Paragraph properties.
@@ -520,7 +520,7 @@ impl Context<'_> {
     }
 
     fn highlighted(&self, run: &Run) -> bool {
-        run.highlight
+        run.scope
             .is_some_and(|group| !self.document.commented.contains(&group))
     }
 }
