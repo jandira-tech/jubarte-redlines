@@ -11,7 +11,10 @@
 mod common;
 
 use common::docx::docx;
-use jubarte::markdown::{DocxOptions, ReadOptions, TrackChanges, markdown_to_docx, read};
+use jubarte::markdown::{
+    DocxOptions, MarkdownOptions, ReadOptions, TrackChanges, docx_to_markdown, markdown_to_docx,
+    read,
+};
 
 fn view(docx: &[u8]) -> String {
     let options = ReadOptions {
@@ -106,6 +109,55 @@ fn a_plain_space_between_underlined_words_stays_plain() {
         "{first}\n{document}"
     );
     assert_eq!(second, first);
+}
+
+/// The plain conversion of `docx`: no id lines, no marks on spaces.
+fn plain(docx: &[u8]) -> String {
+    docx_to_markdown(docx, &MarkdownOptions::default())
+        .expect("the docx reads")
+        .markdown
+}
+
+#[test]
+fn a_paragraph_of_only_formatted_spaces_prints_its_marks() {
+    // A signature line: spaces carrying a mark are all the paragraph
+    // holds, one paragraph per mark that shows on a space.
+    let body = format!(
+        "<w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p>",
+        run("<w:u w:val=\"single\"/>", "   "),
+        run("<w:highlight w:val=\"yellow\"/>", "   "),
+        run("<w:strike/>", "   "),
+    );
+    let (first, document, second) = round_trip(&docx(&body));
+    assert!(first.contains("<u>&#32;&#32;&#32;</u>"), "{first}");
+    assert!(first.contains("<mark>&#32;&#32;&#32;</mark>"), "{first}");
+    assert!(
+        first.contains("&#32;&#32;&#32;") && !first.contains("empty"),
+        "{first}"
+    );
+    assert_eq!(
+        marked_text(&document, "<w:u "),
+        "   ",
+        "{first}\n{document}"
+    );
+    assert_eq!(marked_text(&document, "<w:highlight"), "   ");
+    assert_eq!(marked_text(&document, "<w:strike"), "   ");
+    assert_eq!(second, first);
+}
+
+#[test]
+fn a_paragraph_of_only_formatted_spaces_stays_exact_in_the_plain_view() {
+    // The plain conversion carries no underline, so the paragraph is blank
+    // there: the round trip is exact with it gone.
+    let body = format!(
+        "<w:p><w:r><w:t>Text.</w:t></w:r></w:p><w:p>{}</w:p>",
+        run("<w:u w:val=\"single\"/>", "   ")
+    );
+    let first = plain(&docx(&body));
+    let again = markdown_to_docx(&first, &DocxOptions::default())
+        .expect("the plain Markdown reads")
+        .docx;
+    assert_eq!(plain(&again), first, "{first}");
 }
 
 #[test]

@@ -379,13 +379,21 @@ impl Critic {
 
     /// True when there is no visible text and no comment. Text inside an
     /// insertion or deletion counts even when it is only a space: Word shows
-    /// it (`{++ ++}`), and dropping it would lose the change's run.
+    /// it (`{++ ++}`), and dropping it would lose the change's run. So do
+    /// spaces carrying underline, highlight or strike, which show on a
+    /// space: a signature line of underlined spaces is not a blank
+    /// paragraph. Other whitespace (a tab) renders to nothing the marks
+    /// could hold, so it stays blank.
     pub(crate) fn is_blank(&self) -> bool {
         let mut changed = 0usize;
         self.tokens.iter().all(|token| match token {
-            Token::Leaf(Leaf::Text { text, .. } | Leaf::Raw(text)) => {
-                changed == 0 && text.trim().is_empty()
+            Token::Leaf(Leaf::Text { text, marks, .. }) => {
+                let marked = marks.underline || marks.highlight || marks.strike;
+                let spaces = !text.is_empty() && text.chars().all(|c| c == ' ');
+                let visible = !text.trim().is_empty() || (spaces && marked);
+                changed == 0 && !visible
             }
+            Token::Leaf(Leaf::Raw(text)) => changed == 0 && text.trim().is_empty(),
             Token::Leaf(Leaf::Comment(_)) => false,
             Token::Open(Mark::Insertion | Mark::Deletion, _) => {
                 changed += 1;
