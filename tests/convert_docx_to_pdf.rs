@@ -20037,14 +20037,37 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
             if y >= 72.0 || font.is_empty() {
                 continue;
             }
-            if let (Some(a), Some(b)) = (op.find('<'), op.find("> Tj")) {
-                out.push(op[a + 1..b].to_string());
+            if let Some(run) = tj_glyph_operand(op) {
+                out.push(run.to_string());
             }
         }
     }
     out.sort();
     out.dedup();
     out
+}
+
+/// The hex operand of the glyph text `op` shows: the `<…>` of a
+/// `<…> Tj`. A label no face covers is painted as a `.notdef` per
+/// character under an `/ActualText` span,
+/// `/Span <</ActualText <FEFF0623>>> BDC <0000> Tj EMC`, so the operand
+/// is the last `<` before `> Tj`, never the span's own `<FEFF…>` (#568).
+fn tj_glyph_operand(op: &str) -> Option<&str> {
+    let b = op.find("> Tj")?;
+    let a = op[..b].rfind('<')?;
+    Some(&op[a + 1..b])
+}
+
+/// #568: without a face for the label's script (CI's runners have none
+/// for ㈩ or أ), the writer paints a `.notdef` per character under an
+/// `/ActualText` span, so the operand is still one glyph id per
+/// character; the span's own `<FEFF0623>` must not be read as the run.
+#[test]
+fn tj_glyph_operand_reads_the_tj_operand_not_the_actual_text_span() {
+    let boxed = "/Span <</ActualText <FEFF0623>>> BDC <0000> Tj EMC";
+    assert_eq!(tj_glyph_operand(boxed), Some("0000"));
+    assert_eq!(tj_glyph_operand("<0623> Tj"), Some("0623"));
+    assert_eq!(tj_glyph_operand("(11) Tj"), None);
 }
 
 #[test]
