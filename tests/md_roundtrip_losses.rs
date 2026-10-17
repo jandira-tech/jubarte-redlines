@@ -614,9 +614,8 @@ fn a_floating_image_keeps_its_anchor() {
 
 /// A drawing no image form carries — here a VML rectangle — leaves the
 /// body text: the paragraph shows only `![descr][d1]`, and the payload
-/// sits in a `[d1]: drawing:…` reference definition under a
-/// `<!-- drawings -->` marker at the view's end. The written document
-/// reads back to the same view.
+/// sits in a `[d1]: drawing:…` reference definition at the view's end.
+/// The written document reads back to the same view.
 #[test]
 fn a_drawing_payload_is_a_reference_definition() {
     let shape = "<w:p><w:r><w:pict>\
@@ -628,13 +627,10 @@ fn a_drawing_payload_is_a_reference_definition() {
     let body = view
         .find(reference)
         .unwrap_or_else(|| panic!("{reference} not in:\n{view}"));
-    let marker = view
-        .find("<!-- drawings -->")
-        .unwrap_or_else(|| panic!("drawings marker not in:\n{view}"));
     let definition = view
         .find("[d1]: drawing:")
         .unwrap_or_else(|| panic!("d1 definition not in:\n{view}"));
-    assert!(body < marker && marker < definition, "{view}");
+    assert!(body < definition, "{view}");
     assert!(!view.contains("](drawing:"), "{view}");
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("out.docx"), &out).unwrap();
@@ -731,8 +727,8 @@ fn svg_blip_docx() -> Vec<u8> {
 
 /// An `asvg:svgBlip` the paragraph holds alone reads as its code: a
 /// ` ```svg ` fence in the body, the drawing's payload — its PNG fallback
-/// with it — in a backing comment under `<!-- drawings -->`. Written
-/// back, the package holds the blip, the SVG and the fallback again.
+/// with it — in a backing comment at the view's end. Written back, the
+/// package holds the blip, the SVG and the fallback again.
 #[test]
 fn a_standalone_svg_blip_is_a_fenced_source() {
     let (view, out) = docx_round_trip(&svg_blip_docx());
@@ -892,4 +888,80 @@ fn an_edited_mermaid_fence_rewrites_the_chart() {
     let pie = part_string(&out, "word/charts/chart2.xml").expect("chart2.xml");
     assert!(pie.contains("<c:v>31</c:v>"), "{pie}");
     assert!(pie.contains("<c:v>Gamma</c:v>"), "{pie}");
+}
+
+/// A small PNG, `size` pixels square.
+fn png(size: u32) -> Vec<u8> {
+    use image::ImageEncoder as _;
+    let mut out = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut out)
+        .write_image(
+            &vec![0u8; (size * size) as usize],
+            size,
+            size,
+            image::ExtendedColorType::L8,
+        )
+        .unwrap();
+    out
+}
+
+/// Google Docs' image syntax — `![][imageN]` uses, one `<data:…>`
+/// definition a payload at the end — keeps every byte through the round
+/// trip: an empty alt stays empty (the `wp:docPr` name Word gives a
+/// picture is not its alt text), each distinct payload is one media part
+/// and one image relationship however often it is used, and the view
+/// prints one definition a payload, `imageN` in order of first use.
+/// (`tests/fixtures/md-roundtrip/docx-libraries-comparison.md`, #556.)
+#[test]
+fn google_docs_images_share_one_definition_per_payload() {
+    use base64::Engine as _;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let one = b64(&png(2));
+    let two = b64(&png(3));
+    let body = format!(
+        "a ![][image1] b ![][image2] c ![][image1]\n\n\
+         [image1]: <data:image/png;base64,{one}>\n\
+         [image2]: <data:image/png;base64,{two}>\n"
+    );
+    let (view, docx) = round_trip(&body);
+    assert!(
+        view.contains("a ![][image1] b ![][image2] c ![][image1]"),
+        "{view}"
+    );
+    assert_eq!(view.matches("![][image1]").count(), 2, "{view}");
+    assert_eq!(view.matches("![][image2]").count(), 1, "{view}");
+    assert_eq!(
+        view.matches("[image1]: <data:image/png;base64,").count(),
+        1,
+        "{view}"
+    );
+    assert_eq!(
+        view.matches("[image2]: <data:image/png;base64,").count(),
+        1,
+        "{view}"
+    );
+    assert!(!view.contains("[image3]"), "{view}");
+    assert!(!view.contains("![Picture"), "{view}");
+    assert!(
+        view.contains(&format!("[image1]: <data:image/png;base64,{one}>")),
+        "{view}"
+    );
+    assert!(
+        view.contains(&format!("[image2]: <data:image/png;base64,{two}>")),
+        "{view}"
+    );
+    // Two payloads: two media parts and two image relationships between
+    // them, shared by the three blips the document.xml holds.
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&docx)).unwrap();
+    let media: Vec<String> = (0..zip.len())
+        .map(|i| zip.by_index(i).unwrap().name().to_string())
+        .filter(|name| name.starts_with("word/media/"))
+        .collect();
+    assert_eq!(media.len(), 2, "{media:?}");
+    let rels = part(&docx, "word/_rels/document.xml.rels");
+    assert_eq!(rels.matches("/image\"").count(), 2, "{rels}");
+    assert_eq!(
+        part(&docx, "word/document.xml").matches("r:embed").count(),
+        3
+    );
 }
