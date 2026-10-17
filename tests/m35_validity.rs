@@ -230,6 +230,33 @@ fn t6b_section_column_and_float_geometry_measures_normalized() {
 }
 
 #[test]
+fn t6c_fractional_plain_float_geometry_rounds_as_a_validity_repair() {
+    // A fractional plain value on an integer-typed attribute is
+    // schema-invalid wherever the Strict whitelist now reads it
+    // (OpenXmlValidator on `w:tblpX="100.5"`: not a valid Int32 — same
+    // for `w:ind/@w:left`, a union member fail), so the output sweep
+    // rounds it: a validity repair, kept and recorded in CHANGELOG.md.
+    // The render diagnostic keeps the literal (normalize_unit_measures).
+    use jubarte::comparer::finalize::normalize_universal_measures;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:body xmlns:w=\"{w}\">\
+             <w:tbl><w:tblPr><w:tblpPr w:tblpX=\"100.5\" w:tblpY=\"50.25\"/></w:tblPr></w:tbl>\
+             <w:p><w:pPr><w:framePr w:x=\"33.5\"/></w:pPr></w:p>\
+             </w:body>",
+            w = W::URI
+        ),
+    );
+    normalize_universal_measures(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(x.contains("w:tblpX=\"101\""), "100.5 → 101: {x}");
+    assert!(x.contains("w:tblpY=\"50\""), "50.25 → 50: {x}");
+    assert!(x.contains("w:x=\"34\""), "33.5 → 34: {x}");
+}
+
+#[test]
 fn t7_drawingml_percent_attrs_to_per_thousand() {
     let mut dom = Dom::new();
     let root = parse(

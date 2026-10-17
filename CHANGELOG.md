@@ -15,6 +15,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fractional plain values on table and frame geometry are rounded in
+  redline output — a validity repair.** A gdocs-style fractional dxa
+  (`w:tblpX="100.5"`, `w:framePr w:x="33.5"`) is schema-invalid on the
+  integer-typed attributes the Strict measure whitelist reads
+  (OpenXmlValidator: not a valid Int32), so `convert`'s output sweep rounds
+  them (101, 34) as it already did for indents, spacing and cell margins.
+  `jubarte debug` still reports the literal value: a diagnostic describes,
+  it does not repair.
+
 ### Added
 
 - **`convert --commonmark`** writes Word as plain CommonMark with
