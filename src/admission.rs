@@ -560,7 +560,7 @@ fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), Admis
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().check_end_names = true;
-    let mut policy = crate::xmllinq::parse::TagPolicy::new();
+    let mut policy = crate::xmllinq::parse::TagPolicy::tolerant();
     let mut depth = 0usize;
     loop {
         match reader.read_event() {

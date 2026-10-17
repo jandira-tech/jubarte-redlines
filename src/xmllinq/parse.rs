@@ -17,6 +17,13 @@
 //!   arena). The permissive path used by every code that reads an OOXML
 //!   part: tolerates missing closing tags, unquoted / mixed-quote
 //!   attributes, and similar WW-isms in real-world .docx files.
+//!
+//!   It refuses nothing, so its input is expected to have passed a
+//!   gate first: [`validate_xml`], or the package admission scan
+//!   (`admission::check_xml_depth`), which applies the same tag and
+//!   namespace budgets. A caller holding unchecked XML uses
+//!   [`try_parse_xdocument`], which runs [`validate_xml`] before it
+//!   builds any node.
 //! - [`unescape_xml_text`] — decode XML entities / character references
 //!   in attribute / text bodies.
 //! - [`validate_xml`] — structural admission for a part *before* the
@@ -43,9 +50,13 @@ use super::{Dom, NodeId, XDeclaration, XName, XNamespace};
 pub(crate) const MAX_ELEMENT_ATTRIBUTES: usize = 256;
 /// Bytes in one element or attribute name.
 pub(crate) const MAX_NAME_BYTES: usize = 4096;
-/// Bytes in one attribute value. Matches `InputLimits::max_part_bytes`
-/// (`64 * 1024 * 1024`); Word's own `o:gfxdata` reaches ≈366 KiB in the
-/// corpus, so the cap has to be above what Word writes today.
+/// Bytes in one attribute value: a fixed cap, the size of the default
+/// `InputLimits::max_part_bytes` (64 MiB) and well above Word's own
+/// `o:gfxdata` (≈366 KiB in the corpus). It does not follow the active
+/// limits: under `InputLimits::compare()` (512 MiB parts) or a host
+/// override, a part can be admitted by size and still be refused for one
+/// wider value. Deriving the cap from the active limits is #1077's
+/// option B.
 pub(crate) const MAX_ATTRIBUTE_VALUE_BYTES: usize = 64 * 1024 * 1024;
 /// Total attribute bytes (names + values) on one element. Twice the value
 /// cap, so one value at its cap plus its name fits inside the tag cap.
@@ -59,20 +70,31 @@ pub(crate) const MAX_LIVE_NS_BINDINGS: usize = 256;
 /// Total prefix+URI bytes declared by xmlns attributes in one document.
 pub(crate) const MAX_NS_DECLARED_BYTES: usize = 1024 * 1024;
 
-/// N02 mechanism counter: bytes of (prefix, uri) pairs the parser's
-/// namespace scope has recorded. The scoped-overlay scope only ever records
-/// what an element declares; a parent-map clone would inflate this by the
-/// live-set size on every nested declaration.
+// N02 mechanism counter: bytes of (prefix, uri) pairs the parser's
+// namespace scope has recorded. The scoped-overlay scope only ever records
+// what an element declares; a parent-map clone would inflate this by the
+// live-set size on every nested declaration. Per thread, so tests running
+// side by side in one `cargo test` process do not count each other's work.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static NS_SCOPE_DECLARED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Add to this thread's [`NS_SCOPE_DECLARED_BYTES`].
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
-pub(crate) static NS_SCOPE_DECLARED_BYTES: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+fn bump_ns_scope_declared_bytes(by: usize) {
+    NS_SCOPE_DECLARED_BYTES.with(|c| c.set(c.get() + by));
+}
 
 /// Parse an XML string into a Document node allocated into `dom`. The
 /// parser is permissive on real-world OOXML inputs (truncated closing
 /// tags, missing `?>` terminators, mixed-quote attribute values) — see
 /// the module-level docs. A leading UTF-8 BOM is stripped before parsing
 /// so a BOM-prefixed input still yields a document with a root.
+///
+/// This parser refuses nothing: run [`validate_xml`] (or package
+/// admission) on `xml` first, or call [`try_parse_xdocument`], which does.
 ///
 /// `xml` may be a complete document (prolog + root + children) or a
 /// fragment; the result is wrapped in a fresh Document node.
@@ -145,7 +167,7 @@ impl NsScope {
         self.live_bytes += bytes;
         self.live_bindings += 1;
         #[cfg(test)]
-        NS_SCOPE_DECLARED_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+        bump_ns_scope_declared_bytes(bytes);
     }
 
     /// Restore the scope to `mark`, undoing every push since then.
@@ -178,14 +200,31 @@ pub(crate) struct TagPolicy {
     marks: Vec<usize>,
     /// Cumulative declared prefix+URI bytes across the document.
     declared_bytes: usize,
+    /// Read attributes with quick-xml's HTML rules, which also accept
+    /// unquoted (`w:val=on`) and valueless (`compact`) attributes.
+    html_attributes: bool,
 }
 
 impl TagPolicy {
+    /// The strict gate's policy: every attribute must be well-formed XML,
+    /// quoted and with a value.
     pub(crate) fn new() -> Self {
         TagPolicy {
             scope: NsScope::default(),
             marks: Vec::new(),
             declared_bytes: 0,
+            html_attributes: false,
+        }
+    }
+
+    /// The package admission scan's policy. The scan admits parts for the
+    /// permissive parser, which reads unquoted and valueless attributes, so
+    /// those pass here; the budgets and the duplicate checks still apply to
+    /// them.
+    pub(crate) fn tolerant() -> Self {
+        TagPolicy {
+            html_attributes: true,
+            ..Self::new()
         }
     }
 
@@ -228,10 +267,15 @@ impl TagPolicy {
         }
         let mut count = 0usize;
         let mut tag_bytes = tag_name.as_ref().len();
-        // (raw key, normalized value) for a second pass after the
-        // declarations land in scope.
-        let mut seen: Vec<(String, String)> = Vec::new();
-        for attribute in tag.attributes() {
+        // Raw keys for a second pass after the declarations land in scope.
+        let mut seen: Vec<String> = Vec::new();
+        // Both iterators refuse a repeated raw name (`AttrError::Duplicated`).
+        let attributes = if self.html_attributes {
+            tag.html_attributes()
+        } else {
+            tag.attributes()
+        };
+        for attribute in attributes {
             let attribute = attribute.map_err(|e| e.to_string())?;
             count += 1;
             if count > MAX_ELEMENT_ATTRIBUTES {
@@ -243,16 +287,17 @@ impl TagPolicy {
             if key.len() > MAX_NAME_BYTES {
                 return Err(format!("XML name exceeds {MAX_NAME_BYTES} bytes"));
             }
+            // A valueless attribute normalizes to an empty value.
             let value = attribute
                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                .map_err(|e| e.to_string())?
-                .into_owned();
-            if value.len() > MAX_ATTRIBUTE_VALUE_BYTES {
+                .map_err(|e| e.to_string())?;
+            let value_len = value.len();
+            if value_len > MAX_ATTRIBUTE_VALUE_BYTES {
                 return Err(format!(
                     "attribute value exceeds {MAX_ATTRIBUTE_VALUE_BYTES} bytes"
                 ));
             }
-            tag_bytes += key.len() + value.len();
+            tag_bytes += key.len() + value_len;
             if tag_bytes > MAX_TAG_ATTRIBUTE_BYTES {
                 return Err(format!(
                     "element exceeds {MAX_TAG_ATTRIBUTE_BYTES} attribute bytes"
@@ -263,13 +308,13 @@ impl TagPolicy {
             } else if let Some(prefix) = key.strip_prefix("xmlns:") {
                 self.declare(prefix, &value)?;
             }
-            seen.push((key, value));
+            seen.push(key);
         }
         // Two differently-spelled attributes that expand to the same name
         // collapse in the DOM (and confuse every downstream differ) — a
         // shape Word also rejects.
         let mut expanded = std::collections::HashSet::with_capacity(seen.len());
-        for (key, _) in &seen {
+        for key in &seen {
             if !expanded.insert(self.expand(key)) {
                 return Err(format!("attribute {key} repeats an expanded name"));
             }
@@ -824,6 +869,19 @@ mod checked_xml_tests {
         }
     }
 
+    /// Package admission tolerates unquoted and valueless attributes so the
+    /// permissive parser can read them; the strict gate never did, and the
+    /// edit, comments, append and inspect paths still refuse such a part.
+    #[test]
+    fn checked_xml_keeps_refusing_attributes_that_are_not_xml() {
+        for xml in ["<w:b w:val=on/>", "<w:b compact/>", "<p a=1 b='2'></p>"] {
+            assert!(validate_xml(xml).is_err(), "{xml}");
+            let mut dom = Dom::new();
+            let document = parse_xdocument(&mut dom, xml);
+            assert!(dom.root(document).is_some(), "{xml}");
+        }
+    }
+
     #[test]
     fn checked_xml_rejects_invalid_or_unbounded_structure() {
         for xml in [
@@ -1150,10 +1208,10 @@ mod tag_policy_tests {
         const N: usize = 96;
         let xml = xml_with_attrs(N);
 
-        let before = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst);
+        let before = ATTR_NAME_PROBES.with(|c| c.get());
         let mut dom = Dom::new();
         let document = parse_xdocument(&mut dom, &xml);
-        let parsed = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst) - before;
+        let parsed = ATTR_NAME_PROBES.with(|c| c.get()) - before;
         let root = dom.root(document).unwrap();
         assert_eq!(dom.attr_count(root), N);
         assert!(
@@ -1162,7 +1220,7 @@ mod tag_policy_tests {
         );
 
         // Control: the incremental editing API still costs sum(0..N) probes.
-        let before = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst);
+        let before = ATTR_NAME_PROBES.with(|c| c.get());
         let manual = dom.new_element(crate::xmllinq::XName::get("m", ""));
         for i in 0..N {
             dom.set_attribute_value(
@@ -1171,7 +1229,7 @@ mod tag_policy_tests {
                 Some("v"),
             );
         }
-        let incremental = ATTR_NAME_PROBES.load(std::sync::atomic::Ordering::SeqCst) - before;
+        let incremental = ATTR_NAME_PROBES.with(|c| c.get()) - before;
         assert_eq!(incremental, N * (N - 1) / 2);
     }
 
@@ -1235,10 +1293,10 @@ mod tag_policy_tests {
         for _ in 0..DEPTH {
             xml.push_str("</e>");
         }
-        let before = NS_SCOPE_DECLARED_BYTES.load(std::sync::atomic::Ordering::SeqCst);
+        let before = NS_SCOPE_DECLARED_BYTES.with(|c| c.get());
         let mut dom = Dom::new();
         let document = parse_xdocument(&mut dom, &xml);
-        let inserted = NS_SCOPE_DECLARED_BYTES.load(std::sync::atomic::Ordering::SeqCst) - before;
+        let inserted = NS_SCOPE_DECLARED_BYTES.with(|c| c.get()) - before;
         // p -> urn:{i} is 1 + 4 + digits bytes; q -> urn:q{i} is
         // 1 + 5 + digits.
         let declared: usize = (0..DEPTH).map(|i| 11 + 2 * i.to_string().len()).sum();
@@ -1278,6 +1336,59 @@ mod tag_policy_tests {
         assert_eq!(
             dom.attribute(r, &crate::xmllinq::XName::get("val", "urn:wml")),
             Some("1")
+        );
+    }
+
+    /// `cargo test` runs tests as threads of one process, so a shared
+    /// counter would see every other test's parsing. Work done on another
+    /// thread must leave this thread's counters at zero.
+    #[test]
+    fn mechanism_counters_are_isolated_to_the_calling_thread() {
+        let attr_handle = std::thread::spawn(|| {
+            let mut dom = Dom::new();
+            let el = dom.new_element(crate::xmllinq::XName::get("m", ""));
+            for i in 0..100 {
+                dom.set_attribute_value(
+                    el,
+                    &crate::xmllinq::XName::get(&format!("a{i}"), ""),
+                    Some("v"),
+                );
+            }
+            ATTR_NAME_PROBES.with(|c| c.get())
+        });
+        let attr_probed_bg = attr_handle.join().expect("bg attr thread");
+
+        let scope_handle = std::thread::spawn(|| {
+            let mut xml = String::new();
+            for i in 0..32 {
+                xml.push_str(&format!("<e xmlns:p='urn:{i}' xmlns:q='urn:q{i}'>"));
+            }
+            for _ in 0..32 {
+                xml.push_str("</e>");
+            }
+            let mut dom = Dom::new();
+            let _ = parse_xdocument(&mut dom, &xml);
+            NS_SCOPE_DECLARED_BYTES.with(|c| c.get())
+        });
+        let scope_inserted_bg = scope_handle.join().expect("bg scope thread");
+
+        let attr_main = ATTR_NAME_PROBES.with(|c| c.get());
+        let scope_main = NS_SCOPE_DECLARED_BYTES.with(|c| c.get());
+        assert_eq!(
+            attr_main, 0,
+            "main-thread ATTR_NAME_PROBES must be untouched by background work, got {attr_main}"
+        );
+        assert_eq!(
+            scope_main, 0,
+            "main-thread NS_SCOPE_DECLARED_BYTES must be untouched by background work, got {scope_main}"
+        );
+        assert!(
+            attr_probed_bg > 0,
+            "background thread observed {attr_probed_bg} attr probes"
+        );
+        assert!(
+            scope_inserted_bg > 0,
+            "background thread observed {scope_inserted_bg} declared bytes"
         );
     }
 }
