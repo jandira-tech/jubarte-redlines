@@ -711,7 +711,7 @@ fn editing_a_text_boxs_words_writes_them_into_the_box() {
     let box_at = document
         .find("txbxContent")
         .unwrap_or_else(|| panic!("no text box:\n{document}"));
-    let box_xml = &document[box_at - 3..];
+    let box_xml = document[box_at - 3..].split("</w:txbxContent>").next().unwrap();
     assert!(box_xml.contains("Edited words"), "{document}");
     assert!(!document.contains("Added box"), "{document}");
 }
@@ -723,15 +723,11 @@ fn editing_a_text_boxs_words_writes_them_into_the_box() {
 fn an_unedited_text_box_round_trips_to_the_same_drawing() {
     let (view, out) = docx_round_trip(&text_box_docx());
     let document = part(&out, "word/document.xml");
-    for want in [
-        "<wp:anchor",
-        "name=\"Text Box 7\"",
-        "<wp:extent cx=\"2374265\" cy=\"457200\"/>",
-        "<wps:txbx><w:txbxContent>",
-        ">Added box</w:t>",
-    ] {
-        assert!(document.contains(want), "{want}: {document}");
-    }
+    let original = part(&text_box_docx(), "word/document.xml");
+    assert_eq!(
+        xml_element(&document, "wp:anchor"),
+        xml_element(&original, "wp:anchor").replace("id=\"7\"", "id=\"1\"")
+    );
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("out.docx"), &out).unwrap();
     let second = jubarte(dir.path(), &["read", "out.docx", "--no-page-markers"]);
@@ -742,6 +738,66 @@ fn an_unedited_text_box_round_trips_to_the_same_drawing() {
             .join("\n")
     };
     assert_eq!(unnamed(&view), unnamed(&second));
+}
+
+fn xml_element<'a>(xml: &'a str, name: &str) -> &'a str {
+    let start = xml.find(&format!("<{name}")).unwrap();
+    let close = format!("</{name}>");
+    let end = start + xml[start..].find(&close).unwrap() + close.len();
+    &xml[start..end]
+}
+
+#[test]
+fn plain_markdown_edits_stay_inside_the_text_box() {
+    use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
+    let view = docx_to_markdown(&text_box_docx(), &MarkdownOptions::default()).unwrap().markdown;
+    assert!(view.contains("\nAdded box\n"), "{view}");
+    let edited = view.replace("Added box", "Edited **box**\n\nSecond paragraph");
+    let out = markdown_to_docx(&edited, &DocxOptions::default()).unwrap().docx;
+    let xml = part(&out, "word/document.xml");
+    assert!(xml.contains("<w:txbxContent>"), "box content is empty: {xml}");
+    let boxed = xml_element(&xml, "w:txbxContent");
+    assert!(boxed.contains("Edited "), "{xml}");
+    assert!(boxed.contains("Second paragraph"), "{xml}");
+    assert!(!boxed.contains("After."), "{xml}");
+    assert_eq!(xml.matches("Second paragraph").count(), 1, "{xml}");
+    assert!(xml.contains("Before.") && xml.contains("After."), "{xml}");
+}
+
+#[test]
+fn an_unedited_box_keeps_unprinted_run_properties_exactly() {
+    let original = text_box_docx();
+    let xml = part(&original, "word/document.xml").replace(
+        "<w:t xml:space=\"preserve\">Added box",
+        "<w:rPr><w:lang w:val=\"pt-BR\"/></w:rPr><w:t xml:space=\"preserve\">Added box",
+    );
+    let original = replace_entry(&original, "word/document.xml", xml.as_bytes());
+    let (_, out) = docx_round_trip(&original);
+    let actual = part(&out, "word/document.xml");
+    assert_eq!(
+        xml_element(&actual, "wp:anchor"),
+        xml_element(&xml, "wp:anchor").replace("id=\"7\"", "id=\"1\"")
+    );
+}
+
+#[test]
+fn a_box_with_its_own_change_remains_editable() {
+    let original = text_box_docx();
+    let xml = part(&original, "word/document.xml").replace(
+        "<w:p><w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r></w:p>",
+        "<w:p><w:ins w:id=\"90\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:t>Added box</w:t></w:r></w:ins></w:p>",
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), replace_entry(&original, "word/document.xml", xml.as_bytes())).unwrap();
+    let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
+    assert!(view.contains("Added box"), "{view}");
+    std::fs::write(dir.path().join("edit.md"), view.replace("Added box", "Edited words")).unwrap();
+    jubarte(dir.path(), &["convert", "edit.md", "-o", "out.docx"]);
+    let out = std::fs::read(dir.path().join("out.docx")).unwrap();
+    let xml = part(&out, "word/document.xml");
+    let boxed = xml_element(&xml, "w:txbxContent");
+    assert!(boxed.contains("Edited words"), "{xml}");
+    assert!(!xml.contains("Added box"), "{xml}");
 }
 
 /// A raster drawing — here a floating anchor — is image bytes to the
