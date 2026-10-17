@@ -7,10 +7,12 @@
 
 mod common;
 
-use common::docx::{docx, para};
+use common::docx::{Part, W_NS, docx, docx_with_sect, para};
+use jubarte::changes::list_changes;
+use jubarte::comments::list_comments;
 use jubarte::edit::{
-    AnchorRefusal, EditPlan, apply_plan, v2_candidates, v2_resolve, v2_resolve_all, v2_select,
-    v2_select_all,
+    AnchorRefusal, EditPlan, Working, apply_plan, v2_candidates, v2_resolve, v2_resolve_all,
+    v2_select, v2_select_all,
 };
 use jubarte::inspect::{paragraphs, source_sha256};
 use jubarte::result::CommitState;
@@ -211,18 +213,13 @@ fn wrong_target_and_repeated_anchor_return_context() {
         body.push_str(&para(text));
     }
     let source = docx(&body);
-    let text: Vec<String> = paragraphs(&source)
-        .unwrap()
-        .into_iter()
-        .map(|p| p.text)
-        .collect();
-    let p15 = text[15].clone();
     let digest = source_sha256(&source);
 
-    // A wrong target: the anchor belongs to p20 but names p15.
+    // A wrong target: the anchor belongs to p20 but names p15. The working
+    // text is p15's own, derived from the source itself.
     let refused = v2_resolve(
         &source,
-        &p15,
+        Working::InSource,
         &AnchorRefusal {
             operation: Some("/operations/0"),
             target: "p15",
@@ -295,7 +292,7 @@ fn wrong_target_and_repeated_anchor_return_context() {
     // where it first matched, and the occurrence that picks one.
     let refused = v2_resolve(
         &source,
-        &p15,
+        Working::InSource,
         &AnchorRefusal {
             operation: Some("/operations/1"),
             target: "p15",
@@ -324,7 +321,7 @@ fn wrong_target_and_repeated_anchor_return_context() {
     assert_eq!(
         v2_resolve(
             &source,
-            &p15,
+            Working::InSource,
             &AnchorRefusal {
                 operation: None,
                 target: "p15",
@@ -338,7 +335,7 @@ fn wrong_target_and_repeated_anchor_return_context() {
     );
     let refused = v2_resolve(
         &source,
-        &p15,
+        Working::InSource,
         &AnchorRefusal {
             operation: None,
             target: "p15",
@@ -375,12 +372,16 @@ fn wrong_target_and_repeated_anchor_return_context() {
 /// continuation is missing.
 #[test]
 fn anchor_refusals_name_missing_targets_and_keep_argv_structured() {
-    let source = docx(&format!("{}{}", para("one two"), para("three")));
-    let working = paragraphs(&source).unwrap()[0].text.clone();
+    let source = docx(&format!(
+        "{}{}{}",
+        para("one two"),
+        para("three"),
+        para("eee")
+    ));
 
     let refused = v2_resolve(
         &source,
-        &working,
+        Working::InSource,
         &AnchorRefusal {
             operation: Some("op-7"),
             target: "p99",
@@ -396,7 +397,7 @@ fn anchor_refusals_name_missing_targets_and_keep_argv_structured() {
     assert_eq!(refused.matches, Some(0));
     assert!(refused.context.is_none());
     assert!(
-        refused.message.contains("no paragraph p99") && refused.message.contains("2 paragraphs"),
+        refused.message.contains("no paragraph p99") && refused.message.contains("3 paragraphs"),
         "{}",
         refused.message
     );
@@ -406,7 +407,13 @@ fn anchor_refusals_name_missing_targets_and_keep_argv_structured() {
         ["jubarte", "read", "small.docx", "--head", "20"]
     );
 
-    let refused = v2_resolve(&source, &working, &AnchorRefusal::new("p0", ""), None).unwrap_err();
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("p0", ""),
+        None,
+    )
+    .unwrap_err();
     assert_eq!(refused.code, "INVALID_EDIT");
     assert!(refused.message.contains("nonempty"), "{}", refused.message);
     assert_eq!(refused.matches, None);
@@ -414,7 +421,7 @@ fn anchor_refusals_name_missing_targets_and_keep_argv_structured() {
 
     let refused = v2_resolve_all(
         &source,
-        &working,
+        Working::InSource,
         &AnchorRefusal {
             operation: None,
             target: "p0",
@@ -434,12 +441,14 @@ fn anchor_refusals_name_missing_targets_and_keep_argv_structured() {
         refused.message
     );
     assert_eq!(refused.context.as_ref().unwrap().matched, "one");
+    // The working text is p2's own ("eee"), derived from the source: the
+    // refusal's facts cannot be about text the caller handed in instead.
     let refused = v2_resolve_all(
         &source,
-        "eee",
+        Working::InSource,
         &AnchorRefusal {
             operation: None,
-            target: "p0",
+            target: "p2",
             anchor: "ee",
             path: None,
         },
@@ -453,7 +462,7 @@ fn anchor_refusals_name_missing_targets_and_keep_argv_structured() {
         Some(source_sha256(&source).as_str())
     );
     let action = &refused.next_actions[0];
-    assert_eq!(action.argv, ["jubarte", "read", "-p", "p0"]);
+    assert_eq!(action.argv, ["jubarte", "read", "-p", "p2"]);
     assert!(
         action
             .prerequisites
@@ -478,11 +487,10 @@ fn elsewhere_suggestions_are_bounded_and_read_only() {
     }
     body.push_str(&para("nothing"));
     let source = docx(&body);
-    let working = paragraphs(&source).unwrap()[8].text.clone();
 
     let refused = v2_resolve(
         &source,
-        &working,
+        Working::InSource,
         &AnchorRefusal {
             operation: None,
             target: "p8",
@@ -528,6 +536,562 @@ fn elsewhere_suggestions_are_bounded_and_read_only() {
     }
 }
 
+/// V2-11 review: the refusal's facts are bound to the target they attest.
+/// Working text that is not the target's own never produces a confident,
+/// digest-backed refusal about the wrong paragraph: an anchor that is not
+/// in p0's actual text refuses against p0's actual text.
+#[test]
+fn the_working_text_is_bound_to_the_target() {
+    let source = docx(&format!("{}{}", para("one two"), para("three")));
+    let digest = source_sha256(&source);
+
+    // `Working::InSource` derives the target's text from the source
+    // itself, so an anchor that is not in p0's actual text refuses against
+    // what p0 actually says — never a confident refusal built from text
+    // the caller handed in instead.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: Some("/operations/0"),
+            target: "p0",
+            anchor: "settled insertion",
+            path: Some("small.docx"),
+        },
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(refused.matches, Some(0));
+    let context = refused.context.as_ref().unwrap();
+    assert_eq!(context.before, "one two");
+    assert_eq!(context.matched, "");
+    assert!(
+        refused.message.contains(r#"p0 starts "one two""#),
+        "{}",
+        refused.message
+    );
+
+    // `Working::Settled` is the typed way a settled caller (V2-06/V2-10
+    // working document W) states where its text came from. The text is
+    // W's, matched as given, while the digest, the target inventory and
+    // the elsewhere suggestions stay bound to the source.
+    let settled = String::from("one two; the settled insertion three");
+    let refused = v2_resolve(
+        &source,
+        Working::Settled(&settled),
+        &AnchorRefusal {
+            operation: None,
+            target: "p0",
+            anchor: "nowhere",
+            path: None,
+        },
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(refused.source_digest.as_deref(), Some(digest.as_str()));
+    assert_eq!(refused.target.as_deref(), Some("p0"));
+    let context = refused.context.as_ref().unwrap();
+    assert!(
+        context.before.starts_with("one two; the settled"),
+        "{context:?}"
+    );
+    assert_eq!(
+        v2_resolve(
+            &source,
+            Working::Settled(&settled),
+            &AnchorRefusal::new("p0", "settled insertion"),
+            None,
+        )
+        .unwrap(),
+        (13, 30)
+    );
+}
+
+/// V2-11 review: a target the source does not have refuses
+/// `ANCHOR_NOT_FOUND` before anything else is judged — an empty anchor or
+/// an occurrence 0 included — and its only continuation is the bounded
+/// `--head` read, never a read of the missing target.
+#[test]
+fn a_missing_target_refuses_before_anything_else_is_judged() {
+    let source = docx(&format!("{}{}", para("one two"), para("three")));
+
+    let refused = v2_resolve_all(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: None,
+            target: "p99",
+            anchor: "two",
+            path: Some("small.docx"),
+        },
+        1,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(refused.target.as_deref(), Some("p99"));
+    assert_eq!(refused.matches, Some(0));
+    assert!(
+        refused.message.contains("no paragraph p99") && refused.message.contains("2 paragraphs"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(refused.next_actions.len(), 1);
+    assert_eq!(
+        refused.next_actions[0].argv,
+        ["jubarte", "read", "small.docx", "--head", "20"]
+    );
+
+    // An empty anchor on a missing target still names the missing target.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("p99", ""),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert!(
+        refused.message.contains("no paragraph p99"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        refused.next_actions[0].argv,
+        ["jubarte", "read", "--head", "20"]
+    );
+
+    // An occurrence 0 on a missing target too: the missing target is the
+    // fact that orients the caller, not the malformed request.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("p99", "two"),
+        Some(0),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+
+    // `v2_resolve_all`'s INVALID_EDIT route needs a target that exists.
+    let refused = v2_resolve_all(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: Some("op-1"),
+            target: "p0",
+            anchor: "",
+            path: Some("small.docx"),
+        },
+        2,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "INVALID_EDIT");
+    assert_eq!(refused.operation.as_deref(), Some("op-1"));
+    assert!(refused.message.contains("nonempty"), "{}", refused.message);
+    assert_eq!(
+        refused.next_actions[0].argv,
+        ["jubarte", "read", "small.docx", "-p", "p0"]
+    );
+}
+
+/// V2-11 review: the caller's anchor is echoed bounded too. A pasted
+/// clause cannot make the refusal bigger than the request it answers: the
+/// message quotes its first window of characters with the cut said, and
+/// `context.matched` is bounded with `truncated` set.
+#[test]
+fn a_pasted_clause_anchor_is_echoed_bounded() {
+    let clause = "c".repeat(60);
+    let source = docx(&para(&format!("{clause} and {clause}")));
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: None,
+            target: "p0",
+            anchor: &clause,
+            path: None,
+        },
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "AMBIGUOUS_ANCHOR");
+    assert_eq!(refused.matches, Some(2));
+    assert!(
+        !refused.message.contains(&clause),
+        "the complete clause is echoed: {}",
+        refused.message
+    );
+    assert!(
+        refused.message.contains("… (+40 more characters)"),
+        "{}",
+        refused.message
+    );
+    let context = refused.context.as_ref().unwrap();
+    assert_eq!(context.matched, "c".repeat(20));
+    assert!(context.truncated);
+}
+
+/// V2-11 review: every target `-p` accepts is a target here — cells
+/// (`t0.row1.cell2`), comments (`c5`, `c5.text`) and revisions (`r12`)
+/// beside paragraphs and stories. A missing target's message counts what
+/// the source has; a source that cannot be parsed says so instead of
+/// claiming zero.
+#[test]
+fn every_dash_p_target_is_recognized() {
+    let base = docx(&format!(
+        "{}{}{}",
+        para("intro"),
+        concat!(
+            r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Alpha cell</w:t></w:r></w:p></w:tc>"#,
+            r#"<w:tc><w:p><w:r><w:t>Beta cell text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        ),
+        para("outro")
+    ));
+    let source = apply_plan(
+        &base,
+        &plan(
+            r#"[{"kind":"replace","paragraph":"p3","find":"outro","replacement":"closing"},
+                {"kind":"comment","paragraph":"p0","find":"intro","text":"Check this opening"}]"#,
+        ),
+    )
+    .unwrap()
+    .redline;
+
+    // A cell is a target: its own paragraph's text is the working text,
+    // derived from the source.
+    assert_eq!(
+        v2_resolve(
+            &source,
+            Working::InSource,
+            &AnchorRefusal::new("t0.row0.cell1", "Beta"),
+            None,
+        )
+        .unwrap(),
+        (0, 4)
+    );
+    // A miss in the cell does not suggest the cell's own paragraph back.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: None,
+            target: "t0.row0.cell1",
+            anchor: "Alpha",
+            path: Some("grid.docx"),
+        },
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert!(
+        refused.message.contains("p1 (1)") && !refused.message.contains("p2 ("),
+        "{}",
+        refused.message
+    );
+    // A missing cell says what the source has.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("t0.row1.cell0", "Alpha"),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        refused.message.contains("no paragraph t0.row1.cell0")
+            && refused.message.contains("the source has 1 table"),
+        "{}",
+        refused.message
+    );
+
+    // Comments: the comment's own text, and the text it covers.
+    let comments = list_comments(&source).unwrap();
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    let comment = format!("c{}", comments[0].id);
+    assert_eq!(comments[0].text, "Check this opening");
+    assert_eq!(comments[0].anchor_text, "intro");
+    assert!(
+        v2_resolve(
+            &source,
+            Working::InSource,
+            &AnchorRefusal::new(&comment, "Check this"),
+            None,
+        )
+        .is_ok()
+    );
+    assert!(
+        v2_resolve(
+            &source,
+            Working::InSource,
+            &AnchorRefusal::new(&format!("{comment}.text"), "intro"),
+            None,
+        )
+        .is_ok()
+    );
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("c99", "Check"),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        refused.message.contains("no comment c99")
+            && refused
+                .message
+                .contains(&format!("the source has {} comment", comments.len())),
+        "{}",
+        refused.message
+    );
+
+    // Revisions: the change's own covered text.
+    let changes = list_changes(&source).unwrap();
+    let inserted = changes
+        .iter()
+        .find(|c| c.text == "closing")
+        .expect("the tracked replacement");
+    assert!(
+        v2_resolve(
+            &source,
+            Working::InSource,
+            &AnchorRefusal::new(&inserted.id, "closing"),
+            None,
+        )
+        .is_ok()
+    );
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("r99", "closing"),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        refused.message.contains("no revision r99")
+            && refused
+                .message
+                .contains(&format!("the source has {} revisions", changes.len())),
+        "{}",
+        refused.message
+    );
+    // A pair of changes is a valid `-p` target, but no one text carries an
+    // anchor: refused as an invalid edit, with the single spellings said.
+    let numbers: Vec<&str> = changes
+        .iter()
+        .map(|c| c.id.trim_start_matches('r'))
+        .collect();
+    let pair = format!("r{}+{}", numbers[0], numbers[1]);
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new(&pair, "closing"),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "INVALID_EDIT");
+    assert!(
+        refused.message.contains("names 2 changes"),
+        "{}",
+        refused.message
+    );
+
+    // A source that cannot be parsed says so; it never claims paragraph
+    // counts it could not see.
+    let refused = v2_resolve(
+        b"not a docx",
+        Working::InSource,
+        &AnchorRefusal::new("p0", "x"),
+        None,
+    )
+    .unwrap_err();
+    assert_ne!(refused.code, "ANCHOR_NOT_FOUND");
+    assert!(
+        refused.message.contains("no anchor was searched")
+            && !refused.message.contains("0 paragraphs"),
+        "{}",
+        refused.message
+    );
+}
+
+/// A source with stories (V2-11 review): a three-paragraph header, a
+/// two-note footnotes part, and a two-paragraph body.
+fn with_stories() -> Vec<u8> {
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>First header line</w:t></w:r></w:p><w:p><w:r><w:t>The header needle hides here</w:t></w:r></w:p><w:p><w:r><w:t>Third header line</w:t></w:r></w:p></w:hdr>"#
+    );
+    let notes = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes xmlns:w="{W_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t xml:space="preserve">See the master agreement.</w:t></w:r></w:p></w:footnote><w:footnote w:id="2"><w:p><w:r><w:t xml:space="preserve">A second note about the needle.</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+    );
+    docx_with_sect(
+        &format!(
+            "{}{}",
+            para("the needle in the body"),
+            para("plain body text")
+        ),
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            },
+            Part {
+                name: "word/footnotes.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+                xml: &notes,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    )
+}
+
+/// V2-11 review: story targets are first-class. An anchor in `header1.p2`
+/// resolves there; a miss names the story paragraph it targeted; elsewhere
+/// suggestions reach into stories with their own argv; a missing story
+/// paragraph counts the story it names, not the body.
+#[test]
+fn story_targets_exist_suggest_and_refuse_by_name() {
+    let source = with_stories();
+
+    // A header paragraph is a target: the anchor resolves in it. The story
+    // id itself is its first paragraph (`header1`, not `header1.p0`).
+    assert_eq!(
+        v2_resolve(
+            &source,
+            Working::InSource,
+            &AnchorRefusal::new("header1", "First"),
+            None,
+        )
+        .unwrap(),
+        (0, 5)
+    );
+    assert_eq!(
+        v2_resolve(
+            &source,
+            Working::InSource,
+            &AnchorRefusal::new("header1.p2", "Third"),
+            None,
+        )
+        .unwrap(),
+        (0, 5)
+    );
+
+    // A miss names the story paragraph, shows its text, and suggests the
+    // body paragraph that holds the anchor.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: Some("/operations/0"),
+            target: "header1.p2",
+            anchor: "needle",
+            path: Some("stories.docx"),
+        },
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(refused.target.as_deref(), Some("header1.p2"));
+    let context = refused.context.as_ref().unwrap();
+    assert_eq!(context.before, "Third header line");
+    assert!(
+        refused.message.contains("occurs 0 times in header1.p2")
+            && refused.message.contains("p0 (1)"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        refused.next_actions[0].argv,
+        ["jubarte", "read", "stories.docx", "-p", "header1.p2"]
+    );
+    assert!(
+        refused
+            .next_actions
+            .iter()
+            .any(|a| a.argv == ["jubarte", "read", "stories.docx", "-p", "p0"]),
+        "{:?}",
+        refused.next_actions
+    );
+
+    // The stories half of elsewhere: a body miss suggests the header and
+    // footnote paragraphs that hold the anchor, each with its own argv.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal {
+            operation: None,
+            target: "p1",
+            anchor: "needle",
+            path: Some("stories.docx"),
+        },
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        refused.message.contains("header1.p1 (1)") && refused.message.contains("footnotes.p1 (1)"),
+        "{}",
+        refused.message
+    );
+    let suggestion = refused
+        .next_actions
+        .iter()
+        .find(|a| a.argv == ["jubarte", "read", "stories.docx", "-p", "header1.p1"])
+        .unwrap();
+    assert!(
+        suggestion
+            .purpose
+            .as_deref()
+            .unwrap_or_default()
+            .contains("suggestion"),
+        "{:?}",
+        suggestion.purpose
+    );
+
+    // A footnote paragraph resolves too.
+    assert!(
+        v2_resolve(
+            &source,
+            Working::InSource,
+            &AnchorRefusal::new("footnotes.p1", "second note"),
+            None,
+        )
+        .is_ok()
+    );
+
+    // A missing story paragraph counts the story it names.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("header1.p9", "Third"),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert!(
+        refused.message.contains("no paragraph header1.p9")
+            && refused
+                .message
+                .contains("the story header1 has 3 paragraphs"),
+        "{}",
+        refused.message
+    );
+
+    // A story the source does not have says so.
+    let refused = v2_resolve(
+        &source,
+        Working::InSource,
+        &AnchorRefusal::new("endnotes.p2", "note"),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        refused.message.contains("the source has no endnotes story"),
+        "{}",
+        refused.message
+    );
+}
+
 /// V2-11 (#841): a refusal without a source path keeps saying what its
 /// continuations are missing — on the target read and on every suggestion.
 #[test]
@@ -537,10 +1101,9 @@ fn a_pathless_miss_keeps_its_prerequisites_on_every_continuation() {
         para("the needle appears here"),
         para("other")
     ));
-    let working = paragraphs(&source).unwrap()[1].text.clone();
     let refused = v2_resolve(
         &source,
-        &working,
+        Working::InSource,
         &AnchorRefusal {
             operation: None,
             target: "p1",
