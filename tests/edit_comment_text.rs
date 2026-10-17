@@ -629,8 +629,11 @@ fn note_definitions_carry_the_ids_edit_takes() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    // Markdown without ids (convert) prints no id lines.
-    let md = jubarte(&["convert", "notes.docx", "-o", "n.md"], dir.path());
+    // Plain Markdown (convert --commonmark) prints no id lines.
+    let md = jubarte(
+        &["convert", "notes.docx", "-o", "n.md", "--commonmark"],
+        dir.path(),
+    );
     assert!(
         md.status.success(),
         "{}",

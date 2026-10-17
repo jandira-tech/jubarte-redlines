@@ -393,6 +393,47 @@ pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
         .collect()
 }
 
+/// A plain view's revision note: the change's ids, then who made it and
+/// when, as stored (`r5 Ana Lima (2026-…)`, `r1+2 (2026-…)`, `r7 Di Eng`,
+/// `r7`). An absent author or date stays empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PlainRevision {
+    pub ids: Vec<u32>,
+    pub author: String,
+    pub date: String,
+}
+
+/// The plain view's revision note; `None` for any other comment text. The
+/// ids come first, as in [`revision_tags`]; what follows is `Name (date)`,
+/// `(date)`, a name with no colon or bracket, or nothing.
+pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
+    let text = text.trim();
+    let (id, rest) = text.split_once(' ').unwrap_or((text, ""));
+    let id_ok = !id.starts_with(|c: char| c.is_ascii_digit())
+        && !id.starts_with('#')
+        && (id == "noid"
+            || id.strip_suffix(".noid").is_some()
+            || crate::ids::parse_change_ids(id).is_ok());
+    if !id_ok {
+        return None;
+    }
+    let (author, date) = match super::write::named(rest) {
+        Some((author, date, "")) => (author.unwrap_or_default(), date.to_string()),
+        Some(_) => return None,
+        None if rest.contains([':', '(', ')']) || rest.starts_with('@') => return None,
+        None => (rest.trim().to_string(), String::new()),
+    };
+    let ids = crate::ids::parse_change_ids(id)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|c| c.wid.parse().ok())
+                .filter(|&id| id <= MOST_ID)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(PlainRevision { ids, author, date })
+}
+
 /// The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a
 /// larger number a view names is left for a fresh one.
 pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
@@ -1534,6 +1575,42 @@ mod tests {
             }
         );
         assert_eq!(table["R"].date, None);
+    }
+
+    #[test]
+    fn plain_revision_notes_name_ids_then_author_and_date() {
+        let plain = |ids: &[u32], author: &str, date: &str| {
+            Some(PlainRevision {
+                ids: ids.to_vec(),
+                author: author.into(),
+                date: date.into(),
+            })
+        };
+        let date = "2026-03-02T10:00:00Z";
+        assert_eq!(
+            plain_revision(&format!("r5 Ann Lee ({date})")),
+            plain(&[5], "Ann Lee", date)
+        );
+        assert_eq!(
+            plain_revision(&format!("r2+1 ({date})")),
+            plain(&[2, 1], "", date)
+        );
+        assert_eq!(plain_revision("r75 Di Eng"), plain(&[75], "Di Eng", ""));
+        assert_eq!(plain_revision("r7"), plain(&[7], "", ""));
+        assert_eq!(plain_revision("footnotes.r31 Ann"), plain(&[31], "Ann", ""));
+        assert_eq!(plain_revision("noid Ann"), plain(&[], "Ann", ""));
+        for text in [
+            "why",
+            "Di Eng",
+            "5 Ann",
+            "r5 @AC",
+            "r5 Ann: why",
+            "r5 Ann (soon)",
+            &format!("r5 Ann ({date}): why"),
+            &format!("Ann ({date})"),
+        ] {
+            assert_eq!(plain_revision(text), None, "{text}");
+        }
     }
 
     #[test]

@@ -186,6 +186,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
                 .chain(comments_root.as_ref()),
+            true,
         );
         // A heading's own slug bookmark prints no anchor (the link reaches
         // the heading by its slug): it keeps no two marks apart.
@@ -366,6 +367,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
                 .chain(comments_root.as_ref()),
+            options.ids,
         ),
         monospace_paragraph: false,
         closing_fields: HashSet::new(),
@@ -2097,34 +2099,47 @@ fn has_markup(part: &Element, comments: &HashMap<String, Element>) -> bool {
 /// A revision element (`w:ins`, `w:del`, `w:moveTo`, `w:moveFrom`) as a tracked
 /// change. Insertions and move destinations are insertions; deletions and move
 /// sources are deletions (the representation pandiff uses too).
-fn change_of(element: &Element) -> Change {
+fn change_of(element: &Element, story: Option<&str>) -> Change {
     let mark = if matches!(element.local(), "ins" | "moveTo") {
         Mark::Insertion
     } else {
         Mark::Deletion
     };
-    (mark, attribution(element))
+    (mark, attribution(element, story))
 }
 
-/// Who made a tracked change and when: `w:author` and `w:date` exactly as
-/// stored, in the same form as a comment's (`Ana Lima (2026-09-29T14:05:00Z)`).
-fn attribution(element: &Element) -> Option<String> {
-    // A leading agent-tag sentinel in a stored author would be read as a tag.
+/// Which change it is, and who made it when: a plain-view tag
+/// ([`critic::PLAIN`]) of the change's `w:id` in `story` and its note,
+/// `w:author` and `w:date` exactly as stored, in the same form as a
+/// comment's. It prints `r5 Ana Lima (2026-09-29T14:05:00Z)`: the number
+/// tells the writer the note names the change's author, not a comment.
+fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
+    // A leading tag sentinel in a stored author would be read as a tag.
     let author = element
         .attr("author")
-        .map(|a| a.trim_start_matches(critic::TAG));
-    let by = comment_note(author, element.attr("date"), "");
-    (!by.is_empty()).then_some(by)
+        .map(|a| a.trim_start_matches(['\u{E000}', '\u{E001}']));
+    let note = comment_note(author, element.attr("date"), "");
+    // A mark with no id, author or date (only a malformed file has one)
+    // names nothing.
+    if note.is_empty() && element.attr("id").is_none() {
+        return None;
+    }
+    let story = story.map_or(String::new(), |s| format!("{s}#"));
+    Some(format!(
+        "{}{story}{}",
+        critic::PLAIN,
+        agent::plain_tag_of(element, &note)
+    ))
 }
 
 /// Tracked changes recorded in a properties element (`trPr`, `tcPr`, a
 /// paragraph mark's `rPr`), in document order.
-fn revision_marks(properties: &Element) -> Vec<Change> {
+fn revision_marks(properties: &Element, story: Option<&str>) -> Vec<Change> {
     properties
         .elements()
         .filter_map(|p| match p.local() {
-            "ins" | "moveTo" | "cellIns" => Some((Mark::Insertion, attribution(p))),
-            "del" | "moveFrom" | "cellDel" => Some((Mark::Deletion, attribution(p))),
+            "ins" | "moveTo" | "cellIns" => Some((Mark::Insertion, attribution(p, story))),
+            "del" | "moveFrom" | "cellDel" => Some((Mark::Deletion, attribution(p, story))),
             _ => None,
         })
         .collect()
@@ -2133,10 +2148,10 @@ fn revision_marks(properties: &Element) -> Vec<Change> {
 /// The tracked change on the mark that ends a paragraph, that is on the break
 /// between it and the next one. A mark inserted and then deleted counts as
 /// deleted, the later of the two changes.
-fn paragraph_mark(p: &Element) -> Option<Change> {
+fn paragraph_mark(p: &Element, story: Option<&str>) -> Option<Change> {
     let marks = p
         .path(&["pPr", "rPr"])
-        .map(revision_marks)
+        .map(|rpr| revision_marks(rpr, story))
         .unwrap_or_default();
     let deleted = marks.iter().position(|(m, _)| *m == Mark::Deletion);
     marks.into_iter().nth(deleted.unwrap_or(0))
@@ -2178,8 +2193,9 @@ struct Writer<'a> {
     lead: Option<String>,
     /// Inside a nested table, whose cells are flattened onto one line.
     flattening: usize,
-    /// The bookmarks a link or a reference field names, which print as
-    /// `<a id="name"></a>` where they start.
+    /// The bookmarks a link or a reference field names, and Word's
+    /// cross-reference targets (`_Ref…`), which print as `<a id="name"></a>`
+    /// where they start.
     bookmarks: HashSet<String>,
     /// The tables differ in style (two styles, or one and none): each
     /// table line names its own, `style Ledger`.
@@ -3495,14 +3511,15 @@ impl Writer<'_> {
         if self.agent {
             return None;
         }
-        paragraph_mark(p).map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
+        paragraph_mark(p, self.story.as_deref())
+            .map(|(mark, by)| (mark, by.filter(|_| !self.in_comment)))
     }
 
     /// The tracked change on a note paragraph's mark. A note has no id
     /// lines, so the agent view prints it inline with its tag.
     fn note_mark(&self, p: &Element) -> Option<Change> {
         if !self.agent {
-            return paragraph_mark(p);
+            return paragraph_mark(p, self.story.as_deref());
         }
         let marks = p
             .path(&["pPr", "rPr"])
@@ -3542,7 +3559,7 @@ impl Writer<'_> {
     /// A tracked change's mark with its attribution: the agent tag, or the
     /// `Author (date)` note of the plain conversion.
     fn change_of(&self, element: &Element) -> Change {
-        let (mark, by) = change_of(element);
+        let (mark, by) = change_of(element, self.story.as_deref());
         if self.agent {
             (mark, Some(self.agent_tag(element)))
         } else {
@@ -3553,7 +3570,7 @@ impl Writer<'_> {
     /// [`revision_marks`] with agent tags when the agent view is on.
     fn revision_marks(&self, properties: &Element) -> Vec<Change> {
         if !self.agent {
-            return revision_marks(properties);
+            return revision_marks(properties, self.story.as_deref());
         }
         properties
             .elements()
@@ -4253,20 +4270,25 @@ fn field_words(instruction: &str) -> Vec<(String, bool)> {
 }
 
 /// The bookmarks under `roots` a link (`w:hyperlink w:anchor`, `HYPERLINK
-/// \l`) or a reference field (`REF`, `PAGEREF`, `NOTEREF`) names.
-fn bookmark_targets<'e>(roots: impl Iterator<Item = &'e Element>) -> HashSet<String> {
-    fn walk(e: &Element, codes: &mut Vec<String>, out: &mut HashSet<String>) {
+/// \l`) or a reference field (`REF`, `PAGEREF`, `NOTEREF`) names. Unless
+/// `fields_print` (the agent view, which prints a field as its code), every
+/// `_Ref…` bookmark too: Word's cross-reference targets.
+fn bookmark_targets<'e>(
+    roots: impl Iterator<Item = &'e Element>,
+    fields_print: bool,
+) -> HashSet<String> {
+    fn walk(e: &Element, refs: bool, codes: &mut Vec<String>, out: &mut HashSet<String>) {
         for c in e.elements() {
             match c.local() {
                 "hyperlink" => {
                     if let Some(anchor) = c.attr("anchor").filter(|a| !a.is_empty()) {
                         out.insert(anchor.to_string());
                     }
-                    walk(c, codes, out);
+                    walk(c, refs, codes, out);
                 }
                 "fldSimple" => {
                     codes.push(c.attr("instr").unwrap_or_default().to_string());
-                    walk(c, codes, out);
+                    walk(c, refs, codes, out);
                 }
                 "fldChar" if c.attr("fldCharType") == Some("begin") => codes.push(String::new()),
                 "instrText" | "delInstrText" => {
@@ -4274,14 +4296,23 @@ fn bookmark_targets<'e>(roots: impl Iterator<Item = &'e Element>) -> HashSet<Str
                         code.push_str(&c.text());
                     }
                 }
-                _ => walk(c, codes, out),
+                // Word's cross-reference targets print whether or not a
+                // field still names them: the plain view prints a REF field
+                // as its text, and the file it writes back keeps only the
+                // bookmark.
+                "bookmarkStart" if refs => {
+                    if let Some(name) = c.attr("name").filter(|n| n.starts_with("_Ref")) {
+                        out.insert(name.to_string());
+                    }
+                }
+                _ => walk(c, refs, codes, out),
             }
         }
     }
     let mut codes = Vec::new();
     let mut out = HashSet::new();
     for root in roots {
-        walk(root, &mut codes, &mut out);
+        walk(root, !fields_print, &mut codes, &mut out);
     }
     for code in &codes {
         let words = field_words(code);
@@ -4877,6 +4908,19 @@ mod tests {
     }
 
     #[test]
+    fn a_cross_reference_target_prints_its_anchor_with_nothing_naming_it() {
+        // Word names its cross-reference targets `_Ref…`. The plain view
+        // prints a REF field as its text, so the file it writes back has
+        // the bookmark and no field: the anchor still prints, or a second
+        // read would lose it. Other names nothing points at print nothing.
+        let body = p(
+            "",
+            r#"<w:bookmarkStart w:id="2" w:name="_Ref100"/><w:r><w:t>Target</w:t></w:r><w:bookmarkEnd w:id="2"/><w:bookmarkStart w:id="3" w:name="_Hlk7"/><w:bookmarkEnd w:id="3"/>"#,
+        );
+        assert_eq!(md(&docx(&body, &[])), "<a id=\"_Ref100\"></a>Target\n");
+    }
+
+    #[test]
     fn image_names_keep_delimiter_characters_out_of_the_markup() {
         let image = r#"<w:r><w:drawing><wp:inline xmlns:wp="wp"><wp:docPr id="1" name="P" descr="x"/><a:graphic xmlns:a="a"><a:graphicData><pic:pic xmlns:pic="p"><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
         let bytes = docx(
@@ -4909,7 +4953,7 @@ mod tests {
         // writes it: CriticMarkup's substitution, as pandiff writes it.
         assert_eq!(
             md(&docx(&body, &[])),
-            "Keep {~~_old_~>**new**~~}.\n\n{++destination++} / {--source--}\n"
+            "Keep {~~_old_~>**new**~~}{>>r1+2<<}.\n\n{++destination++}{>>r3<<} / {--source--}{>>r3<<}\n"
         );
     }
 
@@ -4923,7 +4967,7 @@ mod tests {
 
         assert_eq!(
             md(&docx(&body, &[])),
-            "## {++Added heading++}\n\n{--Deleted paragraph--}\n"
+            "## {++Added heading++}{>>r1<<}\n\n{--Deleted paragraph--}{>>r2<<}\n"
         );
     }
 
@@ -4993,7 +5037,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|Head|\n|-|\n|{--old--}{>>Ana (2026-01-02T03:04:00Z)<<}|\n"
+            "|Head|\n|-|\n|{--old--}{>>r1 Ana (2026-01-02T03:04:00Z)<<}|\n"
         );
     }
 
@@ -5010,7 +5054,7 @@ mod tests {
         // The deleted box leaves no empty `{----}` paragraph behind.
         assert_eq!(
             md(&docx(&body, &[])),
-            "{--Deleted box--}{>>Ana (2026-01-02T03:04:00Z)<<}\n\nKeep\n\n{++Added box++}{>>Ana (2026-01-02T03:04:00Z)<<}\n"
+            "{--Deleted box--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\nKeep\n\n{++Added box++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
     }
 
@@ -5019,14 +5063,15 @@ mod tests {
         let deleted = [pm("", &["del"], &r("A")), p("", &r("B"))].concat();
         assert_eq!(
             md(&docx(&deleted, &[])),
-            "A{--\n\n--}{>>Ana (2026-01-02T03:04:00Z)<<}B\n"
+            "A{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n"
         );
         let inserted = [pm("", &["ins"], &r("A")), p("", &r("B"))].concat();
         assert_eq!(
             md(&docx(&inserted, &[])),
-            "A{++\n\n++}{>>Ana (2026-01-02T03:04:00Z)<<}B\n"
+            "A{++\n\n++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n"
         );
-        // A whole deleted paragraph: its text and its break are one deletion.
+        // A whole deleted paragraph: its text and its break are one
+        // deletion, whose note names both marks.
         let whole = [
             pm("", &["del"], &del(&dr("Deleted paragraph"))),
             p("", &r("Next")),
@@ -5034,7 +5079,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&whole, &[])),
-            "{--Deleted paragraph\n\n--}{>>Ana (2026-01-02T03:04:00Z)<<}Next\n"
+            "{--Deleted paragraph\n\n--}{>>r91+92 Ana (2026-01-02T03:04:00Z)<<}Next\n"
         );
     }
 
@@ -5055,7 +5100,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[("word/footnotes.xml", &footnotes)])),
-            "Claim[^1]\n\n[^1]: Source{++ updated++}{>>Ana (2026-01-02T03:04:00Z)<<}{-- --}{>>Ana (2026-01-02T03:04:00Z)<<}page 4\n"
+            "Claim[^1]\n\n[^1]: Source{++ updated++}{>>footnotes.r90 Ana (2026-01-02T03:04:00Z)<<}{-- --}{>>footnotes.r92 Ana (2026-01-02T03:04:00Z)<<}page 4\n"
         );
     }
 
@@ -5357,11 +5402,11 @@ mod tests {
         assert_eq!(with_comments(&tracked, &xml), "{==text==}{>>Ana: n<<}\n");
         assert_eq!(
             with_comments(&deleted, &xml),
-            "{=={--old--}{>>Ana (2026-01-02T03:04:00Z)<<}==}{>>Ana: n<<}\n"
+            "{=={--old--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}==}{>>Ana: n<<}\n"
         );
         assert_eq!(
             with_comments(&crossing, &xml),
-            "{==a{++b++}{>>Ana (2026-01-02T03:04:00Z)<<}==}{++c++}{>>Ana (2026-01-02T03:04:00Z)<<}{>>Ana: n<<}\n"
+            "{==a{++b++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}==}{++c++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}{>>Ana: n<<}\n"
         );
     }
 
@@ -5458,7 +5503,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {~~fonts~>font-styles~~}{>>Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>Ana (2026-01-02T03:04:00Z)<<}\n\nx{++{--y--}{>>Ana (2026-01-02T03:04:00Z)<<}++}{>>Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}\n"
+            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{++{--y--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
         );
     }
 
@@ -5468,7 +5513,7 @@ mod tests {
         let body = p("", &r("x {++ y ++} ~> z")) + &p("", &ins(&r("new")));
         assert_eq!(
             md(&docx(&body, &[])),
-            "x {\\++ y ++\\} ~\\> z\n\n{++new++}{>>Ana (2026-01-02T03:04:00Z)<<}\n"
+            "x {\\++ y ++\\} ~\\> z\n\n{++new++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
         // Without one, nothing is marked up, so the text is kept as is.
         let body = p("", &r("x {++ y ++} ~> z"));
@@ -5489,7 +5534,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[("word/_rels/document.xml.rels", rels)])),
-            "[keep](https://x.test) {++[new](https://x.test)++}{>>Ana (2026-01-02T03:04:00Z)<<}\n\n{++[added link](https://x.test)++}{>>Ana (2026-01-02T03:04:00Z)<<}\n\n{--[old link](https://f.test)--}{>>Ana (2026-01-02T03:04:00Z)<<}\n\nseen\n"
+            "[keep](https://x.test) {++[new](https://x.test)++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++[added link](https://x.test)++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{--[old link](https://f.test)--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\nseen\n"
         );
     }
 
@@ -5537,7 +5582,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[("word/numbering.xml", &numbering)])),
-            "A{++\n\n## ++}{>>Ana (2026-01-02T03:04:00Z)<<}B\n\n1. one{--\n2. two--}{>>Ana (2026-01-02T03:04:00Z)<<}\n3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>Ana (2026-01-02T03:04:00Z)<<}E\n\nF\n\n|G|\n|-|\n\nH\n\nbox\n\nI\n\nJ\n"
+            "A{++\n\n## ++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n\n1. one{--\n2. two--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}E\n\nF\n\n|G|\n|-|\n\nH\n\nbox\n\nI\n\nJ\n"
         );
     }
 
@@ -5556,7 +5601,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|a{--<br>--}{>>Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{++{--n1--}; {--n2--}++}|{++{--wrapped--}{>>Ana (2026-01-02T03:04:00Z)<<}++}|\n"
+            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{++{--n1--}; {--n2--}++}|{++{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}|\n"
         );
     }
 
@@ -5569,7 +5614,7 @@ mod tests {
         ));
         assert_eq!(
             md(&docx(&body, &[])),
-            "{++in control++}{>>Ana (2026-01-02T03:04:00Z)<<}\n\n{++in custom xml++}{>>Ana (2026-01-02T03:04:00Z)<<}\n"
+            "{++in control++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++in custom xml++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
     }
 
@@ -5597,7 +5642,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{~~ boxed~>tagged~~}{>>Ana (2026-01-02T03:04:00Z)<<}\n\n# Title{--\n\n--}{>>Ana (2026-01-02T03:04:00Z)<<}Body\n\nx\n"
+            "{~~ boxed~>tagged~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n# Title{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}Body\n\nx\n"
         );
     }
 
@@ -5634,7 +5679,10 @@ mod tests {
         let body = r#"<w:p><w:pPr><w:rPr><w:del w:id="1"/></w:rPr></w:pPr><w:r><w:t>First</w:t></w:r></w:p>
 <w:p><w:r><w:t>Second</w:t></w:r></w:p>
 <w:p><w:r><w:t>Third</w:t></w:r></w:p>"#;
-        assert_eq!(md(&docx(body, &[])), "First{--\n\n--}Second\n\nThird\n");
+        assert_eq!(
+            md(&docx(body, &[])),
+            "First{--\n\n--}{>>r1<<}Second\n\nThird\n"
+        );
     }
 
     #[test]
@@ -5690,7 +5738,7 @@ mod tests {
 </w:p></w:tc></w:tr></w:tbl>"#;
         assert_eq!(
             md(&docx(body, &[])),
-            "|Header|\n|-|\n|{--Before **old** after--}|\n"
+            "|Header|\n|-|\n|{--Before **old** after--}{>>r1<<}|\n"
         );
     }
 
@@ -5759,11 +5807,11 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{~~fonts~>styles~~}{>>Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
-             {~~old~>new~~}{>>Ana Lima (2026-09-29T14:05:00Z)<<}{>>Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
-             {++a++}{>>Ana Lima (2026-09-29T14:05:00Z)<<}{++b++}{>>Ana Lima (2026-09-29T15:10:00Z)<<}\n\n\
-             {++moved here++}{>>Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
-             {~~x~>w~~}{>>(2026-09-29T14:05:00Z)<<}{>>Ana Lima<<}{++y++}{++z++}{>>A <<\\} B (2026-09-29T14:05:00Z)<<}\n"
+            "{~~fonts~>styles~~}{>>r7+7 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
+             {~~old~>new~~}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{>>r7 Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
+             {++a++}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{++b++}{>>r7 Ana Lima (2026-09-29T15:10:00Z)<<}\n\n\
+             {++moved here++}{>>r7 Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
+             {~~x~>w~~}{>>r7 (2026-09-29T14:05:00Z)<<}{>>r7 Ana Lima<<}{++y++}{>>r7<<}{++z++}{>>r7 A <<\\} B (2026-09-29T14:05:00Z)<<}\n"
         );
     }
 
@@ -5792,9 +5840,9 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{--A--}{>>Ana Lima (2026-09-29T14:05:00Z)<<}{--\n\n--}{>>Bo Chen (2026-09-29T15:10:00Z)<<}Next\n\n\
-             {--B\n\nC--}{>>Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
-             |{++row++}{>>Bo Chen (2026-09-29T15:10:00Z)<<}|{++{--cell--}{>>Ana Lima (2026-09-29T14:05:00Z)<<}++}{>>Bo Chen (2026-09-29T15:10:00Z)<<}|\n|-|-|\n"
+            "{--A--}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{--\n\n--}{>>r8 Bo Chen (2026-09-29T15:10:00Z)<<}Next\n\n\
+             {--B\n\nC--}{>>r7+8 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
+             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{++{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|\n|-|-|\n"
         );
     }
 
@@ -5877,7 +5925,7 @@ mod tests {
         .concat();
         assert_eq!(
             with_comments(&body, &xml),
-            "{==a==}{--\n\n--}{>>Ana (2026-01-02T03:04:00Z)<<}{>>Ana: first<<}\n\n|cell|\n|-|\n"
+            "{==a==}{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}{>>Ana: first<<}\n\n|cell|\n|-|\n"
         );
     }
 
@@ -6117,11 +6165,13 @@ mod tests {
             p("", &format!("{}{}", r("Gone "), ins(&r("note")))),
         );
         let bytes = docx(&body, &[("word/footnotes.xml", &footnotes)]);
-        let by = "{>>Ana (2026-01-02T03:04:00Z)<<}";
+        let by = |id: &str| format!("{{>>{id} Ana (2026-01-02T03:04:00Z)<<}}");
+        let (added, gone) = (by("r90"), by("r91"));
         assert_eq!(
             md(&bytes),
             format!(
-                "Kept[^1]\n\n{{++Added[^2]++}}{by}\n\n{{--Gone[^3]--}}{by}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{by}\n{{--[^3]: Gone {{++note++}}{by}--}}{by}\n"
+                "Kept[^1]\n\n{{++Added[^2]++}}{added}\n\n{{--Gone[^3]--}}{gone}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{added}\n{{--[^3]: Gone {{++note++}}{}--}}{gone}\n",
+                by("footnotes.r90")
             )
         );
         // Resolved first, the notes are numbered as they are left.

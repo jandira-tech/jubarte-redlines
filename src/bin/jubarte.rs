@@ -2107,6 +2107,34 @@ fn run_convert_any(
                 pdf_job(Some(&resolved), to)
             }
         },
+        (Format::Docx, Format::Md) if !markdown.commonmark => {
+            // The agent view, as `jubarte read` prints it: the dialect that
+            // comes back whole through `convert` to Word.
+            let view = jubarte::markdown::read(
+                &bytes,
+                &jubarte::markdown::ReadOptions {
+                    track_changes: markdown.track_changes.into(),
+                    comments: true,
+                    dates: false,
+                    page_markers: !markdown.no_page_markers,
+                    select: None,
+                    source: job
+                        .file
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned()),
+                },
+            )
+            .map_err(|e| format!("convert failed: {e}"))?;
+            if !job.quiet {
+                for warning in &view.warnings {
+                    eprintln!("warning: {warning}");
+                }
+            }
+            match job.output {
+                Some(path) => at(Format::Md, path, Some(Produced::Text(&view.markdown))),
+                None => write_stdout(&view.markdown).map_err(ConvertFailure::from),
+            }
+        }
         (Format::Docx, Format::Md) => {
             let read = jubarte::markdown::docx_to_markdown(
                 &bytes,

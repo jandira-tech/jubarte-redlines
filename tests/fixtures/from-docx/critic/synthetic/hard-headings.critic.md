@@ -1,8 +1,8 @@
-# Heading {++with an insertion++}{>>Ana Lima (2026-10-01T00:05:00Z)<<}
+# Heading {++with an insertion++}{>>r0 Ana Lima (2026-10-01T00:05:00Z)<<}
 
 Body text.
 
-## {--Deleted --}{>>Bo Chen (2026-10-01T00:10:00Z)<<}Heading two
+## {--Deleted --}{>>r1 Bo Chen (2026-10-01T00:10:00Z)<<}Heading two
 
 More text
 
@@ -10,7 +10,7 @@ More text
 
 Text before an inserted heading.{++
 
-## Inserted heading++}{>>Ana Lima (2026-10-01T00:20:00Z)<<}
+## Inserted heading++}{>>r3+4 Ana Lima (2026-10-01T00:20:00Z)<<}
 
 Text after it.
 

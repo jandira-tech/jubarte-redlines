@@ -423,6 +423,12 @@ pub(super) struct Context<'d> {
     /// even one the view names twice (`r43+43`), which Word's own files
     /// never repeat (see `validate::ring1`).
     pub used_revisions: HashSet<u32>,
+    /// Each open paragraph's mark whose numbered change its runs share:
+    /// its kind, its change and where in the output its `w:rPr` takes it.
+    /// The mark is written at the paragraph's end, so its id follows the
+    /// runs' as the view reads them (`{--A\n\nB--}{>>r8+9+10<<}`: `A` 8,
+    /// the mark 9, `B` 10), though Word's `w:pPr` comes first.
+    pub pending_marks: Vec<Option<(Kind, Option<u32>, usize)>>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
     /// `w:numId` of each label use, by its index in `Document::label_uses`.
@@ -710,6 +716,10 @@ pub(super) fn story(
                 for mark in std::mem::take(&mut unshown) {
                     let mark = context.format_mark("w:ins", &mark);
                     let _ = write!(out, "<{mark}/>");
+                }
+                if let Some((kind, by, at)) = context.pending_marks.pop().flatten() {
+                    let mark = context.revision(kind, by);
+                    out.insert_str(at, &format!("<{mark}/>"));
                 }
                 out.push_str("</w:p>");
             }
@@ -1207,7 +1217,14 @@ fn close_mark(
         Kind::Delete => "</w:del>",
     });
     if natural.get(&by).copied().unwrap_or(0) == 0 {
-        for _ in 0..context.ids_left(by) {
+        // A paragraph mark written at its paragraph's end takes its own.
+        let deferred = context
+            .pending_marks
+            .iter()
+            .flatten()
+            .filter(|(_, mark_by, _)| *mark_by == Some(by))
+            .count();
+        for _ in 0..context.ids_left(by).saturating_sub(deferred) {
             let mark = context.revision(kind, Some(by));
             let _ = write!(out, "<{mark}/>");
         }
@@ -1438,16 +1455,24 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         [first, second, ..] => (Some(first), Some(second)),
     };
     let mut mark_properties = String::new();
+    let mut deferred = None;
     if let Some(kind) = paragraph.mark {
-        let mark = context.revision(kind, paragraph.mark_by);
-        let _ = write!(mark_properties, "<{mark}/>");
+        if paragraph.mark_by.is_some_and(|by| context.ids_left(by) > 0) {
+            deferred = Some(kind);
+        } else {
+            let mark = context.revision(kind, paragraph.mark_by);
+            let _ = write!(mark_properties, "<{mark}/>");
+        }
     }
     if let Some(format) = mark_format {
         let change = context.format_mark("w:rPrChange", format);
         let _ = write!(mark_properties, "<{change}><w:rPr/></w:rPrChange>");
     }
-    if !mark_properties.is_empty() {
-        let _ = write!(properties, "<w:rPr>{mark_properties}</w:rPr>");
+    let mut mark_at = None;
+    if !mark_properties.is_empty() || deferred.is_some() {
+        properties.push_str("<w:rPr>");
+        mark_at = deferred.map(|kind| (kind, properties.len()));
+        let _ = write!(properties, "{mark_properties}</w:rPr>");
     }
     if paragraph.section_break {
         context.sections_ended += 1;
@@ -1459,9 +1484,13 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         let change = context.format_mark("w:pPrChange", format);
         let _ = write!(properties, "<{change}><w:pPr>{base}</w:pPr></w:pPrChange>");
     }
+    let start = out.len() + "<w:pPr>".len();
     if !properties.is_empty() {
         let _ = write!(out, "<w:pPr>{properties}</w:pPr>");
     }
+    context
+        .pending_marks
+        .push(mark_at.map(|(kind, at)| (kind, paragraph.mark_by, start + at)));
 }
 
 /// Whether the note a reference at `position` (1-based) points to is an

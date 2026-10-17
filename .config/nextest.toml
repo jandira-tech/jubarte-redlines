@@ -9,3 +9,9 @@ fail-fast = false
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# `cargo miri nextest run`, the rare full run (AGENTS.md): Miri interprets
+# every test, so a slow one is stopped rather than left to hang the run.
+[profile.default-miri]
+fail-fast = false
+slow-timeout = { period = "300s", terminate-after = 4 }

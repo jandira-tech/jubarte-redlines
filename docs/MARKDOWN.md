@@ -11,22 +11,30 @@ jubarte reads Markdown alongside Word documents:
 | Task | CLI | Library (`jubarte::markdown`) |
 | --- | --- | --- |
 | Markdown to Word, CriticMarkup as tracked changes | `jubarte convert draft.md` | `markdown_to_docx` |
-| Word to Markdown, tracked changes and comments as CriticMarkup | `jubarte convert FILE.docx -t md` | `docx_to_markdown` |
+| Word to Markdown: the agent view | `jubarte convert FILE.docx -t md` | `read` |
+| Word to plain CommonMark, tracked changes and comments as CriticMarkup | `jubarte convert FILE.docx -t md --commonmark` | `docx_to_markdown` |
 | Accept or reject CriticMarkup in Markdown | `jubarte convert draft.md -t md --track-changes accept` | `resolve_critic` |
 | The changes between any two documents as a patch | `jubarte diff old new` | `patch_documents` |
 | Two Markdown documents as CriticMarkup (pandiff) | `jubarte diff old.md new.md --format critic` | `diff_markdown` |
 | Any two documents as a Word redline | `jubarte compare a b -o redline.docx` | `redline` |
 | A Markdown edit applied to a Word document | `jubarte compare contract.docx edited.md -o redline.docx` | `apply_markdown` |
 
-`jubarte convert FILE.docx -t md` prints the document as Markdown, with
-each tracked change and comment as CriticMarkup followed by its author and
-date (`-o FILE.md` writes it; `--track-changes accept` or `reject` writes
-the text after Word's Accept All or Reject All). Pictures become their alt
+`jubarte convert FILE.docx -t md` prints the [agent view](#agent-view), as
+`jubarte read FILE` does: the Markdown with a YAML header, an id line before
+every paragraph and an id on every change and comment, which comes back
+whole through `jubarte convert FILE.md`. `-o FILE.md` writes it;
+`--track-changes accept` or `reject` writes the text after Word's Accept
+All or Reject All.
+
+`--commonmark` writes plain CommonMark instead, for readers outside this
+dialect: each tracked change and comment as CriticMarkup, a change
+followed by its number, author and date (`{++new++}{>>r5 Ana Lima
+(2026-09-29T14:05:00Z)<<}`; the number tells the writer the note names who
+made the change, not a comment on it). Fields print as their text, and
+underline, highlight and strike are left out. Pictures become their alt
 text. Hidden text (`w:vanish` on the run, or on its character style
 directly or through `basedOn`) prints nothing, in the body, table cells,
-notes and headers. `jubarte read FILE` prints the [agent view](#agent-view):
-the same Markdown with a YAML header, an id line before every paragraph and
-an id on every change and comment, for edit plans.
+notes and headers.
 
 ## Markdown to Word
 
@@ -713,6 +721,8 @@ Payment is due in [-30-]{+45+} days.
 - The `+++` line names who made the changes and when, once. A change by
   anyone else (a tracked change already in a Word document) is followed
   by `{>>Name (date)<<}`, and every comment carries its author and date.
+  A substitution whose two sides two people made is two changes, each
+  named after itself: `[-old-]{>>Ana (date)<<}{+new+}{>>Bo (date)<<}`.
   `-a/--author` defaults to Redline; `-d/--datetime` to now.
 - Changes grow to whole words, numbers, formatting spans and links, so
   `[-**twelve**-]{+**eighteen**+}` rather than a change inside the bold.

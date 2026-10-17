@@ -17,6 +17,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **`convert --commonmark`** writes Word as plain CommonMark with
+  CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
+  wrote before.
+- **A change's note names its number in plain Markdown:**
+  `{++new++}{>>r5 Ana Lima (2026-09-29T14:05:00Z)<<}`. The writer reads a
+  numbered note as the change's attribution, so an undated author
+  (`{>>r75 Di Eng<<}`) and an empty one (`{>>r5 (2026-…)<<}`) come back as
+  they were instead of turning into a comment or `Redline`. A note with no
+  number keeps its old meaning.
+- **Plain Markdown keeps Word's cross-reference targets:** every `_Ref…`
+  bookmark prints its `<a id>`, since the REF fields that name it print as
+  their text.
 - **`PdfOptions::comment_notes`** (hidden CLI flag `--comment-notes`)
   attaches each comment as a PDF note at its anchor, for the exceptional
   case that wants one.
@@ -116,6 +128,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   say, in the binary and in both hosts.
 
 ### Changed
+
+- **Breaking (CLI): `convert FILE.docx -t md` writes the agent view**, the
+  Markdown `jubarte read` prints (YAML header, id lines, ids on changes and
+  comments), which comes back whole through `convert FILE.md`. Pass
+  `--commonmark` for the plain Markdown it wrote before.
 
 - **Tables keep the borders Word passes; a Markdown table takes Word's thin
   grid.** The agent view prints a table's own borders (`borders single 0.5pt
