@@ -15,8 +15,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod agent;
 mod critic;
+pub(crate) mod drawing;
 mod header;
 mod media;
+mod mermaid;
 mod ooxml;
 mod revise;
 
@@ -123,6 +125,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let mut note_roots = Vec::new();
     // The notes parts' stems (`footnotes`), which name their changes' story.
     let mut note_stories: HashMap<bool, String> = HashMap::new();
+    // Each notes part's name and `xmlns` scope, for drawings it holds.
+    let mut note_scopes: HashMap<bool, (String, drawing::ScopeMap)> = HashMap::new();
     for (kind, fallback, name) in [
         ("/footnotes", "word/footnotes.xml", "footnote"),
         ("/endnotes", "word/endnotes.xml", "endnote"),
@@ -130,6 +134,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let path = part(kind, fallback);
         if let Ok(Some(root)) = package.xml(&path) {
             note_stories.insert(name == "endnote", part_stem(&path));
+            note_scopes.insert(name == "endnote", (path, drawing::ScopeMap::of(&root)));
             note_roots.push((name, root));
         }
     }
@@ -400,6 +405,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         para_comments: Vec::new(),
         threads: threads.clone(),
         story: None,
+        part: main.clone(),
+        scopes: drawing::ScopeMap::of(&document),
+        pendings: Vec::new(),
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -468,6 +476,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let around = std::mem::replace(&mut writer.revisions, changes);
         writer.lead = Some(format!("[^{index}]: "));
         writer.story = note_stories.get(&key.0).cloned();
+        // Drawings a note prints name the notes part's relationships.
+        let story_part = note_scopes.get(&key.0).map(|(part, scopes)| {
+            (
+                std::mem::replace(&mut writer.part, part.clone()),
+                std::mem::replace(&mut writer.scopes, scopes.clone()),
+            )
+        });
         // Every paragraph the id line counts, a table's cells' too: the
         // view has no table in a note, so they are the note's paragraphs.
         let paragraphs = agent::paragraphs(note);
@@ -549,6 +564,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             })
             .collect();
         writer.revisions = around;
+        if let Some((part, scopes)) = story_part {
+            writer.part = part;
+            writer.scopes = scopes;
+        }
         let story = writer.story.take();
         // Still set: no paragraph had text, so there is no note.
         if writer.lead.take().is_none() {
@@ -877,6 +896,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         continue;
                     };
                     let paragraphs = header::story_paragraphs(&root);
+                    let story_scopes = drawing::ScopeMap::of(&root);
                     let read: Vec<(usize, String, header::ParaFact)> = paragraphs
                         .iter()
                         .enumerate()
@@ -917,7 +937,19 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                     )
                                 }),
                             };
-                            (i, header::story_text(p, view), own)
+                            (
+                                i,
+                                header::story_text_with(p, view, &mut |element, wrap| {
+                                    Some(drawing::Pending::push(
+                                        &mut writer.pendings,
+                                        element,
+                                        &path,
+                                        story_scopes.scope(element),
+                                        wrap,
+                                    ))
+                                }),
+                                own,
+                            )
                         })
                         .collect();
                     // From the first paragraph with text to the part's last:
@@ -1207,6 +1239,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     if !markdown.is_empty() {
         markdown.push('\n');
     }
+
+    let types = drawing::content_types(&mut package);
+    let markdown = drawing::fill(&markdown, &mut package, &types, &writer.pendings);
 
     Ok(Converted {
         markdown,
@@ -2290,6 +2325,13 @@ struct Writer<'a> {
     /// Agent view: the story being written (`footnotes`, `header1`), whose
     /// stem prefixes its change tags; `None` in the body.
     story: Option<String>,
+    /// The part being written (`word/document.xml`, `word/footnotes.xml`):
+    /// whose relationships a captured drawing names.
+    part: String,
+    /// `xmlns` scopes of the part being written, by drawing element.
+    scopes: drawing::ScopeMap,
+    /// Drawings queued for `drawing:` payloads, in print order.
+    pendings: Vec<drawing::Pending>,
 }
 
 impl Writer<'_> {
@@ -2967,6 +3009,16 @@ impl Writer<'_> {
                 "smartTag" | "customXml" | "sdt" | "sdtContent" | "bdo" | "dir" => {
                     self.inline(child, link, base, fields, out, extra);
                 }
+                "AlternateContent" if drawing::capturable_alternate(child) => {
+                    // Sits where a `w:r` may, holding one whole drawing.
+                    self.drawing(child, false, out, extra);
+                }
+                "AlternateContent" => {
+                    if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback"))
+                    {
+                        self.inline(choice, link, base, fields, out, extra);
+                    }
+                }
                 "oMathPara" | "oMath" => {
                     let latex = if child.is("oMath") {
                         let latex = math(child);
@@ -3221,7 +3273,10 @@ impl Writer<'_> {
                     self.noted_at_reference.insert(id.to_string());
                 }
             }
-            "drawing" | "pict" | "object" if !hidden => self.drawing(child, out, extra),
+            "drawing" | "pict" | "object" if !hidden => self.drawing(child, true, out, extra),
+            "AlternateContent" if !hidden && drawing::capturable_alternate(child) => {
+                self.drawing(child, true, out, extra);
+            }
             "AlternateContent" => {
                 if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
                     for inner in choice.elements() {
@@ -3233,10 +3288,59 @@ impl Writer<'_> {
         }
     }
 
-    /// Images with alt text become `![alt](name)`; text boxes become extra blocks,
-    /// inside any tracked change around the drawing. A text box is a story of
-    /// its own, so comment ranges around its anchor do not cover it.
-    fn drawing(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
+    /// Drawings as Markdown: `![alt](name)` for a plain inline image whose
+    /// raster extracts to a file, a `drawing:` payload (its element, parts
+    /// and relationships verbatim) for everything else — anchors, shapes,
+    /// text boxes, VML, AlternateContent and unextracted images. Inside a
+    /// comment the writer cannot restore a payload, so the drawing prints
+    /// its text instead.
+    fn drawing(
+        &mut self,
+        element: &Element,
+        wrap: bool,
+        out: &mut Critic,
+        extra: &mut Vec<String>,
+    ) {
+        if self.in_comment {
+            self.drawing_text(element, out, extra);
+            return;
+        }
+        let mut plain_image = false;
+        if drawing::is_plain_inline(element)
+            && let Some(doc_pr) = element.find("docPr")
+        {
+            let alt = doc_pr
+                .attr("descr")
+                .filter(|d| !d.trim().is_empty())
+                .or_else(|| doc_pr.attr("title"))
+                .unwrap_or("");
+            let target = element
+                .find("blip")
+                .and_then(|b| b.rel_attr("embed").or_else(|| b.rel_attr("link")))
+                .and_then(|id| self.rels.get(id))
+                .map(|r| r.target.clone());
+            if let Some(image) = self.media.extracted_markdown(alt, target.as_deref()) {
+                out.raw(&image);
+                plain_image = true;
+            }
+        }
+        if !plain_image {
+            let scope = self.scopes.scope(element);
+            let part = self.part.clone();
+            out.raw(&drawing::Pending::push(
+                &mut self.pendings,
+                element,
+                &part,
+                scope,
+                wrap,
+            ));
+        }
+    }
+
+    /// A drawing's printable content inside a comment: its text boxes as
+    /// extra blocks (a text box is a story of its own, so comment ranges
+    /// around its anchor do not cover it) and its image's alt text.
+    fn drawing_text(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
         drawing.find_all("txbxContent", &mut boxes);
         let open_comments = std::mem::take(&mut self.open_comments);

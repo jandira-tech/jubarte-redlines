@@ -184,6 +184,8 @@ pub(super) fn assemble(
         author: options.author.clone(),
         date: options.date.clone(),
         range_ends: document.story_range_ends.clone(),
+        drawing_defs: document.drawing_defs.clone(),
+        drawing_backings: document.drawing_backings.clone(),
         ..super::view_stories::People::default()
     };
     // A header's fresh ids sit far above the body's.
@@ -1421,6 +1423,19 @@ impl Relate for PartRelate<'_, '_, '_> {
             &self.part,
             &format!("{RELS}/image"),
             &relative_rel_target(&self.part, &target),
+        )
+    }
+
+    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {
+        let drawing = self.document.drawings.get(index)?;
+        let existing: HashSet<String> = self.package.parts().into_iter().collect();
+        super::from_docx::drawing::materialize(
+            drawing,
+            self.package,
+            &self.part,
+            &existing,
+            &mut self.media.used,
+            next_doc_pr,
         )
     }
 }

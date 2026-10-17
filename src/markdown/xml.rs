@@ -46,6 +46,9 @@ pub(super) enum Content {
     NoteReference(u32),
     /// A picture, by its index in [`Document::pictures`].
     Picture(usize),
+    /// A drawing no image syntax carries, by its index in
+    /// [`Document::drawings`]: spliced back verbatim.
+    Drawing(usize),
     /// An equation's LaTeX: display math (`$$…$$`) or inline (`$…$`).
     Math {
         latex: String,
@@ -283,6 +286,15 @@ pub(super) struct Document {
     /// change's mark (`{++{>>c1 re c0<<}text++}`).
     pub note_changes: HashMap<u32, (Change, bool)>,
     pub pictures: Vec<Picture>,
+    /// `drawing:` payloads to splice back, in the order the runs name them.
+    pub drawings: Vec<super::from_docx::drawing::Drawing>,
+    /// The view's drawing reference definitions, by name: a `dN` maps to
+    /// its `drawing:` destination, an `imageK` to its `data:` one. The
+    /// stories' `![…][dN]` and `![…][imageK]` tokens resolve through them.
+    pub drawing_defs: HashMap<String, String>,
+    /// The view's `<!-- NAME drawing:… -->` backing comments, by name: the
+    /// payload a `data:` definition's bytes fill, or an `svg` fence's.
+    pub drawing_backings: HashMap<String, String>,
     pub lists: Vec<List>,
     pub styles: HashSet<&'static str>,
     /// Styles id lines name (`<!-- p0 TitlePage -->`), by id.
@@ -408,6 +420,10 @@ pub(super) trait Relate {
     fn hyperlink(&mut self, url: &str) -> String;
     /// The relationship id of a picture from this story's part.
     fn picture(&mut self, index: usize) -> String;
+    /// The XML of drawing `index` written into the package beside this
+    /// story's part: its relationships and dependent parts too. `None`
+    /// when the payload's parts could not be written.
+    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String>;
 }
 
 /// Numbers shared by every story of one document.
@@ -1598,6 +1614,23 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
             context.next_drawing += 1;
             if let Some(picture) = context.document.pictures.get(*index) {
                 drawing_xml(picture, &id, drawing, out);
+            }
+        }
+        Content::Drawing(index) => {
+            let wraps_run = context
+                .document
+                .drawings
+                .get(*index)
+                .is_some_and(|drawing| drawing.wraps_run());
+            if let Some(drawing) = relate.drawing(*index, &mut context.next_drawing) {
+                if wraps_run {
+                    out.push_str(&drawing);
+                } else {
+                    // Content a run cannot hold sits where a `w:r` may:
+                    // close this run, splice, reopen one with its
+                    // properties (already written, so they are repeated).
+                    let _ = write!(out, "</w:r>{drawing}<w:r>{properties}");
+                }
             }
         }
     }

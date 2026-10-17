@@ -14,7 +14,9 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Alignment, CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
+};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
@@ -139,7 +141,14 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     writer.note_breaks = note_breaks(&source);
     writer.item_levels = item_levels(&source);
     writer.label_definitions = label_definitions(&source);
-    for event in Parser::new_ext(&source, parser_options()) {
+    let parser = Parser::new_ext(&source, parser_options());
+    writer.document.drawing_defs = parser
+        .reference_definitions()
+        .iter()
+        .map(|(name, def)| (name.to_string(), def.dest.to_string()))
+        .collect();
+    writer.document.drawing_backings = super::from_docx::drawing::backing_comments(&source);
+    for event in parser {
         writer.event(event);
     }
     writer.finish()
@@ -1134,7 +1143,12 @@ struct Writer<'o, 'a> {
     /// Runs a task list marker wrote at the start of the paragraph: a
     /// change that starts right after them takes them in.
     prefix_runs: Vec<usize>,
-    image: Option<(String, String)>,
+    /// The open image's destination, its reference name (`image1` of
+    /// `![alt][image1]`, else the destination), and its alt text so far.
+    image: Option<(String, String, String)>,
+    /// A ` ```svg NAME ` or ` ```mermaid NAME ` fence being read: its
+    /// language, its backing's name and the source accumulated so far.
+    drawing_block: Option<(String, String, String)>,
     metadata: Option<String>,
 
     // Inline formatting depth.
@@ -1263,6 +1277,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             row_cells: RowCells::Empty,
             prefix_runs: Vec::new(),
             image: None,
+            drawing_block: None,
             metadata: None,
             bold: 0,
             italic: 0,
@@ -1324,6 +1339,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     block.push_str(&text);
                 }
             }
+            Event::Text(text) if self.drawing_block.is_some() => {
+                if let Some((_, _, block)) = &mut self.drawing_block {
+                    block.push_str(&text);
+                }
+            }
             Event::Text(text) => self.text(&text),
             Event::Code(text) => {
                 self.code += 1;
@@ -1382,10 +1402,23 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.quote += 1;
             }
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(kind) => {
                 self.end_paragraph();
                 self.code_block = true;
                 self.begin_paragraph();
+                // ` ```svg NAME ` and ` ```mermaid NAME ` are a drawing's
+                // readable layer: gather the source and let the block's
+                // end splice `NAME`'s backing.
+                if let CodeBlockKind::Fenced(info) = &kind {
+                    let mut words = info.split_whitespace();
+                    if let Some(lang) = words.next()
+                        && matches!(lang, "svg" | "mermaid")
+                        && let Some(name) = words.next()
+                    {
+                        self.drawing_block =
+                            Some((lang.to_string(), name.to_string(), String::new()));
+                    }
+                }
             }
             Tag::List(first) => {
                 self.end_paragraph();
@@ -1573,9 +1606,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 };
                 self.link_start(&dest, title);
             }
-            Tag::Image { dest_url, .. } => {
+            Tag::Image { dest_url, id, .. } => {
                 if self.image.is_none() {
-                    self.image = Some((critic::decode(&dest_url), String::new()));
+                    self.image = Some((
+                        critic::decode(&dest_url),
+                        critic::decode(&id),
+                        String::new(),
+                    ));
                 }
             }
             Tag::MetadataBlock(_) => self.metadata = Some(String::new()),
@@ -1604,6 +1641,52 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.quote = self.quote.saturating_sub(1);
             }
             TagEnd::CodeBlock => {
+                if let Some((lang, name, text)) = self.drawing_block.take() {
+                    use super::from_docx::drawing;
+                    let dest = self.document.drawing_backings.get(&name).cloned();
+                    let drawing = dest.and_then(|dest| drawing::decode(&dest).ok()).and_then(
+                        |mut drawing| match lang.as_str() {
+                            "svg" => {
+                                use base64::Engine;
+                                drawing
+                                    .fill_slot_data(
+                                        &base64::engine::general_purpose::STANDARD
+                                            .encode(text.trim().as_bytes()),
+                                        "image/svg+xml",
+                                    )
+                                    .then_some(drawing)
+                            }
+                            // A `mermaid` fence's text is the chart it
+                            // was: unchanged, the payload writes back byte
+                            // for byte; edited, its chart part is patched.
+                            _ if drawing.mermaid_unchanged(&text) => Some(drawing),
+                            _ if drawing.rebuild_mermaid(&text) => Some(drawing),
+                            _ => {
+                                self.document.warnings.push(format!(
+                                    "mermaid '{name}' names a drawing this text cannot edit"
+                                ));
+                                Some(drawing)
+                            }
+                        },
+                    );
+                    match drawing {
+                        Some(drawing) => {
+                            // A drawing's paragraph: not SourceCode.
+                            if let Some(index) = self.paragraph
+                                && let Some(Item::Paragraph(paragraph)) =
+                                    self.story().get_mut(index)
+                            {
+                                paragraph.style = None;
+                            }
+                            self.document.drawings.push(drawing);
+                            let index = self.document.drawings.len() - 1;
+                            self.push(Content::Drawing(index));
+                        }
+                        // No backing, or one that did not read: the fence
+                        // stays the code it shows.
+                        None => self.plain(&text),
+                    }
+                }
                 // The block's last line ends in a newline: no break after it.
                 let story = self.story();
                 if matches!(
@@ -2315,7 +2398,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             metadata.push_str(text);
             return;
         }
-        if let Some((_, alt)) = &mut self.image {
+        if let Some((_, _, alt)) = &mut self.image {
             alt.push_str(&critic::decode(text));
             return;
         }
@@ -2346,7 +2429,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             let text = format!("{fence}{}{fence}", critic::restore(latex));
             if let Some(metadata) = &mut self.metadata {
                 metadata.push_str(&text);
-            } else if let Some((_, alt)) = &mut self.image {
+            } else if let Some((_, _, alt)) = &mut self.image {
                 alt.push_str(&text);
             } else {
                 self.plain(&text);
@@ -3071,9 +3154,63 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn picture(&mut self) {
-        let Some((url, alt)) = self.image.take() else {
+        let Some((url, id, alt)) = self.image.take() else {
             return;
         };
+        // A `drawing:` destination is a whole element and its parts,
+        // spliced back as it was; a payload that does not read is alt text.
+        if url.starts_with("drawing:") {
+            match super::from_docx::drawing::decode(&url) {
+                Ok(drawing) => {
+                    self.document.drawings.push(drawing);
+                    let index = self.document.drawings.len() - 1;
+                    self.push(Content::Drawing(index));
+                }
+                Err(_) => self.plain(alt.trim()),
+            }
+            return;
+        }
+        // A `data:` destination names its bytes. A `<!-- imageN drawing:…
+        // -->` backing makes it the drawing it was: the anchor, the
+        // wrapping, the parts, with the `data:` bytes filling the slot the
+        // readable layer carries. Without a backing it is a plain picture,
+        // shared with any other `data:` picture of the same bytes.
+        if let Some((_mime, b64)) = super::from_docx::drawing::data_uri(&url) {
+            use super::from_docx::drawing;
+            if let Some(drawing) = drawing::lookup(
+                &id,
+                &self.document.drawing_defs,
+                &self.document.drawing_backings,
+            ) {
+                self.document.drawings.push(drawing);
+                let index = self.document.drawings.len() - 1;
+                self.push(Content::Drawing(index));
+                return;
+            }
+            let picture =
+                drawing::base64_decode(b64).and_then(|bytes| read_picture(bytes, alt.trim()));
+            match picture {
+                Some(picture) => {
+                    let index = self
+                        .document
+                        .pictures
+                        .iter()
+                        .position(|seen| seen.bytes == picture.bytes)
+                        .unwrap_or_else(|| {
+                            self.document.pictures.push(picture);
+                            self.document.pictures.len() - 1
+                        });
+                    self.push(Content::Picture(index));
+                }
+                None => {
+                    self.document
+                        .warnings
+                        .push(format!("image '{id}' was written as its alt text"));
+                    self.plain(alt.trim());
+                }
+            }
+            return;
+        }
         let loaded = self.options.images.map(|load| load(&url));
         let picture = loaded
             .flatten()

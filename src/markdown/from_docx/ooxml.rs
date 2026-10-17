@@ -221,6 +221,16 @@ impl Rels {
             .collect()
     }
 
+    /// How many relationships the part holds.
+    pub(crate) fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    /// Whether the part holds no relationships.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+
     /// A hyperlink target for a relationship id: external URLs only.
     pub(crate) fn link(&self, id: &str) -> Option<String> {
         self.get(id)
@@ -1027,6 +1037,13 @@ impl Media {
             extracted: Some(extracted),
             files,
         }
+    }
+
+    /// Markdown only when the picture's raster is extracted to a file;
+    /// `None` when pictures are not extracted or this one is no raster.
+    pub(crate) fn extracted_markdown(&mut self, alt: &str, target: Option<&str>) -> Option<String> {
+        let bytes = target.and_then(|target| self.files.get(target))?;
+        self.extracted.as_mut()?.add(bytes, alt)
     }
 
     /// Markdown for a picture: the extracted file when pictures are

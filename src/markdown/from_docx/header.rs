@@ -1375,7 +1375,22 @@ pub(crate) enum StoryView<'a> {
 /// prints its result. Line breaks are newlines. Runs inside hyperlinks,
 /// content controls, smart tags and custom XML count; tracked changes read
 /// as `view` says.
-pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
+/// [`story_text_with`] without drawing capture: the tests' view.
+#[cfg(test)]
+fn story_text(p: &Element, view: StoryView) -> String {
+    story_text_with(p, view, &mut |_, _| None)
+}
+
+/// [`story_text`], calling `draw` for each `w:drawing`, `w:pict`, `w:object`
+/// and drawing-holding `mc:AlternateContent` element: its Markdown (`None`
+/// prints nothing). The `bool` says the element is run content, spliced
+/// inside a `w:r` (`true`) or where a `w:r` may sit (`false`, a
+/// paragraph-level AlternateContent).
+pub(crate) fn story_text_with(
+    p: &Element,
+    view: StoryView,
+    draw: &mut dyn FnMut(&Element, bool) -> Option<String>,
+) -> String {
     struct State<'a> {
         out: String,
         /// Open complex fields, outermost first.
@@ -1450,9 +1465,28 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
             .to_uppercase();
         format!("{{{name}}}")
     }
-    fn walk(parent: &Element, s: &mut State) {
+    fn walk(
+        parent: &Element,
+        s: &mut State,
+        draw: &mut dyn FnMut(&Element, bool) -> Option<String>,
+    ) {
         for run in parent.elements() {
             match run.local() {
+                "drawing" | "pict" | "object" => {
+                    if let Some(markdown) = draw(run, true) {
+                        s.out.push_str(&markdown);
+                    }
+                }
+                "AlternateContent" if super::drawing::capturable_alternate(run) => {
+                    if let Some(markdown) = draw(run, false) {
+                        s.out.push_str(&markdown);
+                    }
+                }
+                "AlternateContent" => {
+                    if let Some(choice) = run.child("Choice").or_else(|| run.child("Fallback")) {
+                        walk(choice, s, draw);
+                    }
+                }
                 "fldSimple" => {
                     let instr = run.attr("instr").unwrap_or("");
                     match super::printed_code(instr).filter(|_| s.fields.is_empty()) {
@@ -1461,12 +1495,12 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                             let at = s.out.len();
                             let nested = s.in_result > 0;
                             s.in_result += 1;
-                            walk(run, s);
+                            walk(run, s, draw);
                             s.in_result -= 1;
                             s.out.push_str(field_end(&s.out, at, instr, nested));
                         }
                         None if s.fields.is_empty() => s.out.push_str(&code(instr)),
-                        None => walk(run, s),
+                        None => walk(run, s, draw),
                     }
                 }
                 local if inserting(local).is_some() => {
@@ -1487,7 +1521,7 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                     }
                     let start = s.out.len();
                     let deleting = std::mem::replace(&mut s.deleting, !inserted);
-                    walk(run, s);
+                    walk(run, s, draw);
                     s.deleting = deleting;
                     if let Some((handles, stem)) = tagged {
                         let text = s.out.split_off(start);
@@ -1504,10 +1538,10 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                         }
                     }
                 }
-                "hyperlink" | "smartTag" | "customXml" => walk(run, s),
+                "hyperlink" | "smartTag" | "customXml" => walk(run, s, draw),
                 "sdt" => {
                     if let Some(content) = run.child("sdtContent") {
-                        walk(content, s);
+                        walk(content, s, draw);
                     }
                 }
                 "r" => {
@@ -1520,65 +1554,92 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
                         continue;
                     }
                     for child in run.elements() {
-                        match child.local() {
-                            "fldChar" => match child.attr("fldCharType") {
-                                Some("begin") => {
-                                    if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
-                                        field.nested = true;
-                                    }
-                                    s.fields.push(Open::default());
-                                }
-                                Some("separate") => {
-                                    let outermost = s.fields.len() == 1;
-                                    if let Some(field) = s.fields.last_mut() {
-                                        field.result = true;
-                                        if outermost
-                                            && !field.nested
-                                            && let Some(code) = super::printed_code(&field.instr)
-                                        {
-                                            field.printed = true;
-                                            s.out.push_str(&code);
-                                            field.at = s.out.len();
-                                        }
-                                    }
-                                }
-                                Some("end") => {
-                                    if let Some(field) = s.fields.pop()
-                                        && s.fields.is_empty()
-                                    {
-                                        s.out.push_str(&if field.printed {
-                                            field_end(
-                                                &s.out,
-                                                field.at,
-                                                &field.instr,
-                                                s.in_result > 0,
-                                            )
-                                            .to_string()
-                                        } else {
-                                            code(&field.instr)
-                                        });
-                                    }
-                                }
-                                _ => {}
-                            },
-                            "instrText" | "delInstrText" => {
-                                if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
-                                    field.instr.push_str(&child.text());
-                                }
-                            }
-                            // Only a printed field's result shows, and not
-                            // the code of a field nested in it.
-                            _ if !(s.fields.is_empty()
-                                || s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
-                            "t" => s.push_text(&child.text()),
-                            "delText" if s.deleting => s.push_text(&child.text()),
-                            "tab" => s.out.push('\t'),
-                            "br" | "cr" => s.out.push('\n'),
-                            _ => {}
-                        }
+                        run_content(child, s, draw);
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+    /// One child of a `w:r` (or of a run-level `mc:Choice`): text, field
+    /// characters, breaks, and drawings `draw` renders.
+    fn run_content(
+        child: &Element,
+        s: &mut State,
+        draw: &mut dyn FnMut(&Element, bool) -> Option<String>,
+    ) {
+        match child.local() {
+            "drawing" | "pict" | "object" => {
+                if let Some(markdown) = draw(child, true) {
+                    s.out.push_str(&markdown);
+                }
+            }
+            "AlternateContent" if super::drawing::holds_drawing(child) => {
+                if let Some(markdown) = draw(child, true) {
+                    s.out.push_str(&markdown);
+                }
+            }
+            "AlternateContent" => {
+                if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
+                    for inner in choice.elements() {
+                        run_content(inner, s, draw);
+                    }
+                }
+            }
+            _ => {
+                {
+                    match child.local() {
+                        "fldChar" => match child.attr("fldCharType") {
+                            Some("begin") => {
+                                if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                    field.nested = true;
+                                }
+                                s.fields.push(Open::default());
+                            }
+                            Some("separate") => {
+                                let outermost = s.fields.len() == 1;
+                                if let Some(field) = s.fields.last_mut() {
+                                    field.result = true;
+                                    if outermost
+                                        && !field.nested
+                                        && let Some(code) = super::printed_code(&field.instr)
+                                    {
+                                        field.printed = true;
+                                        s.out.push_str(&code);
+                                        field.at = s.out.len();
+                                    }
+                                }
+                            }
+                            Some("end") => {
+                                if let Some(field) = s.fields.pop()
+                                    && s.fields.is_empty()
+                                {
+                                    s.out.push_str(&if field.printed {
+                                        field_end(&s.out, field.at, &field.instr, s.in_result > 0)
+                                            .to_string()
+                                    } else {
+                                        code(&field.instr)
+                                    });
+                                }
+                            }
+                            _ => {}
+                        },
+                        "instrText" | "delInstrText" => {
+                            if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                field.instr.push_str(&child.text());
+                            }
+                        }
+                        // Only a printed field's result shows, and not
+                        // the code of a field nested in it.
+                        _ if !(s.fields.is_empty()
+                            || s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
+                        "t" => s.push_text(&child.text()),
+                        "delText" if s.deleting => s.push_text(&child.text()),
+                        "tab" => s.out.push('\t'),
+                        "br" | "cr" => s.out.push('\n'),
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -1672,7 +1733,7 @@ pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
         last: None,
         in_result: 0,
     };
-    walk(p, &mut s);
+    walk(p, &mut s, draw);
     s.out.trim().to_string()
 }
 
