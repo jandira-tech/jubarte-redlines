@@ -5164,14 +5164,18 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 }
 
 /// `Name (date)` or `(date)` at the start of `text`: the name, the date and
-/// the text after them. The date is the last parenthesised group, for an
-/// author may hold parentheses of its own (`Ana (consultant)`); in a fold
+/// the text after them. The date is the first parenthesised date after a
+/// name whose own parentheses balance, for an author may hold some
+/// (`Ana (consultant)`) and a comment's text may hold a date; in a fold
 /// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`)
 /// and are read back off the name.
 pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
-    let mut from = text.len();
-    while let Some(open) = text[..from].rfind('(') {
-        from = open;
+    // The first group that is a date after a name: a later one belongs to
+    // the text after the attribution (`Ana (d1): moved to (d2)`), and an
+    // earlier one that is no date to the name (`Ana (Legal) (d1)`).
+    let mut from = 0;
+    while let Some(open) = text[from..].find('(').map(|at| from + at) {
+        from = open + 1;
         let Some(close) = text[open..].find(')').map(|at| open + at) else {
             continue;
         };
@@ -5431,6 +5435,28 @@ pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_comment_body_holding_a_date_keeps_its_author() {
+        // The date is the last parenthesised group of the attribution, not
+        // of the comment's body: `(D2)` in the text names no one.
+        assert_eq!(
+            named("Ana (2026-01-01T00:00:00Z): moved to (2026-02-01T00:00:00Z)"),
+            Some((
+                Some("Ana".to_string()),
+                "2026-01-01T00:00:00Z",
+                ": moved to (2026-02-01T00:00:00Z)"
+            ))
+        );
+        assert_eq!(
+            named("Ana (Legal) (2026-01-01T00:00:00Z): see (2026-02-01T00:00:00Z)"),
+            Some((
+                Some("Ana (Legal)".to_string()),
+                "2026-01-01T00:00:00Z",
+                ": see (2026-02-01T00:00:00Z)"
+            ))
+        );
+    }
 
     #[test]
     fn even_backslash_runs_move_off_the_pipes_they_shield() {
