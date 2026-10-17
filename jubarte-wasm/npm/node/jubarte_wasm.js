@@ -656,9 +656,66 @@ function capabilitiesText(manifest_json) {
 exports.capabilitiesText = capabilitiesText;
 
 /**
+ * Focused edit discovery; no filters returns this runtime's edit support matrix.
+ * @param {string | null} [operation]
+ * @param {string | null} [field]
+ * @returns {string}
+ */
+function capabilityQuery(operation, field) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        var ptr0 = isLikeNone(operation) ? 0 : passStringToWasm0(operation, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(field) ? 0 : passStringToWasm0(field, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.capabilityQuery(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred3_0 = r0;
+        deferred3_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.capabilityQuery = capabilityQuery;
+
+/**
+ * Render a focused query in the same text form as the native CLI.
+ * @param {string | null} [operation]
+ * @param {string | null} [field]
+ * @returns {string}
+ */
+function capabilityQueryText(operation, field) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        var ptr0 = isLikeNone(operation) ? 0 : passStringToWasm0(operation, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(field) ? 0 : passStringToWasm0(field, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.capabilityQueryText(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred3_0 = r0;
+        deferred3_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.capabilityQueryText = capabilityQueryText;
+
+/**
  * `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
- * in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
- * change id throws `jubarte-wasm: c5: expected a change id …`, which the
+ * in its settled spelling (`r1+2` → `r1`, `r2`). An id that is no change
+ * id, the expired `body:rev:1` among them, throws `jubarte-wasm: c5:
+ * expected a change id …` (naming `r1` for `body:rev:1`), which the
  * binary reports as a usage error before reading the document.
  *
  * Mirrors `jubarte::changes::ChangeFilter::normalized`.
@@ -913,7 +970,7 @@ exports.convertMarkdown = convertMarkdown;
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
- * `body:p:N` id in a Word document or `line:N` in Markdown.
+ * `pN` id in a Word document or `line:N` in Markdown.
  *
  * Each side is a `.docx` package or UTF-8 Markdown
  * (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -1098,7 +1155,7 @@ function diffDocumentsView(old, next, options_json) {
 exports.diffDocumentsView = diffDocumentsView;
 
 /**
- * Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
+ * Body paragraphs as Markdown, each preceded by its `[pN]` id: the
  * coordinates an edit plan uses.
  *
  * Mirrors `jubarte::inspect::markdown`.
@@ -2021,6 +2078,46 @@ function repairDocument(docx) {
     }
 }
 exports.repairDocument = repairDocument;
+
+/**
+ * The lines `edit -p rN --accept/--reject` prints for a pure resolution:
+ * one per resolved change from `source` (the bytes before resolution) and
+ * `resolvedJson` (`{"accepted": [...], "rejected": [...]}` short ids).
+ *
+ * Mirrors `jubarte::edit::resolution::resolution_text`.
+ * @param {Uint8Array} docx
+ * @param {string} resolved_json
+ * @returns {string}
+ */
+function resolutionText(docx, resolved_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(resolved_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.resolutionText(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred4_0, deferred4_1, 1);
+    }
+}
+exports.resolutionText = resolutionText;
 
 /**
  * Remove who touched a document: author names (as one alias), rsids, the

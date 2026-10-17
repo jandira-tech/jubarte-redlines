@@ -80,7 +80,7 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `changesText`, `commentsText`, `tablesText`, `readJson`, `wroteLine`, `changeFilter`, `refusedInput`, `planError`) |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `capabilityQuery`, `capabilityQueryText`, `changesText`, `commentsText`, `tablesText`, `readJson`, `wroteLine`, `changeFilter`, `refusedInput`, `planError`) |
 | `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (same export set as `node-slim`) |
 
 ## API
@@ -129,6 +129,8 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `editReportJsonl` | `(reportJson) → string` | A report as JSON lines (`load`, one `op` per operation, `summary`). |
 | `capabilities` | `() → string` | What this build can do, as JSON (`runtime: "wasm"`, operations, edit kinds, input budgets, `formats`, `ids`). |
 | `capabilitiesText` | `() → string` | The same manifest as the text summary `jubarte capabilities` prints. |
+| `capabilityQuery` | `(operation?, field?) → string` | Focused edit discovery as JSON (`runtime: "wasm"`, `schema_version: 1`): one operation's profile, one field (within that operation when both are given), or the full edit support matrix when neither is. An unknown name answers `supported: false` with the `nearest` known names. |
+| `capabilityQueryText` | `(operation?, field?) → string` | The same answer as the text the native `jubarte capabilities` query prints. |
 | `wroteLine` | `(path, format, size, pages?) → string` | The status line a writing task prints: `wrote r.pdf (pdf, 48213 bytes, 3 pages)`; `format` is `docx`, `md`, `pdf`, `png` or `json`. |
 | `diffDocuments` | `(old, next, author, date, columns?, oldName?, newName?) → string` | The changed paragraphs as a patch, JSON `{text, hunks}`, each change `[-old-]{+new+}` at its `body:p:N` id (`line:N` in Markdown). Each side is a `.docx` or UTF-8 Markdown. |
 | `diffDocumentsUnified` | `(old, next, oldName?, newName?, context?) → string` | Complete Git unified patch of text snapshots, with no clipping. |

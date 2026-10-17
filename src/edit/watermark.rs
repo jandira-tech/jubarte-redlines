@@ -24,7 +24,7 @@ const W10_URI: &str = "urn:schemas-microsoft-com:office:word";
 /// Shape ids Word gives text and picture watermarks.
 const WATERMARK_IDS: [&str; 2] = ["PowerPlusWaterMarkObject", "WordPictureWatermark"];
 /// Longest watermark text the operation takes.
-const MAX_TEXT: usize = 64;
+pub(super) const MAX_TEXT: usize = 64;
 /// Word's shape size for a text watermark on a Letter page.
 const LETTER: (f64, f64) = (527.85, 131.95);
 

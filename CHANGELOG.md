@@ -140,6 +140,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
+  `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`
+  select a comment, not a paragraph, and used to ignore a stray `paragraph`
+  silently; they now refuse it as an unknown field (`INVALID_PLAN`), as
+  `list`, `watermark`, `settings`, `fill_control` and `page_setup` already
+  did. Discovery publishes every v1 operation as closed
+  (`additionalProperties: false`), with the bounds the dispatcher enforces.
+
 - **Breaking (CLI): `convert FILE.docx -t md` writes the agent view**, the
   Markdown `jubarte read` prints (YAML header, id lines, ids on changes and
   comments), which comes back whole through `convert FILE.md`. Pass

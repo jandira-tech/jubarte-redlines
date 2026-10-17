@@ -50,19 +50,16 @@ impl Stamp<'_> {
 /// The operation kind of `resolved` when the emitter cannot write it as a
 /// tracked change: such a plan goes through the comparer, or is refused
 /// under `keep`, never left out of the redline.
-fn untracked_kind(resolved: &Resolved) -> Option<&'static str> {
-    match resolved {
-        Resolved::FillControl { .. } => Some("fill_control"),
-        Resolved::InsertFootnote { .. } => Some("insert_footnote"),
-        Resolved::InsertImage { .. } => Some("insert_image"),
-        Resolved::PageSetup { .. } => Some("page_setup"),
-        _ => None,
-    }
+fn untracked_kind(tx: &Transaction<'_>, operation: usize) -> Option<&'static str> {
+    let kind = super::kind_name(&tx.plan.operations[operation].kind);
+    (!super::operation_supports_keep(kind)).then_some(kind)
 }
 
 /// Whether the emitter writes every operation of `tx` as tracked changes.
 pub(super) fn emits_all(tx: &Transaction<'_>) -> bool {
-    tx.resolved.iter().all(|(_, r)| untracked_kind(r).is_none())
+    tx.resolved
+        .iter()
+        .all(|(op, _)| untracked_kind(tx, *op).is_none())
 }
 
 /// Whether a run holding `[start, end)` of `paragraph` has a tracked
@@ -96,7 +93,7 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
         error
     };
     for (op, resolved) in &tx.resolved {
-        if let Some(kind) = untracked_kind(resolved) {
+        if let Some(kind) = untracked_kind(tx, *op) {
             return Err(refuse(
                 *op,
                 &format!(
