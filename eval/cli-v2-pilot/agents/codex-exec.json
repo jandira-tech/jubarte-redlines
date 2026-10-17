@@ -1,0 +1,7 @@
+{
+  "name": "codex-exec",
+  "argv": ["codex", "exec", "--json"],
+  "model": "gpt-5.1-codex",
+  "provider": "openai",
+  "version": "unknown"
+}
