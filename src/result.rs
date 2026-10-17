@@ -73,8 +73,8 @@ pub enum Phase {
 
 /// The primary document effect a result reports.
 ///
-/// A `generated` or `validated` phase always has [`Effect::NotApplied`] —
-/// see [`ResultData::validate`].
+/// A `generated` or `validated` phase always has [`Effect::NotApplied`],
+/// and a `committed` phase never does — see [`ResultData::validate`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Effect {
@@ -615,6 +615,15 @@ pub enum ResultDataError {
         /// The effect that was supplied.
         effect: Effect,
     },
+    /// A committed phase was paired with a `not_applied` effect: only
+    /// actual primary publication reports phase `committed`, and it
+    /// reports an actual effect.
+    EffectRequired {
+        /// The phase that requires an actual effect.
+        phase: Phase,
+        /// The effect that was supplied.
+        effect: Effect,
+    },
     /// `predicted_effect` was set without a `validated` phase.
     PredictedWithoutValidation {
         /// The phase that was supplied.
@@ -630,6 +639,10 @@ impl std::fmt::Display for ResultDataError {
             Self::NotAppliedRequired { phase, effect } => write!(
                 f,
                 "phase {phase:?} requires effect NotApplied, got {effect:?}"
+            ),
+            Self::EffectRequired { phase, effect } => write!(
+                f,
+                "phase {phase:?} requires effect Changed or Unchanged, got {effect:?}"
             ),
             Self::PredictedWithoutValidation { phase } => write!(
                 f,
@@ -679,7 +692,16 @@ impl ResultData {
     pub fn validate(&self) -> Result<(), ResultDataError> {
         match self.phase {
             Some(phase) => {
-                if phase != Phase::Committed && self.effect != Effect::NotApplied {
+                if phase == Phase::Committed {
+                    // Only actual primary publication reports phase
+                    // `committed`, and it reports an actual effect.
+                    if self.effect == Effect::NotApplied {
+                        return Err(ResultDataError::EffectRequired {
+                            phase,
+                            effect: self.effect,
+                        });
+                    }
+                } else if self.effect != Effect::NotApplied {
                     return Err(ResultDataError::NotAppliedRequired {
                         phase,
                         effect: self.effect,
@@ -906,8 +928,10 @@ impl From<&Envelope> for StreamHeader {
 }
 
 /// Progress event for JSONL streams: a free-form JSON value so callers can
-/// attach any `ev`/`load`/`op`/`save` line they want. The terminal record
-/// is a typed [`Envelope`]; see [`jsonl_terminal_line`] and [`write_jsonl_stream`].
+/// attach any `ev`/`load`/`op`/`save` line they want. [`read_jsonl_stream`]
+/// requires every progress record to carry a string `ev` discriminator.
+/// The terminal record is a typed [`Envelope`]; see
+/// [`jsonl_terminal_line`] and [`write_jsonl_stream`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ProgressEvent {
@@ -1024,10 +1048,12 @@ impl std::fmt::Display for StreamError {
 impl std::error::Error for StreamError {}
 
 /// Require a typed header first and exactly one terminal result last.
-/// Progress uses `ev`; its per-operation `status` is not a terminal marker.
-/// Empty lines are ignored. Missing termination is incomplete; missing or
-/// malformed headers, duplicate terminals and records after termination are
-/// malformed.
+/// Progress uses `ev`; its per-operation `status` is not a terminal
+/// marker. A progress record must carry a string `ev` discriminator:
+/// JSONL emits typed records, so an untyped line between the header and
+/// the terminal is malformed. Empty lines are ignored. Missing
+/// termination is incomplete; missing or malformed headers, duplicate
+/// terminals and records after termination are malformed.
 pub fn read_jsonl_stream(input: &str) -> std::result::Result<ParsedStream, StreamError> {
     let mut header: Option<StreamHeader> = None;
     let mut events: Vec<ProgressEvent> = Vec::new();
@@ -1073,6 +1099,16 @@ pub fn read_jsonl_stream(input: &str) -> std::result::Result<ParsedStream, Strea
             terminal = Some(record);
         } else {
             if terminal.is_some() {
+                return Err(StreamError::InvalidLine {
+                    line,
+                    content: trimmed.to_string(),
+                });
+            }
+            if value
+                .get("ev")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+            {
                 return Err(StreamError::InvalidLine {
                     line,
                     content: trimmed.to_string(),
@@ -1124,25 +1160,27 @@ impl From<ExitStatus> for u8 {
 /// Map a [`Status`] and the optional [`Error`] code to the proposal §12
 /// exit code.
 ///
-/// Refusals whose code is `CHECK_THRESHOLD_EXCEEDED` or
-/// `COMPARISON_DIFFERENCE` map to their dedicated exit codes (2 and 5).
-/// Other refusals map to 3. Errors whose code is `RENDER_FIDELITY_FAILED`,
-/// `DEADLINE_EXCEEDED` or `USAGE` map to their dedicated exit codes
-/// (4, 124 and 64); other errors map to 1.
+/// The §12 table is keyed by the code's meaning, not by the envelope
+/// status: a dedicated code decides whatever status the envelope carries
+/// (`USAGE`→64, `RENDER_FIDELITY_FAILED`→4, `DEADLINE_EXCEEDED`→124,
+/// `CHECK_THRESHOLD_EXCEEDED`→2, `COMPARISON_DIFFERENCE`→5). Only
+/// unclassified codes fall back to the status: `Ok`→0, `Refused`→3,
+/// `Error`→1.
 pub fn exit_status_for(status: Status, error: Option<&Error>) -> ExitStatus {
+    if let Some(code) = error.map(|e| e.code.as_str()) {
+        match code {
+            codes::CHECK_THRESHOLD_EXCEEDED => return ExitStatus::CHECK_FINDINGS,
+            codes::COMPARISON_DIFFERENCE => return ExitStatus::COMPARISON_DIFFERENCE,
+            codes::RENDER_FIDELITY_FAILED => return ExitStatus::RENDER_FAILURE,
+            codes::USAGE => return ExitStatus::USAGE,
+            codes::DEADLINE_EXCEEDED => return ExitStatus::DEADLINE_EXCEEDED,
+            _ => {}
+        }
+    }
     match status {
         Status::Ok => ExitStatus::SUCCESS,
-        Status::Refused => match error.map(|e| e.code.as_str()) {
-            Some(codes::CHECK_THRESHOLD_EXCEEDED) => ExitStatus::CHECK_FINDINGS,
-            Some(codes::COMPARISON_DIFFERENCE) => ExitStatus::COMPARISON_DIFFERENCE,
-            _ => ExitStatus::REFUSED,
-        },
-        Status::Error => match error.map(|e| e.code.as_str()) {
-            Some(codes::RENDER_FIDELITY_FAILED) => ExitStatus::RENDER_FAILURE,
-            Some(codes::DEADLINE_EXCEEDED) => ExitStatus::DEADLINE_EXCEEDED,
-            Some(codes::USAGE) => ExitStatus::USAGE,
-            _ => ExitStatus::INPUT_FAILURE,
-        },
+        Status::Refused => ExitStatus::REFUSED,
+        Status::Error => ExitStatus::INPUT_FAILURE,
     }
 }
 
@@ -1190,6 +1228,20 @@ mod tests {
     }
 
     #[test]
+    fn committed_phase_with_not_applied_is_rejected() {
+        // Only actual primary publication reports phase committed, and it
+        // reports an actual effect; not_applied contradicts the phase.
+        let data = ResultData::new(Phase::Committed, Effect::NotApplied);
+        assert_eq!(
+            data.validate(),
+            Err(ResultDataError::EffectRequired {
+                phase: Phase::Committed,
+                effect: Effect::NotApplied,
+            })
+        );
+    }
+
+    #[test]
     fn predicted_effect_requires_validated_phase() {
         let mut data = ResultData::new(Phase::Committed, Effect::Changed);
         data.set_predicted(PredictedEffect::Unchanged);
@@ -1223,6 +1275,21 @@ mod tests {
         assert_eq!(
             exit_status_for(Status::Error, Some(&err)),
             ExitStatus::INPUT_FAILURE
+        );
+    }
+
+    #[test]
+    fn dedicated_exit_codes_win_over_the_status_fallback() {
+        // The exit table is keyed by meaning: the dedicated code decides
+        // whatever status the envelope carries, and only unclassified
+        // codes fall back to the status.
+        assert_eq!(
+            exit_status_for(Status::Refused, Some(&Error::new("USAGE"))),
+            ExitStatus::USAGE
+        );
+        assert_eq!(
+            exit_status_for(Status::Error, Some(&Error::new("CHECK_THRESHOLD_EXCEEDED"))),
+            ExitStatus::CHECK_FINDINGS
         );
     }
 

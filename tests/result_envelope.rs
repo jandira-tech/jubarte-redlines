@@ -131,6 +131,48 @@ fn committed_phase_with_unchanged_effect_is_allowed() {
     assert!(data.validate().is_ok());
 }
 
+#[test]
+fn committed_phase_with_not_applied_effect_is_refused() {
+    // "Only actual primary publication reports phase `committed` and
+    //  actual effects" (§11): a committed primary reports changed or
+    //  unchanged, never not_applied. A generated plan keeps phase
+    //  `generated`, so it is unaffected.
+    let data = ResultData::new(Phase::Committed, jubarte::result::Effect::NotApplied);
+    assert!(
+        data.validate().is_err(),
+        "committed phase with not_applied effect contradicts the publication it reports"
+    );
+    let built = Envelope::ok(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        ResultData::new(Phase::Committed, jubarte::result::Effect::NotApplied),
+        Runtime::native(),
+    );
+    assert_eq!(
+        built.err(),
+        Some(ResultDataError::EffectRequired {
+            phase: Phase::Committed,
+            effect: jubarte::result::Effect::NotApplied,
+        }),
+        "no ok envelope may publish phase committed with effect not_applied"
+    );
+    // A post-commit failure retains the actual effect the same way; the
+    // contradictory pair must not slip through with_failure_data either.
+    let envelope = Envelope::new_error(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        Error::new("REPORT_WRITE_FAILED"),
+    )
+    .with_failure_data(ResultData::new(
+        Phase::Committed,
+        jubarte::result::Effect::NotApplied,
+    ));
+    assert!(
+        envelope.is_err(),
+        "a committed failure retains the actual effect, never not_applied"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // P4 no-effect table: every row has a serialization test.
 // ---------------------------------------------------------------------------
@@ -601,7 +643,9 @@ fn jsonl_terminal_line_helper_writes_only_the_terminal_record() {
 
 #[test]
 fn jsonl_stream_without_terminal_record_is_incomplete() {
-    // Only progress lines; no terminal. The reader reports incomplete.
+    // Only typed progress lines; no terminal. The reader reports incomplete.
+    // (The stream must stay well-typed: an untyped line would be refused
+    // as malformed before the missing terminal is noticed.)
     let events = vec![ProgressEvent::from(serde_json::json!({"ev": "load"}))];
     let stream = write_jsonl_stream(
         &events,
@@ -611,10 +655,16 @@ fn jsonl_stream_without_terminal_record_is_incomplete() {
             Runtime::native(),
         ),
     );
-    // Replace the terminal line with a progress line so the stream lacks it.
-    let mangled = stream.replace("\"status\":", "\"xstatus\":");
+    // Drop the terminal line so the stream ends after typed progress.
+    let mut lines: Vec<&str> = stream.lines().filter(|l| !l.is_empty()).collect();
+    let dropped = lines.pop().expect("terminal line present");
+    let dropped_value: serde_json::Value = serde_json::from_str(dropped).unwrap();
     assert_eq!(
-        read_jsonl_stream(&mangled),
+        dropped_value["status"], "ok",
+        "the dropped line is the terminal"
+    );
+    assert_eq!(
+        read_jsonl_stream(&lines.join("\n")),
         Err(jubarte::result::StreamError::MissingTerminal)
     );
 }
@@ -749,6 +799,30 @@ fn exit_status_mapping_check_threshold_and_comparison_difference() {
         exit_status_for(Status::Refused, Some(&err)),
         ExitStatus::COMPARISON_DIFFERENCE
     );
+}
+
+#[test]
+fn exit_status_dedicated_codes_win_whatever_the_envelope_status() {
+    // The §12 table is keyed by the code's meaning, not by the envelope
+    // status a route happened to choose: a refusal that carries USAGE is a
+    // usage error (64), an error envelope that carries
+    // CHECK_THRESHOLD_EXCEEDED is a findings exit (2). The cross-product is
+    // the contract; dispatching by status first silently drops the code.
+    for (code, expected) in [
+        ("CHECK_THRESHOLD_EXCEEDED", ExitStatus::CHECK_FINDINGS),
+        ("COMPARISON_DIFFERENCE", ExitStatus::COMPARISON_DIFFERENCE),
+        ("RENDER_FIDELITY_FAILED", ExitStatus::RENDER_FAILURE),
+        ("USAGE", ExitStatus::USAGE),
+        ("DEADLINE_EXCEEDED", ExitStatus::DEADLINE_EXCEEDED),
+    ] {
+        for status in [Status::Refused, Status::Error, Status::Ok] {
+            assert_eq!(
+                exit_status_for(status, Some(&Error::new(code))),
+                expected,
+                "{status:?} + {code} must map by the code's meaning"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1134,6 +1208,32 @@ fn jsonl_progress_status_does_not_become_a_terminal() {
     let parsed = read_jsonl_stream(&write_jsonl_stream(&events, &terminal))
         .expect("typed operation record is progress");
     assert_eq!(parsed.events, events);
+}
+
+#[test]
+fn jsonl_reader_refuses_untyped_progress_records() {
+    // "JSONL emits a header, typed records and exactly one terminal
+    //  result": a record with neither a string `ev` discriminator nor the
+    //  terminal `status` shape is not a typed record, so the stream is
+    //  malformed instead of silently downgraded to free-form JSON.
+    let terminal = ok_envelope(Status::Ok, jubarte::result::Effect::Changed);
+    let header = serde_json::to_string(&jubarte::result::StreamHeader::from(&terminal)).unwrap();
+    let terminal_line = jsonl_terminal_line(&terminal);
+    for untyped in [
+        "{\"foo\":\"bar\"}",
+        "{\"ev\":3}",
+        "[1,2]",
+        "\"just a string\"",
+    ] {
+        let stream = format!("{header}\n{untyped}\n{terminal_line}\n");
+        assert!(
+            matches!(
+                read_jsonl_stream(&stream),
+                Err(jubarte::result::StreamError::InvalidLine { line: 2, .. })
+            ),
+            "an untyped record ({untyped}) must be refused, not read as progress"
+        );
+    }
 }
 
 #[test]
