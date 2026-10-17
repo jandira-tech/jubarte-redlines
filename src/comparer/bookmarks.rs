@@ -49,11 +49,11 @@ struct Marker {
     /// No text precedes the start in its paragraph. An empty bookmark there
     /// belongs to the paragraph that follows it, not to the text before it.
     leads: bool,
-    /// A nonempty start at its paragraph's text end belongs after the
-    /// preceding text, rather than before a newly inserted next paragraph.
+    /// A nonempty start at its paragraph's text end retains the preceding
+    /// side, after the adjacent run's outermost inline revision, if any.
     start_trails: bool,
-    /// An end at its paragraph's text start belongs before the following
-    /// text, rather than after a newly inserted preceding paragraph.
+    /// An end at its paragraph's text start retains the following side,
+    /// before the adjacent run's outermost inline revision, if any.
     end_leads: bool,
     /// `w:colFirst`/`w:colLast`, kept verbatim as Word does (Google Docs
     /// writes them on plain paragraph bookmarks).
@@ -242,6 +242,26 @@ fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
     (start, end)
 }
 
+/// Keep a boundary endpoint beside the outermost inline revision containing
+/// its adjacent run, on the same side. Never climb past its paragraph.
+fn leave_inline_revision(dom: &mut Dom, endpoint: NodeId, after: bool) {
+    let revisions = [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")];
+    let outermost = dom
+        .ancestors(endpoint, None)
+        .into_iter()
+        .take_while(|&ancestor| !dom.name_is(ancestor, &W::p()))
+        .filter(|&ancestor| revisions.iter().any(|name| dom.name_is(ancestor, name)))
+        .last();
+    if let Some(revision) = outermost {
+        dom.remove(endpoint);
+        if after {
+            dom.add_after_self(revision, endpoint);
+        } else {
+            dom.add_before_self(revision, endpoint);
+        }
+    }
+}
+
 /// Place one side's bookmarks on the merged body's projection of that side.
 fn inject_side(
     dom: &mut Dom,
@@ -290,15 +310,18 @@ fn inject_side(
         *next_id += 1;
         if s < e {
             // Text offsets alone cannot distinguish the two paragraph sides
-            // of a boundary. Retain the source endpoint's side so an adjacent
-            // insertion cannot acquire it inside its revision container.
+            // of a boundary. Restore the source side of a trailing start or
+            // leading end, then leave any enclosing inline revisions on that
+            // same side, without climbing above the paragraph.
             if m.start_trails {
                 place_after_offset(dom, &mut segs, s, start);
+                leave_inline_revision(dom, start, true);
             } else {
                 place_before_offset(dom, &mut segs, s, start);
             }
             if m.end_leads {
                 place_before_offset(dom, &mut segs, e, end);
+                leave_inline_revision(dom, end, false);
             } else {
                 place_after_offset(dom, &mut segs, e, end);
             }
@@ -433,4 +456,89 @@ pub fn carry_matching_bookmarks(
         author,
         &mut next_id,
     );
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    fn check_boundary_revision(trailing_start: bool) {
+        for (outer, inner, b_side, leaf) in [
+            ("ins", "moveTo", true, "t"),
+            ("moveTo", "ins", true, "t"),
+            ("del", "moveFrom", false, "delText"),
+            ("moveFrom", "del", false, "delText"),
+        ] {
+            let revised = format!(
+                r#"<w:{outer} w:author="Editor"><w:{inner} w:author="Editor"><w:r><w:{leaf}>{}</w:{leaf}></w:r></w:{inner}></w:{outer}>"#,
+                if trailing_start { "foo" } else { "bar" }
+            );
+            let body = if trailing_start {
+                format!("<w:p>{revised}</w:p><w:p><w:r><w:t>bar</w:t></w:r></w:p>")
+            } else {
+                format!("<w:p><w:r><w:t>foo</w:t></w:r></w:p><w:p>{revised}</w:p>")
+            };
+            let mut dom = Dom::new();
+            // The block-level revision above the paragraphs must remain an
+            // ancestor: only inline revision containers are left behind.
+            let doc = dom.parse_xdocument(&format!(
+                r#"<w:body xmlns:w="{}"><w:{outer} w:author="Editor">{body}</w:{outer}></w:body>"#,
+                W::URI
+            ));
+            let root = dom.root(doc).unwrap();
+            let paragraphs = dom.descendants(root, Some(&W::p()));
+            let owner = paragraphs[usize::from(!trailing_start)];
+            let container = dom.elements(owner, None)[0];
+            let marker = Marker {
+                name: "Clause".into(),
+                start: if trailing_start { 3 } else { 0 },
+                end: if trailing_start { 6 } else { 3 },
+                leads: !trailing_start,
+                start_trails: trailing_start,
+                end_leads: !trailing_start,
+                cols: None,
+                in_sdt: false,
+            };
+            inject_side(
+                &mut dom,
+                root,
+                (&"foobar".chars().collect::<Vec<_>>(), &[&marker]),
+                b_side,
+                "Editor",
+                &mut 10,
+            );
+            let name = if trailing_start {
+                W::bookmark_start()
+            } else {
+                W::bookmark_end()
+            };
+            let endpoint = dom.descendants(root, Some(&name))[0];
+            assert_eq!(
+                dom.parent(endpoint),
+                Some(owner),
+                "{outer}/{inner}: endpoint must sit beside the outermost inline revision"
+            );
+            let children = dom.elements(owner, None);
+            assert_eq!(
+                children,
+                if trailing_start {
+                    vec![container, endpoint]
+                } else {
+                    vec![endpoint, container]
+                },
+                "source boundary side must be retained"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_start_leaves_outermost_inline_revision_on_same_side() {
+        check_boundary_revision(true);
+    }
+
+    #[test]
+    fn leading_end_leaves_outermost_inline_revision_on_same_side() {
+        check_boundary_revision(false);
+    }
 }

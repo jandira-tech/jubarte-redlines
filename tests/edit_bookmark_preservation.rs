@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Paragraph insertion preserves the source bookmark's endpoint ownership,
-//! including an end at the beginning of the following paragraph.
+//! Edits preserve boundary bookmarks through tracking and revision resolution.
 
 mod common;
 
@@ -84,6 +83,24 @@ fn endpoints(bytes: &[u8]) -> [(String, String); 2] {
     [location(start), location(end)]
 }
 
+fn assert_no_bookmark_findings(outputs: &[(&str, &[u8])]) {
+    let mut diagnostics = Vec::new();
+    for (stage, bytes) in outputs {
+        let findings: Vec<_> = validate(bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|f| f.code.starts_with("BOOKMARK_"))
+            .collect();
+        if !findings.is_empty() {
+            diagnostics.push(format!(
+                "{stage}: {findings:#?}\n{}",
+                part_string(bytes, "word/document.xml").unwrap()
+            ));
+        }
+    }
+    assert!(diagnostics.is_empty(), "{}", diagnostics.join("\n"));
+}
+
 fn check_insert(end: &str, tracked: bool, policy: &str) {
     let source = source(end);
     let expected = endpoints(&source);
@@ -103,14 +120,7 @@ fn check_insert(end: &str, tracked: bool, policy: &str) {
     } else {
         &result.clean
     };
-    let findings = validate(output).unwrap();
-    assert!(
-        findings
-            .iter()
-            .all(|f| f.code != "BOOKMARK_CROSSES_REVISION"),
-        "{findings:#?}\n{}",
-        part_string(output, "word/document.xml").unwrap()
-    );
+    assert_no_bookmark_findings(&[("output", output)]);
     assert_eq!(
         endpoints(output),
         expected,
@@ -125,6 +135,7 @@ fn check_insert(end: &str, tracked: bool, policy: &str) {
         assert!(xml.contains("<w:ins "), "{xml}");
         let accepted = accept_revisions(output).unwrap();
         let rejected = reject_revisions(output).unwrap();
+        assert_no_bookmark_findings(&[("accepted", &accepted), ("rejected", &rejected)]);
         assert_eq!(texts(&accepted), texts(&result.clean));
         assert_eq!(texts(&rejected), texts(&source));
         assert_eq!(endpoints(&accepted), expected);
@@ -136,6 +147,84 @@ fn check_insert(end: &str, tracked: bool, policy: &str) {
                 .contains("<w:ins ")
         );
     }
+}
+
+fn check_boundary_edit(trailing_start: bool, operation: &str, expected_texts: &[&str]) {
+    let body = if trailing_start {
+        format!(
+            "<w:p><w:r><w:t>foo</w:t></w:r>{START}</w:p><w:p><w:r><w:t>bar</w:t></w:r>{END}</w:p>"
+        )
+    } else {
+        format!(
+            "<w:p>{START}<w:r><w:t>foo</w:t></w:r></w:p><w:p>{END}<w:r><w:t>bar</w:t></w:r></w:p>"
+        )
+    };
+    let source = docx(&(body + "<w:p><w:r><w:t>final</w:t></w:r></w:p>"));
+    assert_no_bookmark_findings(&[("source", &source)]);
+    let plan = EditPlan::from_json(&format!(
+        r#"{{"schema_version":1,"author":"Editor","date":"2026-10-17T12:00:00Z","existing_revisions":"refuse","operations":[{operation}]}}"#
+    )).unwrap();
+    let result = apply_plan(&source, &plan).unwrap();
+    let accepted = accept_revisions(&result.redline).unwrap();
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_no_bookmark_findings(&[
+        ("redline", &result.redline),
+        ("accepted", &accepted),
+        ("rejected", &rejected),
+    ]);
+    // Reopen each serialized package and check the named, matched pair even
+    // when deleting a paragraph removes one endpoint from the clean copy.
+    endpoints(&result.redline);
+    endpoints(&accepted);
+    endpoints(&rejected);
+    assert_eq!(texts(&accepted), expected_texts);
+    assert_eq!(texts(&accepted), texts(&result.clean));
+    assert_eq!(texts(&rejected), texts(&source));
+}
+
+#[test]
+fn trailing_bookmark_start_survives_run_insert() {
+    check_boundary_edit(
+        true,
+        r#"{"kind":"insert","paragraph":"p0","after":"foo","text":"X"}"#,
+        &["fooX", "bar", "final"],
+    );
+}
+
+#[test]
+fn trailing_bookmark_start_survives_paragraph_deletion() {
+    check_boundary_edit(
+        true,
+        r#"{"kind":"delete_paragraph","paragraph":"p0"}"#,
+        &["bar", "final"],
+    );
+}
+
+#[test]
+fn leading_bookmark_end_survives_run_insert() {
+    check_boundary_edit(
+        false,
+        r#"{"kind":"insert","paragraph":"p1","before":"bar","text":"X"}"#,
+        &["foo", "Xbar", "final"],
+    );
+}
+
+#[test]
+fn leading_bookmark_end_survives_run_replace() {
+    check_boundary_edit(
+        false,
+        r#"{"kind":"replace","paragraph":"p1","find":"bar","replacement":"baz"}"#,
+        &["foo", "baz", "final"],
+    );
+}
+
+#[test]
+fn leading_bookmark_end_survives_paragraph_deletion() {
+    check_boundary_edit(
+        false,
+        r#"{"kind":"delete_paragraph","paragraph":"p1"}"#,
+        &["foo", "final"],
+    );
 }
 
 #[test]
