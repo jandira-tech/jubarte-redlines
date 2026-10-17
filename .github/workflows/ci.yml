@@ -43,25 +43,18 @@ jobs:
           components: rustfmt, clippy
           # jubarte-wasm is linted for the target it ships on.
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          # The bindings are not members of the root workspace (`[workspace]`
-          # in Cargo.toml is empty and each binding declares its own), so each
-          # has its own Cargo.lock and target/ to cache.
-          workspaces: |
-            .
-            jubarte-python
-            jubarte-wasm
-            jubarte-rust-inproc
+      - uses: ./.github/actions/mbx
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       # The library without the `cli` feature (clap) must still build: a
       # library path once called into src/cli.rs and only --all-features ran.
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
 
-      # `--workspace` would not reach the bindings (see the cache note), so
-      # each is linted from its own directory, which also makes cargo read
-      # jubarte-wasm/.cargo/config.toml (the wasm RUSTFLAGS recipe).
+      # The bindings are not members of the root workspace (`[workspace]` in
+      # Cargo.toml is empty and each binding declares its own), so
+      # `--workspace` would not reach them. Each is linted from its own
+      # directory, which also makes cargo read jubarte-wasm/.cargo/config.toml
+      # (the wasm RUSTFLAGS recipe).
       - name: clippy jubarte-rust-inproc
         working-directory: jubarte-rust-inproc
         run: cargo clippy --all-targets -- -D warnings
@@ -91,7 +84,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - if: matrix.os == 'self-hosted'
+        uses: ./.github/actions/mbx
+      - if: matrix.os != 'self-hosted'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
         with:
           tool: cargo-nextest
@@ -128,7 +124,7 @@ jobs:
           # Branch instrumentation and doctest coverage require nightly.
           # Production remains supported by the separate stable/MSRV jobs.
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/mbx
       # Downloads a prebuilt binary instead of `cargo install` (minutes → seconds).
       # install-action picks the tool from the ref (`@cargo-llvm-cov`) or, as
       # here with the ref pinned to a commit SHA, from the `tool` input.
@@ -177,7 +173,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
           toolchain: "1.94"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/mbx
       # The whole suite, not `cargo check`: README.md promises MSRV *testing*,
       # and dev-dependencies and test-only code are exactly what a compile
       # check of the library skips. One Linux run on the declared
@@ -200,9 +196,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
           toolchain: nightly
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: fuzz
+      - uses: ./.github/actions/mbx
       - run: cargo install cargo-fuzz --locked
       - run: ./fuzz/seed.sh
       - run: cargo fuzz run admit -- -max_total_time=60
@@ -234,7 +228,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/mbx
       - run: cargo publish --dry-run
 
   deny:
@@ -257,9 +251,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: jubarte-python
+      - uses: ./.github/actions/mbx
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: build the extension and run pytest
         working-directory: jubarte-python
