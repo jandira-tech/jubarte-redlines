@@ -749,11 +749,7 @@ impl SourceModel {
         let paragraph = paragraphs
             .first()
             .map(|&g| Selector::Name(self.ids().id(g)));
-        let occurrence = |n: Option<u64>| {
-            n.map(usize::try_from)
-                .transpose()
-                .map_err(|_| err("INVALID_PLAN", None, "occurrence exceeds runtime limits"))
-        };
+        let occurrence = |n: Option<u64>| n.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
         let attachment = |c: &Option<AttachedComment>| c.as_ref().map(|c| c.text.clone());
         let p = || {
             paragraph
@@ -774,7 +770,7 @@ impl SourceModel {
                 paragraph: p()?,
                 find: find.clone(),
                 replacement: text.clone(),
-                occurrence: occurrence(*n)?,
+                occurrence: occurrence(*n),
                 comment: attachment(attached_comment),
                 format: None,
                 whole: false,
@@ -793,7 +789,7 @@ impl SourceModel {
                 before: before_text.clone(),
                 after: after_text.clone(),
                 position: *edge,
-                occurrence: occurrence(*n)?,
+                occurrence: occurrence(*n),
                 comment: attachment(attached_comment),
                 format: None,
             },
@@ -804,7 +800,7 @@ impl SourceModel {
             } => OperationKind::Delete {
                 paragraph: p()?,
                 find: find.clone(),
-                occurrence: occurrence(*n)?,
+                occurrence: occurrence(*n),
             },
             V::Rewrite { text, .. } => OperationKind::Rewrite {
                 paragraph: p()?,
@@ -863,7 +859,7 @@ impl SourceModel {
                     paragraph: p()?,
                     text: text.clone(),
                     find: find.clone(),
-                    occurrence: occurrence(*n)?,
+                    occurrence: occurrence(*n),
                     through,
                 }
             }
@@ -1140,11 +1136,7 @@ fn resolve_operation(
         .map(|&g| mapped_paragraph(tx, g))
         .transpose()?;
     let exact = |p| v2::logical_text(&tx.opened.dom, tx.paragraph_nodes[p]);
-    let occurrence = |n: Option<u64>| {
-        n.map(usize::try_from)
-            .transpose()
-            .map_err(|_| err("INVALID_EDIT", None, "occurrence exceeds runtime limits"))
-    };
+    let occurrence = |n: Option<u64>| n.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
     let note = |c: &Option<AttachedComment>| c.as_ref().map(|c| c.text.clone());
     let p = p.unwrap_or(0);
     o.paragraph = (!m.paragraphs.is_empty()).then(|| tx.paragraph_id(p));
@@ -1158,7 +1150,7 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
-            let (start, end) = anchor::v2_select(&old, find, occurrence(*n)?)?;
+            let (start, end) = anchor::v2_select(&old, find, occurrence(*n))?;
             if &old[start..end] == text {
                 comment_component(tx, p, start, end, note(attached_comment))
             } else {
@@ -1179,7 +1171,7 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
-            let (start, end) = anchor::v2_select(&old, find, occurrence(*n)?)?;
+            let (start, end) = anchor::v2_select(&old, find, occurrence(*n))?;
             Ok(vec![text_component(tx, p, start, end, "", None, true)?])
         }
         V::Insert {
@@ -1194,10 +1186,10 @@ fn resolve_operation(
             let old = exact(p)?;
             let (at, attach) = match (before_text, after_text, edge) {
                 (Some(anchor), None, None) => {
-                    (anchor::v2_select(&old, anchor, occurrence(*n)?)?.0, false)
+                    (anchor::v2_select(&old, anchor, occurrence(*n))?.0, false)
                 }
                 (None, Some(anchor), None) => {
-                    (anchor::v2_select(&old, anchor, occurrence(*n)?)?.1, true)
+                    (anchor::v2_select(&old, anchor, occurrence(*n))?.1, true)
                 }
                 (None, None, Some(super::Edge::Start)) => (0, false),
                 (None, None, Some(super::Edge::End)) => (old.len(), true),
@@ -1247,7 +1239,7 @@ fn resolve_operation(
         } => {
             let (start, end) = if let Some(find) = find {
                 let old = exact(p)?;
-                anchor::v2_select(&old, find, occurrence(*n)?)?
+                anchor::v2_select(&old, find, occurrence(*n))?
             } else {
                 (0, tx.projections[p].text.len())
             };
