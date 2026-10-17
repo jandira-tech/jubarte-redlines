@@ -332,7 +332,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             ),
         ));
     }
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
+    let mut archive = crate::opc::open_archive(Cursor::new(bytes))
         .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("not a ZIP file: {e}")))?;
     // The reader keys entries by name, so exact duplicates collapse into one.
     if (archive.len() as u64) < declared {

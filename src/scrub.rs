@@ -398,7 +398,7 @@ pub fn leaks(docx: &[u8], needle: &str) -> Vec<String> {
     if needle.is_empty() {
         return Vec::new();
     }
-    let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(docx)) else {
+    let Ok(mut zip) = crate::opc::open_archive(std::io::Cursor::new(docx)) else {
         return Vec::new();
     };
     let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();

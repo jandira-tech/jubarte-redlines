@@ -80,7 +80,10 @@ where
     OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, ZipWriter};
+
+mod archive;
+pub(crate) use archive::open_archive;
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
@@ -264,7 +267,7 @@ fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
 /// Populate parts and local relationships without invoking upstream's whole-package
 /// normalization and duplicate-refusal policies ahead of the adapter's repairs.
 fn read_package(bytes: &[u8]) -> Result<PartFs, OpcError> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let mut archive = open_archive(Cursor::new(bytes))?;
     let mut parts = HashMap::new();
     let mut source_order = HashMap::new();
     let mut identities = HashSet::new();
@@ -388,7 +391,7 @@ fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
 }
 
 fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let mut archive = open_archive(Cursor::new(bytes))?;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
         let name = entry.name()?;
@@ -838,6 +841,7 @@ impl PartFs {
 mod tests {
     use super::*;
     use crate::admission::zip_names;
+    use zip::ZipArchive;
 
     #[test]
     fn opc_attribute_budget_bounds_upstream_duplicate_checks() {

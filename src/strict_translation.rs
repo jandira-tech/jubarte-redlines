@@ -41,7 +41,7 @@ use std::io::{Cursor, Read, Write};
 use std::sync::LazyLock;
 
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, ZipWriter};
 
 use crate::admission::InputLimits;
 
@@ -668,7 +668,7 @@ const STRICT_MAIN: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
 /// fact Word reads the dialect from. A Transitional package that merely
 /// *quotes* a Strict URI in its text is not a Strict package (#531).
 pub fn main_part_is_strict(bytes: &[u8]) -> bool {
-    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes)) else {
+    let Ok(mut archive) = crate::opc::open_archive(Cursor::new(bytes)) else {
         return false;
     };
     let Ok(mut part) = archive.by_name("word/document.xml") else {
@@ -756,7 +756,7 @@ pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
 pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> Vec<u8> {
     // Not a readable zip — leave untouched (PartFs::open reports the real
     // error downstream).
-    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes)) else {
+    let Ok(mut archive) = crate::opc::open_archive(Cursor::new(bytes)) else {
         return bytes.to_vec();
     };
 
@@ -839,6 +839,7 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use zip::ZipArchive;
 
     /// A Strict document whose *text* quotes a Strict URI: the namespace
     /// declaration is rewritten, the `w:t` keeps the bytes the file's own

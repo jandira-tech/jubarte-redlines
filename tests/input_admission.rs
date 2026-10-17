@@ -108,6 +108,17 @@ fn small_limits() -> InputLimits {
 }
 
 #[test]
+fn admission_accepts_a_package_with_prepended_data() {
+    let mut bytes = b"prepended data".to_vec();
+    bytes.extend_from_slice(&package(|_, _| {}));
+
+    let admitted = jubarte::admission::admit(&bytes, small_limits()).unwrap();
+
+    assert_eq!(admitted.entries, 3);
+    assert_eq!(admitted.main_part, "word/document.xml");
+}
+
+#[test]
 fn compare_limits_are_a_generous_superset_of_the_agent_defaults() {
     let agent = InputLimits::default();
     let compare = InputLimits::compare();

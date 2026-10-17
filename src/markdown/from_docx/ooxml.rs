@@ -36,7 +36,7 @@ pub(crate) struct Package<'a> {
 
 impl<'a> Package<'a> {
     pub(crate) fn open(bytes: &'a [u8], kind: &str) -> Result<Self, ConvertError> {
-        let archive = zip::ZipArchive::new(Cursor::new(bytes))
+        let archive = crate::opc::open_archive(Cursor::new(bytes))
             .map_err(|e| invalid(format!("not a valid {kind} file: {e}")))?;
         check_limits(&archive)?;
         let names = archive

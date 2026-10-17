@@ -180,7 +180,7 @@ impl Package {
         let translated = crate::strict_translation::strict_to_transitional_docx(bytes);
         let bytes = translated.as_slice();
         let mut zip =
-            zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
+            crate::opc::open_archive(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
         let mut entries = Vec::with_capacity(zip.len());
         for i in 0..zip.len() {
             let mut f = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
