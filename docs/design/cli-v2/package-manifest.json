@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "title": "Jubarte final CLI reassessment and implementation design",
+  "date": "2026-10-17",
+  "status": "proposed_contract_not_implemented",
+  "file_count": 34,
+  "files": [
+    {
+      "path": "README.md",
+      "size_bytes": 4964,
+      "sha256": "159f8401d479cba1273f008adbdb79b2baa5041ce43d25baf0830daf5d7d5190"
+    },
+    {
+      "path": "evidence/build-identities.json",
+      "size_bytes": 1222,
+      "sha256": "eeae9d5645dda29b37d50b6f60277edf82729164366ef1c22bc69d0bd8578aac"
+    },
+    {
+      "path": "evidence/example-validation.json",
+      "size_bytes": 3402,
+      "sha256": "1dd4b0001126f2d5eda3425f7ad192c9938f87602b240d7ae1a0bfd1692aab8c"
+    },
+    {
+      "path": "evidence/probe_release.py",
+      "size_bytes": 6096,
+      "sha256": "2b9063e50a8d16659555b0c690ec71307d96d9a9f9fe7274d6da76991fd033c6"
+    },
+    {
+      "path": "evidence/release-capabilities.txt",
+      "size_bytes": 1886,
+      "sha256": "c2cb952151b0994d66b8f7539ea4a8e72a8cc7504a2665b5c57d3c99963a36d9"
+    },
+    {
+      "path": "evidence/release-edit-help.txt",
+      "size_bytes": 4211,
+      "sha256": "166c0ffbd7ec93fe1a5a4f94631ce2b513e3010730226276a23a84629f113ed8"
+    },
+    {
+      "path": "evidence/release-identity.json",
+      "size_bytes": 880,
+      "sha256": "6a3daf208f9d26eb39dc9531aaf1e53fe41423b052112d86be3c6ed3f2a29ff8"
+    },
+    {
+      "path": "evidence/release-probes.json",
+      "size_bytes": 12414,
+      "sha256": "c6112ded42950119b5348188868a15fdc3042dd0897071362ec00300b18d557d"
+    },
+    {
+      "path": "evidence/release-read-help.txt",
+      "size_bytes": 1952,
+      "sha256": "d058ce39906bc7b79a8a500b594384de61a4b129ad60521cd7fc468c904c4e61"
+    },
+    {
+      "path": "evidence/release-root-help.txt",
+      "size_bytes": 5556,
+      "sha256": "88422709a095f4e6a74e1283b49f2f37fb6423a5623d0f09029c898097859adc"
+    },
+    {
+      "path": "evidence/reviews/reassessment-cross-review.md",
+      "size_bytes": 11945,
+      "sha256": "3d22f31b0b506c7d9e657e6690e38f68ca5e366f48d2af83a45308cead54bbcb"
+    },
+    {
+      "path": "evidence/reviews/reassessment-evidence-audit.md",
+      "size_bytes": 47796,
+      "sha256": "41c1fe0d24b38fa47ff28717a0b5ccad027c023662cb4f1e292e8e5ea9d546a7"
+    },
+    {
+      "path": "evidence/reviews/reassessment-implementation-review.md",
+      "size_bytes": 39523,
+      "sha256": "b9d3156583014c6db3e5dac2ed1d638271d2a9fddd177bce4d35a00b178e9019"
+    },
+    {
+      "path": "evidence/reviews/reassessment-template-design.md",
+      "size_bytes": 27471,
+      "sha256": "33149718c1456142f1ffdb06b7cdd91b4d7aa4ac25ab7b2badf48b84f7fd3150"
+    },
+    {
+      "path": "evidence/supplied/2026-10-09-agent-edit-follow-ups.md",
+      "size_bytes": 30784,
+      "sha256": "6b0f06d579e3ce581b0bc9ad35e3d572cbdca18e1911cf5a96651dcce90d409f"
+    },
+    {
+      "path": "evidence/supplied/deep-research-report(17).md",
+      "size_bytes": 47476,
+      "sha256": "06de61afbbd03dd95678455788aeddd78138d75bcfb79fd255edba170ba66cd1"
+    },
+    {
+      "path": "evidence/supplied/final_turn_001.md",
+      "size_bytes": 22294,
+      "sha256": "e374986dfebdb416d8c3d0617b94352bd2193418e91be9c8558b79fc5fdd8695"
+    },
+    {
+      "path": "evidence/supplied/final_turn_002.md",
+      "size_bytes": 38185,
+      "sha256": "979888171f4704f6728f404c1ac3f0e9c8eb894cf43397e98acc7da5949aa0c5"
+    },
+    {
+      "path": "examples/README.md",
+      "size_bytes": 5470,
+      "sha256": "273049d93ecd1263a22be51dd47b921cdaef9d21302ebe1c3f237d8816df5c64"
+    },
+    {
+      "path": "examples/example-source.docx",
+      "size_bytes": 1631,
+      "sha256": "54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e"
+    },
+    {
+      "path": "examples/expectations.json",
+      "size_bytes": 1244,
+      "sha256": "bc8c0beddbbc360c3362ee5a5b765a68c509b0f02732d331af276a7645386cf6"
+    },
+    {
+      "path": "examples/expected-changes.json",
+      "size_bytes": 1128,
+      "sha256": "5f9a0fa12f7596dfad534df24b8fbbb77b47b147c7a4bf976efa5a0534316e16"
+    },
+    {
+      "path": "examples/template.composed.json",
+      "size_bytes": 1066,
+      "sha256": "2132a48c37ec046f1896768604d2541b03c01a856d0f87e9f0f5b4b4383195cf"
+    },
+    {
+      "path": "examples/template.edited.json",
+      "size_bytes": 1189,
+      "sha256": "a871757939e89874822716c6564d746b0e4bab7f06e587f1cdca3eff1fe38a53"
+    },
+    {
+      "path": "examples/template.exact-replace.json",
+      "size_bytes": 1021,
+      "sha256": "ea51009af6ae787305cb8749609d2f566694adb6e266e0aad0e2afecba5d4db9"
+    },
+    {
+      "path": "examples/template.generated.json",
+      "size_bytes": 1681,
+      "sha256": "a6edc6760d5d3ed53d01ab97f18f1ccc8367312c234016a1d0a9667543160264"
+    },
+    {
+      "path": "examples/template.with-comment.json",
+      "size_bytes": 1113,
+      "sha256": "8439f27b94feb5f2094c43c99dd002493a8af1004f6750e0c1f20bc5ed1f4c21"
+    },
+    {
+      "path": "jubarte-cli-evidence-review.md",
+      "size_bytes": 45940,
+      "sha256": "e18e4e900a1fc8f0930c8983753d5211141ae5a5c49a7196efeddd76b147fd23"
+    },
+    {
+      "path": "jubarte-cli-proposal-b-revised.md",
+      "size_bytes": 69625,
+      "sha256": "0050f762a27155da0639557c00ac391373c0acd757deb1d6239f9fc4d234a7fe"
+    },
+    {
+      "path": "jubarte-edit-implementation-plan.md",
+      "size_bytes": 52499,
+      "sha256": "a6b61b1553d14c358929a848e409dca3033cc38a1fcc1302f7ffce26cb56df1d"
+    },
+    {
+      "path": "jubarte-edit-plan-v2-core.schema.json",
+      "size_bytes": 19202,
+      "sha256": "707b38830e75524c7a8797afe05b6373f7cb41a312fee9bcda49d4dee08a0c56"
+    },
+    {
+      "path": "jubarte-expectations-v1.schema.json",
+      "size_bytes": 4908,
+      "sha256": "50b7385d41539a45e54aad80281007e27c1f8ebfd0e761dbffc85420b5ddc7f5"
+    },
+    {
+      "path": "jubarte-template-implementation-plan.md",
+      "size_bytes": 40930,
+      "sha256": "ff066587e1bad6aa29740e1b5d2a1257cb73896b918c7f079a5546d3253f2d7e"
+    },
+    {
+      "path": "validate_examples.py",
+      "size_bytes": 21025,
+      "sha256": "76e7c69f8d683dadcfc1b3d7c4ee4a237f428670de7f2db3ca2adce8ae1fa97a"
+    }
+  ],
+  "manifest_coverage": "All bundled files except this manifest and the containing ZIP. No release executable or repository checkout is bundled.",
+  "verification": "Two design schemas; five plan examples; one expectations example; 21 in-memory text-model case families; 19 schema-negative cases. No proposed CLI or actual DOCX mutation was executed."
+}

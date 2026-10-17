@@ -1,0 +1,93 @@
+{
+  "status": "passed",
+  "scope": "Design-schema validation and in-memory four-paragraph text model ONLY; no proposed CLI execution.",
+  "source_sha256": "54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e",
+  "schema_meta_validation": [
+    "edit-plan-v2-core",
+    "expectations-v1"
+  ],
+  "examples": [
+    {
+      "file": "template.generated.json",
+      "schema_valid": true,
+      "active_body_requests": 0,
+      "unchanged_text_components": 4,
+      "declared_attached_comments": 0
+    },
+    {
+      "file": "template.edited.json",
+      "schema_valid": true,
+      "active_body_requests": 3,
+      "unchanged_text_components": 0,
+      "declared_attached_comments": 0
+    },
+    {
+      "file": "template.exact-replace.json",
+      "schema_valid": true,
+      "active_body_requests": 3,
+      "unchanged_text_components": 0,
+      "declared_attached_comments": 0
+    },
+    {
+      "file": "template.composed.json",
+      "schema_valid": true,
+      "active_body_requests": 2,
+      "unchanged_text_components": 1,
+      "declared_attached_comments": 0
+    },
+    {
+      "file": "template.with-comment.json",
+      "schema_valid": true,
+      "active_body_requests": 3,
+      "unchanged_text_components": 0,
+      "declared_attached_comments": 1
+    }
+  ],
+  "semantic_model_cases": [
+    "stale source",
+    "mismatched ID pair",
+    "unchanged row still verifies before hash",
+    "changed working basis never restores old scaffold",
+    "whole rewrite rejects non-one-to-one mapping",
+    "ambiguous repeated literal",
+    "occurrence outside matches",
+    "overlapping literal starts count as ambiguous",
+    "overlapping literal occurrence 1 selects exact start",
+    "overlapping literal occurrence 2 selects exact start",
+    "NBSP is not normalized to ordinary space",
+    "true overlapping edits",
+    "direct target outside selected scope",
+    "modified original-source observation",
+    "exact whitespace request retained",
+    "unchanged rewrite retains attached comment declaration",
+    "unchanged replacement retains attached comment declaration",
+    "empty plan is valid unchanged request",
+    "same-position insertion order",
+    "missing expectation target is not passing absence",
+    "failed expected text is visible"
+  ],
+  "schema_negative_cases": [
+    "run_operation rejected",
+    "missing before hash rejected",
+    "missing selected-decision field rejected",
+    "unknown root field rejected",
+    "third identity field rejected",
+    "zero occurrence rejected",
+    "empty attached anchor rejected",
+    "timezone-free date rejected",
+    "invalid calendar date rejected",
+    "source hash with trailing newline rejected",
+    "before hash with trailing newline rejected",
+    "whitespace author rejected",
+    "two insertion positions rejected",
+    "occurrence on edge rejected",
+    "comment occurrence without find rejected",
+    "comment find plus through rejected",
+    "unimplemented expectation predicate rejected",
+    "expectation hash with trailing newline rejected",
+    "requirement key with trailing newline rejected"
+  ],
+  "limitations": [
+    "No actual DOCX mutation, revision settlement, tracking, comment-range construction, package preservation, publication failure handling, rendering or runtime conformance was tested. Attached comments are counted as declarations only. Working-basis drift is a string-model test."
+  ]
+}

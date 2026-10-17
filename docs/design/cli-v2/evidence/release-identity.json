@@ -1,0 +1,16 @@
+{
+  "release_tag": "v0.12.0",
+  "published_at": "2026-10-11T17:42:11Z",
+  "release_url": "https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0",
+  "asset": "jubarte-0.12.0-linux-x86_64.tar.gz",
+  "archive_sha256": "1858b969f9e16065dfdab54cddf7ba6a78cb68867ab54eb96e101385fff67c20",
+  "archive_checksum_matched_release_manifest": true,
+  "binary_sha256": "6a2d2f6017e845646b5fe35877f6c8f12e998dfc1c4110053ab04bbae09b472e",
+  "binary_size_bytes": 35446704,
+  "separate_source_audit_commit": "0ca2d3ea8191fec56d7bf0f0adb4fd492c8327b3",
+  "limits": [
+    "Matching a release checksum verifies downloaded-byte consistency, not independent publisher authenticity.",
+    "The audited main commit also declares 0.12.0; the release binary was not a build of that commit.",
+    "Fourteen diagnostic cases on one synthetic fixture are not an agent performance study."
+  ]
+}

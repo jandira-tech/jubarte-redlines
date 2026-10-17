@@ -1,0 +1,144 @@
+Read, edit, compare and render Word documents
+
+Usage: jubarte [OPTIONS] [ORIGINAL] [MODIFIED]
+       jubarte <COMMAND>
+
+Tasks:
+  compare       Compare documents and write a Word redline [alias: redline]
+  changes       List tracked changes with IDs for accept, reject and edit plans
+  accept        Accept all tracked changes, or select by ID, author or kind
+  reject        Reject all tracked changes, or select by ID, author or kind
+  convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
+  diff          Review differences as GitHub, word, normal, context or side-by-side text
+  inspect       Inspect document facts, paragraphs, styles and tables
+  read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
+                comments with ids [alias: text]
+  edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve
+                or --style (several -p per command), or a JSON plan. Writes clean copy,
+                redline, patch and report, then prints the changed paragraphs as the
+                agent view (refusal: exit 3)
+  add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
+                -p per command). Writes the same files as edit and prints the changed
+                paragraphs as the agent view
+  capabilities  What this binary can do, for agents choosing an operation
+  self-update   Check or install a release from GitHub
+  debug         Diagnose a Word package, or compare package structures
+  diff-render   Compare rendered pages pixel by pixel (different pages: exit 5)
+  comments      List comments, threads and the text they annotate
+  append        Join documents in order, preserving images, styles, lists and notes
+  validate      Check or repair Word validity (findings: exit 2; unreadable: exit 1)
+  scrub         Remove authors, editing IDs, metadata and comments before sharing
+  audit         Audit accessibility, style and structure (findings: exit 2)
+  help          Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Compare options:
+  -b, --original <FILE>
+          Original/base document (overrides the positional ORIGINAL)
+
+  -m, --modified <FILE>
+          Modified document (overrides the positional MODIFIED)
+
+  -o, --output <FILE>
+          Output path (default: `<original-dir>/<original>_v_<modified>.docx`). A `.md`
+          output writes the changes as CriticMarkup (both documents Markdown)
+
+  -a, --author <NAME>
+          Author name recorded on the revisions
+          
+          [default: Redline]
+
+  -d, --date <ISO8601>
+          Revision timestamp (ISO 8601); pinned for reproducible output
+          
+          [default: 1970-01-01T00:00:00Z]
+
+      --force
+          Overwrite the output file if it already exists
+
+  -q, --quiet
+          Do not print the success message
+
+      --detail-threshold <RATIO>
+          Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15]
+
+      --mode <MODE>
+          Compare like Microsoft Word or Open-Xml-PowerTools
+
+          Possible values:
+          - word:       Microsoft Word Compare's layout: word-level detail, replaced
+            paragraphs merged, Word's alignment passes
+          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
+            no Word alignment passes
+          
+          [default: word]
+
+      --powertools-faithful
+          Same as --mode powertools
+
+  [MODIFIED]
+          The modified document (.docx or Markdown)
+
+  [ORIGINAL]
+          The original / base document (.docx or Markdown)
+
+Read options:
+      --track-changes <CHOICE>
+          Tracked changes inline (all, the default), or the text with every change
+          accepted or rejected; the id lines then list what changed
+
+          Possible values:
+          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
+          - accept: Accept every change
+          - reject: Reject every change
+
+      --comments <MODE>
+          Comments inline (default) or hidden, with their ids on the id line of the
+          paragraph that holds them
+
+          Possible values:
+          - inline: Comments inline, with their ids
+          - none:   Comments hidden; their ids on the id lines
+          
+          [default: inline]
+
+      --dates
+          Timestamps on the notes of an author whose changes do not all share one (the
+          header shows an author's single timestamp)
+
+      --no-page-markers
+          Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
+          M -->` lines
+
+  -p, --paragraphs <SPEC>
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
+
+      --head <N>
+          Only the first N blocks (a table is one block)
+
+      --tail <N>
+          Only the last N blocks
+
+      --changed
+          Only the blocks with a tracked change or a comment
+
+      --by <AUTHOR>
+          With --changed: only the blocks with this author's marks (a handle such as AC,
+          or the full name)
+
+Examples:
+  jubarte compare old.docx new.docx -o redline.docx
+  jubarte contract.docx                    print the agent view (read)
+  jubarte old.docx new.docx                redline printed as the agent view (-o writes
+  it)
+  jubarte inspect contract.docx --json
+  jubarte diff old.docx new.docx --format github
+  jubarte convert contract.docx -o contract.pdf
+
+Run jubarte <task> --help for task options.
