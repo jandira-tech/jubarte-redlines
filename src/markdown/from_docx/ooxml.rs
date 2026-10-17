@@ -587,22 +587,18 @@ impl Inline {
                     let (lead, core, trail) = split_ws(&inner);
                     let label = core.replace('[', "\\[").replace(']', "\\]");
                     let (url, title) = link.split_once(TITLE).unwrap_or((&link, ""));
-                    let destination = link_destination(url);
+                    let url = url.replace(' ', "%20").replace(')', "%29");
                     if !title.is_empty() {
                         let title = title.replace('\\', "\\\\").replace('"', "\\\"");
-                        out.push_str(&format!(
-                            "{lead}[{label}]({destination} \"{title}\"){trail}"
-                        ));
-                    } else if label == url {
-                        out.push_str(&format!("{lead}<{url}>{trail}"));
-                    } else if url.strip_prefix("mailto:") == Some(label.as_str())
-                        && email_autolink(&label)
+                        out.push_str(&format!("{lead}[{label}]({url} \"{title}\"){trail}"));
+                    } else if label == url
+                        || (label.contains('@')
+                            && label.trim_start_matches("mailto:")
+                                == url.trim_start_matches("mailto:"))
                     {
-                        // `<addr>` comes back as the address. `<mailto:addr>`
-                        // is a URI autolink, so the text gains `mailto:`.
-                        out.push_str(&format!("{lead}<{label}>{trail}"));
+                        out.push_str(&format!("{lead}<{url}>{trail}"));
                     } else {
-                        out.push_str(&format!("{lead}[{label}]({destination}){trail}"));
+                        out.push_str(&format!("{lead}[{label}]({url}){trail}"));
                     }
                 }
                 _ => out.push_str(&render_emphasis(group, emphasis)),
@@ -611,55 +607,6 @@ impl Inline {
         }
         tidy_inline(&out, self.keep_spaces, self.verbatim)
     }
-}
-
-/// Spaces become `%20`. A destination that holds `(` or `)` is wrapped in
-/// angle brackets: a bare destination ends at an unmatched `)`, and
-/// percent-encoding `)` leaves `(` with nothing to balance, so the link
-/// comes back as literal text.
-fn link_destination(url: &str) -> String {
-    let url = url.replace(' ', "%20");
-    if url.contains('(') || url.contains(')') {
-        let inner = url
-            .replace('\\', "\\\\")
-            .replace('<', "\\<")
-            .replace('>', "\\>");
-        format!("<{inner}>")
-    } else {
-        url
-    }
-}
-
-/// Whether `address` is the inside of a CommonMark email autolink, the
-/// addresses pulldown-cmark reads (`<local@domain>`). The view prints
-/// `<address>` only then, so the text comes back as the address.
-fn email_autolink(address: &str) -> bool {
-    let bytes = address.as_bytes();
-    let Some(at) = bytes.iter().position(|b| *b == b'@') else {
-        return false;
-    };
-    at > 0 && local_part(&bytes[..at]) && domain(&bytes[at + 1..])
-}
-
-fn local_part(bytes: &[u8]) -> bool {
-    // CommonMark's email local part, besides ASCII alphanumerics.
-    const MARKS: &[u8] = b".!#$%&'*+/=?^_`{|}~-";
-    !bytes.is_empty()
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || MARKS.contains(b))
-}
-
-fn domain(bytes: &[u8]) -> bool {
-    !bytes.is_empty()
-        && bytes.split(|b| *b == b'.').all(|label| {
-            (1..=63).contains(&label.len())
-                && !label.starts_with(b"-")
-                && !label.ends_with(b"-")
-                && label
-                    .iter()
-                    .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
-        })
 }
 
 fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
@@ -672,17 +619,9 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         } else {
             Marks::default()
         };
-        // Whitespace-only spans inherit the previous formatting so markers
-        // do not split. A plain space does not become code: `a` `b` is two
-        // spans, and folding the space in would make one.
+        // Whitespace-only spans inherit the previous formatting so markers do not split.
         let marks = if span.text.trim().is_empty() {
-            match merged.last() {
-                Some((previous, _)) => Marks {
-                    code: style.code,
-                    ..*previous
-                },
-                None => style,
-            }
+            merged.last().map_or(style, |(m, _)| *m)
         } else {
             style
         };
@@ -1389,7 +1328,7 @@ mod ooxml_package_boundary_tests {
             (
                 "ada@example.invalid",
                 "mailto:ada@example.invalid",
-                "<ada@example.invalid>",
+                "<mailto:ada@example.invalid>",
             ),
             (
                 "other@example.invalid",
@@ -1399,13 +1338,8 @@ mod ooxml_package_boundary_tests {
             ("   ", "https://example.invalid", ""),
             (
                 "label",
-                "https://example.invalid/a b",
-                "[label](https://example.invalid/a%20b)",
-            ),
-            (
-                "label",
                 "https://example.invalid/a b)",
-                "[label](<https://example.invalid/a%20b)>)",
+                "[label](https://example.invalid/a%20b%29)",
             ),
         ] {
             let mut inline = Inline::default();
@@ -1441,25 +1375,6 @@ mod ooxml_package_boundary_tests {
         let mut plain = Inline::default();
         plain.push("  but", false, false, None);
         assert_eq!(plain.render(true), "but");
-    }
-
-    #[test]
-    fn a_plain_space_between_code_spans_stays_between_them() {
-        let mut inline = Inline::default();
-        let code = Marks {
-            code: true,
-            ..Marks::default()
-        };
-        inline.push_styled("docProps/app.xml", code, None);
-        inline.push_styled(" ", Marks::default(), None);
-        inline.push_styled("Application", code, None);
-        assert_eq!(inline.render(true), "`docProps/app.xml` `Application`");
-
-        let mut joined = Inline::default();
-        joined.push_styled("hello", code, None);
-        joined.push_styled(" ", code, None);
-        joined.push_styled("world", code, None);
-        assert_eq!(joined.render(true), "`hello world`");
     }
 
     #[test]

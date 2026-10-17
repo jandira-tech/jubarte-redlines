@@ -463,9 +463,6 @@ pub(super) struct TableLine {
     /// Its cells' own borders (`cell-borders bottom single 1pt in t0.row0`),
     /// with the cells each names.
     pub cell_borders: Vec<(CellsAt, super::borders::Sides)>,
-    /// Its rows' own table borders (`row-borders top double 0.5pt in
-    /// t0.row1`, Word's `w:tblPrEx`), by row.
-    pub row_borders: Vec<(usize, super::borders::Sides)>,
     /// A comment's range runs through the table (`in c5`).
     pub in_comment: bool,
     /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
@@ -574,26 +571,6 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
     Ok(kinds)
 }
 
-/// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
-/// each formatting change on a notes part's separators, with its part's
-/// kind (`footnote`, `endnote`), in the order the view lists them; none
-/// without the clause. An entry that names no notes part is skipped.
-pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
-    let Some(tags) = super::view_stories::flow_text(value, "fmt") else {
-        return Vec::new();
-    };
-    tags.split("; ")
-        .filter_map(|entry| {
-            let kind = match entry.trim().split_once('.')?.0 {
-                "footnotes" => "footnote",
-                "endnotes" => "endnote",
-                _ => return None,
-            };
-            Some((kind, revision_tags(entry)?.into_iter().next()?))
-        })
-        .collect()
-}
-
 /// The most grid columns a table has, and rows one merged cell reaches: a
 /// bound on what a hand-edited table line can make the reader write (Word
 /// takes 63 columns).
@@ -620,7 +597,6 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         style: None,
         borders: None,
         cell_borders: Vec::new(),
-        row_borders: Vec::new(),
         in_comment: false,
         fmt: None,
         grid_fmt: None,
@@ -749,20 +725,6 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         }
         if let Some(text) = clause.strip_prefix("borders ") {
             parsed.borders = super::borders::parse(text, &super::borders::TABLE_SIDES);
-        }
-        if let Some(groups) = clause.strip_prefix("row-borders ") {
-            // `top double 0.5pt FF0000 in t0.row1 t0.row3; left none in t0.row2`
-            for group in groups.split("; ") {
-                let Some((text, at)) = group.rsplit_once(" in ") else {
-                    continue;
-                };
-                let Some(sides) = super::borders::parse(text, &super::borders::TABLE_SIDES) else {
-                    continue;
-                };
-                for row in at.split(' ').filter_map(row_of) {
-                    parsed.row_borders.push((row, sides.clone()));
-                }
-            }
         }
         if let Some(groups) = clause.strip_prefix("cell-borders ") {
             // `top,bottom single 1pt in all; left none in t0.row1 t0.row2.cell0`
@@ -985,7 +947,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 20] = [
+const CLAUSE_WORDS: [&str; 18] = [
     "empty",
     "center",
     "right",
@@ -997,8 +959,6 @@ const CLAUSE_WORDS: [&str; 20] = [
     "num",
     "level",
     "page-break",
-    "page-break-ins",
-    "page-break-del",
     "section-break",
     "break-ins",
     "break-del",
@@ -1010,11 +970,10 @@ const CLAUSE_WORDS: [&str; 20] = [
 
 /// The words that open a table line's own clauses (`cells p0-p3 by row`,
 /// `merged …`): beside [`CLAUSE_WORDS`], what a style id must not read as.
-const TABLE_WORDS: [&str; 10] = [
+const TABLE_WORDS: [&str; 9] = [
     "cells",
     "borders",
     "cell-borders",
-    "row-borders",
     "merged",
     "gaps",
     "style",
@@ -1130,9 +1089,6 @@ pub(super) struct IdLine {
     pub right: Option<i64>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
-    /// The page break's tracked change, `true` for an insertion
-    /// (`page-break-ins r5 @AC`, `page-break-del r5 @AC`).
-    pub page_break_change: Option<(bool, Tag)>,
     /// The paragraph ends a section (`section-break`).
     pub section_break: bool,
     /// The list label (`num "(a)"`, `bullet`).
@@ -1218,10 +1174,6 @@ impl IdLine {
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
-            Some((kind @ ("page-break-ins" | "page-break-del"), v)) => {
-                self.page_break = true;
-                self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
-            }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
             Some(_) => {}
@@ -1328,37 +1280,6 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn note_formats_reads_each_parts_separator_changes() {
-        let kinds = |value: &str| -> Vec<(&str, Vec<u32>)> {
-            note_formats(value)
-                .into_iter()
-                .map(|(kind, tag)| (kind, tag.ids))
-                .collect()
-        };
-        assert_eq!(
-            kinds(
-                "{fmt: footnotes.r0 @AS; footnotes.r1 @AS; endnotes.r2 @AS, \
-                 empty: [footnotes, endnotes]}  # changes in notes"
-            ),
-            [
-                ("footnote", vec![0]),
-                ("footnote", vec![1]),
-                ("endnote", vec![2])
-            ]
-        );
-        assert_eq!(
-            kinds("{rev: \"footnotes.r4 @AS\", fmt: \"endnotes.r7 @AS 2026-09-26T14:55:00Z\"}"),
-            [("endnote", vec![7])]
-        );
-        assert_eq!(kinds("{rev: \"fmt: footnotes.r1 @AS\"}"), []);
-        assert_eq!(kinds("{rev: 'fmt: footnotes.r1 @AS'}"), []);
-        assert_eq!(kinds("{rev: 'author''s fmt: footnotes.r1 @AS'}"), []);
-        assert_eq!(kinds("{fmt: 'footnotes.r7 @AS'}"), [("footnote", vec![7])]);
-        assert_eq!(kinds("{fmt: header1.r1 @AS}"), []);
-        assert_eq!(kinds("{empty: [footnotes]}"), []);
-    }
-
     #[test]
     fn empty_notes_reads_the_clause_outside_quotes() {
         use super::empty_notes;

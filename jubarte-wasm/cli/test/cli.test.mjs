@@ -1222,15 +1222,4 @@ test("convert JSON, by format or extension, keeps the output when the source fai
     assert.ok(!fs.existsSync(path.join(tmp, "missing.json")));
     assert.ok(!fs.existsSync(path.join(tmp, "unsupported-convert.JSON")));
   }
-test("edit -p rN --accept/--reject prints the resolved changes, as the binary does", () => {
-  const received = path.join(repo, "tests/fixtures/agent-view/received.docx");
-  const src = copy(received, "resolve-received.docx");
-  const out = path.join(tmp, "resolve-out.docx");
-  const single = run("edit", src, "-p", "r0", "--accept", "-o", out, "--datetime", "2026-10-11T00:00:00Z");
-  assert.equal(single.code, 0, single.err);
-  assert.equal(single.out, 'accepted r0 in p3: "{++quarterly++}" > "quarterly"\n');
-  assert.match(single.err, new RegExp(`^wrote ${out.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(docx, `));
-  const pair = run("edit", src, "-p", "r1+2", "--accept", "-o", path.join(tmp, "resolve-pair.docx"), "--datetime", "2026-10-11T00:00:00Z");
-  assert.equal(pair.code, 0, pair.err);
-  assert.equal(pair.out, 'accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"\n');
 });

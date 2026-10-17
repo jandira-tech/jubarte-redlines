@@ -507,8 +507,8 @@ jubarte convert contract.docx --compress --font-report fonts.json
 
 A document with comments gets Word's markup pane: each comment in a
 balloon beside its range, joined to it by a dotted connector, with the
-range tinted and bracketed. As Word does, no style writes a PDF comment
-annotation: a viewer would paint it as a note icon over the text
+range tinted and bracketed. `--revisions word` writes no comment annotation,
+as Word does; the other styles keep a sticky note on the range as well
 ([`docs/WORD_DIFFERENCES.md`](docs/WORD_DIFFERENCES.md)).
 
 A custom palette can be supplied with:
