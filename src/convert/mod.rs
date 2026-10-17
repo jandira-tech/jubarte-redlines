@@ -12421,6 +12421,23 @@ fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
     Some(civil_from_unix_secs(local - offset_min * 60))
 }
 
+/// A revision timestamp ordered by UTC seconds and fractional digits.
+/// As with W3CDTF fields, a missing offset is UTC.
+pub(crate) fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
+    crate::util::datetime::parse_datetime(raw).ok()?;
+    let time = parse_w3cdtf(raw)?;
+    let seconds = unix_days_from_civil(time.y, time.m, time.d) * 86_400
+        + i64::from(time.h * 3600 + time.min * 60 + time.s);
+    let fraction = raw[19..]
+        .strip_prefix('.')
+        .unwrap_or_default()
+        .split(['Z', '+', '-'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('0');
+    Some((seconds, fraction))
+}
+
 /// `docProps/core.xml` dates, read as elements (a title that merely
 /// contains "created" is text, not a tag).
 fn core_dates_from_xml(xml: &str) -> CoreDates {

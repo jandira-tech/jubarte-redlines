@@ -115,8 +115,55 @@ fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
     Ok(docx)
 }
 
+fn author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
+    use jubarte::namespaces::W;
+    let mut dates: HashMap<String, Vec<Option<String>>> = HashMap::new();
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(docx)) else {
+        return dates;
+    };
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).unwrap();
+        let name = entry.name().expect("a package part name");
+        if !name.starts_with("word/") || !name.ends_with(".xml") {
+            continue;
+        }
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut xml).unwrap();
+        let mut dom = jubarte::xmllinq::Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).expect("a part root");
+        for node in dom.descendants_and_self(root, None) {
+            if let Some(author) = dom.attribute(node, &W::author()) {
+                dates
+                    .entry(author.to_string())
+                    .or_default()
+                    .push(dom.attribute(node, &W::date()).map(str::to_string));
+            }
+        }
+    }
+    dates
+}
+
+fn author_has_date(line: &str, date: &str, dates: &HashMap<String, Vec<Option<String>>>) -> bool {
+    use saphyr::LoadableYamlNode;
+    let Ok(yaml) = saphyr::Yaml::load_from_str(line) else {
+        return false;
+    };
+    let author = yaml
+        .first()
+        .and_then(|yaml| yaml.as_mapping())
+        .and_then(|map| map.values().next())
+        .and_then(saphyr::Yaml::as_str);
+    author
+        .and_then(|author| dates.get(author))
+        .is_some_and(|dates| {
+            !dates.is_empty() && dates.iter().all(|value| value.as_deref() == Some(date))
+        })
+}
+
 // Undated marks take the latest timestamp, which can become shared.
-fn round_trip_comparable(markdown: &str) -> String {
+fn round_trip_comparable(markdown: &str, docx: &[u8]) -> String {
+    let dates = author_dates(docx);
     let mut front_matter = false;
     let mut authors = false;
     let mut out = String::new();
@@ -131,6 +178,7 @@ fn round_trip_comparable(markdown: &str) -> String {
             && authors
             && line.starts_with(' ')
             && let Some((before, date)) = line.rsplit_once(", latest ")
+            && author_has_date(before, date, &dates)
         {
             out.push_str(before);
             out.push_str(", ");
@@ -143,6 +191,15 @@ fn round_trip_comparable(markdown: &str) -> String {
     out
 }
 
+fn dated_marks(date: &str) -> Vec<u8> {
+    jubarte::markdown::markdown_to_docx(
+        &format!("---\nauthors:\n  AL: Ann Lee  # 2 revisions, {date}\nbody: p0\n---\n\n<!-- p0 -->\n{{++one++}}{{>>r1 @AL<<}} and {{++two++}}{{>>r2 @AL<<}}.\n"),
+        &jubarte::markdown::DocxOptions::default(),
+    )
+    .unwrap()
+    .docx
+}
+
 #[test]
 fn latest_and_shared_headers_compare_after_undated_marks_take_latest() {
     let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\nbody: p0\n---\n\n  AL: body, latest 2026-10-17T16:59:00Z\n";
@@ -151,15 +208,57 @@ fn latest_and_shared_headers_compare_after_undated_marks_take_latest() {
         "# 2 revisions, 2026-10-17T16:59:00Z",
         1,
     );
+    let docx = dated_marks("2026-10-17T16:59:00Z");
     assert_eq!(
-        round_trip_comparable(latest),
-        round_trip_comparable(&shared)
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared, &docx)
     );
-    assert!(round_trip_comparable(latest).contains("  AL: body, latest 2026-10-17T16:59:00Z"));
+    assert!(
+        round_trip_comparable(latest, &docx).contains("  AL: body, latest 2026-10-17T16:59:00Z")
+    );
     assert_ne!(
-        round_trip_comparable(latest),
-        round_trip_comparable(&shared.replace("16:59:00Z", "16:58:00Z"))
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared.replace("16:59:00Z", "16:58:00Z"), &docx)
     );
+}
+
+#[test]
+fn latest_and_shared_headers_differ_when_docx_dates_disagree() {
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    for date in ["2026-10-17T16:58:00Z", "latest 2026-10-17T16:58:00Z"] {
+        let docx = dated_marks(date);
+        assert_ne!(
+            round_trip_comparable(latest, &docx),
+            round_trip_comparable(&shared, &docx),
+            "the docx has {date}"
+        );
+    }
+}
+
+#[test]
+fn latest_collapse_requires_every_mark_and_comment_of_the_named_author() {
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    for body in [
+        "{++one++}{>>r1 @AL 2026-10-17T16:59:00Z<<} and {++two++}{>>r2 @AL 2026-10-17T16:58:00Z<<}.",
+        "{++one++}{>>r1 @AL 2026-10-17T16:59:00Z<<} and {==two==}{>>c0 @AL 2026-10-17T16:58:00Z: note<<}.",
+        "{++one++}{>>r1 @BO 2026-10-17T16:59:00Z<<}.",
+        "Plain text.",
+    ] {
+        let markdown = format!("{latest}\n<!-- p0 -->\n{body}\n");
+        let docx = jubarte::markdown::markdown_to_docx(
+            &markdown,
+            &jubarte::markdown::DocxOptions::default(),
+        )
+        .unwrap()
+        .docx;
+        assert_ne!(
+            round_trip_comparable(latest, &docx),
+            round_trip_comparable(&shared, &docx),
+            "{body}"
+        );
+    }
 }
 
 /// The first lines that differ, numbered, for the failure report.
@@ -385,10 +484,15 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
         }
     };
     let written = to_docx(dir, &source, "md");
+    let bytes = written
+        .as_ref()
+        .ok()
+        .and_then(|name| std::fs::read(dir.join(name)).ok())
+        .unwrap_or_default();
     let got = written
         .clone()
         .and_then(|docx| view(dir, &docx))
-        .map(|view| round_trip_comparable(&view));
+        .map(|view| round_trip_comparable(&view, &bytes));
     let docx = match (docx_source, &written) {
         (Some(original), Ok(written)) => match std::fs::copy(original, dir.join("original.docx")) {
             Ok(_) => docx_verdicts(dir, "original.docx", written),
@@ -401,7 +505,7 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
     };
     Case {
         name,
-        want: round_trip_comparable(&source),
+        want: round_trip_comparable(&source, &bytes),
         got,
         docx,
     }
@@ -420,16 +524,21 @@ fn docx_case(dir: &Path, path: &Path) -> Case {
     match first {
         Ok(first) => {
             let written = to_docx(dir, &first, "back");
+            let bytes = written
+                .as_ref()
+                .ok()
+                .and_then(|name| std::fs::read(dir.join(name)).ok())
+                .unwrap_or_default();
             let docx = match &written {
                 Ok(written) => docx_verdicts(dir, "source/source.docx", written),
                 Err(_) => Vec::new(),
             };
             let got = written
                 .and_then(|docx| view(dir, &docx))
-                .map(|view| round_trip_comparable(&view));
+                .map(|view| round_trip_comparable(&view, &bytes));
             Case {
                 name,
-                want: round_trip_comparable(&first),
+                want: round_trip_comparable(&first, &bytes),
                 got,
                 docx,
             }

@@ -61,7 +61,12 @@ impl Handles {
     pub(crate) fn latest_date(&self, author: &str) -> Option<&str> {
         let dates = self.dates.get(author)?;
         (dates.len() > 1)
-            .then(|| dates.iter().next_back().map(String::as_str))
+            .then(|| {
+                dates
+                    .iter()
+                    .max_by_key(|date| (crate::convert::timestamp_order_key(date), *date))
+                    .map(String::as_str)
+            })
             .flatten()
     }
 
@@ -3018,6 +3023,58 @@ mod tests {
         assert_eq!(handles.unique_date("Nobody"), None);
         assert_eq!(handles.latest_date("Ann Counsel"), None);
         assert_eq!(handles.latest_date("Nobody"), None);
+    }
+
+    #[test]
+    fn latest_date_orders_positive_offsets_by_instant() {
+        let handles = Handles {
+            dates: HashMap::from([(
+                "Ann Lee".into(),
+                BTreeSet::from([
+                    "2026-03-04T05:00:00+02:00".into(),
+                    "2026-03-04T04:00:00Z".into(),
+                ]),
+            )]),
+            ..Handles::default()
+        };
+        assert_eq!(handles.latest_date("Ann Lee"), Some("2026-03-04T04:00:00Z"));
+    }
+
+    #[test]
+    fn latest_date_orders_negative_offsets_by_instant() {
+        let handles = Handles {
+            dates: HashMap::from([(
+                "Ann Lee".into(),
+                BTreeSet::from([
+                    "2026-03-04T03:00:00-02:00".into(),
+                    "2026-03-04T04:00:00Z".into(),
+                ]),
+            )]),
+            ..Handles::default()
+        };
+        assert_eq!(
+            handles.latest_date("Ann Lee"),
+            Some("2026-03-04T03:00:00-02:00")
+        );
+    }
+
+    #[test]
+    fn latest_date_compares_fractions_across_days_and_missing_offsets() {
+        for (earlier, later) in [
+            ("2026-01-01T00:30:00+01:00", "2025-12-31T23:45:00Z"),
+            ("2024-03-01T00:30:00+01:00", "2024-02-29T23:45:00Z"),
+            ("2026-03-04T05:00:00.100+02:00", "2026-03-04T03:00:00.11Z"),
+            ("2026-03-04T05:00:00+02:00", "2026-03-04T04:00:00"),
+        ] {
+            let handles = Handles {
+                dates: HashMap::from([(
+                    "Ann Lee".into(),
+                    BTreeSet::from([earlier.into(), later.into()]),
+                )]),
+                ..Handles::default()
+            };
+            assert_eq!(handles.latest_date("Ann Lee"), Some(later), "{earlier}");
+        }
     }
 
     #[test]

@@ -130,6 +130,81 @@ fn an_authors_latest_comes_back_whatever_change_ends_it() {
     }
 }
 
+fn legacy_range_docx(dir: &Path, name: &str) -> PathBuf {
+    let latest = read(dir, &fixture(name));
+    let legacy = latest.replace("latest 2026-03-04T16:30:00Z", "2026-03-02..2026-03-04");
+    assert_ne!(latest, legacy, "{name}: no latest header to replace");
+    let md = dir.join("legacy.md");
+    let out = dir.join("legacy.docx");
+    std::fs::write(&md, legacy).unwrap();
+    jubarte(
+        dir,
+        &[
+            "convert",
+            md.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--force",
+            "-d",
+            "1970-01-01T00:00:00Z",
+        ],
+    );
+    out
+}
+
+fn assert_mark_date(docx: &Path, part_name: &str, kind: &str, id: &str, date: &str) {
+    use jubarte::namespaces::W;
+    let xml = part(docx, part_name);
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let marks: Vec<_> = dom
+        .descendants(root, Some(&W::name(kind)))
+        .into_iter()
+        .filter(|&node| dom.attribute(node, &W::id()) == Some(id))
+        .collect();
+    assert_eq!(marks.len(), 1, "{part_name} {kind} r{id}: {xml}");
+    assert_eq!(dom.attribute(marks[0], &W::author()), Some("Ann Lee"));
+    assert_eq!(
+        dom.attribute(marks[0], &W::date()),
+        Some(date),
+        "{part_name} {kind} r{id}"
+    );
+}
+
+#[test]
+fn legacy_range_dates_formatting_changes_rows_and_body_header_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, last_part, last_kind, last_id) in [
+        ("A-fmt.docx", "word/document.xml", "pPrChange", "10"),
+        ("B-row.docx", "word/document.xml", "ins", "3"),
+        ("C-header.docx", "word/header1.xml", "ins", "4"),
+    ] {
+        let out = legacy_range_docx(dir.path(), name);
+        assert_mark_date(
+            &out,
+            "word/document.xml",
+            "ins",
+            "1",
+            "2026-03-02T00:00:00Z",
+        );
+        assert_mark_date(&out, last_part, last_kind, last_id, "2026-03-04T23:59:59Z");
+    }
+}
+
+#[test]
+fn legacy_range_dates_header_and_footer_only_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, story) in [
+        ("H-hdr-only.docx", "word/header1.xml"),
+        ("I-ftr-only.docx", "word/footer1.xml"),
+    ] {
+        let out = legacy_range_docx(dir.path(), name);
+        assert_mark_date(&out, story, "ins", "40", "2026-03-02T00:00:00Z");
+        assert_mark_date(&out, story, "ins", "41", "2026-03-04T23:59:59Z");
+    }
+}
+
 #[test]
 fn a_date_the_view_writes_out_is_kept() {
     let dir = tempfile::tempdir().unwrap();
