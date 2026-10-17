@@ -37,6 +37,8 @@ use super::{
 pub struct ForEditRequest {
     /// Printed IDs or closed ranges (`p5`, `p4-p7`, `t0`), resolved on S.
     pub select: Option<String>,
+    /// Original story ID, or all (the default).
+    pub story: Option<String>,
     /// First N body paragraphs.
     pub head: Option<usize>,
     /// Last N body paragraphs.
@@ -51,6 +53,8 @@ pub struct ForEditRequest {
     pub changed: bool,
     /// `--changed` author filter (a handle or full name).
     pub by: Option<String>,
+    /// Additional author filters, unioned with by for original marks.
+    pub by_any: Vec<String>,
     /// Read-only original-S neighbours around matches.
     pub context: usize,
     /// Primary records per page (default 100); ignored under `all`.
@@ -70,12 +74,17 @@ pub struct ForEditRequest {
     pub existing_revisions: ExistingRevisions,
     /// Readiness for tracked new edits (default) or direct ones.
     pub track: bool,
+    /// `edit template` (and other plan surfaces) allow only closed ranges
+    /// (proposal §2); `read --for-edit` keeps the open-ended `p17-` /
+    /// `-p3` spellings its shipped help documents, transitionally.
+    pub closed_ranges_only: bool,
 }
 
 impl Default for ForEditRequest {
     fn default() -> Self {
         Self {
             select: None,
+            story: None,
             head: None,
             tail: None,
             find: None,
@@ -83,6 +92,7 @@ impl Default for ForEditRequest {
             ignore_case: false,
             changed: false,
             by: None,
+            by_any: Vec::new(),
             context: 0,
             limit: None,
             max_chars: None,
@@ -92,6 +102,7 @@ impl Default for ForEditRequest {
             reject: Vec::new(),
             existing_revisions: ExistingRevisions::Keep,
             track: true,
+            closed_ranges_only: false,
         }
     }
 }
@@ -414,6 +425,11 @@ pub struct ForEdit {
     /// Read-only original-S observations (`--context` neighbours).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_context: Vec<SourceContextRow>,
+    /// The original source's comment inventory, so consumers that build on
+    /// the same view (template generation) need not reparse the package.
+    /// Not part of the wire document.
+    #[serde(skip)]
+    pub comments: Vec<crate::comments::CommentRecord>,
     /// Completeness and omissions.
     pub coverage: ForEditCoverage,
     /// Continuation token; `null` when the selection is exhausted.
@@ -450,6 +466,7 @@ fn basis_digest(source_digest: &str, request: &ForEditRequest, selection: &Selec
         "accept": accept,
         "reject": reject,
         "select": request.select,
+        "story": request.story,
         "head": request.head,
         "tail": request.tail,
         "find": request.find,
@@ -457,6 +474,7 @@ fn basis_digest(source_digest: &str, request: &ForEditRequest, selection: &Selec
         "ignore_case": request.ignore_case,
         "changed": request.changed,
         "by": request.by,
+        "by_any": request.by_any,
         "context": request.context,
         "frozen": selection.selected,
     });
@@ -530,8 +548,30 @@ impl Selection {
         let total = s_loaded.paragraph_nodes.len();
         let mut filters: Vec<(&'static str, HashSet<usize>)> = Vec::new();
 
+        if let Some(story) = request.story.as_deref().filter(|s| *s != "all") {
+            let si = s_loaded
+                .stories
+                .iter()
+                .position(|s| s.id == story)
+                .ok_or_else(|| {
+                    super::err("USAGE", None, format!("unknown source story {story}"))
+                })?;
+            filters.push((
+                "story",
+                s_loaded
+                    .paragraph_story
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pair)| pair.0 == si)
+                    .map(|(g, _)| g)
+                    .collect(),
+            ));
+        }
         if let Some(spec) = &request.select {
-            filters.push(("ids", id_selection(spec, s_opened, s_loaded)?));
+            filters.push((
+                "ids",
+                id_selection(spec, source, request.closed_ranges_only)?,
+            ));
         }
         if let Some(head) = request.head {
             filters.push((
@@ -607,79 +647,11 @@ impl Selection {
 }
 
 /// The paragraphs `spec` names: `pN`/`pN-pM` closed ranges and `tN`
-/// whole tables, against the body's own numbering on S.
-fn id_selection(
-    spec: &str,
-    s_opened: &Opened,
-    s_loaded: &Loaded,
-) -> Result<HashSet<usize>, EditError> {
-    let usage = |message: String| super::err("USAGE", None, message);
-    let select = crate::markdown::Select::parse(spec).map_err(usage)?;
-    let crate::markdown::Select::Picks(picks) = select else {
-        return Err(super::err("USAGE", None, "unsupported selection"));
-    };
-    let body: Vec<usize> = s_loaded
-        .paragraph_story
-        .iter()
-        .enumerate()
-        .filter(|(_, pair)| pair.0 == 0)
-        .map(|(g, _)| g)
-        .collect();
-    let mut out = HashSet::new();
-    for pick in picks {
-        match pick {
-            crate::markdown::Pick::Paragraphs { from, to } => {
-                let to = to.unwrap_or(body.len().saturating_sub(1));
-                if from >= body.len() || to >= body.len() {
-                    return Err(super::err(
-                        "USAGE",
-                        None,
-                        format!(
-                            "p{} is past the last paragraph p{}",
-                            from.max(to),
-                            body.len().saturating_sub(1)
-                        ),
-                    ));
-                }
-                out.extend(body[from..=to].iter().copied());
-            }
-            crate::markdown::Pick::Table(t) => {
-                let tables: Vec<NodeId> = s_opened
-                    .dom
-                    .descendants(s_opened.body, Some(&W::tbl()))
-                    .into_iter()
-                    .filter(|&tbl| {
-                        !s_opened
-                            .dom
-                            .ancestors(tbl, None)
-                            .iter()
-                            .any(|&a| s_opened.dom.name_is(a, &W::tbl()))
-                    })
-                    .collect();
-                let Some(&table) = tables.get(t) else {
-                    return Err(super::err(
-                        "USAGE",
-                        None,
-                        format!("t{t} is not a table of this document"),
-                    ));
-                };
-                let inside: HashSet<NodeId> = s_opened
-                    .dom
-                    .descendants(table, Some(&W::p()))
-                    .into_iter()
-                    .collect();
-                out.extend(
-                    s_loaded
-                        .paragraph_nodes
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, p)| inside.contains(p))
-                        .map(|(g, _)| g),
-                );
-            }
-        }
-    }
-    Ok(out)
+/// whole tables, against the body's own numbering on S; the transitional
+/// open-ended `pN-` / `-pN` spellings parse unless the caller requires
+/// closed ranges.
+fn id_selection(spec: &str, source: &[u8], closed_only: bool) -> Result<HashSet<usize>, EditError> {
+    super::v2_apply::SourceModel::new(source)?.selected_paragraphs(spec, !closed_only)
 }
 
 /// The paragraphs whose original final logical text the search matches.
@@ -743,15 +715,22 @@ fn changed_selection(
     };
     // `--by` matches an author exactly, or a comment's explicit
     // `w:initials` exactly; it never derives a handle from a name.
-    let author = request
+    let authors: Vec<&str> = request
         .by
-        .as_deref()
-        .map(|a| a.trim().strip_prefix('@').unwrap_or(a.trim()));
+        .iter()
+        .chain(&request.by_any)
+        .map(|a| {
+            let a = a.trim();
+            a.strip_prefix('@').unwrap_or(a)
+        })
+        .collect();
     let by = |name: Option<&str>, initials: Option<&str>| -> bool {
-        let Some(want) = author else {
+        if authors.is_empty() {
             return true;
-        };
-        name.is_some_and(|a| a == want) || initials.is_some_and(|i| i == want)
+        }
+        authors
+            .iter()
+            .any(|want| name.is_some_and(|a| a == *want) || initials.is_some_and(|i| i == *want))
     };
     let mut out = HashSet::new();
     let changes = crate::changes::list_changes(source)
@@ -908,14 +887,10 @@ impl NativeKeys {
 }
 
 /// The `w14:paraId` of `paragraph` when it is a key Word could have
-/// written: exactly eight ASCII hex digits in `1..=0x7FFFFFFF`.
+/// written, under the shared native-key policy: exactly eight ASCII hex
+/// digits in `1..=0x7FFFFFFF`.
 fn native_para_id(dom: &Dom, paragraph: NodeId) -> Option<u32> {
-    let value = dom.attribute(paragraph, &W14::name("paraId"))?;
-    if value.len() != 8 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    let n = u32::from_str_radix(value, 16).ok()?;
-    (1..=0x7FFF_FFFF).contains(&n).then_some(n)
+    super::native_keys::para_id(dom.attribute(paragraph, &W14::name("paraId"))?)
 }
 
 /// The long ID of the revision element `el` (a `w:ins`, `w:del`,
@@ -929,11 +904,7 @@ pub(super) fn revision_pair(dom: &Dom, el: NodeId, story: &str, part: &str) -> T
     let wid = dom.attribute(el, &W::name("id")).unwrap_or_default();
     let short = crate::ids::ChangeId::new(story, wid).short();
     let stem = crate::ids::part_story(part);
-    let usable = !wid.is_empty()
-        && wid
-            .bytes()
-            .all(|b| b.is_ascii_digit() || matches!(b, b'+' | b'-'))
-        && wid.parse::<i32>().is_ok();
+    let usable = super::native_keys::revision_id(wid).is_some();
     let long_id = if usable {
         format!("{stem}.w:{local}.w:id.{}", escape_value(wid))
     } else {
@@ -1561,9 +1532,11 @@ fn context_of(
         let part = s_loaded.stories[story].part.as_str();
         let short_id = crate::ids::paragraph_id(story_id, l);
         let projection = project_paragraph(&s_opened.dom, node);
-        let text_codec = match v2::logical_text(&s_opened.dom, node) {
-            Ok(_) => "supported",
-            Err(_) => "unsupported",
+        let representable = v2::logical_text(&s_opened.dom, node).is_ok();
+        let text_codec = if representable {
+            "supported"
+        } else {
+            "unsupported"
         };
         let (_, mut revisions, mark_revisions) = obstacles(&s_opened.dom, node, story_id, part);
         revisions.extend(mark_revisions);
@@ -1573,14 +1546,18 @@ fn context_of(
         let value = TextValue::bounded(&projection.text, *budget);
         *budget = budget.saturating_sub(value.chars());
         out.push(SourceContextRow {
-            kind: "paragraph".to_string(),
+            kind: if representable { "paragraph" } else { "opaque" }.to_string(),
             target: native.pair(&s_opened.dom, story, part, &short_id, node),
             value,
             text_view: "final".to_string(),
             text_codec: text_codec.to_string(),
             limitations: projection.limitations.into_iter().collect(),
             revisions,
-            reason_codes: vec!["context".to_string()],
+            reason_codes: if representable {
+                vec!["context".to_string()]
+            } else {
+                vec!["context".to_string(), "unsupported_text_codec".to_string()]
+            },
         });
     }
     out
@@ -1600,7 +1577,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
     if request.find.is_some() && request.regex.is_some() {
         return Err(super::err("USAGE", None, "--find and --regex conflict"));
     }
-    if request.by.is_some() && !request.changed {
+    if (request.by.is_some() || !request.by_any.is_empty()) && !request.changed {
         return Err(super::err("USAGE", None, "--by needs --changed"));
     }
     let source_digest = source_sha256(source);
@@ -1644,7 +1621,13 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         let ids: Vec<String> = stories.iter().map(|s| s.id.clone()).collect();
         let origin = Origin::build(source, &plan, &ids, &paragraph_story)?;
         (0..s_loaded.paragraph_nodes.len())
-            .map(|g| origin.fate(g))
+            .map(|g| match origin.exact(g) {
+                Ok(post) => Fate::Kept(post),
+                Err(_) => match origin.fate(g) {
+                    Fate::Kept(post) | Fate::Merged(post) => Fate::Merged(post),
+                    Fate::Gone => Fate::Gone,
+                },
+            })
             .collect()
     } else {
         (0..s_loaded.paragraph_nodes.len())
@@ -1671,9 +1654,9 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
     }
 
     // Comments of S, for references and the --changed/--by selection.
-    let comments = crate::comments::list_comments(source)
+    let comment_list = crate::comments::list_comments(source)
         .map_err(|e| super::err(e.code(), None, e.to_string()))?;
-    let (comments, unanchored_comments) = comments_by_paragraph(&comments, &s_loaded);
+    let (comments, unanchored_comments) = comments_by_paragraph(&comment_list, &s_loaded);
 
     // Pagination over the frozen selection.
     let limit = if request.all {
@@ -1805,6 +1788,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         paragraphs: rows,
         unanchored_comments,
         source_context: context_rows,
+        comments: comment_list,
         next_cursor,
     })
 }

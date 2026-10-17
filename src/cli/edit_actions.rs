@@ -236,7 +236,7 @@ fn positive(s: &str) -> Result<usize, String> {
         .filter(|n| *n > 0)
         .ok_or_else(|| "must be a positive, 1-based integer".into())
 }
-fn digest(s: &str) -> Result<String, String> {
+pub(super) fn digest(s: &str) -> Result<String, String> {
     if s.len() == 64
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -263,12 +263,16 @@ pub fn route(arguments: &[OsString], model: &clap::Command) -> Vec<OsString> {
     if !action.is_some_and(|a| {
         matches!(
             a.to_str(),
-            Some("replace" | "rewrite" | "insert" | "delete" | "apply")
+            Some("replace" | "rewrite" | "insert" | "delete" | "apply" | "template")
         )
     }) {
         return routed;
     }
     if model.clone().try_get_matches_from(arguments).is_ok() {
+        return routed;
+    }
+    if action.is_some_and(|a| a == "template") {
+        routed[1] = "__edit-template".into();
         return routed;
     }
     routed[1] = "__edit-v2".into();

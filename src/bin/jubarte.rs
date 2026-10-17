@@ -30,6 +30,8 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
+#[path = "jubarte/edit_template.rs"]
+mod edit_template;
 #[path = "jubarte/edit_typed.rs"]
 mod edit_typed;
 
@@ -798,6 +800,7 @@ fn run_for_edit(
     use jubarte::edit::for_edit::{ForEditRequest, for_edit};
     let request = ForEditRequest {
         select: args.paragraphs.clone(),
+        story: None,
         head: args.head,
         tail: args.tail,
         find: args.find.clone(),
@@ -805,6 +808,7 @@ fn run_for_edit(
         ignore_case: args.ignore_case,
         changed: args.changed,
         by: args.by.clone(),
+        by_any: Vec::new(),
         context: args.context.unwrap_or(0),
         limit: args.limit,
         max_chars: args.max_chars,
@@ -817,6 +821,8 @@ fn run_for_edit(
             .and_then(ExistingArg::plan_value)
             .unwrap_or(ExistingRevisions::Keep),
         track: args.track.unwrap_or(TrackArg::On) == TrackArg::On,
+        // `read --for-edit` keeps the open-ended spellings its help documents.
+        closed_ranges_only: false,
     };
     let refused = |e: jubarte::edit::EditError| {
         let code = if e.code == "USAGE" {
@@ -3034,7 +3040,7 @@ fn cli_main() -> ExitCode {
             eprintln!("error: {message}");
             std::process::exit(i32::from(code));
         }
-        if edit_typed::usage(&argv, &error) {
+        if edit_template::usage(&argv, &error) || edit_typed::usage(&argv, &error) {
             std::process::exit(64);
         }
         // A removed flag names what replaced it; clap's tip may name a
@@ -3057,6 +3063,9 @@ fn cli_main() -> ExitCode {
     }
     let quiet = cli.quiet;
     match cli.command {
+        Some(Command::EditTemplate(jubarte::cli::edit_template::TemplateDispatch {
+            action: jubarte::cli::edit_template::TemplateAction::Template(options),
+        })) => return edit_template::run(&options, quiet),
         Some(Command::TypedEdit(typed)) => return edit_typed::run(&typed, quiet),
         Some(Command::Compare(compare)) => {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));

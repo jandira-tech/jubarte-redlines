@@ -28,12 +28,13 @@ fn edit_error(e: jubarte::edit::EditError) -> Failure {
 fn io_error(message: String) -> Failure {
     failure("IO_ERROR", message)
 }
-/// A publication refusal or failure in this route's vocabulary. The shared
-/// publisher names its refusals by a `CODE: ` prefix; `SOURCE_CHANGED` is
-/// this route's `STALE_SOURCE`. Nothing is published before the primary, so
-/// a failure that committed nothing is `not_committed`; after a commit the
-/// primary's state is not reported back, and stays `unknown`.
-fn publish_failure((_, message): (u8, String)) -> Failure {
+/// A publication refusal or failure in the vocabulary of the typed and
+/// template routes. The shared publisher names its refusals by a `CODE: `
+/// prefix; `SOURCE_CHANGED` is these routes' `STALE_SOURCE`. Nothing is
+/// published before the primary, so a failure that committed nothing is
+/// `not_committed`; after a commit the primary's state is not reported back,
+/// and stays `unknown`.
+pub(super) fn publish_failure((_, message): (u8, String)) -> Failure {
     let code = match message.split_once(": ").map(|(code, _)| code) {
         Some(code @ ("OUTPUT_EXISTS" | "OUTPUT_ALIAS")) => code,
         Some("SOURCE_CHANGED") => "STALE_SOURCE",
