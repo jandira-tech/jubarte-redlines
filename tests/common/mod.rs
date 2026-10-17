@@ -86,7 +86,7 @@ fn read_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         if f.is_dir() {
             continue;
         }
-        let name = f.name().to_string();
+        let name = f.name().expect("decode ZIP fixture name").into_owned();
         let mut buf = Vec::with_capacity(f.size() as usize);
         f.read_to_end(&mut buf).expect("read zip entry");
         parts.insert(name, buf);
