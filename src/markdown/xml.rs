@@ -628,11 +628,27 @@ pub(super) fn story(
         if let Some(change) = in_note
             && open != Some(change)
         {
-            close_mark(context, &natural, &mut out, &mut open);
-            spend(&mut natural, change.1);
-            let wrap = context.revision(change.0, Some(change.1));
-            let _ = write!(out, "<{wrap}>");
-            open = Some(change);
+            if let Some(depth) = marks
+                .iter()
+                .rposition(|outer| continues_change(context.document, change, *outer))
+            {
+                // The note sits in a piece of a change a nested one
+                // suspended: the marks above that piece's change close,
+                // and the note's items and the piece's runs go inside its
+                // still-open mark, which the piece's runs then resume.
+                close_mark(context, &natural, &mut out, &mut open);
+                while marks.len() > depth + 1 {
+                    open = marks.pop();
+                    close_mark(context, &natural, &mut out, &mut open);
+                }
+                open = None;
+            } else {
+                close_marks(context, &natural, &mut out, &mut open, &mut marks);
+                spend(&mut natural, change.1);
+                let wrap = context.revision(change.0, Some(change.1));
+                let _ = write!(out, "<{wrap}>");
+                open = Some(change);
+            }
         }
         match item {
             Item::Bookmark(name) => {
