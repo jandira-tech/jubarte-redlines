@@ -346,9 +346,27 @@ impl Anchors {
         let paragraph_id =
             |story: usize, para: usize| crate::ids::paragraph_id(&self.stories[story].0, para);
         match (start, end) {
-            (Some((story, first, s)), Some((end_story, last, e)))
-                if story == end_story && (first, s) <= (last, e) =>
-            {
+            (Some((story, first, s)), Some((end_story, last, e))) if story != end_story => {
+                // A range cannot cross parts in OOXML, so this malformed
+                // input is still recorded as a range: both endpoints are
+                // real marks and neither may be dropped.
+                record.paragraph = Some(paragraph_id(story, first));
+                record.last_paragraph = Some(paragraph_id(end_story, last));
+                record.anchor_text = self.stories[story].1[first][s..].to_string();
+                record.before = tail(&self.stories[story].1[first][..s], CONTEXT);
+                record.after = self.stories[end_story].1[last][e..]
+                    .chars()
+                    .take(CONTEXT)
+                    .collect();
+            }
+            (Some((story, first, s)), Some((end_story, last, e))) if story == end_story => {
+                // A malformed input may name the end before the start; the
+                // range still spans its paragraphs, start to end.
+                let (first, s, last, e) = if (first, s) <= (last, e) {
+                    (first, s, last, e)
+                } else {
+                    (last, e, first, s)
+                };
                 let texts = &self.stories[story].1;
                 record.paragraph = Some(paragraph_id(story, first));
                 record.last_paragraph = (last > first).then(|| paragraph_id(story, last));
@@ -1455,6 +1473,31 @@ mod public_memory_anchor_boundary_tests {
                 "listing retains all source properties, relationships and comment history bytes"
             );
         }
+    }
+    #[test]
+    fn reversed_ranges_record_both_endpoints() {
+        let body = format!(
+            "<w:p><w:r><w:t>AA</w:t></w:r><w:commentRangeEnd w:id='7'/><w:r><w:t>BB</w:t></w:r></w:p>{}<w:p><w:r><w:t>CC</w:t></w:r><w:commentRangeStart w:id='7'/><w:r><w:t>DD</w:t></w:r></w:p>",
+            paragraph("middle")
+        );
+        let mut pkg = package(&body);
+        pkg.set_part("word/comments.xml",format!("<w:comments xmlns:w='{}'><w:comment w:id='7' w:author='Source reviewer' w:initials='SR' w:date='2025-02-03T04:05:06Z'><w:p><w:r><w:t>Review</w:t></w:r></w:p></w:comment></w:comments>",W::URI).into_bytes());
+        pkg.add_content_type_override(
+            "/word/comments.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        );
+        pkg.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            "comments.xml",
+        );
+        let bytes = pkg.to_zip().unwrap();
+        let record = &list_comments(&bytes).unwrap()[0];
+        assert_eq!(record.paragraph.as_deref(), Some("p0"));
+        assert_eq!(record.last_paragraph.as_deref(), Some("p2"));
+        assert_eq!(record.anchor_text, "BB\nmiddle\nCC");
+        assert_eq!(record.before, "AA");
+        assert_eq!(record.after, "DD");
     }
     #[test]
     fn latest_thread_selection_preserves_complete_winning_source_records_and_thread_order() {

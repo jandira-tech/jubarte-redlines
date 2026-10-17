@@ -7,10 +7,11 @@
 
 mod common;
 
-use common::docx::{Part, docx, docx_with, para};
+use common::docx::{Part, docx, docx_with, docx_with_sect, para};
 use jubarte::edit::ExistingRevisions;
 use jubarte::edit::for_edit::{Correspondence, ForEditRequest, for_edit};
 use jubarte::inspect::source_sha256;
+use serde_json::{Value, json};
 
 /// The acceptance fixture of the template plan §6: a pending insertion
 /// changes "30" to "45"; the rest of the paragraph is plain text.
@@ -60,11 +61,21 @@ fn pending_insertion_only_blocks_its_changed_span() {
         revision.long_id, "document.w:ins.w:id.7",
         "the revision's native w:id is its long key"
     );
-    assert!(
-        row.blockers
-            .iter()
-            .all(|b| !(b.range[0] < 23 && 23 < b.range[1]) || b.range == ins.range),
-        "nothing else blocks the span around 'is 2%'"
+    // The blockers cover exactly the insertion's span: nothing else in
+    // the paragraph is blocked, on any position.
+    let mut ranges: Vec<[usize; 2]> = row.blockers.iter().map(|b| b.range).collect();
+    ranges.sort_unstable();
+    let mut merged: Vec<[usize; 2]> = Vec::new();
+    for [start, end] in ranges {
+        match merged.last_mut() {
+            Some([_, last_end]) if start <= *last_end => *last_end = (*last_end).max(end),
+            _ => merged.push([start, end]),
+        }
+    }
+    assert_eq!(
+        merged,
+        vec![ins.range],
+        "the union of blocker ranges is exactly the tracked insertion's range"
     );
 
     // Readiness is range-specific: the paragraph is not uneditable, the
@@ -396,4 +407,389 @@ fn decision_flags_do_not_modify_the_source() {
     assert_eq!(result.source_sha256, before);
     // The working basis carries the rejection; the source bytes are intact.
     assert_ne!(result.basis.working_sha256, result.source_sha256);
+}
+
+fn comments_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/comments.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+        xml,
+    }
+}
+
+fn one_comment(id: u32, attrs: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="{id}" {attrs}><w:p><w:r><w:t>note</w:t></w:r></w:p></w:comment></w:comments>"#
+    )
+}
+
+#[test]
+fn cross_story_comment_ranges_label_their_endpoint_paragraphs() {
+    let comment_xml = one_comment(5, r#"w:author="AC" w:date="2026-09-01T00:00:00Z""#);
+    let comments = comments_part(&comment_xml);
+    let header = Part {
+        name: "word/header1.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+        xml: r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>head</w:t></w:r><w:commentRangeEnd w:id="5"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="5"/></w:r></w:p></w:hdr>"#,
+    };
+    let body = r#"<w:p><w:commentRangeStart w:id="5"/><w:r><w:t>covered</w:t></w:r></w:p>"#;
+    let doc = docx_with_sect(
+        body,
+        &[comments, header],
+        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let result = for_edit(&doc, &ForEditRequest::default()).unwrap();
+    let row_of = |story: &str| {
+        result
+            .paragraphs
+            .iter()
+            .find(|r| r.story == story)
+            .unwrap_or_else(|| panic!("a row for the {story} story"))
+    };
+    for row in [row_of("body"), row_of("header1")] {
+        assert!(
+            row.comments.iter().any(|c| c.short_id == "c5"),
+            "the {} endpoint carries the comment its cross-story range anchors",
+            row.story
+        );
+        let value = serde_json::to_value(row).unwrap();
+        assert_eq!(
+            value["comments"][0]["limitation"], "cross_story_range",
+            "the malformed range is labelled, not silent"
+        );
+    }
+    let changed = for_edit(
+        &doc,
+        &ForEditRequest {
+            changed: true,
+            ..ForEditRequest::default()
+        },
+    )
+    .unwrap();
+    let stories: Vec<&str> = changed
+        .paragraphs
+        .iter()
+        .map(|r| r.story.as_str())
+        .collect();
+    assert_eq!(
+        stories,
+        ["body", "header1"],
+        "--changed keeps both endpoints"
+    );
+}
+
+#[test]
+fn unanchored_comments_are_inventoried() {
+    let comment_xml = one_comment(7, r#"w:author="AC" w:date="2026-09-01T00:00:00Z""#);
+    let comments = comments_part(&comment_xml);
+    let doc = docx_with(&para("plain"), &[comments]);
+    let result = for_edit(&doc, &ForEditRequest::default()).unwrap();
+    let value = serde_json::to_value(&result).unwrap();
+    let inventory = value["unanchored_comments"]
+        .as_array()
+        .expect("a document-level inventory of comments with no anchor");
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(inventory[0]["short_id"], "c7");
+    assert_eq!(inventory[0]["long_id"], "comments.w:comment.w:id.7");
+    assert!(
+        result.paragraphs.iter().all(|r| r.comments.is_empty()),
+        "an unanchored comment claims no paragraph"
+    );
+}
+
+#[test]
+fn context_rows_state_their_view_codec_limitations_and_revisions() {
+    let doc = docx(&format!(
+        "{}{}",
+        para("anchor"),
+        r#"<w:p><w:ins w:id="9" w:author="AC" w:date="2026-09-01T00:00:00Z"><w:r><w:t>inserted</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> plain</w:t></w:r><w:r><w:sym w:font="Wingdings" w:char="F0E0"/></w:r></w:p>"#
+    ));
+    let result = for_edit(
+        &doc,
+        &ForEditRequest {
+            find: Some("anchor".to_string()),
+            context: 1,
+            ..ForEditRequest::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.source_context.len(), 1);
+    let context = &result.source_context[0];
+    assert_eq!(context.target.short_id, "p1");
+    assert_eq!(
+        context.value.text.as_deref(),
+        Some("inserted plain\u{FFFC}"),
+        "context text is the final view, exactly as the row would read it"
+    );
+    let value = serde_json::to_value(context).unwrap();
+    assert_eq!(value["text_view"], "final", "the projection is labelled");
+    assert_eq!(
+        value["text_codec"], "unsupported",
+        "a U+FFFC neighbour is no false promise of editability"
+    );
+    let limitations = value["limitations"]
+        .as_array()
+        .expect("the codec limitations reach the context record");
+    assert!(
+        limitations.iter().any(|l| l == "sym"),
+        "limitations: {limitations:?}"
+    );
+    let revisions = value["revisions"]
+        .as_array()
+        .expect("the context row carries its revision marks");
+    assert!(
+        revisions.iter().any(|r| r["target"]["short_id"] == "r9"
+            && r["kind"] == "insertion"
+            && r["basis"] == "original"),
+        "inserted context text is labelled as a pending insertion"
+    );
+}
+
+#[test]
+fn a_fully_deleted_context_neighbour_carries_its_revision_marks() {
+    let doc = docx(&format!(
+        "{}{}",
+        para("kept"),
+        r#"<w:p><w:del w:id="10" w:author="AC" w:date="2026-09-01T00:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"#
+    ));
+    let result = for_edit(
+        &doc,
+        &ForEditRequest {
+            find: Some("kept".to_string()),
+            context: 1,
+            ..ForEditRequest::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.source_context.len(), 1);
+    let context = &result.source_context[0];
+    assert_eq!(context.value.text.as_deref(), Some(""));
+    assert!(context.value.complete);
+    let value = serde_json::to_value(context).unwrap();
+    assert_eq!(value["text_view"], "final");
+    let revisions = value["revisions"]
+        .as_array()
+        .expect("an empty final view still names the deletion that emptied it");
+    assert!(
+        revisions
+            .iter()
+            .any(|r| r["target"]["short_id"] == "r10" && r["kind"] == "deletion"),
+        "the neighbour's emptiness is explained, not silent"
+    );
+}
+
+#[test]
+fn reversed_comment_endpoints_span_their_paragraphs() {
+    let comment_xml = one_comment(5, r#"w:author="AC" w:date="2026-09-01T00:00:00Z""#);
+    let comments = comments_part(&comment_xml);
+    let body = r#"<w:p><w:r><w:t>AA</w:t></w:r><w:commentRangeStart w:id="5"/><w:r><w:t>BB</w:t></w:r></w:p>"#
+        .to_string()
+        + &para("middle")
+        + r#"<w:p><w:r><w:t>CC</w:t></w:r><w:commentRangeEnd w:id="5"/><w:r><w:t>DD</w:t></w:r><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="5"/></w:r></w:p>"#;
+    let doc = docx_with(&body, &[comments]);
+    let result = for_edit(&doc, &ForEditRequest::default()).unwrap();
+    for id in ["p0", "p1", "p2"] {
+        let row = result
+            .paragraphs
+            .iter()
+            .find(|r| r.target.short_id == id)
+            .unwrap();
+        assert!(
+            row.comments.iter().any(|c| c.short_id == "c5"),
+            "{id} carries the comment its reversed range spans"
+        );
+    }
+    let changed = for_edit(
+        &doc,
+        &ForEditRequest {
+            changed: true,
+            ..ForEditRequest::default()
+        },
+    )
+    .unwrap();
+    let ids: Vec<&str> = changed
+        .paragraphs
+        .iter()
+        .map(|r| r.target.short_id.as_str())
+        .collect();
+    assert_eq!(ids, ["p0", "p1", "p2"]);
+}
+
+#[test]
+fn filters_narrow_and_empty_results_name_their_filters() {
+    let doc = docx(&(para("alpha foo") + &para("beta bar") + &para("gamma foo")));
+    // The filters intersect: a paragraph is selected only when every
+    // filter given matches it.
+    let both = for_edit(
+        &doc,
+        &ForEditRequest {
+            select: Some("p0-p2".to_string()),
+            find: Some("foo".to_string()),
+            ..ForEditRequest::default()
+        },
+    )
+    .unwrap();
+    let ids: Vec<&str> = both
+        .paragraphs
+        .iter()
+        .map(|r| r.target.short_id.as_str())
+        .collect();
+    assert_eq!(ids, ["p0", "p2"], "select and find narrow together");
+    let empty = for_edit(
+        &doc,
+        &ForEditRequest {
+            select: Some("p1".to_string()),
+            find: Some("foo".to_string()),
+            ..ForEditRequest::default()
+        },
+    )
+    .unwrap();
+    assert!(empty.paragraphs.is_empty());
+    assert_eq!(empty.coverage.paragraphs_selected, 0);
+    assert!(
+        empty
+            .coverage
+            .omissions
+            .iter()
+            .any(|o| o.contains("ids") && o.contains("find")),
+        "an empty result names the filters applied: {:?}",
+        empty.coverage.omissions
+    );
+}
+
+#[test]
+fn decision_order_does_not_change_the_cursor_basis() {
+    let doc = source();
+    let first = for_edit(
+        &doc,
+        &ForEditRequest {
+            accept: vec!["r7".to_string(), "r8".to_string()],
+            limit: Some(1),
+            ..ForEditRequest::default()
+        },
+    )
+    .unwrap();
+    let cursor = first.next_cursor.clone().expect("page one continues");
+    let second = for_edit(
+        &doc,
+        &ForEditRequest {
+            accept: vec!["r8".to_string(), "r7".to_string()],
+            limit: Some(1),
+            cursor: Some(cursor),
+            ..ForEditRequest::default()
+        },
+    )
+    .expect("decisions are a set: their order is no part of the basis");
+    assert_eq!(second.basis.digest, first.basis.digest);
+    assert_eq!(second.coverage.paragraphs_returned, 1);
+}
+
+fn v2_plan(bytes: &[u8]) -> Value {
+    json!({"schema_version":2, "source":{"sha256":source_sha256(bytes)},
+        "policy":{"track":"on","existing_revisions":"keep","text_view":"final"},
+        "resolve_revisions":{"accept":[],"reject":[]}, "author":"Me","date":"2026-10-17T00:00:00Z",
+        "scope":{"kind":"all"},"operations":[]})
+}
+
+#[test]
+fn accept_keeps_the_source_intact_and_agrees_with_apply() {
+    use jubarte::edit::v2::PlanV2;
+    use jubarte::edit::v2_apply::apply_plan;
+    let doc = source();
+    let before = source_sha256(&doc);
+    for (accept, ids, text) in [
+        (
+            true,
+            json!([
+                {"short_id":"r7","long_id":"document.w:ins.w:id.7"},
+                {"short_id":"r8","long_id":"document.w:del.w:id.8"}
+            ]),
+            "Payment is due within 45 days. Late interest is 2%.",
+        ),
+        (
+            false,
+            json!([
+                {"short_id":"r7","long_id":"document.w:ins.w:id.7"},
+                {"short_id":"r8","long_id":"document.w:del.w:id.8"}
+            ]),
+            "Payment is due within 30 days. Late interest is 2%.",
+        ),
+    ] {
+        let request = if accept {
+            ForEditRequest {
+                accept: vec!["r7".to_string(), "r8".to_string()],
+                ..ForEditRequest::default()
+            }
+        } else {
+            ForEditRequest {
+                reject: vec!["r7".to_string(), "r8".to_string()],
+                ..ForEditRequest::default()
+            }
+        };
+        let result = for_edit(&doc, &request).unwrap();
+        assert_eq!(
+            result.source_sha256, before,
+            "decision flags never modify the source file"
+        );
+        assert_ne!(result.basis.working_sha256, before);
+        let working = result.paragraphs[0]
+            .working
+            .as_ref()
+            .expect("a working view");
+        assert_eq!(working.value.text.as_deref(), Some(text));
+        // The apply half: a rewrite bound to for-edit's before_sha256
+        // applies under the same decisions (read hashes are apply hashes).
+        let mut plan = v2_plan(&doc);
+        plan["resolve_revisions"][if accept { "accept" } else { "reject" }] = ids;
+        plan["operations"] = json!([{
+            "kind": "rewrite",
+            "target": {"short_id": "p0", "long_id": "document.w:p.j:short.p0"},
+            "before_sha256": working.before_sha256.clone().expect("a supported codec"),
+            "text": text
+        }]);
+        apply_plan(&doc, &PlanV2::from_json(&plan.to_string()).unwrap())
+            .unwrap_or_else(|e| panic!("apply must accept for-edit's working basis: {e}"));
+    }
+}
+
+#[test]
+fn by_matches_authors_and_initials_exactly() {
+    let comment_xml = one_comment(
+        5,
+        r#"w:author="Alice Cooper" w:initials="AC" w:date="2026-09-01T00:00:00Z""#,
+    );
+    let comments = comments_part(&comment_xml);
+    let body = r#"<w:p><w:ins w:id="9" w:author="Alice Cooper" w:date="2026-09-01T00:00:00Z"><w:r><w:t>change</w:t></w:r></w:ins></w:p>"#
+        .to_string()
+        + r#"<w:p><w:commentRangeStart w:id="5"/><w:r><w:t>noted</w:t></w:r><w:commentRangeEnd w:id="5"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="5"/></w:r></w:p>"#;
+    let doc = docx_with(&body, &[comments]);
+    let ids = |by: &str| -> Vec<String> {
+        for_edit(
+            &doc,
+            &ForEditRequest {
+                changed: true,
+                by: Some(by.to_string()),
+                ..ForEditRequest::default()
+            },
+        )
+        .unwrap()
+        .paragraphs
+        .iter()
+        .map(|r| r.target.short_id.clone())
+        .collect()
+    };
+    assert_eq!(
+        ids("Alice Cooper"),
+        ["p0", "p1"],
+        "full names match both inventories exactly"
+    );
+    assert_eq!(
+        ids("AC"),
+        ["p1"],
+        "a handle matches a comment's explicit w:initials, never initials derived from a name"
+    );
 }
