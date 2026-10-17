@@ -180,9 +180,10 @@ fn a_comment_anchored_across_runs_highlights_its_whole_range() {
 }
 
 #[test]
-fn a_document_without_tracked_changes_converts_as_before() {
-    // The same output as before tracked changes were rendered, under every
-    // `revisions` choice: nothing is escaped, marked, or dropped.
+fn a_document_without_tracked_changes_escapes_its_literal_markup() {
+    // Under every `revisions` choice the output is the same, with no markup
+    // marked or dropped: text that looks like CriticMarkup is escaped, so a
+    // later convert cannot read it as changes (#519).
     for revisions in [
         TrackChanges::All,
         TrackChanges::Accept,

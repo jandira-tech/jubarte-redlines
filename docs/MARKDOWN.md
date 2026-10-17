@@ -42,7 +42,10 @@ notes and headers.
 (`-o` names another file, `-o draft.pdf` or `-t png` renders it). The
 Markdown is CommonMark with GitHub's tables, strikethrough, task lists and
 footnotes, and a YAML front matter's `title:` and `author:` become the
-document's properties. Its `track_changes: on` (or `off`) sets Word's Track
+document's properties. In a table row an even backslash run before a pipe
+(`\\|`) is escaped backslashes and then the cell separator, as GFM reads
+it; a pipe behind an odd run (`\|`) is a literal pipe in the cell. Its
+`track_changes: on` (or `off`) sets Word's Track
 Changes switch in the output; `--tracking on|off` overrides the key. With
 neither, the output keeps the `--reference-doc`'s switch, else tracking is
 off. Tracked changes the Markdown holds never turn the switch on by
@@ -603,11 +606,26 @@ Text that reads like a field code is escaped with `\{` (`\{PAGE}`), in the
 body and in headers and footers, and text that reads like a mark has its
 delimiter broken (`{\++`); converting back restores both.
 
-Document text that CommonMark would read as markup is escaped in the agent
-view: a paragraph that starts with `# `, `- `, `> ` or `1. ` (also after a
-line break), and `*`, `` ` ``, `\`, `~~`, `==`, `[^`, a tag-like `<` and a
-word-edge `_`, `~` or `^` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes
-read back as the characters. `convert -t md` (ids off) does not escape.
+A code fence has its own rule, because Markdown reads no backslash escape
+there while CriticMarkup still marks tracked changes in code: the delimiter
+itself carries the escape. A delimiter shape with a run of backslashes at
+its break point (`{` + the run + `++`, `++` + the run + `}`, `~` + the run
++ `>`) is written with the run made odd — literal `{++` prints as `{\++`,
+literal `{\++` as `{\\\++` — and reading halves an odd run back
+(`{\++` in a fence is the text `{++`). Every other backslash in a fence is
+text as written, so hand-written `C:\\path`, `\\d+` and LaTeX `\\` reach
+Word byte-identical; a delimiter behind an even run (`{\\++`) is text as
+written too and opens nothing, and a bare delimiter is the change itself,
+never escaped by what precedes it. CommonMark's indented code blocks (four
+spaces or more) hold their text verbatim the same way: nothing opens there
+and no fence sits inside one.
+
+Document text that CommonMark would read as markup is escaped in every
+view, the agent view and `convert --commonmark` alike: a paragraph that
+starts with `# `, `- `, `> ` or `1. ` (also after a line break), and `*`,
+`` ` ``, `\`, `~~`, `==`, `[^`, a tag-like `<` and a word-edge `_`, `~` or
+`^` anywhere (`\# Not a heading`, `\*\*stars\*\*`). The escapes read back
+as the characters.
 
 An `edit` anchor copied out of the view may carry marks that are not
 document text (`# Fees`, `**secret**`, a CriticMarkup note). The literal

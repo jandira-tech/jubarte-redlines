@@ -361,6 +361,28 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Literal CriticMarkup delimiters in a code block stay text.** A
+  `SourceCode` paragraph whose text holds `{++x++}` printed it into its
+  fence as is, and the next convert read it as a tracked change. The views
+  now break such delimiters for the fence, and only there, where Markdown
+  reads no backslash escape: a delimiter shape with a run of backslashes at
+  its break point (`{` + the run + `++`, `++` + the run + `}`, `~` + the
+  run + `>`) is written with the run made odd and read back halved
+  (`{\++` for literal `{++`, `{\\\++` for literal `{\++`), every other
+  backslash staying as written. The text comes back exactly, tracked
+  changes inside a code block still round-trip (their delimiters are never
+  escaped by a backslash before them), and hand-written code such as
+  `C:\\path`, a regex `\\d+` or LaTeX `\\` reaches Word byte-identical
+  instead of losing half its backslashes.
+
+- **`--commonmark` escapes CriticMarkup and Markdown syntax.** A document
+  without tracked changes printed its text as is, so Word text such as
+  `{++a++}`, `\{++a++}`, `- not a list`, `1. not a list`, `# not a
+  heading`, `> not a quote`, `*not em*`, `` `not code` ``, `[not](link)`
+  or `<b>not html</b>` came back as real changes, lists, a heading, a
+  quote, emphasis, code, a link or HTML. The plain conversion now escapes
+  both, as the agent view always did, and round-trips as itself.
+
 - **A header or footer keeps its own text colour, borders and alignment.**
   The view prints a story whose paragraphs carry them paragraph by paragraph
   (`id: header1`, then `p0: {text: …, center, color: "595959", border: bottom
