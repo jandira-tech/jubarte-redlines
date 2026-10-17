@@ -72,13 +72,48 @@ pub(crate) const PLAIN: &str = "\u{E001}";
 
 /// The internal tag of an attribution, agent or plain.
 fn tag(by: Option<&str>) -> Option<&str> {
-    let by = by?;
-    by.strip_prefix(TAG).or_else(|| by.strip_prefix(PLAIN))
+    let by = bare(by?);
+    by.strip_prefix(TAG)
+        .or_else(|| by.strip_prefix(PLAIN))
+        // A note that names the change it sits inside (`3@BO` on `1@AL`)
+        // carries that one after [`ON`]: the tag is the change's own.
+        .map(|tagged| tagged.split_once(ON).map_or(tagged, |(own, _)| own))
+}
+
+/// The change a nested note names after [`ON`], as its tag reads (no
+/// sentinel): the change the note's own sits inside.
+fn outer_of(by: Option<&str>) -> Option<&str> {
+    let by = bare(by?);
+    by.strip_prefix(TAG)
+        .or_else(|| by.strip_prefix(PLAIN))?
+        .split_once(ON)
+        .map(|(_, outer)| outer)
+}
+
+/// The changes a note names sit behind this sentinel after the change's
+/// own tag (`\u{E000}3@BO\u{E002}1@AL`), with each tag's optional
+/// timestamp before it, exactly as [`display`] prints them: `r3 @BO on
+/// r1 @AL`.
+const ON: &str = "\u{E002}";
+
+/// Marks an attribution the container carries (a row's or cell's own
+/// mark, opened around each paragraph it covers) rather than a change on
+/// the content: a sole change under one is not folded into a note, for
+/// the writer rebuilds container marks itself, not as a wrap.
+pub(crate) const CARRIED: &str = "\u{E003}";
+
+/// An attribution without [`CARRIED`].
+fn bare(by: &str) -> &str {
+    by.strip_suffix(CARRIED).unwrap_or(by)
 }
 
 /// The sentinel an attribution's tag sits behind.
 fn sentinel(by: &str) -> &'static str {
-    if by.starts_with(PLAIN) { PLAIN } else { TAG }
+    if bare(by).starts_with(PLAIN) {
+        PLAIN
+    } else {
+        TAG
+    }
 }
 
 /// The tag proper and its optional inline timestamp.
@@ -89,22 +124,28 @@ fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// A note's text: the formatted tag, or the plain attribution.
+/// A note's text: the formatted tag, or the plain attribution. A note
+/// that names the change it sits inside prints ` on ` between the tags.
 fn display(by: &str) -> String {
-    if let Some(tagged) = by.strip_prefix(PLAIN) {
-        return super::agent::format_plain_tag(tagged);
-    }
-    match by.strip_prefix(TAG) {
-        Some(tagged) => {
-            let (t, date) = tag_parts(tagged);
-            let mut out = super::agent::format_tag(t);
-            if let Some(date) = date {
-                out.push(' ');
-                out.push_str(date);
-            }
-            out
+    let by = bare(by);
+    let one = |tagged: &str| {
+        if by.starts_with(PLAIN) {
+            return super::agent::format_plain_tag(tagged);
         }
-        None => by.to_string(),
+        let (t, date) = tag_parts(tagged);
+        let mut out = super::agent::format_tag(t);
+        if let Some(date) = date {
+            out.push(' ');
+            out.push_str(date);
+        }
+        out
+    };
+    let Some(tagged) = by.strip_prefix(PLAIN).or_else(|| by.strip_prefix(TAG)) else {
+        return by.to_string();
+    };
+    match tagged.split_once(ON) {
+        Some((own, outer)) => format!("{} on {}", one(own), one(outer)),
+        None => one(tagged),
     }
 }
 
@@ -114,8 +155,12 @@ fn same_author(a: Option<&str>, b: Option<&str>) -> bool {
     use super::agent::{handle_of, split_tag};
     match (tag(a), tag(b)) {
         (Some(ta), Some(tb)) if a.map(sentinel) == b.map(sentinel) => {
-            let (a, b) = (tag_parts(ta).0, tag_parts(tb).0);
-            handle_of(a) == handle_of(b) && split_tag(a).0 == split_tag(b).0
+            let (own_a, own_b) = (tag_parts(ta).0, tag_parts(tb).0);
+            handle_of(own_a) == handle_of(own_b)
+                && split_tag(own_a).0 == split_tag(own_b).0
+                // A change named as the one another sits inside joins only
+                // with one that names the same change.
+                && outer_of(a) == outer_of(b)
         }
         _ => a == b,
     }
@@ -164,6 +209,12 @@ enum Token {
 enum Node {
     Leaf(Leaf),
     Span(Mark, Option<String>, Vec<Node>),
+    /// A change's pieces around the changes it held, with the outer
+    /// change's attribution: each piece keeps it too. CriticMarkup cannot
+    /// nest a change in a change, so an insertion holding a deletion
+    /// prints `{++a++}…{++b++}`, and the pieces never pair as a
+    /// substitution.
+    Split(Option<String>, Vec<Node>),
 }
 
 impl Node {
@@ -171,7 +222,9 @@ impl Node {
         match self {
             Self::Leaf(Leaf::Comment(_)) => false,
             Self::Leaf(_) => true,
-            Self::Span(_, _, children) => children.iter().any(Self::has_content),
+            Self::Span(_, _, children) | Self::Split(_, children) => {
+                children.iter().any(Self::has_content)
+            }
         }
     }
 }
@@ -326,7 +379,7 @@ impl Critic {
     }
 
     pub(crate) fn into_inline(self) -> Inline {
-        let mut nodes = tidy(tree(self.tokens));
+        let mut nodes = tidy(unnest(tree(self.tokens)));
         if self.inline_end {
             space_into_last_change(&mut nodes);
         }
@@ -407,11 +460,118 @@ fn close_from(root: &mut Vec<Node>, open: &mut Vec<Open>, at: usize) {
     children(root, open).extend(outermost);
 }
 
+/// Splits a change around every change inside it: CriticMarkup cannot nest
+/// one, so `w:ins` holding `w:del` prints `{++a++}…{--x--}…{++b++}` and the
+/// writer puts the marks back one inside the other. Each piece keeps the
+/// outer change's attribution. A change is a span's direct child; inside a
+/// highlight or a comment it may stay.
+fn unnest(nodes: Vec<Node>) -> Vec<Node> {
+    /// `node` is a change, holds one (a comment's scope), or is the pieces
+    /// one split into: anything the outer change must break around.
+    fn is_change(node: &Node) -> bool {
+        match node {
+            Node::Split(..) => true,
+            Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
+            Node::Span(..) => true,
+            _ => false,
+        }
+    }
+    let mut out = Vec::new();
+    for node in nodes {
+        let Node::Span(mark, by, children) = node else {
+            out.push(node);
+            continue;
+        };
+        let children = unnest(children);
+        if matches!(mark, Mark::Insertion | Mark::Deletion) && children.iter().any(is_change) {
+            let outer = by.clone();
+            let mut pieces: Vec<Node> = Vec::new();
+            let mut piece: Vec<Node> = Vec::new();
+            for child in children {
+                if is_change(&child) {
+                    if !piece.is_empty() {
+                        pieces.push(Node::Span(mark, by.clone(), piece));
+                        piece = Vec::new();
+                    }
+                    pieces.push(child);
+                } else {
+                    piece.push(child);
+                }
+            }
+            if !piece.is_empty() {
+                pieces.push(Node::Span(mark, by, piece));
+            }
+            out.push(Node::Split(outer, pieces));
+        } else {
+            out.push(Node::Span(mark, by, children));
+        }
+    }
+    out
+}
+
+/// Names `outer` in the note of the change `node` is, when the split left
+/// that change as the outer's only content: `A` inserted what `B` deleted,
+/// and the note reads `r3 @B on r1 @A`, so the writer nests them again.
+/// Both must be tagged attributions of one view, and the sole change a
+/// change itself, or there is nothing to name.
+fn fold_on(node: &mut Node, outer: Option<&str>) {
+    let Some(outer) = outer else {
+        return;
+    };
+    // A row's or cell's own mark wraps the content the container covers;
+    // the writer rebuilds it there, not as a wrap around the sole change.
+    if outer.ends_with(CARRIED) {
+        return;
+    }
+    let Some(tagged) = outer
+        .strip_prefix(TAG)
+        .or_else(|| outer.strip_prefix(PLAIN))
+    else {
+        return;
+    };
+    // The change may sit in a comment's scope, the only content left.
+    let by = match node {
+        Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
+        Node::Span(Mark::Scope, _, children) => children.iter_mut().find_map(|child| match child {
+            Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
+            _ => None,
+        }),
+        _ => None,
+    };
+    if let Some(by) = by
+        && let Some(own) = by.clone()
+        && sentinel(&own) == sentinel(outer)
+    {
+        *by = Some(format!("{own}{ON}{tagged}"));
+    }
+}
+
 /// Drops empty spans, joins neighbours of the same kind and attribution, and
 /// moves comments out of highlights, at every level.
 fn tidy(nodes: Vec<Node>) -> Vec<Node> {
     let mut out: Vec<Node> = Vec::new();
     for node in nodes {
+        let node = if let Node::Split(outer, pieces) = node {
+            // The pieces tidy as one list: what emptied out of a child change
+            // leaves its neighbours adjacent, and they join again. A change a
+            // child swallowed whole is just the child, and joins as it would
+            // — but the note names the child after ` on `, so the writer
+            // puts it back inside.
+            let mut pieces = tidy(pieces);
+            if !pieces.iter().any(Node::has_content) {
+                lift_comments(pieces, &mut out);
+                continue;
+            } else if pieces.len() == 1 {
+                let mut sole = pieces.remove(0);
+                fold_on(&mut sole, outer.as_deref());
+                sole
+            } else {
+                out.push(Node::Split(outer, pieces));
+                continue;
+            }
+        } else {
+            node
+        };
         let Node::Span(mark, by, nodes) = node else {
             out.push(node);
             continue;
@@ -510,6 +670,9 @@ fn lift_comments(nodes: Vec<Node>, comments: &mut Vec<Node>) -> Vec<Node> {
             Node::Span(mark, by, nodes) => {
                 kept.push(Node::Span(mark, by, lift_comments(nodes, comments)));
             }
+            Node::Split(outer, pieces) => {
+                kept.push(Node::Split(outer, lift_comments(pieces, comments)));
+            }
             leaf => kept.push(leaf),
         }
     }
@@ -561,11 +724,12 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
             // The new text, then the old it replaces: Word's Compare
             // writes a substitution so, and so the writer puts
             // `{~~old~>new~~}` back. A deletion before an insertion stays
-            // two changes, in their order.
+            // two changes, in their order. A change that names the one it
+            // sits inside never pairs: the pair would lose the nest.
             (
                 Node::Span(Mark::Insertion, new_by, new),
                 Some(Node::Span(Mark::Deletion, old_by, old)),
-            ) => {
+            ) if outer_of(new_by.as_deref()).is_none() && outer_of(old_by.as_deref()).is_none() => {
                 *ids += 1;
                 let id = *ids;
                 marker(out, "{~~", id);
@@ -599,6 +763,13 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 render(nodes, out, escaping, ids);
                 marker(out, close, id);
                 attribution(out, by.as_deref(), id);
+            }
+            // The pieces of a split change render side by side, never
+            // paired as a substitution: their order is the document's.
+            (Node::Split(_, pieces), _) => {
+                for piece in pieces {
+                    render(std::slice::from_ref(piece), out, escaping, ids);
+                }
             }
             (Node::Leaf(Leaf::Text { text, marks, link }), _) => {
                 out.push(Piece {
@@ -1202,8 +1373,10 @@ mod tests {
     }
 
     #[test]
-    fn different_kinds_may_nest() {
-        // Inserted by one author, deleted by another: gone either way.
+    fn different_kinds_cannot_nest() {
+        // CriticMarkup cannot nest a change in a change: an insertion that
+        // is only the deletion splits away entirely, each piece keeping its
+        // attribution.
         let nested = [
             ("open", "+"),
             ("open", "-"),
@@ -1211,7 +1384,140 @@ mod tests {
             ("close", "-"),
             ("close", "+"),
         ];
-        assert_eq!(script(&nested), "{++{--x--}++}");
+        assert_eq!(script(&nested), "{--x--}");
+    }
+
+    #[test]
+    fn a_change_inside_a_change_splits_the_outer_one() {
+        let nested = [
+            ("by+", "Ana"),
+            ("t", "one "),
+            ("by-", "Ben"),
+            ("t", "two"),
+            ("close", "-"),
+            ("t", " three"),
+            ("close", "+"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{++one ++}{>>Ana<<}{--two--}{>>Ben<<}{++ three++}{>>Ana<<}"
+        );
+    }
+
+    #[test]
+    fn a_change_that_is_another_s_only_content_names_it_in_the_note() {
+        // `A` inserted what `B` deleted: nothing of the insertion is left
+        // to split around the deletion, so the note names it after ` on `.
+        let nested = [
+            ("by+", "\u{E000}1@AL"),
+            ("by-", "\u{E000}3@BO"),
+            ("t", "x"),
+            ("close", "-"),
+            ("close", "+"),
+        ];
+        assert_eq!(script(&nested), "{--x--}{>>r3 @BO on r1 @AL<<}");
+        // Each tag keeps its own timestamp, as notes print them.
+        let dated = [
+            ("by+", "\u{E000}1@AL 2026-01-01T09:00:00Z"),
+            ("by-", "\u{E000}3@BO 2026-01-02T10:00:00Z"),
+            ("t", "x"),
+            ("close", "-"),
+            ("close", "+"),
+        ];
+        assert_eq!(
+            script(&dated),
+            "{--x--}{>>r3 @BO 2026-01-02T10:00:00Z on r1 @AL 2026-01-01T09:00:00Z<<}"
+        );
+        // The plain view names the same change by its author and date.
+        let plain = [
+            ("by+", "\u{E001}1@Ana%20Lima%20(2026-01-01T09:00:00Z)"),
+            ("by-", "\u{E001}3@Ben%20Ode%20(2026-01-02T10:00:00Z)"),
+            ("t", "x"),
+            ("close", "-"),
+            ("close", "+"),
+        ];
+        assert_eq!(
+            script(&plain),
+            "{--x--}{>>r3 Ben Ode (2026-01-02T10:00:00Z) \
+             on r1 Ana Lima (2026-01-01T09:00:00Z)<<}"
+        );
+    }
+
+    #[test]
+    fn a_note_that_names_no_change_keeps_the_sole_one() {
+        // Untagged changes have no note to name the outer one in, so the
+        // outer stays gone, as joined crossings always were.
+        let nested = [
+            ("by+", "Ana"),
+            ("by-", "Ben"),
+            ("t", "x"),
+            ("close", "-"),
+            ("close", "+"),
+        ];
+        assert_eq!(script(&nested), "{--x--}{>>Ben<<}");
+    }
+
+    #[test]
+    fn an_insertion_inside_a_deletion_splits_it_too() {
+        let nested = [
+            ("by-", "Ben"),
+            ("t", "one "),
+            ("by+", "Ana"),
+            ("t", "two"),
+            ("close", "+"),
+            ("t", " three"),
+            ("close", "-"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{--one --}{>>Ben<<}{++two++}{>>Ana<<}{-- three--}{>>Ben<<}"
+        );
+    }
+
+    #[test]
+    fn split_pieces_do_not_pair_as_a_substitution() {
+        // `one` was inserted before `two`, not instead of it: the pieces
+        // the nested change split keep their order.
+        let nested = [
+            ("by+", "Ana"),
+            ("t", "one "),
+            ("by-", "Ben"),
+            ("t", "two"),
+            ("close", "-"),
+            ("t", " three"),
+            ("close", "+"),
+            ("by-", "Ben"),
+            ("t", "four"),
+            ("close", "-"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{++one ++}{>>Ana<<}{--two--}{>>Ben<<}{++ three++}{>>Ana<<}\
+             {--four--}{>>Ben<<}"
+        );
+    }
+
+    #[test]
+    fn a_nest_inside_a_nest_splits_at_every_level() {
+        // Two changes inside one: the outer change splits around each.
+        let nested = [
+            ("by+", "Ana"),
+            ("t", "a"),
+            ("by-", "Ben"),
+            ("t", "x"),
+            ("close", "-"),
+            ("t", "y"),
+            ("by-", "Cid"),
+            ("t", "z"),
+            ("close", "-"),
+            ("t", "b"),
+            ("close", "+"),
+        ];
+        assert_eq!(
+            script(&nested),
+            "{++a++}{>>Ana<<}{--x--}{>>Ben<<}{++y++}{>>Ana<<}{--z--}\
+             {>>Cid<<}{++b++}{>>Ana<<}"
+        );
     }
 
     #[test]
@@ -1239,7 +1545,8 @@ mod tests {
             ("close", "+"),
         ];
         assert_eq!(script(&split), "{++ab++}");
-        // Joining exposes inner neighbours, which join too.
+        // Joining exposes inner neighbours, which join too. The deletions
+        // around them split away: a change cannot hold a change.
         let deep = [
             ("open", "-"),
             ("open", "+"),
@@ -1252,7 +1559,7 @@ mod tests {
             ("close", "+"),
             ("close", "-"),
         ];
-        assert_eq!(script(&deep), "{--{++ab++}--}");
+        assert_eq!(script(&deep), "{++ab++}");
     }
 
     #[test]

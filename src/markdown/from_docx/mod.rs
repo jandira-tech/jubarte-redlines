@@ -2930,7 +2930,12 @@ impl Writer<'_> {
             }
         }
         for (mark, by) in &self.revisions {
-            inline.open(*mark, by.as_deref());
+            // A change the container carries (a row's or cell's own mark, or
+            // one that goes on past this paragraph) is not the content's:
+            // [`critic::CARRIED`] keeps a sole change under it from naming
+            // it in a note, which the writer would wrap again.
+            let carried = by.as_deref().map(|by| format!("{by}{}", critic::CARRIED));
+            inline.open(*mark, carried.as_deref());
         }
         // A note's label goes inside its tracked changes, before any comment.
         let start = inline.len();
@@ -5089,7 +5094,7 @@ mod tests {
         // rejecting removes the cell, so the text is gone either way.
         assert_eq!(
             md(&docx(&body, &[])),
-            "|Before|After|\n|-|-|\n|{--old--}|{--{++new++}--}|\n"
+            "|Before|After|\n|-|-|\n|{--old--}|{++new++}|\n"
         );
     }
 
@@ -5598,7 +5603,8 @@ mod tests {
             p("", &format!("{}{}{}", ins(&r("one ")), ins(&r("insertion")), r("."))),
             // Empty change elements vanish; an inserted space stays.
             p("", &format!("{}{}{}{}", r("a"), ins(""), del(&r("")), ins(&r(" ")))),
-            // Inserted by one author and deleted by another.
+            // Inserted by one author and deleted by another: the insertion
+            // held nothing else, so the note names it after ` on `.
             p("", &format!("{}{}", r("x"), ins(&del(&dr("y"))))),
             // Moves are an insertion and a deletion; the inserted side then
             // the deleted one read as a substitution.
@@ -5607,7 +5613,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{++{--y--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
+            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{--y--}{>>r91 Ana (2026-01-02T03:04:00Z) on r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
         );
     }
 
@@ -5705,7 +5711,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{++{--n1--}; {--n2--}++}|{++{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}|\n"
+            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{--n1; n2--}|{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}|\n"
         );
     }
 
@@ -5946,7 +5952,7 @@ mod tests {
             md(&docx(&body, &[])),
             "{--A--}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{--\n\n--}{>>r8 Bo Chen (2026-09-29T15:10:00Z)<<}Next\n\n\
              {--B\n\nC--}{>>r7+8 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
-             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{++{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|\n|-|-|\n"
+             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}|\n|-|-|\n"
         );
     }
 
@@ -6274,7 +6280,7 @@ mod tests {
         assert_eq!(
             md(&bytes),
             format!(
-                "Kept[^1]\n\n{{++Added[^2]++}}{added}\n\n{{--Gone[^3]--}}{gone}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{added}\n{{--[^3]: Gone {{++note++}}{}--}}{gone}\n",
+                "Kept[^1]\n\n{{++Added[^2]++}}{added}\n\n{{--Gone[^3]--}}{gone}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{added}\n{{--[^3]: Gone --}}{gone}{{++note++}}{}\n",
                 by("footnotes.r90")
             )
         );
