@@ -2828,6 +2828,10 @@ impl<'o, 'a> Writer<'o, 'a> {
         // A view's cell or note says its paragraph marks by its `<br>`s,
         // in a change or not: a paragraph changed whole keeps its mark.
         let says_marks = self.view && (self.cell.is_some() || self.target.is_some());
+        // A change that names another after ` on ` (a fold) is not the
+        // paragraph's own mark: the writer nests it back inside the one it
+        // names, and the row or cell it sits in keeps its own.
+        let folded = |serial: u32| self.document.wraps.contains_key(&serial);
         let (mark, whole) = match self.change {
             Some((kind, serial)) => (Some((kind, serial)), false),
             None => match self.span_start {
@@ -2836,6 +2840,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         && span.at_start
                         && span.paragraph == self.paragraph_serial
                         && self.closed == Some(span.serial)
+                        && !folded(span.serial)
                         && !self.run_after_close
                         && self.paragraph_runs > 0
                         && !after_break.is_some_and(|after| after) =>
@@ -2851,7 +2856,9 @@ impl<'o, 'a> Writer<'o, 'a> {
         let covered = self.span_start.and_then(|span| {
             let starts = span.paragraph != self.paragraph_serial || span.at_start;
             let ends = self.change == Some((span.kind, span.serial))
-                || (self.closed == Some(span.serial) && !self.run_after_close);
+                || (self.closed == Some(span.serial)
+                    && !folded(span.serial)
+                    && !self.run_after_close);
             (starts && ends).then_some((span.kind, span.serial))
         });
         let whole_in_cell = if whole { mark } else { covered };
@@ -2881,6 +2888,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             (None, Some(span))
                 if span.paragraph != self.paragraph_serial
                     && self.closed == Some(span.serial)
+                    && !folded(span.serial)
                     && !self.run_after_close
                     && self.paragraph_runs > 0
                     && self.cell.is_none() =>
@@ -4538,6 +4546,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.text_boxes();
         self.held_comment_marks();
         let mut body = std::mem::take(&mut self.body);
+        clear_continued_marks(&mut body, &self.document);
         finish_story(&mut body);
         let targets: HashSet<&str> = body
             .iter()
@@ -5147,6 +5156,68 @@ fn renumber_comments(document: &mut Document) {
 }
 
 /// A story's last paragraph mark cannot be inserted or deleted in Word; a
+/// A paragraph changed whole whose change another paragraph continues
+/// keeps no mark of its own: the view names the same ids there — one
+/// revision across paragraphs, Word's one `w:id` on each — and the break
+/// between them is not the revision's.
+fn clear_continued_marks(items: &mut [Item], document: &Document) {
+    // Each serial's paragraphs: the runs that carry it and the marks that
+    // name it.
+    let mut paragraphs: HashMap<u32, HashSet<usize>> = HashMap::new();
+    let mut at = 0usize;
+    for item in items.iter() {
+        match item {
+            Item::Paragraph(paragraph) => {
+                at += 1;
+                if let Some(serial) = paragraph.mark_by {
+                    paragraphs.entry(serial).or_default().insert(at);
+                }
+            }
+            Item::Run(run) => {
+                if let Some((_, serial)) = run.change {
+                    paragraphs.entry(serial).or_default().insert(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    // A wrap's outer change is used wherever the change it holds is.
+    for (inner, (_, outer)) in document.wraps.iter() {
+        if let Some(ats) = paragraphs.get(inner).cloned() {
+            paragraphs.entry(*outer).or_default().extend(ats);
+        }
+    }
+    // Another serial naming any of this one's ids, used in another
+    // paragraph, continues it there.
+    let continued = |serial: u32, at: usize| {
+        document.revision_ids.get(&serial).is_some_and(|ids| {
+            document.revision_ids.iter().any(|(other, named)| {
+                *other != serial
+                    && named.iter().any(|id| ids.contains(id))
+                    && paragraphs
+                        .get(other)
+                        .is_some_and(|serials| serials.iter().any(|p| *p != at))
+            })
+        })
+    };
+    let mut at = 0usize;
+    for item in items.iter_mut() {
+        let Item::Paragraph(paragraph) = item else {
+            continue;
+        };
+        at += 1;
+        if !paragraph.mark_fixed
+            && paragraph
+                .mark_by
+                .is_some_and(|serial| continued(serial, at))
+        {
+            paragraph.mark = None;
+            paragraph.mark_by = None;
+            paragraph.whole = false;
+        }
+    }
+}
+
 /// last paragraph that was added or removed whole puts its change on the
 /// mark before it instead. A story that ends in a table gets the empty
 /// paragraph Word ends one with.
@@ -5262,22 +5333,77 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 }
 
 /// `Name (date)` or `(date)` at the start of `text`: the name, the date and
-/// the text after them.
+/// the text after them. The date is the first parenthesised date after a
+/// name whose own parentheses balance, for an author may hold some
+/// (`Ana (consultant)`) and a comment's text may hold a date; in a fold
+/// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`)
+/// and are read back off the name.
 pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
-    let open = text.find('(')?;
-    let close = open + text[open..].find(')')?;
-    let date = &text[open + 1..close];
-    if !is_date(date) {
-        return None;
+    // The first group that is a date after a name: a later one belongs to
+    // the text after the attribution (`Ana (d1): moved to (d2)`), and an
+    // earlier one that is no date to the name (`Ana (Legal) (d1)`).
+    let mut from = 0;
+    while let Some(open) = text[from..].find('(').map(|at| from + at) {
+        from = open + 1;
+        let Some(close) = text[open..].find(')').map(|at| open + at) else {
+            continue;
+        };
+        let date = &text[open + 1..close];
+        if !is_date(date) {
+            continue;
+        }
+        let name = &text[..open];
+        let author = match name.trim() {
+            "" if name.is_empty() => None,
+            "" => return None,
+            author if name.ends_with(' ') => Some(unescaped(author).to_string()),
+            _ => continue,
+        };
+        // The name's own parentheses, when it holds any, must balance:
+        // `A (b) (date)` names `A (b)`, `Ad)a (date)` names nothing.
+        let mut depth = 0i64;
+        let mut unbalanced = false;
+        for c in text[..open].chars() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    unbalanced |= depth < 0;
+                }
+                _ => {}
+            }
+        }
+        if unbalanced || depth != 0 {
+            return None;
+        }
+        return Some((author, date, &text[close + 1..]));
     }
-    let name = &text[..open];
-    let author = match name.trim() {
-        "" if name.is_empty() => None,
-        "" => return None,
-        author if name.ends_with(' ') && !author.contains(['(', ')']) => Some(author.to_string()),
-        _ => return None,
-    };
-    Some((author, date, &text[close + 1..]))
+    None
+}
+
+/// A name with its percent-spelled parentheses (`%28`, `%29`), backslash
+/// (`%5C`) and `%` (`%25`) read back off, as a fold note writes them;
+/// anything else a `%` starts stays as it is.
+fn unescaped(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        let spelled = match rest.get(at + 1..at + 3) {
+            Some("25") => Some('%'),
+            Some("28") => Some('('),
+            Some("29") => Some(')'),
+            Some("5C") | Some("5c") => Some('\\'),
+            _ => None,
+        };
+        match spelled {
+            Some(c) => out.push(c),
+            None => out.push('%'),
+        }
+        rest = &rest[at + 1 + usize::from(spelled.is_some()) * 2..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `YYYY-MM-DDTHH:MM`, then optional seconds and fraction, then an
@@ -5480,6 +5606,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_comment_body_holding_a_date_keeps_its_author() {
+        // The date is the last parenthesised group of the attribution, not
+        // of the comment's body: `(D2)` in the text names no one.
+        assert_eq!(
+            named("Ana (2026-01-01T00:00:00Z): moved to (2026-02-01T00:00:00Z)"),
+            Some((
+                Some("Ana".to_string()),
+                "2026-01-01T00:00:00Z",
+                ": moved to (2026-02-01T00:00:00Z)"
+            ))
+        );
+        assert_eq!(
+            named("Ana (Legal) (2026-01-01T00:00:00Z): see (2026-02-01T00:00:00Z)"),
+            Some((
+                Some("Ana (Legal)".to_string()),
+                "2026-01-01T00:00:00Z",
+                ": see (2026-02-01T00:00:00Z)"
+            ))
+        );
+    }
+
+    #[test]
     fn even_backslash_runs_move_off_the_pipes_they_shield() {
         // GFM reads an even backslash run before a table row's pipe as
         // escaped backslashes and then the cell separator, but
@@ -5591,12 +5739,22 @@ mod tests {
         for text in [
             "Ana(2026-01-02T03:04Z)",
             " (2026-01-02T03:04Z)",
-            "A (b) (2026-01-02T03:04Z)",
+            "Ad)a (2026-01-02T03:04Z)",
             "Ana (soon)",
             "Ana 2026-01-02T03:04Z",
         ] {
             assert_eq!(named(text), None, "{text}");
         }
+        // The date is the last parenthesised group: an author may hold
+        // parentheses of its own, spelled percent-wise in a fold note.
+        assert_eq!(
+            named("A (b) (2026-01-02T03:04Z)"),
+            Some((Some("A (b)".to_string()), "2026-01-02T03:04Z", ""))
+        );
+        assert_eq!(
+            named("A %28b%29 (2026-01-02T03:04Z)"),
+            Some((Some("A (b)".to_string()), "2026-01-02T03:04Z", ""))
+        );
         assert_eq!(
             attribution("Bo (2026-01-02T03:04:05Z)"),
             Some((Some("Bo".to_string()), "2026-01-02T03:04:05Z"))

@@ -647,6 +647,22 @@ pub(crate) fn text_marked(e: &Element) -> bool {
     })
 }
 
+/// Whether `e` holds a tracked change inside a tracked change: CriticMarkup
+/// cannot nest one, so a container's mark merged into the nest's outer
+/// change would lose it — the text keeps its own marks instead, as the
+/// agent view's marked text does.
+pub(crate) fn nested_marked(e: &Element) -> bool {
+    e.elements().any(|c| {
+        (is_revision(c.local()) && any_revision(c)) || (c.local() != "tbl" && nested_marked(c))
+    })
+}
+
+/// Whether any element below `e` is a tracked change.
+fn any_revision(e: &Element) -> bool {
+    e.elements()
+        .any(|c| is_revision(c.local()) || any_revision(c))
+}
+
 fn shows_text(e: &Element) -> bool {
     shown_children(e).into_iter().any(|c| {
         matches!(c.local(), "t" | "delText" | "instrText" | "delInstrText") || shows_text(c)
@@ -1949,14 +1965,18 @@ pub(crate) fn table_line(
                 let at = format!(" in t{t}.row{r}.cell{c}");
                 let props = tc.child("tcPr");
                 changes_in(props, &at, &mut fmt);
-                for cell_change in props
-                    .into_iter()
-                    .flat_map(|e| e.elements())
-                    .filter(|e| matches!(e.local(), "cellIns" | "cellDel" | "cellMerge"))
-                {
+                // Word's own cell mark is `w:ins`/`w:del` in `w:tcPr` as
+                // often as `w:cellIns`/`w:cellDel` (both read); a merge is
+                // `w:cellMerge`.
+                for cell_change in props.into_iter().flat_map(|e| e.elements()).filter(|e| {
+                    matches!(
+                        e.local(),
+                        "ins" | "del" | "cellIns" | "cellDel" | "cellMerge"
+                    )
+                }) {
                     let tag = format!("{}{at}", format_tag(&tag_of(cell_change, handles)));
                     match cell_change.local() {
-                        "cellDel" => rev_del.push(tag),
+                        "del" | "cellDel" => rev_del.push(tag),
                         "cellMerge" => rev_merge.push(tag),
                         _ => revs.push(tag),
                     }
