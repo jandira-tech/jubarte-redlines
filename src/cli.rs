@@ -144,7 +144,10 @@ pub struct ReadArgs {
     /// paired target ids, exact logical working text with `before_sha256`
     /// and readiness per operation and range. The selection (-p/--select,
     /// --head, --tail, --changed, --by, --find, --regex) resolves on the
-    /// original source and freezes before the decisions settle it.
+    /// original source and freezes before the decisions settle it. Given
+    /// filters narrow together: a paragraph is selected only when every
+    /// filter given matches it, and an empty result names the filters
+    /// applied in `coverage.omissions`.
     #[arg(
         long,
         conflicts_with_all = [
@@ -191,7 +194,9 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub track: Option<TrackArg>,
-    /// --for-edit: literal search of the original final text.
+    /// --for-edit: literal search of the original final text. Combined
+    /// filters narrow: a paragraph must match every filter given, and an
+    /// empty result names the filters applied.
     #[arg(
         long,
         value_name = "TEXT",

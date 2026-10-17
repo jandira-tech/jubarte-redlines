@@ -247,6 +247,11 @@ pub struct CommentRef {
     pub long_id: String,
     /// `open` or `done`.
     pub status: String,
+    /// Why the reference is partial (`cross_story_range`: the range's
+    /// endpoints lie in different stories — malformed input a part-based
+    /// format cannot carry — so each endpoint names the comment).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limitation: Option<String>,
 }
 
 /// Where a source paragraph went under settlement.
@@ -314,6 +319,23 @@ pub struct SourceContextRow {
     /// Original-S final logical text.
     #[serde(flatten)]
     pub value: TextValue,
+    /// `final`, the view `value` was projected under: inserted text in,
+    /// deleted text out. The revision marks below say which parts of the
+    /// text are pending decisions.
+    pub text_view: String,
+    /// Whether the exact text codec represents this paragraph
+    /// (`supported` / `unsupported`): context is never editable, but an
+    /// unrepresentable neighbour must not look like one.
+    pub text_codec: String,
+    /// Constructs present but not represented in `value` (`sym`,
+    /// `field`, `revision`, `drawing`, ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limitations: Vec<String>,
+    /// Original revision marks the neighbour holds (`basis` is always
+    /// `original`): a pending insertion's text or an emptied paragraph
+    /// is labelled, not silent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revisions: Vec<RevisionRef>,
     /// Why the record is context (`context`, `unsupported_text_codec`,
     /// `merged`, `removed`).
     pub reason_codes: Vec<String>,
@@ -348,9 +370,9 @@ pub struct ForEditBasis {
     pub track: String,
     /// The remaining-revision policy.
     pub existing_revisions: String,
-    /// Selected revision decisions, in given order.
+    /// Selected revision decisions, sorted (decisions are a set).
     pub accept: Vec<String>,
-    /// Selected revision decisions, in given order.
+    /// Selected revision decisions, sorted (decisions are a set).
     pub reject: Vec<String>,
     /// SHA-256 of the bytes W was derived from (S after settlement).
     pub working_sha256: String,
@@ -385,6 +407,10 @@ pub struct ForEdit {
     pub settled: ForEditSettled,
     /// The frozen selection, in document order.
     pub paragraphs: Vec<ForEditRow>,
+    /// Original comments with no anchor in any story: marks too,
+    /// labelled at document level instead of silently dropped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unanchored_comments: Vec<CommentRef>,
     /// Read-only original-S observations (`--context` neighbours).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_context: Vec<SourceContextRow>,
@@ -406,16 +432,23 @@ fn existing_revisions_name(policy: ExistingRevisions) -> &'static str {
 
 /// Everything a cursor binds: the source digest, the frozen selection,
 /// the filters that produced it, the codec, and the working policy.
-fn basis_digest(source: &[u8], request: &ForEditRequest, selection: &Selection) -> String {
+fn basis_digest(source_digest: &str, request: &ForEditRequest, selection: &Selection) -> String {
+    // Decisions are a set: order and repetition are no part of the basis.
+    let mut accept = request.accept.clone();
+    let mut reject = request.reject.clone();
+    accept.sort();
+    accept.dedup();
+    reject.sort();
+    reject.dedup();
     let basis = serde_json::json!({
         "v": 1,
-        "source_sha256": source_sha256(source),
+        "source_sha256": source_digest,
         "codec": v2::TEXT_CODEC_VERSION,
         "view": "final",
         "track": request.track,
         "existing_revisions": existing_revisions_name(request.existing_revisions),
-        "accept": request.accept,
-        "reject": request.reject,
+        "accept": accept,
+        "reject": reject,
         "select": request.select,
         "head": request.head,
         "tail": request.tail,
@@ -708,20 +741,17 @@ fn changed_selection(
     let global = |at: (usize, usize)| -> Option<usize> {
         s_loaded.paragraph_story.iter().position(|&pair| pair == at)
     };
-    let author = request.by.as_deref().map(str::trim);
+    // `--by` matches an author exactly, or a comment's explicit
+    // `w:initials` exactly; it never derives a handle from a name.
+    let author = request
+        .by
+        .as_deref()
+        .map(|a| a.trim().strip_prefix('@').unwrap_or(a.trim()));
     let by = |name: Option<&str>, initials: Option<&str>| -> bool {
         let Some(want) = author else {
             return true;
         };
-        let want = want.strip_prefix('@').unwrap_or(want);
-        name.is_some_and(|a| a == want)
-            || initials.is_some_and(|i| i == want)
-            || name.is_some_and(|a| {
-                a.split_whitespace()
-                    .filter_map(|w| w.chars().next())
-                    .collect::<String>()
-                    .eq_ignore_ascii_case(want)
-            })
+        name.is_some_and(|a| a == want) || initials.is_some_and(|i| i == want)
     };
     let mut out = HashSet::new();
     let changes = crate::changes::list_changes(source)
@@ -740,15 +770,8 @@ fn changed_selection(
         if !by(Some(&comment.author), comment.initials.as_deref()) {
             continue;
         }
-        let Some(first) = place(comment.paragraph.as_ref()) else {
-            continue;
-        };
-        let last = place(comment.last_paragraph.as_ref()).unwrap_or(first);
-        if first.0 != last.0 {
-            continue;
-        }
-        for local in first.1..=last.1.max(first.1) {
-            if let Some(g) = global((first.0, local)) {
+        for at in comment_paragraphs(comment, s_loaded).0 {
+            if let Some(g) = global(at) {
                 out.insert(g);
             }
         }
@@ -756,47 +779,80 @@ fn changed_selection(
     Ok(out)
 }
 
-/// The comments intersecting each global S paragraph index.
-fn comments_by_paragraph(
-    comments: &[crate::comments::CommentRecord],
+/// The `(story, local)` paragraphs a comment's range covers: min to max
+/// of its endpoints inside one story, and each endpoint separately when
+/// a malformed range crosses stories (OOXML cannot carry one, so the
+/// comment is attached where its markers are instead of dropped).
+fn comment_paragraphs(
+    comment: &crate::comments::CommentRecord,
     s_loaded: &Loaded,
-) -> HashMap<usize, Vec<CommentRef>> {
-    let story_index: HashMap<String, usize> = s_loaded
+) -> (Vec<(usize, usize)>, bool) {
+    let story_index: HashMap<&str, usize> = s_loaded
         .stories
         .iter()
         .enumerate()
-        .map(|(i, s)| (s.id.clone(), i))
+        .map(|(i, s)| (s.id.as_str(), i))
         .collect();
     let place = |id: Option<&String>| -> Option<(usize, usize)> {
         let (story, local) = crate::ids::paragraph_place(id?)?;
-        Some((*story_index.get(&story)?, local))
+        Some((*story_index.get(story.as_str())?, local))
     };
+    let Some(first) = place(comment.paragraph.as_ref()) else {
+        return (Vec::new(), false);
+    };
+    match comment.last_paragraph.as_ref() {
+        None => (vec![first], false),
+        Some(_) => match place(comment.last_paragraph.as_ref()) {
+            None => (vec![first], true),
+            Some(l) if l.0 == first.0 => {
+                let (lo, hi) = (first.1.min(l.1), first.1.max(l.1));
+                ((lo..=hi).map(|local| (first.0, local)).collect(), false)
+            }
+            Some(l) => (vec![first, l], true),
+        },
+    }
+}
+
+/// The comment reference of `comment`.
+fn comment_ref(comment: &crate::comments::CommentRecord) -> CommentRef {
+    CommentRef {
+        short_id: format!("c{}", comment.id),
+        long_id: format!("comments.w:comment.w:id.{}", comment.id),
+        status: if comment.done {
+            "done".to_string()
+        } else {
+            "open".to_string()
+        },
+        limitation: None,
+    }
+}
+
+/// The comments intersecting each global S paragraph index, and the
+/// comments no paragraph holds (no anchor in any story).
+fn comments_by_paragraph(
+    comments: &[crate::comments::CommentRecord],
+    s_loaded: &Loaded,
+) -> (HashMap<usize, Vec<CommentRef>>, Vec<CommentRef>) {
     let global = |at: (usize, usize)| s_loaded.paragraph_story.iter().position(|&p| p == at);
     let mut out: HashMap<usize, Vec<CommentRef>> = HashMap::new();
+    let mut unanchored = Vec::new();
     for comment in comments {
-        let Some(first) = place(comment.paragraph.as_ref()) else {
-            continue;
-        };
-        let last = place(comment.last_paragraph.as_ref()).unwrap_or(first);
-        if first.0 != last.0 {
+        let (paragraphs, cross_story) = comment_paragraphs(comment, s_loaded);
+        if paragraphs.is_empty() {
+            unanchored.push(comment_ref(comment));
             continue;
         }
-        let reference = CommentRef {
-            short_id: format!("c{}", comment.id),
-            long_id: format!("comments.w:comment.w:id.{}", comment.id),
-            status: if comment.done {
-                "done".to_string()
-            } else {
-                "open".to_string()
-            },
-        };
-        for local in first.1..=last.1.max(first.1) {
-            if let Some(g) = global((first.0, local)) {
+        let mut reference = comment_ref(comment);
+        if cross_story {
+            reference.limitation = Some("cross_story_range".to_string());
+        }
+        for at in paragraphs {
+            if let Some(g) = global(at) {
                 out.entry(g).or_default().push(reference.clone());
             }
         }
     }
-    out
+    (out, unanchored)
 }
 
 /// Per-story usable native `w14:paraId` keys of S, for the long IDs:
@@ -1504,13 +1560,26 @@ fn context_of(
         let story_id = s_loaded.stories[story].id.as_str();
         let part = s_loaded.stories[story].part.as_str();
         let short_id = crate::ids::paragraph_id(story_id, l);
-        let text = project_paragraph(&s_opened.dom, node).text;
-        let value = TextValue::bounded(&text, *budget);
+        let projection = project_paragraph(&s_opened.dom, node);
+        let text_codec = match v2::logical_text(&s_opened.dom, node) {
+            Ok(_) => "supported",
+            Err(_) => "unsupported",
+        };
+        let (_, mut revisions, mark_revisions) = obstacles(&s_opened.dom, node, story_id, part);
+        revisions.extend(mark_revisions);
+        for reference in &mut revisions {
+            reference.basis = "original".to_string();
+        }
+        let value = TextValue::bounded(&projection.text, *budget);
         *budget = budget.saturating_sub(value.chars());
         out.push(SourceContextRow {
             kind: "paragraph".to_string(),
             target: native.pair(&s_opened.dom, story, part, &short_id, node),
             value,
+            text_view: "final".to_string(),
+            text_codec: text_codec.to_string(),
+            limitations: projection.limitations.into_iter().collect(),
+            revisions,
             reason_codes: vec!["context".to_string()],
         });
     }
@@ -1534,10 +1603,11 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
     if request.by.is_some() && !request.changed {
         return Err(super::err("USAGE", None, "--by needs --changed"));
     }
+    let source_digest = source_sha256(source);
     let probe = Opened::open(source).map_err(super::open_error)?;
     let plan = EditPlan {
         schema_version: crate::inspect::SCHEMA_VERSION,
-        source_sha256: Some(source_sha256(source)),
+        source_sha256: Some(source_digest.clone()),
         author: "jubarte read --for-edit".to_string(),
         date: None,
         initials: None,
@@ -1587,7 +1657,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
 
     // The frozen selection, resolved on S before anything settles.
     let selection = Selection::build(request, &s_opened, &s_loaded, source)?;
-    let basis_digest = basis_digest(source, request, &selection);
+    let basis_digest = basis_digest(&source_digest, request, &selection);
     let offset = match &request.cursor {
         Some(token) => cursor_offset(token, &basis_digest)?,
         None => 0,
@@ -1603,7 +1673,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
     // Comments of S, for references and the --changed/--by selection.
     let comments = crate::comments::list_comments(source)
         .map_err(|e| super::err(e.code(), None, e.to_string()))?;
-    let comments = comments_by_paragraph(&comments, &s_loaded);
+    let (comments, unanchored_comments) = comments_by_paragraph(&comments, &s_loaded);
 
     // Pagination over the frozen selection.
     let limit = if request.all {
@@ -1664,6 +1734,28 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
             break;
         }
     }
+    if selection.selected.is_empty() {
+        let filters: Vec<&str> = [
+            request.select.is_some().then_some("ids"),
+            request.head.is_some().then_some("ids"),
+            request.tail.is_some().then_some("ids"),
+            request.find.is_some().then_some("find"),
+            request.regex.is_some().then_some("regex"),
+            request.changed.then_some("changed"),
+            request.by.is_some().then_some("by"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !filters.is_empty() {
+            // Filters narrow to a conjunction: an empty result names
+            // them so a miss is not mistaken for a refusal.
+            omissions.push(format!(
+                "no paragraphs match every filter given: {}",
+                filters.join(", ")
+            ));
+        }
+    }
     let next_cursor = (next < selection.selected.len()).then(|| cursor_token(&basis_digest, next));
     if next_cursor.is_some() {
         truncated = true;
@@ -1674,9 +1766,15 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         ));
     }
 
+    let mut accept = request.accept.clone();
+    let mut reject = request.reject.clone();
+    accept.sort();
+    accept.dedup();
+    reject.sort();
+    reject.dedup();
     Ok(ForEdit {
         schema: "jubarte-read-for-edit-v1".to_string(),
-        source_sha256: source_sha256(source),
+        source_sha256: source_digest,
         basis: ForEditBasis {
             text_view: "final".to_string(),
             text_codec_version: v2::TEXT_CODEC_VERSION,
@@ -1686,8 +1784,8 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
                 "off".to_string()
             },
             existing_revisions: existing_revisions_name(request.existing_revisions).to_string(),
-            accept: request.accept.clone(),
-            reject: request.reject.clone(),
+            accept,
+            reject,
             working_sha256: source_sha256(&base),
             digest: basis_digest,
         },
@@ -1705,6 +1803,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
             omissions,
         },
         paragraphs: rows,
+        unanchored_comments,
         source_context: context_rows,
         next_cursor,
     })
