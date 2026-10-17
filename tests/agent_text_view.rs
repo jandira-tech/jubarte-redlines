@@ -961,9 +961,10 @@ fn a_styles_only_author_gets_a_handle() {
     assert!(!out.contains("@??"), "{out}");
 }
 
-/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in a
-/// text box with no text to tag, or in Word's Fallback copy with no Choice
-/// twin) is named on the header's `unplaced:` line, by paragraph.
+/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in
+/// Word's Fallback copy with no Choice twin, or inside a drawing the view
+/// carries whole as a `drawing:` payload, whose atomic token no mark can
+/// name) is named on the header's `unplaced:` line, by paragraph.
 #[test]
 fn changes_printed_nowhere_else_are_unplaced() {
     let body = format!(
@@ -1007,11 +1008,14 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .unwrap_or_else(|| panic!("no unplaced line in {out}"));
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
     assert!(unplaced.contains("r21 @AC in p0"), "{out}");
-    assert!(!unplaced.contains("r20"), "{out}");
+    // Since 54621454 the whole mc:AlternateContent is one atomic payload,
+    // so even the Choice branch's own insertion (whose text the view once
+    // extracted as body text) prints in no mark: it is named here too.
+    assert!(unplaced.contains("r20 @AC in p0"), "{out}");
     // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
     assert!(unplaced.contains(r#""r22 @?? in p0""#), "{out}");
     let yaml = header_yaml(&out);
-    assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(3), "{out}");
+    assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(4), "{out}");
     for view in [TrackChanges::Accept, TrackChanges::Reject] {
         assert!(
             !agent_with(&bytes, view, true).contains("unplaced:"),
