@@ -155,14 +155,17 @@ fn reject_rejoins_adjacent_tables_word_split() {
     assert_eq!(xml.matches("<w:tblPrEx><w:tblBorders>").count(), 2, "{xml}");
 }
 
-fn accept_table_merge_row(row: &str) -> (Dom, NodeId) {
-    let second = table(BORDERS, "", &["D"], false);
+fn accept_table_merge(name: &str, first: &str, second: &str) -> (Dom, Vec<NodeId>) {
     let body = format!(
-        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tblPrEx><w:tblW w:type="dxa" w:w="3000"/></w:tblPrEx><w:trPr><w:cantSplit/></w:trPr>{row}</w:tr></w:tbl>
-<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr></w:p>{second}<w:p/>"#
+        r#"{first}<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr></w:p>{second}<w:p/>"#
     );
     let accepted = accept_revisions(&docx(&body)).unwrap();
     assert_word_valid_package(&accepted);
+    if let Some(dir) = std::env::var_os("JUBARTE_DUMP_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.docx")), &accepted).unwrap();
+    }
     let xml = part_string(&accepted, "word/document.xml").unwrap();
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
@@ -171,29 +174,77 @@ fn accept_table_merge_row(row: &str) -> (Dom, NodeId) {
     assert_eq!(tables.len(), 1, "{xml}");
     let rows = dom.elements(tables[0], Some(&W::tr()));
     assert_eq!(rows.len(), 2, "{xml}");
+    (dom, rows)
+}
+
+fn merge_table(grid: &[i64], properties: &str, row: &str) -> String {
+    let columns: String = grid
+        .iter()
+        .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+        .collect();
+    format!(
+        "<w:tbl><w:tblPr>{properties}</w:tblPr><w:tblGrid>{columns}</w:tblGrid><w:tr>{row}</w:tr></w:tbl>"
+    )
+}
+
+fn accept_table_merge_row(name: &str, row: &str) -> (Dom, NodeId) {
+    let first = merge_table(
+        &[1000, 1000, 1000],
+        "",
+        &format!(
+            r#"<w:tblPrEx><w:tblW w:type="dxa" w:w="3000"/></w:tblPrEx><w:trPr><w:cantSplit/></w:trPr>{row}"#
+        ),
+    );
+    let second = table(BORDERS, "", &["D"], false);
+    let (dom, rows) = accept_table_merge(name, &first, &second);
     (dom, rows[0])
 }
 
-fn merge_cell(text: &str) -> String {
+fn merge_cell_width(text: &str, width: i64) -> String {
     format!(
-        r#"<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="1000"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        r#"<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="{width}"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
     )
+}
+
+fn merge_cell(text: &str) -> String {
+    merge_cell_width(text, 1000)
+}
+
+fn cell_spans(dom: &Dom, row: NodeId) -> Vec<i64> {
+    dom.descendants(row, Some(&W::tc()))
+        .into_iter()
+        .map(|tc| {
+            dom.element(tc, &W::tc_pr())
+                .and_then(|pr| dom.element(pr, &W::grid_span()))
+                .and_then(|span| dom.attribute(span, &W::val()))
+                .map(|v| v.parse().unwrap())
+                .unwrap_or(1)
+        })
+        .collect()
 }
 
 #[test]
 fn accept_table_merge_keeps_wrapped_cells_in_order() {
-    for middle in [
-        format!(
-            "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
-            merge_cell("B")
+    for (wrapper, middle) in [
+        (
+            "sdt",
+            format!(
+                "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
+                merge_cell("B")
+            ),
         ),
-        format!(
-            r#"<w:customXml w:element="cell" w:uri="urn:test">{}</w:customXml>"#,
-            merge_cell("B")
+        (
+            "customXml",
+            format!(
+                r#"<w:customXml w:element="cell" w:uri="urn:test">{}</w:customXml>"#,
+                merge_cell("B")
+            ),
         ),
     ] {
-        let (dom, row) =
-            accept_table_merge_row(&format!("{}{middle}{}", merge_cell("A"), merge_cell("C")));
+        let (dom, row) = accept_table_merge_row(
+            &format!("order-{wrapper}"),
+            &format!("{}{middle}{}", merge_cell("A"), merge_cell("C")),
+        );
         let cells: Vec<_> = dom
             .descendants(row, Some(&W::tc()))
             .into_iter()
@@ -203,17 +254,26 @@ fn accept_table_merge_keeps_wrapped_cells_in_order() {
         let children = dom.elements(row, None);
         assert_eq!(dom.name(children[0]), Some(W::name("tblPrEx")));
         assert_eq!(dom.name(children[1]), Some(W::tr_pr()));
+        assert_eq!(dom.name(children[2]), Some(W::tc()));
+        assert_eq!(dom.name(children[3]), Some(W::name(wrapper)));
+        let wrapped = dom.descendants(children[3], Some(&W::tc()));
+        assert_eq!(wrapped.len(), 1);
+        assert_eq!(dom.value(wrapped[0]), "B");
+        assert_eq!(dom.name(children[4]), Some(W::tc()));
     }
 }
 
 #[test]
 fn accept_table_merge_keeps_row_bookmarks_between_cells() {
-    let (dom, row) = accept_table_merge_row(&format!(
-        r#"{}<w:bookmarkStart w:id="0" w:name="between"/>{}<w:bookmarkEnd w:id="0"/>{}"#,
-        merge_cell("A"),
-        merge_cell("B"),
-        merge_cell("C")
-    ));
+    let (dom, row) = accept_table_merge_row(
+        "order-bookmarks",
+        &format!(
+            r#"{}<w:bookmarkStart w:id="0" w:name="between"/>{}<w:bookmarkEnd w:id="0"/>{}"#,
+            merge_cell("A"),
+            merge_cell("B"),
+            merge_cell("C")
+        ),
+    );
     let children: Vec<_> = dom
         .elements(row, None)
         .into_iter()
@@ -230,6 +290,129 @@ fn accept_table_merge_keeps_row_bookmarks_between_cells() {
     ]
     .map(|(name, text)| (name.to_string(), text.to_string()));
     assert_eq!(children, expected);
+}
+
+#[test]
+fn accept_table_merge_respans_wrapped_cell() {
+    for (wrapper, row) in [
+        (
+            "sdt",
+            format!(
+                "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
+                merge_cell_width("B", 2000)
+            ),
+        ),
+        (
+            "customXml",
+            format!(
+                r#"<w:customXml w:element="cell" w:uri="urn:test">{}</w:customXml>"#,
+                merge_cell_width("B", 2000)
+            ),
+        ),
+    ] {
+        let first = merge_table(&[2000], "", &format!("<w:tblPrEx/><w:trPr/>{row}"));
+        let second = merge_table(&[500, 500, 1000], "", &merge_cell_width("D", 500));
+        let (dom, rows) = accept_table_merge(&format!("respan-{wrapper}"), &first, &second);
+        let children = dom.elements(rows[0], None);
+        assert_eq!(dom.name(children[2]), Some(W::name(wrapper)));
+        assert_eq!(dom.value(children[2]), "B");
+        assert_eq!(dom.descendants(children[2], Some(&W::tc())).len(), 1);
+        // Boundaries 0, 500, 1000, 2000: the wrapped cell covers all three columns.
+        assert_eq!(cell_spans(&dom, rows[0]), [3], "{wrapper}");
+    }
+}
+
+#[test]
+fn accept_table_merge_respans_several_sdt_cells() {
+    let row = format!(
+        "<w:sdt><w:sdtPr/><w:sdtContent>{}{}</w:sdtContent></w:sdt>{}",
+        merge_cell_width("A", 1000),
+        merge_cell_width("B", 500),
+        merge_cell_width("C", 500)
+    );
+    let first = merge_table(&[1000, 500, 500], "", &row);
+    let second = merge_table(&[500, 500, 500, 500], "", &merge_cell_width("D", 500));
+    let (dom, rows) = accept_table_merge("several-sdt-cells", &first, &second);
+    let children = dom.elements(rows[0], None);
+    assert_eq!(dom.name(children[0]), Some(W::name("sdt")));
+    let content = dom.element(children[0], &W::name("sdtContent")).unwrap();
+    let cells = dom.elements(content, Some(&W::tc()));
+    assert_eq!(
+        cells.iter().map(|&c| dom.value(c)).collect::<Vec<_>>(),
+        ["A", "B"]
+    );
+    assert_eq!(dom.value(children[1]), "C");
+    // Boundaries 0, 500, 1000, 1500, 2000; cells end at 1000, 1500, 2000.
+    assert_eq!(cell_spans(&dom, rows[0]), [2, 1, 1]);
+}
+
+#[test]
+fn accept_table_merge_respans_nested_wrapped_cell_and_following_cell() {
+    for depth in [1, 3] {
+        let mut wrapped = format!(
+            r#"<w:customXml w:element="cell" w:uri="urn:test">{}</w:customXml>"#,
+            merge_cell("B")
+        );
+        for _ in 0..depth {
+            wrapped = format!("<w:sdt><w:sdtPr/><w:sdtContent>{wrapped}</w:sdtContent></w:sdt>");
+        }
+        let first = merge_table(&[1000, 1000], "", &format!("{wrapped}{}", merge_cell("C")));
+        let second = merge_table(&[500, 500, 1000], "", &merge_cell_width("D", 500));
+        let (dom, rows) = accept_table_merge(&format!("nested-sdt-{depth}"), &first, &second);
+        let children = dom.elements(rows[0], None);
+        assert_eq!(dom.name(children[0]), Some(W::name("sdt")));
+        assert_eq!(
+            dom.descendants(children[0], Some(&W::name("sdt"))).len(),
+            depth - 1
+        );
+        let custom = dom.descendants(children[0], Some(&W::name("customXml")));
+        assert_eq!(custom.len(), 1);
+        assert_eq!(dom.value(dom.element(custom[0], &W::tc()).unwrap()), "B");
+        assert_eq!(dom.name(children[1]), Some(W::tc()));
+        assert_eq!(dom.value(children[1]), "C");
+        // Boundaries 0, 500, 1000, 2000: B spans two columns, C spans the last.
+        let spans = cell_spans(&dom, rows[0]);
+        assert_eq!(spans[1], 1, "following direct cell, depth {depth}");
+        assert_eq!(spans[0], 2, "wrapped cell, depth {depth}");
+    }
+}
+
+#[test]
+fn accept_table_merge_keeps_later_member_properties_and_wrapped_cell() {
+    let first = merge_table(&[500, 500, 1000], "", &merge_cell_width("A", 500));
+    let row = format!(
+        r#"<w:tblPrEx><w:tblW w:type="dxa" w:w="2000"/></w:tblPrEx><w:trPr><w:cantSplit/></w:trPr><w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt><w:bookmarkStart w:id="0" w:name="later"/>{}<w:bookmarkEnd w:id="0"/>"#,
+        merge_cell("B"),
+        merge_cell("C")
+    );
+    let second = merge_table(&[1000, 1000], BORDERS, &row);
+    let (dom, rows) = accept_table_merge("later-member", &first, &second);
+    let children = dom.elements(rows[1], None);
+    let names: Vec<_> = children
+        .iter()
+        .map(|&c| dom.name(c).unwrap().local_name().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "tblPrEx",
+            "trPr",
+            "sdt",
+            "bookmarkStart",
+            "tc",
+            "bookmarkEnd"
+        ]
+    );
+    assert_eq!(dom.elements(rows[1], Some(&W::name("tblPrEx"))).len(), 1);
+    assert!(dom.element(children[0], &W::name("tblW")).is_some());
+    assert!(dom.element(children[0], &W::name("tblBorders")).is_some());
+    assert!(dom.element(children[1], &W::name("cantSplit")).is_some());
+    assert_eq!(
+        dom.value(dom.descendants(children[2], Some(&W::tc()))[0]),
+        "B"
+    );
+    assert_eq!(dom.value(children[4]), "C");
+    assert_eq!(cell_spans(&dom, rows[1]), [2, 1]);
 }
 
 /// R8's boundary: tables of different styles stay two tables (Word's own

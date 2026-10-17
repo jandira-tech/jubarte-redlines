@@ -2777,6 +2777,22 @@ fn row_tbl_pr_ex(dom: &mut Dom, tr: NodeId, own: &[NodeId]) -> NodeId {
     ex
 }
 
+/// Cells in row order, through cell wrappers but not into nested tables.
+fn row_cells(dom: &Dom, row: NodeId) -> Vec<NodeId> {
+    let mut cells = Vec::new();
+    for child in dom.elements(row, None) {
+        if dom.name(child) == Some(W::tc()) {
+            cells.push(child);
+        } else if dom.name(child) == Some(W::name("sdt"))
+            || dom.name(child) == Some(W::name("sdtContent"))
+            || dom.name(child) == Some(W::name("customXml"))
+        {
+            cells.extend(row_cells(dom, child));
+        }
+    }
+    cells
+}
+
 /// A.8 — `FixWidths` (:1484): clone the table and rewrite each `w:tcW`'s
 /// `w:w` to the sum of the grid columns its cell spans (per the ORIGINAL
 /// table's `tblGrid`). FAITHFUL: cells without a `tcW` do not advance the
@@ -2795,7 +2811,7 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
     let new_tbl = dom.clone_subtree(tbl);
     for tr in dom.elements(new_tbl, Some(&W::tr())) {
         let mut last_used: i64 = -1;
-        for tc in dom.elements(tr, Some(&W::tc())) {
+        for tc in row_cells(dom, tr) {
             // Singular tcPr / tcW / gridSpan — avoid multi-Vec flat_map scans.
             let tc_w = dom
                 .element(tc, &W::tc_pr())
@@ -3070,47 +3086,30 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                         dom.add(new_row, c);
                     }
                 }
-                for tc in dom.elements(tr, None) {
-                    if dom.name(tc) == Some(W::name("tblPrEx")) || dom.name(tc) == Some(W::tr_pr())
+                for child in dom.elements(tr, None) {
+                    if dom.name(child) == Some(W::name("tblPrEx"))
+                        || dom.name(child) == Some(W::tr_pr())
                     {
                         continue;
                     }
-                    if dom.name(tc) != Some(W::tc()) {
-                        let c = dom.clone_subtree(tc);
-                        dom.add(new_row, c);
-                        continue;
-                    }
+                    let c = dom.clone_subtree(child);
+                    dom.add(new_row, c);
+                }
+                let mut width_to_left = 0i64;
+                for tc in row_cells(dom, new_row) {
                     let w: Option<i64> = dom
                         .element(tc, &W::tc_pr())
                         .and_then(|p| dom.element(p, &W::name("tcW")))
                         .and_then(|t| dom.attribute(t, &W::name("w")))
                         .and_then(|v| v.parse().ok());
-                    let Some(w) = w else {
-                        let c = dom.clone_subtree(tc);
-                        dom.add(new_row, c);
-                        continue;
-                    };
-                    let mut width_to_left = 0i64;
-                    for btc in dom.elements(tr, Some(&W::tc())) {
-                        if btc == tc {
-                            break;
-                        }
-                        width_to_left += dom
-                            .element(btc, &W::tc_pr())
-                            .and_then(|p| dom.element(p, &W::name("tcW")))
-                            .and_then(|t| dom.attribute(t, &W::name("w")))
-                            .and_then(|v| v.parse::<i64>().ok())
-                            .unwrap_or(0);
-                    }
-                    // rolled_pairs = [0] ++ rolled; start = first >= width_to_left
+                    let Some(w) = w else { continue };
+                    let cell_start = width_to_left;
+                    width_to_left += w;
+                    // rolled_pairs = [0] ++ rolled; start = first >= cell_start
                     let rolled_pairs: Vec<i64> =
                         std::iter::once(0).chain(rolled.iter().copied()).collect();
-                    let start = rolled_pairs.iter().position(|&gv| gv >= width_to_left);
-                    let Some(start_idx) = start else {
-                        let c = dom.clone_subtree(tc);
-                        dom.add(new_row, c);
-                        continue;
-                    };
+                    let start = rolled_pairs.iter().position(|&gv| gv >= cell_start);
+                    let Some(start_idx) = start else { continue };
                     let start_value = rolled_pairs[start_idx];
                     let grids_required = rolled_pairs[start_idx..]
                         .iter()
@@ -3148,7 +3147,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                         let c = dom.clone_subtree(e);
                         dom.add(new_cell, c);
                     }
-                    dom.add(new_row, new_cell);
+                    dom.replace_with(tc, &[new_cell]);
                 }
                 dom.add(new_table, new_row);
             }
