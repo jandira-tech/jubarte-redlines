@@ -1009,14 +1009,18 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .unwrap_or_else(|| panic!("no unplaced line in {out}"));
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
     assert!(unplaced.contains("r21 @AC in p0"), "{out}");
-    // Since 54621454 the whole mc:AlternateContent is one atomic payload,
-    // so even the Choice branch's own insertion (whose text the view once
-    // extracted as body text) prints in no mark: it is named here too.
-    assert!(unplaced.contains("r20 @AC in p0"), "{out}");
+    // The shown branch's text box prints its content as comment lines
+    // beside the drawing, so the Choice branch's own insertion is placed
+    // there (`<!-- Box{++Choice++}{>>r20 @AC<<} -->`), not unplaced.
+    assert!(
+        out.contains("<!-- Box{++Choice++}{>>r20 @AC<<} -->"),
+        "{out}"
+    );
+    assert!(!unplaced.contains("r20"), "{out}");
     // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
     assert!(unplaced.contains(r#""del r22 @?? in p0""#), "{out}");
     let yaml = header_yaml(&out);
-    assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(4), "{out}");
+    assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(3), "{out}");
     for view in [TrackChanges::Accept, TrackChanges::Reject] {
         assert!(
             !agent_with(&bytes, view, true).contains("unplaced:"),
@@ -4160,12 +4164,16 @@ fn header_counts_a_text_box_revision_once() {
     // One shape, not one per branch: the whole AlternateContent is a
     // single payload token, and the revision it holds is named once.
     assert_eq!(view.matches("![][d1]").count(), 1, "{view}");
+    // The shown branch's box prints once, as comment lines beside the
+    // drawing, never the Fallback copy: its revision is placed there.
+    assert_eq!(view.matches("{++boxed++}").count(), 1, "{view}");
     let lines = header_lines(&view);
-    let unplaced = lines
-        .iter()
-        .find(|l| l.starts_with("unplaced: "))
-        .unwrap_or_else(|| panic!("no unplaced line in {view}"));
-    assert_eq!(unplaced.matches("r7 @AC").count(), 1, "{view}");
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("unplaced: ") && l.contains("r7")),
+        "{view}"
+    );
     assert!(
         lines.iter().any(|l| l.starts_with("revisions: 1 ")),
         "{lines:?}"
@@ -5561,33 +5569,43 @@ fn pr392_alternate_content_carries_one_payload_and_names_every_listed_author() {
         r#"<mc:Fallback><w:pict><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:pict></mc:Fallback>"#,
         ins(2, "Bob Day", "Fallback")
     );
-    for (branches, handle, author, unplaced) in [
+    for (branches, kept, absent, handle, author, unplaced) in [
         (
             format!("{choice}{fallback}"),
+            "Chosen",
+            "Fallback",
             "AC",
             "Ann Counsel",
-            vec!["r1 @AC in p0", "r2 @BD in p0"],
+            vec!["r2 @BD in p0"],
         ),
-        (fallback, "BD", "Bob Day", vec!["r2 @BD in p0"]),
+        (fallback, "Fallback", "Chosen", "BD", "Bob Day", vec![]),
     ] {
         let bytes = docx(&format!(
             r#"<w:p>{}<w:r><mc:AlternateContent>{branches}</mc:AlternateContent></w:r></w:p>"#,
             run("Host")
         ));
         let view = agent(&bytes);
-        // One payload for the whole element — not one token per branch —
-        // and no branch's interior text prints as body text.
+        // One payload for the whole element, not one token per branch; the
+        // branch Word shows prints its box once, as comment lines beside
+        // the drawing, and the other branch's text never prints.
         assert_eq!(body(&view).matches("![][d1]").count(), 1, "{view}");
-        assert!(!body(&view).contains("Chosen"), "{view}");
-        assert!(!body(&view).contains("Fallback"), "{view}");
+        assert_eq!(
+            body(&view).matches(&format!("{{++{kept}++}}")).count(),
+            1,
+            "{view}"
+        );
+        assert!(!body(&view).contains(absent), "{view}");
+        // The hidden branch's change prints nowhere: it is named on
+        // `unplaced:`; the shown branch's is placed in its box.
         let lines = header_lines(&view);
         let unplaced_line = lines
             .iter()
             .find(|l| l.starts_with("unplaced: "))
-            .unwrap_or_else(|| panic!("no unplaced line in {view}"));
+            .map_or("", |l| &**l);
         for entry in &unplaced {
             assert!(unplaced_line.contains(entry), "{entry}: {view}");
         }
+        assert!(!unplaced_line.contains(&format!("@{handle}")), "{view}");
         let yaml = header_yaml(&view);
         assert_eq!(yaml["authors"][handle].as_str(), Some(author), "{view}");
         // A Fallback change that is no twin of the Choice's (another text)

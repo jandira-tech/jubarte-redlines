@@ -12,6 +12,7 @@
 //! properties are not read.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 
 mod agent;
 mod critic;
@@ -388,6 +389,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         hidden_ranges: Vec::new(),
         pending_notes: Vec::new(),
         in_comment: false,
+        in_box: false,
         agent: options.ids,
         comments_inline: options.comments,
         resolved: accept.is_some(),
@@ -2322,6 +2324,10 @@ struct Writer<'a> {
     /// changes keep their marks but not their author, and comment anchors are
     /// ignored.
     in_comment: bool,
+    /// Writing a drawn text box's content for its comment lines: a drawing
+    /// inside it prints no payload token (the captured drawing already holds
+    /// it) and a box nested inside it is walked through, not printed twice.
+    in_box: bool,
     /// Agent view (`Options::ids`).
     agent: bool,
     /// Agent view: comments inline, or hidden and listed on id lines.
@@ -3341,10 +3347,17 @@ impl Writer<'_> {
         out: &mut Critic,
         extra: &mut Vec<String>,
     ) {
+        if self.in_box {
+            // Inside a drawn box's content: the capturing drawing already
+            // holds this one; print only what the layer can say in words.
+            self.drawing_text(element, out, extra);
+            return;
+        }
         if self.in_comment {
             self.drawing_text(element, out, extra);
             return;
         }
+        self.box_comments(element, extra);
         let mut plain_image = false;
         if drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
@@ -3377,12 +3390,61 @@ impl Writer<'_> {
         }
     }
 
-    /// A drawing's printable content inside a comment: its text boxes as
-    /// extra blocks (a text box is a story of its own, so comment ranges
-    /// around its anchor do not cover it) and its image's alt text.
+    /// The `txbxContent` Word renders of `element` — under an
+    /// `mc:AlternateContent`, only the shown branch's, never the
+    /// `mc:Fallback` copy — each rendered as a block of `<!-- -->` comment
+    /// lines pushed to `extra`. The drawing's `dN` payload already carries
+    /// the text, so printing it as a real paragraph would write it twice;
+    /// the comment keeps the view readable without cost to the write.
+    fn box_comments(&mut self, element: &Element, extra: &mut Vec<String>) {
+        let mut boxes = Vec::new();
+        let root = match element
+            .child("Choice")
+            .or_else(|| element.child("Fallback"))
+        {
+            Some(branch) => branch,
+            None => element,
+        };
+        root.find_all("txbxContent", &mut boxes);
+        if boxes.is_empty() {
+            return;
+        }
+        let open_comments = std::mem::take(&mut self.open_comments);
+        let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
+        let in_box = std::mem::replace(&mut self.in_box, true);
+        for content in boxes {
+            let mut blocks = Blocks::new();
+            let mut list = ListIndent::default();
+            self.blocks(content, &mut blocks, &mut list);
+            let block = blocks.finish();
+            let mut comment = String::new();
+            for line in block.lines() {
+                // A line ending `-->` would close the comment early.
+                let line = line.replace("-->", "-- >");
+                if line.is_empty() {
+                    comment.push('\n');
+                } else {
+                    let _ = writeln!(comment, "<!-- {line} -->");
+                }
+            }
+            extra.push(comment.trim_end_matches('\n').to_string());
+        }
+        self.in_box = in_box;
+        self.open_comments = open_comments;
+        self.hidden_ranges = hidden_ranges;
+    }
+
+    /// A drawing's printable content inside a comment or a drawn text box:
+    /// its text boxes as extra blocks (a text box is a story of its own, so
+    /// comment ranges around its anchor do not cover it) and its image's
+    /// alt text.
     fn drawing_text(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
-        drawing.find_all("txbxContent", &mut boxes);
+        // Inside a drawn box's content, `blocks` already walked a nested
+        // box through: printing it again as a block would show it twice.
+        if !self.in_box {
+            drawing.find_all("txbxContent", &mut boxes);
+        }
         let open_comments = std::mem::take(&mut self.open_comments);
         let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
         for content in boxes {
