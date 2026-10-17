@@ -131,6 +131,9 @@ pub mod namespaces;
 pub mod opc;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
 pub mod perf;
+/// Machine result envelope for the v2 routes (`edit apply`, `edit template`,
+/// `review accept`, and friends). See [`result::Envelope`].
+pub mod result;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
 pub mod scrub;
