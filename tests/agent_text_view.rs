@@ -5249,8 +5249,13 @@ fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
     }
 }
 
+/// PR #392, restated for the drawing payload (54621454): Word renders one
+/// branch of an `mc:AlternateContent`; the view carries the element whole
+/// as one atomic payload, so no branch's text prints, while every listed
+/// change — the Choice's and the Fallback's alike — keeps its author a
+/// handle and is named, by paragraph, on `unplaced:`.
 #[test]
-fn pr392_alternate_content_renders_one_branch_and_names_every_listed_author() {
+fn pr392_alternate_content_carries_one_payload_and_names_every_listed_author() {
     let choice = format!(
         r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
         ins(1, "Ann Counsel", "Chosen")
@@ -5259,32 +5264,38 @@ fn pr392_alternate_content_renders_one_branch_and_names_every_listed_author() {
         r#"<mc:Fallback><w:pict><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:pict></mc:Fallback>"#,
         ins(2, "Bob Day", "Fallback")
     );
-    for (branches, kept, absent, handle, author) in [
+    for (branches, handle, author, unplaced) in [
         (
             format!("{choice}{fallback}"),
-            "Chosen",
-            "Fallback",
             "AC",
             "Ann Counsel",
+            vec!["r1 @AC in p0", "r2 @BD in p0"],
         ),
-        (fallback, "Fallback", "Chosen", "BD", "Bob Day"),
+        (fallback, "BD", "Bob Day", vec!["r2 @BD in p0"]),
     ] {
         let bytes = docx(&format!(
             r#"<w:p>{}<w:r><mc:AlternateContent>{branches}</mc:AlternateContent></w:r></w:p>"#,
             run("Host")
         ));
         let view = agent(&bytes);
-        assert_eq!(
-            body(&view).matches(&format!("{{++{kept}++}}")).count(),
-            1,
-            "{view}"
-        );
-        assert!(!body(&view).contains(absent), "{view}");
+        // One payload for the whole element — not one token per branch —
+        // and no branch's interior text prints as body text.
+        assert_eq!(body(&view).matches("![][d1]").count(), 1, "{view}");
+        assert!(!body(&view).contains("Chosen"), "{view}");
+        assert!(!body(&view).contains("Fallback"), "{view}");
+        let lines = header_lines(&view);
+        let unplaced_line = lines
+            .iter()
+            .find(|l| l.starts_with("unplaced: "))
+            .unwrap_or_else(|| panic!("no unplaced line in {view}"));
+        for entry in &unplaced {
+            assert!(unplaced_line.contains(entry), "{entry}: {view}");
+        }
         let yaml = header_yaml(&view);
         assert_eq!(yaml["authors"][handle].as_str(), Some(author), "{view}");
         // A Fallback change that is no twin of the Choice's (another text)
-        // is still a change of the file: listed and counted (D8), though
-        // the view shows the Choice only.
+        // is still a change of the file: listed and counted (D8), carried
+        // in the payload and named on `unplaced:`.
         let changes = jubarte::changes::list_changes(&bytes).unwrap();
         let listed = changes.len();
         // Handles name the authors of the listed changes: a Fallback
