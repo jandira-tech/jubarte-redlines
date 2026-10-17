@@ -25,7 +25,9 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | `- a` `* a` `+ a` / `1. a` `1) a` / `- [ ] a` | bullets / numbers (start kept) / task | `ListParagraph` |
 | `> q`, fenced code | `Quote`, `SourceCode` | |
 | `[t](url)` `[t](#a)` `![alt](f.png)` `[^n]` | link, picture, footnote | `#a` is a heading's GitHub slug |
-| `![alt][dN]` | floating anchor, shape, text box, connector, chart, VML, `mc:AlternateContent`, unextracted picture | the reference definition `[dN]: drawing:…` at the end (after `<!-- drawings -->`) holds a verbatim payload of the element's XML, its relationships and the parts they reach; spliced back whole |
+| `![alt][dN]` | shape, text box, connector, chart, VML, `mc:AlternateContent` | the reference definition `[dN]: drawing:…` at the end (after `<!-- drawings -->`) holds a verbatim payload of the element's XML, its relationships and the parts they reach; spliced back whole |
+| `![alt][imageN]` | raster picture (PNG, JPEG, GIF, BMP, TIFF), inline or anchored | `[imageN]: <data:mime;base64,…>` holds the bytes, `<!-- imageN drawing:… -->` the anchor's payload; without the comment the `data:` bytes are a plain picture |
+| ` ```svg dN ` fence | an `asvg:svgBlip` alone in its paragraph | the fence holds the SVG source; `<!-- dN drawing:… -->` keeps the payload, PNG fallback inside; an edited source writes the new SVG into the part |
 | `---`, GFM table | bordered paragraph, `TableGrid` table | header row repeats |
 
 **Changes and comments (CriticMarkup, read before the Markdown)**

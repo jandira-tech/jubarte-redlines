@@ -547,14 +547,19 @@ fn a_floating_image_keeps_its_anchor() {
     assert!(rels.contains("media/"), "{rels}");
 }
 
-/// A `drawing:` payload leaves the body text: the paragraph shows only
-/// `![descr][d1]`, and the payload sits in a `[d1]: drawing:…` reference
-/// definition under a `<!-- drawings -->` marker at the view's end. The
-/// written document reads back to the same view.
+/// A drawing no image form carries — here a VML rectangle — leaves the
+/// body text: the paragraph shows only `![descr][d1]`, and the payload
+/// sits in a `[d1]: drawing:…` reference definition under a
+/// `<!-- drawings -->` marker at the view's end. The written document
+/// reads back to the same view.
 #[test]
 fn a_drawing_payload_is_a_reference_definition() {
-    let (view, out) = docx_round_trip(&floating_image_docx());
-    let reference = "![logo][d1]";
+    let shape = "<w:p><w:r><w:pict>\
+        <v:rect xmlns:v=\"urn:schemas-microsoft-com:vml\" \
+        style=\"width:100pt;height:50pt\" fill=\"true\" stroke=\"true\"/>\
+        </w:pict></w:r></w:p>";
+    let (view, out) = docx_round_trip(&docx_with(&(para("Before.") + shape), &[]));
+    let reference = "![][d1]";
     let body = view
         .find(reference)
         .unwrap_or_else(|| panic!("{reference} not in:\n{view}"));
@@ -577,4 +582,118 @@ fn a_drawing_payload_is_a_reference_definition() {
             .join("\n")
     };
     assert_eq!(unnamed(&view), unnamed(&second));
+}
+
+/// A raster drawing — here a floating anchor — is image bytes to the
+/// readable layer: `![descr][imageN]` backed by a `data:` definition and a
+/// `drawing:` comment that keeps the anchor XML. Written back, the
+/// package holds the anchor and the PNG again.
+#[test]
+fn a_floating_raster_is_a_backed_data_uri() {
+    let (view, out) = docx_round_trip(&floating_image_docx());
+    let reference = "![logo][image1]";
+    let body = view
+        .find(reference)
+        .unwrap_or_else(|| panic!("{reference} not in:\n{view}"));
+    let definition = view
+        .find("[image1]: <data:image/png;base64,")
+        .unwrap_or_else(|| panic!("image1 definition not in:\n{view}"));
+    let backing = view
+        .find("<!-- image1 drawing:")
+        .unwrap_or_else(|| panic!("image1 backing not in:\n{view}"));
+    assert!(body < definition && definition < backing, "{view}");
+    assert!(!view.contains("[d1]"), "{view}");
+    let document = part(&out, "word/document.xml");
+    assert!(document.contains("<wp:anchor"), "{document}");
+    let rels = part(&out, "word/_rels/document.xml.rels");
+    assert!(rels.contains("media/logo"), "{rels}");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+    let mut media = Vec::new();
+    std::io::Read::read_to_end(
+        &mut zip.by_name("word/media/logo.png").expect("logo.png"),
+        &mut media,
+    )
+    .unwrap();
+    assert_eq!(media, PNG_1X1);
+}
+
+const SVG_1X1: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>"#;
+
+/// A docx whose one paragraph is an `asvg:svgBlip` drawing: the SVG part
+/// and the PNG fallback Word stores beside it.
+fn svg_blip_docx() -> Vec<u8> {
+    let drawing = "<w:p><w:r><w:drawing><wp:inline \
+        xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+        distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"914400\" cy=\"914400\"/>\
+        <wp:docPr id=\"7\" name=\"Icon 1\" descr=\"icon\"/>\
+        <a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+        <a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:nvPicPr><pic:cNvPr id=\"0\" name=\"icon.svg\"/><pic:cNvPicPr/></pic:nvPicPr>\
+        <pic:blipFill><a:blip r:embed=\"rIdX1\"><a:extLst>\
+        <a:ext uri=\"{96DAC541-7B7A-43D3-8B79-37D633B846F1}\">\
+        <asvg:svgBlip \
+        xmlns:asvg=\"http://schemas.microsoft.com/office/drawing/2016/SVG/main\" \
+        r:embed=\"rIdX0\"/></a:ext></a:extLst></a:blip>\
+        <a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+        <pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"914400\" cy=\"914440\"/></a:xfrm>\
+        <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+        </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>";
+    let image_rel = format!("{R_NS}/image");
+    replace_entry(
+        &docx_with(
+            &(para("Before.") + drawing),
+            &[
+                Part {
+                    name: "word/media/icon.svg",
+                    content_type: "image/svg+xml",
+                    rel_type: &image_rel,
+                    xml: SVG_1X1,
+                },
+                Part {
+                    name: "word/media/icon.png",
+                    content_type: "image/png",
+                    rel_type: &image_rel,
+                    xml: "",
+                },
+            ],
+        ),
+        "word/media/icon.png",
+        PNG_1X1,
+    )
+}
+
+/// An `asvg:svgBlip` the paragraph holds alone reads as its code: a
+/// ` ```svg ` fence in the body, the drawing's payload — its PNG fallback
+/// with it — in a backing comment under `<!-- drawings -->`. Written
+/// back, the package holds the blip, the SVG and the fallback again.
+#[test]
+fn a_standalone_svg_blip_is_a_fenced_source() {
+    let (view, out) = docx_round_trip(&svg_blip_docx());
+    let fence = view
+        .find("``` svg d1 icon\n")
+        .unwrap_or_else(|| panic!("svg fence not in:\n{view}"));
+    let source = view
+        .find(SVG_1X1)
+        .unwrap_or_else(|| panic!("svg source not in:\n{view}"));
+    let backing = view
+        .find("<!-- d1 drawing:")
+        .unwrap_or_else(|| panic!("d1 backing not in:\n{view}"));
+    assert!(fence < source && source < backing, "{view}");
+    assert!(!view.contains("![icon][d1]"), "{view}");
+    let document = part(&out, "word/document.xml");
+    assert!(document.contains("svgBlip"), "{document}");
+    assert_eq!(
+        part_string(&out, "word/media/icon.svg").as_deref(),
+        Some(SVG_1X1)
+    );
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+    let mut png = Vec::new();
+    std::io::Read::read_to_end(
+        &mut zip.by_name("word/media/icon.png").expect("icon.png"),
+        &mut png,
+    )
+    .unwrap();
+    assert_eq!(png, PNG_1X1);
 }
