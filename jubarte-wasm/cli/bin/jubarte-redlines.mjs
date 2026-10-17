@@ -434,19 +434,25 @@ function runEdit(verb, file, o) {
   const docx = read(file);
   if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
   // What --consume deletes once the edit is written: the plan file as it
-  // was read, never a link to it or an output written over it.
-  let consumed;
+  // was read, never a link to it or an output written over it. Open once
+  // and read the handle, so `plan` names this file — not another placed on
+  // the name between a check and the read; O_NOFOLLOW makes the open itself
+  // refuse a symbolic link.
+  let planFd, consumed;
   if (o.consume && !o.dry_run) {
-    if (fs.lstatSync(o.plan, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
-    }
     try {
-      consumed = fs.readFileSync(o.plan);
+      planFd = fs.openSync(o.plan, (fs.constants.O_NOFOLLOW ?? 0) | fs.constants.O_RDONLY);
+      consumed = fs.readFileSync(planFd);
     } catch (e) {
+      if (planFd !== undefined) try { fs.closeSync(planFd); } catch {}
+      if (e?.code === "ELOOP") {
+        throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+      }
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
     }
   }
   const code = applyEdit(verb, file, docx, o);
+  if (planFd !== undefined) fs.closeSync(planFd);
   if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
     const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
     let current;
