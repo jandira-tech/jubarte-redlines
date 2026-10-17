@@ -386,7 +386,8 @@ fn edit_writes_clean_redline_and_report_and_refuses_an_existing_output_dir() {
         "--out-dir",
         out_dir.to_str().unwrap(),
     ]);
-    assert_eq!(code, 1);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("OUTPUT_EXISTS"), "{stderr}");
     assert!(stderr.contains("already exists"), "{stderr}");
     let (code, _, _) = run(&[
         "edit",

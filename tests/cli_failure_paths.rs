@@ -946,3 +946,32 @@ fn publication_failure_reports_actual_commit_state() {
     let committed = std::fs::read(dir.path().join("a_modified.docx")).unwrap();
     assert!(committed.starts_with(b"PK"), "{committed:?}");
 }
+
+/// I7: status writes after publication must not panic on a closed stderr.
+#[test]
+fn broken_stderr_keeps_the_committed_result_on_stdout() {
+    for bundle in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.docx"), docx(&para("One."))).unwrap();
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jubarte"));
+        cmd.current_dir(dir.path())
+            .args(["edit", "a.docx", "-p", "p0", "--content", "Two."]);
+        if bundle {
+            cmd.args(["--out-dir", "r"]);
+        }
+        let out = cmd.stderr(writer).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{out:?}");
+        let primary = if bundle {
+            "r/redline.docx"
+        } else {
+            "a_modified.docx"
+        };
+        assert!(dir.path().join(primary).is_file());
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(primary),
+            "{out:?}"
+        );
+    }
+}

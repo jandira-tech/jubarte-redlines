@@ -330,7 +330,16 @@ fn an_output_spelling_the_source_is_refused() {
     letter(dir);
     std::fs::create_dir(dir.join("sub")).unwrap();
     let source = sha256(&dir.join("a.docx"));
-    for spelling in ["a.docx", "./a.docx", "sub/../a.docx"] {
+    let absolute = dir.join("a.docx");
+    for spelling in [
+        "a.docx",
+        "./a.docx",
+        "sub/../a.docx",
+        "A.docx",
+        "a.DOCX",
+        "a.docx/",
+        absolute.to_str().unwrap(),
+    ] {
         let mut args = EDIT.to_vec();
         args.extend(["-o", spelling, "--force"]);
         let (code, _, err) = run(dir, &args);
@@ -446,6 +455,7 @@ fn a_bundle_member_aliasing_the_plan_is_refused() {
             "a.docx",
             "--plan",
             "out/report.jsonl",
+            "--consume",
             "--out-dir",
             "out",
             "--force",
@@ -476,8 +486,9 @@ fn a_forced_bundle_replaces_its_earlier_bundle_wholesale() {
     let first = sha256(&dir.join("r/report.jsonl"));
     // Without --force the taken destination refuses, untouched.
     let (code, _, err) = run(dir, &args);
-    assert_eq!(code, 1, "{err}");
-    assert!(err.contains("already exists"), "{err}");
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("OUTPUT_EXISTS"), "{err}");
+    assert!(err.contains("already exists (use --force"), "{err}");
     assert_eq!(sha256(&dir.join("r/report.jsonl")), first);
     // With --force the earlier bundle is replaced by a new directory.
     args.push("--force");
@@ -554,7 +565,8 @@ fn a_forced_bundle_never_deletes_an_input_inside_the_destination() {
         ],
     );
     assert_eq!(code, 2, "{err}");
-    assert!(err.contains("OUTPUT_DIR_NOT_EMPTY"), "{err}");
+    assert!(err.contains("OUTPUT_ALIAS"), "{err}");
+    assert!(err.contains("r/src/a.docx"), "{err}");
     assert_eq!(sha256(&dir.join("r/src/a.docx")), source);
 }
 
@@ -578,4 +590,417 @@ fn a_failed_commit_leaves_no_output_or_staging_file() {
     let left: Vec<_> = std::fs::read_dir(&ro).unwrap().collect();
     assert!(left.is_empty(), "no output and no staging file: {left:?}");
     std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// C3/M18: one stable refusal and status for occupied destinations.
+#[test]
+fn occupied_outputs_share_the_output_exists_code() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    std::fs::write(dir.join("b.docx"), b"kept").unwrap();
+    std::fs::create_dir(dir.join("r")).unwrap();
+    for extra in [["-o", "b.docx"], ["--out-dir", "r"]] {
+        let mut args = EDIT.to_vec();
+        args.extend(extra);
+        let (code, _, err) = run(dir, &args);
+        assert_eq!(code, 2, "{err}");
+        assert!(err.contains("OUTPUT_EXISTS:"), "{err}");
+        assert!(err.contains("already exists (use --force"), "{err}");
+    }
+    assert_eq!(std::fs::read(dir.join("b.docx")).unwrap(), b"kept");
+    assert_eq!(std::fs::read_dir(dir.join("r")).unwrap().count(), 0);
+}
+
+/// M15: advice to force an output must never precede input protection.
+#[test]
+fn alias_refusals_precede_no_clobber_in_both_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    std::fs::create_dir(dir.join("r")).unwrap();
+    std::fs::hard_link(dir.join("a.docx"), dir.join("r/redline.docx")).unwrap();
+    let source = sha256(&dir.join("a.docx"));
+    for extra in [["-o", "a.docx"], ["--out-dir", "r"]] {
+        let mut args = EDIT.to_vec();
+        args.extend(extra);
+        let (code, _, err) = run(dir, &args);
+        assert_eq!(code, 2, "{err}");
+        assert!(err.contains("OUTPUT_ALIAS:"), "{err}");
+        assert!(!err.contains("use --force"), "{err}");
+    }
+    assert_eq!(sha256(&dir.join("a.docx")), source);
+}
+
+/// C9: a PDF derivative cannot replace the primary DOCX.
+#[test]
+fn outputs_aliasing_each_other_write_nothing() {
+    for name in ["r.pdf", "r.PDF"] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        letter(dir);
+        let mut args = EDIT.to_vec();
+        args.extend(["-o", name, "--pdf"]);
+        let (code, _, err) = run(dir, &args);
+        assert_eq!(code, 2, "{err}");
+        assert!(err.contains("OUTPUT_ALIAS:"), "{err}");
+        assert!(err.contains(name) && err.contains("r.pdf"), "{err}");
+        assert!(written(dir).is_empty(), "{:?}", written(dir));
+    }
+}
+
+/// I11: force accepts an empty existing directory, even without a report.
+#[test]
+fn force_replaces_an_empty_non_bundle_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    std::fs::create_dir(dir.join("r")).unwrap();
+    let mut args = EDIT.to_vec();
+    args.extend(["--out-dir", "r", "--force"]);
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 0, "{err}");
+    assert!(dir.join("r/redline.docx").is_file());
+    assert_eq!(std::fs::read_dir(dir.join("r")).unwrap().count(), 4);
+}
+
+/// C7/C8: existing link chains and symlink-to-plan aliases are refused.
+#[cfg(unix)]
+#[test]
+fn chained_source_and_symlinked_plan_aliases_are_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    let source = sha256(&dir.join("a.docx"));
+    std::os::unix::fs::symlink("a.docx", dir.join("link2.docx")).unwrap();
+    std::os::unix::fs::symlink("link2.docx", dir.join("link1.docx")).unwrap();
+    let mut args = EDIT.to_vec();
+    args.extend(["-o", "link1.docx", "--force"]);
+    let (code, _, err) = run(dir, &args);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("OUTPUT_ALIAS:"), "{err}");
+    assert_eq!(sha256(&dir.join("a.docx")), source);
+    let mut record = EDIT.to_vec();
+    record.extend(["--plan", "plan.json"]);
+    assert_eq!(run(dir, &record).0, 0);
+    let plan = sha256(&dir.join("plan.json"));
+    std::os::unix::fs::symlink("plan.json", dir.join("plan.docx")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "plan.docx",
+            "--force",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("OUTPUT_ALIAS:"), "{err}");
+    assert_eq!(sha256(&dir.join("plan.json")), plan);
+}
+
+/// I6/C2 pin: a member alias is an input; non-member links remain foreign.
+#[cfg(unix)]
+#[test]
+fn bundle_member_and_foreign_links_keep_their_refusal_classes() {
+    for name in ["redline.docx", "foreign-hard.docx", "foreign-sym.docx"] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        letter(dir);
+        std::fs::create_dir(dir.join("r")).unwrap();
+        let source = sha256(&dir.join("a.docx"));
+        if name == "foreign-sym.docx" {
+            std::os::unix::fs::symlink("../a.docx", dir.join("r").join(name)).unwrap();
+        } else {
+            std::fs::hard_link(dir.join("a.docx"), dir.join("r").join(name)).unwrap();
+        }
+        let (code, _, err) = run(
+            dir,
+            &[
+                "edit",
+                "r/../a.docx",
+                "-p",
+                "p1",
+                "--content",
+                "changed",
+                "--out-dir",
+                "r",
+                "--force",
+            ],
+        );
+        assert_eq!(code, 2, "{err}");
+        let expected = if name == "redline.docx" {
+            "OUTPUT_ALIAS:"
+        } else {
+            "OUTPUT_DIR_NOT_EMPTY:"
+        };
+        assert!(err.contains(expected), "{err}");
+        assert_eq!(sha256(&dir.join("a.docx")), source);
+        assert_eq!(std::fs::read_dir(dir.join("r")).unwrap().count(), 1);
+    }
+}
+
+/// Debug-build-only publication synchronization. The child connects after
+/// staging and after its final collision check; the parent releases it only
+/// after making the exact filesystem change under test. These are integration
+/// tests: no sleeps or probabilistic racing writers determine the result.
+#[cfg(unix)]
+fn publication_hook(
+    dir: &Path,
+    args: &[std::ffi::OsString],
+    mut at: impl FnMut(&str, u32),
+) -> std::process::Output {
+    use std::io::{BufRead, Write};
+    use std::os::unix::net::UnixListener;
+    let socket = dir.join("hook.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let mut child = Command::new(BIN)
+        .current_dir(dir)
+        .args(args)
+        .env("JUBARTE_TEST_PUBLICATION_HOOK", &socket)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Polling is only for child exit / a bounded synchronization timeout;
+    // the callback always runs while the child is blocked on the socket.
+    listener.set_nonblocking(true).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                    .unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(&mut stream)
+                    .read_line(&mut line)
+                    .unwrap();
+                let (phase, pid) = line.trim().split_once(' ').unwrap();
+                at(phase, pid.parse().unwrap());
+                stream.write_all(b"x").unwrap();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if child.try_wait().unwrap().is_some() {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    panic!("publication hook timed out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) => panic!("{e}"),
+        }
+    }
+    let output = child.wait_with_output().unwrap();
+    std::fs::remove_file(socket).unwrap();
+    output
+}
+
+#[cfg(unix)]
+fn hook_args(extra: &[&str]) -> Vec<std::ffi::OsString> {
+    EDIT.iter()
+        .chain(extra)
+        .map(std::ffi::OsString::from)
+        .collect()
+}
+
+/// C1: changing the named source never substitutes unprepared bytes.
+#[cfg(unix)]
+#[test]
+fn a_source_changed_after_preparation_refuses_without_publishing() {
+    for extra in [&["-o", "out.docx"][..], &["--out-dir", "r"][..]] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        letter(dir);
+        let replacement = docx(&para("A different named source."));
+        let mut injected = false;
+        let out = publication_hook(dir, &hook_args(extra), |phase, _| {
+            if phase == "staged" {
+                std::fs::write(dir.join("a.docx"), &replacement).unwrap();
+                injected = true;
+            }
+        });
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(injected, "the source mutation ran");
+        assert_eq!(out.status.code(), Some(3), "{err}");
+        assert!(err.contains("SOURCE_CHANGED:"), "{err}");
+        assert_eq!(std::fs::read(dir.join("a.docx")).unwrap(), replacement);
+        assert!(written(dir).is_empty(), "{:?}", written(dir));
+    }
+}
+
+/// C1: an entry created after the last taken check must not be clobbered.
+#[cfg(unix)]
+#[test]
+fn a_destination_created_after_the_check_is_not_clobbered() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    let mut injected = false;
+    let out = publication_hook(dir, &hook_args(&["-o", "out.docx"]), |phase, _| {
+        if phase == "checked" {
+            std::fs::write(dir.join("out.docx"), b"late output").unwrap();
+            injected = true;
+        }
+    });
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(injected, "the late destination was created");
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("OUTPUT_EXISTS:"), "{err}");
+    assert_eq!(std::fs::read(dir.join("out.docx")).unwrap(), b"late output");
+    assert_eq!(written(dir), ["out.docx"]);
+}
+
+/// C1: the final alias recheck catches a link introduced after staging.
+#[cfg(unix)]
+#[test]
+fn an_alias_introduced_after_staging_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    let source = sha256(&dir.join("a.docx"));
+    let mut injected = false;
+    let out = publication_hook(
+        dir,
+        &hook_args(&["-o", "out.docx", "--force"]),
+        |phase, _| {
+            if phase == "staged" {
+                std::os::unix::fs::symlink("a.docx", dir.join("out.docx")).unwrap();
+                injected = true;
+            }
+        },
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(injected);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("OUTPUT_ALIAS:"), "{err}");
+    assert!(
+        dir.join("out.docx")
+            .symlink_metadata()
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(sha256(&dir.join("a.docx")), source);
+}
+
+/// C1: a symlink racing after the recheck is replaced by rename; the
+/// source inode is never written through (the review's attack was wrong).
+#[cfg(unix)]
+#[test]
+fn force_rename_replaces_a_late_symlink_without_touching_its_input() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    let source = sha256(&dir.join("a.docx"));
+    let mut injected = false;
+    let out = publication_hook(
+        dir,
+        &hook_args(&["-o", "out.docx", "--force"]),
+        |phase, _| {
+            if phase == "checked" {
+                std::os::unix::fs::symlink("a.docx", dir.join("out.docx")).unwrap();
+                injected = true;
+            }
+        },
+    );
+    assert!(injected);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(
+        !dir.join("out.docx")
+            .symlink_metadata()
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(sha256(&dir.join("a.docx")), source);
+    assert!(document_xml(&dir.join("out.docx")).contains("forty"));
+}
+
+/// C5: a stale aside belonging to a reused PID remains intact.
+#[cfg(unix)]
+#[test]
+fn a_forced_bundle_probes_past_an_occupied_aside_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    std::fs::create_dir(dir.join("r")).unwrap();
+    let mut aside = None;
+    let out = publication_hook(
+        dir,
+        &hook_args(&["--out-dir", "r", "--force"]),
+        |phase, pid| {
+            if phase == "staged" {
+                let path = dir.join(format!(".r.jubarte-tmp-{pid}-100"));
+                std::fs::create_dir(&path).unwrap();
+                std::fs::write(path.join("kept"), b"old residue").unwrap();
+                aside = Some(path);
+            }
+        },
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        std::fs::read(aside.unwrap().join("kept")).unwrap(),
+        b"old residue"
+    );
+    assert!(dir.join("r/redline.docx").is_file());
+    assert_eq!(written(dir).len(), 2, "only bundle and preserved residue");
+}
+
+/// M4: a destination's raw filename bytes survive in its staging name.
+#[cfg(unix)]
+#[test]
+fn staging_names_preserve_non_utf8_destination_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    letter(dir);
+    let name = std::ffi::OsString::from_vec(b"r-\xff".to_vec());
+    // APFS rejects invalid UTF-8 directory entries. On such a filesystem
+    // byte preservation means refusing the exact name before staging,
+    // rather than creating a different name with replacement characters.
+    let accepts_raw_name = match std::fs::create_dir(dir.join(&name)) {
+        Ok(()) => {
+            std::fs::remove_dir(dir.join(&name)).unwrap();
+            true
+        }
+        Err(e) if e.raw_os_error() == Some(92) => false, // macOS EILSEQ
+        Err(e) => panic!("probing raw filename support: {e}"),
+    };
+    let mut args = hook_args(&["--out-dir"]);
+    args.push(name.clone());
+    let mut exact = false;
+    let mut visited = false;
+    let out = publication_hook(dir, &args, |phase, pid| {
+        if phase == "staged" {
+            let mut stage = std::ffi::OsString::from(".");
+            stage.push(&name);
+            stage.push(format!(".jubarte-tmp-{pid}-0"));
+            exact = dir.join(stage).is_dir();
+            visited = true;
+        }
+    });
+    if accepts_raw_name {
+        assert!(visited, "{out:?}");
+        assert!(
+            exact,
+            "staging must preserve the filename bytes, without U+FFFD"
+        );
+        assert_eq!(out.status.code(), Some(0), "{out:?}");
+        assert!(dir.join(name).join("redline.docx").is_file());
+    } else {
+        assert!(
+            !visited,
+            "an unrepresentable staging name must be refused, never replaced with U+FFFD"
+        );
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("Illegal byte sequence"),
+            "{out:?}"
+        );
+        assert!(written(dir).is_empty(), "{:?}", written(dir));
+    }
 }
