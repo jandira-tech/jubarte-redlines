@@ -1,0 +1,76 @@
+# Type aliases
+
+70 items (non-test). Part of the [symbol manifest](README.md).
+
+| Name | Defined at | Vis | Does | Detail |
+|---|---|---|---|---|
+| `LayoutPass` | src/audit.rs:161 | pub | A layout pass [`audit_report_with`] calls at most once. | pub type LayoutPass<'a> = &'a mut dyn FnMut(&[u8]) -> Result<RenderReport, AuditError> |
+| `Resolve` | src/bin/jubarte.rs:3394 | private | `jubarte fields update`: refresh, write, then list what was written. | type Resolve = fn(&[u8]) -> Result<Vec<u8>, jubarte::opc::OpcError> |
+| `Cli::Target` | src/cli.rs:635 | private | _no doc comment_ | type Target = CompareArgs |
+| `AnchorInterval` | src/comparer/comments.rs:781 | private | Mapped output intervals keyed by the final comment id. | type AnchorInterval = (usize, usize) |
+| `AnchoredRanges` | src/comparer/comments.rs:782 | private | _no doc comment_ | type AnchoredRanges = HashMap<String, AnchorInterval> |
+| `FingerprintGroups` | src/comparer/comments.rs:783 | private | _no doc comment_ | type FingerprintGroups = HashMap<String, Vec<(String, AnchorInterval)>> |
+| `Rendered` | src/comparer/cross_para.rs:718 | private | A rendered region: its sequences, and each right paragraph's mark with its left partner. | type Rendered = ( Vec<CorrelatedSequence>, Vec<(ComparisonUnit, Option<ComparisonUnit>)>, ) |
+| `CanonicalRprChild` | src/comparer/formatchg.rs:45 | private | One canonical `w:rPr` child: element name plus its filtered, sorted attrs. | type CanonicalRprChild = (XName, Vec<(XName, String)>) |
+| `PendingRunFormatChange` | src/comparer/formatchg.rs:253 | private | A pending run format change: (atom index, old rPr, new rPr, changed names). | type PendingRunFormatChange = (usize, Option<NodeId>, Option<NodeId>, Vec<String>) |
+| `PendingParaFormatChange` | src/comparer/formatchg.rs:255 | private | A pending para format change: (atom index, projected old pPr node). | type PendingParaFormatChange = (usize, NodeId) |
+| `U64BuildHasher` | src/comparer/lcs.rs:55 | pub(crate) | `BuildHasher` for [`U64IdentityHasher`]. | pub(crate) type U64BuildHasher = std::hash::BuildHasherDefault<U64IdentityHasher> |
+| `Side` | src/comparer/lcs.rs:9790 | private | _no doc comment_ | type Side = (Vec<u32>, Vec<u32>, Vec<bool>, Vec<bool>, Vec<u32>, usize) |
+| `TableShape` | src/comparer/lcs_table.rs:443 | private | _no doc comment_ | type TableShape = &'static [(usize, usize)] |
+| `PartSource` | src/comparer/parts.rs:443 | private | The package that supplied a part's content: `(source package, part name there)`. | type PartSource<'a> = (&'a PartFs, String) |
+| `RelHashResolver` | src/comparer/preprocess.rs:37 | pub | A resolver `rId -> Some(replacement)\|None` used by the rel-id clone branch. | pub type RelHashResolver<'a> = dyn Fn(&str) -> Option<String> + 'a |
+| `UnidChainMemo` | src/comparer/produce.rs:462 | private | PRODUCE-UNID-01: (ancestor-elements chain, its minted unid chain) memo. | type UnidChainMemo = Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)> |
+| `WordWithKeys` | src/comparer/units.rs:274 | private | _no doc comment_ | type WordWithKeys = (Vec<String>, Vec<NodeId>, ComparisonUnitWord) |
+| `Props` | src/convert/altchunk.rs:149 | private | _no doc comment_ | type Props = HashMap<String, String> |
+| `ShapedUnits` | src/convert/font.rs:932 | private | Glyph ids and x advances in font units. | type ShapedUnits = Arc<[(u16, i32, u32)]> |
+| `PlanKey` | src/convert/font.rs:934 | private | _no doc comment_ | type PlanKey = ( rustybuzz::Direction, rustybuzz::Script, Option<rustybuzz::Language>, bool, ) |
+| `EmbeddedFonts` | src/convert/font.rs:1449 | pub(crate) | A document's decoded embedded fonts (`.odttf`), keyed by (family, bold, italic). | pub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Arc<[u8]>> |
+| `FolderNames` | src/convert/font.rs:2380 | private | Cloud-font folders, each with the folded family names its fonts carry. | type FolderNames = Vec<(PathBuf, Vec<String>)> |
+| `FontNameIndex` | src/convert/font.rs:2589 | private | Font files with their normalised family names. | type FontNameIndex = Arc<Vec<(PathBuf, Vec<String>)>> |
+| `SharedFaces` | src/convert/font.rs:3037 | private | _no doc comment_ | type SharedFaces = Vec<((bool, bool), Arc<[u8]>)> |
+| `SourcedBytes` | src/convert/font.rs:3078 | private | A face's bytes with the file they came from. | type SourcedBytes = (FaceSource, Vec<u8>) |
+| `SourcedFaces` | src/convert/font.rs:3081 | private | Picked faces with their files. | type SourcedFaces = Vec<((bool, bool), FaceSource, Vec<u8>)> |
+| `LoadedFaces` | src/convert/font.rs:3137 | private | Faces by (bold, italic), read from their files. | type LoadedFaces = Vec<((bool, bool), Vec<u8>)> |
+| `TcEdge` | src/convert/mod.rs:4090 | private | A cell's `w:tcBorders` edge by edge (top, bottom, left, right): the outer `None` is an edge the cell does not name, `Some(None)` one it names as none. | type TcEdge = Option<Option<([f32; 3], f32)>> |
+| `ParsedSettings` | src/convert/mod.rs:6870 | private | A parsed settings part and its root element. | type ParsedSettings = Rc<(Dom, NodeId)> |
+| `TxbxContent` | src/convert/mod.rs:17210 | private | A text box's paragraphs and its tables (`LaidTextBox::tables`). | type TxbxContent = ( Vec<(Vec<TextRun>, ParaStyle)>, Vec<(usize, std::rc::Rc<Block>)>, ) |
+| `AxisScaling` | src/convert/mod.rs:17720 | private | `c:valAx` `c:scaling` bounds split by axis position: `(horizontal, vertical)`, each `(min, max)`. | type AxisScaling = ((Option<f32>, Option<f32>), (Option<f32>, Option<f32>)) |
+| `SizePct` | src/convert/mod.rs:19092 | private | A `wp14` size percentage (0..1) and the frame it is taken of. | type SizePct = (f32, SizeFrom) |
+| `LaidCellPara` | src/convert/mod.rs:32464 | private | A cell paragraph ready to paint: its wrapped lines (each sized by its own runs, `cell_line_metrics`) and which of them end in a `w:br`. | type LaidCellPara = (Vec<Vec<TextRun>>, Vec<bool>) |
+| `WrapPiece` | src/convert/mod.rs:32467 | private | One measured piece of a run inside a wrap unit: source run, text, width. | type WrapPiece<'r> = (&'r TextRun, &'r str, f32) |
+| `RawImage` | src/convert/pdf.rs:520 | private | The same samples repeat per page (a header logo): deflate them once. _(from a code comment)_ | type RawImage<'p> = (u32, u32, &'p [u8], Option<&'p [u8]>) |
+| `TextStateBits` | src/convert/pdf.rs:1358 | private | A text operator's size, colour and tracking as bits. | type TextStateBits = (u32, [u32; 3], u32) |
+| `Seg` | src/debug.rs:1516 | private | A stretch of text: revision kind (0 plain, 1 inserted, 2 deleted), the run's direct formatting (`runs` view only), the text. | type Seg = (u8, Option<String>, String) |
+| `Hunk` | src/debug.rs:1761 | private | One change hunk: where it starts in A, the lines only in A, then the lines only in B. | type Hunk<'a> = (usize, Vec<&'a str>, Vec<&'a str>) |
+| `PartLines` | src/debug.rs:1824 | private | _no doc comment_ | type PartLines = BTreeMap<String, (Vec<String>, usize)> |
+| `Layer` | src/debug/render.rs:733 | private | The value that reaches the page and the style it comes through (`None` for direct formatting). _(from a code comment)_ | type Layer = Option<(String, Option<String>)> |
+| `SectionRef` | src/document_comparer.rs:125 | private | A header/footer reference with the index of the section holding it. | type SectionRef = (usize, String, String, String) |
+| `Props` | src/document_comparer.rs:1720 | private | _no doc comment_ | type Props = std::collections::BTreeMap<String, String> |
+| `Slots` | src/document_comparer.rs:1721 | private | _no doc comment_ | type Slots = std::collections::BTreeMap<String, Props> |
+| `FontSlot` | src/document_comparer.rs:3223 | private | Normal's EFFECTIVE run metrics: each value from the style's stored rPr when present, else from docDefaults' rPrDefault (per-attribute, the way Word resolves a style chain). | type FontSlot = (Option<String>, Option<String>) |
+| `Resolution` | src/edit.rs:1925 | private | What resolving an operation gives: its resolved form and outcome, or the error with the outcome so far. | type Resolution<T> = Result<(T, EditOutcome), Box<(EditError, EditOutcome)>> |
+| `Miss` | src/edit/origin.rs:37 | pub(super) | A selector that failed: code, message and how many paragraphs matched. | pub(super) type Miss = (String, String, usize) |
+| `Targets` | src/edit/sections.rs:347 | pub(super) | The sections a page setup changes: `None` stands for a final section the body lacks, which apply creates. | pub(super) type Targets = Vec<(Option<NodeId>, Geometry)> |
+| `Fallback` | src/edit/whole.rs:125 | pub(super) | An operation index and why its change stayed word-level. | pub(super) type Fallback = (usize, String) |
+| `ShortId::Err` | src/ids/short.rs:385 | private | _no doc comment_ | type Err = IdError |
+| `Result` | src/legacy_doc.rs:91 | private | _no doc comment_ | type Result<T> = std::result::Result<T, LegacyDocError> |
+| `Sides` | src/markdown/borders.rs:185 | pub(crate) | A table's or a cell's borders, side by side, in schema order. | pub(crate) type Sides = Vec<(&'static str, Border)> |
+| `Allowed` | src/markdown/critic.rs:352 | private | Which spans a text may open: bits of [`INSERT`], [`DELETE`]... | type Allowed = u8 |
+| `Cover` | src/markdown/critic.rs:386 | private | A nested span's cover of one delimiter position: the innermost span covering it, the earliest start and the latest end of every span covering it. | type Cover = ((usize, usize), usize, usize) |
+| `Run` | src/markdown/critic.rs:390 | private | A delimiter's run of consecutive covered positions: the first index after it, its earliest covering start, its latest covering end. | type Run = (usize, usize, usize) |
+| `StoryRev` | src/markdown/from_docx/agent.rs:1076 | pub(crate) | A whole story part's changes (a header, a footer, one note) whose id `shown` prints no tag for, as printed tags: insertions, deletions and moves, each `true` for an insertion (`rev`/`rev-del`), then formatting (`fmt`), each with its paragraph when one holds it (`in footer1.p1`). | pub(crate) type StoryRev = (bool, String) |
+| `StoryFmt` | src/markdown/from_docx/agent.rs:1079 | pub(crate) | A formatting change `story_unshown` names: its paragraph when one holds it, and its tag. | pub(crate) type StoryFmt = (Option<usize>, String) |
+| `Change` | src/markdown/from_docx/critic.rs:58 | pub(crate) | A tracked change: its kind and who made it when, as the inside of its `{>>…<<}` note (`Ana Lima (2026-09-29T14:05:00Z)`), already escaped. | pub(crate) type Change = (Mark, Option<String>) |
+| `Open` | src/markdown/from_docx/critic.rs:468 | private | A span still open while the tree is built. | type Open = (Mark, Option<String>, Vec<Node>) |
+| `Format` | src/markdown/from_docx/critic.rs:938 | private | _no doc comment_ | type Format = (Marks, Option<String>) |
+| `Part` | src/markdown/from_docx/critic.rs:1403 | pub(crate) | A rendered paragraph, the tracked change on the mark that ends it, and whether its text started and ended with a space before rendering trimmed it. | pub(crate) type Part = (String, Option<Change>, (bool, bool)) |
+| `Scope` | src/markdown/from_docx/drawing.rs:147 | private | `xmlns` bindings in scope at an element: `(prefix, uri)` where `""` is the default namespace. | type Scope = Vec<(String, String)> |
+| `Open` | src/markdown/from_docx/mod.rs:2073 | private | A field open in the walk: its begin, the changes around the begin, and whether its separate (if any yet) sat inside the same ones. | type Open<'e> = (&'e Element, Vec<*const Element>, bool) |
+| `Open` | src/markdown/from_docx/mod.rs:2124 | private | A field open in the walk: its begin, the paragraph it began in, and whether no tracked change has cut it yet. | type Open<'e> = (&'e Element, usize, bool) |
+| `ImageLoader` | src/markdown/mod.rs:163 | pub | Callback that, given the path an image in a Markdown document names, returns the image bytes. | pub type ImageLoader<'a> = &'a dyn Fn(&str) -> Option<Vec<u8>> |
+| `TableStyleEntry` | src/markdown/view_styles.rs:406 | private | One `table:`/`tables:` entry — `X, all borders 0.5pt, named My X` — its id, the border it states and the name it gives the style, with the rest of the line after it (the `tables:` legend holds one entry per style). | type TableStyleEntry = (String, Option<u32>, Option<String>) |
+| `Pad` | src/markdown/write.rs:962 | private | One empty cell the view left out at a row's end: the grid columns it spans, and its vertical merge (as [`Item::Cell`]). | type Pad = (usize, Option<bool>) |
+| `Change` | src/markdown/xml.rs:20 | pub(super) | A change's kind and its serial number, so two changes side by side stay two revisions. | pub(super) type Change = (Kind, u32) |
+| `Relationships::Target` | src/opc/mod.rs:56 | private | _no doc comment_ | type Target = oxml_opc::Relationships |
+| `Freeze` | src/revision_processor.rs:3490 | pub(crate) | Called with each revision-bearing part's name and parsed root before it is resolved; renames the revisions to keep into [`FROZEN_NS`]. | pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId) |
+| `Declaration` | src/revision_processor/style_records.rs:480 | private | Each slot's nearest declaration: its style, the property and its attributes. _(from a code comment)_ | type Declaration = (Option<NodeId>, NodeId, Vec<(String, String)>) |
