@@ -760,11 +760,7 @@ impl Literal {
                 b'(' if at > 0 && bytes[at - 1] == b']' && !escaped(source, at - 1) => {
                     destinations.get(&(at + 1)).copied()
                 }
-                b'<' if !escaped(source, at) => comment_end(source, at).or_else(|| {
-                    (!source[at..].starts_with("<!--"))
-                        .then(|| autolink_end(source, at))
-                        .flatten()
-                }),
+                b'<' if !escaped(source, at) => autolink_end(source, at),
                 _ => None,
             };
             match end {
@@ -937,7 +933,8 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
 }
 
 /// The end of the HTML comment that starts at `at` (`<!-- … -->`), if it
-/// closes. The writer drops comments whole, so nothing inside one opens.
+/// closes. [`verbatim_ranges`] counts a comment whole; the CriticMarkup
+/// reader does not (#520: a closer inside one still closes its span).
 fn comment_end(source: &str, at: usize) -> Option<usize> {
     if !source[at..].starts_with("<!--") {
         return None;
@@ -1562,12 +1559,37 @@ pub(crate) fn encode_spans_only(source: &str) -> String {
     encode_spans(source, ALL, false)
 }
 
-/// The ranges of `source` the reader passes over verbatim: code spans
-/// (across single line breaks), link destinations, autolinks and HTML
-/// comments. The Markdown diff escaper skips them, so it escapes exactly
-/// where the reader recognizes delimiters.
+/// The ranges of `source` the Markdown diff escaper must leave alone:
+/// the reader's own verbatim (code spans across single line breaks, link
+/// destinations, autolinks) plus every complete HTML comment — a
+/// backslash inside one changes the comment's text, and the delimiter
+/// the escaper would escape drops with the comment anyway. The
+/// CriticMarkup reader still counts a delimiter inside a comment (#520:
+/// [`Literal`] leaves comments to it), so the comment ranges live here,
+/// not in [`Literal`]. Sorted, disjoint.
 pub(super) fn verbatim_ranges(source: &str) -> Vec<std::ops::Range<usize>> {
-    Literal::new(source).verbatim
+    let mut ranges = Literal::new(source).verbatim;
+    let mut at = 0;
+    while let Some(open) = source[at..].find("<!--") {
+        let open = at + open;
+        match comment_end(source, open) {
+            Some(end) => {
+                ranges.push(open..end);
+                at = end;
+            }
+            // An unclosed comment is text to the reader, not a comment.
+            None => at = open + "<!--".len(),
+        }
+    }
+    ranges.sort_by_key(|range| range.start);
+    let mut disjoint: Vec<std::ops::Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match disjoint.last_mut() {
+            Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
+            _ => disjoint.push(range),
+        }
+    }
+    disjoint
 }
 
 /// The source of text that holds no stand-ins, as it was.
