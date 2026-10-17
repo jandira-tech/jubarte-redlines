@@ -899,6 +899,142 @@ fn typed_routes_protect_plan_payload_and_source_aliases() {
     assert_eq!(std::fs::read(dir.join("plan.json")).unwrap(), before);
 }
 
+fn plan_with_moved_source(dir: &Path) -> Vec<u8> {
+    let file = letter(dir, "a.docx", "Last.");
+    let before = std::fs::read(&file).unwrap();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "rewrite",
+            "a.docx",
+            "--at",
+            "p0",
+            "--text",
+            "Moved heading.",
+            "--track",
+            "off",
+            "--datetime",
+            "2026-10-17T12:00:00Z",
+            "--save-plan",
+            "plan.json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    assert_eq!(plan(dir)["source"]["sha256"], source_sha256(&before));
+    std::fs::create_dir(dir.join("moved")).unwrap();
+    std::fs::copy(&file, dir.join("moved/b.docx")).unwrap();
+    std::fs::remove_file(file).unwrap();
+    before
+}
+
+#[test]
+fn moved_source_applies_its_plan_and_still_refuses_output_aliases() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let before = plan_with_moved_source(dir);
+    let plan_before = std::fs::read(dir.join("plan.json")).unwrap();
+    let base = vec![
+        "edit",
+        "apply",
+        "moved/b.docx",
+        "--plan",
+        "plan.json",
+        "--json",
+    ];
+    for dry_run in [true, false] {
+        let mut args = base.clone();
+        if dry_run {
+            args.push("--dry-run");
+        } else {
+            args.extend(["-o", "out.docx"]);
+        }
+        let (code, out, err) = run(dir, &args);
+        assert_eq!(code, 0, "{out} {err}");
+        let receipt: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(receipt["status"], "ok");
+        assert_eq!(receipt["source"]["sha256"], source_sha256(&before));
+        assert_eq!(
+            Path::new(receipt["source"]["path"].as_str().unwrap()),
+            dir.join("moved/b.docx").canonicalize().unwrap()
+        );
+        assert_eq!(receipt["effective_options"]["source_binding"], "bound");
+        assert_eq!(receipt["data"]["counts"]["body_operations_applied"], 1);
+        if dry_run {
+            assert_eq!(receipt["data"]["phase"], "validated");
+            assert_eq!(receipt["data"]["effect"], "not_applied");
+            assert_eq!(receipt["data"]["predicted_effect"], "changed");
+            assert!(!dir.join("out.docx").exists());
+            assert!(receipt.get("artifacts").is_none());
+        } else {
+            assert_eq!(receipt["data"]["phase"], "committed");
+            assert_eq!(receipt["data"]["effect"], "changed");
+            let output = std::fs::read(dir.join("out.docx")).unwrap();
+            common::validity::assert_word_valid_package(&output);
+            assert_eq!(
+                jubarte::inspect::paragraphs(&output).unwrap()[0].text,
+                "Moved heading."
+            );
+        }
+    }
+    std::fs::hard_link(dir.join("moved/b.docx"), dir.join("moved/source-link.docx")).unwrap();
+    std::fs::hard_link(dir.join("plan.json"), dir.join("moved/plan-link.json")).unwrap();
+    for path in [
+        "moved/b.docx",
+        "moved/./b.docx",
+        "moved/source-link.docx",
+        "plan.json",
+        "./plan.json",
+        "moved/plan-link.json",
+    ] {
+        let args = [base.clone(), vec!["-o", path, "--force"]].concat();
+        let (code, out, err) = run(dir, &args);
+        assert_ne!(code, 0, "{path}: {out} {err}");
+        let receipt: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(receipt["error"]["code"], "OUTPUT_ALIAS");
+        assert_eq!(std::fs::read(dir.join("moved/b.docx")).unwrap(), before);
+        assert_eq!(std::fs::read(dir.join("plan.json")).unwrap(), plan_before);
+    }
+}
+
+#[test]
+fn moved_source_with_one_changed_byte_refuses_stale_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let mut changed = plan_with_moved_source(dir);
+    let plan_before = std::fs::read(dir.join("plan.json")).unwrap();
+    // Change a ZIP timestamp without changing the document text.
+    changed[10] ^= 1;
+    assert_eq!(
+        jubarte::inspect::paragraphs(&changed).unwrap()[0].text,
+        "Heading"
+    );
+    std::fs::write(dir.join("moved/b.docx"), &changed).unwrap();
+    for dry_run in [true, false] {
+        let mut args = vec![
+            "edit",
+            "apply",
+            "moved/b.docx",
+            "--plan",
+            "plan.json",
+            "--json",
+        ];
+        if dry_run {
+            args.push("--dry-run");
+        } else {
+            args.extend(["-o", "out.docx"]);
+        }
+        let (code, out, err) = run(dir, &args);
+        assert_eq!(code, 3, "{out} {err}");
+        let receipt: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(receipt["status"], "refused");
+        assert_eq!(receipt["error"]["code"], "STALE_SOURCE");
+        assert!(!dir.join("out.docx").exists());
+        assert_eq!(std::fs::read(dir.join("moved/b.docx")).unwrap(), changed);
+        assert_eq!(std::fs::read(dir.join("plan.json")).unwrap(), plan_before);
+    }
+}
+
 #[test]
 fn action_named_files_execute_the_unchanged_legacy_route() {
     let dir = tempfile::tempdir().unwrap();
