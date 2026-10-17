@@ -125,14 +125,18 @@ fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
 }
 
 /// A note's text: the formatted tag, or the plain attribution. A note
-/// that names the change it sits inside prints ` on ` between the tags.
+/// that names the changes it sits inside prints ` on ` between them,
+/// one part per level, its own change first.
 fn display(by: &str) -> String {
     let by = bare(by);
-    let one = |tagged: &str| {
+    let Some(tagged) = by.strip_prefix(PLAIN).or_else(|| by.strip_prefix(TAG)) else {
+        return by.to_string();
+    };
+    let one = |part: &str| {
         if by.starts_with(PLAIN) {
-            return super::agent::format_plain_tag(tagged);
+            return super::agent::format_plain_tag(part);
         }
-        let (t, date) = tag_parts(tagged);
+        let (t, date) = tag_parts(part);
         let mut out = super::agent::format_tag(t);
         if let Some(date) = date {
             out.push(' ');
@@ -140,13 +144,7 @@ fn display(by: &str) -> String {
         }
         out
     };
-    let Some(tagged) = by.strip_prefix(PLAIN).or_else(|| by.strip_prefix(TAG)) else {
-        return by.to_string();
-    };
-    match tagged.split_once(ON) {
-        Some((own, outer)) => format!("{} on {}", one(own), one(outer)),
-        None => one(tagged),
-    }
+    tagged.split(ON).map(one).collect::<Vec<_>>().join(" on ")
 }
 
 /// Two attributions join as neighbours: equal notes, or two tags of one
@@ -437,7 +435,20 @@ fn tree(tokens: Vec<Token>) -> Vec<Node> {
     for token in tokens {
         match token {
             Token::Leaf(leaf) => children(&mut root, &mut open).push(Node::Leaf(leaf)),
-            Token::Open(mark, _) if open.iter().any(|(m, ..)| *m == mark) => {
+            Token::Open(mark, _)
+                if open
+                    .iter()
+                    .rposition(|(m, ..)| *m == mark)
+                    .is_some_and(|at| {
+                        // A span of a kind already open merges into it when only a
+                        // comment's scope lies between: a change of the other kind
+                        // between them makes a nest the reader must keep (`w:ins >
+                        // w:del > w:ins`), not a span to absorb.
+                        open[at + 1..]
+                            .iter()
+                            .all(|(m, ..)| matches!(m, Mark::Scope))
+                    }) =>
+            {
                 merged[mark.index()] += 1;
             }
             Token::Open(mark, by) => open.push((mark, by, Vec::new())),
@@ -498,12 +509,14 @@ fn is_change(node: &Node) -> bool {
 /// A piece of a split `mark` made is one of the changes it held, not a
 /// piece of the change itself: the writer nests it back inside, so the
 /// outer may fold into its note. Same-kind changes merge in [`tree`],
-/// so a held change never shares the outer's mark.
+/// so a held change never shares the outer's mark — save a level a
+/// deeper fold already dissolved into its sole change, whose note then
+/// names the change it sits inside.
 fn held_change(piece: &Node, outer: Mark) -> bool {
     match piece {
         Node::Split(..) => true,
         Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
-        Node::Span(mark, ..) => *mark != outer,
+        Node::Span(mark, by, _) => outer_of(by.as_deref()).is_some() || *mark != outer,
         _ => false,
     }
 }
@@ -553,6 +566,13 @@ fn unnest(nodes: Vec<Node>) -> Vec<Node> {
 /// Both must be tagged attributions of one view, and the sole change a
 /// change itself, or there is nothing to name.
 fn fold_on(node: &mut Node, outer: Option<&str>) {
+    /// The change `node` holds, when it is the sole one it names.
+    fn held(node: &mut Node) -> Option<&mut Option<String>> {
+        match node {
+            Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
+            _ => None,
+        }
+    }
     let Some(outer) = outer else {
         return;
     };
@@ -567,13 +587,12 @@ fn fold_on(node: &mut Node, outer: Option<&str>) {
     else {
         return;
     };
-    // The change may sit in a comment's scope, the only content left.
+    // The change may sit in a comment's scope, the only content left, or
+    // be one a change it held split around: the change the note follows.
     let by = match node {
         Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-        Node::Span(Mark::Scope, _, children) => children.iter_mut().find_map(|child| match child {
-            Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-            _ => None,
-        }),
+        Node::Span(Mark::Scope, _, children) => children.iter_mut().find_map(held),
+        Node::Split(_, _, pieces) => pieces.iter_mut().find_map(held),
         _ => None,
     };
     if let Some(by) = by
