@@ -261,11 +261,6 @@ fn request(
     }
 }
 
-fn absolute(path: &Path) -> String {
-    let path = std::fs::canonicalize(path)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
-    slash_path(&path)
-}
 fn artifact(path: &Path, role: MediaRole, bytes: &[u8]) -> Artifact {
     let media = match role {
         MediaRole::Document => {
@@ -626,16 +621,34 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
     let source = read(action.file());
     let receipt = match source.as_ref() {
         Ok(source) => prepare_and_publish(action, source, &command).unwrap_or_else(|error| {
-            if matches!(
+            let operational = matches!(
                 error.code.as_str(),
                 "IO_ERROR" | "OUTPUT_EXISTS" | "USAGE" | "OUTPUT_ALIAS" | "INVALID_UTF8"
-            ) {
+            );
+            let mut receipt = if operational {
                 Envelope::new_error(&command, Source::new(source), *error)
             } else {
                 Envelope::refused(&command, Source::new(source), *error)
+            };
+            // The caller supplied an expectation contract this request
+            // cannot run (v1 plan): the receipt says so instead of
+            // claiming none was requested (#1084 review F4).
+            if !operational
+                && receipt
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.code == "UNSUPPORTED_EXPECTATION")
+                && let Some(data) = receipt.data.as_mut()
+            {
+                data.verification.expectations = "unresolved".to_string();
             }
+            receipt
         }),
-        Err(error) => Envelope::new_error(&command, Source::from_digest(""), *error.clone()),
+        Err(error) => Envelope::new_error(
+            &command,
+            Source::from_digest("").with_path(absolute(action.file())),
+            *error.clone(),
+        ),
     };
     let code: u8 = jubarte::result::exit_status_for_envelope(&receipt).into();
     let delivery = action.delivery();
@@ -735,12 +748,19 @@ pub(super) fn usage(argv: &[String], error: &clap::Error) -> bool {
         .chain(argv.iter().map(String::as_str))
         .map(Into::into)
         .collect();
-    let Some((action, jsonl)) = jubarte::cli::typed_edit_protocol(&args) else {
+    let Some((action, jsonl, file)) = jubarte::cli::typed_edit_protocol(&args) else {
         return false;
+    };
+    // Name the file the tokens carried when they named one: a usage
+    // failure the caller cannot re-associate with a file is
+    // undiagnosable (#1084 review F5).
+    let source = match file {
+        Some(file) => Source::from_digest("").with_path(absolute(Path::new(&file))),
+        None => Source::from_digest(""),
     };
     let receipt = Envelope::new_error(
         format!("edit {action}"),
-        Source::from_digest(""),
+        source,
         *failure("USAGE", error.to_string().replace("__edit-v2", "edit")),
     );
     let rendered = if jsonl {

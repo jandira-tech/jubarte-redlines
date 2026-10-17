@@ -2556,6 +2556,238 @@ fn directly_deleted_paragraph_target_refuses_split() {
 }
 
 #[test]
+fn tracked_deleted_paragraph_target_refuses_under_the_final_view() {
+    // Track on: delete_paragraph keeps the `<w:p>` in the redline with
+    // every run deleted and a deleted mark, so the final view holds no
+    // paragraph of its own. The correspondence must refuse the target —
+    // a vanished paragraph never passes text_absent (#1084 review F2,
+    // proposal §10) — instead of mapping it one-to-one to the empty
+    // projection slot.
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Alpha.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Beta.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Gamma.</w:t></w:r></w:p>"#,
+    );
+    let source = docx(body);
+    let hash = source_sha256(&source);
+    let plan = format!(
+        r#"{{
+  "schema_version": 2,
+  "source": {{"sha256": "{hash}"}},
+  "policy": {{"track": "on", "existing_revisions": "keep", "text_view": "final"}},
+  "resolve_revisions": {{"accept": [], "reject": []}},
+  "author": "T",
+  "date": "2026-10-17T07:00:00Z",
+  "scope": {{"kind": "all"}},
+  "operations": [
+    {{"kind": "delete_paragraph", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}}}
+  ]
+}}"#
+    );
+    let prepared = prepare_plan(&source, &plan);
+    let correspondence = correspondence_of(&prepared);
+    for (id, output) in [("p0", vec![0]), ("p1", Vec::new()), ("p2", vec![2])] {
+        assert_eq!(
+            correspondence.lookup(id).expect(id).output,
+            output,
+            "{id} maps through the tracked deletion's final view"
+        );
+    }
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "beta-gone",
+      "description": "Beta removed.",
+      "checks": [
+        {{"kind": "text_absent", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}, "text": "Beta"}}
+      ]
+    }}
+  ]
+}}"#
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &source, &prepared.primary, correspondence);
+    assert!(report.has_blocking_failure());
+    assert_eq!(report.checks[0].outcome, Outcome::Refused);
+    assert_eq!(report.checks[0].reason, Some(RefusalReason::Split));
+}
+
+#[test]
+fn tracked_insertion_beside_an_untouched_target_stays_one_to_one() {
+    // The mirror guard: an inserted paragraph's mark (`w:pPr/w:rPr/w:ins`)
+    // exists in the final view, so the untouched neighbours around it keep
+    // their exact one-to-one mapping and their checks evaluate (#1084
+    // review F2).
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Alpha.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Beta.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Gamma.</w:t></w:r></w:p>"#,
+    );
+    let source = docx(body);
+    let hash = source_sha256(&source);
+    let plan = format!(
+        r#"{{
+  "schema_version": 2,
+  "source": {{"sha256": "{hash}"}},
+  "policy": {{"track": "on", "existing_revisions": "keep", "text_view": "final"}},
+  "resolve_revisions": {{"accept": [], "reject": []}},
+  "author": "T",
+  "date": "2026-10-17T07:00:00Z",
+  "scope": {{"kind": "all"}},
+  "operations": [
+    {{"kind": "insert_paragraph", "target": {{"short_id": "p0", "long_id": "document.w:p.j:short.p0"}}, "position": "after", "text": "Inserted."}}
+  ]
+}}"#
+    );
+    let prepared = prepare_plan(&source, &plan);
+    let correspondence = correspondence_of(&prepared);
+    for (id, output) in [("p0", 0), ("p1", 2), ("p2", 3)] {
+        assert_eq!(
+            correspondence.lookup(id).expect(id).output,
+            [output],
+            "{id} stays one-to-one beside the tracked insertion"
+        );
+    }
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "beta-kept",
+      "description": "Beta untouched.",
+      "checks": [
+        {{"kind": "text_equals", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}, "text": "Beta."}}
+      ]
+    }}
+  ]
+}}"#
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &source, &prepared.primary, correspondence);
+    assert!(!report.has_blocking_failure(), "{:?}", report.checks);
+    assert_eq!(report.checks[0].outcome, Outcome::Passed);
+    assert_eq!(report.checks[0].evidence.as_deref(), Some("Beta."));
+}
+
+#[test]
+fn kept_deleted_mark_with_surviving_text_merges_into_the_next_and_refuses() {
+    // A source-side deleted paragraph mark kept under `keep`, with content
+    // that survives the final view, merges into the next paragraph there:
+    // both source paragraphs share one final paragraph and refuse merged,
+    // even beside an unrelated tracked body edit (#1084 review F2).
+    const REV: &str = r#"w:author="Other" w:date="2026-09-01T00:00:00Z""#;
+    let body = format!(
+        concat!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>Beta</w:t></w:r></w:p>"#,
+        ),
+        REV = REV,
+    );
+    let source = docx(&body);
+    let hash = source_sha256(&source);
+    let plan = format!(
+        r#"{{
+  "schema_version": 2,
+  "source": {{"sha256": "{hash}"}},
+  "policy": {{"track": "on", "existing_revisions": "keep", "text_view": "final"}},
+  "resolve_revisions": {{"accept": [], "reject": []}},
+  "author": "T",
+  "date": "2026-10-17T07:00:00Z",
+  "scope": {{"kind": "all"}},
+  "operations": [
+    {{"kind": "rewrite", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}, "before_sha256": "{beta}", "text": "Beta revised."}}
+  ]
+}}"#,
+        beta = jubarte::expect::content_sha256("Beta".as_bytes()),
+    );
+    let prepared = prepare_plan(&source, &plan);
+    let correspondence = correspondence_of(&prepared);
+    for id in ["p0", "p1"] {
+        let entry = correspondence.lookup(id).expect(id);
+        assert_eq!(
+            entry.output.len(),
+            2,
+            "{id} refuses as merged: {:?}",
+            entry.output
+        );
+    }
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "beta-wording",
+      "description": "Beta reworded.",
+      "checks": [
+        {{"kind": "text_equals", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}, "text": "Beta revised."}}
+      ]
+    }}
+  ]
+}}"#
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &source, &prepared.primary, correspondence);
+    assert!(report.has_blocking_failure());
+    assert_eq!(report.checks[0].outcome, Outcome::Refused);
+    assert_eq!(report.checks[0].reason, Some(RefusalReason::Merged));
+}
+
+#[test]
+fn kept_deleted_mark_merging_into_an_insertion_still_refuses() {
+    // The merge chain lands on the first follower without a deleted mark,
+    // which an inserted paragraph can be: the marked source paragraph
+    // still refuses merged (its final paragraph is not its own), while
+    // the paragraph after the insertion keeps its one-to-one mapping
+    // (#1084 review F2).
+    const REV: &str = r#"w:author="Other" w:date="2026-09-01T00:00:00Z""#;
+    let body = format!(
+        concat!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>Beta</w:t></w:r></w:p>"#,
+        ),
+        REV = REV,
+    );
+    let source = docx(&body);
+    let hash = source_sha256(&source);
+    let plan = format!(
+        r#"{{
+  "schema_version": 2,
+  "source": {{"sha256": "{hash}"}},
+  "policy": {{"track": "on", "existing_revisions": "keep", "text_view": "final"}},
+  "resolve_revisions": {{"accept": [], "reject": []}},
+  "author": "T",
+  "date": "2026-10-17T07:00:00Z",
+  "scope": {{"kind": "all"}},
+  "operations": [
+    {{"kind": "insert_paragraph", "target": {{"short_id": "p0", "long_id": "document.w:p.j:short.p0"}}, "position": "after", "text": "Inserted."}}
+  ]
+}}"#
+    );
+    let prepared = prepare_plan(&source, &plan);
+    let correspondence = correspondence_of(&prepared);
+    let marked = correspondence.lookup("p0").expect("p0");
+    assert_ne!(
+        marked.output.len(),
+        1,
+        "the merge-marked paragraph refuses: {:?}",
+        marked.output
+    );
+    assert_eq!(
+        correspondence.lookup("p1").expect("p1").output,
+        [2],
+        "p1 stays one-to-one past the insertion"
+    );
+}
+
+#[test]
 fn rebound_output_copy_targets_output_ids_and_round_trips() {
     // The apply-side receipt copy: the edited primary's own digest, p1
     // rebound to the output's p2, and the copy is a schema-valid

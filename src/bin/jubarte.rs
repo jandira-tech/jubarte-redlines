@@ -151,6 +151,16 @@ fn pdf_options(
     }))
 }
 
+/// The absolute form of a CLI path: the real path when it exists, else the
+/// working directory joined with it. Error envelopes use it to name the
+/// file the caller supplied even when its bytes were never read (#1084
+/// review F5; proposal §11 keeps `source.path` absolute).
+fn absolute(path: &Path) -> String {
+    let path = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
+    slash_path(&path)
+}
+
 /// Whether two CLI paths name the same file. Two existing paths are compared
 /// by identity, which sees through hard links, symlinks and a volume that
 /// ignores case; a path not written yet is keyed by its canonicalized parent
