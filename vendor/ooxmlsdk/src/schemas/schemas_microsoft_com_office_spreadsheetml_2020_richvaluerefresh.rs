@@ -1,0 +1,28 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+/// Defines the RichValueRefreshIntervals Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "xlrvr:refreshIntervals")]
+pub struct RichValueRefreshIntervals {
+  /// Defines the RichValueRefreshInterval Class.
+  #[sdk(child(qname = "xlrvr:refreshInterval"))]
+  pub rich_value_refresh_interval: Vec<RichValueRefreshInterval>,
+}
+/// Defines the RichValueRefreshInterval Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "xlrvr:refreshInterval")]
+pub struct RichValueRefreshInterval {
+  /// resourceIdInt
+  #[sdk(attr(qname = ":resourceIdInt"))]
+  pub resource_id_int: Option<crate::simple_type::Int32Value>,
+  /// resourceIdStr
+  #[sdk(attr(qname = ":resourceIdStr"))]
+  pub resource_id_str: Option<crate::simple_type::StringValue>,
+  /// interval
+  #[sdk(attr(qname = ":interval"))]
+  pub interval: crate::simple_type::Int32Value,
+}

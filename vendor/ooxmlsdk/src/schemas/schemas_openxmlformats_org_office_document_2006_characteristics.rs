@@ -1,0 +1,47 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum RelationValues {
+  #[sdk(rename = "ge")]
+  #[default]
+  GreaterThanOrEqualTo,
+  #[sdk(rename = "le")]
+  LessThanOrEqualTo,
+  #[sdk(rename = "gt")]
+  GreaterThan,
+  #[sdk(rename = "lt")]
+  LessThan,
+  #[sdk(rename = "eq")]
+  EqualTo,
+}
+/// Set of Additional Characteristics.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(xml_header, qname = "ac:additionalCharacteristics")]
+pub struct AdditionalCharacteristicsInfo {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Single Characteristic.
+  #[sdk(child(qname = "ac:characteristic"))]
+  pub characteristic: Vec<Characteristic>,
+}
+/// Single Characteristic.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "ac:characteristic")]
+pub struct Characteristic {
+  /// Name of Characteristic
+  #[sdk(attr(qname = ":name"))]
+  pub name: crate::simple_type::StringValue,
+  /// Relationship of Value to Name
+  #[sdk(attr(qname = ":relation"))]
+  pub relation: RelationValues,
+  /// Characteristic Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+  /// Characteristic Grammar
+  #[sdk(attr(qname = ":vocabulary"))]
+  #[sdk(string_format(kind = "uri"))]
+  pub vocabulary: Option<crate::simple_type::StringValue>,
+}

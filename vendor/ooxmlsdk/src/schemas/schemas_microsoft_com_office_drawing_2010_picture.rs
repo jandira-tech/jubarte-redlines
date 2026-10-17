@@ -1,0 +1,31 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+/// Defines the ShapeStyle Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "pic14:style")]
+pub struct ShapeStyle {
+  /// Defines the LineReference Class.
+  #[sdk(child(qname = "a:lnRef"))]
+  pub line_reference: std::boxed::Box<crate::schemas::a::LineReference>,
+  /// Fill Reference.
+  #[sdk(child(qname = "a:fillRef"))]
+  pub fill_reference: std::boxed::Box<crate::schemas::a::FillReference>,
+  /// Effect Reference.
+  #[sdk(child(qname = "a:effectRef"))]
+  pub effect_reference: std::boxed::Box<crate::schemas::a::EffectReference>,
+  /// Font Reference
+  #[sdk(child(qname = "a:fontRef"))]
+  pub font_reference: std::boxed::Box<crate::schemas::a::FontReference>,
+}
+/// Defines the OfficeArtExtensionList Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "pic14:extLst")]
+pub struct OfficeArtExtensionList {
+  /// Extension.
+  #[sdk(child(qname = "a:ext"))]
+  pub extension: Vec<crate::schemas::a::Extension>,
+}

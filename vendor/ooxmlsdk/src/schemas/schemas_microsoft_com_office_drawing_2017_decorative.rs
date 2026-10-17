@@ -1,0 +1,15 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+/// Defines the Decorative Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "adec:decorative")]
+pub struct Decorative {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// val
+  #[sdk(attr(qname = ":val"))]
+  pub val: Option<crate::simple_type::BooleanValue>,
+}

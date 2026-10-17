@@ -1,0 +1,86 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum PersistenceValues {
+  #[sdk(rename = "persistPropertyBag")]
+  #[default]
+  PersistPropertyBag,
+  #[sdk(rename = "persistStream")]
+  PersistStream,
+  #[sdk(rename = "persistStreamInit")]
+  PersistStreamInit,
+  #[sdk(rename = "persistStorage")]
+  PersistStorage,
+}
+/// Defines the ActiveXControlData Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "ax:ocx")]
+pub struct ActiveXControlData {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// classid
+  #[sdk(attr(qname = "ax:classid"))]
+  pub active_x_control_class_id: crate::simple_type::StringValue,
+  /// license
+  #[sdk(attr(qname = "ax:license"))]
+  pub license: Option<crate::simple_type::StringValue>,
+  /// id
+  #[sdk(attr(qname = "r:id"))]
+  pub id: Option<crate::simple_type::StringValue>,
+  /// persistence
+  #[sdk(attr(qname = "ax:persistence"))]
+  pub persistence: PersistenceValues,
+  /// Defines the ActiveXObjectProperty Class.
+  #[sdk(child(qname = "ax:ocxPr"))]
+  pub active_x_object_property: Vec<ActiveXObjectProperty>,
+}
+/// Defines the ActiveXObjectProperty Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "ax:ocxPr")]
+pub struct ActiveXObjectProperty {
+  /// name
+  #[sdk(attr(qname = "ax:name"))]
+  pub name: crate::simple_type::StringValue,
+  /// value
+  #[sdk(attr(qname = "ax:value"))]
+  pub value: Option<crate::simple_type::StringValue>,
+  #[sdk(
+        choice(
+            child(variant = SharedComFont, qname = "ax:font"),
+            child(variant = SharedComPicture, qname = "ax:picture")
+        )
+    )]
+  pub active_x_object_property_choice: Option<ActiveXObjectPropertyChoice>,
+}
+/// Defines the SharedComFont Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "ax:font")]
+pub struct SharedComFont {
+  /// persistence
+  #[sdk(attr(qname = "ax:persistence"))]
+  pub persistence: Option<PersistenceValues>,
+  /// id
+  #[sdk(attr(qname = "r:id"))]
+  pub id: Option<crate::simple_type::StringValue>,
+  /// Defines the ActiveXObjectProperty Class.
+  #[sdk(child(qname = "ax:ocxPr"))]
+  pub active_x_object_property: Vec<ActiveXObjectProperty>,
+}
+/// Defines the SharedComPicture Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "ax:picture")]
+pub struct SharedComPicture {
+  /// id
+  #[sdk(attr(qname = "r:id"))]
+  pub id: Option<crate::simple_type::StringValue>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActiveXObjectPropertyChoice {
+  /// Defines the SharedComFont Class.
+  SharedComFont(SharedComFont),
+  /// Defines the SharedComPicture Class.
+  SharedComPicture(SharedComPicture),
+}

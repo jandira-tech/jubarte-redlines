@@ -1,0 +1,3070 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ColorApplicationMethodValues {
+  #[sdk(rename = "span")]
+  #[default]
+  Span,
+  #[sdk(rename = "cycle")]
+  Cycle,
+  #[sdk(rename = "repeat")]
+  Repeat,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum HueDirectionValues {
+  #[sdk(rename = "cw")]
+  #[default]
+  Clockwise,
+  #[sdk(rename = "ccw")]
+  Counterclockwise,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum PointValues {
+  #[sdk(rename = "node")]
+  #[default]
+  Node,
+  #[sdk(rename = "asst")]
+  Assistant,
+  #[sdk(rename = "doc")]
+  Document,
+  #[sdk(rename = "pres")]
+  Presentation,
+  #[sdk(rename = "parTrans")]
+  ParentTransition,
+  #[sdk(rename = "sibTrans")]
+  SiblingTransition,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ConnectionValues {
+  #[sdk(rename = "parOf")]
+  #[default]
+  ParentOf,
+  #[sdk(rename = "presOf")]
+  PresentationOf,
+  #[sdk(rename = "presParOf")]
+  PresentationParentOf,
+  #[sdk(rename = "unknownRelationship")]
+  UnknownRelationship,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum DirectionValues {
+  #[sdk(rename = "norm")]
+  #[default]
+  Normal,
+  #[sdk(rename = "rev")]
+  Reversed,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum HierarchyBranchStyleValues {
+  #[sdk(rename = "l")]
+  #[default]
+  Left,
+  #[sdk(rename = "r")]
+  Right,
+  #[sdk(rename = "hang")]
+  Hanging,
+  #[sdk(rename = "std")]
+  Standard,
+  #[sdk(rename = "init")]
+  Initial,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum AnimateOneByOneValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "one")]
+  One,
+  #[sdk(rename = "branch")]
+  Branch,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum AnimationLevelStringValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "lvl")]
+  Level,
+  #[sdk(rename = "ctr")]
+  Center,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ResizeHandlesStringValues {
+  #[sdk(rename = "exact")]
+  #[default]
+  Exact,
+  #[sdk(rename = "rel")]
+  Relative,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum AlgorithmValues {
+  #[sdk(rename = "composite")]
+  #[default]
+  Composite,
+  #[sdk(rename = "conn")]
+  Connector,
+  #[sdk(rename = "cycle")]
+  Cycle,
+  #[sdk(rename = "hierChild")]
+  HierarchyChild,
+  #[sdk(rename = "hierRoot")]
+  HierarchyRoot,
+  #[sdk(rename = "pyra")]
+  Pyramid,
+  #[sdk(rename = "lin")]
+  Linear,
+  #[sdk(rename = "sp")]
+  Space,
+  #[sdk(rename = "tx")]
+  Text,
+  #[sdk(rename = "snake")]
+  Snake,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum AxisValues {
+  #[sdk(rename = "self")]
+  #[default]
+  _Self,
+  #[sdk(rename = "ch")]
+  Child,
+  #[sdk(rename = "des")]
+  Descendant,
+  #[sdk(rename = "desOrSelf")]
+  DescendantOrSelf,
+  #[sdk(rename = "par")]
+  Parent,
+  #[sdk(rename = "ancst")]
+  Ancestor,
+  #[sdk(rename = "ancstOrSelf")]
+  AncestorOrSelf,
+  #[sdk(rename = "followSib")]
+  FollowSibling,
+  #[sdk(rename = "precedSib")]
+  PrecedingSibling,
+  #[sdk(rename = "follow")]
+  Follow,
+  #[sdk(rename = "preced")]
+  Preceding,
+  #[sdk(rename = "root")]
+  Root,
+  #[sdk(rename = "none")]
+  None,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum BoolOperatorValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "equ")]
+  Equal,
+  #[sdk(rename = "gte")]
+  GreaterThanOrEqualTo,
+  #[sdk(rename = "lte")]
+  LessThanOrEqualTo,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ChildOrderValues {
+  #[sdk(rename = "b")]
+  #[default]
+  Bottom,
+  #[sdk(rename = "t")]
+  Top,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ConstraintValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "alignOff")]
+  AlignmentOffset,
+  #[sdk(rename = "begMarg")]
+  BeginningMargin,
+  #[sdk(rename = "bendDist")]
+  BendingDistance,
+  #[sdk(rename = "begPad")]
+  BeginningPadding,
+  #[sdk(rename = "b")]
+  Bottom,
+  #[sdk(rename = "bMarg")]
+  BottomMargin,
+  #[sdk(rename = "bOff")]
+  BottomOffset,
+  #[sdk(rename = "ctrX")]
+  CenterHeight,
+  #[sdk(rename = "ctrXOff")]
+  CenterXOffset,
+  #[sdk(rename = "ctrY")]
+  CenterWidth,
+  #[sdk(rename = "ctrYOff")]
+  CenterYOffset,
+  #[sdk(rename = "connDist")]
+  ConnectionDistance,
+  #[sdk(rename = "diam")]
+  Diameter,
+  #[sdk(rename = "endMarg")]
+  EndMargin,
+  #[sdk(rename = "endPad")]
+  EndPadding,
+  #[sdk(rename = "h")]
+  Height,
+  #[sdk(rename = "hArH")]
+  ArrowheadHeight,
+  #[sdk(rename = "hOff")]
+  HeightOffset,
+  #[sdk(rename = "l")]
+  Left,
+  #[sdk(rename = "lMarg")]
+  LeftMargin,
+  #[sdk(rename = "lOff")]
+  LeftOffset,
+  #[sdk(rename = "r")]
+  Right,
+  #[sdk(rename = "rMarg")]
+  RightMargin,
+  #[sdk(rename = "rOff")]
+  RightOffset,
+  #[sdk(rename = "primFontSz")]
+  PrimaryFontSize,
+  #[sdk(rename = "pyraAcctRatio")]
+  PyramidAccentRatio,
+  #[sdk(rename = "secFontSz")]
+  SecondaryFontSize,
+  #[sdk(rename = "sibSp")]
+  SiblingSpacing,
+  #[sdk(rename = "secSibSp")]
+  SecondarySiblingSpacing,
+  #[sdk(rename = "sp")]
+  Spacing,
+  #[sdk(rename = "stemThick")]
+  StemThickness,
+  #[sdk(rename = "t")]
+  Top,
+  #[sdk(rename = "tMarg")]
+  TopMargin,
+  #[sdk(rename = "tOff")]
+  TopOffset,
+  #[sdk(rename = "userA")]
+  UserDefinedA,
+  #[sdk(rename = "userB")]
+  UserDefinedB,
+  #[sdk(rename = "userC")]
+  UserDefinedC,
+  #[sdk(rename = "userD")]
+  UserDefinedD,
+  #[sdk(rename = "userE")]
+  UserDefinedE,
+  #[sdk(rename = "userF")]
+  UserDefinedF,
+  #[sdk(rename = "userG")]
+  UserDefinedG,
+  #[sdk(rename = "userH")]
+  UserDefinedH,
+  #[sdk(rename = "userI")]
+  UserDefinedI,
+  #[sdk(rename = "userJ")]
+  UserDefinedJ,
+  #[sdk(rename = "userK")]
+  UserDefinedK,
+  #[sdk(rename = "userL")]
+  UserDefinedL,
+  #[sdk(rename = "userM")]
+  UserDefinedM,
+  #[sdk(rename = "userN")]
+  UserDefinedN,
+  #[sdk(rename = "userO")]
+  UserDefinedO,
+  #[sdk(rename = "userP")]
+  UserDefinedP,
+  #[sdk(rename = "userQ")]
+  UserDefinedQ,
+  #[sdk(rename = "userR")]
+  UserDefinedR,
+  #[sdk(rename = "userS")]
+  UserDefinedS,
+  #[sdk(rename = "userT")]
+  UserDefinedT,
+  #[sdk(rename = "userU")]
+  UserDefinedU,
+  #[sdk(rename = "userV")]
+  UserDefinedV,
+  #[sdk(rename = "userW")]
+  UserDefinedW,
+  #[sdk(rename = "userX")]
+  UserDefinedX,
+  #[sdk(rename = "userY")]
+  UserDefinedY,
+  #[sdk(rename = "userZ")]
+  UserDefinedZ,
+  #[sdk(rename = "w")]
+  Width,
+  #[sdk(rename = "wArH")]
+  ArrowheadWidth,
+  #[sdk(rename = "wOff")]
+  WidthOffset,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ConstraintRelationshipValues {
+  #[sdk(rename = "self")]
+  #[default]
+  _Self,
+  #[sdk(rename = "ch")]
+  Child,
+  #[sdk(rename = "des")]
+  Descendant,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ElementValues {
+  #[sdk(rename = "all")]
+  #[default]
+  All,
+  #[sdk(rename = "doc")]
+  Document,
+  #[sdk(rename = "node")]
+  Node,
+  #[sdk(rename = "norm")]
+  Normal,
+  #[sdk(rename = "nonNorm")]
+  NonNormal,
+  #[sdk(rename = "asst")]
+  Assistant,
+  #[sdk(rename = "nonAsst")]
+  NonAssistant,
+  #[sdk(rename = "parTrans")]
+  ParentTransition,
+  #[sdk(rename = "pres")]
+  Presentation,
+  #[sdk(rename = "sibTrans")]
+  SiblingTransition,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ParameterIdValues {
+  #[sdk(rename = "horzAlign")]
+  #[default]
+  HorizontalAlignment,
+  #[sdk(rename = "vertAlign")]
+  VerticalAlignment,
+  #[sdk(rename = "chDir")]
+  ChildDirection,
+  #[sdk(rename = "chAlign")]
+  ChildAlignment,
+  #[sdk(rename = "secChAlign")]
+  SecondaryChildAlignment,
+  #[sdk(rename = "linDir")]
+  LinearDirection,
+  #[sdk(rename = "secLinDir")]
+  SecondaryLinearDirection,
+  #[sdk(rename = "stElem")]
+  StartElement,
+  #[sdk(rename = "bendPt")]
+  BendPoint,
+  #[sdk(rename = "connRout")]
+  ConnectionRoute,
+  #[sdk(rename = "begSty")]
+  BeginningArrowheadStyle,
+  #[sdk(rename = "endSty")]
+  EndStyle,
+  #[sdk(rename = "dim")]
+  ConnectorDimension,
+  #[sdk(rename = "rotPath")]
+  RotationPath,
+  #[sdk(rename = "ctrShpMap")]
+  CenterShapeMapping,
+  #[sdk(rename = "nodeHorzAlign")]
+  NodeHorizontalAlignment,
+  #[sdk(rename = "nodeVertAlign")]
+  NodeVerticalAlignment,
+  #[sdk(rename = "fallback")]
+  FallbackScale,
+  #[sdk(rename = "txDir")]
+  TextDirection,
+  #[sdk(rename = "pyraAcctPos")]
+  PyramidAccentPosition,
+  #[sdk(rename = "pyraAcctTxMar")]
+  PyramidAccentTextMargin,
+  #[sdk(rename = "txBlDir")]
+  TextBlockDirection,
+  #[sdk(rename = "txAnchorHorz")]
+  TextAnchorHorizontal,
+  #[sdk(rename = "txAnchorVert")]
+  TextAnchorVertical,
+  #[sdk(rename = "txAnchorHorzCh")]
+  TextAnchorHorizontalWithChildren,
+  #[sdk(rename = "txAnchorVertCh")]
+  TextAnchorVerticalWithChildren,
+  #[sdk(rename = "parTxLTRAlign")]
+  ParentTextLeftToRightAlignment,
+  #[sdk(rename = "parTxRTLAlign")]
+  ParentTextRightToLeftAlignment,
+  #[sdk(rename = "shpTxLTRAlignCh")]
+  ShapeTextLeftToRightAlignment,
+  #[sdk(rename = "shpTxRTLAlignCh")]
+  ShapeTextRightToLeftAlignment,
+  #[sdk(rename = "autoTxRot")]
+  AutoTextRotation,
+  #[sdk(rename = "grDir")]
+  GrowDirection,
+  #[sdk(rename = "flowDir")]
+  FlowDirection,
+  #[sdk(rename = "contDir")]
+  ContinueDirection,
+  #[sdk(rename = "bkpt")]
+  Breakpoint,
+  #[sdk(rename = "off")]
+  Offset,
+  #[sdk(rename = "hierAlign")]
+  HierarchyAlignment,
+  #[sdk(rename = "bkPtFixedVal")]
+  BreakpointFixedValue,
+  #[sdk(rename = "stBulletLvl")]
+  StartBulletsAtLevel,
+  #[sdk(rename = "stAng")]
+  StartAngle,
+  #[sdk(rename = "spanAng")]
+  SpanAngle,
+  #[sdk(rename = "ar")]
+  AspectRatio,
+  #[sdk(rename = "lnSpPar")]
+  LineSpacingParent,
+  #[sdk(rename = "lnSpAfParP")]
+  LineSpacingAfterParentParagraph,
+  #[sdk(rename = "lnSpCh")]
+  LineSpacingChildren,
+  #[sdk(rename = "lnSpAfChP")]
+  LineSpacingAfterChildrenParagraph,
+  #[sdk(rename = "rtShortDist")]
+  RouteShortestDistance,
+  #[sdk(rename = "alignTx")]
+  TextAlignment,
+  #[sdk(rename = "pyraLvlNode")]
+  PyramidLevelNode,
+  #[sdk(rename = "pyraAcctBkgdNode")]
+  PyramidAccentBackgroundNode,
+  #[sdk(rename = "pyraAcctTxNode")]
+  PyramidAccentTextNode,
+  #[sdk(rename = "srcNode")]
+  SourceNode,
+  #[sdk(rename = "dstNode")]
+  DestinationNode,
+  #[sdk(rename = "begPts")]
+  BeginningPoints,
+  #[sdk(rename = "endPts")]
+  EndPoints,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum FunctionValues {
+  #[sdk(rename = "cnt")]
+  #[default]
+  Count,
+  #[sdk(rename = "pos")]
+  Position,
+  #[sdk(rename = "revPos")]
+  ReversePosition,
+  #[sdk(rename = "posEven")]
+  PositionEven,
+  #[sdk(rename = "posOdd")]
+  PositionOdd,
+  #[sdk(rename = "var")]
+  Variable,
+  #[sdk(rename = "depth")]
+  Depth,
+  #[sdk(rename = "maxDepth")]
+  MaxDepth,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum FunctionOperatorValues {
+  #[sdk(rename = "equ")]
+  #[default]
+  Equal,
+  #[sdk(rename = "neq")]
+  NotEqualTo,
+  #[sdk(rename = "gt")]
+  GreaterThan,
+  #[sdk(rename = "lt")]
+  LessThan,
+  #[sdk(rename = "gte")]
+  GreaterThanOrEqualTo,
+  #[sdk(rename = "lte")]
+  LessThanOrEqualTo,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum HorizontalAlignmentValues {
+  #[sdk(rename = "l")]
+  #[default]
+  Left,
+  #[sdk(rename = "ctr")]
+  Center,
+  #[sdk(rename = "r")]
+  Right,
+  #[sdk(rename = "none")]
+  None,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ChildDirectionValues {
+  #[sdk(rename = "horz")]
+  #[default]
+  Horizontal,
+  #[sdk(rename = "vert")]
+  Vertical,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ChildAlignmentValues {
+  #[sdk(rename = "t")]
+  #[default]
+  Top,
+  #[sdk(rename = "b")]
+  Bottom,
+  #[sdk(rename = "l")]
+  Left,
+  #[sdk(rename = "r")]
+  Right,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum SecondaryChildAlignmentValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "t")]
+  Top,
+  #[sdk(rename = "b")]
+  Bottom,
+  #[sdk(rename = "l")]
+  Left,
+  #[sdk(rename = "r")]
+  Right,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum LinearDirectionValues {
+  #[sdk(rename = "fromL")]
+  #[default]
+  FromLeft,
+  #[sdk(rename = "fromR")]
+  FromRight,
+  #[sdk(rename = "fromT")]
+  FromTop,
+  #[sdk(rename = "fromB")]
+  FromBottom,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum SecondaryLinearDirectionValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "fromL")]
+  FromLeft,
+  #[sdk(rename = "fromR")]
+  FromRight,
+  #[sdk(rename = "fromT")]
+  FromTop,
+  #[sdk(rename = "fromB")]
+  FromBottom,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum StartingElementValues {
+  #[sdk(rename = "node")]
+  #[default]
+  Node,
+  #[sdk(rename = "trans")]
+  Transition,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum RotationPathValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "alongPath")]
+  AlongPath,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum CenterShapeMappingValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "fNode")]
+  FirstNode,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum BendPointValues {
+  #[sdk(rename = "beg")]
+  #[default]
+  Beginning,
+  #[sdk(rename = "def")]
+  Default,
+  #[sdk(rename = "end")]
+  End,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ConnectorRoutingValues {
+  #[sdk(rename = "stra")]
+  #[default]
+  Straight,
+  #[sdk(rename = "bend")]
+  Bending,
+  #[sdk(rename = "curve")]
+  Curve,
+  #[sdk(rename = "longCurve")]
+  LongCurve,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ArrowheadStyleValues {
+  #[sdk(rename = "auto")]
+  #[default]
+  Auto,
+  #[sdk(rename = "arr")]
+  Arrow,
+  #[sdk(rename = "noArr")]
+  NoArrow,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ConnectorDimensionValues {
+  #[sdk(rename = "1D")]
+  #[default]
+  OneDimension,
+  #[sdk(rename = "2D")]
+  TwoDimension,
+  #[sdk(rename = "cust")]
+  Custom,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ConnectorPointValues {
+  #[sdk(rename = "auto")]
+  #[default]
+  Auto,
+  #[sdk(rename = "bCtr")]
+  BottomCenter,
+  #[sdk(rename = "ctr")]
+  Center,
+  #[sdk(rename = "midL")]
+  MiddleLeft,
+  #[sdk(rename = "midR")]
+  MiddleRight,
+  #[sdk(rename = "tCtr")]
+  TopCenter,
+  #[sdk(rename = "bL")]
+  BottomLeft,
+  #[sdk(rename = "bR")]
+  BottomRight,
+  #[sdk(rename = "tL")]
+  TopLeft,
+  #[sdk(rename = "tR")]
+  TopRight,
+  #[sdk(rename = "radial")]
+  Radial,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum NodeHorizontalAlignmentValues {
+  #[sdk(rename = "l")]
+  #[default]
+  Left,
+  #[sdk(rename = "ctr")]
+  Center,
+  #[sdk(rename = "r")]
+  Right,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum NodeVerticalAlignmentValues {
+  #[sdk(rename = "t")]
+  #[default]
+  Top,
+  #[sdk(rename = "mid")]
+  Middle,
+  #[sdk(rename = "b")]
+  Bottom,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum FallbackDimensionValues {
+  #[sdk(rename = "1D")]
+  #[default]
+  OneDimension,
+  #[sdk(rename = "2D")]
+  TwoDimension,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum TextDirectionValues {
+  #[sdk(rename = "fromT")]
+  #[default]
+  FromTop,
+  #[sdk(rename = "fromB")]
+  FromBottom,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum PyramidAccentPositionValues {
+  #[sdk(rename = "bef")]
+  #[default]
+  Before,
+  #[sdk(rename = "aft")]
+  After,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum PyramidAccentTextMarginValues {
+  #[sdk(rename = "step")]
+  #[default]
+  Step,
+  #[sdk(rename = "stack")]
+  Stack,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum TextBlockDirectionValues {
+  #[sdk(rename = "horz")]
+  #[default]
+  Horizontal,
+  #[sdk(rename = "vert")]
+  Vertical,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum TextAnchorHorizontalValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "ctr")]
+  Center,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum TextAnchorVerticalValues {
+  #[sdk(rename = "t")]
+  #[default]
+  Top,
+  #[sdk(rename = "mid")]
+  Middle,
+  #[sdk(rename = "b")]
+  Bottom,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum TextAlignmentValues {
+  #[sdk(rename = "l")]
+  #[default]
+  Left,
+  #[sdk(rename = "ctr")]
+  Center,
+  #[sdk(rename = "r")]
+  Right,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum AutoTextRotationValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "upr")]
+  Upright,
+  #[sdk(rename = "grav")]
+  Gravity,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum GrowDirectionValues {
+  #[sdk(rename = "tL")]
+  #[default]
+  TopLeft,
+  #[sdk(rename = "tR")]
+  TopRight,
+  #[sdk(rename = "bL")]
+  BottomLeft,
+  #[sdk(rename = "bR")]
+  BottomRight,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum FlowDirectionValues {
+  #[sdk(rename = "row")]
+  #[default]
+  Row,
+  #[sdk(rename = "col")]
+  Column,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum ContinueDirectionValues {
+  #[sdk(rename = "revDir")]
+  #[default]
+  ReverseDirection,
+  #[sdk(rename = "sameDir")]
+  SameDirection,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum BreakpointValues {
+  #[sdk(rename = "endCnv")]
+  #[default]
+  EndCanvas,
+  #[sdk(rename = "bal")]
+  Balanced,
+  #[sdk(rename = "fixed")]
+  Fixed,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum OffsetValues {
+  #[sdk(rename = "ctr")]
+  #[default]
+  Center,
+  #[sdk(rename = "off")]
+  Offset,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum HierarchyAlignmentValues {
+  #[sdk(rename = "tL")]
+  #[default]
+  TopLeft,
+  #[sdk(rename = "tR")]
+  TopRight,
+  #[sdk(rename = "tCtrCh")]
+  TopCenterChildren,
+  #[sdk(rename = "tCtrDes")]
+  TopCenterDescendants,
+  #[sdk(rename = "bL")]
+  BottomLeft,
+  #[sdk(rename = "bR")]
+  BottomRight,
+  #[sdk(rename = "bCtrCh")]
+  BottomCenterChild,
+  #[sdk(rename = "bCtrDes")]
+  BottomCenterDescendant,
+  #[sdk(rename = "lT")]
+  LeftTop,
+  #[sdk(rename = "lB")]
+  LeftBottom,
+  #[sdk(rename = "lCtrCh")]
+  LeftCenterChild,
+  #[sdk(rename = "lCtrDes")]
+  LeftCenterDescendant,
+  #[sdk(rename = "rT")]
+  RightTop,
+  #[sdk(rename = "rB")]
+  RightBottom,
+  #[sdk(rename = "rCtrCh")]
+  RightCenterChildren,
+  #[sdk(rename = "rCtrDes")]
+  RightCenterDescendants,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum VariableValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "orgChart")]
+  OrganizationalChart,
+  #[sdk(rename = "chMax")]
+  ChildMax,
+  #[sdk(rename = "chPref")]
+  ChildPreference,
+  #[sdk(rename = "bulEnabled")]
+  BulletsEnabled,
+  #[sdk(rename = "dir")]
+  Direction,
+  #[sdk(rename = "hierBranch")]
+  HierarchyBranch,
+  #[sdk(rename = "animOne")]
+  AnimateOne,
+  #[sdk(rename = "animLvl")]
+  AnimationLevel,
+  #[sdk(rename = "resizeHandles")]
+  ResizeHandles,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum OutputShapeValues {
+  #[sdk(rename = "none")]
+  #[default]
+  None,
+  #[sdk(rename = "conn")]
+  Connection,
+}
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, ooxmlsdk_derive::SdkEnum)]
+pub enum VerticalAlignmentValues {
+  #[sdk(rename = "t")]
+  #[default]
+  Top,
+  #[sdk(rename = "mid")]
+  Middle,
+  #[sdk(rename = "b")]
+  Bottom,
+  #[sdk(rename = "none")]
+  None,
+  #[sdk(rename = "top")]
+  Top2010,
+  #[sdk(rename = "center")]
+  Middle2010,
+  #[sdk(rename = "bottom")]
+  Bottom2010,
+}
+/// Color Transform Definitions.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(xml_header, qname = "dgm:colorsDef")]
+pub struct ColorsDefinition {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Unique ID
+  #[sdk(attr(qname = ":uniqueId"))]
+  pub unique_id: Option<crate::simple_type::StringValue>,
+  /// Minimum Version
+  #[sdk(attr(qname = ":minVer"))]
+  pub min_version: Option<crate::simple_type::StringValue>,
+  /// Title.
+  #[sdk(child(qname = "dgm:title"))]
+  pub color_definition_title: Vec<ColorDefinitionTitle>,
+  /// Description.
+  #[sdk(child(qname = "dgm:desc"))]
+  pub color_transform_description: Vec<ColorTransformDescription>,
+  /// Color Transform Category List.
+  #[sdk(child(qname = "dgm:catLst"))]
+  pub color_transform_categories: Option<ColorTransformCategories>,
+  /// Style Label.
+  #[sdk(child(qname = "dgm:styleLbl"))]
+  pub color_transform_style_label: Vec<ColorTransformStyleLabel>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Color Transform Header.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:colorsDefHdr")]
+pub struct ColorsDefinitionHeader {
+  /// Unique ID
+  #[sdk(attr(qname = ":uniqueId"))]
+  pub unique_id: crate::simple_type::StringValue,
+  /// Minimum Version
+  #[sdk(attr(qname = ":minVer"))]
+  pub min_version: Option<crate::simple_type::StringValue>,
+  /// Resource ID
+  #[sdk(attr(qname = ":resId"))]
+  pub resource_id: Option<crate::simple_type::Int32Value>,
+  /// Title.
+  #[sdk(child(qname = "dgm:title"))]
+  pub color_definition_title: Vec<ColorDefinitionTitle>,
+  /// Description.
+  #[sdk(child(qname = "dgm:desc"))]
+  pub color_transform_description: Vec<ColorTransformDescription>,
+  /// Color Transform Category List.
+  #[sdk(child(qname = "dgm:catLst"))]
+  pub color_transform_categories: Option<ColorTransformCategories>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Color Transform Header List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:colorsDefHdrLst")]
+pub struct ColorsDefinitionHeaderList {
+  /// Color Transform Header.
+  #[sdk(child(qname = "dgm:colorsDefHdr"))]
+  pub colors_definition_header: Vec<ColorsDefinitionHeader>,
+}
+/// Data Model.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(xml_header, qname = "dgm:dataModel")]
+pub struct DataModelRoot {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Point List
+  #[sdk(child(qname = "dgm:ptLst"))]
+  pub point_list: PointList,
+  /// Connection List
+  #[sdk(child(qname = "dgm:cxnLst"))]
+  pub connection_list: Option<ConnectionList>,
+  /// Background Formatting
+  #[sdk(child(qname = "dgm:bg"))]
+  pub background: Option<std::boxed::Box<Background>>,
+  /// Whole E2O Formatting
+  #[sdk(child(qname = "dgm:whole"))]
+  pub whole: Option<std::boxed::Box<Whole>>,
+  /// Defines the DataModelExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub data_model_extension_list: Option<DataModelExtensionList>,
+}
+/// Layout Definition.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(xml_header, qname = "dgm:layoutDef")]
+pub struct LayoutDefinition {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// uniqueId
+  #[sdk(attr(qname = ":uniqueId"))]
+  pub unique_id: Option<crate::simple_type::StringValue>,
+  /// minVer
+  #[sdk(attr(qname = ":minVer"))]
+  pub min_version: Option<crate::simple_type::StringValue>,
+  /// defStyle
+  #[sdk(attr(qname = ":defStyle"))]
+  pub default_style: Option<crate::simple_type::StringValue>,
+  /// Title.
+  #[sdk(child(qname = "dgm:title"))]
+  pub title: Vec<Title>,
+  /// Description.
+  #[sdk(child(qname = "dgm:desc"))]
+  pub description: Vec<Description>,
+  /// Category List.
+  #[sdk(child(qname = "dgm:catLst"))]
+  pub category_list: Option<CategoryList>,
+  /// Defines the SampleData Class.
+  #[sdk(child(qname = "dgm:sampData"))]
+  pub sample_data: Option<std::boxed::Box<SampleData>>,
+  /// Defines the StyleData Class.
+  #[sdk(child(qname = "dgm:styleData"))]
+  pub style_data: Option<std::boxed::Box<StyleData>>,
+  /// Defines the ColorData Class.
+  #[sdk(child(qname = "dgm:clrData"))]
+  pub color_data: Option<std::boxed::Box<ColorData>>,
+  /// Layout Node.
+  #[sdk(child(qname = "dgm:layoutNode"))]
+  pub layout_node: std::boxed::Box<LayoutNode>,
+  /// List of extensions to the CT_DiagramDefintions type..
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub diagram_definition_extension_list: Option<DiagramDefinitionExtensionList>,
+}
+/// Layout Definition Header.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:layoutDefHdr")]
+pub struct LayoutDefinitionHeader {
+  /// Unique Identifier
+  #[sdk(attr(qname = ":uniqueId"))]
+  pub unique_id: crate::simple_type::StringValue,
+  /// Minimum Version
+  #[sdk(attr(qname = ":minVer"))]
+  pub min_version: Option<crate::simple_type::StringValue>,
+  /// Default Style
+  #[sdk(attr(qname = ":defStyle"))]
+  pub default_style: Option<crate::simple_type::StringValue>,
+  /// Resource Identifier
+  #[sdk(attr(qname = ":resId"))]
+  pub resource_id: Option<crate::simple_type::Int32Value>,
+  /// Title.
+  #[sdk(child(qname = "dgm:title"))]
+  pub title: Vec<Title>,
+  /// Description.
+  #[sdk(child(qname = "dgm:desc"))]
+  pub description: Vec<Description>,
+  /// Category List.
+  #[sdk(child(qname = "dgm:catLst"))]
+  pub category_list: Option<CategoryList>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Diagram Layout Header List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:layoutDefHdrLst")]
+pub struct LayoutDefinitionHeaderList {
+  /// Layout Definition Header.
+  #[sdk(child(qname = "dgm:layoutDefHdr"))]
+  pub layout_definition_header: Vec<LayoutDefinitionHeader>,
+}
+/// Explicit Relationships to Diagram Parts.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:relIds")]
+pub struct RelationshipIds {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Explicit Relationship to Diagram Data Part
+  #[sdk(attr(qname = "r:dm"))]
+  pub data_part: crate::simple_type::StringValue,
+  /// Explicit Relationship to Diagram Layout Definition Part
+  #[sdk(attr(qname = "r:lo"))]
+  pub layout_part: crate::simple_type::StringValue,
+  /// Explicit Relationship to Style Definition Part
+  #[sdk(attr(qname = "r:qs"))]
+  pub style_part: crate::simple_type::StringValue,
+  /// Explicit Relationship to Diagram Colors Part
+  #[sdk(attr(qname = "r:cs"))]
+  pub color_part: crate::simple_type::StringValue,
+}
+/// Style Definition.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(xml_header, qname = "dgm:styleDef")]
+pub struct StyleDefinition {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Unique Style ID
+  #[sdk(attr(qname = ":uniqueId"))]
+  pub unique_id: Option<crate::simple_type::StringValue>,
+  /// Minimum Version
+  #[sdk(attr(qname = ":minVer"))]
+  pub min_version: Option<crate::simple_type::StringValue>,
+  /// Title.
+  #[sdk(child(qname = "dgm:title"))]
+  pub style_definition_title: Vec<StyleDefinitionTitle>,
+  /// Style Label Description.
+  #[sdk(child(qname = "dgm:desc"))]
+  pub style_label_description: Vec<StyleLabelDescription>,
+  /// Category List.
+  #[sdk(child(qname = "dgm:catLst"))]
+  pub style_display_categories: Option<StyleDisplayCategories>,
+  /// 3-D Scene.
+  #[sdk(child(qname = "dgm:scene3d"))]
+  pub scene3_d: Option<std::boxed::Box<Scene3D>>,
+  /// Style Label.
+  #[sdk(child(qname = "dgm:styleLbl"))]
+  pub style_label: Vec<StyleLabel>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Style Definition Header.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:styleDefHdr")]
+pub struct StyleDefinitionHeader {
+  /// Unique Style ID
+  #[sdk(attr(qname = ":uniqueId"))]
+  pub unique_id: crate::simple_type::StringValue,
+  /// Minimum Version
+  #[sdk(attr(qname = ":minVer"))]
+  pub min_version: Option<crate::simple_type::StringValue>,
+  /// Resource ID
+  #[sdk(attr(qname = ":resId"))]
+  pub resource_id: Option<crate::simple_type::Int32Value>,
+  /// Title.
+  #[sdk(child(qname = "dgm:title"))]
+  pub style_definition_title: Vec<StyleDefinitionTitle>,
+  /// Style Label Description.
+  #[sdk(child(qname = "dgm:desc"))]
+  pub style_label_description: Vec<StyleLabelDescription>,
+  /// Category List.
+  #[sdk(child(qname = "dgm:catLst"))]
+  pub style_display_categories: Option<StyleDisplayCategories>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// List of Style Definition Headers.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:styleDefHdrLst")]
+pub struct StyleDefinitionHeaderList {
+  /// Style Definition Header.
+  #[sdk(child(qname = "dgm:styleDefHdr"))]
+  pub style_definition_header: Vec<StyleDefinitionHeader>,
+}
+/// Color Transform Category.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:cat")]
+pub struct ColorTransformCategory {
+  /// Category Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "uri"))]
+  pub r#type: crate::simple_type::StringValue,
+  /// Priority
+  #[sdk(attr(qname = ":pri"))]
+  pub priority: crate::simple_type::UInt32Value,
+}
+/// Fill Color List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:fillClrLst")]
+pub struct FillColorList {
+  /// Color Application Method Type
+  #[sdk(attr(qname = ":meth"))]
+  #[sdk(string_format(kind = "token"))]
+  pub method: Option<ColorApplicationMethodValues>,
+  /// Hue Direction
+  #[sdk(attr(qname = ":hueDir"))]
+  #[sdk(string_format(kind = "token"))]
+  pub hue_direction: Option<HueDirectionValues>,
+  #[sdk(
+        choice(
+            child(variant = RgbColorModelPercentage, qname = "a:scrgbClr"),
+            child(variant = RgbColorModelHex, boxed, qname = "a:srgbClr"),
+            child(variant = HslColor, qname = "a:hslClr"),
+            child(variant = SystemColor, qname = "a:sysClr"),
+            child(variant = SchemeColor, qname = "a:schemeClr"),
+            child(variant = PresetColor, qname = "a:prstClr")
+        )
+    )]
+  pub fill_color_list_choice: Vec<FillColorListChoice>,
+}
+/// Line Color List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:linClrLst")]
+pub struct LineColorList {
+  /// Color Application Method Type
+  #[sdk(attr(qname = ":meth"))]
+  #[sdk(string_format(kind = "token"))]
+  pub method: Option<ColorApplicationMethodValues>,
+  /// Hue Direction
+  #[sdk(attr(qname = ":hueDir"))]
+  #[sdk(string_format(kind = "token"))]
+  pub hue_direction: Option<HueDirectionValues>,
+  #[sdk(
+        choice(
+            child(variant = RgbColorModelPercentage, qname = "a:scrgbClr"),
+            child(variant = RgbColorModelHex, boxed, qname = "a:srgbClr"),
+            child(variant = HslColor, qname = "a:hslClr"),
+            child(variant = SystemColor, qname = "a:sysClr"),
+            child(variant = SchemeColor, qname = "a:schemeClr"),
+            child(variant = PresetColor, qname = "a:prstClr")
+        )
+    )]
+  pub line_color_list_choice: Vec<LineColorListChoice>,
+}
+/// Effect Color List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:effectClrLst")]
+pub struct EffectColorList {
+  /// Color Application Method Type
+  #[sdk(attr(qname = ":meth"))]
+  #[sdk(string_format(kind = "token"))]
+  pub method: Option<ColorApplicationMethodValues>,
+  /// Hue Direction
+  #[sdk(attr(qname = ":hueDir"))]
+  #[sdk(string_format(kind = "token"))]
+  pub hue_direction: Option<HueDirectionValues>,
+  #[sdk(
+        choice(
+            child(variant = RgbColorModelPercentage, qname = "a:scrgbClr"),
+            child(variant = RgbColorModelHex, boxed, qname = "a:srgbClr"),
+            child(variant = HslColor, qname = "a:hslClr"),
+            child(variant = SystemColor, qname = "a:sysClr"),
+            child(variant = SchemeColor, qname = "a:schemeClr"),
+            child(variant = PresetColor, qname = "a:prstClr")
+        )
+    )]
+  pub effect_color_list_choice: Vec<EffectColorListChoice>,
+}
+/// Text Line Color List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:txLinClrLst")]
+pub struct TextLineColorList {
+  /// Color Application Method Type
+  #[sdk(attr(qname = ":meth"))]
+  #[sdk(string_format(kind = "token"))]
+  pub method: Option<ColorApplicationMethodValues>,
+  /// Hue Direction
+  #[sdk(attr(qname = ":hueDir"))]
+  #[sdk(string_format(kind = "token"))]
+  pub hue_direction: Option<HueDirectionValues>,
+  #[sdk(
+        choice(
+            child(variant = RgbColorModelPercentage, qname = "a:scrgbClr"),
+            child(variant = RgbColorModelHex, boxed, qname = "a:srgbClr"),
+            child(variant = HslColor, qname = "a:hslClr"),
+            child(variant = SystemColor, qname = "a:sysClr"),
+            child(variant = SchemeColor, qname = "a:schemeClr"),
+            child(variant = PresetColor, qname = "a:prstClr")
+        )
+    )]
+  pub text_line_color_list_choice: Vec<TextLineColorListChoice>,
+}
+/// Text Fill Color List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:txFillClrLst")]
+pub struct TextFillColorList {
+  /// Color Application Method Type
+  #[sdk(attr(qname = ":meth"))]
+  #[sdk(string_format(kind = "token"))]
+  pub method: Option<ColorApplicationMethodValues>,
+  /// Hue Direction
+  #[sdk(attr(qname = ":hueDir"))]
+  #[sdk(string_format(kind = "token"))]
+  pub hue_direction: Option<HueDirectionValues>,
+  #[sdk(
+        choice(
+            child(variant = RgbColorModelPercentage, qname = "a:scrgbClr"),
+            child(variant = RgbColorModelHex, boxed, qname = "a:srgbClr"),
+            child(variant = HslColor, qname = "a:hslClr"),
+            child(variant = SystemColor, qname = "a:sysClr"),
+            child(variant = SchemeColor, qname = "a:schemeClr"),
+            child(variant = PresetColor, qname = "a:prstClr")
+        )
+    )]
+  pub text_fill_color_list_choice: Vec<TextFillColorListChoice>,
+}
+/// Text Effect Color List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:txEffectClrLst")]
+pub struct TextEffectColorList {
+  /// Color Application Method Type
+  #[sdk(attr(qname = ":meth"))]
+  #[sdk(string_format(kind = "token"))]
+  pub method: Option<ColorApplicationMethodValues>,
+  /// Hue Direction
+  #[sdk(attr(qname = ":hueDir"))]
+  #[sdk(string_format(kind = "token"))]
+  pub hue_direction: Option<HueDirectionValues>,
+  #[sdk(
+        choice(
+            child(variant = RgbColorModelPercentage, qname = "a:scrgbClr"),
+            child(variant = RgbColorModelHex, boxed, qname = "a:srgbClr"),
+            child(variant = HslColor, qname = "a:hslClr"),
+            child(variant = SystemColor, qname = "a:sysClr"),
+            child(variant = SchemeColor, qname = "a:schemeClr"),
+            child(variant = PresetColor, qname = "a:prstClr")
+        )
+    )]
+  pub text_effect_color_list_choice: Vec<TextEffectColorListChoice>,
+}
+/// Defines the ExtensionList Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:extLst")]
+pub struct ExtensionList {
+  /// Extension.
+  #[sdk(child(qname = "a:ext"))]
+  pub extension: Vec<crate::schemas::a::Extension>,
+}
+/// Title.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:title")]
+pub struct ColorDefinitionTitle {
+  /// Language
+  #[sdk(attr(qname = ":lang"))]
+  pub language: Option<crate::simple_type::StringValue>,
+  /// Description Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+}
+/// Description.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:desc")]
+pub struct ColorTransformDescription {
+  /// Language
+  #[sdk(attr(qname = ":lang"))]
+  pub language: Option<crate::simple_type::StringValue>,
+  /// Description Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+}
+/// Color Transform Category List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:catLst")]
+pub struct ColorTransformCategories {
+  /// Color Transform Category.
+  #[sdk(child(qname = "dgm:cat"))]
+  pub color_transform_category: Vec<ColorTransformCategory>,
+}
+/// Style Label.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:styleLbl")]
+pub struct ColorTransformStyleLabel {
+  /// Name
+  #[sdk(attr(qname = ":name"))]
+  pub name: crate::simple_type::StringValue,
+  /// Fill Color List
+  #[sdk(child(qname = "dgm:fillClrLst"))]
+  pub fill_color_list: Option<FillColorList>,
+  /// Line Color List
+  #[sdk(child(qname = "dgm:linClrLst"))]
+  pub line_color_list: Option<LineColorList>,
+  /// Effect Color List
+  #[sdk(child(qname = "dgm:effectClrLst"))]
+  pub effect_color_list: Option<EffectColorList>,
+  /// Text Line Color List
+  #[sdk(child(qname = "dgm:txLinClrLst"))]
+  pub text_line_color_list: Option<TextLineColorList>,
+  /// Text Fill Color List
+  #[sdk(child(qname = "dgm:txFillClrLst"))]
+  pub text_fill_color_list: Option<TextFillColorList>,
+  /// Text Effect Color List
+  #[sdk(child(qname = "dgm:txEffectClrLst"))]
+  pub text_effect_color_list: Option<TextEffectColorList>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Point.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:pt")]
+pub struct Point {
+  /// Model Identifier
+  #[sdk(attr(qname = ":modelId"))]
+  #[sdk(number_type(source = 1u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 2u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub model_id: crate::simple_type::StringValue,
+  /// Point Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#type: Option<PointValues>,
+  /// Connection Identifier
+  #[sdk(attr(qname = ":cxnId"))]
+  #[sdk(number_type(source = 0u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 1u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub connection_id: Option<crate::simple_type::StringValue>,
+  /// Property Set
+  #[sdk(child(qname = "dgm:prSet"))]
+  pub property_set: Option<std::boxed::Box<PropertySet>>,
+  /// Shape Properties
+  #[sdk(child(qname = "dgm:spPr"))]
+  pub shape_properties: Option<std::boxed::Box<ShapeProperties>>,
+  /// Text Body
+  #[sdk(child(qname = "dgm:t"))]
+  pub text_body: Option<std::boxed::Box<TextBody>>,
+  /// Defines the PtExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub pt_extension_list: Option<PtExtensionList>,
+}
+/// Connection.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:cxn")]
+pub struct Connection {
+  /// Model Identifier
+  #[sdk(attr(qname = ":modelId"))]
+  #[sdk(number_type(source = 1u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 2u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub model_id: crate::simple_type::StringValue,
+  /// Point Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#type: Option<ConnectionValues>,
+  /// Source Identifier
+  #[sdk(attr(qname = ":srcId"))]
+  #[sdk(number_type(source = 1u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 2u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub source_id: crate::simple_type::StringValue,
+  /// Destination Identifier
+  #[sdk(attr(qname = ":destId"))]
+  #[sdk(number_type(source = 1u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 2u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub destination_id: crate::simple_type::StringValue,
+  /// Source Position
+  #[sdk(attr(qname = ":srcOrd"))]
+  pub source_position: crate::simple_type::UInt32Value,
+  /// Destination Position
+  #[sdk(attr(qname = ":destOrd"))]
+  pub destination_position: crate::simple_type::UInt32Value,
+  /// Parent Transition Identifier
+  #[sdk(attr(qname = ":parTransId"))]
+  #[sdk(number_type(source = 0u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 1u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub parent_transition_id: Option<crate::simple_type::StringValue>,
+  /// Sibling Transition Identifier
+  #[sdk(attr(qname = ":sibTransId"))]
+  #[sdk(number_type(source = 0u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 1u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub sibling_transition_id: Option<crate::simple_type::StringValue>,
+  /// Presentation Identifier
+  #[sdk(attr(qname = ":presId"))]
+  pub presentation_id: Option<crate::simple_type::StringValue>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Constraint.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:constr")]
+pub struct Constraint {
+  /// Constraint Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#type: ConstraintValues,
+  /// For
+  #[sdk(attr(qname = ":for"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#for: Option<ConstraintRelationshipValues>,
+  /// For Name
+  #[sdk(attr(qname = ":forName"))]
+  pub for_name: Option<crate::simple_type::StringValue>,
+  /// Data Point Type
+  #[sdk(attr(qname = ":ptType"))]
+  #[sdk(string_format(kind = "token"))]
+  pub point_type: Option<ElementValues>,
+  /// Reference Type
+  #[sdk(attr(qname = ":refType"))]
+  #[sdk(string_format(kind = "token"))]
+  pub reference_type: Option<ConstraintValues>,
+  /// Reference For
+  #[sdk(attr(qname = ":refFor"))]
+  #[sdk(string_format(kind = "token"))]
+  pub reference_for: Option<ConstraintRelationshipValues>,
+  /// Reference For Name
+  #[sdk(attr(qname = ":refForName"))]
+  pub reference_for_name: Option<crate::simple_type::StringValue>,
+  /// Reference Point Type
+  #[sdk(attr(qname = ":refPtType"))]
+  #[sdk(string_format(kind = "token"))]
+  pub reference_point_type: Option<ElementValues>,
+  /// Operator
+  #[sdk(attr(qname = ":op"))]
+  #[sdk(string_format(kind = "token"))]
+  pub operator: Option<BoolOperatorValues>,
+  /// Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: Option<crate::simple_type::DoubleValue>,
+  /// Factor
+  #[sdk(attr(qname = ":fact"))]
+  pub fact: Option<crate::simple_type::DoubleValue>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Rule.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:rule")]
+pub struct Rule {
+  /// Constraint Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#type: ConstraintValues,
+  /// For
+  #[sdk(attr(qname = ":for"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#for: Option<ConstraintRelationshipValues>,
+  /// For Name
+  #[sdk(attr(qname = ":forName"))]
+  pub for_name: Option<crate::simple_type::StringValue>,
+  /// Data Point Type
+  #[sdk(attr(qname = ":ptType"))]
+  #[sdk(string_format(kind = "token"))]
+  pub point_type: Option<ElementValues>,
+  /// Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: Option<crate::simple_type::DoubleValue>,
+  /// Factor
+  #[sdk(attr(qname = ":fact"))]
+  pub fact: Option<crate::simple_type::DoubleValue>,
+  /// Max Value
+  #[sdk(attr(qname = ":max"))]
+  pub max: Option<crate::simple_type::DoubleValue>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Shape Adjust.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:adj")]
+pub struct Adjust {
+  /// Adjust Handle Index
+  #[sdk(attr(qname = ":idx"))]
+  #[sdk(number_range(range = 1..))]
+  pub index: crate::simple_type::UInt32Value,
+  /// Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::DoubleValue,
+}
+/// Shape Adjust List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:adjLst")]
+pub struct AdjustList {
+  /// Shape Adjust.
+  #[sdk(child(qname = "dgm:adj"))]
+  pub adjust: Vec<Adjust>,
+}
+/// Parameter.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:param")]
+pub struct Parameter {
+  /// Parameter Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#type: ParameterIdValues,
+  /// Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(string_set(source = 0u32, union = 0u64, values = &["l", "ctr", "r", "none"]))]
+  #[sdk(
+        string_set(
+            source = 1u32,
+            union = 0u64,
+            values = &["t",
+            "mid",
+            "b",
+            "none",
+            "top",
+            "center",
+            "bottom"]
+        )
+    )]
+  #[sdk(string_set(source = 2u32, union = 0u64, values = &["horz", "vert"]))]
+  #[sdk(string_set(source = 3u32, union = 0u64, values = &["t", "b", "l", "r"]))]
+  #[sdk(
+        string_set(source = 4u32, union = 0u64, values = &["none", "t", "b", "l", "r"])
+    )]
+  #[sdk(
+        string_set(
+            source = 5u32,
+            union = 0u64,
+            values = &["fromL",
+            "fromR",
+            "fromT",
+            "fromB"]
+        )
+    )]
+  #[sdk(
+        string_set(
+            source = 6u32,
+            union = 0u64,
+            values = &["none",
+            "fromL",
+            "fromR",
+            "fromT",
+            "fromB"]
+        )
+    )]
+  #[sdk(string_set(source = 7u32, union = 0u64, values = &["node", "trans"]))]
+  #[sdk(string_set(source = 8u32, union = 0u64, values = &["beg", "def", "end"]))]
+  #[sdk(
+        string_set(
+            source = 9u32,
+            union = 0u64,
+            values = &["stra",
+            "bend",
+            "curve",
+            "longCurve"]
+        )
+    )]
+  #[sdk(string_set(source = 10u32, union = 0u64, values = &["auto", "arr", "noArr"]))]
+  #[sdk(string_set(source = 11u32, union = 0u64, values = &["1D", "2D", "cust"]))]
+  #[sdk(string_set(source = 12u32, union = 0u64, values = &["none", "alongPath"]))]
+  #[sdk(string_set(source = 13u32, union = 0u64, values = &["none", "fNode"]))]
+  #[sdk(string_set(source = 14u32, union = 0u64, values = &["l", "ctr", "r"]))]
+  #[sdk(string_set(source = 15u32, union = 0u64, values = &["t", "mid", "b"]))]
+  #[sdk(string_set(source = 16u32, union = 0u64, values = &["1D", "2D"]))]
+  #[sdk(string_set(source = 17u32, union = 0u64, values = &["fromT", "fromB"]))]
+  #[sdk(string_set(source = 18u32, union = 0u64, values = &["bef", "aft"]))]
+  #[sdk(string_set(source = 19u32, union = 0u64, values = &["step", "stack"]))]
+  #[sdk(string_set(source = 20u32, union = 0u64, values = &["horz", "vert"]))]
+  #[sdk(string_set(source = 21u32, union = 0u64, values = &["none", "ctr"]))]
+  #[sdk(string_set(source = 22u32, union = 0u64, values = &["t", "mid", "b"]))]
+  #[sdk(string_set(source = 23u32, union = 0u64, values = &["l", "ctr", "r"]))]
+  #[sdk(string_set(source = 24u32, union = 0u64, values = &["none", "upr", "grav"]))]
+  #[sdk(string_set(source = 25u32, union = 0u64, values = &["tL", "tR", "bL", "bR"]))]
+  #[sdk(string_set(source = 26u32, union = 0u64, values = &["row", "col"]))]
+  #[sdk(string_set(source = 27u32, union = 0u64, values = &["revDir", "sameDir"]))]
+  #[sdk(
+        string_set(source = 28u32, union = 0u64, values = &["endCnv", "bal", "fixed"])
+    )]
+  #[sdk(string_set(source = 29u32, union = 0u64, values = &["ctr", "off"]))]
+  #[sdk(
+        string_set(
+            source = 30u32,
+            union = 0u64,
+            values = &["tL",
+            "tR",
+            "tCtrCh",
+            "tCtrDes",
+            "bL",
+            "bR",
+            "bCtrCh",
+            "bCtrDes",
+            "lT",
+            "lB",
+            "lCtrCh",
+            "lCtrDes",
+            "rT",
+            "rB",
+            "rCtrCh",
+            "rCtrDes"]
+        )
+    )]
+  #[sdk(number_type(source = 31u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(number_type(source = 32u32, union = 0u64, type_name = "xsd:double"))]
+  #[sdk(number_type(source = 33u32, union = 0u64, type_name = "xsd:boolean"))]
+  #[sdk(string_format(source = 34u32, union = 0u64, kind = "token"))]
+  #[sdk(
+        string_set(
+            source = 35u32,
+            union = 0u64,
+            values = &["auto",
+            "bCtr",
+            "ctr",
+            "midL",
+            "midR",
+            "tCtr",
+            "bL",
+            "bR",
+            "tL",
+            "tR",
+            "radial"]
+        )
+    )]
+  pub val: Option<crate::simple_type::StringValue>,
+}
+/// Algorithm.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:alg")]
+pub struct Algorithm {
+  /// Algorithm Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "token"))]
+  pub r#type: AlgorithmValues,
+  /// Revision Number
+  #[sdk(attr(qname = ":rev"))]
+  pub revision: Option<crate::simple_type::UInt32Value>,
+  /// Parameter.
+  #[sdk(child(qname = "dgm:param"))]
+  pub parameter: Vec<Parameter>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Shape.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:shape")]
+pub struct Shape {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Rotation
+  #[sdk(attr(qname = ":rot"))]
+  pub rotation: Option<crate::simple_type::DoubleValue>,
+  /// Shape Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(
+        string_set(
+            source = 0u32,
+            union = 0u64,
+            values = &["line",
+            "lineInv",
+            "triangle",
+            "rtTriangle",
+            "rect",
+            "diamond",
+            "parallelogram",
+            "trapezoid",
+            "nonIsoscelesTrapezoid",
+            "pentagon",
+            "hexagon",
+            "heptagon",
+            "octagon",
+            "decagon",
+            "dodecagon",
+            "star4",
+            "star5",
+            "star6",
+            "star7",
+            "star8",
+            "star10",
+            "star12",
+            "star16",
+            "star24",
+            "star32",
+            "roundRect",
+            "round1Rect",
+            "round2SameRect",
+            "round2DiagRect",
+            "snipRoundRect",
+            "snip1Rect",
+            "snip2SameRect",
+            "snip2DiagRect",
+            "plaque",
+            "ellipse",
+            "teardrop",
+            "homePlate",
+            "chevron",
+            "pieWedge",
+            "pie",
+            "blockArc",
+            "donut",
+            "noSmoking",
+            "rightArrow",
+            "leftArrow",
+            "upArrow",
+            "downArrow",
+            "stripedRightArrow",
+            "notchedRightArrow",
+            "bentUpArrow",
+            "leftRightArrow",
+            "upDownArrow",
+            "leftUpArrow",
+            "leftRightUpArrow",
+            "quadArrow",
+            "leftArrowCallout",
+            "rightArrowCallout",
+            "upArrowCallout",
+            "downArrowCallout",
+            "leftRightArrowCallout",
+            "upDownArrowCallout",
+            "quadArrowCallout",
+            "bentArrow",
+            "uturnArrow",
+            "circularArrow",
+            "leftCircularArrow",
+            "leftRightCircularArrow",
+            "curvedRightArrow",
+            "curvedLeftArrow",
+            "curvedUpArrow",
+            "curvedDownArrow",
+            "swooshArrow",
+            "cube",
+            "can",
+            "lightningBolt",
+            "heart",
+            "sun",
+            "moon",
+            "smileyFace",
+            "irregularSeal1",
+            "irregularSeal2",
+            "foldedCorner",
+            "bevel",
+            "frame",
+            "halfFrame",
+            "corner",
+            "diagStripe",
+            "chord",
+            "arc",
+            "leftBracket",
+            "rightBracket",
+            "leftBrace",
+            "rightBrace",
+            "bracketPair",
+            "bracePair",
+            "straightConnector1",
+            "bentConnector2",
+            "bentConnector3",
+            "bentConnector4",
+            "bentConnector5",
+            "curvedConnector2",
+            "curvedConnector3",
+            "curvedConnector4",
+            "curvedConnector5",
+            "callout1",
+            "callout2",
+            "callout3",
+            "accentCallout1",
+            "accentCallout2",
+            "accentCallout3",
+            "borderCallout1",
+            "borderCallout2",
+            "borderCallout3",
+            "accentBorderCallout1",
+            "accentBorderCallout2",
+            "accentBorderCallout3",
+            "wedgeRectCallout",
+            "wedgeRoundRectCallout",
+            "wedgeEllipseCallout",
+            "cloudCallout",
+            "cloud",
+            "ribbon",
+            "ribbon2",
+            "ellipseRibbon",
+            "ellipseRibbon2",
+            "leftRightRibbon",
+            "verticalScroll",
+            "horizontalScroll",
+            "wave",
+            "doubleWave",
+            "plus",
+            "flowChartProcess",
+            "flowChartDecision",
+            "flowChartInputOutput",
+            "flowChartPredefinedProcess",
+            "flowChartInternalStorage",
+            "flowChartDocument",
+            "flowChartMultidocument",
+            "flowChartTerminator",
+            "flowChartPreparation",
+            "flowChartManualInput",
+            "flowChartManualOperation",
+            "flowChartConnector",
+            "flowChartPunchedCard",
+            "flowChartPunchedTape",
+            "flowChartSummingJunction",
+            "flowChartOr",
+            "flowChartCollate",
+            "flowChartSort",
+            "flowChartExtract",
+            "flowChartMerge",
+            "flowChartOfflineStorage",
+            "flowChartOnlineStorage",
+            "flowChartMagneticTape",
+            "flowChartMagneticDisk",
+            "flowChartMagneticDrum",
+            "flowChartDisplay",
+            "flowChartDelay",
+            "flowChartAlternateProcess",
+            "flowChartOffpageConnector",
+            "actionButtonBlank",
+            "actionButtonHome",
+            "actionButtonHelp",
+            "actionButtonInformation",
+            "actionButtonForwardNext",
+            "actionButtonBackPrevious",
+            "actionButtonEnd",
+            "actionButtonBeginning",
+            "actionButtonReturn",
+            "actionButtonDocument",
+            "actionButtonSound",
+            "actionButtonMovie",
+            "gear6",
+            "gear9",
+            "funnel",
+            "mathPlus",
+            "mathMinus",
+            "mathMultiply",
+            "mathDivide",
+            "mathEqual",
+            "mathNotEqual",
+            "cornerTabs",
+            "squareTabs",
+            "plaqueTabs",
+            "chartX",
+            "chartStar",
+            "chartPlus"]
+        )
+    )]
+  #[sdk(string_set(source = 1u32, union = 0u64, values = &["none", "conn"]))]
+  pub r#type: Option<crate::simple_type::StringValue>,
+  /// Relationship to Image Part
+  #[sdk(attr(qname = "r:blip"))]
+  pub blip: Option<crate::simple_type::StringValue>,
+  /// Z-Order Offset
+  #[sdk(attr(qname = ":zOrderOff"))]
+  pub z_order_offset: Option<crate::simple_type::Int32Value>,
+  /// Hide Geometry
+  #[sdk(attr(qname = ":hideGeom"))]
+  pub hide_geometry: Option<crate::simple_type::BooleanValue>,
+  /// Prevent Text Editing
+  #[sdk(attr(qname = ":lkTxEntry"))]
+  pub locked_text: Option<crate::simple_type::BooleanValue>,
+  /// Image Placeholder
+  #[sdk(attr(qname = ":blipPhldr"))]
+  pub blip_placeholder: Option<crate::simple_type::BooleanValue>,
+  /// Shape Adjust List
+  #[sdk(child(qname = "dgm:adjLst"))]
+  pub adjust_list: Option<AdjustList>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Presentation Of.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:presOf")]
+pub struct PresentationOf {
+  /// Axis
+  #[sdk(attr(list, qname = ":axis"))]
+  pub axis: Option<Vec<AxisValues>>,
+  /// Data Point Type
+  #[sdk(attr(list, qname = ":ptType"))]
+  pub point_type: Option<Vec<ElementValues>>,
+  /// Hide Last Transition
+  #[sdk(attr(list, qname = ":hideLastTrans"))]
+  pub hide_last_trans: Option<Vec<crate::simple_type::BooleanValue>>,
+  /// Start
+  #[sdk(attr(list, qname = ":st"))]
+  pub start: Option<Vec<crate::simple_type::Int32Value>>,
+  /// Count
+  #[sdk(attr(list, qname = ":cnt"))]
+  pub count: Option<Vec<crate::simple_type::UInt32Value>>,
+  /// Step
+  #[sdk(attr(list, qname = ":step"))]
+  pub step: Option<Vec<crate::simple_type::Int32Value>>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Constraint List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:constrLst")]
+pub struct Constraints {
+  /// Constraint.
+  #[sdk(child(qname = "dgm:constr"))]
+  pub constraint: Vec<Constraint>,
+}
+/// Rule List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:ruleLst")]
+pub struct RuleList {
+  /// Rule.
+  #[sdk(child(qname = "dgm:rule"))]
+  pub rule: Vec<Rule>,
+}
+/// Variable List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:varLst")]
+pub struct VariableList {
+  /// Show Organization Chart User Interface
+  #[sdk(child(qname = "dgm:orgChart"))]
+  pub organization_chart: Option<OrganizationChart>,
+  /// Maximum Children
+  #[sdk(child(qname = "dgm:chMax"))]
+  pub max_number_of_children: Option<MaxNumberOfChildren>,
+  /// Preferred Number of Children
+  #[sdk(child(qname = "dgm:chPref"))]
+  pub preferred_number_of_children: Option<PreferredNumberOfChildren>,
+  /// Show Insert Bullet
+  #[sdk(child(qname = "dgm:bulletEnabled"))]
+  pub bullet_enabled: Option<BulletEnabled>,
+  /// Diagram Direction
+  #[sdk(child(qname = "dgm:dir"))]
+  pub direction: Option<Direction>,
+  /// Organization Chart Branch Style
+  #[sdk(child(qname = "dgm:hierBranch"))]
+  pub hierarchy_branch: Option<HierarchyBranch>,
+  /// One by One Animation String
+  #[sdk(child(qname = "dgm:animOne"))]
+  pub animate_one_by_one: Option<AnimateOneByOne>,
+  /// Level Animation
+  #[sdk(child(qname = "dgm:animLvl"))]
+  pub animation_level: Option<AnimationLevel>,
+  /// Shape Resize Style
+  #[sdk(child(qname = "dgm:resizeHandles"))]
+  pub resize_handles: Option<ResizeHandles>,
+}
+/// Presentation Layout Variables.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:presLayoutVars")]
+pub struct PresentationLayoutVariables {
+  /// Show Organization Chart User Interface
+  #[sdk(child(qname = "dgm:orgChart"))]
+  pub organization_chart: Option<OrganizationChart>,
+  /// Maximum Children
+  #[sdk(child(qname = "dgm:chMax"))]
+  pub max_number_of_children: Option<MaxNumberOfChildren>,
+  /// Preferred Number of Children
+  #[sdk(child(qname = "dgm:chPref"))]
+  pub preferred_number_of_children: Option<PreferredNumberOfChildren>,
+  /// Show Insert Bullet
+  #[sdk(child(qname = "dgm:bulletEnabled"))]
+  pub bullet_enabled: Option<BulletEnabled>,
+  /// Diagram Direction
+  #[sdk(child(qname = "dgm:dir"))]
+  pub direction: Option<Direction>,
+  /// Organization Chart Branch Style
+  #[sdk(child(qname = "dgm:hierBranch"))]
+  pub hierarchy_branch: Option<HierarchyBranch>,
+  /// One by One Animation String
+  #[sdk(child(qname = "dgm:animOne"))]
+  pub animate_one_by_one: Option<AnimateOneByOne>,
+  /// Level Animation
+  #[sdk(child(qname = "dgm:animLvl"))]
+  pub animation_level: Option<AnimationLevel>,
+  /// Shape Resize Style
+  #[sdk(child(qname = "dgm:resizeHandles"))]
+  pub resize_handles: Option<ResizeHandles>,
+}
+/// For Each.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:forEach")]
+pub struct ForEach {
+  /// Name
+  #[sdk(attr(qname = ":name"))]
+  pub name: Option<crate::simple_type::StringValue>,
+  /// Reference
+  #[sdk(attr(qname = ":ref"))]
+  pub reference: Option<crate::simple_type::StringValue>,
+  /// Axis
+  #[sdk(attr(list, qname = ":axis"))]
+  pub axis: Option<Vec<AxisValues>>,
+  /// Data Point Type
+  #[sdk(attr(list, qname = ":ptType"))]
+  pub point_type: Option<Vec<ElementValues>>,
+  /// Hide Last Transition
+  #[sdk(attr(list, qname = ":hideLastTrans"))]
+  pub hide_last_trans: Option<Vec<crate::simple_type::BooleanValue>>,
+  /// Start
+  #[sdk(attr(list, qname = ":st"))]
+  pub start: Option<Vec<crate::simple_type::Int32Value>>,
+  /// Count
+  #[sdk(attr(list, qname = ":cnt"))]
+  pub count: Option<Vec<crate::simple_type::UInt32Value>>,
+  /// Step
+  #[sdk(attr(list, qname = ":step"))]
+  pub step: Option<Vec<crate::simple_type::Int32Value>>,
+  #[sdk(
+        choice(
+            child(variant = Algorithm, boxed, qname = "dgm:alg"),
+            child(variant = Shape, boxed, qname = "dgm:shape"),
+            child(variant = PresentationOf, boxed, qname = "dgm:presOf"),
+            child(variant = Constraints, qname = "dgm:constrLst"),
+            child(variant = RuleList, qname = "dgm:ruleLst"),
+            child(variant = ForEach, boxed, qname = "dgm:forEach"),
+            child(variant = LayoutNode, boxed, qname = "dgm:layoutNode"),
+            child(variant = Choose, boxed, qname = "dgm:choose"),
+            child(variant = ExtensionList, qname = "dgm:extLst")
+        )
+    )]
+  pub for_each_choice: Vec<ForEachChoice>,
+}
+/// Layout Node.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:layoutNode")]
+pub struct LayoutNode {
+  /// Name
+  #[sdk(attr(qname = ":name"))]
+  pub name: Option<crate::simple_type::StringValue>,
+  /// Style Label
+  #[sdk(attr(qname = ":styleLbl"))]
+  pub style_label: Option<crate::simple_type::StringValue>,
+  /// Child Order
+  #[sdk(attr(qname = ":chOrder"))]
+  #[sdk(string_format(kind = "token"))]
+  pub child_order: Option<ChildOrderValues>,
+  /// Move With
+  #[sdk(attr(qname = ":moveWith"))]
+  pub move_with: Option<crate::simple_type::StringValue>,
+  #[sdk(
+        choice(
+            child(variant = Algorithm, boxed, qname = "dgm:alg"),
+            child(variant = Shape, boxed, qname = "dgm:shape"),
+            child(variant = PresentationOf, boxed, qname = "dgm:presOf"),
+            child(variant = Constraints, qname = "dgm:constrLst"),
+            child(variant = RuleList, qname = "dgm:ruleLst"),
+            child(variant = VariableList, boxed, qname = "dgm:varLst"),
+            child(variant = ForEach, boxed, qname = "dgm:forEach"),
+            child(variant = LayoutNode, boxed, qname = "dgm:layoutNode"),
+            child(variant = Choose, boxed, qname = "dgm:choose"),
+            child(variant = ExtensionList, qname = "dgm:extLst")
+        )
+    )]
+  pub layout_node_choice: Vec<LayoutNodeChoice>,
+}
+/// Choose Element.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:choose")]
+pub struct Choose {
+  /// Name
+  #[sdk(attr(qname = ":name"))]
+  pub name: Option<crate::simple_type::StringValue>,
+  /// If.
+  #[sdk(child(qname = "dgm:if"))]
+  pub diagram_choose_if: Vec<DiagramChooseIf>,
+  /// Else.
+  #[sdk(child(qname = "dgm:else"))]
+  pub diagram_choose_else: Option<DiagramChooseElse>,
+}
+/// If.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:if")]
+pub struct DiagramChooseIf {
+  /// Name
+  #[sdk(attr(qname = ":name"))]
+  pub name: Option<crate::simple_type::StringValue>,
+  /// Axis
+  #[sdk(attr(list, qname = ":axis"))]
+  pub axis: Option<Vec<AxisValues>>,
+  /// Data Point Type
+  #[sdk(attr(list, qname = ":ptType"))]
+  pub point_type: Option<Vec<ElementValues>>,
+  /// Hide Last Transition
+  #[sdk(attr(list, qname = ":hideLastTrans"))]
+  pub hide_last_trans: Option<Vec<crate::simple_type::BooleanValue>>,
+  /// Start
+  #[sdk(attr(list, qname = ":st"))]
+  pub start: Option<Vec<crate::simple_type::Int32Value>>,
+  /// Count
+  #[sdk(attr(list, qname = ":cnt"))]
+  pub count: Option<Vec<crate::simple_type::UInt32Value>>,
+  /// Step
+  #[sdk(attr(list, qname = ":step"))]
+  pub step: Option<Vec<crate::simple_type::Int32Value>>,
+  /// Function
+  #[sdk(attr(qname = ":func"))]
+  #[sdk(string_format(kind = "token"))]
+  pub function: FunctionValues,
+  /// Argument
+  #[sdk(attr(qname = ":arg"))]
+  #[sdk(
+        string_set(
+            values = &["none",
+            "orgChart",
+            "chMax",
+            "chPref",
+            "bulEnabled",
+            "dir",
+            "hierBranch",
+            "animOne",
+            "animLvl",
+            "resizeHandles"]
+        )
+    )]
+  pub argument: Option<crate::simple_type::StringValue>,
+  /// Operator
+  #[sdk(attr(qname = ":op"))]
+  #[sdk(string_format(kind = "token"))]
+  pub operator: FunctionOperatorValues,
+  /// Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(number_type(source = 1u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(number_type(source = 2u32, union = 0u64, type_name = "xsd:boolean"))]
+  #[sdk(string_set(source = 3u32, union = 0u64, values = &["norm", "rev"]))]
+  #[sdk(
+        string_set(
+            source = 4u32,
+            union = 0u64,
+            values = &["l",
+            "r",
+            "hang",
+            "std",
+            "init"]
+        )
+    )]
+  #[sdk(string_set(source = 5u32, union = 0u64, values = &["none", "one", "branch"]))]
+  #[sdk(string_set(source = 6u32, union = 0u64, values = &["none", "lvl", "ctr"]))]
+  #[sdk(string_set(source = 7u32, union = 0u64, values = &["exact", "rel"]))]
+  pub val: crate::simple_type::StringValue,
+  #[sdk(
+        choice(
+            child(variant = Algorithm, boxed, qname = "dgm:alg"),
+            child(variant = Shape, boxed, qname = "dgm:shape"),
+            child(variant = PresentationOf, boxed, qname = "dgm:presOf"),
+            child(variant = Constraints, qname = "dgm:constrLst"),
+            child(variant = RuleList, qname = "dgm:ruleLst"),
+            child(variant = ForEach, boxed, qname = "dgm:forEach"),
+            child(variant = LayoutNode, boxed, qname = "dgm:layoutNode"),
+            child(variant = Choose, boxed, qname = "dgm:choose"),
+            child(variant = ExtensionList, qname = "dgm:extLst")
+        )
+    )]
+  pub diagram_choose_if_choice: Vec<DiagramChooseIfChoice>,
+}
+/// Else.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:else")]
+pub struct DiagramChooseElse {
+  /// Name
+  #[sdk(attr(qname = ":name"))]
+  pub name: Option<crate::simple_type::StringValue>,
+  #[sdk(
+        choice(
+            child(variant = Algorithm, boxed, qname = "dgm:alg"),
+            child(variant = Shape, boxed, qname = "dgm:shape"),
+            child(variant = PresentationOf, boxed, qname = "dgm:presOf"),
+            child(variant = Constraints, qname = "dgm:constrLst"),
+            child(variant = RuleList, qname = "dgm:ruleLst"),
+            child(variant = ForEach, boxed, qname = "dgm:forEach"),
+            child(variant = LayoutNode, boxed, qname = "dgm:layoutNode"),
+            child(variant = Choose, boxed, qname = "dgm:choose"),
+            child(variant = ExtensionList, qname = "dgm:extLst")
+        )
+    )]
+  pub diagram_choose_else_choice: Vec<DiagramChooseElseChoice>,
+}
+/// Data Model.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:dataModel")]
+pub struct DataModel {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Point List
+  #[sdk(child(qname = "dgm:ptLst"))]
+  pub point_list: PointList,
+  /// Connection List
+  #[sdk(child(qname = "dgm:cxnLst"))]
+  pub connection_list: Option<ConnectionList>,
+  /// Background Formatting
+  #[sdk(child(qname = "dgm:bg"))]
+  pub background: Option<std::boxed::Box<Background>>,
+  /// Whole E2O Formatting
+  #[sdk(child(qname = "dgm:whole"))]
+  pub whole: Option<std::boxed::Box<Whole>>,
+  /// Defines the DataModelExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub data_model_extension_list: Option<DataModelExtensionList>,
+}
+/// Category.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:cat")]
+pub struct Category {
+  /// Category Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "uri"))]
+  pub r#type: crate::simple_type::StringValue,
+  /// Priority
+  #[sdk(attr(qname = ":pri"))]
+  pub priority: crate::simple_type::UInt32Value,
+}
+/// Title.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:title")]
+pub struct Title {
+  /// Language
+  #[sdk(attr(qname = ":lang"))]
+  pub language: Option<crate::simple_type::StringValue>,
+  /// Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+}
+/// Description.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:desc")]
+pub struct Description {
+  /// Language
+  #[sdk(attr(qname = ":lang"))]
+  pub language: Option<crate::simple_type::StringValue>,
+  /// Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+}
+/// Category List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:catLst")]
+pub struct CategoryList {
+  /// Category.
+  #[sdk(child(qname = "dgm:cat"))]
+  pub category: Vec<Category>,
+}
+/// Shape Style.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:style")]
+pub struct Style {
+  /// Defines the LineReference Class.
+  #[sdk(child(qname = "a:lnRef"))]
+  pub line_reference: std::boxed::Box<crate::schemas::a::LineReference>,
+  /// Fill Reference.
+  #[sdk(child(qname = "a:fillRef"))]
+  pub fill_reference: std::boxed::Box<crate::schemas::a::FillReference>,
+  /// Effect Reference.
+  #[sdk(child(qname = "a:effectRef"))]
+  pub effect_reference: std::boxed::Box<crate::schemas::a::EffectReference>,
+  /// Font Reference
+  #[sdk(child(qname = "a:fontRef"))]
+  pub font_reference: std::boxed::Box<crate::schemas::a::FontReference>,
+}
+/// Show Organization Chart User Interface.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:orgChart")]
+pub struct OrganizationChart {
+  /// Show Organization Chart User Interface Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: Option<crate::simple_type::BooleanValue>,
+}
+/// Maximum Children.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:chMax")]
+pub struct MaxNumberOfChildren {
+  /// Maximum Children Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(number_range(range = -1..))]
+  pub val: Option<crate::simple_type::Int32Value>,
+}
+/// Preferred Number of Children.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:chPref")]
+pub struct PreferredNumberOfChildren {
+  /// Preferred Number of CHildren Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(number_range(range = -1..))]
+  pub val: Option<crate::simple_type::Int32Value>,
+}
+/// Show Insert Bullet.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:bulletEnabled")]
+pub struct BulletEnabled {
+  /// Show Insert Bullet Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: Option<crate::simple_type::BooleanValue>,
+}
+/// Diagram Direction.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:dir")]
+pub struct Direction {
+  /// Diagram Direction Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(string_format(kind = "token"))]
+  pub val: Option<DirectionValues>,
+}
+/// Organization Chart Branch Style.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:hierBranch")]
+pub struct HierarchyBranch {
+  /// Organization Chart Branch Style Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(string_format(kind = "token"))]
+  pub val: Option<HierarchyBranchStyleValues>,
+}
+/// One by One Animation String.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:animOne")]
+pub struct AnimateOneByOne {
+  /// One By One Animation Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(string_format(kind = "token"))]
+  pub val: Option<AnimateOneByOneValues>,
+}
+/// Level Animation.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:animLvl")]
+pub struct AnimationLevel {
+  /// Level Animation Value
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(string_format(kind = "token"))]
+  pub val: Option<AnimationLevelStringValues>,
+}
+/// Shape Resize Style.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:resizeHandles")]
+pub struct ResizeHandles {
+  /// Shape Resize Style Type
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(string_format(kind = "token"))]
+  pub val: Option<ResizeHandlesStringValues>,
+}
+/// Category.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:cat")]
+pub struct StyleDisplayCategory {
+  /// Category Type
+  #[sdk(attr(qname = ":type"))]
+  #[sdk(string_format(kind = "uri"))]
+  pub r#type: crate::simple_type::StringValue,
+  /// Priority
+  #[sdk(attr(qname = ":pri"))]
+  pub priority: crate::simple_type::UInt32Value,
+}
+/// 3-D Scene.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:scene3d")]
+pub struct Scene3D {
+  /// Camera
+  #[sdk(child(qname = "a:camera"))]
+  pub camera: std::boxed::Box<crate::schemas::a::Camera>,
+  /// Light Rig
+  #[sdk(child(qname = "a:lightRig"))]
+  pub light_rig: std::boxed::Box<crate::schemas::a::LightRig>,
+  /// Backdrop Plane
+  #[sdk(child(qname = "a:backdrop"))]
+  pub backdrop: Option<std::boxed::Box<crate::schemas::a::Backdrop>>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "a:extLst"))]
+  pub extension_list: Option<crate::schemas::a::ExtensionList>,
+}
+/// 3-D Shape Properties.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:sp3d")]
+pub struct Shape3D {
+  /// Shape Depth
+  #[sdk(attr(qname = ":z"))]
+  #[sdk(number_range(range = -27273042329600..= 27273042316900))]
+  pub z: Option<crate::simple_type::Int64Value>,
+  /// Extrusion Height
+  #[sdk(attr(qname = ":extrusionH"))]
+  #[sdk(number_range(range = 0..= 2147483647))]
+  pub extrusion_height: Option<crate::simple_type::Int64Value>,
+  /// Contour Width
+  #[sdk(attr(qname = ":contourW"))]
+  #[sdk(number_range(range = 0..= 2147483647))]
+  pub contour_width: Option<crate::simple_type::Int64Value>,
+  /// Preset Material Type
+  #[sdk(attr(qname = ":prstMaterial"))]
+  #[sdk(string_format(kind = "token"))]
+  pub preset_material: Option<crate::schemas::a::PresetMaterialTypeValues>,
+  /// Top Bevel
+  #[sdk(child(qname = "a:bevelT"))]
+  pub bevel_top: Option<crate::schemas::a::BevelTop>,
+  /// Bottom Bevel
+  #[sdk(child(qname = "a:bevelB"))]
+  pub bevel_bottom: Option<crate::schemas::a::BevelBottom>,
+  /// Extrusion Color
+  #[sdk(child(qname = "a:extrusionClr"))]
+  pub extrusion_color: Option<std::boxed::Box<crate::schemas::a::ExtrusionColor>>,
+  /// Contour Color
+  #[sdk(child(qname = "a:contourClr"))]
+  pub contour_color: Option<std::boxed::Box<crate::schemas::a::ContourColor>>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "a:extLst"))]
+  pub extension_list: Option<crate::schemas::a::ExtensionList>,
+}
+/// Text Properties.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:txPr")]
+pub struct TextProperties {
+  #[sdk(
+        choice(
+            child(variant = Shape3DType, boxed, qname = "a:sp3d"),
+            child(variant = FlatText, qname = "a:flatTx")
+        )
+    )]
+  pub text_properties_choice: Option<TextPropertiesChoice>,
+}
+/// Title.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:title")]
+pub struct StyleDefinitionTitle {
+  /// Natural Language
+  #[sdk(attr(qname = ":lang"))]
+  pub language: Option<crate::simple_type::StringValue>,
+  /// Description Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+}
+/// Style Label Description.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:desc")]
+pub struct StyleLabelDescription {
+  /// Natural Language
+  #[sdk(attr(qname = ":lang"))]
+  pub language: Option<crate::simple_type::StringValue>,
+  /// Description Value
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+}
+/// Category List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:catLst")]
+pub struct StyleDisplayCategories {
+  /// Category.
+  #[sdk(child(qname = "dgm:cat"))]
+  pub style_display_category: Vec<StyleDisplayCategory>,
+}
+/// Style Label.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:styleLbl")]
+pub struct StyleLabel {
+  /// Style Name
+  #[sdk(attr(qname = ":name"))]
+  pub name: crate::simple_type::StringValue,
+  /// 3-D Scene
+  #[sdk(child(qname = "dgm:scene3d"))]
+  pub scene3_d: Option<std::boxed::Box<Scene3D>>,
+  /// 3-D Shape Properties
+  #[sdk(child(qname = "dgm:sp3d"))]
+  pub shape3_d: Option<std::boxed::Box<Shape3D>>,
+  /// Text Properties
+  #[sdk(child(qname = "dgm:txPr"))]
+  pub text_properties: Option<std::boxed::Box<TextProperties>>,
+  /// Shape Style
+  #[sdk(child(qname = "dgm:style"))]
+  pub style: Option<std::boxed::Box<Style>>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "dgm:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Point List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:ptLst")]
+pub struct PointList {
+  #[sdk(
+        choice(
+            child(variant = Point, boxed, qname = "dgm:pt"),
+            child(variant = AlternateContent, boxed, qname = "mc:AlternateContent")
+        )
+    )]
+  pub xml_children: Vec<PointListChoice>,
+}
+/// Connection List.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:cxnLst")]
+pub struct ConnectionList {
+  /// Connection.
+  #[sdk(child(qname = "dgm:cxn"))]
+  pub connection: Vec<Connection>,
+}
+/// Background Formatting.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:bg")]
+pub struct Background {
+  #[sdk(
+        choice(
+            child(variant = NoFill, qname = "a:noFill"),
+            child(variant = SolidFill, boxed, qname = "a:solidFill"),
+            child(variant = GradientFill, boxed, qname = "a:gradFill"),
+            child(variant = BlipFill, boxed, qname = "a:blipFill"),
+            child(variant = PatternFill, boxed, qname = "a:pattFill"),
+            empty_child(variant = GroupFill, qname = "a:grpFill")
+        )
+    )]
+  pub background_choice1: Option<BackgroundChoice>,
+  #[sdk(
+        choice(
+            child(variant = EffectList, boxed, qname = "a:effectLst"),
+            child(variant = EffectDag, boxed, qname = "a:effectDag")
+        )
+    )]
+  pub background_choice2: Option<BackgroundChoice2>,
+}
+/// Whole E2O Formatting.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:whole")]
+pub struct Whole {
+  /// Outline
+  #[sdk(child(qname = "a:ln"))]
+  pub outline: Option<std::boxed::Box<crate::schemas::a::Outline>>,
+  #[sdk(
+        choice(
+            child(variant = EffectList, boxed, qname = "a:effectLst"),
+            child(variant = EffectDag, boxed, qname = "a:effectDag")
+        )
+    )]
+  pub whole_choice: Option<WholeChoice>,
+}
+/// Defines the DataModelExtensionList Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:extLst")]
+pub struct DataModelExtensionList {
+  /// Defines the DataModelExtension Class.
+  #[sdk(child(qname = "a:ext"))]
+  pub data_model_extension: Vec<crate::schemas::a::DataModelExtension>,
+}
+/// Property Set.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:prSet")]
+pub struct PropertySet {
+  /// Presentation Element Identifier
+  #[sdk(attr(qname = ":presAssocID"))]
+  #[sdk(number_type(source = 0u32, union = 0u64, type_name = "xsd:int"))]
+  #[sdk(pattern(
+    source = 1u32,
+    union = 0u64,
+    regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"
+  ))]
+  pub presentation_element_id: Option<crate::simple_type::StringValue>,
+  /// Presentation Name
+  #[sdk(attr(qname = ":presName"))]
+  pub presentation_name: Option<crate::simple_type::StringValue>,
+  /// Presentation Style Label
+  #[sdk(attr(qname = ":presStyleLbl"))]
+  pub presentation_style_label: Option<crate::simple_type::StringValue>,
+  /// Presentation Style Index
+  #[sdk(attr(qname = ":presStyleIdx"))]
+  pub presentation_style_index: Option<crate::simple_type::Int32Value>,
+  /// Presentation Style Count
+  #[sdk(attr(qname = ":presStyleCnt"))]
+  pub presentation_style_count: Option<crate::simple_type::Int32Value>,
+  /// Current Diagram Type
+  #[sdk(attr(qname = ":loTypeId"))]
+  pub layout_type_id: Option<crate::simple_type::StringValue>,
+  /// Current Diagram Category
+  #[sdk(attr(qname = ":loCatId"))]
+  pub layout_category_id: Option<crate::simple_type::StringValue>,
+  /// Current Style Type
+  #[sdk(attr(qname = ":qsTypeId"))]
+  pub quick_style_type_id: Option<crate::simple_type::StringValue>,
+  /// Current Style Category
+  #[sdk(attr(qname = ":qsCatId"))]
+  pub quick_style_category_id: Option<crate::simple_type::StringValue>,
+  /// Color Transform Type Identifier
+  #[sdk(attr(qname = ":csTypeId"))]
+  pub color_type: Option<crate::simple_type::StringValue>,
+  /// Color Transform Category
+  #[sdk(attr(qname = ":csCatId"))]
+  pub color_category_id: Option<crate::simple_type::StringValue>,
+  /// Coherent 3D Behavior
+  #[sdk(attr(qname = ":coherent3DOff"))]
+  pub coherent3_d: Option<crate::simple_type::BooleanValue>,
+  /// Placeholder Text
+  #[sdk(attr(qname = ":phldrT"))]
+  pub placeholder_text: Option<crate::simple_type::StringValue>,
+  /// Placeholder
+  #[sdk(attr(qname = ":phldr"))]
+  pub placeholder: Option<crate::simple_type::BooleanValue>,
+  /// Custom Rotation
+  #[sdk(attr(qname = ":custAng"))]
+  pub rotation: Option<crate::simple_type::Int32Value>,
+  /// Custom Vertical Flip
+  #[sdk(attr(qname = ":custFlipVert"))]
+  pub vertical_flip: Option<crate::simple_type::BooleanValue>,
+  /// Custom Horizontal Flip
+  #[sdk(attr(qname = ":custFlipHor"))]
+  pub horizontal_flip: Option<crate::simple_type::BooleanValue>,
+  /// Fixed Width Override
+  #[sdk(attr(qname = ":custSzX"))]
+  pub fixed_width_override: Option<crate::simple_type::Int32Value>,
+  /// Fixed Height Override
+  #[sdk(attr(qname = ":custSzY"))]
+  pub fixed_height_override: Option<crate::simple_type::Int32Value>,
+  /// Width Scale
+  #[sdk(attr(qname = ":custScaleX"))]
+  pub width_scale: Option<crate::simple_type::Int32Value>,
+  /// Height Scale
+  #[sdk(attr(qname = ":custScaleY"))]
+  pub height_scale: Option<crate::simple_type::Int32Value>,
+  /// Text Changed
+  #[sdk(attr(qname = ":custT"))]
+  pub text_changed: Option<crate::simple_type::BooleanValue>,
+  /// Custom Factor Width
+  #[sdk(attr(qname = ":custLinFactX"))]
+  pub factor_width: Option<crate::simple_type::Int32Value>,
+  /// Custom Factor Height
+  #[sdk(attr(qname = ":custLinFactY"))]
+  pub factor_height: Option<crate::simple_type::Int32Value>,
+  /// Neighbor Offset Width
+  #[sdk(attr(qname = ":custLinFactNeighborX"))]
+  pub neighbor_offset_width: Option<crate::simple_type::Int32Value>,
+  /// Neighbor Offset Height
+  #[sdk(attr(qname = ":custLinFactNeighborY"))]
+  pub neighbor_offset_height: Option<crate::simple_type::Int32Value>,
+  /// Radius Scale
+  #[sdk(attr(qname = ":custRadScaleRad"))]
+  pub radius_scale: Option<crate::simple_type::Int32Value>,
+  /// Include Angle Scale
+  #[sdk(attr(qname = ":custRadScaleInc"))]
+  pub include_angle_scale: Option<crate::simple_type::Int32Value>,
+  /// Presentation Layout Variables
+  #[sdk(child(qname = "dgm:presLayoutVars"))]
+  pub presentation_layout_variables: Option<std::boxed::Box<PresentationLayoutVariables>>,
+  /// Shape Style
+  #[sdk(child(qname = "dgm:style"))]
+  pub style: Option<std::boxed::Box<Style>>,
+}
+/// Shape Properties.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:spPr")]
+pub struct ShapeProperties {
+  /// Black and White Mode
+  #[sdk(attr(qname = ":bwMode"))]
+  #[sdk(string_format(kind = "token"))]
+  pub black_white_mode: Option<crate::schemas::a::BlackWhiteModeValues>,
+  /// 2D Transform for Individual Objects
+  #[sdk(child(qname = "a:xfrm"))]
+  pub transform2_d: Option<std::boxed::Box<crate::schemas::a::Transform2D>>,
+  #[sdk(
+        choice(
+            child(variant = CustomGeometry, boxed, qname = "a:custGeom"),
+            child(variant = PresetGeometry, boxed, qname = "a:prstGeom")
+        )
+    )]
+  pub shape_properties_choice1: Option<ShapePropertiesChoice>,
+  #[sdk(
+        choice(
+            child(variant = NoFill, qname = "a:noFill"),
+            child(variant = SolidFill, boxed, qname = "a:solidFill"),
+            child(variant = GradientFill, boxed, qname = "a:gradFill"),
+            child(variant = BlipFill, boxed, qname = "a:blipFill"),
+            child(variant = PatternFill, boxed, qname = "a:pattFill"),
+            empty_child(variant = GroupFill, qname = "a:grpFill")
+        )
+    )]
+  pub shape_properties_choice2: Option<ShapePropertiesChoice2>,
+  /// Defines the Outline Class.
+  #[sdk(child(qname = "a:ln"))]
+  pub outline: Option<std::boxed::Box<crate::schemas::a::Outline>>,
+  #[sdk(
+        choice(
+            child(variant = EffectList, boxed, qname = "a:effectLst"),
+            child(variant = EffectDag, boxed, qname = "a:effectDag")
+        )
+    )]
+  pub shape_properties_choice3: Option<ShapePropertiesChoice3>,
+  /// 3D Scene Properties.
+  #[sdk(child(qname = "a:scene3d"))]
+  pub scene3_d_type: Option<std::boxed::Box<crate::schemas::a::Scene3DType>>,
+  /// Apply 3D shape properties.
+  #[sdk(child(qname = "a:sp3d"))]
+  pub shape3_d_type: Option<std::boxed::Box<crate::schemas::a::Shape3DType>>,
+  /// Defines the ShapePropertiesExtensionList Class.
+  #[sdk(child(qname = "a:extLst"))]
+  pub shape_properties_extension_list: Option<crate::schemas::a::ShapePropertiesExtensionList>,
+}
+/// Text Body.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:t")]
+pub struct TextBody {
+  /// Body Properties
+  #[sdk(child(qname = "a:bodyPr"))]
+  pub body_properties: std::boxed::Box<crate::schemas::a::BodyProperties>,
+  /// Text List Styles
+  #[sdk(child(qname = "a:lstStyle"))]
+  pub list_style: Option<std::boxed::Box<crate::schemas::a::ListStyle>>,
+  /// Text Paragraphs.
+  #[sdk(child(qname = "a:p"))]
+  pub paragraph: Vec<crate::schemas::a::Paragraph>,
+}
+/// Defines the PtExtensionList Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:extLst")]
+pub struct PtExtensionList {
+  /// Defines the PtExtension Class.
+  #[sdk(child(qname = "a:ext"))]
+  pub pt_extension: Vec<crate::schemas::a::PtExtension>,
+}
+/// Defines the DiagramDefinitionExtension Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:ext")]
+pub struct DiagramDefinitionExtension {
+  /// URI
+  #[sdk(attr(qname = ":uri"))]
+  #[sdk(string_format(kind = "token"))]
+  pub uri: crate::simple_type::StringValue,
+  #[sdk(
+        choice(
+            child(variant = NumberDiagramInfoList, qname = "dgm1611:autoBuNodeInfoLst"),
+            child(variant = TextListStyleType, boxed, qname = "dgm1612:lstStyle"),
+            any
+        )
+    )]
+  pub diagram_definition_extension_choice: Option<DiagramDefinitionExtensionChoice>,
+}
+/// Defines the SampleData Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:sampData")]
+pub struct SampleData {
+  /// Use Default
+  #[sdk(attr(qname = ":useDef"))]
+  pub use_default: Option<crate::simple_type::BooleanValue>,
+  /// Data Model
+  #[sdk(child(qname = "dgm:dataModel"))]
+  pub data_model: Option<std::boxed::Box<DataModel>>,
+}
+/// Defines the StyleData Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:styleData")]
+pub struct StyleData {
+  /// Use Default
+  #[sdk(attr(qname = ":useDef"))]
+  pub use_default: Option<crate::simple_type::BooleanValue>,
+  /// Data Model
+  #[sdk(child(qname = "dgm:dataModel"))]
+  pub data_model: Option<std::boxed::Box<DataModel>>,
+}
+/// Defines the ColorData Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:clrData")]
+pub struct ColorData {
+  /// Use Default
+  #[sdk(attr(qname = ":useDef"))]
+  pub use_default: Option<crate::simple_type::BooleanValue>,
+  /// Data Model
+  #[sdk(child(qname = "dgm:dataModel"))]
+  pub data_model: Option<std::boxed::Box<DataModel>>,
+}
+/// List of extensions to the CT_DiagramDefintions type..
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "dgm:extLst")]
+pub struct DiagramDefinitionExtensionList {
+  /// Defines the DiagramDefinitionExtension Class.
+  #[sdk(child(qname = "dgm:ext"))]
+  pub diagram_definition_extension: Vec<DiagramDefinitionExtension>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum FillColorListChoice {
+  /// RGB Color Model - Percentage Variant.
+  RgbColorModelPercentage(crate::schemas::a::RgbColorModelPercentage),
+  /// RGB Color Model - Hex Variant.
+  RgbColorModelHex(std::boxed::Box<crate::schemas::a::RgbColorModelHex>),
+  /// Hue, Saturation, Luminance Color Model.
+  HslColor(crate::schemas::a::HslColor),
+  /// System Color.
+  SystemColor(crate::schemas::a::SystemColor),
+  /// Scheme Color.
+  SchemeColor(crate::schemas::a::SchemeColor),
+  /// Preset Color.
+  PresetColor(crate::schemas::a::PresetColor),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum LineColorListChoice {
+  /// RGB Color Model - Percentage Variant.
+  RgbColorModelPercentage(crate::schemas::a::RgbColorModelPercentage),
+  /// RGB Color Model - Hex Variant.
+  RgbColorModelHex(std::boxed::Box<crate::schemas::a::RgbColorModelHex>),
+  /// Hue, Saturation, Luminance Color Model.
+  HslColor(crate::schemas::a::HslColor),
+  /// System Color.
+  SystemColor(crate::schemas::a::SystemColor),
+  /// Scheme Color.
+  SchemeColor(crate::schemas::a::SchemeColor),
+  /// Preset Color.
+  PresetColor(crate::schemas::a::PresetColor),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum EffectColorListChoice {
+  /// RGB Color Model - Percentage Variant.
+  RgbColorModelPercentage(crate::schemas::a::RgbColorModelPercentage),
+  /// RGB Color Model - Hex Variant.
+  RgbColorModelHex(std::boxed::Box<crate::schemas::a::RgbColorModelHex>),
+  /// Hue, Saturation, Luminance Color Model.
+  HslColor(crate::schemas::a::HslColor),
+  /// System Color.
+  SystemColor(crate::schemas::a::SystemColor),
+  /// Scheme Color.
+  SchemeColor(crate::schemas::a::SchemeColor),
+  /// Preset Color.
+  PresetColor(crate::schemas::a::PresetColor),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum TextLineColorListChoice {
+  /// RGB Color Model - Percentage Variant.
+  RgbColorModelPercentage(crate::schemas::a::RgbColorModelPercentage),
+  /// RGB Color Model - Hex Variant.
+  RgbColorModelHex(std::boxed::Box<crate::schemas::a::RgbColorModelHex>),
+  /// Hue, Saturation, Luminance Color Model.
+  HslColor(crate::schemas::a::HslColor),
+  /// System Color.
+  SystemColor(crate::schemas::a::SystemColor),
+  /// Scheme Color.
+  SchemeColor(crate::schemas::a::SchemeColor),
+  /// Preset Color.
+  PresetColor(crate::schemas::a::PresetColor),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum TextFillColorListChoice {
+  /// RGB Color Model - Percentage Variant.
+  RgbColorModelPercentage(crate::schemas::a::RgbColorModelPercentage),
+  /// RGB Color Model - Hex Variant.
+  RgbColorModelHex(std::boxed::Box<crate::schemas::a::RgbColorModelHex>),
+  /// Hue, Saturation, Luminance Color Model.
+  HslColor(crate::schemas::a::HslColor),
+  /// System Color.
+  SystemColor(crate::schemas::a::SystemColor),
+  /// Scheme Color.
+  SchemeColor(crate::schemas::a::SchemeColor),
+  /// Preset Color.
+  PresetColor(crate::schemas::a::PresetColor),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum TextEffectColorListChoice {
+  /// RGB Color Model - Percentage Variant.
+  RgbColorModelPercentage(crate::schemas::a::RgbColorModelPercentage),
+  /// RGB Color Model - Hex Variant.
+  RgbColorModelHex(std::boxed::Box<crate::schemas::a::RgbColorModelHex>),
+  /// Hue, Saturation, Luminance Color Model.
+  HslColor(crate::schemas::a::HslColor),
+  /// System Color.
+  SystemColor(crate::schemas::a::SystemColor),
+  /// Scheme Color.
+  SchemeColor(crate::schemas::a::SchemeColor),
+  /// Preset Color.
+  PresetColor(crate::schemas::a::PresetColor),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum ForEachChoice {
+  /// Algorithm.
+  Algorithm(std::boxed::Box<Algorithm>),
+  /// Shape.
+  Shape(std::boxed::Box<Shape>),
+  /// Presentation Of.
+  PresentationOf(std::boxed::Box<PresentationOf>),
+  /// Constraint List.
+  Constraints(Constraints),
+  /// Rule List.
+  RuleList(RuleList),
+  /// For Each.
+  ForEach(std::boxed::Box<ForEach>),
+  /// Layout Node.
+  LayoutNode(std::boxed::Box<LayoutNode>),
+  /// Choose Element.
+  Choose(std::boxed::Box<Choose>),
+  /// Defines the ExtensionList Class.
+  ExtensionList(ExtensionList),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum LayoutNodeChoice {
+  /// Algorithm.
+  Algorithm(std::boxed::Box<Algorithm>),
+  /// Shape.
+  Shape(std::boxed::Box<Shape>),
+  /// Presentation Of.
+  PresentationOf(std::boxed::Box<PresentationOf>),
+  /// Constraint List.
+  Constraints(Constraints),
+  /// Rule List.
+  RuleList(RuleList),
+  /// Variable List.
+  VariableList(std::boxed::Box<VariableList>),
+  /// For Each.
+  ForEach(std::boxed::Box<ForEach>),
+  /// Layout Node.
+  LayoutNode(std::boxed::Box<LayoutNode>),
+  /// Choose Element.
+  Choose(std::boxed::Box<Choose>),
+  /// Defines the ExtensionList Class.
+  ExtensionList(ExtensionList),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum DiagramChooseIfChoice {
+  /// Algorithm.
+  Algorithm(std::boxed::Box<Algorithm>),
+  /// Shape.
+  Shape(std::boxed::Box<Shape>),
+  /// Presentation Of.
+  PresentationOf(std::boxed::Box<PresentationOf>),
+  /// Constraint List.
+  Constraints(Constraints),
+  /// Rule List.
+  RuleList(RuleList),
+  /// For Each.
+  ForEach(std::boxed::Box<ForEach>),
+  /// Layout Node.
+  LayoutNode(std::boxed::Box<LayoutNode>),
+  /// Choose Element.
+  Choose(std::boxed::Box<Choose>),
+  /// Defines the ExtensionList Class.
+  ExtensionList(ExtensionList),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum DiagramChooseElseChoice {
+  /// Algorithm.
+  Algorithm(std::boxed::Box<Algorithm>),
+  /// Shape.
+  Shape(std::boxed::Box<Shape>),
+  /// Presentation Of.
+  PresentationOf(std::boxed::Box<PresentationOf>),
+  /// Constraint List.
+  Constraints(Constraints),
+  /// Rule List.
+  RuleList(RuleList),
+  /// For Each.
+  ForEach(std::boxed::Box<ForEach>),
+  /// Layout Node.
+  LayoutNode(std::boxed::Box<LayoutNode>),
+  /// Choose Element.
+  Choose(std::boxed::Box<Choose>),
+  /// Defines the ExtensionList Class.
+  ExtensionList(ExtensionList),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum TextPropertiesChoice {
+  /// Apply 3D shape properties.
+  Shape3DType(std::boxed::Box<crate::schemas::a::Shape3DType>),
+  /// No text in 3D scene.
+  FlatText(crate::schemas::a::FlatText),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum BackgroundChoice {
+  /// Defines the NoFill Class.
+  NoFill(crate::schemas::a::NoFill),
+  /// Defines the SolidFill Class.
+  SolidFill(std::boxed::Box<crate::schemas::a::SolidFill>),
+  /// Defines the GradientFill Class.
+  GradientFill(std::boxed::Box<crate::schemas::a::GradientFill>),
+  /// Defines the BlipFill Class.
+  BlipFill(std::boxed::Box<crate::schemas::a::BlipFill>),
+  /// Pattern Fill.
+  PatternFill(std::boxed::Box<crate::schemas::a::PatternFill>),
+  /// Group Fill.
+  GroupFill,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum BackgroundChoice2 {
+  /// Effect Container.
+  EffectList(std::boxed::Box<crate::schemas::a::EffectList>),
+  /// Effect Container.
+  EffectDag(std::boxed::Box<crate::schemas::a::EffectDag>),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum WholeChoice {
+  EffectList(std::boxed::Box<crate::schemas::a::EffectList>),
+  EffectDag(std::boxed::Box<crate::schemas::a::EffectDag>),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShapePropertiesChoice {
+  /// Custom geometry.
+  CustomGeometry(std::boxed::Box<crate::schemas::a::CustomGeometry>),
+  /// Preset geometry.
+  PresetGeometry(std::boxed::Box<crate::schemas::a::PresetGeometry>),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShapePropertiesChoice2 {
+  /// Defines the NoFill Class.
+  NoFill(crate::schemas::a::NoFill),
+  /// Defines the SolidFill Class.
+  SolidFill(std::boxed::Box<crate::schemas::a::SolidFill>),
+  /// Defines the GradientFill Class.
+  GradientFill(std::boxed::Box<crate::schemas::a::GradientFill>),
+  /// Defines the BlipFill Class.
+  BlipFill(std::boxed::Box<crate::schemas::a::BlipFill>),
+  /// Pattern Fill.
+  PatternFill(std::boxed::Box<crate::schemas::a::PatternFill>),
+  /// Group Fill.
+  GroupFill,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShapePropertiesChoice3 {
+  /// Effect Container.
+  EffectList(std::boxed::Box<crate::schemas::a::EffectList>),
+  /// Effect Container.
+  EffectDag(std::boxed::Box<crate::schemas::a::EffectDag>),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum DiagramDefinitionExtensionChoice {
+  /// Defines the NumberDiagramInfoList Class.
+  NumberDiagramInfoList(crate::schemas::dgm1611::NumberDiagramInfoList),
+  /// Defines the TextListStyleType Class.
+  TextListStyleType(std::boxed::Box<crate::schemas::dgm1612::TextListStyleType>),
+  XmlAny(std::boxed::Box<[u8]>),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum PointListChoice {
+  /// Point.
+  Point(std::boxed::Box<Point>),
+  /// Markup Compatibility alternate content.
+  AlternateContent(std::boxed::Box<crate::schemas::mc::AlternateContent>),
+}

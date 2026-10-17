@@ -1,0 +1,193 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+/// Defines the TaskHistoryDetails Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:taskHistoryDetails")]
+pub struct TaskHistoryDetails {
+  /// id
+  #[sdk(attr(qname = ":id"))]
+  #[sdk(pattern(regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"))]
+  #[sdk(string_format(kind = "token"))]
+  pub id: crate::simple_type::StringValue,
+  /// Defines the TaskHistory Class.
+  #[sdk(child(qname = "p216:history"))]
+  pub task_history: TaskHistory,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "p216:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Defines the CommentAnchor Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:comment")]
+pub struct CommentAnchor {
+  /// id
+  #[sdk(attr(qname = ":id"))]
+  #[sdk(pattern(regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"))]
+  #[sdk(string_format(kind = "token"))]
+  pub id: crate::simple_type::StringValue,
+}
+/// Defines the ExtensionList Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:extLst")]
+pub struct ExtensionList {
+  /// Extension.
+  #[sdk(child(qname = "p:ext"))]
+  pub extension: Vec<crate::schemas::p::Extension>,
+}
+/// Defines the AtrbtnTaskAssignUnassignUser Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:atrbtn")]
+pub struct AtrbtnTaskAssignUnassignUser {
+  /// authorId
+  #[sdk(attr(qname = ":authorId"))]
+  #[sdk(string_format(kind = "token"))]
+  pub author_id: crate::simple_type::StringValue,
+}
+/// Defines the AsgnTaskAssignUnassignUser Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:asgn")]
+pub struct AsgnTaskAssignUnassignUser {
+  /// authorId
+  #[sdk(attr(qname = ":authorId"))]
+  #[sdk(string_format(kind = "token"))]
+  pub author_id: crate::simple_type::StringValue,
+}
+/// Defines the UnAsgnTaskAssignUnassignUser Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:unAsgn")]
+pub struct UnAsgnTaskAssignUnassignUser {
+  /// authorId
+  #[sdk(attr(qname = ":authorId"))]
+  #[sdk(string_format(kind = "token"))]
+  pub author_id: crate::simple_type::StringValue,
+}
+/// Defines the TaskAnchor Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:anchr")]
+pub struct TaskAnchor {
+  /// Defines the CommentAnchor Class.
+  #[sdk(child(qname = "p216:comment"))]
+  pub comment_anchor: CommentAnchor,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "p216:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Defines the TaskTitleEventInfo Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:title")]
+pub struct TaskTitleEventInfo {
+  /// val
+  #[sdk(attr(qname = ":val"))]
+  pub val: crate::simple_type::StringValue,
+}
+/// Defines the TaskScheduleEventInfo Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:date")]
+pub struct TaskScheduleEventInfo {
+  /// stDt
+  #[sdk(attr(qname = ":stDt"))]
+  pub st_dt: Option<crate::simple_type::DateTimeValue>,
+  /// endDt
+  #[sdk(attr(qname = ":endDt"))]
+  pub end_dt: Option<crate::simple_type::DateTimeValue>,
+}
+/// Defines the TaskProgressEventInfo Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:pcntCmplt")]
+pub struct TaskProgressEventInfo {
+  /// val
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(number_range(range = 0..= 100000))]
+  pub val: crate::simple_type::Int32Value,
+}
+/// Defines the TaskPriorityRecord Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:pri")]
+pub struct TaskPriorityRecord {
+  /// val
+  #[sdk(attr(qname = ":val"))]
+  #[sdk(number_range(range = 0..= 10))]
+  pub val: crate::simple_type::Int32Value,
+}
+/// Defines the TaskUndo Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:undo")]
+pub struct TaskUndo {
+  /// id
+  #[sdk(attr(qname = ":id"))]
+  #[sdk(pattern(regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"))]
+  #[sdk(string_format(kind = "token"))]
+  pub id: crate::simple_type::StringValue,
+}
+/// Defines the TaskHistoryEvent Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:event")]
+pub struct TaskHistoryEvent {
+  /// time
+  #[sdk(attr(qname = ":time"))]
+  pub time: crate::simple_type::DateTimeValue,
+  /// id
+  #[sdk(attr(qname = ":id"))]
+  #[sdk(pattern(regex = "\\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\\}"))]
+  #[sdk(string_format(kind = "token"))]
+  pub id: crate::simple_type::StringValue,
+  /// Defines the AtrbtnTaskAssignUnassignUser Class.
+  #[sdk(child(qname = "p216:atrbtn"))]
+  pub atrbtn_task_assign_unassign_user: AtrbtnTaskAssignUnassignUser,
+  /// Defines the TaskAnchor Class.
+  #[sdk(child(qname = "p216:anchr"))]
+  pub task_anchor: Option<std::boxed::Box<TaskAnchor>>,
+  #[sdk(
+        choice(
+            child(variant = AsgnTaskAssignUnassignUser, qname = "p216:asgn"),
+            child(variant = UnAsgnTaskAssignUnassignUser, qname = "p216:unAsgn"),
+            empty_child(variant = AddEmpty, qname = "p216:add"),
+            child(variant = TaskTitleEventInfo, qname = "p216:title"),
+            child(variant = TaskScheduleEventInfo, qname = "p216:date"),
+            child(variant = TaskProgressEventInfo, qname = "p216:pcntCmplt"),
+            child(variant = TaskPriorityRecord, qname = "p216:pri"),
+            empty_child(variant = UnasgnAllEmpty, qname = "p216:unasgnAll"),
+            child(variant = TaskUndo, qname = "p216:undo"),
+            empty_child(variant = TaskUnknownRecord, qname = "p216:unknown")
+        )
+    )]
+  pub task_history_event_choice: Option<TaskHistoryEventChoice>,
+  /// Defines the ExtensionList Class.
+  #[sdk(child(qname = "p216:extLst"))]
+  pub extension_list: Option<ExtensionList>,
+}
+/// Defines the TaskHistory Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "p216:history")]
+pub struct TaskHistory {
+  /// Defines the TaskHistoryEvent Class.
+  #[sdk(child(qname = "p216:event"))]
+  pub task_history_event: Vec<TaskHistoryEvent>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum TaskHistoryEventChoice {
+  /// Defines the AsgnTaskAssignUnassignUser Class.
+  AsgnTaskAssignUnassignUser(AsgnTaskAssignUnassignUser),
+  /// Defines the UnAsgnTaskAssignUnassignUser Class.
+  UnAsgnTaskAssignUnassignUser(UnAsgnTaskAssignUnassignUser),
+  /// Defines the AddEmpty Class.
+  AddEmpty,
+  /// Defines the TaskTitleEventInfo Class.
+  TaskTitleEventInfo(TaskTitleEventInfo),
+  /// Defines the TaskScheduleEventInfo Class.
+  TaskScheduleEventInfo(TaskScheduleEventInfo),
+  /// Defines the TaskProgressEventInfo Class.
+  TaskProgressEventInfo(TaskProgressEventInfo),
+  /// Defines the TaskPriorityRecord Class.
+  TaskPriorityRecord(TaskPriorityRecord),
+  /// Defines the UnasgnAllEmpty Class.
+  UnasgnAllEmpty,
+  /// Defines the TaskUndo Class.
+  TaskUndo(TaskUndo),
+  /// Defines the TaskUnknownRecord Class.
+  TaskUnknownRecord,
+}

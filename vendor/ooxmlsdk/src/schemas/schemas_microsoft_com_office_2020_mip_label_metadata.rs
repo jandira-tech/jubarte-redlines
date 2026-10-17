@@ -1,0 +1,73 @@
+//
+// -----------------------------------------------------------------------------
+//  THIS FILE WAS @generated AUTOMATICALLY. DO NOT MODIFY THIS FILE MANUALLY.
+// -----------------------------------------------------------------------------
+//
+
+/// Defines the ClassificationLabelList Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(xml_header, qname = "clbl:labelList")]
+pub struct ClassificationLabelList {
+  pub xmlns: Vec<crate::common::XmlNamespace>,
+  /// Defines the ClassificationLabel Class.
+  #[sdk(child(qname = "clbl:label"))]
+  pub classification_label: Vec<ClassificationLabel>,
+  /// Defines the ClassificationExtensionList Class.
+  #[sdk(child(qname = "clbl:extLst"))]
+  pub classification_extension_list: Option<ClassificationExtensionList>,
+}
+/// Defines the ClassificationExtension Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "clbl:ext")]
+pub struct ClassificationExtension {
+  /// uri
+  #[sdk(attr(qname = ":uri"))]
+  #[sdk(string_format(kind = "token"))]
+  pub uri: crate::simple_type::StringValue,
+  #[sdk(any)]
+  pub xml_children: std::boxed::Box<[u8]>,
+}
+/// Defines the ClassificationLabel Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "clbl:label")]
+pub struct ClassificationLabel {
+  /// id
+  #[sdk(attr(qname = ":id"))]
+  pub id: crate::simple_type::StringValue,
+  /// enabled
+  #[sdk(attr(qname = ":enabled"))]
+  pub enabled: crate::simple_type::BooleanValue,
+  /// setDate
+  #[sdk(attr(qname = ":setDate"))]
+  pub set_date: Option<crate::simple_type::StringValue>,
+  /// method
+  #[sdk(attr(qname = ":method"))]
+  pub method: crate::simple_type::StringValue,
+  /// name
+  #[sdk(attr(qname = ":name"))]
+  pub name: Option<crate::simple_type::StringValue>,
+  /// siteId
+  #[sdk(attr(qname = ":siteId"))]
+  #[sdk(pattern(
+    regex = "\\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\}"
+  ))]
+  #[sdk(string_format(kind = "token"))]
+  pub site_id: crate::simple_type::StringValue,
+  /// actionId
+  #[sdk(attr(qname = ":actionId"))]
+  pub action_id: Option<crate::simple_type::StringValue>,
+  /// contentBits
+  #[sdk(attr(qname = ":contentBits"))]
+  pub content_bits: Option<crate::simple_type::UInt32Value>,
+  /// removed
+  #[sdk(attr(qname = ":removed"))]
+  pub removed: crate::simple_type::BooleanValue,
+}
+/// Defines the ClassificationExtensionList Class.
+#[derive(Clone, Debug, Default, PartialEq, ooxmlsdk_derive::SdkType)]
+#[sdk(qname = "clbl:extLst")]
+pub struct ClassificationExtensionList {
+  /// Defines the ClassificationExtension Class.
+  #[sdk(child(qname = "clbl:ext"))]
+  pub classification_extension: Vec<ClassificationExtension>,
+}

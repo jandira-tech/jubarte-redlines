@@ -1,0 +1,4230 @@
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+
+use bytes::Bytes;
+
+#[cfg(feature = "flat-opc")]
+use super::unexpected_eof;
+use super::{
+  SdkError, part_relationships_path, resolve_relationship_target_path, resolve_zip_file_path,
+};
+use crate::schemas::opc_content_types::{Types, TypesChoice};
+use crate::schemas::opc_relationships::{
+  Relationship as OpcRelationship, Relationships, TargetMode,
+};
+
+#[cfg(feature = "flat-opc")]
+const FLAT_OPC_PACKAGE_NS: &str = "http://schemas.microsoft.com/office/2006/xmlPackage";
+const RELATIONSHIP_CONTENT_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PartSlot(u32);
+
+impl PartSlot {
+  #[inline]
+  pub const fn from_index(index: usize) -> Self {
+    Self(index as u32)
+  }
+
+  #[inline]
+  pub const fn index(self) -> usize {
+    self.0 as usize
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PackageToken(u64);
+
+impl PackageToken {
+  fn new() -> Self {
+    static NEXT_PACKAGE_ID: AtomicU64 = AtomicU64::new(1);
+    Self(NEXT_PACKAGE_ID.fetch_add(1, Ordering::Relaxed))
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PartKey {
+  package: PackageToken,
+  slot: PartSlot,
+}
+
+impl PartKey {
+  #[inline]
+  pub(crate) const fn new(package: PackageToken, slot: PartSlot) -> Self {
+    Self { package, slot }
+  }
+
+  #[inline]
+  pub(crate) fn resolve(self, storage: &SdkPackageStorage) -> Result<PartSlot, SdkError> {
+    if self.package != storage.token() {
+      return Err(SdkError::ForeignPart);
+    }
+    if storage.part(self.slot).is_none() {
+      return Err(SdkError::StalePart);
+    }
+    Ok(self.slot)
+  }
+
+  #[inline]
+  pub(crate) fn resolve_optional(self, storage: &SdkPackageStorage) -> Option<PartSlot> {
+    self.resolve(storage).ok()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NewPartDescriptor {
+  pub(crate) relationship_type: Cow<'static, str>,
+  pub(crate) content_type: Cow<'static, str>,
+  pub(crate) path_prefix: &'static str,
+  pub(crate) target_name: &'static str,
+  pub(crate) extension: Cow<'static, str>,
+}
+
+pub(crate) fn default_part_extension_for_content_type(content_type: &str) -> Option<&'static str> {
+  match content_type {
+    "image/unknown" => Some(".bin"),
+    "image/bmp" => Some(".bmp"),
+    "image/gif" => Some(".gif"),
+    "image/png" => Some(".png"),
+    "image/jp2" => Some(".jp2"),
+    "image/tif" => Some(".tif"),
+    "image/tiff" => Some(".tiff"),
+    "image/xbm" => Some(".xbm"),
+    "image/x-icon" => Some(".ico"),
+    "image/x-pcx" => Some(".pcx"),
+    "image/x-pcz" => Some(".pcz"),
+    "image/x-emz" => Some(".emz"),
+    "image/x-wmz" => Some(".wmz"),
+    "image/jpeg" => Some(".jpeg"),
+    "image/x-emf" => Some(".emf"),
+    "image/x-wmf" => Some(".wmf"),
+    "image/svg+xml" => Some(".svg"),
+    "audio/aiff" => Some(".aiff"),
+    "audio/midi" => Some(".midi"),
+    "audio/mp3" => Some(".mp3"),
+    "audio/mpegurl" => Some(".m3u"),
+    "audio/wav" => Some(".wav"),
+    "audio/x-ms-wma" => Some(".wma"),
+    "audio/mpeg" => Some(".mpeg"),
+    "audio/ogg" => Some(".ogg"),
+    "video/x-ms-asf-plugin" => Some(".asx"),
+    "video/avi" => Some(".avi"),
+    "video/mp4" => Some(".mp4"),
+    "video/mpg" => Some(".mpg"),
+    "video/mpeg" => Some(".mpeg"),
+    "video/x-ms-wmv" => Some(".wmv"),
+    "video/x-ms-wmx" => Some(".wmx"),
+    "video/x-ms-wvx" => Some(".wvx"),
+    "video/quicktime" => Some(".mov"),
+    "video/ogg" => Some(".ogg"),
+    "video/vc1" => Some(".wmv"),
+    _ => None,
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NewPartTargetMode {
+  Fixed,
+  #[default]
+  Indexed,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum StoredPartData {
+  Archived {
+    entry_index: usize,
+    bytes: OnceLock<Bytes>,
+  },
+  Owned {
+    bytes: Bytes,
+    original_entry_index: Option<usize>,
+  },
+}
+
+impl StoredPartData {
+  #[inline]
+  fn original_entry_index(&self) -> Option<usize> {
+    match self {
+      Self::Archived { entry_index, .. } => Some(*entry_index),
+      Self::Owned {
+        original_entry_index,
+        ..
+      } => *original_entry_index,
+    }
+  }
+
+  #[inline]
+  fn unchanged_archive_entry_index(&self) -> Option<usize> {
+    match self {
+      Self::Archived { entry_index, .. } => Some(*entry_index),
+      Self::Owned { .. } => None,
+    }
+  }
+
+  #[inline]
+  fn set_owned(&mut self, bytes: Vec<u8>) {
+    let original_entry_index = self.original_entry_index();
+    *self = Self::Owned {
+      bytes: bytes.into(),
+      original_entry_index,
+    };
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PackageSaveEntry {
+  ArchivedExtra(usize),
+  ContentTypes,
+  PackageRelationships,
+  Part(PartSlot),
+  PartRelationships(PartSlot),
+}
+
+#[derive(Clone, Debug)]
+enum ArchiveReader {
+  #[cfg(any(unix, windows))]
+  File(PositionedFileReader),
+  Memory(Cursor<Bytes>),
+  Positioned(PositionedSourceReader),
+}
+
+pub trait ReadAt: Send + Sync {
+  fn read_at(&self, buffer: &mut [u8], offset: u64) -> std::io::Result<usize>;
+
+  fn size(&self) -> std::io::Result<u64>;
+}
+
+#[derive(Clone)]
+struct PositionedSourceReader {
+  source: Arc<dyn ReadAt>,
+  position: u64,
+  length: u64,
+}
+
+impl std::fmt::Debug for PositionedSourceReader {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("PositionedSourceReader")
+      .field("position", &self.position)
+      .field("length", &self.length)
+      .finish_non_exhaustive()
+  }
+}
+
+impl PositionedSourceReader {
+  fn new(source: Arc<dyn ReadAt>) -> Result<Self, SdkError> {
+    let length = source.size()?;
+    Ok(Self {
+      source,
+      position: 0,
+      length,
+    })
+  }
+}
+
+impl Read for PositionedSourceReader {
+  fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    let read = self.source.read_at(buffer, self.position)?;
+    self.position = self
+      .position
+      .checked_add(read as u64)
+      .ok_or_else(|| std::io::Error::other("source reader position overflow"))?;
+    Ok(read)
+  }
+}
+
+impl Seek for PositionedSourceReader {
+  fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+    let next = match position {
+      SeekFrom::Start(position) => i128::from(position),
+      SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+      SeekFrom::End(offset) => i128::from(self.length) + i128::from(offset),
+    };
+    self.position = u64::try_from(next)
+      .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid seek"))?;
+    Ok(self.position)
+  }
+}
+
+impl Read for ArchiveReader {
+  fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    match self {
+      #[cfg(any(unix, windows))]
+      Self::File(reader) => reader.read(buffer),
+      Self::Memory(reader) => reader.read(buffer),
+      Self::Positioned(reader) => reader.read(buffer),
+    }
+  }
+}
+
+impl Seek for ArchiveReader {
+  fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+    match self {
+      #[cfg(any(unix, windows))]
+      Self::File(reader) => reader.seek(position),
+      Self::Memory(reader) => reader.seek(position),
+      Self::Positioned(reader) => reader.seek(position),
+    }
+  }
+}
+
+#[cfg(any(unix, windows))]
+#[derive(Clone, Debug)]
+struct PositionedFileReader {
+  file: Arc<std::fs::File>,
+  position: u64,
+  length: u64,
+}
+
+#[cfg(any(unix, windows))]
+impl PositionedFileReader {
+  fn new(file: std::fs::File) -> Result<Self, SdkError> {
+    let length = file.metadata()?.len();
+    Ok(Self {
+      file: Arc::new(file),
+      position: 0,
+      length,
+    })
+  }
+}
+
+#[cfg(any(unix, windows))]
+impl Read for PositionedFileReader {
+  fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    #[cfg(unix)]
+    let read = {
+      use std::os::unix::fs::FileExt as _;
+      self.file.read_at(buffer, self.position)?
+    };
+    #[cfg(windows)]
+    let read = {
+      use std::os::windows::fs::FileExt as _;
+      self.file.seek_read(buffer, self.position)?
+    };
+    self.position = self
+      .position
+      .checked_add(read as u64)
+      .ok_or_else(|| std::io::Error::other("file reader position overflow"))?;
+    Ok(read)
+  }
+}
+
+#[cfg(any(unix, windows))]
+impl Seek for PositionedFileReader {
+  fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+    let next = match position {
+      SeekFrom::Start(position) => i128::from(position),
+      SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+      SeekFrom::End(offset) => i128::from(self.length) + i128::from(offset),
+    };
+    self.position = u64::try_from(next)
+      .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid seek"))?;
+    Ok(self.position)
+  }
+}
+
+#[derive(Debug)]
+struct ArchiveBacking {
+  archive: zip::ZipArchive<ArchiveReader>,
+}
+
+impl ArchiveBacking {
+  fn read_entry(&self, entry_index: usize) -> Result<Bytes, SdkError> {
+    let mut archive = self.archive.clone();
+    let bytes = read_archive_entry_by_index(&mut archive, entry_index)?;
+    Ok(bytes.into())
+  }
+
+  fn raw_copy_entry<W: std::io::Write + std::io::Seek>(
+    &self,
+    entry_index: usize,
+    target_name: &str,
+    writer: &mut zip::ZipWriter<W>,
+  ) -> Result<(), SdkError> {
+    let mut archive = self.archive.clone();
+    let entry = archive.by_index_raw(entry_index)?;
+    writer.raw_copy_file_rename(entry, target_name)?;
+    Ok(())
+  }
+
+  fn raw_copy_entry_with_original_name<W: std::io::Write + std::io::Seek>(
+    &self,
+    entry_index: usize,
+    writer: &mut zip::ZipWriter<W>,
+  ) -> Result<(), SdkError> {
+    let mut archive = self.archive.clone();
+    let entry = archive.by_index_raw(entry_index)?;
+    writer.raw_copy_file(entry)?;
+    Ok(())
+  }
+
+  fn configure_writer<W: std::io::Write + std::io::Seek>(
+    &self,
+    writer: &mut zip::ZipWriter<W>,
+  ) -> Result<(), SdkError> {
+    writer.set_raw_comment(self.archive.comment().into())?;
+    if let Some(data) = self.archive.raw_zip64_extensible_data_sector() {
+      writer.set_raw_zip64_extensible_data_sector(data.into());
+    }
+    Ok(())
+  }
+}
+
+fn open_package_file(path: &Path) -> Result<std::fs::File, SdkError> {
+  let mut options = std::fs::OpenOptions::new();
+  options.read(true);
+  #[cfg(windows)]
+  {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+  }
+  Ok(options.open(path)?)
+}
+
+pub(crate) fn create_package_temp_file(
+  target_path: &Path,
+) -> Result<(PathBuf, std::fs::File), SdkError> {
+  static NEXT_TEMP_FILE_ID: AtomicU64 = AtomicU64::new(1);
+  let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+  let file_name = target_path
+    .file_name()
+    .and_then(|name| name.to_str())
+    .unwrap_or("package");
+
+  for _ in 0..1024 {
+    let id = NEXT_TEMP_FILE_ID.fetch_add(1, Ordering::Relaxed);
+    let path = parent.join(format!(
+      ".{file_name}.ooxmlsdk-{}-{id}.tmp",
+      std::process::id()
+    ));
+    match std::fs::OpenOptions::new()
+      .write(true)
+      .create_new(true)
+      .open(&path)
+    {
+      Ok(file) => return Ok((path, file)),
+      Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+      Err(error) => return Err(error.into()),
+    }
+  }
+
+  Err(SdkError::CommonError(format!(
+    "could not create a temporary package file beside {}",
+    target_path.display()
+  )))
+}
+
+pub(crate) fn replace_package_file(
+  temporary_path: &Path,
+  target_path: &Path,
+) -> Result<(), SdkError> {
+  #[cfg(unix)]
+  {
+    std::fs::rename(temporary_path, target_path)?;
+    Ok(())
+  }
+
+  #[cfg(not(unix))]
+  {
+    if !target_path.exists() {
+      std::fs::rename(temporary_path, target_path)?;
+      return Ok(());
+    }
+
+    let backup_path = target_path.with_extension(format!(
+      "ooxmlsdk-backup-{}-{}",
+      std::process::id(),
+      PackageToken::new().0
+    ));
+    std::fs::rename(target_path, &backup_path)?;
+    if let Err(error) = std::fs::rename(temporary_path, target_path) {
+      let _ = std::fs::rename(&backup_path, target_path);
+      return Err(error.into());
+    }
+    let _ = std::fs::remove_file(backup_path);
+    Ok(())
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RelationshipInfo {
+  id: Box<str>,
+  relationship_type: super::XmlRelationshipNamespaceUri,
+  target: Box<str>,
+  target_mode: Option<TargetMode>,
+  target_kind: RelationshipTargetKind,
+  target_part_slot: Option<PartSlot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RelationshipTargetKind {
+  InternalPart,
+  External,
+  Null,
+  Missing,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceRelationshipKind {
+  External,
+  Hyperlink,
+  Audio,
+  Media,
+  Video,
+}
+
+impl RelationshipInfo {
+  fn internal_part(
+    id: String,
+    relationship_type: String,
+    target: String,
+    target_part_slot: PartSlot,
+  ) -> Self {
+    Self {
+      id: id.into_boxed_str(),
+      relationship_type: super::XmlRelationshipNamespaceUri::from_uri(&relationship_type),
+      target: target.into_boxed_str(),
+      target_mode: None,
+      target_kind: RelationshipTargetKind::InternalPart,
+      target_part_slot: Some(target_part_slot),
+    }
+  }
+
+  fn external(
+    id: String,
+    relationship_type: String,
+    target: String,
+    target_mode: Option<TargetMode>,
+  ) -> Self {
+    Self {
+      id: id.into_boxed_str(),
+      relationship_type: super::XmlRelationshipNamespaceUri::from_uri(&relationship_type),
+      target: target.into_boxed_str(),
+      target_mode,
+      target_kind: RelationshipTargetKind::External,
+      target_part_slot: None,
+    }
+  }
+
+  fn reference(
+    id: String,
+    relationship_type: String,
+    target: String,
+    target_mode: Option<TargetMode>,
+  ) -> Self {
+    let effective_target_mode = target_mode.unwrap_or(TargetMode::Internal);
+    let target_kind = if matches!(effective_target_mode, TargetMode::External) {
+      RelationshipTargetKind::External
+    } else if target.eq_ignore_ascii_case("NULL") {
+      RelationshipTargetKind::Null
+    } else {
+      RelationshipTargetKind::Missing
+    };
+    Self {
+      id: id.into_boxed_str(),
+      relationship_type: super::XmlRelationshipNamespaceUri::from_uri(&relationship_type),
+      target: target.into_boxed_str(),
+      target_mode,
+      target_kind,
+      target_part_slot: None,
+    }
+  }
+
+  #[inline]
+  pub fn id(&self) -> &str {
+    &self.id
+  }
+
+  #[inline]
+  pub fn relationship_type(&self) -> &str {
+    self.relationship_type.as_str()
+  }
+
+  #[inline]
+  pub(crate) fn relationship_type_bytes(&self) -> &[u8] {
+    self.relationship_type.uri_bytes()
+  }
+
+  #[inline]
+  pub fn target(&self) -> &str {
+    &self.target
+  }
+
+  #[inline]
+  pub fn target_mode(&self) -> TargetMode {
+    self.target_mode.unwrap_or(TargetMode::Internal)
+  }
+
+  #[inline]
+  pub fn target_kind(&self) -> RelationshipTargetKind {
+    self.target_kind
+  }
+
+  #[inline]
+  pub(crate) fn target_part_slot(&self) -> Option<PartSlot> {
+    self.target_part_slot
+  }
+
+  #[inline]
+  pub fn is_reference_relationship(&self) -> bool {
+    self.reference_kind().is_some()
+  }
+
+  #[inline]
+  pub(crate) fn is_child_part_relationship(&self) -> bool {
+    self.target_part_slot.is_some() && !self.is_reference_relationship()
+  }
+
+  #[inline]
+  pub(crate) fn is_data_part_reference_relationship(&self) -> bool {
+    super::is_data_part_reference_relationship_type_bytes(self.relationship_type_bytes())
+  }
+
+  #[inline]
+  pub fn reference_kind(&self) -> Option<ReferenceRelationshipKind> {
+    let relationship_type = self.relationship_type_bytes();
+    if super::relationship_type_matches_bytes(relationship_type, super::REL_HYPERLINK) {
+      Some(ReferenceRelationshipKind::Hyperlink)
+    } else if super::relationship_type_matches_bytes(relationship_type, super::REL_AUDIO) {
+      Some(ReferenceRelationshipKind::Audio)
+    } else if super::relationship_type_matches_bytes(relationship_type, super::REL_MEDIA) {
+      Some(ReferenceRelationshipKind::Media)
+    } else if super::relationship_type_matches_bytes(relationship_type, super::REL_VIDEO) {
+      Some(ReferenceRelationshipKind::Video)
+    } else if self.target_kind == RelationshipTargetKind::External {
+      Some(ReferenceRelationshipKind::External)
+    } else {
+      None
+    }
+  }
+
+  fn to_relationship(&self) -> OpcRelationship {
+    OpcRelationship {
+      id: self.id().to_string(),
+      r#type: self.relationship_type().to_string(),
+      target: self.target().to_string(),
+      target_mode: self.target_mode,
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Relationship {
+  inner: RelationshipInfo,
+  package_token: PackageToken,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelationshipRef<'a> {
+  inner: &'a RelationshipInfo,
+  package_token: PackageToken,
+}
+
+macro_rules! impl_relationship_accessors {
+  ($ident:ident) => {
+    impl $ident {
+      #[inline]
+      pub fn id(&self) -> &str {
+        self.inner.id()
+      }
+
+      #[inline]
+      pub fn relationship_type(&self) -> &str {
+        self.inner.relationship_type()
+      }
+
+      #[inline]
+      pub fn target(&self) -> &str {
+        self.inner.target()
+      }
+
+      #[inline]
+      pub fn target_mode(&self) -> TargetMode {
+        self.inner.target_mode()
+      }
+
+      #[inline]
+      pub fn target_kind(&self) -> RelationshipTargetKind {
+        self.inner.target_kind()
+      }
+
+      #[inline]
+      pub fn reference_kind(&self) -> Option<ReferenceRelationshipKind> {
+        self.inner.reference_kind()
+      }
+
+      #[inline]
+      pub fn is_reference_relationship(&self) -> bool {
+        self.inner.is_reference_relationship()
+      }
+
+      #[inline]
+      pub fn target_part<P: crate::sdk::SdkPackage>(
+        &self,
+        package: &P,
+      ) -> Result<Option<crate::parts::PartRef>, SdkError> {
+        let Some(part_slot) = self.target_part_slot_for_package(package)? else {
+          return Ok(None);
+        };
+        if !self.inner.is_child_part_relationship() {
+          return Ok(None);
+        }
+        crate::parts::PartRef::from_part_slot(package, part_slot)
+          .map(Some)
+          .ok_or(SdkError::StalePart)
+      }
+
+      #[inline]
+      pub fn target_part_path<'a, P: crate::sdk::SdkPackage>(
+        &self,
+        package: &'a P,
+      ) -> Result<Option<&'a str>, SdkError> {
+        let Some(part_slot) = self.target_part_slot_for_package(package)? else {
+          return Ok(None);
+        };
+        package
+          .storage()
+          .part(part_slot)
+          .map(|part| Some(part.path()))
+          .ok_or(SdkError::StalePart)
+      }
+
+      #[inline]
+      pub fn target_media_data_part<P: crate::sdk::SdkPackage>(
+        &self,
+        package: &P,
+      ) -> Result<Option<crate::common::MediaDataPart>, SdkError> {
+        let Some(part_slot) = self.target_part_slot_for_package(package)? else {
+          return Ok(None);
+        };
+        if !self.inner.is_data_part_reference_relationship() {
+          return Ok(None);
+        }
+        package
+          .storage()
+          .part(part_slot)
+          .ok_or(SdkError::StalePart)?;
+        Ok(Some(crate::common::MediaDataPart::from_part_slot(
+          package.storage().token(),
+          part_slot,
+        )))
+      }
+
+      #[inline]
+      pub fn targets_media_data_part<P: crate::sdk::SdkPackage>(
+        &self,
+        package: &P,
+        media_data_part: &crate::common::MediaDataPart,
+      ) -> Result<bool, SdkError> {
+        let target_part_slot = self.target_part_slot_for_package(package)?;
+        if !self.inner.is_data_part_reference_relationship() {
+          return Ok(false);
+        }
+        Ok(target_part_slot == Some(media_data_part.part_slot_for_package(package)?))
+      }
+
+      #[inline]
+      pub(crate) fn target_part_slot_for_package<P: crate::sdk::SdkPackage>(
+        &self,
+        package: &P,
+      ) -> Result<Option<PartSlot>, SdkError> {
+        if self.package_token != package.storage().token() {
+          return Err(SdkError::ForeignPart);
+        }
+        Ok(self.inner.target_part_slot())
+      }
+    }
+  };
+}
+
+impl_relationship_accessors!(Relationship);
+
+impl<'a> RelationshipRef<'a> {
+  pub const HYPERLINK_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+  pub const AUDIO_REFERENCE_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio";
+  pub const MEDIA_REFERENCE_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.microsoft.com/office/2007/relationships/media";
+  pub const VIDEO_REFERENCE_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video";
+
+  #[inline]
+  pub(crate) const fn new(package_token: PackageToken, inner: &'a RelationshipInfo) -> Self {
+    Self {
+      inner,
+      package_token,
+    }
+  }
+
+  #[inline]
+  pub fn id(&self) -> &'a str {
+    self.inner.id()
+  }
+
+  #[inline]
+  pub fn relationship_type(&self) -> &'a str {
+    self.inner.relationship_type()
+  }
+
+  #[inline]
+  pub fn target(&self) -> &'a str {
+    self.inner.target()
+  }
+
+  #[inline]
+  pub fn target_mode(&self) -> TargetMode {
+    self.inner.target_mode()
+  }
+
+  #[inline]
+  pub fn target_kind(&self) -> RelationshipTargetKind {
+    self.inner.target_kind()
+  }
+
+  #[inline]
+  pub fn reference_kind(&self) -> Option<ReferenceRelationshipKind> {
+    self.inner.reference_kind()
+  }
+
+  #[inline]
+  pub fn is_reference_relationship(&self) -> bool {
+    self.inner.is_reference_relationship()
+  }
+
+  #[inline]
+  pub fn target_part<P: crate::sdk::SdkPackage>(
+    &self,
+    package: &P,
+  ) -> Result<Option<crate::parts::PartRef>, SdkError> {
+    let Some(part_slot) = self.target_part_slot_for_package(package)? else {
+      return Ok(None);
+    };
+    if !self.inner.is_child_part_relationship() {
+      return Ok(None);
+    }
+    crate::parts::PartRef::from_part_slot(package, part_slot)
+      .map(Some)
+      .ok_or(SdkError::StalePart)
+  }
+
+  #[inline]
+  pub fn target_part_path<'b, P: crate::sdk::SdkPackage>(
+    &self,
+    package: &'b P,
+  ) -> Result<Option<&'b str>, SdkError> {
+    let Some(part_slot) = self.target_part_slot_for_package(package)? else {
+      return Ok(None);
+    };
+    package
+      .storage()
+      .part(part_slot)
+      .map(|part| Some(part.path()))
+      .ok_or(SdkError::StalePart)
+  }
+
+  #[inline]
+  pub fn target_media_data_part<P: crate::sdk::SdkPackage>(
+    &self,
+    package: &P,
+  ) -> Result<Option<crate::common::MediaDataPart>, SdkError> {
+    let Some(part_slot) = self.target_part_slot_for_package(package)? else {
+      return Ok(None);
+    };
+    if !self.inner.is_data_part_reference_relationship() {
+      return Ok(None);
+    }
+    package
+      .storage()
+      .part(part_slot)
+      .ok_or(SdkError::StalePart)?;
+    Ok(Some(crate::common::MediaDataPart::from_part_slot(
+      package.storage().token(),
+      part_slot,
+    )))
+  }
+
+  #[inline]
+  pub fn targets_media_data_part<P: crate::sdk::SdkPackage>(
+    &self,
+    package: &P,
+    media_data_part: &crate::common::MediaDataPart,
+  ) -> Result<bool, SdkError> {
+    let target_part_slot = self.target_part_slot_for_package(package)?;
+    if !self.inner.is_data_part_reference_relationship() {
+      return Ok(false);
+    }
+    Ok(target_part_slot == Some(media_data_part.part_slot_for_package(package)?))
+  }
+
+  #[inline]
+  pub(crate) fn target_part_slot_for_package<P: crate::sdk::SdkPackage>(
+    &self,
+    package: &P,
+  ) -> Result<Option<PartSlot>, SdkError> {
+    if self.package_token != package.storage().token() {
+      return Err(SdkError::ForeignPart);
+    }
+    Ok(self.inner.target_part_slot())
+  }
+}
+
+impl Relationship {
+  #[inline]
+  pub(crate) const fn new(package_token: PackageToken, inner: RelationshipInfo) -> Self {
+    Self {
+      inner,
+      package_token,
+    }
+  }
+}
+
+impl From<RelationshipRef<'_>> for Relationship {
+  #[inline]
+  fn from(value: RelationshipRef<'_>) -> Self {
+    Self {
+      inner: value.inner.clone(),
+      package_token: value.package_token,
+    }
+  }
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RelationshipSet {
+  relationships: Vec<RelationshipInfo>,
+  by_id: HashMap<Box<str>, usize>,
+  next_relationship_id_hint: u64,
+  raw_bytes: Option<Box<[u8]>>,
+  archive_entry_index: Option<usize>,
+}
+
+impl RelationshipSet {
+  pub(crate) const HYPERLINK_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+  pub(crate) const AUDIO_REFERENCE_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio";
+  pub(crate) const MEDIA_REFERENCE_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.microsoft.com/office/2007/relationships/media";
+  pub(crate) const VIDEO_REFERENCE_RELATIONSHIP_TYPE: &'static str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video";
+
+  #[inline]
+  pub(crate) fn is_empty(&self) -> bool {
+    self.relationships.is_empty() && self.raw_bytes.is_none()
+  }
+
+  #[inline]
+  pub(crate) fn iter(&self) -> impl Iterator<Item = &RelationshipInfo> {
+    self.relationships.iter()
+  }
+
+  #[inline]
+  pub(crate) fn get(&self, relationship_id: &str) -> Option<&RelationshipInfo> {
+    self
+      .by_id
+      .get(relationship_id)
+      .and_then(|index| self.relationships.get(*index))
+  }
+
+  #[inline]
+  pub(crate) fn contains_id(&self, relationship_id: &str) -> bool {
+    self.by_id.contains_key(relationship_id)
+  }
+
+  pub(crate) fn next_relationship_id(&self) -> String {
+    let mut next = self.next_relationship_id_hint.max(1);
+    loop {
+      let relationship_id = format!("rId{next}");
+      if !self.contains_id(&relationship_id) {
+        return relationship_id;
+      }
+      next = next
+        .checked_add(1)
+        .expect("relationship id sequence exhausted u64");
+    }
+  }
+
+  pub(crate) fn add_external_relationship(
+    &mut self,
+    relationship_id: impl Into<String>,
+    relationship_type: impl Into<String>,
+    target: impl Into<String>,
+  ) -> Result<&RelationshipInfo, SdkError> {
+    self.push_relationship(RelationshipInfo::external(
+      relationship_id.into(),
+      relationship_type.into(),
+      target.into(),
+      Some(TargetMode::External),
+    ))
+  }
+
+  pub(crate) fn add_hyperlink_relationship(
+    &mut self,
+    relationship_id: impl Into<String>,
+    target: impl Into<String>,
+  ) -> Result<&RelationshipInfo, SdkError> {
+    self.add_hyperlink_relationship_with_mode(relationship_id, target, TargetMode::External)
+  }
+
+  pub(crate) fn add_hyperlink_relationship_with_mode(
+    &mut self,
+    relationship_id: impl Into<String>,
+    target: impl Into<String>,
+    target_mode: TargetMode,
+  ) -> Result<&RelationshipInfo, SdkError> {
+    let target_mode = match target_mode {
+      TargetMode::External => Some(TargetMode::External),
+      TargetMode::Internal => None,
+    };
+    self.push_relationship(RelationshipInfo::reference(
+      relationship_id.into(),
+      Self::HYPERLINK_RELATIONSHIP_TYPE.to_string(),
+      target.into(),
+      target_mode,
+    ))
+  }
+
+  pub(crate) fn add_internal_part_relationship(
+    &mut self,
+    relationship_id: impl Into<String>,
+    relationship_type: impl Into<String>,
+    target: impl Into<String>,
+    target_part_slot: PartSlot,
+  ) -> Result<&RelationshipInfo, SdkError> {
+    self.push_relationship(RelationshipInfo::internal_part(
+      relationship_id.into(),
+      relationship_type.into(),
+      target.into(),
+      target_part_slot,
+    ))
+  }
+
+  pub(crate) fn add_relationship_info(
+    &mut self,
+    relationship: RelationshipInfo,
+  ) -> Result<&RelationshipInfo, SdkError> {
+    self.push_relationship(relationship)
+  }
+
+  pub(crate) fn remove(&mut self, relationship_id: &str) -> Option<RelationshipInfo> {
+    let index = *self.by_id.get(relationship_id)?;
+    self.raw_bytes = None;
+    let removed = self.relationships.remove(index);
+    self.rebuild_index();
+    Some(removed)
+  }
+
+  pub(crate) fn remove_reference_relationship(
+    &mut self,
+    relationship_id: &str,
+  ) -> Result<RelationshipInfo, SdkError> {
+    let relationship = self.get(relationship_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "reference relationship id {relationship_id} does not exist"
+      ))
+    })?;
+    if !relationship.is_reference_relationship() {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {relationship_id} is not a reference relationship"
+      )));
+    }
+    Ok(
+      self
+        .remove(relationship_id)
+        .expect("relationship was already resolved"),
+    )
+  }
+
+  pub(crate) fn get_external_relationship(
+    &self,
+    relationship_id: &str,
+  ) -> Option<&RelationshipInfo> {
+    self.get(relationship_id).filter(|relationship| {
+      matches!(
+        relationship.reference_kind(),
+        Some(ReferenceRelationshipKind::External)
+      )
+    })
+  }
+
+  pub(crate) fn remove_external_relationship(
+    &mut self,
+    relationship_id: &str,
+  ) -> Result<RelationshipInfo, SdkError> {
+    let relationship = self.get(relationship_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "external relationship id {relationship_id} does not exist"
+      ))
+    })?;
+    if !matches!(
+      relationship.reference_kind(),
+      Some(ReferenceRelationshipKind::External)
+    ) {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {relationship_id} is not an external relationship"
+      )));
+    }
+    Ok(
+      self
+        .remove(relationship_id)
+        .expect("relationship was already resolved"),
+    )
+  }
+
+  pub(crate) fn get_hyperlink_relationship(
+    &self,
+    relationship_id: &str,
+  ) -> Option<&RelationshipInfo> {
+    self.get(relationship_id).filter(|relationship| {
+      matches!(
+        relationship.reference_kind(),
+        Some(ReferenceRelationshipKind::Hyperlink)
+      )
+    })
+  }
+
+  pub(crate) fn change_relationship_id(
+    &mut self,
+    relationship_id: &str,
+    new_relationship_id: impl Into<String>,
+  ) -> Result<(), SdkError> {
+    let new_relationship_id = new_relationship_id.into();
+    if relationship_id == new_relationship_id {
+      return Ok(());
+    }
+    if self.contains_id(&new_relationship_id) {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {new_relationship_id} already exists"
+      )));
+    }
+
+    let Some(index) = self.by_id.get(relationship_id).copied() else {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {relationship_id} does not exist"
+      )));
+    };
+
+    self.relationships[index].id = new_relationship_id.into_boxed_str();
+    self.raw_bytes = None;
+    self.rebuild_index();
+    Ok(())
+  }
+
+  #[inline]
+  pub(crate) fn part_relationships(&self) -> impl Iterator<Item = &RelationshipInfo> {
+    self
+      .relationships
+      .iter()
+      .filter(|relationship| relationship.is_child_part_relationship())
+  }
+
+  #[inline]
+  pub(crate) fn external_relationships(&self) -> impl Iterator<Item = &RelationshipInfo> {
+    self.relationships.iter().filter(|relationship| {
+      relationship.target_kind() == RelationshipTargetKind::External
+        && !super::relationship_type_matches_bytes(
+          relationship.relationship_type_bytes(),
+          super::REL_HYPERLINK,
+        )
+    })
+  }
+
+  #[inline]
+  pub(crate) fn hyperlink_relationships(&self) -> impl Iterator<Item = &RelationshipInfo> {
+    self.relationships.iter().filter(|relationship| {
+      super::relationship_type_matches_bytes(
+        relationship.relationship_type_bytes(),
+        super::REL_HYPERLINK,
+      )
+    })
+  }
+
+  #[inline]
+  pub(crate) fn data_part_reference_relationships(
+    &self,
+  ) -> impl Iterator<Item = &RelationshipInfo> {
+    self.relationships.iter().filter(|relationship| {
+      crate::common::is_data_part_reference_relationship_type_bytes(
+        relationship.relationship_type_bytes(),
+      )
+    })
+  }
+
+  #[inline]
+  pub(crate) fn first_target_part_by_relationship_type(
+    &self,
+    relationship_type: &str,
+  ) -> Option<PartSlot> {
+    self.part_relationships().find_map(|relationship| {
+      super::relationship_type_matches_bytes(
+        relationship.relationship_type_bytes(),
+        relationship_type.as_bytes(),
+      )
+      .then(|| relationship.target_part_slot())
+      .flatten()
+    })
+  }
+
+  pub(crate) fn to_relationships(&self) -> Relationships {
+    Relationships {
+      xmlns: vec![super::XmlNamespace::raw(
+        "",
+        "http://schemas.openxmlformats.org/package/2006/relationships",
+      )],
+      relationship: self
+        .relationships
+        .iter()
+        .map(RelationshipInfo::to_relationship)
+        .collect(),
+    }
+  }
+
+  pub(crate) fn to_bytes_cow(&self) -> Result<Cow<'_, [u8]>, SdkError> {
+    if let Some(bytes) = &self.raw_bytes {
+      return Ok(Cow::Borrowed(bytes));
+    }
+    let mut bytes = Vec::with_capacity(32);
+    crate::sdk::SdkType::write_to(&self.to_relationships(), &mut bytes)?;
+    Ok(Cow::Owned(bytes))
+  }
+
+  fn from_relationships(
+    relationships: Option<Relationships>,
+    source_path: &str,
+    by_path: &HashMap<Box<str>, PartSlot>,
+  ) -> Self {
+    let Some(relationships) = relationships else {
+      return Self::default();
+    };
+
+    let source_parent_path = super::parent_zip_path(source_path);
+    let mut set = Self {
+      relationships: Vec::with_capacity(relationships.relationship.len()),
+      by_id: HashMap::with_capacity(relationships.relationship.len()),
+      next_relationship_id_hint: 0,
+      raw_bytes: None,
+      archive_entry_index: None,
+    };
+
+    for relationship in relationships.relationship {
+      let info = relationship_info(relationship, &source_parent_path, by_path);
+      // The OPC relationships schema declares Id as xsd:ID, so a later
+      // duplicate cannot be addressed independently. Word's malformed-package
+      // recovery keeps the first relationship with that ID (tdf93284 uses a
+      // later image relationship that collides with an earlier font/theme
+      // relationship). Keep lookup and typed relationship iteration on the
+      // same first-wins view instead of exposing both incompatible targets.
+      if set.contains_id(info.id()) {
+        continue;
+      }
+      set.push_relationship_unchecked(info);
+    }
+
+    set
+  }
+
+  fn from_raw_bytes(bytes: Box<[u8]>) -> Self {
+    Self {
+      relationships: Vec::new(),
+      by_id: HashMap::new(),
+      next_relationship_id_hint: 0,
+      raw_bytes: Some(bytes),
+      archive_entry_index: None,
+    }
+  }
+
+  #[inline]
+  fn with_archive_entry(mut self, entry_index: usize) -> Self {
+    self.archive_entry_index = Some(entry_index);
+    self
+  }
+
+  #[inline]
+  pub(crate) fn raw_archive_entry_index(&self) -> Option<usize> {
+    self
+      .raw_bytes
+      .is_some()
+      .then_some(self.archive_entry_index)
+      .flatten()
+  }
+
+  #[inline]
+  fn original_archive_entry_index(&self) -> Option<usize> {
+    self.archive_entry_index
+  }
+
+  fn push_relationship(
+    &mut self,
+    relationship: RelationshipInfo,
+  ) -> Result<&RelationshipInfo, SdkError> {
+    if self.contains_id(relationship.id()) {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {} already exists",
+        relationship.id()
+      )));
+    }
+    self.raw_bytes = None;
+    self.push_relationship_unchecked(relationship);
+    Ok(self.relationships.last().expect("pushed relationship"))
+  }
+
+  fn push_relationship_unchecked(&mut self, relationship: RelationshipInfo) {
+    let index = self.relationships.len();
+    self.update_next_relationship_id_hint(relationship.id());
+    self.by_id.insert(relationship.id.clone(), index);
+    self.relationships.push(relationship);
+  }
+
+  fn rebuild_index(&mut self) {
+    self.by_id.clear();
+    self.by_id.reserve(self.relationships.len());
+    self.next_relationship_id_hint = 0;
+    for (index, relationship) in self.relationships.iter().enumerate() {
+      self.by_id.insert(relationship.id.clone(), index);
+      if let Some(next) = relationship
+        .id()
+        .strip_prefix("rId")
+        .and_then(|suffix| suffix.parse::<u64>().ok())
+        .and_then(|value| value.checked_add(1))
+      {
+        self.next_relationship_id_hint = self.next_relationship_id_hint.max(next);
+      }
+    }
+  }
+
+  fn update_next_relationship_id_hint(&mut self, relationship_id: &str) {
+    if let Some(next) = relationship_id
+      .strip_prefix("rId")
+      .and_then(|suffix| suffix.parse::<u64>().ok())
+      .and_then(|value| value.checked_add(1))
+    {
+      self.next_relationship_id_hint = self.next_relationship_id_hint.max(next);
+    }
+  }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StoredPart {
+  path: Box<str>,
+  content_type: Box<str>,
+  relationship_type: Option<super::XmlRelationshipNamespaceUri>,
+  kind: crate::parts::PartKind,
+  relationships: RelationshipSet,
+  data: StoredPartData,
+  deleted: bool,
+}
+
+impl StoredPart {
+  #[inline]
+  pub(crate) fn is_deleted(&self) -> bool {
+    self.deleted
+  }
+
+  #[inline]
+  pub(crate) fn path(&self) -> &str {
+    &self.path
+  }
+
+  #[inline]
+  pub(crate) fn content_type(&self) -> &str {
+    &self.content_type
+  }
+
+  #[inline]
+  pub(crate) fn relationship_type(&self) -> Option<&str> {
+    self
+      .relationship_type
+      .as_ref()
+      .map(super::XmlRelationshipNamespaceUri::as_str)
+  }
+
+  #[inline]
+  pub(crate) fn relationship_type_bytes(&self) -> Option<&[u8]> {
+    self
+      .relationship_type
+      .as_ref()
+      .map(super::XmlRelationshipNamespaceUri::uri_bytes)
+  }
+
+  #[inline]
+  pub(crate) fn kind(&self) -> crate::parts::PartKind {
+    self.kind
+  }
+
+  #[inline]
+  pub(crate) fn relationships(&self) -> &RelationshipSet {
+    &self.relationships
+  }
+
+  #[inline]
+  pub(crate) fn relationships_mut(&mut self) -> &mut RelationshipSet {
+    &mut self.relationships
+  }
+
+  fn mark_deleted(&mut self) -> Option<Box<str>> {
+    if self.deleted {
+      return None;
+    }
+
+    self.deleted = true;
+    let path = std::mem::take(&mut self.path);
+    self.content_type = Box::default();
+    self.relationship_type = None;
+    self.relationships = RelationshipSet::default();
+    self.data = StoredPartData::Owned {
+      bytes: Bytes::new(),
+      original_entry_index: None,
+    };
+    Some(path)
+  }
+}
+
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct SdkPackageStorage {
+  token: PackageToken,
+  archive: Option<Arc<ArchiveBacking>>,
+  archived_extra_entry_indices: Box<[usize]>,
+  content_types: Types,
+  content_types_archive_entry_index: Option<usize>,
+  package_relationships: RelationshipSet,
+  parts: Vec<StoredPart>,
+  by_path: HashMap<Box<str>, PartSlot>,
+  preferred_main_part_content_type: Option<&'static str>,
+}
+
+impl SdkPackageStorage {
+  pub(crate) fn create(preferred_main_part_content_type: Option<&'static str>) -> Self {
+    Self {
+      token: PackageToken::new(),
+      archive: None,
+      archived_extra_entry_indices: Box::new([]),
+      content_types: empty_content_types(),
+      content_types_archive_entry_index: None,
+      package_relationships: RelationshipSet::default(),
+      parts: Vec::new(),
+      by_path: HashMap::new(),
+      preferred_main_part_content_type,
+    }
+  }
+
+  pub(crate) fn open<R: Read + Seek>(mut reader: R) -> Result<Self, SdkError> {
+    let length = reader.seek(SeekFrom::End(0))?;
+    reader.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    let capacity = usize::try_from(length)
+      .map_err(|_| SdkError::CommonError("package is too large for this platform".to_string()))?;
+    bytes.try_reserve_exact(capacity).map_err(|error| {
+      SdkError::CommonError(format!(
+        "cannot allocate {capacity} bytes for package input: {error}"
+      ))
+    })?;
+    reader.read_to_end(&mut bytes)?;
+    Self::open_memory(bytes.into())
+  }
+
+  pub(crate) fn open_reader_at(source: Arc<dyn ReadAt>) -> Result<Self, SdkError> {
+    let reader = PositionedSourceReader::new(source)?;
+    Self::open_archive(ArchiveReader::Positioned(reader))
+  }
+
+  pub(crate) fn open_file(path: &Path) -> Result<Self, SdkError> {
+    #[cfg(any(unix, windows))]
+    {
+      let file = open_package_file(path)?;
+      let reader = PositionedFileReader::new(file)?;
+      Self::open_archive(ArchiveReader::File(reader))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+      Self::open_memory(std::fs::read(path)?.into())
+    }
+  }
+
+  fn open_memory(bytes: Bytes) -> Result<Self, SdkError> {
+    Self::open_archive(ArchiveReader::Memory(Cursor::new(bytes)))
+  }
+
+  fn open_archive(reader: ArchiveReader) -> Result<Self, SdkError> {
+    let mut raw_reader = reader.clone();
+    let mut archive = zip::ZipArchive::new(reader)?;
+    let entry_names = read_archive_entry_names(&mut archive, &mut raw_reader)?;
+    let opened = read_archive_model(&mut archive, &entry_names)?;
+    let OpenedArchiveModel {
+      content_types,
+      content_types_archive_entry_index,
+      mut raw_parts,
+      package_relationships,
+      part_relationships,
+    } = opened;
+    let mut claimed_entry_indices = vec![false; archive.len()];
+    claimed_entry_indices[content_types_archive_entry_index] = true;
+    for raw_part in &raw_parts {
+      claimed_entry_indices[raw_part.entry_index] = true;
+    }
+    for entry in part_relationships.iter().flatten() {
+      claimed_entry_indices[entry.entry_index] = true;
+    }
+    if let Some(entry) = &package_relationships {
+      claimed_entry_indices[entry.entry_index] = true;
+    }
+    let archived_extra_entry_indices = (0..archive.len())
+      .filter(|entry_index| !claimed_entry_indices[*entry_index])
+      .collect::<Box<[_]>>();
+    let mut by_path = HashMap::with_capacity(raw_parts.len());
+
+    for (index, raw_part) in raw_parts.iter().enumerate() {
+      by_path.insert(raw_part.path.clone(), PartSlot::from_index(index));
+    }
+
+    let package_relationships = package_relationships
+      .map(|loaded| {
+        RelationshipSet::from_relationships(loaded.relationships, "", &by_path)
+          .with_archive_entry(loaded.entry_index)
+      })
+      .unwrap_or_default();
+
+    let part_relationships = part_relationships
+      .into_iter()
+      .zip(&raw_parts)
+      .map(|(loaded, raw_part)| {
+        loaded
+          .map(|loaded| {
+            match loaded.relationships {
+              Some(relationships) => {
+                RelationshipSet::from_relationships(Some(relationships), &raw_part.path, &by_path)
+              }
+              None => RelationshipSet::from_raw_bytes(loaded.bytes.into_boxed_slice()),
+            }
+            .with_archive_entry(loaded.entry_index)
+          })
+          .unwrap_or_default()
+      })
+      .collect::<Vec<_>>();
+
+    let relationship_types =
+      relationship_types_by_part(&package_relationships, &part_relationships)?;
+
+    let mut parts = Vec::with_capacity(raw_parts.len());
+    for (index, (raw_part, relationships)) in
+      raw_parts.drain(..).zip(part_relationships).enumerate()
+    {
+      let relationship_type = relationship_types[index].clone();
+      let kind = crate::parts::PartKind::classify(
+        relationship_type
+          .as_ref()
+          .map(super::XmlRelationshipNamespaceUri::uri_bytes),
+        raw_part.content_type.as_bytes(),
+        &raw_part.path,
+      );
+      parts.push(StoredPart {
+        path: raw_part.path,
+        content_type: raw_part.content_type,
+        relationship_type,
+        kind,
+        relationships,
+        data: StoredPartData::Archived {
+          entry_index: raw_part.entry_index,
+          bytes: OnceLock::new(),
+        },
+        deleted: false,
+      });
+    }
+
+    let archive = Arc::new(ArchiveBacking { archive });
+
+    Ok(Self {
+      token: PackageToken::new(),
+      archive: Some(archive),
+      archived_extra_entry_indices,
+      content_types,
+      content_types_archive_entry_index: Some(content_types_archive_entry_index),
+      package_relationships,
+      parts,
+      by_path,
+      preferred_main_part_content_type: None,
+    })
+  }
+
+  #[cfg(feature = "flat-opc")]
+  pub(crate) fn open_flat_opc<R: std::io::BufRead>(reader: R) -> Result<Self, SdkError> {
+    let mut flat_parts = read_flat_opc_parts(reader)?;
+    flat_parts.sort_by(|left, right| left.path.cmp(&right.path));
+
+    let mut raw_parts = Vec::new();
+    let mut relationship_parts = HashMap::new();
+    for flat_part in flat_parts {
+      if is_relationships_part_path(&flat_part.path) {
+        relationship_parts.insert(flat_part.path, flat_part.bytes);
+      } else {
+        raw_parts.push(RawPart {
+          path: flat_part.path.into_boxed_str(),
+          content_type: flat_part.content_type.into_boxed_str(),
+          entry_index: usize::MAX,
+          bytes: flat_part.bytes,
+        });
+      }
+    }
+
+    let mut by_path = HashMap::with_capacity(raw_parts.len());
+    for (index, raw_part) in raw_parts.iter().enumerate() {
+      by_path.insert(raw_part.path.clone(), PartSlot::from_index(index));
+    }
+
+    let content_types = content_types_from_raw_parts(&raw_parts);
+    let package_relationships = relationships_from_flat_opc_part(
+      relationship_parts.remove("_rels/.rels").as_deref(),
+      "",
+      &by_path,
+    )?;
+
+    let mut part_relationships = Vec::with_capacity(raw_parts.len());
+    for raw_part in &raw_parts {
+      let rels_path = part_relationships_path(&raw_part.path);
+      part_relationships.push(relationships_from_flat_opc_part(
+        relationship_parts.remove(&rels_path).as_deref(),
+        &raw_part.path,
+        &by_path,
+      )?);
+    }
+
+    let relationship_types =
+      relationship_types_by_part(&package_relationships, &part_relationships)?;
+
+    let mut parts = Vec::with_capacity(raw_parts.len());
+    for (index, (raw_part, relationships)) in
+      raw_parts.into_iter().zip(part_relationships).enumerate()
+    {
+      let relationship_type = relationship_types[index].clone();
+      let kind = crate::parts::PartKind::classify(
+        relationship_type
+          .as_ref()
+          .map(super::XmlRelationshipNamespaceUri::uri_bytes),
+        raw_part.content_type.as_bytes(),
+        &raw_part.path,
+      );
+      parts.push(StoredPart {
+        path: raw_part.path,
+        content_type: raw_part.content_type,
+        relationship_type,
+        kind,
+        relationships,
+        data: StoredPartData::Owned {
+          bytes: raw_part.bytes.into(),
+          original_entry_index: None,
+        },
+        deleted: false,
+      });
+    }
+
+    Ok(Self {
+      token: PackageToken::new(),
+      archive: None,
+      archived_extra_entry_indices: Box::new([]),
+      content_types,
+      content_types_archive_entry_index: None,
+      package_relationships,
+      parts,
+      by_path,
+      preferred_main_part_content_type: None,
+    })
+  }
+
+  #[cfg(feature = "flat-opc")]
+  pub(crate) fn write_flat_opc<W, F>(
+    &self,
+    writer: &mut W,
+    mut part_data: F,
+  ) -> Result<(), SdkError>
+  where
+    W: std::io::Write,
+    F: FnMut(PartSlot, &StoredPart) -> Result<Vec<u8>, SdkError>,
+  {
+    writer.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#)?;
+    writer.write_all(b"\n<pkg:package")?;
+    writer.write_all(b" xmlns:pkg=\"")?;
+    writer.write_all(FLAT_OPC_PACKAGE_NS.as_bytes())?;
+    writer.write_all(b"\"")?;
+    writer.write_all(b">\n")?;
+
+    if !self.package_relationships.is_empty() {
+      let bytes = self.package_relationships.to_bytes_cow()?;
+      write_flat_opc_xml_part(
+        writer,
+        "/_rels/.rels",
+        RELATIONSHIP_CONTENT_TYPE,
+        bytes.as_ref(),
+      )?;
+    }
+
+    let alt_chunk_part_ids = self.alt_chunk_part_ids();
+    for (index, part) in self.parts.iter().enumerate() {
+      if part.is_deleted() {
+        continue;
+      }
+
+      let part_id = PartSlot::from_index(index);
+      let data = part_data(part_id, part)?;
+      let part_name = format!("/{}", part.path());
+      if flat_opc_part_is_xml(part, part_id, &alt_chunk_part_ids) {
+        write_flat_opc_xml_part(writer, &part_name, part.content_type(), &data)?;
+      } else {
+        write_flat_opc_binary_part(writer, &part_name, part.content_type(), &data)?;
+      }
+
+      if !part.relationships().is_empty() {
+        let bytes = part.relationships().to_bytes_cow()?;
+        let rels_name = format!("/{}", part_relationships_path(part.path()));
+        write_flat_opc_xml_part(
+          writer,
+          &rels_name,
+          RELATIONSHIP_CONTENT_TYPE,
+          bytes.as_ref(),
+        )?;
+      }
+    }
+
+    writer.write_all(b"</pkg:package>")?;
+    Ok(())
+  }
+
+  #[inline]
+  pub(crate) fn token(&self) -> PackageToken {
+    self.token
+  }
+
+  #[inline]
+  pub(crate) fn part_key(&self, slot: PartSlot) -> PartKey {
+    PartKey::new(self.token, slot)
+  }
+
+  #[inline]
+  pub(crate) fn content_types(&self) -> &Types {
+    &self.content_types
+  }
+
+  pub(crate) fn package_save_entries(&self) -> Vec<PackageSaveEntry> {
+    let mut entries = Vec::with_capacity(
+      self.parts.len().saturating_mul(2) + self.archived_extra_entry_indices.len() + 2,
+    );
+    let mut sequence = 0usize;
+    let mut push = |original_entry_index: Option<usize>, entry: PackageSaveEntry| {
+      entries.push((original_entry_index.unwrap_or(usize::MAX), sequence, entry));
+      sequence += 1;
+    };
+
+    push(
+      self.content_types_archive_entry_index,
+      PackageSaveEntry::ContentTypes,
+    );
+    if !self.package_relationships.is_empty() {
+      push(
+        self.package_relationships.original_archive_entry_index(),
+        PackageSaveEntry::PackageRelationships,
+      );
+    }
+    for (index, part) in self.parts.iter().enumerate() {
+      if part.is_deleted() {
+        continue;
+      }
+      let part_id = PartSlot::from_index(index);
+      if !part.relationships().is_empty() {
+        push(
+          part.relationships().original_archive_entry_index(),
+          PackageSaveEntry::PartRelationships(part_id),
+        );
+      }
+      push(
+        part.data.original_entry_index(),
+        PackageSaveEntry::Part(part_id),
+      );
+    }
+    for &entry_index in &self.archived_extra_entry_indices {
+      push(
+        Some(entry_index),
+        PackageSaveEntry::ArchivedExtra(entry_index),
+      );
+    }
+
+    entries.sort_unstable_by_key(|(entry_index, sequence, _)| (*entry_index, *sequence));
+    entries.into_iter().map(|(_, _, entry)| entry).collect()
+  }
+
+  pub(crate) fn configure_zip_writer<W: std::io::Write + std::io::Seek>(
+    &self,
+    writer: &mut zip::ZipWriter<W>,
+  ) -> Result<(), SdkError> {
+    if let Some(archive) = &self.archive {
+      archive.configure_writer(writer)?;
+    }
+    Ok(())
+  }
+
+  fn cached_part_bytes(&self, part_id: PartSlot) -> Result<&Bytes, SdkError> {
+    let part = self.part(part_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "part id {part_id:?} is not present in package storage"
+      ))
+    })?;
+    match &part.data {
+      StoredPartData::Archived { entry_index, bytes } => {
+        if bytes.get().is_none() {
+          let archive = self.archive.as_ref().ok_or_else(|| {
+            SdkError::CommonError("archived part has no package archive backing".to_string())
+          })?;
+          let loaded = archive.read_entry(*entry_index)?;
+          let _ = bytes.set(loaded);
+        }
+        Ok(
+          bytes
+            .get()
+            .expect("part bytes were initialized or another thread initialized them"),
+        )
+      }
+      StoredPartData::Owned { bytes, .. } => Ok(bytes),
+    }
+  }
+
+  pub(crate) fn part_bytes(&self, part_id: PartSlot) -> Result<&[u8], SdkError> {
+    self.cached_part_bytes(part_id).map(AsRef::as_ref)
+  }
+
+  pub(crate) fn part_bytes_owned(&self, part_id: PartSlot) -> Result<Bytes, SdkError> {
+    self.cached_part_bytes(part_id).cloned()
+  }
+
+  pub(crate) fn part_bytes_for_root(&self, part_id: PartSlot) -> Result<Bytes, SdkError> {
+    let part = self.part(part_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "part id {part_id:?} is not present in package storage"
+      ))
+    })?;
+    match &part.data {
+      StoredPartData::Archived { entry_index, bytes } => {
+        if let Some(bytes) = bytes.get() {
+          return Ok(bytes.clone());
+        }
+        self
+          .archive
+          .as_ref()
+          .ok_or_else(|| {
+            SdkError::CommonError("archived part has no package archive backing".to_string())
+          })?
+          .read_entry(*entry_index)
+      }
+      StoredPartData::Owned { bytes, .. } => Ok(bytes.clone()),
+    }
+  }
+
+  pub(crate) fn raw_copy_archive_entry<W: std::io::Write + std::io::Seek>(
+    &self,
+    entry_index: usize,
+    target_name: &str,
+    writer: &mut zip::ZipWriter<W>,
+  ) -> Result<bool, SdkError> {
+    let Some(archive) = &self.archive else {
+      return Ok(false);
+    };
+    archive.raw_copy_entry(entry_index, target_name, writer)?;
+    Ok(true)
+  }
+
+  pub(crate) fn raw_copy_archived_extra<W: std::io::Write + std::io::Seek>(
+    &self,
+    entry_index: usize,
+    writer: &mut zip::ZipWriter<W>,
+  ) -> Result<(), SdkError> {
+    let archive = self.archive.as_ref().ok_or_else(|| {
+      SdkError::CommonError("archived ZIP entry has no package archive backing".to_string())
+    })?;
+    archive.raw_copy_entry_with_original_name(entry_index, writer)
+  }
+
+  pub(crate) fn raw_copy_part<W: std::io::Write + std::io::Seek>(
+    &self,
+    part_id: PartSlot,
+    writer: &mut zip::ZipWriter<W>,
+  ) -> Result<bool, SdkError> {
+    let Some(part) = self.part(part_id) else {
+      return Ok(false);
+    };
+    let Some(entry_index) = part.data.unchanged_archive_entry_index() else {
+      return Ok(false);
+    };
+    self.raw_copy_archive_entry(entry_index, part.path(), writer)
+  }
+
+  #[inline]
+  pub(crate) fn package_relationships(&self) -> &RelationshipSet {
+    &self.package_relationships
+  }
+
+  #[inline]
+  pub(crate) fn package_relationships_mut(&mut self) -> &mut RelationshipSet {
+    &mut self.package_relationships
+  }
+
+  #[inline]
+  pub(crate) fn parts(&self) -> &[StoredPart] {
+    &self.parts
+  }
+
+  #[inline]
+  pub(crate) fn part(&self, part_id: PartSlot) -> Option<&StoredPart> {
+    self
+      .parts
+      .get(part_id.index())
+      .filter(|part| !part.is_deleted())
+  }
+
+  #[inline]
+  pub(crate) fn part_mut(&mut self, part_id: PartSlot) -> Option<&mut StoredPart> {
+    self
+      .parts
+      .get_mut(part_id.index())
+      .filter(|part| !part.is_deleted())
+  }
+
+  #[inline]
+  pub(crate) fn preferred_main_part_content_type(&self) -> Option<&str> {
+    self.preferred_main_part_content_type
+  }
+
+  #[inline]
+  pub(crate) fn set_preferred_main_part_content_type(&mut self, content_type: &'static str) {
+    self.preferred_main_part_content_type = Some(content_type);
+  }
+
+  #[inline]
+  pub(crate) fn media_data_parts(&self) -> impl Iterator<Item = (PartSlot, &StoredPart)> {
+    self
+      .parts
+      .iter()
+      .enumerate()
+      .filter(|(_, part)| !part.is_deleted() && is_media_data_part(part))
+      .map(|(index, part)| (PartSlot::from_index(index), part))
+  }
+
+  #[inline]
+  pub(crate) fn relationships(&self, part_id: PartSlot) -> Option<&RelationshipSet> {
+    self.part(part_id).map(StoredPart::relationships)
+  }
+
+  #[inline]
+  pub(crate) fn relationships_mut(&mut self, part_id: PartSlot) -> Option<&mut RelationshipSet> {
+    self.part_mut(part_id).map(StoredPart::relationships_mut)
+  }
+
+  #[inline]
+  pub(crate) fn target_part_slot(
+    &self,
+    source_part_id: PartSlot,
+    relationship_id: &str,
+  ) -> Option<PartSlot> {
+    let relationship = self.relationships(source_part_id)?.get(relationship_id)?;
+    relationship
+      .is_child_part_relationship()
+      .then(|| relationship.target_part_slot())
+      .flatten()
+  }
+
+  pub(crate) fn delete_package_part(
+    &mut self,
+    relationship_id: &str,
+  ) -> Result<Option<Vec<PartSlot>>, SdkError> {
+    let Some(target_part_slot) = self
+      .package_relationships
+      .get(relationship_id)
+      .filter(|relationship| relationship.is_child_part_relationship())
+      .and_then(RelationshipInfo::target_part_slot)
+    else {
+      return Ok(None);
+    };
+
+    self.package_relationships.remove(relationship_id);
+    Ok(Some(self.delete_unreachable_part_tree(target_part_slot)))
+  }
+
+  pub(crate) fn delete_child_part(
+    &mut self,
+    source_part_id: PartSlot,
+    relationship_id: &str,
+  ) -> Result<Option<Vec<PartSlot>>, SdkError> {
+    let Some(target_part_slot) = self.target_part_slot(source_part_id, relationship_id) else {
+      return Ok(None);
+    };
+
+    let relationships = self.relationships_mut(source_part_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "part id {source_part_id:?} is not present in package storage"
+      ))
+    })?;
+    relationships.remove(relationship_id);
+    Ok(Some(self.delete_unreachable_part_tree(target_part_slot)))
+  }
+
+  pub(crate) fn add_package_relationship_to_part(
+    &mut self,
+    relationship_id: impl Into<String>,
+    relationship_type: &str,
+    target_part_slot: PartSlot,
+  ) -> Result<String, SdkError> {
+    let relationship_id = relationship_id.into();
+    if let Some(existing_relationship_id) =
+      self.existing_relationship_id_for_target(None, target_part_slot)
+    {
+      if existing_relationship_id == relationship_id {
+        return Ok(existing_relationship_id);
+      }
+      return Err(SdkError::CommonError(format!(
+        "part id {target_part_slot:?} is already referenced by relationship id {existing_relationship_id}"
+      )));
+    }
+
+    let target = {
+      let target_part = self.part(target_part_slot).ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {target_part_slot:?} is not present in package storage"
+        ))
+      })?;
+      target_part.path().to_string()
+    };
+
+    self.package_relationships.add_internal_part_relationship(
+      relationship_id.clone(),
+      relationship_type,
+      target,
+      target_part_slot,
+    )?;
+    Ok(relationship_id)
+  }
+
+  pub(crate) fn add_child_relationship_to_part(
+    &mut self,
+    source_part_id: PartSlot,
+    relationship_id: impl Into<String>,
+    relationship_type: &str,
+    target_part_slot: PartSlot,
+  ) -> Result<String, SdkError> {
+    let relationship_id = relationship_id.into();
+    if let Some(existing_relationship_id) =
+      self.existing_relationship_id_for_target(Some(source_part_id), target_part_slot)
+    {
+      if existing_relationship_id == relationship_id {
+        return Ok(existing_relationship_id);
+      }
+      return Err(SdkError::CommonError(format!(
+        "part id {target_part_slot:?} is already referenced by relationship id {existing_relationship_id}"
+      )));
+    }
+
+    let relationship_target = {
+      let source_part_path = self
+        .part(source_part_id)
+        .ok_or_else(|| {
+          SdkError::CommonError(format!(
+            "part id {source_part_id:?} is not present in package storage"
+          ))
+        })?
+        .path()
+        .to_string();
+      let target_part = self.part(target_part_slot).ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {target_part_slot:?} is not present in package storage"
+        ))
+      })?;
+      relationship_target_from_source(&source_part_path, target_part.path())
+    };
+
+    self
+      .relationships_mut(source_part_id)
+      .expect("source part was already resolved")
+      .add_internal_part_relationship(
+        relationship_id.clone(),
+        relationship_type,
+        relationship_target,
+        target_part_slot,
+      )?;
+    Ok(relationship_id)
+  }
+
+  pub(crate) fn create_media_data_part(
+    &mut self,
+    content_type: impl Into<String>,
+    extension: impl AsRef<str>,
+  ) -> Result<PartSlot, SdkError> {
+    let content_type = content_type.into();
+    if content_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a media data part with an empty content type".to_string(),
+      ));
+    }
+    let extension = normalized_part_extension(extension.as_ref());
+    let path = self.next_data_part_path("media/mediadata", &extension);
+    let part_id = self.push_part(path, &content_type, None);
+    Ok(part_id)
+  }
+
+  pub(crate) fn add_data_part_reference_relationship(
+    &mut self,
+    source_part_id: PartSlot,
+    relationship_id: impl Into<String>,
+    relationship_type: &str,
+    target_part_slot: PartSlot,
+  ) -> Result<String, SdkError> {
+    let relationship_id = relationship_id.into();
+    let relationship_target = {
+      let source_part_path = self
+        .part(source_part_id)
+        .ok_or_else(|| {
+          SdkError::CommonError(format!(
+            "part id {source_part_id:?} is not present in package storage"
+          ))
+        })?
+        .path()
+        .to_string();
+      let target_part = self.part(target_part_slot).ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {target_part_slot:?} is not present in package storage"
+        ))
+      })?;
+      relationship_target_from_source(&source_part_path, target_part.path())
+    };
+
+    self
+      .relationships_mut(source_part_id)
+      .expect("source part was already resolved")
+      .add_internal_part_relationship(
+        relationship_id.clone(),
+        relationship_type,
+        relationship_target,
+        target_part_slot,
+      )?;
+    Ok(relationship_id)
+  }
+
+  pub(crate) fn import_part_tree_from(
+    &mut self,
+    source: &Self,
+    source_part_id: PartSlot,
+    parent_part_id: Option<PartSlot>,
+    relationship_id: impl Into<String>,
+    relationship_type: &str,
+    mut part_data: impl FnMut(PartSlot, &StoredPart) -> Result<Vec<u8>, SdkError>,
+  ) -> Result<(PartSlot, usize), SdkError> {
+    let relationship_id = relationship_id.into();
+    source.part(source_part_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "source part id {source_part_id:?} is not present in package storage"
+      ))
+    })?;
+
+    match parent_part_id {
+      Some(parent_part_id) => {
+        let relationships = self.relationships(parent_part_id).ok_or_else(|| {
+          SdkError::CommonError(format!(
+            "part id {parent_part_id:?} is not present in package storage"
+          ))
+        })?;
+        if relationships.contains_id(&relationship_id) {
+          return Err(SdkError::CommonError(format!(
+            "relationship id {relationship_id} already exists"
+          )));
+        }
+      }
+      None => {
+        if self.package_relationships.contains_id(&relationship_id) {
+          return Err(SdkError::CommonError(format!(
+            "relationship id {relationship_id} already exists"
+          )));
+        }
+      }
+    }
+
+    let mut part_map = HashMap::new();
+    let mut added_count = 0;
+    let imported_part_id = self.import_part_tree_recursive(
+      source,
+      source_part_id,
+      &mut part_map,
+      &mut added_count,
+      &mut part_data,
+    )?;
+    self.add_imported_part_relationship(
+      parent_part_id,
+      relationship_id,
+      relationship_type,
+      imported_part_id,
+    )?;
+    Ok((imported_part_id, added_count))
+  }
+
+  #[inline]
+  pub(crate) fn data_part_reference_relationships_to(
+    &self,
+    target_part_slot: PartSlot,
+  ) -> impl Iterator<Item = &RelationshipInfo> {
+    std::iter::once(self.package_relationships())
+      .chain(
+        self
+          .parts
+          .iter()
+          .filter(|part| !part.is_deleted())
+          .map(StoredPart::relationships),
+      )
+      .flat_map(RelationshipSet::data_part_reference_relationships)
+      .filter(move |relationship| relationship.target_part_slot() == Some(target_part_slot))
+  }
+
+  pub(crate) fn delete_unused_media_data_parts(&mut self) -> usize {
+    let unused_part_ids: Vec<_> = self
+      .media_data_parts()
+      .filter_map(|(part_id, _)| {
+        self
+          .data_part_reference_relationships_to(part_id)
+          .next()
+          .is_none()
+          .then_some(part_id)
+      })
+      .collect();
+
+    self.delete_part_slots(unused_part_ids).len()
+  }
+
+  fn import_part_tree_recursive(
+    &mut self,
+    source: &Self,
+    source_part_id: PartSlot,
+    part_map: &mut HashMap<PartSlot, PartSlot>,
+    added_count: &mut usize,
+    part_data: &mut impl FnMut(PartSlot, &StoredPart) -> Result<Vec<u8>, SdkError>,
+  ) -> Result<PartSlot, SdkError> {
+    if let Some(imported_part_id) = part_map.get(&source_part_id).copied() {
+      return Ok(imported_part_id);
+    }
+
+    let source_part = source.part(source_part_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "source part id {source_part_id:?} is not present in package storage"
+      ))
+    })?;
+    let imported_path = self.unique_import_part_path(source_part.path());
+    let imported_part_id = self.push_part(
+      imported_path,
+      source_part.content_type(),
+      source_part.relationship_type(),
+    );
+    self.set_part_data(imported_part_id, part_data(source_part_id, source_part)?)?;
+    *added_count += 1;
+    part_map.insert(source_part_id, imported_part_id);
+
+    for relationship in source_part.relationships().iter() {
+      if let Some(target_part_slot) = relationship.target_part_slot() {
+        let imported_target_part_slot = self.import_part_tree_recursive(
+          source,
+          target_part_slot,
+          part_map,
+          added_count,
+          part_data,
+        )?;
+        if relationship.is_reference_relationship() {
+          self.add_data_part_reference_relationship(
+            imported_part_id,
+            relationship.id(),
+            relationship.relationship_type(),
+            imported_target_part_slot,
+          )?;
+        } else {
+          self.add_imported_part_relationship(
+            Some(imported_part_id),
+            relationship.id().to_string(),
+            relationship.relationship_type(),
+            imported_target_part_slot,
+          )?;
+        }
+      } else if relationship.is_reference_relationship()
+        || relationship.target_kind() == RelationshipTargetKind::External
+      {
+        self
+          .relationships_mut(imported_part_id)
+          .expect("imported part was just created")
+          .add_relationship_info(relationship.clone())?;
+      }
+    }
+
+    Ok(imported_part_id)
+  }
+
+  fn add_imported_part_relationship(
+    &mut self,
+    parent_part_id: Option<PartSlot>,
+    relationship_id: String,
+    relationship_type: &str,
+    target_part_slot: PartSlot,
+  ) -> Result<(), SdkError> {
+    let target_part_path = self
+      .part(target_part_slot)
+      .ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {target_part_slot:?} is not present in package storage"
+        ))
+      })?
+      .path()
+      .to_string();
+    let target = if let Some(parent_part_id) = parent_part_id {
+      let parent_part_path = self
+        .part(parent_part_id)
+        .ok_or_else(|| {
+          SdkError::CommonError(format!(
+            "part id {parent_part_id:?} is not present in package storage"
+          ))
+        })?
+        .path()
+        .to_string();
+      relationship_target_from_source(&parent_part_path, &target_part_path)
+    } else {
+      target_part_path
+    };
+    let relationships = match parent_part_id {
+      Some(parent_part_id) => self.relationships_mut(parent_part_id).ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {parent_part_id:?} is not present in package storage"
+        ))
+      })?,
+      None => self.package_relationships_mut(),
+    };
+    relationships.add_internal_part_relationship(
+      relationship_id,
+      relationship_type,
+      target,
+      target_part_slot,
+    )?;
+    Ok(())
+  }
+
+  pub(crate) fn add_child_part(
+    &mut self,
+    source_part_id: PartSlot,
+    relationship_id: impl Into<String>,
+    descriptor: NewPartDescriptor,
+  ) -> Result<PartSlot, SdkError> {
+    if descriptor.relationship_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty relationship type".to_string(),
+      ));
+    }
+    if descriptor.content_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty content type".to_string(),
+      ));
+    }
+    if descriptor.target_name.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty target name".to_string(),
+      ));
+    }
+
+    let relationship_id = relationship_id.into();
+    let source_part_path = self
+      .part(source_part_id)
+      .ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {source_part_id:?} is not present in package storage"
+        ))
+      })?
+      .path()
+      .to_string();
+    if self
+      .relationships(source_part_id)
+      .is_some_and(|relationships| relationships.contains_id(&relationship_id))
+    {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {relationship_id} already exists"
+      )));
+    }
+
+    let child_path = self.next_child_part_path(
+      &source_part_path,
+      descriptor.path_prefix,
+      descriptor.target_name,
+      descriptor.extension.as_ref(),
+      descriptor.content_type.as_ref(),
+    );
+    let relationship_target = relationship_target_from_source(&source_part_path, &child_path);
+    let part_id = self.push_part(
+      child_path,
+      &descriptor.content_type,
+      Some(descriptor.relationship_type.as_ref()),
+    );
+    self
+      .relationships_mut(source_part_id)
+      .expect("source part was already resolved")
+      .add_internal_part_relationship(
+        relationship_id,
+        descriptor.relationship_type.as_ref(),
+        relationship_target,
+        part_id,
+      )?;
+    Ok(part_id)
+  }
+
+  pub(crate) fn add_package_part(
+    &mut self,
+    relationship_id: impl Into<String>,
+    descriptor: NewPartDescriptor,
+    target_mode: NewPartTargetMode,
+  ) -> Result<PartSlot, SdkError> {
+    if descriptor.relationship_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty relationship type".to_string(),
+      ));
+    }
+    if descriptor.content_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty content type".to_string(),
+      ));
+    }
+    if descriptor.target_name.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty target name".to_string(),
+      ));
+    }
+
+    let relationship_id = relationship_id.into();
+    if self.package_relationships.contains_id(&relationship_id) {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {relationship_id} already exists"
+      )));
+    }
+
+    let part_path = self.package_part_path(&descriptor, target_mode)?;
+    let part_id = self.push_part(
+      part_path.clone(),
+      &descriptor.content_type,
+      Some(descriptor.relationship_type.as_ref()),
+    );
+    self.package_relationships.add_internal_part_relationship(
+      relationship_id,
+      descriptor.relationship_type.as_ref(),
+      part_path,
+      part_id,
+    )?;
+    Ok(part_id)
+  }
+
+  pub(crate) fn add_child_part_with_path(
+    &mut self,
+    source_part_id: PartSlot,
+    relationship_id: impl Into<String>,
+    descriptor: NewPartDescriptor,
+    part_path: impl AsRef<str>,
+  ) -> Result<PartSlot, SdkError> {
+    if descriptor.relationship_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty relationship type".to_string(),
+      ));
+    }
+    if descriptor.content_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot add a part with an empty content type".to_string(),
+      ));
+    }
+
+    let relationship_id = relationship_id.into();
+    let source_part_path = self
+      .part(source_part_id)
+      .ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {source_part_id:?} is not present in package storage"
+        ))
+      })?
+      .path()
+      .to_string();
+    if self
+      .relationships(source_part_id)
+      .is_some_and(|relationships| relationships.contains_id(&relationship_id))
+    {
+      return Err(SdkError::CommonError(format!(
+        "relationship id {relationship_id} already exists"
+      )));
+    }
+
+    let child_path =
+      self.unique_new_part_path(part_path.as_ref(), descriptor.content_type.as_ref())?;
+
+    let relationship_target = relationship_target_from_source(&source_part_path, &child_path);
+    let part_id = self.push_part(
+      child_path,
+      &descriptor.content_type,
+      Some(descriptor.relationship_type.as_ref()),
+    );
+    self
+      .relationships_mut(source_part_id)
+      .expect("source part was already resolved")
+      .add_internal_part_relationship(
+        relationship_id,
+        descriptor.relationship_type.as_ref(),
+        relationship_target,
+        part_id,
+      )?;
+    Ok(part_id)
+  }
+
+  fn push_part(
+    &mut self,
+    path: String,
+    content_type: &str,
+    relationship_type: Option<&str>,
+  ) -> PartSlot {
+    let part_id = PartSlot::from_index(self.parts.len());
+    let kind = crate::parts::PartKind::classify(
+      relationship_type.map(str::as_bytes),
+      content_type.as_bytes(),
+      &path,
+    );
+    self.parts.push(StoredPart {
+      path: path.clone().into_boxed_str(),
+      content_type: content_type.into(),
+      relationship_type: relationship_type.map(super::XmlRelationshipNamespaceUri::from_uri),
+      kind,
+      relationships: RelationshipSet::default(),
+      data: StoredPartData::Owned {
+        bytes: Bytes::new(),
+        original_entry_index: None,
+      },
+      deleted: false,
+    });
+    self.by_path.insert(path.clone().into_boxed_str(), part_id);
+    self.add_content_type_override(&path, content_type);
+    part_id
+  }
+
+  pub(crate) fn set_part_data(
+    &mut self,
+    part_id: PartSlot,
+    data: impl Into<Vec<u8>>,
+  ) -> Result<(), SdkError> {
+    let part = self.part_mut(part_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "part id {part_id:?} is not present in package storage"
+      ))
+    })?;
+    part.data.set_owned(data.into());
+    Ok(())
+  }
+
+  pub(crate) fn feed_part_data<R: Read>(
+    &mut self,
+    part_id: PartSlot,
+    reader: &mut R,
+  ) -> Result<(), SdkError> {
+    let part = self.part_mut(part_id).ok_or_else(|| {
+      SdkError::CommonError(format!(
+        "part id {part_id:?} is not present in package storage"
+      ))
+    })?;
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    part.data.set_owned(bytes);
+    Ok(())
+  }
+
+  fn add_content_type_override(&mut self, path: &str, content_type: &str) {
+    let part_name = format!("/{path}");
+    if let Some(existing) = self
+      .content_types
+      .types_choice
+      .iter_mut()
+      .find_map(|child| match child {
+        TypesChoice::Override(override_type) if override_type.part_name == part_name => {
+          Some(override_type)
+        }
+        _ => None,
+      })
+    {
+      existing.content_type = content_type.to_string();
+      return;
+    }
+
+    self.content_types.types_choice.push(TypesChoice::Override(
+      crate::schemas::opc_content_types::Override {
+        content_type: content_type.to_string(),
+        part_name,
+      },
+    ));
+  }
+
+  pub(crate) fn set_part_content_type(
+    &mut self,
+    part_id: PartSlot,
+    content_type: impl Into<Box<str>>,
+  ) -> Result<(), SdkError> {
+    let content_type = content_type.into();
+    if content_type.is_empty() {
+      return Err(SdkError::CommonError(
+        "cannot set a part to an empty content type".to_string(),
+      ));
+    }
+    let path = {
+      let part = self.part_mut(part_id).ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "part id {part_id:?} is not present in package storage"
+        ))
+      })?;
+      part.content_type = content_type.clone();
+      part.kind = crate::parts::PartKind::classify(
+        part.relationship_type_bytes(),
+        content_type.as_bytes(),
+        part.path(),
+      );
+      part.path().to_string()
+    };
+    self.add_content_type_override(&path, &content_type);
+    Ok(())
+  }
+
+  fn existing_relationship_id_for_target(
+    &self,
+    source_part_id: Option<PartSlot>,
+    target_part_slot: PartSlot,
+  ) -> Option<String> {
+    let relationships = match source_part_id {
+      Some(source_part_id) => self.relationships(source_part_id)?,
+      None => self.package_relationships(),
+    };
+    relationships.part_relationships().find_map(|relationship| {
+      (relationship.target_part_slot() == Some(target_part_slot))
+        .then(|| relationship.id().to_string())
+    })
+  }
+
+  fn reachable_child_parts(&self, roots: impl IntoIterator<Item = PartSlot>) -> Vec<bool> {
+    let mut reachable = vec![false; self.parts.len()];
+    let mut stack: Vec<_> = roots.into_iter().collect();
+
+    while let Some(part_slot) = stack.pop() {
+      let Some(is_reachable) = reachable.get_mut(part_slot.index()) else {
+        continue;
+      };
+      if *is_reachable {
+        continue;
+      }
+      let Some(part) = self.part(part_slot) else {
+        continue;
+      };
+      *is_reachable = true;
+      stack.extend(
+        part
+          .relationships()
+          .part_relationships()
+          .filter_map(RelationshipInfo::target_part_slot),
+      );
+    }
+
+    reachable
+  }
+
+  fn delete_unreachable_part_tree(&mut self, target_part_slot: PartSlot) -> Vec<PartSlot> {
+    let candidates = self.reachable_child_parts(std::iter::once(target_part_slot));
+    let package_roots = self
+      .package_relationships
+      .part_relationships()
+      .filter_map(RelationshipInfo::target_part_slot);
+    let live = self.reachable_child_parts(package_roots);
+    let unreachable = candidates
+      .into_iter()
+      .zip(live)
+      .enumerate()
+      .filter(|(_, (candidate, live))| *candidate && !*live)
+      .map(|(index, _)| PartSlot::from_index(index));
+    self.delete_part_slots(unreachable)
+  }
+
+  fn delete_part_slots(&mut self, part_slots: impl IntoIterator<Item = PartSlot>) -> Vec<PartSlot> {
+    let mut deleted_slots = Vec::new();
+    let mut deleted_paths = HashSet::<Box<str>>::new();
+
+    for part_slot in part_slots {
+      let Some(part) = self.parts.get_mut(part_slot.index()) else {
+        continue;
+      };
+      let Some(path) = part.mark_deleted() else {
+        continue;
+      };
+      deleted_paths.insert(path);
+      deleted_slots.push(part_slot);
+    }
+
+    for path in &deleted_paths {
+      self.by_path.remove(path.as_ref());
+    }
+    self.content_types.types_choice.retain(|child| {
+      let TypesChoice::Override(override_type) = child else {
+        return true;
+      };
+      let Some(path) = override_type.part_name.strip_prefix('/') else {
+        return true;
+      };
+      !deleted_paths.contains(path)
+    });
+
+    deleted_slots
+  }
+
+  fn unique_import_part_path(&self, source_path: &str) -> String {
+    if !self.by_path.contains_key(source_path) {
+      return source_path.to_string();
+    }
+
+    let (base, extension) = match source_path.rsplit_once('.') {
+      Some((base, extension)) => (base, format!(".{extension}")),
+      None => (source_path, String::new()),
+    };
+    for index in 1.. {
+      let candidate = format!("{base}_copy{index}{extension}");
+      if !self.by_path.contains_key(candidate.as_str()) {
+        return candidate;
+      }
+    }
+    unreachable!("unbounded import path search should always find a candidate")
+  }
+
+  fn next_child_part_path(
+    &self,
+    source_part_path: &str,
+    path_prefix: &str,
+    target_name: &str,
+    extension: &str,
+    content_type: &str,
+  ) -> String {
+    let directory_path = child_part_directory_path(source_part_path, path_prefix);
+    let extension = if extension.is_empty() {
+      ".xml"
+    } else {
+      extension
+    };
+    let extension = if extension.starts_with('.') {
+      extension.to_string()
+    } else {
+      format!(".{extension}")
+    };
+
+    let mut sequence = first_part_path_sequence(content_type);
+    loop {
+      let path = part_path_with_sequence(&directory_path, target_name, &extension, sequence);
+      if !self.by_path.contains_key(path.as_str()) {
+        return path;
+      }
+      sequence = next_part_path_sequence(sequence);
+    }
+  }
+
+  fn package_part_path(
+    &self,
+    descriptor: &NewPartDescriptor,
+    target_mode: NewPartTargetMode,
+  ) -> Result<String, SdkError> {
+    let directory_path = package_part_directory_path(descriptor.path_prefix);
+    let extension = normalized_part_extension(descriptor.extension.as_ref());
+
+    if matches!(target_mode, NewPartTargetMode::Fixed) {
+      let path = if directory_path.is_empty() {
+        format!("{}{}", descriptor.target_name, extension)
+      } else {
+        format!("{directory_path}{}{}", descriptor.target_name, extension)
+      };
+      if self.by_path.contains_key(path.as_str()) {
+        return Err(SdkError::CommonError(format!(
+          "part path {path} already exists"
+        )));
+      }
+      return Ok(path);
+    }
+
+    let mut sequence = first_part_path_sequence(descriptor.content_type.as_ref());
+    loop {
+      let path = part_path_with_sequence(
+        &directory_path,
+        descriptor.target_name,
+        &extension,
+        sequence,
+      );
+      if !self.by_path.contains_key(path.as_str()) {
+        return Ok(path);
+      }
+      sequence = next_part_path_sequence(sequence);
+    }
+  }
+
+  fn next_data_part_path(&self, stem: &str, extension: &str) -> String {
+    for index in 1.. {
+      let path = format!("{stem}{index}{extension}");
+      if !self.by_path.contains_key(path.as_str()) {
+        return path;
+      }
+    }
+
+    unreachable!("usize iteration should always find a free data part path")
+  }
+
+  fn unique_new_part_path(&self, path: &str, content_type: &str) -> Result<String, SdkError> {
+    let normalized = normalized_new_part_path(path)?;
+    let (stem, extension) = part_path_stem_and_extension(&normalized);
+
+    let mut sequence = if is_numbered_part_content_type(content_type) {
+      1
+    } else {
+      0
+    };
+
+    loop {
+      let candidate = if sequence == 0 {
+        normalized.clone()
+      } else {
+        format!("{stem}{sequence}{extension}")
+      };
+      if !self.by_path.contains_key(candidate.as_str()) {
+        return Ok(candidate);
+      }
+      sequence = if sequence == 0 { 2 } else { sequence + 1 };
+    }
+  }
+
+  #[cfg(feature = "flat-opc")]
+  fn alt_chunk_part_ids(&self) -> HashSet<PartSlot> {
+    self
+      .parts
+      .iter()
+      .filter(|part| !part.is_deleted())
+      .flat_map(|part| part.relationships().iter())
+      .chain(self.package_relationships().iter())
+      .filter(|relationship| {
+        super::relationship_type_matches_bytes(
+          relationship.relationship_type_bytes(),
+          super::REL_AF_CHUNK,
+        )
+      })
+      .filter_map(RelationshipInfo::target_part_slot)
+      .collect()
+  }
+}
+
+struct RawPart {
+  path: Box<str>,
+  content_type: Box<str>,
+  entry_index: usize,
+  #[cfg(feature = "flat-opc")]
+  bytes: Vec<u8>,
+}
+
+struct LoadedRelationshipEntry {
+  entry_index: usize,
+  bytes: Vec<u8>,
+  relationships: Option<Relationships>,
+}
+
+struct OpenedArchiveModel {
+  content_types: Types,
+  content_types_archive_entry_index: usize,
+  raw_parts: Vec<RawPart>,
+  package_relationships: Option<LoadedRelationshipEntry>,
+  part_relationships: Vec<Option<LoadedRelationshipEntry>>,
+}
+
+struct ContentTypeResolver<'a> {
+  overrides: HashMap<String, &'a str>,
+  defaults: HashMap<String, &'a str>,
+}
+
+impl<'a> ContentTypeResolver<'a> {
+  fn new(content_types: &'a Types) -> Self {
+    let mut overrides = HashMap::with_capacity(content_types.types_choice.len());
+    let mut defaults = HashMap::with_capacity(content_types.types_choice.len());
+
+    for child in &content_types.types_choice {
+      match child {
+        TypesChoice::Override(override_type) => {
+          overrides.insert(
+            override_type
+              .part_name
+              .trim_start_matches('/')
+              .to_ascii_lowercase(),
+            override_type.content_type.as_str(),
+          );
+        }
+        TypesChoice::Default(default_type) => {
+          defaults.insert(
+            default_type.extension.to_ascii_lowercase(),
+            default_type.content_type.as_str(),
+          );
+        }
+      }
+    }
+
+    Self {
+      overrides,
+      defaults,
+    }
+  }
+
+  fn content_type_for_part(&self, path: &str) -> Option<&'a str> {
+    let path = path.to_ascii_lowercase();
+    self.overrides.get(&path).copied().or_else(|| {
+      path
+        .rsplit_once('.')
+        .and_then(|(_, extension)| self.defaults.get(extension).copied())
+    })
+  }
+}
+
+#[cfg(feature = "flat-opc")]
+struct FlatOpcPart {
+  path: String,
+  content_type: String,
+  bytes: Vec<u8>,
+}
+
+#[cfg(feature = "flat-opc")]
+fn content_types_from_raw_parts(raw_parts: &[RawPart]) -> Types {
+  Types {
+    types_choice: raw_parts
+      .iter()
+      .map(|part| {
+        TypesChoice::Override(crate::schemas::opc_content_types::Override {
+          content_type: part.content_type.to_string(),
+          part_name: format!("/{}", part.path),
+        })
+      })
+      .collect(),
+    ..empty_content_types()
+  }
+}
+
+fn empty_content_types() -> Types {
+  Types {
+    xmlns: vec![super::XmlNamespace::raw(
+      "",
+      "http://schemas.openxmlformats.org/package/2006/content-types",
+    )],
+    types_choice: vec![TypesChoice::Default(
+      crate::schemas::opc_content_types::Default {
+        extension: "rels".to_string(),
+        content_type: RELATIONSHIP_CONTENT_TYPE.to_string(),
+      },
+    )],
+  }
+}
+
+#[cfg(feature = "flat-opc")]
+fn relationships_from_flat_opc_part(
+  bytes: Option<&[u8]>,
+  source_path: &str,
+  by_path: &HashMap<Box<str>, PartSlot>,
+) -> Result<RelationshipSet, SdkError> {
+  let relationships = bytes
+    .map(<Relationships as crate::sdk::SdkType>::from_bytes)
+    .transpose()?;
+  Ok(RelationshipSet::from_relationships(
+    relationships,
+    source_path,
+    by_path,
+  ))
+}
+
+#[cfg(feature = "flat-opc")]
+fn read_flat_opc_parts<R: std::io::BufRead>(reader: R) -> Result<Vec<FlatOpcPart>, SdkError> {
+  let mut xml_reader = super::from_reader_inner(reader);
+  let mut parts = Vec::new();
+
+  loop {
+    match xml_reader.next_tag_event()? {
+      super::PayloadEvent::Start(start, empty_tag)
+        if qname_matches(start.name().as_ref(), b"part") =>
+      {
+        if empty_tag {
+          return Err(SdkError::CommonError(
+            "Flat OPC part must contain xmlData or binaryData".to_string(),
+          ));
+        }
+        parts.push(read_flat_opc_part(&mut xml_reader, start)?);
+      }
+      super::PayloadEvent::Eof => break,
+      _ => {}
+    }
+  }
+
+  Ok(parts)
+}
+
+#[cfg(feature = "flat-opc")]
+fn read_flat_opc_part<R: std::io::BufRead>(
+  xml_reader: &mut super::xml::IoReader<R>,
+  start: quick_xml::events::BytesStart<'static>,
+) -> Result<FlatOpcPart, SdkError> {
+  let decoder = xml_reader.decoder();
+  let mut path = None;
+  let mut content_type = None;
+
+  for attr in start.attributes() {
+    let attr = attr?;
+    if qname_matches(attr.key.as_ref(), b"name") {
+      let value = attr.decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)?;
+      path = Some(normalize_flat_opc_part_name(&value));
+    } else if qname_matches(attr.key.as_ref(), b"contentType") {
+      content_type = Some(
+        attr
+          .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)?
+          .into_owned(),
+      );
+    }
+  }
+
+  let path =
+    path.ok_or_else(|| SdkError::CommonError("Flat OPC part missing pkg:name".to_string()))?;
+  let content_type = content_type
+    .ok_or_else(|| SdkError::CommonError("Flat OPC part missing pkg:contentType".to_string()))?;
+  let mut bytes = None;
+
+  loop {
+    match xml_reader.next_tag_event()? {
+      super::PayloadEvent::Start(start, empty_tag)
+        if qname_matches(start.name().as_ref(), b"xmlData") =>
+      {
+        bytes = Some(read_flat_opc_xml_data(xml_reader, empty_tag)?);
+      }
+      super::PayloadEvent::Start(start, empty_tag)
+        if qname_matches(start.name().as_ref(), b"binaryData") =>
+      {
+        bytes = Some(read_flat_opc_binary_data(xml_reader, empty_tag)?);
+      }
+      super::PayloadEvent::Start(_, true) => {}
+      super::PayloadEvent::Start(_, false) => {
+        return Err(SdkError::CommonError(
+          "unsupported Flat OPC part child element".to_string(),
+        ));
+      }
+      super::PayloadEvent::End(end) if qname_matches(end.name().as_ref(), b"part") => break,
+      super::PayloadEvent::Eof => return Err(unexpected_eof("Flat OPC part")),
+      _ => {}
+    }
+  }
+
+  let bytes = bytes.ok_or_else(|| {
+    SdkError::CommonError("Flat OPC part must contain xmlData or binaryData".to_string())
+  })?;
+
+  Ok(FlatOpcPart {
+    path,
+    content_type,
+    bytes,
+  })
+}
+
+#[cfg(feature = "flat-opc")]
+fn read_flat_opc_xml_data<R: std::io::BufRead>(
+  xml_reader: &mut super::xml::IoReader<R>,
+  empty_tag: bool,
+) -> Result<Vec<u8>, SdkError> {
+  if empty_tag {
+    return Err(SdkError::CommonError(
+      "Flat OPC xmlData must contain an XML root element".to_string(),
+    ));
+  }
+
+  let mut bytes = None;
+  loop {
+    match xml_reader.next_tag_event()? {
+      super::PayloadEvent::Start(start, empty_tag) => {
+        bytes = Some(super::read_outer_xml_io(xml_reader, start, empty_tag)?.into_bytes());
+      }
+      super::PayloadEvent::End(end) if qname_matches(end.name().as_ref(), b"xmlData") => break,
+      super::PayloadEvent::Eof => return Err(unexpected_eof("Flat OPC xmlData")),
+      _ => {}
+    }
+  }
+
+  bytes.ok_or_else(|| {
+    SdkError::CommonError("Flat OPC xmlData must contain an XML root element".to_string())
+  })
+}
+
+#[cfg(feature = "flat-opc")]
+fn read_flat_opc_binary_data<R: std::io::BufRead>(
+  xml_reader: &mut super::xml::IoReader<R>,
+  empty_tag: bool,
+) -> Result<Vec<u8>, SdkError> {
+  if empty_tag {
+    return Ok(Vec::new());
+  }
+
+  let mut text = String::new();
+  loop {
+    match xml_reader.next()? {
+      super::xml::PayloadEvent::Text(event) => {
+        text.push_str(event.xml10_content()?.as_ref());
+      }
+      super::xml::PayloadEvent::CData(event) => {
+        text.push_str(event.xml10_content()?.as_ref());
+      }
+      super::xml::PayloadEvent::End(end) if qname_matches(end.name().as_ref(), b"binaryData") => {
+        break;
+      }
+      super::xml::PayloadEvent::Eof => return Err(unexpected_eof("Flat OPC binaryData")),
+      _ => {}
+    }
+  }
+
+  let compact: Vec<u8> = text
+    .bytes()
+    .filter(|byte| !byte.is_ascii_whitespace())
+    .collect();
+  base64::Engine::decode(&base64::engine::general_purpose::STANDARD, compact)
+    .map_err(|err| SdkError::CommonError(format!("invalid Flat OPC binaryData: {err}")))
+}
+
+#[cfg(feature = "flat-opc")]
+fn write_flat_opc_xml_part<W: std::io::Write>(
+  writer: &mut W,
+  name: &str,
+  content_type: &str,
+  bytes: &[u8],
+) -> Result<(), SdkError> {
+  writer.write_all(b"  <pkg:part")?;
+  writer.write_all(b" pkg:name=\"")?;
+  super::write_escaped_str(writer, name)?;
+  writer.write_all(b"\" pkg:contentType=\"")?;
+  super::write_escaped_str(writer, content_type)?;
+  writer.write_all(b"\"")?;
+  writer.write_all(b">\n    <pkg:xmlData>")?;
+  writer.write_all(root_xml_bytes(bytes)?.as_slice())?;
+  writer.write_all(b"</pkg:xmlData>\n  </pkg:part>\n")?;
+  Ok(())
+}
+
+#[cfg(feature = "flat-opc")]
+fn write_flat_opc_binary_part<W: std::io::Write>(
+  writer: &mut W,
+  name: &str,
+  content_type: &str,
+  bytes: &[u8],
+) -> Result<(), SdkError> {
+  writer.write_all(b"  <pkg:part")?;
+  writer.write_all(b" pkg:name=\"")?;
+  super::write_escaped_str(writer, name)?;
+  writer.write_all(b"\" pkg:contentType=\"")?;
+  super::write_escaped_str(writer, content_type)?;
+  writer.write_all(b"\" pkg:compression=\"store\"")?;
+  writer.write_all(b">\n    <pkg:binaryData>")?;
+  let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+  writer.write_all(encoded.as_bytes())?;
+  writer.write_all(b"</pkg:binaryData>\n  </pkg:part>\n")?;
+  Ok(())
+}
+
+#[cfg(feature = "flat-opc")]
+fn root_xml_bytes(bytes: &[u8]) -> Result<Vec<u8>, SdkError> {
+  let mut xml_reader = super::from_bytes_inner(bytes);
+  loop {
+    match xml_reader.next_tag_event()? {
+      super::PayloadEvent::Start(start, empty_tag) => {
+        return Ok(super::read_outer_xml_borrowed(&mut xml_reader, start, empty_tag)?.into_bytes());
+      }
+      super::PayloadEvent::Eof => return Err(unexpected_eof("Flat OPC XML part")),
+      _ => {}
+    }
+  }
+}
+
+#[cfg(feature = "flat-opc")]
+fn flat_opc_part_is_xml(
+  part: &StoredPart,
+  part_id: PartSlot,
+  alt_chunk_part_ids: &HashSet<PartSlot>,
+) -> bool {
+  part.content_type().ends_with("xml") && !alt_chunk_part_ids.contains(&part_id)
+}
+
+#[cfg(feature = "flat-opc")]
+fn qname_matches(qname: &[u8], local_name: &[u8]) -> bool {
+  qname == local_name || qname.rsplit(|byte| *byte == b':').next() == Some(local_name)
+}
+
+#[cfg(feature = "flat-opc")]
+fn normalize_flat_opc_part_name(name: &str) -> String {
+  resolve_zip_file_path(name.trim_start_matches('/'))
+}
+
+fn child_part_directory_path(source_part_path: &str, path_prefix: &str) -> String {
+  let source_parent_path = super::parent_zip_path(source_part_path);
+  let mut path = if path_prefix.is_empty() || path_prefix == "." {
+    source_parent_path
+  } else if path_prefix == "../media"
+    && matches!(source_parent_path.as_str(), "word/" | "ppt/" | "xl/")
+  {
+    format!("{source_parent_path}media")
+  } else if path_prefix.starts_with('/') {
+    path_prefix.to_string()
+  } else {
+    let mut path = String::with_capacity(source_parent_path.len() + path_prefix.len() + 1);
+    path.push_str(&source_parent_path);
+    path.push_str(path_prefix);
+    path
+  };
+
+  path = resolve_zip_file_path(&path);
+  if !path.is_empty() && !path.ends_with('/') {
+    path.push('/');
+  }
+  path
+}
+
+fn package_part_directory_path(path_prefix: &str) -> String {
+  if path_prefix.is_empty() || path_prefix == "." {
+    return String::new();
+  }
+
+  let mut path = resolve_zip_file_path(path_prefix);
+  if !path.is_empty() && !path.ends_with('/') {
+    path.push('/');
+  }
+  path
+}
+
+fn normalized_part_extension(extension: &str) -> String {
+  let extension = if extension.is_empty() {
+    ".xml"
+  } else {
+    extension
+  };
+
+  if extension.starts_with('.') {
+    extension.to_string()
+  } else {
+    format!(".{extension}")
+  }
+}
+
+fn normalized_new_part_path(path: &str) -> Result<String, SdkError> {
+  let path = path.trim_start_matches('/');
+  if path.is_empty() {
+    return Err(SdkError::CommonError("part path is empty".to_string()));
+  }
+  if path.split('/').any(|component| component == "..") {
+    return Err(SdkError::CommonError(format!(
+      "part path {path} is not allowed"
+    )));
+  }
+
+  let normalized = resolve_zip_file_path(path);
+  if normalized.is_empty()
+    || normalized.ends_with('/')
+    || normalized == "[Content_Types].xml"
+    || is_relationships_part_path(&normalized)
+  {
+    return Err(SdkError::CommonError(format!(
+      "part path {path} is not allowed"
+    )));
+  }
+
+  Ok(normalized)
+}
+
+fn part_path_stem_and_extension(path: &str) -> (&str, &str) {
+  let file_name_start = path.rfind('/').map(|index| index + 1).unwrap_or(0);
+  let file_name = &path[file_name_start..];
+  if let Some(extension_start) = file_name.rfind('.') {
+    let extension_start = file_name_start + extension_start;
+    (&path[..extension_start], &path[extension_start..])
+  } else {
+    (path, "")
+  }
+}
+
+fn is_numbered_part_content_type(content_type: &str) -> bool {
+  matches!(
+    content_type,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"
+      | "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml"
+      | "application/vnd.openxmlformats-officedocument.drawing+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.revisionLog+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.tableSingleCells+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.comments+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.handoutMaster+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.slideUpdateInfo+xml"
+      | "application/vnd.openxmlformats-officedocument.presentationml.tags+xml"
+      | "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+      | "application/vnd.openxmlformats-officedocument.drawingml.chartshapes+xml"
+      | "application/vnd.openxmlformats-officedocument.drawingml.diagramColors+xml"
+      | "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml"
+      | "application/vnd.openxmlformats-officedocument.drawingml.diagramLayout+xml"
+      | "application/vnd.openxmlformats-officedocument.drawingml.diagramStyle+xml"
+      | "application/vnd.openxmlformats-officedocument.theme+xml"
+      | "application/vnd.openxmlformats-officedocument.themeOverride+xml"
+      | "application/vnd.openxmlformats-officedocument.customXmlProperties+xml"
+      | "application/vnd.openxmlformats-officedocument.spreadsheetml.printerSettings"
+      | "application/vnd.openxmlformats-officedocument.wordprocessingml.printerSettings"
+      | "application/vnd.openxmlformats-officedocument.presentationml.printerSettings"
+  )
+}
+
+fn first_part_path_sequence(content_type: &str) -> usize {
+  usize::from(is_numbered_part_content_type(content_type))
+}
+
+fn next_part_path_sequence(sequence: usize) -> usize {
+  if sequence == 0 { 2 } else { sequence + 1 }
+}
+
+fn part_path_with_sequence(
+  directory_path: &str,
+  target_name: &str,
+  extension: &str,
+  sequence: usize,
+) -> String {
+  match (directory_path.is_empty(), sequence) {
+    (true, 0) => format!("{target_name}{extension}"),
+    (true, sequence) => format!("{target_name}{sequence}{extension}"),
+    (false, 0) => format!("{directory_path}{target_name}{extension}"),
+    (false, sequence) => format!("{directory_path}{target_name}{sequence}{extension}"),
+  }
+}
+
+fn relationship_target_from_source(source_part_path: &str, child_part_path: &str) -> String {
+  let source_parent_path = super::parent_zip_path(source_part_path);
+  if let Some(relative) = child_part_path.strip_prefix(&source_parent_path) {
+    relative.to_string()
+  } else {
+    format!("/{child_part_path}")
+  }
+}
+
+fn relationship_types_by_part(
+  package_relationships: &RelationshipSet,
+  part_relationships: &[RelationshipSet],
+) -> Result<Vec<Option<super::XmlRelationshipNamespaceUri>>, SdkError> {
+  let mut relationship_types: Vec<Option<super::XmlRelationshipNamespaceUri>> =
+    vec![None; part_relationships.len()];
+
+  for relationship_set in std::iter::once(package_relationships).chain(part_relationships) {
+    for relationship in relationship_set.iter() {
+      let Some(part_id) = relationship.target_part_slot() else {
+        continue;
+      };
+      let slot = relationship_types.get_mut(part_id.index()).ok_or_else(|| {
+        SdkError::CommonError(format!(
+          "relationship target part id {part_id:?} is outside package storage"
+        ))
+      })?;
+      if let Some(existing) = slot {
+        if !relationship_types_are_compatible_bytes(
+          existing.uri_bytes(),
+          relationship.relationship_type_bytes(),
+        ) {
+          return Err(SdkError::CommonError(format!(
+            "same part {:?} is referenced by different relationship types: {} and {}",
+            part_id,
+            existing.as_str(),
+            relationship.relationship_type(),
+          )));
+        }
+      } else {
+        *slot = Some(super::XmlRelationshipNamespaceUri::from_uri(
+          relationship.relationship_type(),
+        ));
+      }
+    }
+  }
+
+  Ok(relationship_types)
+}
+
+fn relationship_types_are_compatible_bytes(left: &[u8], right: &[u8]) -> bool {
+  left == right || data_part_reference_relationship_types_are_compatible_bytes(left, right)
+}
+
+fn data_part_reference_relationship_types_are_compatible_bytes(left: &[u8], right: &[u8]) -> bool {
+  super::is_data_part_reference_relationship_type_bytes(left)
+    && super::is_data_part_reference_relationship_type_bytes(right)
+}
+
+fn is_media_data_part(part: &StoredPart) -> bool {
+  part
+    .relationship_type_bytes()
+    .is_some_and(super::is_data_part_reference_relationship_type_bytes)
+    || media_data_part_content_type(part.content_type())
+    || part
+      .path()
+      .rsplit('/')
+      .next()
+      .is_some_and(|file_name| file_name.starts_with("media"))
+}
+
+fn media_data_part_content_type(content_type: &str) -> bool {
+  content_type.starts_with("audio/") || content_type.starts_with("video/")
+}
+
+fn read_archive_model<R: Read + Seek>(
+  archive: &mut zip::ZipArchive<R>,
+  entry_names: &[Box<str>],
+) -> Result<OpenedArchiveModel, SdkError> {
+  let mut entry_indices = HashMap::with_capacity(entry_names.len());
+  for (entry_index, entry_name) in entry_names.iter().enumerate() {
+    entry_indices
+      .entry(entry_name.as_ref())
+      .or_insert(entry_index);
+  }
+  let (content_types, content_types_archive_entry_index) =
+    read_content_types(archive, &entry_indices)?;
+  let raw_parts = read_raw_parts(entry_names, &content_types);
+  let (package_relationships, part_relationships) =
+    read_required_relationship_entries(archive, &entry_indices, &raw_parts)?;
+
+  Ok(OpenedArchiveModel {
+    content_types,
+    content_types_archive_entry_index,
+    raw_parts,
+    package_relationships,
+    part_relationships,
+  })
+}
+
+#[derive(Clone, Copy)]
+enum RelationshipEntryTarget {
+  Package,
+  Part(usize),
+}
+
+fn read_required_relationship_entries<R: Read + Seek>(
+  archive: &mut zip::ZipArchive<R>,
+  entry_indices: &HashMap<&str, usize>,
+  raw_parts: &[RawPart],
+) -> Result<
+  (
+    Option<LoadedRelationshipEntry>,
+    Vec<Option<LoadedRelationshipEntry>>,
+  ),
+  SdkError,
+> {
+  let mut required = Vec::with_capacity(raw_parts.len() + 1);
+  if let Some(entry_index) = archive_entry_index(entry_indices, "_rels/.rels") {
+    required.push((entry_index, RelationshipEntryTarget::Package));
+  }
+  for (part_index, raw_part) in raw_parts.iter().enumerate() {
+    let path = part_relationships_path(&raw_part.path);
+    let entry_index = archive_entry_index(entry_indices, &path);
+    if let Some(entry_index) = entry_index {
+      required.push((entry_index, RelationshipEntryTarget::Part(part_index)));
+    }
+  }
+  required.sort_unstable_by_key(|(entry_index, _)| *entry_index);
+
+  let mut package_relationships = None;
+  let mut part_relationships = std::iter::repeat_with(|| None)
+    .take(raw_parts.len())
+    .collect::<Vec<_>>();
+  for (entry_index, target) in required {
+    let bytes = read_archive_entry_by_index(archive, entry_index)?;
+    let relationships = <Relationships as crate::sdk::SdkType>::from_bytes(&bytes);
+    let loaded = LoadedRelationshipEntry {
+      entry_index,
+      bytes,
+      relationships: match target {
+        RelationshipEntryTarget::Package => Some(relationships?),
+        RelationshipEntryTarget::Part(_) => relationships.ok(),
+      },
+    };
+    match target {
+      RelationshipEntryTarget::Package => package_relationships = Some(loaded),
+      RelationshipEntryTarget::Part(part_index) => {
+        part_relationships[part_index] = Some(loaded);
+      }
+    }
+  }
+
+  Ok((package_relationships, part_relationships))
+}
+
+fn archive_entry_index(entry_indices: &HashMap<&str, usize>, path: &str) -> Option<usize> {
+  entry_indices.get(path).copied().or_else(|| {
+    entry_indices
+      .iter()
+      .filter_map(|(entry_name, entry_index)| {
+        entry_name
+          .eq_ignore_ascii_case(path)
+          .then_some(*entry_index)
+      })
+      .min()
+  })
+}
+
+fn read_content_types<R: Read + Seek>(
+  archive: &mut zip::ZipArchive<R>,
+  entry_indices: &HashMap<&str, usize>,
+) -> Result<(Types, usize), SdkError> {
+  let entry_index = entry_indices
+    .get("[Content_Types].xml")
+    .copied()
+    .ok_or(zip::result::ZipError::FileNotFound)?;
+  let bytes = read_archive_entry_by_index(archive, entry_index)?;
+  Ok((
+    <Types as crate::sdk::SdkType>::from_bytes(&bytes)?,
+    entry_index,
+  ))
+}
+
+fn read_raw_parts(entry_names: &[Box<str>], content_types: &Types) -> Vec<RawPart> {
+  let mut parts = Vec::new();
+  let mut seen_paths = HashSet::new();
+  let content_type_resolver = ContentTypeResolver::new(content_types);
+
+  for (index, entry_name) in entry_names.iter().enumerate() {
+    if entry_name.ends_with('/') {
+      continue;
+    }
+
+    let path = resolve_zip_file_path(entry_name);
+    if path == "[Content_Types].xml"
+      || is_relationships_part_path(&path)
+      || !seen_paths.insert(path.to_ascii_lowercase())
+    {
+      continue;
+    }
+
+    let content_type = content_type_resolver
+      .content_type_for_part(&path)
+      .unwrap_or_default();
+    parts.push(RawPart {
+      path: path.into_boxed_str(),
+      content_type: content_type.into(),
+      entry_index: index,
+      #[cfg(feature = "flat-opc")]
+      bytes: Vec::new(),
+    });
+  }
+
+  parts.sort_by(|left, right| left.path.cmp(&right.path));
+  parts
+}
+
+const ZIP_UNICODE_PATH_EXTRA_FIELD_ID: u16 = 0x7075;
+const ZIP_UTF8_FILE_NAME_FLAG: u16 = 1 << 11;
+const ZIP_CENTRAL_HEADER_LEN: usize = 46;
+
+fn read_archive_entry_names<R: Read + Seek>(
+  archive: &mut zip::ZipArchive<R>,
+  raw_reader: &mut R,
+) -> Result<Box<[Box<str>]>, SdkError> {
+  let mut names = Vec::with_capacity(archive.len());
+  for entry_index in 0..archive.len() {
+    let entry = archive.by_index_raw(entry_index)?;
+    let mut name = entry.name()?.into_owned();
+    let has_unicode_path = entry
+      .extra_data()
+      .is_some_and(|extra| zip_extra_field_present(&extra, ZIP_UNICODE_PATH_EXTRA_FIELD_ID));
+    let central_header_start = entry.central_header_start();
+    drop(entry);
+
+    if has_unicode_path
+      && let Some(raw_name) = read_utf8_central_directory_name(raw_reader, central_header_start)?
+    {
+      name = raw_name;
+    }
+    names.push(name.into_boxed_str());
+  }
+  Ok(names.into_boxed_slice())
+}
+
+fn zip_extra_field_present(mut extra: &[u8], expected_id: u16) -> bool {
+  while extra.len() >= 4 {
+    let field_id = u16::from_le_bytes([extra[0], extra[1]]);
+    let field_len = usize::from(u16::from_le_bytes([extra[2], extra[3]]));
+    let Some(field_end) = 4usize.checked_add(field_len) else {
+      return false;
+    };
+    if field_end > extra.len() {
+      return false;
+    }
+    if field_id == expected_id {
+      return true;
+    }
+    extra = &extra[field_end..];
+  }
+  false
+}
+
+fn read_utf8_central_directory_name<R: Read + Seek>(
+  reader: &mut R,
+  header_start: u64,
+) -> Result<Option<String>, SdkError> {
+  let mut header = [0; ZIP_CENTRAL_HEADER_LEN];
+  reader.seek(SeekFrom::Start(header_start))?;
+  reader.read_exact(&mut header)?;
+  if header[..4] != *b"PK\x01\x02" {
+    return Ok(None);
+  }
+
+  let flags = u16::from_le_bytes([header[8], header[9]]);
+  if flags & ZIP_UTF8_FILE_NAME_FLAG == 0 {
+    return Ok(None);
+  }
+
+  let name_len = usize::from(u16::from_le_bytes([header[28], header[29]]));
+  let mut raw_name = vec![0; name_len];
+  reader.read_exact(&mut raw_name)?;
+  Ok(String::from_utf8(raw_name).ok())
+}
+
+fn read_archive_entry_by_index<R: Read + Seek>(
+  archive: &mut zip::ZipArchive<R>,
+  entry_index: usize,
+) -> Result<Vec<u8>, SdkError> {
+  let mut entry = archive.by_index(entry_index)?;
+  let capacity = usize::try_from(entry.size()).map_err(|_| {
+    SdkError::CommonError(format!(
+      "ZIP entry {} is too large for this platform",
+      entry.name().unwrap_or_default()
+    ))
+  })?;
+  let mut bytes = Vec::new();
+  bytes.try_reserve_exact(capacity).map_err(|error| {
+    SdkError::CommonError(format!(
+      "cannot allocate {capacity} bytes for ZIP entry {}: {error}",
+      entry.name().unwrap_or_default()
+    ))
+  })?;
+  entry.read_to_end(&mut bytes)?;
+  Ok(bytes)
+}
+
+fn relationship_info(
+  relationship: OpcRelationship,
+  source_parent_path: &str,
+  by_path: &HashMap<Box<str>, PartSlot>,
+) -> RelationshipInfo {
+  let target_mode = relationship.target_mode;
+  let effective_target_mode = target_mode.unwrap_or(TargetMode::Internal);
+  let (target_kind, target_part_slot) = if matches!(effective_target_mode, TargetMode::Internal) {
+    if relationship.target.eq_ignore_ascii_case("NULL") {
+      (RelationshipTargetKind::Null, None)
+    } else {
+      let target_path = resolve_zip_file_path(&resolve_relationship_target_path(
+        source_parent_path,
+        &relationship.target,
+      ));
+      let target_part_slot = by_path.get(target_path.as_str()).copied().or_else(|| {
+        by_path.iter().find_map(|(path, part_slot)| {
+          path
+            .eq_ignore_ascii_case(&target_path)
+            .then_some(*part_slot)
+        })
+      });
+      match target_part_slot {
+        Some(part_id) => (RelationshipTargetKind::InternalPart, Some(part_id)),
+        None => (RelationshipTargetKind::Missing, None),
+      }
+    }
+  } else {
+    (RelationshipTargetKind::External, None)
+  };
+
+  RelationshipInfo {
+    id: relationship.id.into_boxed_str(),
+    relationship_type: super::XmlRelationshipNamespaceUri::from_uri(&relationship.r#type),
+    target: relationship.target.into_boxed_str(),
+    target_mode,
+    target_kind,
+    target_part_slot,
+  }
+}
+
+fn is_relationships_part_path(path: &str) -> bool {
+  path == "_rels/.rels" || path.contains("/_rels/") && path.ends_with(".rels")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::io::{Cursor, Write};
+  use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering as AtomicOrdering},
+  };
+
+  const LAZY_PAYLOAD_LEN: usize = 1024 * 1024;
+
+  #[test]
+  fn relationship_set_keeps_the_first_duplicate_id() {
+    let relationships = Relationships {
+      relationship: vec![
+        OpcRelationship {
+          id: "duplicate".into(),
+          r#type: "urn:first".into(),
+          target: "https://example.test/first".into(),
+          target_mode: Some(TargetMode::External),
+        },
+        OpcRelationship {
+          id: "duplicate".into(),
+          r#type: "urn:second".into(),
+          target: "https://example.test/second".into(),
+          target_mode: Some(TargetMode::External),
+        },
+      ],
+      ..Default::default()
+    };
+
+    let set = RelationshipSet::from_relationships(Some(relationships), "", &HashMap::new());
+
+    assert_eq!(set.iter().count(), 1);
+    let relationship = set.get("duplicate").expect("first relationship");
+    assert_eq!(relationship.relationship_type(), "urn:first");
+    assert_eq!(relationship.target(), "https://example.test/first");
+  }
+
+  struct CountingReadAt {
+    bytes: Bytes,
+    bytes_read: Arc<AtomicUsize>,
+  }
+
+  impl ReadAt for CountingReadAt {
+    fn read_at(&self, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+      let Ok(offset) = usize::try_from(offset) else {
+        return Ok(0);
+      };
+      let source = self.bytes.get(offset..).unwrap_or(&[]);
+      let read = buffer.len().min(source.len());
+      buffer[..read].copy_from_slice(&source[..read]);
+      self.bytes_read.fetch_add(read, AtomicOrdering::Relaxed);
+      Ok(read)
+    }
+
+    fn size(&self) -> std::io::Result<u64> {
+      Ok(self.bytes.len() as u64)
+    }
+  }
+
+  fn package_with_large_unloaded_part() -> Bytes {
+    let mut buffer = Cursor::new(Vec::new());
+    {
+      let mut zip = zip::ZipWriter::new(&mut buffer);
+      let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+      zip.start_file("[Content_Types].xml", options).unwrap();
+      zip
+        .write_all(
+          br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="bin" ContentType="application/octet-stream"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#,
+        )
+        .unwrap();
+
+      zip.start_file("_rels/.rels", options).unwrap();
+      zip
+        .write_all(
+          br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#,
+        )
+        .unwrap();
+
+      zip.start_file("word/document.xml", options).unwrap();
+      zip
+        .write_all(
+          br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>"#,
+        )
+        .unwrap();
+
+      zip.start_file("word/media/unloaded.bin", options).unwrap();
+      let payload = vec![0x5a; LAZY_PAYLOAD_LEN];
+      zip.write_all(&payload).unwrap();
+      zip.finish().unwrap();
+    }
+    buffer.into_inner().into()
+  }
+
+  fn unicode_path_options(target_name: &str) -> zip::write::FullFileOptions<'static> {
+    let mut options =
+      zip::write::FullFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut unicode_path = vec![1, 0, 0, 0, 0];
+    unicode_path.extend_from_slice(target_name.as_bytes());
+    options
+      .add_extra_data(ZIP_UNICODE_PATH_EXTRA_FIELD_ID, unicode_path, false)
+      .unwrap();
+    options
+  }
+
+  fn patch_unicode_path_entry(
+    package: &mut [u8],
+    raw_name: &str,
+    raw_name_crc32: u32,
+    set_utf8_flag: bool,
+  ) {
+    let mut patched_headers = 0;
+    for header_start in 0..package.len().saturating_sub(4) {
+      let (fixed_len, flags_offset, name_len_offset, extra_len_offset) =
+        match package.get(header_start..header_start + 4) {
+          Some(b"PK\x03\x04") => (30, 6, 26, 28),
+          Some(b"PK\x01\x02") => (ZIP_CENTRAL_HEADER_LEN, 8, 28, 30),
+          _ => continue,
+        };
+      if header_start + fixed_len > package.len() {
+        continue;
+      }
+      let name_len = usize::from(u16::from_le_bytes([
+        package[header_start + name_len_offset],
+        package[header_start + name_len_offset + 1],
+      ]));
+      let extra_len = usize::from(u16::from_le_bytes([
+        package[header_start + extra_len_offset],
+        package[header_start + extra_len_offset + 1],
+      ]));
+      let name_start = header_start + fixed_len;
+      let extra_start = name_start + name_len;
+      let extra_end = extra_start + extra_len;
+      if extra_end > package.len()
+        || package.get(name_start..extra_start) != Some(raw_name.as_bytes())
+      {
+        continue;
+      }
+
+      if set_utf8_flag {
+        let flags_start = header_start + flags_offset;
+        let flags = u16::from_le_bytes([package[flags_start], package[flags_start + 1]])
+          | ZIP_UTF8_FILE_NAME_FLAG;
+        package[flags_start..flags_start + 2].copy_from_slice(&flags.to_le_bytes());
+      }
+
+      let mut field_start = extra_start;
+      while field_start + 4 <= extra_end {
+        let field_id = u16::from_le_bytes([package[field_start], package[field_start + 1]]);
+        let field_len = usize::from(u16::from_le_bytes([
+          package[field_start + 2],
+          package[field_start + 3],
+        ]));
+        let field_end = field_start + 4 + field_len;
+        assert!(field_end <= extra_end);
+        if field_id == ZIP_UNICODE_PATH_EXTRA_FIELD_ID {
+          assert!(field_len >= 5);
+          package[field_start + 5..field_start + 9].copy_from_slice(&raw_name_crc32.to_le_bytes());
+          patched_headers += 1;
+          break;
+        }
+        field_start = field_end;
+      }
+    }
+    assert_eq!(patched_headers, 2);
+  }
+
+  #[test]
+  fn relationship_set_separates_child_parts_and_caches_the_next_numeric_id() {
+    let mut relationships = RelationshipSet::default();
+    relationships
+      .add_internal_part_relationship(
+        "rId1",
+        "http://example.com/relationships/child",
+        "child.xml",
+        PartSlot::from_index(0),
+      )
+      .unwrap();
+    relationships
+      .add_internal_part_relationship(
+        "rId9",
+        RelationshipSet::AUDIO_REFERENCE_RELATIONSHIP_TYPE,
+        "media/audio.mp3",
+        PartSlot::from_index(1),
+      )
+      .unwrap();
+
+    assert_eq!(relationships.next_relationship_id(), "rId10");
+    assert_eq!(
+      relationships
+        .part_relationships()
+        .map(RelationshipInfo::id)
+        .collect::<Vec<_>>(),
+      vec!["rId1"]
+    );
+    assert_eq!(
+      relationships
+        .data_part_reference_relationships()
+        .map(RelationshipInfo::id)
+        .collect::<Vec<_>>(),
+      vec!["rId9"]
+    );
+
+    relationships.remove("rId9").unwrap();
+    assert_eq!(relationships.next_relationship_id(), "rId2");
+  }
+
+  #[test]
+  fn positional_reader_opens_lazily_and_raw_copies_unloaded_parts() {
+    let bytes = package_with_large_unloaded_part();
+    let bytes_read = Arc::new(AtomicUsize::new(0));
+    let source = CountingReadAt {
+      bytes,
+      bytes_read: Arc::clone(&bytes_read),
+    };
+
+    let document =
+      crate::parts::wordprocessing_document::WordprocessingDocument::new_from_reader_at(source)
+        .unwrap();
+    assert!(bytes_read.load(AtomicOrdering::Relaxed) < LAZY_PAYLOAD_LEN / 2);
+
+    let main_part = document.main_document_part().unwrap();
+    assert!(!main_part.is_root_element_loaded(&document));
+    main_part.root_element(&document).unwrap();
+    assert!(main_part.is_root_element_loaded(&document));
+    assert!(bytes_read.load(AtomicOrdering::Relaxed) < LAZY_PAYLOAD_LEN / 2);
+
+    let saved = document.to_package_bytes().unwrap();
+    assert!(bytes_read.load(AtomicOrdering::Relaxed) >= LAZY_PAYLOAD_LEN);
+
+    let reopened =
+      crate::parts::wordprocessing_document::WordprocessingDocument::new(Cursor::new(saved))
+        .unwrap();
+    reopened
+      .main_document_part()
+      .unwrap()
+      .root_element(&reopened)
+      .unwrap();
+  }
+
+  #[test]
+  fn storage_resolves_package_relationship_target_part_slot() {
+    let mut buffer = Cursor::new(Vec::new());
+    {
+      let mut zip = zip::ZipWriter::new(&mut buffer);
+      let options = zip::write::SimpleFileOptions::default();
+
+      zip.start_file("[Content_Types].xml", options).unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#,
+      )
+      .unwrap();
+
+      zip.add_directory("_rels", options).unwrap();
+      zip.start_file("_rels/.rels", options).unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#,
+      )
+      .unwrap();
+
+      zip.add_directory("word", options).unwrap();
+      zip.start_file("word/document.xml", options).unwrap();
+      zip.write_all(br#"<w:document xmlns:w="w"/>"#).unwrap();
+      zip.finish().unwrap();
+    }
+
+    buffer.set_position(0);
+    let storage = SdkPackageStorage::open(buffer).unwrap();
+    let relationship = storage.package_relationships().get("rId1").unwrap();
+    let part_id = relationship.target_part_slot().unwrap();
+    let part = storage.part(part_id).unwrap();
+
+    assert_eq!(part.path(), "word/document.xml");
+    assert_eq!(
+      part.relationship_type(),
+      Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument")
+    );
+    assert_eq!(
+      relationship.target_kind(),
+      RelationshipTargetKind::InternalPart
+    );
+    assert!(matches!(
+      &storage.parts[part_id.index()].data,
+      StoredPartData::Archived { bytes, .. } if bytes.get().is_none()
+    ));
+    assert_eq!(
+      storage.package_save_entries(),
+      vec![
+        PackageSaveEntry::ContentTypes,
+        PackageSaveEntry::ArchivedExtra(1),
+        PackageSaveEntry::PackageRelationships,
+        PackageSaveEntry::ArchivedExtra(3),
+        PackageSaveEntry::Part(part_id),
+      ]
+    );
+    assert_eq!(
+      storage.part_bytes_for_root(part_id).unwrap(),
+      Bytes::from_static(br#"<w:document xmlns:w="w"/>"#)
+    );
+    assert!(matches!(
+      &storage.parts[part_id.index()].data,
+      StoredPartData::Archived { bytes, .. } if bytes.get().is_none()
+    ));
+    assert_eq!(
+      storage.part_bytes(part_id).unwrap(),
+      br#"<w:document xmlns:w="w"/>"#
+    );
+    assert!(matches!(
+      &storage.parts[part_id.index()].data,
+      StoredPartData::Archived { bytes, .. } if bytes.get().is_some()
+    ));
+  }
+
+  #[test]
+  fn storage_prefers_utf8_header_name_over_conflicting_unicode_path() {
+    let mut buffer = Cursor::new(Vec::new());
+    {
+      let mut zip = zip::ZipWriter::new(&mut buffer);
+      let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+      zip.start_file("[Content_Types].xml", options).unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#,
+      )
+      .unwrap();
+
+      zip.start_file("_rels/.rels", options).unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#,
+      )
+      .unwrap();
+
+      zip
+        .start_file(
+          "word/document.xml",
+          unicode_path_options("zip-test-additional-file"),
+        )
+        .unwrap();
+      zip.write_all(b"first document").unwrap();
+
+      zip
+        .start_file(
+          "zip-test-additional-file",
+          unicode_path_options("word/document.xml"),
+        )
+        .unwrap();
+      zip.write_all(b"second document").unwrap();
+      zip.finish().unwrap();
+    }
+
+    let mut package = buffer.into_inner();
+    patch_unicode_path_entry(&mut package, "word/document.xml", 0xdfcf_77e6, true);
+    patch_unicode_path_entry(&mut package, "zip-test-additional-file", 0x4f88_9334, false);
+
+    let storage = SdkPackageStorage::open(Cursor::new(package)).unwrap();
+    let main_part_id = storage
+      .package_relationships()
+      .get("rId1")
+      .and_then(RelationshipInfo::target_part_slot)
+      .unwrap();
+
+    assert_eq!(storage.parts().len(), 1);
+    assert_eq!(
+      storage.part(main_part_id).unwrap().path(),
+      "word/document.xml"
+    );
+    assert_eq!(storage.part_bytes(main_part_id).unwrap(), b"first document");
+  }
+
+  #[test]
+  fn storage_uses_first_ascii_case_equivalent_part() {
+    let mut buffer = Cursor::new(Vec::new());
+    {
+      let mut zip = zip::ZipWriter::new(&mut buffer);
+      let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+      zip.start_file("[Content_Types].xml", options).unwrap();
+      zip
+        .write_all(
+          br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>"#,
+        )
+        .unwrap();
+
+      zip.start_file("_rels/.rels", options).unwrap();
+      zip
+        .write_all(
+          br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#,
+        )
+        .unwrap();
+
+      zip.start_file("WORD/DOCUMENT.XML", options).unwrap();
+      zip.write_all(b"first document").unwrap();
+      zip.start_file("word/document.xml", options).unwrap();
+      zip.write_all(b"second document").unwrap();
+
+      zip
+        .start_file("word/_rels/document.xml.rels", options)
+        .unwrap();
+      zip
+        .write_all(
+          br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>"#,
+        )
+        .unwrap();
+
+      zip.start_file("word/styles.xml", options).unwrap();
+      zip.write_all(b"styles").unwrap();
+      zip.finish().unwrap();
+    }
+
+    let storage = SdkPackageStorage::open(Cursor::new(buffer.into_inner())).unwrap();
+    let relationship = storage.package_relationships().get("rId1").unwrap();
+    let main_part_id = relationship.target_part_slot().unwrap();
+    let main_part = storage.part(main_part_id).unwrap();
+
+    assert_eq!(storage.parts().len(), 2);
+    assert_eq!(main_part.path(), "WORD/DOCUMENT.XML");
+    assert_eq!(
+      main_part.content_type(),
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+    );
+    assert_eq!(
+      relationship.target_kind(),
+      RelationshipTargetKind::InternalPart
+    );
+    let styles_relationship = storage
+      .relationships(main_part_id)
+      .and_then(|relationships| relationships.get("rIdStyles"))
+      .unwrap();
+    let styles_part_id = styles_relationship.target_part_slot().unwrap();
+    assert_eq!(
+      storage.part(styles_part_id).unwrap().path(),
+      "word/styles.xml"
+    );
+    assert_eq!(storage.part_bytes(main_part_id).unwrap(), b"first document");
+  }
+
+  #[test]
+  fn storage_reads_part_relationships_with_lowercase_filename_fallback() {
+    let mut buffer = Cursor::new(Vec::new());
+    {
+      let mut zip = zip::ZipWriter::new(&mut buffer);
+      let options = zip::write::SimpleFileOptions::default();
+
+      zip.start_file("[Content_Types].xml", options).unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/Sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>
+</Types>"#,
+      )
+      .unwrap();
+
+      zip.add_directory("_rels", options).unwrap();
+      zip.start_file("_rels/.rels", options).unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#,
+      )
+      .unwrap();
+
+      zip.add_directory("xl/_rels", options).unwrap();
+      zip
+        .start_file("xl/_rels/workbook.xml.rels", options)
+        .unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/Sheet1.xml"/>
+</Relationships>"#,
+      )
+      .unwrap();
+
+      zip.add_directory("xl/worksheets/_rels", options).unwrap();
+      zip
+        .start_file("xl/worksheets/_rels/sheet1.xml.rels", options)
+        .unwrap();
+      zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>
+</Relationships>"#,
+      )
+      .unwrap();
+
+      zip.add_directory("xl", options).unwrap();
+      zip.start_file("xl/workbook.xml", options).unwrap();
+      zip.write_all(br#"<workbook/>"#).unwrap();
+      zip.add_directory("xl/worksheets", options).unwrap();
+      zip.start_file("xl/worksheets/Sheet1.xml", options).unwrap();
+      zip.write_all(br#"<worksheet/>"#).unwrap();
+      zip.add_directory("xl/drawings", options).unwrap();
+      zip.start_file("xl/drawings/drawing1.xml", options).unwrap();
+      zip.write_all(br#"<xdr:wsDr xmlns:xdr="xdr"/>"#).unwrap();
+      zip.finish().unwrap();
+    }
+
+    buffer.set_position(0);
+    let storage = SdkPackageStorage::open(buffer).unwrap();
+    let sheet_part_id = storage
+      .package_relationships()
+      .get("rId1")
+      .and_then(RelationshipInfo::target_part_slot)
+      .and_then(|workbook_part_id| storage.relationships(workbook_part_id))
+      .and_then(|relationships| relationships.get("rId1"))
+      .and_then(RelationshipInfo::target_part_slot)
+      .unwrap();
+    let drawing_relationship = storage
+      .relationships(sheet_part_id)
+      .unwrap()
+      .get("rId1")
+      .unwrap();
+
+    assert_eq!(
+      drawing_relationship.target_kind(),
+      RelationshipTargetKind::InternalPart
+    );
+    let drawing_part = storage
+      .part(drawing_relationship.target_part_slot().unwrap())
+      .unwrap();
+    assert_eq!(drawing_part.path(), "xl/drawings/drawing1.xml");
+  }
+}
