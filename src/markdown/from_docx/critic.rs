@@ -1171,11 +1171,25 @@ fn math_changes(markdown: &str) -> String {
         .replace(math::DELETE_END, "--}")
 }
 
+/// Whether `out` ends with a line of backticks: a code fence, which must end
+/// its line. A CriticMarkup opener written after it (` ```{++ `) reads as the
+/// fence's info string, so the fence stops closing its block and the block
+/// swallows what follows (#587).
+fn ends_with_fence(out: &str) -> bool {
+    out.lines().next_back().is_some_and(|line| {
+        let line = line.trim();
+        line.len() >= 3 && line.bytes().all(|b| b == b'`')
+    })
+}
+
 /// Appends `prefix` and `body` to `out` after `separator`. When the separator is
 /// itself tracked (a paragraph mark that was inserted or deleted), it is marked
 /// the way the CriticMarkup spec marks a paragraph break (`{++\n\n++}`), with
 /// its attribution after it. An adjoining span of the same kind and attribution
-/// is extended rather than opened twice.
+/// is extended rather than opened twice. Before a code fence the opener cannot
+/// share the fence's line ([`ends_with_fence`]): the break is written first and
+/// the span opens on the next block's line, or is dropped when it would wrap
+/// nothing but the break.
 ///
 /// `space` says the text on either side of a tracked break had a space there,
 /// which rendering trimmed: once the break is accepted or rejected away the two
@@ -1215,18 +1229,6 @@ pub(crate) fn splice(
         (rest.is_some() && plain_note_rest(note) == rest)
             .then(|| (kept.len(), Some(plain_note_ids(note).to_string())))
     };
-    match ends_alike(out) {
-        Some((kept, ids)) => {
-            out.truncate(kept);
-            pieces.extend(ids);
-        }
-        None => out.push_str(open),
-    }
-    if let Some(shown) = shown.as_deref().filter(|_| rest.is_some()) {
-        pieces.push(plain_note_ids(shown).to_string());
-    }
-    out.push_str(separator);
-    out.push_str(prefix);
     // The body's first span continues this one when it is of the same kind and
     // its closer carries the same attribution. Document text is escaped and
     // converter-built Markdown is defused, so neither contains the closer, and a
@@ -1242,6 +1244,41 @@ pub(crate) fn splice(
                     .is_some_and(|inner| rest.is_some() && plain_note_rest(inner) == rest)
         })
     });
+    // A code fence must end its line: an opener written after the last
+    // block's closing backticks (` ```{++ `) reads as the fence's info
+    // string, the fence never closes, and the code block swallows the span
+    // and every block after it (#587). Before a fence, the break is written
+    // first and the span opens on the next block's line — the reader marks
+    // the break again from the paragraph's own runs — and a span that would
+    // cover only the break is dropped, as a tracked break before a table is.
+    let fence = ends_with_fence(out);
+    let mut after_break = false;
+    match ends_alike(out) {
+        Some((kept, ids)) => {
+            out.truncate(kept);
+            pieces.extend(ids);
+        }
+        None if fence && continues.is_some() => {
+            out.push_str(separator);
+            out.push_str(prefix);
+            out.push_str(open);
+            after_break = true;
+        }
+        None if fence => {
+            out.push_str(separator);
+            out.push_str(prefix);
+            out.push_str(body);
+            return;
+        }
+        None => out.push_str(open),
+    }
+    if let Some(shown) = shown.as_deref().filter(|_| rest.is_some()) {
+        pieces.push(plain_note_ids(shown).to_string());
+    }
+    if !after_break {
+        out.push_str(separator);
+        out.push_str(prefix);
+    }
     match continues {
         Some(rest_of) => {
             let at = rest_of.find(close).map_or(0, |at| at + close.len());
@@ -1949,6 +1986,57 @@ mod tests {
         let mut heading = "A".to_string();
         splice(&mut heading, "\n\n", "## ", "B", Some(&(Ins, None)), false);
         assert_eq!(heading, "A{++\n\n## ++}B");
+    }
+
+    #[test]
+    fn a_span_after_a_code_fence_opens_on_the_next_block_s_line() {
+        // The closing fence of a code block must end its line: an opener
+        // pushed after its backticks (` ```{++ `) reads as the fence's info
+        // string, the block never closes, and it swallows the span and the
+        // blocks after it (#587).
+        let join = |out: &str, body: &str, mark: Option<Mark>| {
+            let mut out = out.to_string();
+            splice(
+                &mut out,
+                "\n\n",
+                "",
+                body,
+                mark.map(|m| (m, None)).as_ref(),
+                false,
+            );
+            out
+        };
+        let fence = "```\nsome code\n```";
+        // The paragraph's own inserted runs keep their span, on the line
+        // after the fence: the reader marks the new paragraph's break again
+        // from the span alone.
+        assert_eq!(
+            join(fence, "{++B++}", Some(Ins)),
+            "```\nsome code\n```\n\n{++B++}"
+        );
+        // A mark whose span would cover only the break is dropped, as a
+        // tracked break before a table is: written after the fence it wraps
+        // nothing (`{++++}`), and written into the fence line it reopens it.
+        assert_eq!(join(fence, "B", Some(Ins)), "```\nsome code\n```\n\nB");
+        assert_eq!(join(fence, "B", Some(Del)), "```\nsome code\n```\n\nB");
+        // The fence's length or indentation does not matter.
+        assert_eq!(
+            join("  ````\ncode\n````", "{++B++}", Some(Ins)),
+            "  ````\ncode\n````\n\n{++B++}"
+        );
+        // A heading keeps its `## ` outside the span, so it stays a heading.
+        let mut heading = "```\ncode\n```".to_string();
+        splice(
+            &mut heading,
+            "\n\n",
+            "## ",
+            "{++B++}",
+            Some(&(Ins, None)),
+            false,
+        );
+        assert_eq!(heading, "```\ncode\n```\n\n## {++B++}");
+        // After a block that is not a fence, the span still covers the break.
+        assert_eq!(join("A", "B", Some(Ins)), "A{++\n\n++}B");
     }
 
     #[test]

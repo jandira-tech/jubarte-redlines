@@ -98,6 +98,31 @@ fn a_note_without_a_number_after_a_change_keeps_its_old_meaning() {
 }
 
 #[test]
+fn a_code_block_followed_by_a_tracked_paragraph_is_a_fixed_point() {
+    // The closing fence and the `{++` used to land on one line (```{++),
+    // which no Markdown reads as a closing fence: the block stayed open,
+    // swallowed the tracked paragraph, and the next generation wrapped one
+    // more backtick around the lot (#587).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("a.md"),
+        "```\nsome code\n```\n\n{++real change++}\n",
+    )
+    .unwrap();
+    convert(dir.path(), "a.md", "a.docx");
+    convert(dir.path(), "a.docx", "one.md");
+    convert(dir.path(), "one.md", "b.docx");
+    convert(dir.path(), "b.docx", "two.md");
+    let read = |f: &str| std::fs::read_to_string(dir.path().join(f)).unwrap();
+    let (one, two) = (read("one.md"), read("two.md"));
+    assert!(
+        one.contains("```\nsome code\n```\n\n{++real change++}"),
+        "{one}"
+    );
+    assert_eq!(one, two);
+}
+
+#[test]
 fn word_converts_to_the_agent_view_unless_commonmark_is_asked() {
     let dir = tempfile::tempdir().unwrap();
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
