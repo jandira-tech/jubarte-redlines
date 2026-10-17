@@ -195,8 +195,7 @@ fn three_levels() -> Vec<u8> {
 /// A docx with Zoe Stone's comment 7 ("Check.") beside `body`.
 fn with_comment(body: &str) -> Vec<u8> {
     use common::docx::{R_NS, W_NS};
-    const RELS: &str =
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     let comments = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:comments xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:comment w:id="7" w:author="Zoe Stone" w:date="2026-10-01T10:00:00Z" w:initials="ZS"><w:p><w:r><w:t>Check.</w:t></w:r></w:p></w:comment></w:comments>"#
@@ -571,7 +570,10 @@ fn body(view: String) -> String {
     let mut out = String::with_capacity(body.len());
     let mut rest = body.as_str();
     while let Some(at) = rest.find('c') {
-        let digits = rest[at + 1..].bytes().take_while(u8::is_ascii_digit).count();
+        let digits = rest[at + 1..]
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count();
         out.push_str(&rest[..at + 1]);
         if digits > 0 {
             out.push('#');
@@ -596,7 +598,11 @@ fn round_trips(source: &Vec<u8>, markdown: String, view: &str) {
 fn agent_round_trips(source: &Vec<u8>, view: &str) {
     let markdown = agent(source);
     let docx = written(&markdown);
-    assert_eq!(body(agent(&docx)), body(markdown), "{view}: agent fixed point");
+    assert_eq!(
+        body(agent(&docx)),
+        body(markdown),
+        "{view}: agent fixed point"
+    );
     keeps_the_source(source, &docx, view);
 }
 
@@ -804,7 +810,9 @@ fn a_three_level_nest_keeps_the_innermost_text_live() {
     assert!(
         check_word_valid_package(&written(&markdown)).ok(),
         "{}",
-        check_word_valid_package(&written(&markdown)).errors.join("\n")
+        check_word_valid_package(&written(&markdown))
+            .errors
+            .join("\n")
     );
     for accept in [false, true] {
         assert_eq!(
