@@ -219,6 +219,12 @@ fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Stage complete bytes and atomically replace a single authorized output.
+fn publish_file(path: &Path, bytes: &[u8], force: bool) -> Result<(), String> {
+    jubarte::publication::publish_paths(&[(path.to_path_buf(), bytes)], force)
+        .map_err(|e| e.to_string())
+}
+
 /// One task's `-o`: where, as what, and how a Word result becomes it.
 struct Output<'a> {
     kind: Format,
@@ -314,8 +320,7 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
         }
         (Format::Docx, Produced::Docx(bytes)) => {
             ensure_writable(out.path, out.force)?;
-            std::fs::write(out.path, bytes)
-                .map_err(|e| format!("writing {}: {e}", out.path.display()))?;
+            publish_file(out.path, bytes, out.force)?;
             if !out.quiet {
                 eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None));
             }
@@ -344,7 +349,7 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
         }
     };
     ensure_writable(out.path, out.force)?;
-    std::fs::write(out.path, &text).map_err(|e| format!("writing {}: {e}", out.path.display()))?;
+    publish_file(out.path, text.as_bytes(), out.force)?;
     if !out.quiet {
         eprintln!("{}", wrote_line(out.path, out.kind, text.len(), None));
     }
@@ -588,31 +593,40 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
             }
         }
     }
+    let font_json = job
+        .font_report
+        .map(|_| jubarte::convert::font_report_json(&rendered.report.fonts));
+    let report_json = job.report.map(|_| rendered.report.to_json());
+    let mut outputs: Vec<(PathBuf, &[u8])> = Vec::new();
     if let Some(pdf) = &rendered.pdf {
-        std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
-        if !job.quiet {
+        outputs.push((output.clone(), pdf));
+    }
+    if png {
+        outputs.extend(
+            png_paths
+                .iter()
+                .cloned()
+                .zip(rendered.pngs.iter().map(Vec::as_slice)),
+        );
+    }
+    if let (Some(path), Some(json)) = (job.font_report, &font_json) {
+        outputs.push((path.to_path_buf(), json.as_bytes()));
+    }
+    if let (Some(path), Some(json)) = (job.report, &report_json) {
+        outputs.push((path.to_path_buf(), json.as_bytes()));
+    }
+    jubarte::publication::publish_paths(&outputs, job.force).map_err(|e| e.to_string())?;
+    if !job.quiet {
+        if let Some(pdf) = &rendered.pdf {
             eprintln!(
                 "{}",
                 wrote_line(&output, Format::Pdf, pdf.len(), Some(pages))
             );
         }
-    }
-    if png {
-        for (path, png) in png_paths.iter().zip(&rendered.pngs) {
-            std::fs::write(path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
-        }
-        if !job.quiet {
+        if png {
             let pattern = dir.join(format!("{stem}-page-NN.png"));
             eprintln!("{}", wrote_png_line(&pattern, rendered.pngs.len(), job.dpi));
         }
-    }
-    if let Some(report) = job.font_report {
-        let json = jubarte::convert::font_report_json(&rendered.report.fonts);
-        std::fs::write(report, json).map_err(|e| format!("writing {}: {e}", report.display()))?;
-    }
-    if let Some(report) = job.report {
-        std::fs::write(report, rendered.report.to_json())
-            .map_err(|e| format!("writing {}: {e}", report.display()))?;
     }
     if job.fail_on_substitution {
         let substituted: Vec<_> = rendered
@@ -751,9 +765,7 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
             ensure_writable(path, job.force)?;
         }
         std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
-        for (path, bytes) in &files {
-            std::fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))?;
-        }
+        jubarte::publication::publish_paths(&files, job.force).map_err(|e| e.to_string())?;
     }
     if job.json {
         outln!("{summary}");
@@ -853,8 +865,7 @@ fn run_for_edit(
         serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
     if let Some(path) = output {
         ensure_writable(path, force).map_err(ConvertFailure::from)?;
-        std::fs::write(path, &json)
-            .map_err(|e| ConvertFailure::from(format!("writing {}: {e}", path.display())))?;
+        publish_file(path, json.as_bytes(), force).map_err(ConvertFailure::from)?;
         if !quiet {
             eprintln!("{}", wrote_line(path, Format::Json, json.len(), None));
         }
@@ -1186,14 +1197,13 @@ fn run_edit(
         refuse_foreign_bundle_contents(out_dir)?;
     }
     let stage = stage_bundle_dir(out_dir).map_err(fail)?;
-    for (name, bytes) in &outputs {
-        if let Err(e) = std::fs::write(stage.join(name), bytes) {
-            let _ = std::fs::remove_dir_all(&stage);
-            return Err(fail(format!(
-                "writing {}: {e}",
-                out_dir.join(name).display()
-            )));
-        }
+    let files: Vec<_> = outputs
+        .iter()
+        .map(|(name, bytes)| (stage.join(name), bytes.as_slice()))
+        .collect();
+    if let Err(error) = jubarte::publication::publish_paths(&files, false) {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(fail(error.to_string()));
     }
     publish_dir(&stage, out_dir, job.force, || {
         for path in &paths {
@@ -1407,25 +1417,6 @@ fn staging_path(dest: &Path, n: usize) -> PathBuf {
     dir.join(name)
 }
 
-/// `bytes` staged in a temp file beside `path`, ready for the rename
-/// commit. A failure removes the temp file again.
-fn stage_file(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
-    for n in 0..100 {
-        let tmp = staging_path(path, n);
-        match std::fs::File::create_new(&tmp)
-            .and_then(|mut f| std::io::Write::write_all(&mut f, bytes))
-        {
-            Ok(()) => return Ok(tmp),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(format!("writing {}: {e}", path.display()));
-            }
-        }
-    }
-    Err(format!("writing {}: no free staging name", path.display()))
-}
-
 /// Test-only synchronization for filesystem races in debug Unix builds.
 /// JUBARTE_TEST_PUBLICATION_HOOK names a local Unix socket owned by the
 /// integration test. Send the phase/PID, then wait for one release byte.
@@ -1475,16 +1466,17 @@ fn publish_files(
     outputs: &[(PathBuf, &[u8])],
     recheck: &Recheck<'_>,
 ) -> Result<Vec<PathBuf>, (u8, String)> {
-    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut staged = Vec::new();
     let mut committed: Vec<PathBuf> = Vec::new();
-    let publish = |staged: &mut Vec<(PathBuf, PathBuf)>, committed: &mut Vec<PathBuf>| {
+    let publish = |staged: &mut Vec<(jubarte::publication::StagedFile, PathBuf)>,
+                   committed: &mut Vec<PathBuf>| {
         for (path, bytes) in outputs {
-            let tmp = stage_file(path, bytes).map_err(|e| (1, e))?;
-            staged.push((tmp, path.clone()));
+            let held = jubarte::publication::StagedFile::prepare(path, bytes, recheck.force)
+                .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
+            staged.push((held, path.clone()));
         }
         publication_test_hook("staged").map_err(|e| (1, e))?;
-        // Recheck all destinations before the first primary commits, so a
-        // newly unsafe derivative cannot leave a primary behind.
+        // Recheck the entire set before committing the primary.
         for (path, _) in outputs {
             (recheck.alias)(path)?;
         }
@@ -1501,53 +1493,25 @@ fn publish_files(
         {
             return Err(taken_output(path));
         }
-        for (tmp, path) in staged.iter() {
-            (recheck.alias)(path)?;
+        for (held, path) in staged.drain(..) {
+            (recheck.alias)(&path)?;
             if committed.is_empty() {
                 (recheck.source)()?;
             }
             publication_test_hook("checked").map_err(|e| (1, e))?;
-            let linked = if recheck.force {
-                std::fs::rename(tmp, path)
-                    .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
-                false
-            } else {
-                match std::fs::hard_link(tmp, path) {
-                    Ok(()) => true,
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                        return Err(taken_output(path));
-                    }
-                    // Some filesystems cannot create hard links. Only on
-                    // those, fall back to a fresh check followed by rename.
-                    Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
-                        (recheck.alias)(path)?;
-                        if path.symlink_metadata().is_ok() {
-                            return Err(taken_output(path));
-                        }
-                        if committed.is_empty() {
-                            (recheck.source)()?;
-                        }
-                        std::fs::rename(tmp, path)
-                            .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
-                        false
-                    }
-                    Err(e) => return Err((1, format!("committing {}: {e}", path.display()))),
+            if let Err(error) = held.commit() {
+                committed.extend(error.committed.iter().cloned());
+                if error.source.kind() == std::io::ErrorKind::AlreadyExists {
+                    return Err(taken_output(&path));
                 }
-            };
-            committed.push(path.to_path_buf());
-            if linked {
-                std::fs::remove_file(tmp)
-                    .map_err(|e| (1, format!("removing staging file {}: {e}", tmp.display())))?;
+                return Err((1, format!("committing {}: {error}", path.display())));
             }
+            committed.push(path);
         }
         Ok(())
     };
     let outcome = publish(&mut staged, &mut committed);
-    // All precommit refusals, including the source guard and test hook,
-    // remove staging. A committed artifact is never rolled back.
-    for (tmp, _) in &staged {
-        let _ = std::fs::remove_file(tmp);
-    }
+    drop(staged);
     if let Err((code, mut message)) = outcome {
         if !committed.is_empty() {
             message += &format!(" (already committed: {})", comma_paths(&committed));
@@ -1613,7 +1577,13 @@ fn stage_bundle_dir(dir: &Path) -> Result<PathBuf, String> {
     }
     for n in 0..100 {
         let stage = staging_path(dir, n);
-        match std::fs::create_dir(&stage) {
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&stage) {
             Ok(()) => return Ok(stage),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(format!("creating {}: {e}", dir.display())),
@@ -1622,10 +1592,26 @@ fn stage_bundle_dir(dir: &Path) -> Result<PathBuf, String> {
     Err(format!("creating {}: no free staging name", dir.display()))
 }
 
+fn sync_bundle_parent(dir: &Path) -> Result<(), (u8, String)> {
+    let parent = dir
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    jubarte::publication::sync_directory(parent).map_err(|e| {
+        (
+            1,
+            format!(
+                "durability uncertain: syncing bundle parent: {e} (already committed: {})",
+                slash_path(dir)
+            ),
+        )
+    })
+}
+
 /// Publish the staged bundle as `dir` (V2-05): a rename when `dir` is
 /// free; under --force over an existing directory, a swap that replaces it
-/// wholesale — never a merge into its files. On a failure `dir` keeps what
-/// it held and the staging directory is removed.
+/// wholesale — never a merge into its files. Precommit failures preserve the
+/// prior bundle; postcommit durability errors name the committed directory.
 fn publish_dir(
     stage: &Path,
     dir: &Path,
@@ -1639,8 +1625,9 @@ fn publish_dir(
     publication_test_hook("staged").map_err(|e| failed((1, e)))?;
     if dir.symlink_metadata().is_err() {
         recheck().map_err(failed)?;
-        return std::fs::rename(stage, dir)
-            .map_err(|e| failed((1, format!("publishing {}: {e}", dir.display()))));
+        std::fs::rename(stage, dir)
+            .map_err(|e| failed((1, format!("publishing {}: {e}", dir.display()))))?;
+        return sync_bundle_parent(dir);
     }
     // Alias checks precede a no-clobber refusal, here as in preflight.
     recheck().map_err(failed)?;
@@ -1696,6 +1683,7 @@ fn publish_dir(
         let _ = std::fs::rename(&aside, dir);
         return Err((1, format!("publishing {}: {e}", dir.display())));
     }
+    sync_bundle_parent(dir)?;
     // The old directory is replaced, not merged: drop what it held.
     let dropped = if aside
         .symlink_metadata()
@@ -2793,14 +2781,39 @@ fn run_convert_any(
                 check_side_file(report, "--report", others, job.force)?;
             }
             ensure_writable(&path, job.force)?;
-            let mut out = match resolve {
+            let out = match resolve {
                 Some(resolve) => resolve(&bytes).map_err(|e| {
                     refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
                 })?,
                 None => bytes,
             };
             if update_fields {
-                out = refresh_fields(&out, job.report)?;
+                let (updated, report_json) = refresh_fields(&out)?;
+                let docx = &updated.docx;
+                let mut outputs = vec![(path.clone(), docx.as_slice())];
+                if let Some(report) = job.report {
+                    outputs.push((report.to_path_buf(), report_json.as_bytes()));
+                }
+                jubarte::publication::publish_paths(&outputs, job.force)
+                    .map_err(|e| e.to_string())?;
+                for field in &updated.fields {
+                    outln!(
+                        "{}\t{}\t{:?} -> {:?}",
+                        field.paragraph,
+                        field.kind,
+                        field.old,
+                        field.new
+                    );
+                }
+                eprintln!(
+                    "{} field(s) written; {} page(s)",
+                    updated.fields.len(),
+                    updated.page_count
+                );
+                if !job.quiet {
+                    eprintln!("{}", wrote_line(&path, Format::Docx, docx.len(), None));
+                }
+                return Ok(());
             }
             at(Format::Docx, &path, Some(Produced::Docx(&out)))
         }
@@ -2931,7 +2944,7 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
             ));
         }
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
-        std::fs::write(out, &fixed.docx).map_err(|e| format!("{}: {e}", out.display()))?;
+        publish_file(out, &fixed.docx, job.force)?;
         if !job.json {
             outln!("repaired {} finding(s)", fixed.repaired.len());
         }
@@ -3535,34 +3548,15 @@ fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result
 /// `accept_revisions` / `reject_revisions`: a package in, the resolved one out.
 type Resolve = fn(&[u8]) -> Result<Vec<u8>, jubarte::opc::OpcError>;
 
-/// `convert --update-fields`: the package with its field results refreshed
-/// from jubarte's layout, one line per field written on stdout and
-/// `{page_count, fields}` in `report` when given.
-fn refresh_fields(bytes: &[u8], report: Option<&Path>) -> Result<Vec<u8>, String> {
+/// Prepare the refreshed package and its JSON report together, without file I/O.
+/// `convert --update-fields` publishes both only after staging succeeds.
+fn refresh_fields(bytes: &[u8]) -> Result<(jubarte::fields::Updated, String), String> {
     let updated = jubarte::fields::update_fields(bytes).map_err(|e| e.to_string())?;
-    for field in &updated.fields {
-        outln!(
-            "{}\t{}\t{:?} -> {:?}",
-            field.paragraph,
-            field.kind,
-            field.old,
-            field.new
-        );
-    }
-    eprintln!(
-        "{} field(s) written; {} page(s)",
-        updated.fields.len(),
-        updated.page_count
-    );
-    if let Some(report) = report {
-        let json = serde_json::json!({
-            "page_count": updated.page_count,
-            "fields": updated.fields,
-        });
-        std::fs::write(report, json.to_string())
-            .map_err(|e| format!("writing {}: {e}", report.display()))?;
-    }
-    Ok(updated.docx)
+    let json = serde_json::json!({
+        "page_count": updated.page_count,
+        "fields": updated.fields,
+    });
+    Ok((updated, json.to_string()))
 }
 
 #[cfg(test)]
@@ -4645,20 +4639,18 @@ mod tests {
     fn refresh_fields_writes_the_report_and_says_when_it_cannot() {
         let dir = tempfile::tempdir().expect("tempdir");
         let report = dir.path().join("fields.json");
-        let written = refresh_fields(&tiny_docx_bytes("Calibri"), Some(&report)).expect("update");
+        let (updated, json) = refresh_fields(&tiny_docx_bytes("Calibri")).expect("update");
+        publish_file(&report, json.as_bytes(), false).expect("report");
         assert_eq!(
-            jubarte::inspect::paragraphs(&written).unwrap()[0].text,
+            jubarte::inspect::paragraphs(&updated.docx).unwrap()[0].text,
             "HELLO"
         );
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
         assert_eq!(json["page_count"], 1);
-        let err = refresh_fields(
-            &tiny_docx_bytes("Calibri"),
-            Some(&dir.path().join("no/such/dir.json")),
-        )
-        .unwrap_err();
+        assert!(json["fields"].is_array());
+        let err = publish_file(&dir.path().join("no/such/dir.json"), b"{}", false).unwrap_err();
         assert!(err.contains("writing"), "{err}");
-        assert!(refresh_fields(b"not a zip", None).is_err());
+        assert!(refresh_fields(b"not a zip").is_err());
     }
 }

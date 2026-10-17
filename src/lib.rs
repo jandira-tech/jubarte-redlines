@@ -159,3 +159,7 @@ pub mod xmllinq;
 
 /// [`WmlDocument`] re-export for the common library entry point.
 pub use wml_document::WmlDocument;
+
+/// Capability-confined, staged filesystem publication for host applications.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod publication;

@@ -619,3 +619,259 @@ fn json_writer_keeps_unselected_changes_and_scrubbed_authors() {
         );
     }
 }
+
+/// D13: a later unwritable output must not replace the prior good DOCX.
+#[test]
+fn audit_d13_late_staging_failure_keeps_prior_output() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("draft.docx"), docx(&para("Hello."))).unwrap();
+    std::fs::write(dir.path().join("edited.docx"), b"prior good output").unwrap();
+    std::fs::create_dir(dir.path().join("edited.pdf")).unwrap();
+    let out = jubarte(
+        dir.path(),
+        &[
+            "edit",
+            "draft.docx",
+            "-p",
+            "p0",
+            "--content",
+            "Updated.",
+            "-o",
+            "edited.docx",
+            "--pdf",
+            "--force",
+        ],
+    );
+    assert!(!out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        std::fs::read(dir.path().join("edited.docx")).unwrap(),
+        b"prior good output"
+    );
+}
+
+/// D35: generated PNG exports replace a link itself, never its referent.
+#[cfg(unix)]
+#[test]
+fn audit_d35_generated_export_does_not_follow_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let victim = outside.path().join("keep.png");
+    std::fs::write(&victim, b"keep").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.path().join("r-page-01.png")).unwrap();
+    std::fs::write(dir.path().join("d.md"), "Hello.\n").unwrap();
+    let out = jubarte(
+        dir.path(),
+        &["convert", "d.md", "-o", "r.png", "--force", "--dpi", "20"],
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(std::fs::read(victim).unwrap(), b"keep");
+    assert!(
+        !dir.path()
+            .join("r-page-01.png")
+            .symlink_metadata()
+            .unwrap()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn audit_d35_confined_authorized_exports_and_no_clobber() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = jubarte::publication::OutputRoot::open(dir.path());
+    assert!(root.is_ok(), "opening a granted root: {:?}", root.err());
+    let root = root.unwrap();
+    let files = [("media/digest.png".into(), b"asset".as_slice())];
+    assert!(root.publish(&files, false).is_ok());
+    assert_eq!(root.read(Path::new("media/digest.png")).unwrap(), b"asset");
+    assert!(
+        root.publish(&[("media/digest.png".into(), b"replacement")], false)
+            .is_err()
+    );
+    assert_eq!(root.read(Path::new("media/digest.png")).unwrap(), b"asset");
+    assert!(
+        root.publish(&[("media/digest.png".into(), b"replacement")], true)
+            .is_ok()
+    );
+    assert_eq!(
+        root.read(Path::new("media/digest.png")).unwrap(),
+        b"replacement"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn audit_d35_root_capability_survives_path_swap_and_refuses_escaping_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let path = dir.path().join("grant");
+    std::fs::create_dir(&path).unwrap();
+    let root = jubarte::publication::OutputRoot::open(&path);
+    assert!(root.is_ok(), "opening a granted root: {:?}", root.err());
+    let root = root.unwrap();
+    std::fs::rename(&path, dir.path().join("held")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &path).unwrap();
+    assert!(root.publish(&[("safe.txt".into(), b"safe")], false).is_ok());
+    assert_eq!(
+        std::fs::read(dir.path().join("held/safe.txt")).unwrap(),
+        b"safe"
+    );
+    assert!(!outside.path().join("safe.txt").exists());
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("held/escape")).unwrap();
+    assert!(
+        root.publish(&[("escape/unsafe.txt".into(), b"unsafe")], true)
+            .is_err()
+    );
+    std::fs::write(outside.path().join("secret.txt"), b"outside secret").unwrap();
+    assert!(root.read(Path::new("escape/secret.txt")).is_err());
+    assert!(!outside.path().join("unsafe.txt").exists());
+}
+
+#[test]
+fn audit_d13_field_report_is_staged_with_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("Hello."))).unwrap();
+    std::fs::create_dir(dir.path().join("out.docx")).unwrap();
+    std::fs::write(dir.path().join("report.json"), b"prior report").unwrap();
+    let out = jubarte(
+        dir.path(),
+        &[
+            "convert",
+            "input.docx",
+            "-o",
+            "out.docx",
+            "--update-fields",
+            "--report",
+            "report.json",
+            "--force",
+        ],
+    );
+    assert!(!out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        std::fs::read(dir.path().join("report.json")).unwrap(),
+        b"prior report"
+    );
+}
+
+#[test]
+fn audit_d35_confined_reads_accept_literal_local_names() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input%20name.docx"), b"literal name").unwrap();
+    let root = jubarte::publication::OutputRoot::open(dir.path()).unwrap();
+    let read = root.read(Path::new("input%20name.docx"));
+    assert!(read.is_ok(), "a literal input name stays usable: {read:?}");
+    assert_eq!(read.unwrap(), b"literal name");
+    assert!(root.read(Path::new("../escape.docx")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn audit_d13_typed_replacement_preserves_output_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("Hello."))).unwrap();
+    let output = dir.path().join("out.docx");
+    std::fs::write(&output, b"prior output").unwrap();
+    std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let out = jubarte(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "input.docx",
+            "--at",
+            "p0",
+            "--text",
+            "Updated.",
+            "--track",
+            "off",
+            "-o",
+            "out.docx",
+            "--force",
+            "--json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::metadata(output).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn audit_d13_typed_bundle_staging_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("Hello."))).unwrap();
+    let out = jubarte(
+        dir.path(),
+        &[
+            "edit",
+            "rewrite",
+            "input.docx",
+            "--at",
+            "p0",
+            "--text",
+            "Updated.",
+            "--track",
+            "off",
+            "--out-dir",
+            "bundle",
+            "--json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::metadata(dir.path().join("bundle"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn audit_d35_read_for_edit_export_does_not_follow_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), docx(&para("Hello."))).unwrap();
+    let victim = dir.path().join("keep.json");
+    std::fs::write(&victim, b"keep").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.path().join("snapshot.json")).unwrap();
+    let out = jubarte(
+        dir.path(),
+        &[
+            "read",
+            "input.docx",
+            "--for-edit",
+            "-o",
+            "snapshot.json",
+            "--force",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{} {}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(std::fs::read(victim).unwrap(), b"keep");
+    assert!(
+        !dir.path()
+            .join("snapshot.json")
+            .symlink_metadata()
+            .unwrap()
+            .is_symlink()
+    );
+}

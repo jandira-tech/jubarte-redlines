@@ -2213,3 +2213,25 @@ fn review_typed_v1_tracked_paragraph_edits_publish_verified_bytes() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[cfg(unix)]
+#[test]
+fn audit_d13_recording_never_opens_a_predictable_partial_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = dir.path().join("plan.json");
+    let victim = dir.path().join("victim.json");
+    std::fs::write(&victim, "keep").unwrap();
+    std::os::unix::fs::symlink(&victim, jubarte::edit::record::partial_path(&plan)).unwrap();
+    jubarte::edit::record::write_plan(&plan, "{}\n").unwrap();
+    assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep");
+    assert!(!plan.symlink_metadata().unwrap().is_symlink());
+}
+
+#[test]
+fn audit_d13_plan_precommit_error_preserves_io_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let error =
+        jubarte::edit::record::write_plan(&dir.path().join("missing/plan.json"), "{}").unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    assert!(!dir.path().join("missing").exists());
+}

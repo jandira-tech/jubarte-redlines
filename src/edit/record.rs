@@ -139,10 +139,9 @@ pub fn plan_target(plan: &Path) -> PathBuf {
     }
 }
 
-/// The temporary file a recording is written to before it replaces
-/// `target`: hidden, beside it, and named for this process, so it names no
-/// other plan or document. Two recordings into one plan at once are not
-/// serialized: the later rename wins.
+/// Legacy temporary-name helper, retained for API compatibility. Recordings
+/// no longer open this predictable path; publication creates exclusive staging.
+/// Concurrent recordings remain last-writer-wins, not a serialized append.
 pub fn partial_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
@@ -151,20 +150,29 @@ pub fn partial_path(target: &Path) -> PathBuf {
 }
 
 /// Write `json` (a [`Recorded::json`]) to PLAN.json at `plan`, atomically:
-/// a failed write leaves the plan as it was and no partial file behind.
+/// a precommit error leaves the plan as it was; staging cleanup is best effort.
 ///
 /// # Errors
 ///
 /// The I/O error when the partial file cannot be written beside the plan or
-/// renamed into place (a missing directory, no permission).
+/// renamed into place (a missing directory, no permission). After a successful
+/// commit, a durability error explicitly reports the committed plan.
 pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<()> {
-    let target = plan_target(plan);
-    let partial = partial_path(&target);
-    std::fs::write(&partial, json)
-        .and_then(|()| std::fs::rename(&partial, &target))
-        .inspect_err(|_| {
-            let _ = std::fs::remove_file(&partial);
-        })
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let target = plan_target(plan);
+        crate::publication::publish_paths(&[(target, json.as_bytes())], true)
+            .map_err(|error| std::io::Error::new(error.source.kind(), error))
+    }
+    #[cfg(target_arch = "wasm32")]
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!(
+            "cannot publish {} ({} bytes): filesystem publication is unavailable in WASM",
+            plan.display(),
+            json.len()
+        ),
+    ))
 }
 
 /// The operations `ops` recorded into `held` (PLAN.json's text, `None`

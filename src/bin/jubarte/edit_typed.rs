@@ -678,17 +678,21 @@ fn prepare_and_publish(
             ));
         }
         let stage = stage_bundle_dir(dir).map_err(io_error)?;
-        for (path, bytes, _) in &outputs {
-            let name = path.file_name().expect("bundle member");
-            if let Err(e) = std::fs::write(stage.join(name), bytes) {
-                let _ = std::fs::remove_dir_all(&stage);
-                return Err(io_error(e.to_string()));
-            }
-        }
-        let manifest = serde_json::json!({"schema_version":1,"artifacts":receipt.artifacts});
-        if let Err(e) = std::fs::write(stage.join("manifest.json"), manifest.to_string()) {
+        let manifest =
+            serde_json::json!({"schema_version":1,"artifacts":receipt.artifacts}).to_string();
+        let mut files: Vec<_> = outputs
+            .iter()
+            .map(|(path, bytes, _)| {
+                (
+                    stage.join(path.file_name().expect("bundle member")),
+                    bytes.as_slice(),
+                )
+            })
+            .collect();
+        files.push((stage.join("manifest.json"), manifest.as_bytes()));
+        if let Err(error) = jubarte::publication::publish_paths(&files, false) {
             let _ = std::fs::remove_dir_all(&stage);
-            return Err(io_error(e.to_string()));
+            return Err(io_error(error.to_string()));
         }
         publish_dir(&stage, dir, false, || {
             for (path, _, _) in &outputs {

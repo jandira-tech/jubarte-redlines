@@ -1238,9 +1238,48 @@ fn audit_json(py: Python<'_>, docx: &[u8], rules: Option<Vec<String>>) -> PyResu
     serde_json::to_string(&report).map_err(err)
 }
 
+/// Persistent filesystem authority for the hosted MCP adapter. The root is
+/// opened once, not re-resolved by pathname for every write.
+#[pyclass(name = "_OutputRoot")]
+struct PyOutputRoot {
+    root: jubarte::publication::OutputRoot,
+}
+
+#[pymethods]
+impl PyOutputRoot {
+    #[new]
+    fn new(root: &str) -> PyResult<Self> {
+        Ok(Self {
+            root: jubarte::publication::OutputRoot::open(std::path::Path::new(root))?,
+        })
+    }
+
+    fn read<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = py.detach(|| self.root.read(std::path::Path::new(path)))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn publish(
+        &self,
+        py: Python<'_>,
+        files: Vec<(String, Vec<u8>)>,
+        overwrite: bool,
+    ) -> PyResult<()> {
+        py.detach(|| {
+            let files: Vec<_> = files
+                .iter()
+                .map(|(path, bytes)| (std::path::PathBuf::from(path), bytes.as_slice()))
+                .collect();
+            self.root.publish(&files, overwrite)
+        })
+        .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))
+    }
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_class::<PyOutputRoot>()?;
     m.add("JubarteError", m.py().get_type::<JubarteError>())?;
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
