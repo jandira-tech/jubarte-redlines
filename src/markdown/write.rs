@@ -14,7 +14,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
@@ -328,7 +328,6 @@ struct TablePlan {
     /// The table's own borders and its cells' (`borders …`, `cell-borders …`).
     borders: Option<crate::markdown::borders::Sides>,
     cell_borders: Vec<(view_notes::CellsAt, crate::markdown::borders::Sides)>,
-    row_borders: Vec<(usize, crate::markdown::borders::Sides)>,
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
     styles: HashMap<usize, String>,
     /// A comment's range runs through the table (`in c5`).
@@ -759,7 +758,6 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         style: line.style,
         borders: line.borders,
         cell_borders: line.cell_borders,
-        row_borders: line.row_borders,
         in_comment: line.in_comment,
         fmt: line.fmt,
         grid_fmt: line.grid_fmt,
@@ -1194,8 +1192,6 @@ struct Writer<'o, 'a> {
     paragraph_in_comments: Option<Vec<u32>>,
     /// The open paragraph ends in a page break (`page-break`).
     page_break_due: bool,
-    /// That page break's tracked change (`page-break-del r5 @AC`).
-    page_break_change: Option<(Kind, view_notes::Tag)>,
     /// The view's `authors:` table, by handle (`AC` → Ann Counsel).
     authors: HashMap<String, view_notes::Author>,
     /// The changes of each author the view dates with a range of days, in
@@ -1290,7 +1286,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             id_line: None,
             paragraph_in_comments: None,
             page_break_due: false,
-            page_break_change: None,
             run_after_close: false,
             highlight: None,
             groups: 0,
@@ -1500,17 +1495,15 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
-                    let border = self
-                        .document
-                        .table_style
-                        .as_ref()
-                        .filter(|(legend, _)| legend == id)
-                        .and_then(|(_, border)| *border);
-                    // Word's thin Table Grid, unless the legend gives it a
-                    // border of its own (`TableGrid, all borders 1.5pt`).
-                    if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
+                    if id == "TableGrid" {
                         self.document.styles.insert("TableGrid");
                     } else {
+                        let border = self
+                            .document
+                            .table_style
+                            .as_ref()
+                            .filter(|(legend, _)| legend == id)
+                            .and_then(|(_, border)| *border);
                         self.document.table_styles.insert(id.clone(), border);
                     }
                 }
@@ -1556,21 +1549,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             Tag::Superscript => self.superscript += 1,
             Tag::Subscript => self.subscript += 1,
             Tag::Link {
-                link_type,
-                dest_url,
-                title,
-                ..
+                dest_url, title, ..
             } => {
                 let title = (!title.is_empty()).then(|| critic::decode(&title));
-                let dest = critic::decode(&dest_url);
-                // `<ann@x.test>` is an email autolink: its destination is the
-                // address, and the link Word stores is `mailto:` plus that address.
-                let dest = if link_type == LinkType::Email && !dest.starts_with("mailto:") {
-                    format!("mailto:{dest}")
-                } else {
-                    dest
-                };
-                self.link_start(&dest, title);
+                self.link_start(&critic::decode(&dest_url), title);
             }
             Tag::Image { dest_url, .. } => {
                 if self.image.is_none() {
@@ -1931,10 +1913,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             paragraph.align = line.align.or(paragraph.align);
             self.page_break_due = line.page_break;
-            self.page_break_change = line.page_break_change.clone().map(|(inserted, tag)| {
-                let kind = if inserted { Kind::Insert } else { Kind::Delete };
-                (kind, tag)
-            });
             paragraph.section_break = line.section_break;
             paragraph.ind = Indent {
                 first_line: line.first_line,
@@ -2057,13 +2035,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.document.reserved_ids.insert(id);
         }
         let (borders, cell_borders) = (plan.borders.clone(), plan.cell_borders.clone());
-        let row_borders = plan.row_borders.iter().cloned().collect();
         TableFormats {
             table: table.map(|tag| self.format_mark(&tag)),
             grid,
             borders,
             cell_borders,
-            row_borders,
             row_marks: row_marks
                 .into_iter()
                 .map(|(row, (inserted, tag))| {
@@ -2148,29 +2124,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             return;
         };
         self.label_prefix = None;
-        let page_break_change = self.page_break_change.take().map(|(kind, tag)| {
-            // The change the text before it ends in, when the tag names
-            // it too: one `w:del` holds both, as in the source.
-            let before = self.story().iter().rev().find_map(|item| match item {
-                Item::Run(run) => Some(run.change),
-                _ => None,
-            });
-            match before.flatten() {
-                Some((k, serial))
-                    if k == kind
-                        && !tag.ids.is_empty()
-                        && self.document.revision_ids.get(&serial) == Some(&tag.ids) =>
-                {
-                    (k, serial)
-                }
-                _ => (kind, self.tag_serial(&tag)),
-            }
-        });
         if std::mem::take(&mut self.page_break_due) {
             self.story().push(Item::Run(Run {
                 content: Content::PageBreak,
                 format: RunFormat::default(),
-                change: page_break_change,
+                change: None,
                 highlight: None,
             }));
         }
@@ -3212,25 +3170,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .warnings
                         .push(format!("track_changes: {value} ignored: it is on or off")),
                 },
-                "notes" => {
-                    match view_notes::empty_notes(text) {
-                        Ok(kinds) => self.document.empty_notes = kinds,
-                        Err(why) => self.document.warnings.push(format!(
-                            "notes: {why}, so the notes parts it names are not made"
-                        )),
-                    }
-                    let formats = view_notes::note_formats(text);
-                    for kind in ["footnote", "endnote"] {
-                        let count = formats.iter().filter(|(k, _)| *k == kind).count();
-                        if count > 2 {
-                            self.document.warnings.push(format!(
-                                "notes: fmt: {count} changes for the {kind}s' two separators; \
-                                 the rest are not written"
-                            ));
-                        }
-                    }
-                    self.document.note_formats = formats;
-                }
+                "notes" => match view_notes::empty_notes(text) {
+                    Ok(kinds) => self.document.empty_notes = kinds,
+                    Err(why) => self.document.warnings.push(format!(
+                        "notes: {why}, so the notes parts it names are not made"
+                    )),
+                },
                 "comments" => {
                     let value = view_notes::scalar_and_comment(text).0;
                     let (all, each) = view_notes::comment_styles(&value);

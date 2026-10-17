@@ -476,10 +476,8 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     # The shared parser resolved the target: ``output`` for the one
     # document (FILE_modified.docx by default), ``out_dir`` for the bundle.
     out_dir: Path | None = args.out_dir
-    source_bytes = doc.to_bytes()
-    parsed = json.loads(plan_text)
     if out_dir is None:
-        return _write_edited(args, args.output, result, notes, source_bytes, parsed)
+        return _write_edited(args, args.output, result, notes)
     if out_dir.exists() and not args.force:
         raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
     if out_dir.resolve() == args.file.resolve().parent:
@@ -517,24 +515,6 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
     if args.quiet:
         return EXIT_OK
-    # A pure accept/reject prints the resolved lines on stdout, nothing
-    # else; the bundle's report.jsonl still holds the summary.
-    if _is_pure_resolution(parsed, result):
-        try:
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source_bytes,
-                json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
-            )
-            names = [name for name, _ in outputs] + ["report.jsonl"]
-            sys.stdout.flush()
-            print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
-            for note in _edit_notes(notes, result):
-                print(note, file=sys.stderr)
-            sys.stdout.write(text)
-            return EXIT_OK
-        except Exception:
-            pass
     print(summary)
     # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
@@ -543,7 +523,7 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     for note in _edit_notes(notes, result):
         print(note, file=sys.stderr)
     shown = out_dir / ("clean.docx" if editing else "redline.docx")
-    _print_resolution_or_view(source_bytes, parsed, result, editing, shown)
+    _print_changed_view(result, editing, shown)
     return EXIT_OK
 
 
@@ -556,38 +536,6 @@ def _edit_notes(notes: list[str], result: EditResult) -> list[str]:
             given, read_as = json.dumps(outcome.anchor_given, ensure_ascii=False), json.dumps(outcome.anchor_read_as, ensure_ascii=False)
             lines.append(f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)")
     return lines
-
-
-def _is_pure_resolution(parsed: object, result: EditResult) -> bool:
-    """A pure ``--accept``/``--reject`` with no content operation prints the
-    resolved lines, not the view; ordinary edits keep the view."""
-    if not isinstance(parsed, dict):
-        return False
-    if parsed.get("operations"):
-        return False
-    if not parsed.get("resolve_revisions"):
-        return False
-    resolved = result.report.resolved_revisions
-    return bool(resolved.accepted or resolved.rejected)
-
-
-def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult, editing: bool, shown: Path) -> None:
-    """The resolved lines for a pure accept/reject, or the changed view
-    otherwise. Failures fall back to the view, as the binary does."""
-    from . import _native
-
-    if _is_pure_resolution(parsed, result):
-        try:
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source,
-                json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
-            )
-            sys.stdout.write(text)
-            return
-        except Exception:
-            pass
-    _print_changed_view(result, editing, shown)
 
 
 def _print_changed_view(result: EditResult, editing: bool, shown: Path) -> None:
@@ -603,12 +551,11 @@ def _print_changed_view(result: EditResult, editing: bool, shown: Path) -> None:
     sys.stdout.write(view)
 
 
-def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, notes: list[str], source: bytes | None = None, parsed: object = None) -> int:
+def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, notes: list[str]) -> int:
     """``edit`` and ``add`` without --out-dir, as the binary: the redline (in
     editing mode, the result) as one .docx at ``path``, its PDF and PNG pages
     beside it, the ``wrote`` lines and notes on stderr, the changed blocks'
-    view of that file on stdout (a pure accept/reject prints the resolved
-    lines)."""
+    view of that file on stdout."""
     editing = bool(args.editing_mode)
     chosen = result.clean if editing else result.redline
     document = chosen.to_bytes()
@@ -649,10 +596,7 @@ def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, note
         print(f"wrote {pattern} (png, {png_count} page{'' if png_count == 1 else 's'}, {args.dpi:g} dpi)", file=sys.stderr)
     for note in _edit_notes(notes, result):
         print(note, file=sys.stderr)
-    if source is not None:
-        _print_resolution_or_view(source, parsed, result, editing, path)
-    else:
-        _print_changed_view(result, editing, path)
+    _print_changed_view(result, editing, path)
     return EXIT_OK
 
 

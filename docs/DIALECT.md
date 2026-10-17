@@ -54,8 +54,7 @@ inserted or deleted row.
 **Id lines**: `<!-- pN[ Style][, clause…] -->` above every body paragraph
 
 `left|center|right|justify` · `first-line|hanging|left|right Xin` ·
-`num "1)"` | `bullet` · `level N` · `page-break` |
-`page-break-ins|page-break-del TAG` · `section-break` ·
+`num "1)"` | `bullet` · `level N` · `page-break` · `section-break` ·
 `break-ins|break-del TAGS` · `fmt TAGS` · `rev TAGS` · `comments cN` ·
 `in cN` · `empty` (`<!-- p4-p7 empty -->`)
 

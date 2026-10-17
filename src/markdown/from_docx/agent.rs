@@ -964,7 +964,7 @@ fn split_story_text(line: &str) -> (String, Vec<String>) {
                 .find(|&(_, c)| {
                     let done = c == stop && !quoted;
                     if quoted {
-                        quoted = c != '"' || escaped;
+                        quoted = !(c == '"' && !escaped);
                         escaped = c == '\\' && !escaped;
                     } else {
                         quoted = c == '"';
@@ -1147,34 +1147,6 @@ fn count(e: &Element, hit: &dyn Fn(&Element) -> bool) -> usize {
         .filter(|c| !c.is("txbxContent"))
         .map(|c| usize::from(hit(c)) + count(c, hit))
         .sum()
-}
-
-/// The first page break of `p` inside an insertion or deletion: the
-/// change's kind (`ins`, `del`; a move as its side) and tag.
-fn tracked_page_break(p: &Element, handles: &Handles) -> Option<(&'static str, String)> {
-    fn walk(
-        e: &Element,
-        within: Option<(&'static str, &Element)>,
-        handles: &Handles,
-    ) -> Option<(&'static str, String)> {
-        for child in shown_children(e) {
-            if child.is("pPr") || child.is("txbxContent") || child.local().ends_with("PrChange") {
-                continue;
-            }
-            if is_page_break(child) {
-                if let Some((kind, change)) = within {
-                    return Some((kind, tag_of(change, handles)));
-                }
-                continue;
-            }
-            let within = kind_of(child.local()).map_or(within, |kind| Some((kind, child)));
-            if let Some(found) = walk(child, within, handles) {
-                return Some(found);
-            }
-        }
-        None
-    }
-    walk(p, None, handles)
 }
 
 fn is_page_break(e: &Element) -> bool {
@@ -1486,15 +1458,8 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if f.marker.is_some() && f.level > 0 {
         clauses.push(format!("level {}", f.level));
     }
-    // A page break in a tracked change names it: `rev` would say only
-    // that some change shows no text, not that it is the break's.
-    let tracked_break = (!f.resolved && f.page_break)
-        .then(|| tracked_page_break(p, handles))
-        .flatten();
-    match &tracked_break {
-        Some((kind, tag)) => clauses.push(format!("page-break-{kind} {}", format_tag(tag))),
-        None if f.page_break => clauses.push("page-break".to_string()),
-        None => {}
+    if f.page_break {
+        clauses.push("page-break".to_string());
     }
     if has_section_break(p) {
         clauses.push("section-break".to_string());
@@ -1510,14 +1475,8 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
-    let unshown: Vec<String> = f
-        .unshown
-        .iter()
-        .filter(|tag| tracked_break.as_ref().is_none_or(|(_, b)| b != *tag))
-        .cloned()
-        .collect();
-    if !f.resolved && !unshown.is_empty() {
-        clauses.push(format!("rev {}", format_tags(&unshown)));
+    if !f.resolved && !f.unshown.is_empty() {
+        clauses.push(format!("rev {}", format_tags(f.unshown)));
     }
     if f.resolved {
         let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();
@@ -1614,11 +1573,6 @@ fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
                     side.attr("sz"),
                     side.attr("color"),
                     side.attr("space"),
-                )
-                .with_theme(
-                    side.attr("themeColor"),
-                    side.attr("themeTint"),
-                    side.attr("themeShade"),
                 );
                 Some((name, border))
             })
@@ -1629,28 +1583,6 @@ fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
     let own = read(tbl.path(&["tblPr", "tblBorders"]), &TABLE_SIDES);
     if !own.is_empty() {
         clauses.push(format!("borders {}", borders::describe(&own, &TABLE_SIDES)));
-    }
-    // A row's own table borders (`w:tblPrEx/w:tblBorders`), the rows that
-    // share one in one group: `row-borders top double 0.5pt in t0.row1`.
-    let mut row_groups: Vec<(String, Vec<String>)> = Vec::new();
-    for (r, tr) in rows.iter().enumerate() {
-        let sides = read(tr.path(&["tblPrEx", "tblBorders"]), &TABLE_SIDES);
-        if sides.is_empty() {
-            continue;
-        }
-        let text = borders::describe(&sides, &TABLE_SIDES);
-        let at = format!("t{t}.row{r}");
-        match row_groups.iter_mut().find(|(g, _)| *g == text) {
-            Some((_, rows)) => rows.push(at),
-            None => row_groups.push((text, vec![at])),
-        }
-    }
-    if !row_groups.is_empty() {
-        let groups: Vec<String> = row_groups
-            .iter()
-            .map(|(text, at)| format!("{text} in {}", at.join(" ")))
-            .collect();
-        clauses.push(format!("row-borders {}", groups.join("; ")));
     }
     // Each cell's borders, as text, by row; the cells that share one print
     // as one group, a whole row as the row, every cell as `all`.

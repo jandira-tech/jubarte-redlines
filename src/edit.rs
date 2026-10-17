@@ -44,7 +44,6 @@ mod images;
 mod notes;
 mod origin;
 pub mod record;
-pub mod resolution;
 mod rewrite;
 mod runs;
 mod sections;

@@ -957,7 +957,7 @@ fn run_edit(
     // outputs (D15).
     let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
     let dir = match job.target {
-        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source, plan),
+        EditTarget::Single(path) => return write_edited(job, path, &result, notes),
         EditTarget::Bundle(dir) => dir,
     };
     if dir.exists() && !job.force {
@@ -1073,28 +1073,6 @@ fn run_edit(
     if job.quiet {
         return Ok(());
     }
-    // A pure accept/reject prints the resolved lines on stdout, nothing
-    // else; the bundle's report.jsonl still holds the summary.
-    if is_pure_resolution(plan, &result)
-        && let Ok(text) =
-            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
-    {
-        let names: Vec<&str> = outputs
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .chain(["report.jsonl"])
-            .collect();
-        eprintln!(
-            "wrote {} ({} files: {})",
-            out_dir.display(),
-            names.len(),
-            names.join(", ")
-        );
-        for note in edit_notes(notes, &result) {
-            eprintln!("{note}");
-        }
-        return write_stdout(&text).map_err(fail);
-    }
     let summary = jsonl.lines().last().unwrap_or("").to_string();
     outln!("{summary}");
     let names: Vec<&str> = outputs
@@ -1165,47 +1143,15 @@ fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<Strin
     lines
 }
 
-/// Whether `plan` resolved only revisions and `result` resolved some: an
-/// `edit -p rN --accept/--reject` with no content operation prints the
-/// resolved lines, not the view. Ordinary edits keep the view.
-fn is_pure_resolution(plan: &jubarte::edit::EditPlan, result: &jubarte::edit::EditResult) -> bool {
-    plan.operations.is_empty()
-        && plan.resolve_revisions.is_some()
-        && !result.report.resolved_revisions.is_empty()
-}
-
-/// The resolved lines for a pure accept/reject, or the changed view
-/// otherwise. A view that cannot be read back is a warning, not a failed
-/// edit; lines that cannot be built fall back to the view the same way.
-fn resolved_or_view(
-    source: &[u8],
-    plan: &jubarte::edit::EditPlan,
-    result: &jubarte::edit::EditResult,
-    author: &str,
-    accepted: bool,
-    shown: Option<&str>,
-) -> Result<String, String> {
-    if is_pure_resolution(plan, result)
-        && let Ok(text) =
-            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
-    {
-        return Ok(text);
-    }
-    jubarte::markdown::changed_view(&result.redline, author, accepted, shown)
-        .map_err(|e| format!("the changed blocks cannot be shown: {e}"))
-}
-
 /// `edit` and `add` without --out-dir: the redline (in editing mode, the
 /// result) as one .docx at `path`, its PDF and PNG pages beside it, the
 /// `wrote` lines and notes on stderr, and the changed blocks' view of that
-/// file on stdout (a pure accept/reject prints the resolved lines).
+/// file on stdout.
 fn write_edited(
     job: &EditJob<'_>,
     path: &Path,
     result: &jubarte::edit::EditResult,
     notes: &[String],
-    source: &[u8],
-    plan: &jubarte::edit::EditPlan,
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
     let document = match job.mode {
@@ -1292,18 +1238,16 @@ fn write_edited(
         eprintln!("{note}");
     }
     // The file is written: a view that cannot be read back is a warning,
-    // not a failed edit. A pure accept/reject prints the resolved lines.
-    match resolved_or_view(
-        source,
-        plan,
-        result,
+    // not a failed edit.
+    match jubarte::markdown::changed_view(
+        &result.redline,
         &result.report.author,
         job.mode == Mode::Editing,
         Some(&path.display().to_string()),
     ) {
-        Ok(text) => write_stdout(&text).map_err(fail),
+        Ok(view) => write_stdout(&view).map_err(fail),
         Err(e) => {
-            eprintln!("warning: {e}");
+            eprintln!("warning: the changed blocks cannot be shown: {e}");
             Ok(())
         }
     }
@@ -2045,7 +1989,6 @@ fn run_convert_any(
                 job.options.comments == jubarte::convert::CommentPlacement::End,
                 "--move-comments",
             ),
-            (job.options.comment_notes, "--comment-notes"),
             (job.options.changed_only, "--changed-pages"),
             (job.pages.is_some(), "--pages"),
         ] {

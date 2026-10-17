@@ -144,7 +144,7 @@ styles:
 <!-- p149 NoSpacing break-del r279 @SW -->
 {--Author: Hans Schildermans (2021) – e-book--}{>>r280 @SW<<}
 
-<!-- p150 page-break-del r282 @SW, break-del r281 @SW -->
+<!-- p150 page-break, break-del r281 @SW, rev r282 @SW -->
 
 <!-- p151 break-del r283 @SW -->
 # {--Diversity, Inclusion & Social Justice: Othering versus belonging | Summer 2024--}{>>r284 @SW<<}
