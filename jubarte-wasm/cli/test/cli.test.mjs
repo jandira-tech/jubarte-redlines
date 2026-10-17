@@ -40,6 +40,28 @@ function run(...args) {
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
+// Integration-only syscall hooks: Node's own mock utility delegates to the
+// real filesystem, but lets us stop at an exact boundary without timing races.
+function runWithPlanHook(plan, hook, args, context) {
+  const source = `
+    import assert from "node:assert/strict";
+    import fs from "node:fs";
+    import { mock } from "node:test";
+    const plan = ${JSON.stringify(plan)};
+    const verify = (${hook.toString()})(fs, mock, assert, plan, ${JSON.stringify(context) ?? "undefined"});
+    process.argv = [process.execPath, ${JSON.stringify(bin)}, ...${JSON.stringify(args)}];
+    try {
+      await import(${JSON.stringify(bin)});
+      verify();
+      process.exitCode = 0;
+    } finally {
+      mock.restoreAll();
+    }
+  `;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", source], { encoding: "utf8", cwd: tmp });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
 /// One part of a .docx, by name, read from its central directory.
 function part(file, name) {
   const zip = fs.readFileSync(file);
@@ -653,6 +675,195 @@ test("edit and add --plan record into one plan that --consume deletes once appli
   assert.ok(view.includes(`{~~${word}~>Changed~~}`) && view.includes("Why?"), view);
 });
 
+test("--consume closes the plan descriptor when applyEdit throws (integration)", () => {
+  const plan = path.join(tmp, "consume-throws.json");
+  const out = path.join(tmp, "consume-throws.docx");
+  const recorded = run("edit", untracked, "--plan", plan, "-p", "p1", "--content", "Changed.");
+  assert.equal(recorded.code, 0, recorded.err);
+  fs.writeFileSync(out, "existing output");
+  const result = runWithPlanHook(plan, (fs, mock, assert, plan) => {
+    let planFd;
+    const open = fs.openSync;
+    mock.method(fs, "openSync", (name, ...args) => {
+      const fd = open(name, ...args);
+      if (name === plan && planFd === undefined) planFd = fd;
+      return fd;
+    });
+    return () => {
+      assert.equal(process.exitCode, 2, "applyEdit must throw the existing-output usage error");
+      assert.notEqual(planFd, undefined, "the plan was opened");
+      assert.throws(() => fs.fstatSync(planFd), { code: "EBADF" }, "the plan descriptor must be closed on throw");
+    };
+  }, ["edit", untracked, "--plan", plan, "--consume", "-o", out]);
+  assert.equal(result.code, 0, result.err);
+  assert.match(result.err, /already exists \(use --force to overwrite\)/);
+  assert.ok(fs.existsSync(plan), "a failed application keeps its plan");
+  assert.equal(fs.readFileSync(out, "utf8"), "existing output");
+});
+
+test("--consume refuses an identical-bytes replacement between open and read (integration)", () => {
+  const plan = path.join(tmp, "consume-open-swap.json");
+  const out = path.join(tmp, "consume-open-swap.docx");
+  assert.equal(run("edit", untracked, "--plan", plan, "-p", "p1", "--content", "Changed.").code, 0);
+  const held = fs.readFileSync(plan);
+  const result = runWithPlanHook(plan, (fs, mock, assert, plan) => {
+    const open = fs.openSync;
+    let swapped = false, planFd;
+    const original = fs.readFileSync(plan);
+    mock.method(fs, "openSync", (name, ...args) => {
+      const fd = open(name, ...args);
+      if (name === plan && !swapped) {
+        swapped = true;
+        planFd = fd;
+        fs.writeFileSync(`${plan}.replacement`, original);
+        fs.renameSync(`${plan}.replacement`, plan);
+        assert.notEqual(fs.fstatSync(fd, { bigint: true }).ino, fs.lstatSync(plan, { bigint: true }).ino);
+      }
+      return fd;
+    });
+    return () => {
+      assert.ok(swapped);
+      assert.equal(process.exitCode, 1, "a changed plan identity must be refused before applyEdit");
+      assert.throws(() => fs.fstatSync(planFd), { code: "EBADF" });
+    };
+  }, ["edit", untracked, "--plan", plan, "--consume", "-o", out, "-q"]);
+  assert.equal(result.code, 0, result.err);
+  assert.match(result.err, /reading .*: .*changed while it was being read/);
+  assert.deepEqual(fs.readFileSync(plan), held);
+  assert.ok(!fs.existsSync(out));
+});
+
+for (const change of ["rename", "overwrite", "append"]) {
+  test(`--consume keeps a plan changed by ${change} after applying (integration)`, () => {
+    const plan = path.join(tmp, `consume-${change}.json`);
+    const out = path.join(tmp, `consume-${change}.docx`);
+    assert.equal(run("edit", untracked, "--plan", plan, "-p", "p1", "--content", "Changed.").code, 0);
+    const held = fs.readFileSync(plan);
+    // The CLI writes synchronously. Interpose only at that write to reproduce
+    // another actor replacing the plan, including an identical-bytes rename.
+    const hook = (fs, mock, assert, plan, change) => {
+      const write = fs.writeFileSync;
+      let changed = false, planFd;
+      const open = fs.openSync;
+      mock.method(fs, "openSync", (name, ...args) => {
+        const fd = open(name, ...args);
+        if (name === plan && planFd === undefined) planFd = fd;
+        return fd;
+      });
+      mock.method(fs, "writeFileSync", (name, ...args) => {
+        const result = write(name, ...args);
+        if (!changed && String(name).endsWith(".docx")) {
+          changed = true;
+          assert.doesNotThrow(() => fs.fstatSync(planFd), "keep the descriptor open until deletion");
+          const original = fs.readFileSync(plan);
+          const before = fs.lstatSync(plan, { bigint: true });
+          if (change === "rename") {
+            write(`${plan}.replacement`, original);
+            fs.renameSync(`${plan}.replacement`, plan);
+            assert.notEqual(fs.lstatSync(plan, { bigint: true }).ino, before.ino);
+          } else if (change === "append") {
+            fs.appendFileSync(plan, " ");
+          } else {
+            write(plan, Buffer.alloc(original.length, 0x20));
+            assert.equal(fs.lstatSync(plan, { bigint: true }).ino, before.ino);
+          }
+        }
+        return result;
+      });
+      return () => {
+        assert.ok(changed, "the edit wrote its output");
+        assert.equal(process.exitCode, 1, "a changed plan must be kept");
+        assert.throws(() => fs.fstatSync(planFd), { code: "EBADF" });
+      };
+    };
+    const result = runWithPlanHook(plan, hook,
+      ["edit", untracked, "--plan", plan, "--consume", "-o", out, "-q"], change);
+    assert.equal(result.code, 0, result.err);
+    assert.match(result.err, /it no longer holds the plan \(an output was written over it\?\)/);
+    assert.ok(fs.existsSync(out), "the edit committed before the refusal to delete");
+    const current = fs.readFileSync(plan);
+    if (change === "rename") assert.deepEqual(current, held, "identical bytes on a new inode are preserved");
+    else assert.ok(!current.equals(held), "changed content is preserved");
+  });
+}
+
+test("--consume holds its descriptor through unlink and rereads from offset zero (integration)", () => {
+  const plan = path.join(tmp, "consume-unlink.json");
+  const out = path.join(tmp, "consume-unlink.docx");
+  assert.equal(run("edit", untracked, "--plan", plan, "-p", "p1", "--content", "Changed.").code, 0);
+  const result = runWithPlanHook(plan, (fs, mock, assert, plan) => {
+    const open = fs.openSync, read = fs.readSync, unlink = fs.unlinkSync;
+    let planFd, positional = false, deleted = false;
+    mock.method(fs, "openSync", (name, ...args) => {
+      const fd = open(name, ...args);
+      if (name === plan && planFd === undefined) planFd = fd;
+      return fd;
+    });
+    mock.method(fs, "readSync", (fd, buffer, offset, length, position) => {
+      if (fd === planFd && position === 0) positional = true;
+      return read(fd, buffer, offset, length, position);
+    });
+    mock.method(fs, "unlinkSync", (name) => {
+      if (name === plan) {
+        assert.doesNotThrow(() => fs.fstatSync(planFd), "the plan fd must stay open until unlink");
+        assert.ok(positional, "the consumed fd must be reread from position zero");
+        deleted = true;
+      }
+      return unlink(name);
+    });
+    return () => {
+      assert.equal(process.exitCode, 0);
+      assert.ok(deleted, "the unchanged plan must be consumed");
+      assert.throws(() => fs.fstatSync(planFd), { code: "EBADF" });
+    };
+  }, ["edit", untracked, "--plan", plan, "--consume", "-o", out, "-q"]);
+  assert.equal(result.code, 0, result.err);
+  assert.ok(!fs.existsSync(plan));
+});
+
+for (const identity of ["zero-inos", "different-dev"]) {
+  test(`--consume identity handles ${identity} (integration)`, () => {
+    const plan = path.join(tmp, `consume-${identity}.json`);
+    const out = path.join(tmp, `consume-${identity}.docx`);
+    assert.equal(run("edit", untracked, "--plan", plan, "-p", "p1", "--content", "Changed.").code, 0);
+    const result = runWithPlanHook(plan, (fs, mock, assert, plan, identity) => {
+      const open = fs.openSync, fstat = fs.fstatSync, lstat = fs.lstatSync;
+      let planFd, checks = 0;
+      mock.method(fs, "openSync", (name, ...args) => {
+        const fd = open(name, ...args);
+        if (name === plan && planFd === undefined) planFd = fd;
+        return fd;
+      });
+      mock.method(fs, "fstatSync", (fd, options) => {
+        const stat = fstat(fd, options);
+        if (fd === planFd && options?.bigint) {
+          stat.ino = identity === "zero-inos" ? 0n : 9007199254740993n;
+          stat.dev = 9007199254740992n;
+        }
+        return stat;
+      });
+      mock.method(fs, "lstatSync", (name, options) => {
+        const stat = lstat(name, options);
+        if (name === plan) {
+          assert.equal(options?.bigint, true);
+          checks++;
+          stat.ino = identity === "zero-inos" ? 0n : 9007199254740993n;
+          stat.dev = 9007199254740993n;
+        }
+        return stat;
+      });
+      return () => {
+        assert.equal(process.exitCode, identity === "zero-inos" ? 0 : 1);
+        assert.equal(checks, identity === "zero-inos" ? 2 : 1, "identity is checked on open and before delete");
+        assert.throws(() => fs.fstatSync(planFd), { code: "EBADF" });
+      };
+    }, ["edit", untracked, "--plan", plan, "--consume", "-o", out, "-q"], identity);
+    assert.equal(result.code, 0, result.err);
+    assert.equal(fs.existsSync(plan), identity !== "zero-inos");
+    assert.equal(fs.existsSync(out), identity === "zero-inos");
+  });
+}
+
 test("help, version and usage errors", () => {
   const help = run("--help");
   assert.equal(help.code, 0);
@@ -1009,8 +1220,10 @@ test("compare reports the bytes a Markdown redline takes (integration)", () => {
   fs.writeFileSync(b, "Prazo de 45 días — ok.\n");
   const result = run("compare", a, b, "-d", "1970-01-01T00:00:00Z", "-o", out);
   assert.equal(result.code, 0, result.err);
-  const size = fs.statSync(out).size;
-  assert.ok(size > fs.readFileSync(out, "utf8").length);
+  const fd = fs.openSync(out, "r");
+  const size = fs.fstatSync(fd).size;
+  assert.ok(size > fs.readFileSync(fd, "utf8").length);
+  fs.closeSync(fd);
   assert.equal(result.out, "");
   assert.equal(result.err, `wrote ${out} (md, ${size} bytes)\n`);
 });
