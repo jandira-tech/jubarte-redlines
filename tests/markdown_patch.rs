@@ -422,3 +422,52 @@ fn a_changes_author_after_a_comment_moved_out_of_it_still_names_it() {
         "{patch}"
     );
 }
+
+#[test]
+fn a_substitution_by_two_authors_names_each_side() {
+    // The view names a substitution's sides one by one when two authors
+    // made them, old then new: the second note is the insertion's author,
+    // never a comment, and each side is a change of its own.
+    for (ana, bo) in [
+        (
+            "Ana Lima (2026-09-01T00:35:00Z)",
+            "Bo Chen (2026-09-02T00:00:00Z)",
+        ),
+        (
+            "r1 Ana Lima (2026-09-01T00:35:00Z)",
+            "r2 Bo Chen (2026-09-02T00:00:00Z)",
+        ),
+    ] {
+        let patch = patch_critic(
+            &format!("A {{~~old~>new~~}}{{>>{ana}<<}}{{>>{bo}<<}} d.\n"),
+            &options("a.md", "a.md"),
+        );
+        assert!(
+            patch.render(0).ends_with(
+                "A [-old-]{>>Ana Lima (2026-09-01T00:35:00Z)<<}\
+                 {+new+}{>>Bo Chen (2026-09-02T00:00:00Z)<<} d.\n"
+            ),
+            "{patch}"
+        );
+        let hunk = &patch.hunks[0];
+        assert!(hunk.comments.is_empty(), "{:?}", hunk.comments);
+        let sides: Vec<_> = hunk
+            .changes
+            .iter()
+            .map(|c| (c.old.as_str(), c.new.as_str(), c.author.as_str()))
+            .collect();
+        assert_eq!(sides, [("old", "", "Ana Lima"), ("", "new", "Bo Chen")]);
+    }
+    // One note still names the whole substitution.
+    let patch = patch_critic(
+        "A {~~old~>new~~}{>>Bo Chen (2026-09-02T00:00:00Z)<<} d.\n",
+        &options("a.md", "a.md"),
+    );
+    assert!(
+        patch
+            .render(0)
+            .ends_with("A [-old-]{+new+}{>>Bo Chen (2026-09-02T00:00:00Z)<<} d.\n"),
+        "{patch}"
+    );
+    assert_eq!(patch.hunks[0].changes.len(), 1);
+}

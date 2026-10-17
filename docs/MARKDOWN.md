@@ -721,6 +721,8 @@ Payment is due in [-30-]{+45+} days.
 - The `+++` line names who made the changes and when, once. A change by
   anyone else (a tracked change already in a Word document) is followed
   by `{>>Name (date)<<}`, and every comment carries its author and date.
+  A substitution whose two sides two people made is two changes, each
+  named after itself: `[-old-]{>>Ana (date)<<}{+new+}{>>Bo (date)<<}`.
   `-a/--author` defaults to Redline; `-d/--datetime` to now.
 - Changes grow to whole words, numbers, formatting spans and links, so
   `[-**twelve**-]{+**eighteen**+}` rather than a change inside the bold.
