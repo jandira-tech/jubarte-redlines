@@ -139,7 +139,11 @@ fn display(by: &str) -> String {
     let one = |part: &str| {
         if by.starts_with(PLAIN) {
             let printed = super::agent::format_plain_tag(part);
-            return fold.then(|| escaped_author(&printed)).unwrap_or(printed);
+            return if fold {
+                escaped_author(&printed)
+            } else {
+                printed
+            };
         }
         let (t, date) = tag_parts(part);
         let mut out = super::agent::format_tag(t);

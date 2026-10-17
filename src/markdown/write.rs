@@ -3514,6 +3514,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.document.comments.push(comment);
         }
         let mut body = std::mem::take(&mut self.body);
+        clear_continued_marks(&mut body, &self.document);
         finish_story(&mut body);
         let targets: HashSet<&str> = body
             .iter()
@@ -4102,6 +4103,68 @@ fn renumber_comments(document: &mut Document) {
 }
 
 /// A story's last paragraph mark cannot be inserted or deleted in Word; a
+/// A paragraph changed whole whose change another paragraph continues
+/// keeps no mark of its own: the view names the same ids there — one
+/// revision across paragraphs, Word's one `w:id` on each — and the break
+/// between them is not the revision's.
+fn clear_continued_marks(items: &mut [Item], document: &Document) {
+    // Each serial's paragraphs: the runs that carry it and the marks that
+    // name it.
+    let mut paragraphs: HashMap<u32, HashSet<usize>> = HashMap::new();
+    let mut at = 0usize;
+    for item in items.iter() {
+        match item {
+            Item::Paragraph(paragraph) => {
+                at += 1;
+                if let Some(serial) = paragraph.mark_by {
+                    paragraphs.entry(serial).or_default().insert(at);
+                }
+            }
+            Item::Run(run) => {
+                if let Some((_, serial)) = run.change {
+                    paragraphs.entry(serial).or_default().insert(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    // A wrap's outer change is used wherever the change it holds is.
+    for (inner, (_, outer)) in document.wraps.iter() {
+        if let Some(ats) = paragraphs.get(inner).cloned() {
+            paragraphs.entry(*outer).or_default().extend(ats);
+        }
+    }
+    // Another serial naming any of this one's ids, used in another
+    // paragraph, continues it there.
+    let continued = |serial: u32, at: usize| {
+        document.revision_ids.get(&serial).is_some_and(|ids| {
+            document.revision_ids.iter().any(|(other, named)| {
+                *other != serial
+                    && named.iter().any(|id| ids.contains(id))
+                    && paragraphs
+                        .get(other)
+                        .is_some_and(|serials| serials.iter().any(|p| *p != at))
+            })
+        })
+    };
+    let mut at = 0usize;
+    for item in items.iter_mut() {
+        let Item::Paragraph(paragraph) = item else {
+            continue;
+        };
+        at += 1;
+        if !paragraph.mark_fixed
+            && paragraph
+                .mark_by
+                .is_some_and(|serial| continued(serial, at))
+        {
+            paragraph.mark = None;
+            paragraph.mark_by = None;
+            paragraph.whole = false;
+        }
+    }
+}
+
 /// last paragraph that was added or removed whole puts its change on the
 /// mark before it instead. A story that ends in a table gets the empty
 /// paragraph Word ends one with.

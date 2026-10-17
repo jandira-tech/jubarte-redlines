@@ -423,10 +423,18 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
-    /// Every revision `w:id` written so far: none is written twice, not
-    /// even one the view names twice (`r43+43`), which Word's own files
-    /// never repeat (see `validate::ring1`).
+    /// Every revision `w:id` written so far, and the paragraph it was
+    /// written in: none is written twice within one paragraph, not even
+    /// one the view names twice (`r43+43`), which Word's own files never
+    /// repeat (see `validate::ring1`). One revision across paragraphs is
+    /// Word's exception — it writes one `w:id` on each paragraph's mark —
+    /// so an id spent in an earlier paragraph is issued again.
     pub used_revisions: HashSet<u32>,
+    /// The paragraph each spent revision id was written in, by the count
+    /// [`paragraph`] keeps.
+    pub(super) spent_in: HashMap<u32, usize>,
+    /// The paragraphs written so far, from zero.
+    pub(super) paragraph: usize,
     /// Each open paragraph's mark whose numbered change its runs share:
     /// its kind, its change and where in the output its `w:rPr` takes it.
     /// The mark is written at the paragraph's end, so its id follows the
@@ -469,6 +477,17 @@ impl Context<'_> {
             if let Some(&id) = ids.get(*at) {
                 *at += 1;
                 if self.used_revisions.insert(id) {
+                    self.spent_in.insert(id, self.paragraph);
+                    return id;
+                }
+                // One revision the view names in another paragraph too
+                // (its note's ` on ` part, or another piece) continues
+                // under the same id, as Word writes it.
+                if self
+                    .spent_in
+                    .get(&id)
+                    .is_some_and(|&at| at < self.paragraph)
+                {
                     return id;
                 }
             }
@@ -672,6 +691,7 @@ pub(super) fn story(
                 );
             }
             Item::Paragraph(paragraph) => {
+                context.paragraph += 1;
                 out.push_str("<w:p>");
                 paragraph_properties(context, paragraph, &mut out);
                 unshown.clone_from(&paragraph.unshown);

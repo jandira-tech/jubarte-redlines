@@ -213,6 +213,8 @@ pub(super) fn assemble(
         next_revision,
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
+        spent_in: HashMap::new(),
+        paragraph: 0,
         pending_marks: Vec::new(),
         num_ids,
         label_nums,

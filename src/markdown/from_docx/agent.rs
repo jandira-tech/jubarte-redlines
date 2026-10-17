@@ -653,14 +653,14 @@ pub(crate) fn text_marked(e: &Element) -> bool {
 /// agent view's marked text does.
 pub(crate) fn nested_marked(e: &Element) -> bool {
     e.elements().any(|c| {
-        (is_revision(c.local()) && any_revision(&c)) || (c.local() != "tbl" && nested_marked(&c))
+        (is_revision(c.local()) && any_revision(c)) || (c.local() != "tbl" && nested_marked(c))
     })
 }
 
 /// Whether any element below `e` is a tracked change.
 fn any_revision(e: &Element) -> bool {
     e.elements()
-        .any(|c| is_revision(c.local()) || any_revision(&c))
+        .any(|c| is_revision(c.local()) || any_revision(c))
 }
 
 fn shows_text(e: &Element) -> bool {
