@@ -316,11 +316,24 @@ impl Critic {
         self
     }
 
-    /// True when there is no visible text and no comment.
+    /// True when there is no visible text and no comment. Text inside an
+    /// insertion or deletion counts even when it is only a space: Word shows
+    /// it (`{++ ++}`), and dropping it would lose the change's run.
     pub(crate) fn is_blank(&self) -> bool {
+        let mut changed = 0usize;
         self.tokens.iter().all(|token| match token {
-            Token::Leaf(Leaf::Text { text, .. } | Leaf::Raw(text)) => text.trim().is_empty(),
+            Token::Leaf(Leaf::Text { text, .. } | Leaf::Raw(text)) => {
+                changed == 0 && text.trim().is_empty()
+            }
             Token::Leaf(Leaf::Comment(_)) => false,
+            Token::Open(Mark::Insertion | Mark::Deletion, _) => {
+                changed += 1;
+                true
+            }
+            Token::Close(Mark::Insertion | Mark::Deletion) => {
+                changed = changed.saturating_sub(1);
+                true
+            }
             Token::Open(..) | Token::Close(_) => true,
         })
     }
@@ -1401,15 +1414,22 @@ mod tests {
     }
 
     #[test]
-    fn blankness_ignores_markers_but_not_comments() {
+    fn blankness_counts_changed_text_but_ignores_markers() {
+        // An inserted or deleted space is text Word shows (`{++ ++}`), so it
+        // keeps the paragraph's line; a space only highlighted does not.
         let mut critic = Critic::default();
         critic.open(Ins, None);
         text(&mut critic, "  ");
         critic.raw(" ");
         critic.close(Ins);
-        assert!(critic.is_blank());
-        critic.comment("note");
         assert!(!critic.is_blank());
+        let mut scope = Critic::default();
+        scope.open(Mark::Scope, None);
+        text(&mut scope, "  ");
+        scope.close(Mark::Scope);
+        assert!(scope.is_blank());
+        scope.comment("note");
+        assert!(!scope.is_blank());
         let mut raw = Critic::default();
         raw.raw("![x](y)");
         assert!(!raw.is_blank());

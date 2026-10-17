@@ -14,7 +14,7 @@ styles:
   "13": Arial 28pt, named Title
   "17": Arial bold 12pt, before 6pt, after 6pt, named Highlighted Style
   "14": Arial 12pt, named List Paragraph
-  table: "9"
+  table: 9, named Normal Table
 ---
 
 <!-- p0 13 -->

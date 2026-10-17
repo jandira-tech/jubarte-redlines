@@ -574,11 +574,20 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 let (rev, fmt) =
                     agent::story_unshown(note, &story, &def, &HashSet::new(), &writer.handles);
                 let mut clauses = Vec::new();
-                if !rev.is_empty() {
-                    clauses.push(format!("rev {}", rev.join("; ")));
+                for inserted in [true, false] {
+                    let tags: Vec<&str> = rev
+                        .iter()
+                        .filter(|(ins, _)| *ins == inserted)
+                        .map(|(_, tag)| tag.as_str())
+                        .collect();
+                    if !tags.is_empty() {
+                        let word = if inserted { "rev" } else { "rev-del" };
+                        clauses.push(format!("{word} {}", tags.join("; ")));
+                    }
                 }
                 if !fmt.is_empty() {
-                    clauses.push(format!("fmt {}", fmt.join("; ")));
+                    let tags: Vec<&str> = fmt.iter().map(|(_, tag)| tag.as_str()).collect();
+                    clauses.push(format!("fmt {}", tags.join("; ")));
                 }
                 if !clauses.is_empty() {
                     def.push_str(&format!(" <!-- {} -->", clauses.join(", ")));
@@ -847,7 +856,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let mut sections: Vec<header::SectionFact> = Vec::new();
             let mut first = 0;
             for (last, sect) in ends {
-                let title_page = sect.child("titlePg").is_some();
+                // `w:titlePg w:val="0"` is different-first-page off, not on.
+                let title_page = sect
+                    .child("titlePg")
+                    .is_some_and(|t| t.attr("val") != Some("0") && t.attr("val") != Some("false"));
                 let mut stories = Vec::new();
                 for reference in sect.elements() {
                     let kind = match reference.local() {
@@ -983,17 +995,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                             },
                         )
                         .collect();
-                    // The legend describes the paragraph styles the stories
-                    // use, as the body's, so the view writes them as the
-                    // original did (a character style's id stays bare).
+                    // The legend describes the styles the stories use, as
+                    // the body's, so the view writes them as the original
+                    // did; a character style's `, named` carries its
+                    // w:name for `pstyle` to resolve.
                     for style in &styles {
                         if style != default_style.as_deref().unwrap_or("Normal")
                             && !matches!(style.as_str(), "Header" | "Footer")
                             && styles_root.as_ref().is_some_and(|root| {
-                                root.children_named("style").any(|s| {
-                                    s.attr("type") == Some("paragraph")
-                                        && s.attr("styleId") == Some(style.as_str())
-                                })
+                                root.children_named("style")
+                                    .any(|s| s.attr("styleId") == Some(style.as_str()))
                             })
                             && !heading_styles.iter().any(|(_, h)| h == style)
                             && !other_styles.contains(style)
@@ -1016,7 +1027,24 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         let (mut marks, ids) = agent::story_paragraph_marks(&root, &stem, &handles);
                         let (rev, fmt) =
                             agent::story_unshown(&root, &stem, &shown.join("\n"), &ids, &handles);
-                        marks.extend(rev);
+                        // A deletion names its kind (`del footer1.r3 @BC`):
+                        // a bare tag reads back as an insertion.
+                        marks.extend(rev.into_iter().map(|(inserted, tag)| {
+                            if inserted { tag } else { format!("del {tag}") }
+                        }));
+                        // A formatting change names the paragraph it is in
+                        // (`footer1.r1657 @AB in footer1.p1`), or reads
+                        // positionally when outside every paragraph.
+                        let fmt = fmt
+                            .into_iter()
+                            .map(|(at, tag)| match at {
+                                Some(index) => format!(
+                                    "{tag} in {}",
+                                    crate::ids::short_paragraph(&format!("{stem}:p:{index}"))
+                                ),
+                                None => tag,
+                            })
+                            .collect();
                         (marks, fmt)
                     } else {
                         (Vec::new(), Vec::new())
@@ -1088,8 +1116,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     }
                     let (rev, fmt) =
                         agent::story_unshown(note, story, "", &HashSet::new(), &handles);
-                    note_changes.0.extend(rev);
-                    note_changes.1.extend(fmt);
+                    note_changes
+                        .0
+                        .extend(rev.into_iter().map(|(inserted, tag)| {
+                            if inserted { tag } else { format!("del {tag}") }
+                        }));
+                    note_changes.1.extend(fmt.into_iter().map(|(_, tag)| tag));
                 }
             }
         }
