@@ -531,6 +531,26 @@ impl Inline {
         self.verbatim = true;
     }
 
+    /// A code block's paragraph: every mark dropped, for a fence's
+    /// content is literal and formatting printed inside it would come
+    /// back as text.
+    pub(crate) fn render_code(&self) -> String {
+        let unmarked = Inline {
+            spans: self
+                .spans
+                .iter()
+                .map(|s| Span {
+                    text: s.text.clone(),
+                    marks: Marks::default(),
+                    link: s.link.clone(),
+                })
+                .collect(),
+            keep_spaces: self.keep_spaces,
+            verbatim: self.verbatim,
+        };
+        unmarked.render(false)
+    }
+
     /// Whether the text starts and ends with a space. Rendering trims both,
     /// except a leading space in the agent view, which it writes as `&#32;`.
     pub(crate) fn edges(&self) -> (bool, bool) {
@@ -570,7 +590,9 @@ impl Inline {
         });
     }
 
-    /// Render to Markdown. `emphasis` false drops bold/italic (headings).
+    /// Render to Markdown. `emphasis` false drops bold and italic only
+    /// (headings, whose own style carries them); the other marks are the
+    /// run's and print inside the heading as in a body paragraph.
     pub(crate) fn render(&self, emphasis: bool) -> String {
         let mut out = String::new();
         let mut index = 0;
@@ -670,7 +692,14 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         let style = if emphasis {
             span.marks
         } else {
-            Marks::default()
+            // Headings drop bold and italic only: underline, highlight,
+            // strike and code are marks of their own, and they print in
+            // a heading as they do in a body paragraph.
+            Marks {
+                bold: false,
+                italic: false,
+                ..span.marks
+            }
         };
         // Whitespace-only spans inherit the previous bold and italic so
         // markers do not split; underline, highlight and strike show on a

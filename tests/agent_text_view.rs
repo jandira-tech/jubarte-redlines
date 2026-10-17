@@ -1588,7 +1588,8 @@ fn link_entity_and_heading_syntax_in_text_reads_back_as_text() {
 fn code_reads_as_code_spans_and_fences() {
     // `VerbatimChar` runs print as code spans and a `SourceCode` paragraph
     // as a fence: their text stays as written, unescaped and with its
-    // spaces, so it reads back the same.
+    // spaces, so it reads back the same. A fence's content is literal, so
+    // a marked run's marks print nowhere inside it.
     let code = |t: &str| {
         format!(
             r#"<w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t xml:space="preserve">{t}</w:t></w:r>"#
@@ -1600,14 +1601,14 @@ fn code_reads_as_code_spans_and_fences() {
             code("a*b  c"),
             code("x`y")
         ),
-        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t>fn main() {</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">    println!("*hi*");</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>}</w:t></w:r></w:p>"#.to_string(),
+        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t>fn main() {</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">    println!("*hi*");</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>}</w:t></w:r><w:r><w:br/></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>underlined</w:t></w:r></w:p>"#.to_string(),
     ]
     .concat();
     let full = agent(&docx(&p));
     let view = body(&full);
     assert_eq!(
         view,
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nRun `a*b  c` or ``x`y``.\n\n<!-- p1 SourceCode -->\n```\nfn main() {\n    println!(\"*hi*\");\n}\n```\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nRun `a*b  c` or ``x`y``.\n\n<!-- p1 SourceCode -->\n```\nfn main() {\n    println!(\"*hi*\");\n}\nunderlined\n```\n"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()
