@@ -203,6 +203,12 @@ pub(crate) struct Pending {
     scope: Scope,
     /// Inside a `w:r` (see [`Drawing::wrap`]).
     wrap: bool,
+    /// The box's words print as blocks of the view, so the payload drops
+    /// them and the writer refills the frame from what the view shows.
+    /// `false` keeps the words in the payload: the blocks cannot rebuild
+    /// the box whole, or the story does not print as blocks at all (a
+    /// header's box, a note's).
+    story: bool,
 }
 
 impl Pending {
@@ -214,6 +220,7 @@ impl Pending {
         part: &str,
         scope: Scope,
         wrap: bool,
+        story: bool,
     ) -> String {
         let label = label(element);
         if list.len() >= MAX_PENDING {
@@ -225,6 +232,7 @@ impl Pending {
             part: part.to_string(),
             scope,
             wrap,
+            story,
         });
         image(&label, &format!("d{}", index + 1))
     }
@@ -576,6 +584,9 @@ pub(crate) fn resolve(
     let mhash = mermaid.as_deref().map(mermaid_hash);
     normalize_ids(&mut root);
     declare(&mut root, &pending.scope);
+    if pending.story {
+        strip_box_words(&mut root);
+    }
     Some(Drawing {
         xml: serialize(&root),
         wrap: pending.wrap,
@@ -658,6 +669,22 @@ fn media_slot(root: &Element, rels: &[PayRel], deps: &Deps<'_>) -> Option<usize>
         return Some(index);
     }
     None
+}
+
+/// Empty every `w:txbxContent` under `element`: a text box's words print
+/// as blocks of the view, so its payload carries the frame only and the
+/// writer refills the box from what the view shows. Every branch's —
+/// a `mc:Fallback` copy holds the same words as the branch Word shows.
+fn strip_box_words(element: &mut Element) {
+    if local(&element.name) == "txbxContent" {
+        element.children.clear();
+        return;
+    }
+    for child in &mut element.children {
+        if let Node::Element(inner) = child {
+            strip_box_words(inner);
+        }
+    }
 }
 
 /// The `[Content_Types]` entries of `package`: `/part` for each override,
@@ -1296,6 +1323,26 @@ pub(crate) fn capturable_alternate(element: &Element) -> bool {
     })
 }
 
+/// `xml` with every empty `w:txbxContent` — whatever prefix it carries,
+/// `w:` or a Strict one — holding `content`: the frame the payload kept,
+/// refilled with the story the view printed.
+pub(crate) fn fill_empty_boxes(xml: &str, content: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(at) = rest.find(":txbxContent/>") {
+        // `at` is the colon: the tag is `<PREFIX:txbxContent/>`.
+        let Some(open) = rest[..at].rfind('<') else {
+            break;
+        };
+        let prefix = &rest[open + 1..at];
+        out.push_str(&rest[..at]);
+        let _ = write!(out, ":txbxContent>{content}</{prefix}:txbxContent>");
+        rest = &rest[at + ":txbxContent/>".len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Write `drawing` into `package` as content of `part`: the XML with fresh
 /// relationship ids, and every dependent part (its own relationships and
 /// parts too). `existing` and `used` keep names apart from parts already
@@ -1307,6 +1354,29 @@ impl Drawing {
     /// AlternateContent).
     pub(crate) fn wraps_run(&self) -> bool {
         self.wrap
+    }
+
+    /// Whether the element holds a `w:txbxContent` at all: a text box,
+    /// whose words the view prints as the blocks after its anchor.
+    pub(crate) fn holds_text_box(&self) -> bool {
+        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
+            return false;
+        };
+        let mut boxes = Vec::new();
+        root.find_all("txbxContent", &mut boxes);
+        !boxes.is_empty()
+    }
+
+    /// Whether every `w:txbxContent` the element holds is empty: the
+    /// payload carries the frame only, and the writer refills the box
+    /// from the story the view printed.
+    pub(crate) fn holds_empty_text_box(&self) -> bool {
+        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
+            return false;
+        };
+        let mut boxes = Vec::new();
+        root.find_all("txbxContent", &mut boxes);
+        !boxes.is_empty() && boxes.iter().all(|content| content.children.is_empty())
     }
 
     /// `self` with the readable layer's bytes out of the payload: the
@@ -1545,9 +1615,13 @@ mod tests {
         ];
         declare(&mut e, &scope);
         let xml = serialize(&e);
+        // Every prefix the tree uses is declared — the root element's own
+        // `w` too, so the payload stands alone — and nothing else is. The
+        // assertion spells the `=`: `xmlns:w` is a prefix of `xmlns:wp`.
+        assert!(xml.contains("xmlns:w=\"W\""), "{xml}");
         assert!(xml.contains("xmlns:wp=\"WP\""), "{xml}");
         assert!(xml.contains("xmlns:wp14=\"WP14\""), "{xml}");
-        assert!(!xml.contains("xmlns:w"), "{xml}");
+        assert_eq!(xml.matches("xmlns").count(), 3, "{xml}");
     }
 
     #[test]

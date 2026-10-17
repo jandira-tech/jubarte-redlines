@@ -1009,13 +1009,10 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .unwrap_or_else(|| panic!("no unplaced line in {out}"));
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
     assert!(unplaced.contains("r21 @AC in p0"), "{out}");
-    // The shown branch's text box prints its content as comment lines
-    // beside the drawing, so the Choice branch's own insertion is placed
-    // there (`<!-- Box{++Choice++}{>>r20 @AC<<} -->`), not unplaced.
-    assert!(
-        out.contains("<!-- Box{++Choice++}{>>r20 @AC<<} -->"),
-        "{out}"
-    );
+    // The shown branch's text box prints its content as the paragraph
+    // after the drawing, so the Choice branch's own insertion is placed
+    // there (`Box{++Choice++}{>>r20 @AC<<}`), not unplaced.
+    assert!(out.contains("\nBox{++Choice++}{>>r20 @AC<<}\n"), "{out}");
     assert!(!unplaced.contains("r20"), "{out}");
     // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
     assert!(unplaced.contains(r#""del r22 @?? in p0""#), "{out}");

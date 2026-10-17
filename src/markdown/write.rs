@@ -4508,6 +4508,102 @@ impl<'o, 'a> Writer<'o, 'a> {
         (author, date)
     }
 
+    /// The story of each text box the view prints as the blocks after the
+    /// paragraph that anchors it: the payload holds the box's frame, and
+    /// the writer refills it from what the view shows. A box whose
+    /// payload kept its words (its blocks do not say it whole) drains its
+    /// blocks all the same — the payload is what writes — so its text is
+    /// not written twice. Only a paragraph an id line names bounds a
+    /// story: its blocks end where the next named paragraph, a row or a
+    /// cell starts. A paragraph holding two boxes takes the first one's
+    /// name for the one story the view printed after it.
+    fn box_frames(&mut self) {
+        let mut stories = std::mem::take(&mut self.document.box_stories);
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut at = 0;
+        while at < self.body.len() {
+            let Some(Item::Paragraph(paragraph)) = self.body.get(at) else {
+                at += 1;
+                continue;
+            };
+            at += 1;
+            if paragraph.number.is_none() || paragraph.text_box.is_some() {
+                continue;
+            }
+            let Some(end_of) = self.body[at..]
+                .iter()
+                .position(|item| matches!(item, Item::ParagraphEnd))
+                .map(|skip| at + skip)
+            else {
+                continue;
+            };
+            let Some(index) = self.body[at..end_of].iter().find_map(|item| match item {
+                Item::Run(Run {
+                    content: Content::Drawing(index),
+                    ..
+                }) => self
+                    .document
+                    .drawings
+                    .get(*index)
+                    .filter(|drawing| drawing.holds_text_box())
+                    .map(|_| *index),
+                _ => None,
+            }) else {
+                continue;
+            };
+            // The blocks after the paragraph's end, until a paragraph an
+            // id line names, or the row or cell the anchor sits in ends —
+            // a table inside the story is one the story holds.
+            let mut depth = 0usize;
+            let mut end = end_of + 1;
+            let mut content: Vec<Item> = Vec::new();
+            while let Some(item) = self.body.get(end) {
+                let stop = match item {
+                    Item::Paragraph(named) => named.number.is_some(),
+                    Item::Row { .. } | Item::RowEnd | Item::Cell { .. } | Item::CellEnd => {
+                        depth == 0
+                    }
+                    Item::Table { .. } => depth == 0 && content.is_empty(),
+                    Item::TableEnd => {
+                        depth = depth.saturating_sub(1);
+                        false
+                    }
+                    Item::RangeStart(_)
+                    | Item::RangeEnd(_)
+                    | Item::CommentReference(_)
+                    | Item::LinkStart(..)
+                    | Item::LinkEnd
+                    | Item::Bookmark(_) => true,
+                    Item::ParagraphEnd | Item::Run(_) => false,
+                };
+                if stop {
+                    break;
+                }
+                if matches!(item, Item::Table { .. }) {
+                    depth += 1;
+                }
+                content.push(item.clone());
+                end += 1;
+            }
+            let holds_text = content
+                .iter()
+                .any(|item| matches!(item, Item::Paragraph(named) if named.number.is_none()));
+            if !holds_text {
+                continue;
+            }
+            stories.insert(index, content);
+            spans.push((end_of + 1, end));
+        }
+        for (at, boxed) in stories {
+            self.document.box_stories.insert(at, boxed);
+        }
+        for (start, end) in spans.into_iter().rev() {
+            if end > start {
+                self.body.drain(start..end);
+            }
+        }
+    }
+
     /// The text boxes the view prints as blocks with no id lines of their
     /// own, after the paragraph whose `rev` clause names their anchor's
     /// change: each becomes a box anchored in that paragraph, its content
@@ -4682,6 +4778,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             // its text anyway.
             self.document.comments.push(comment);
         }
+        self.box_frames();
         self.text_boxes();
         self.held_comment_marks();
         let mut body = std::mem::take(&mut self.body);

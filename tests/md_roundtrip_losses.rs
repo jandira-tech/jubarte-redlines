@@ -645,6 +645,105 @@ fn a_drawing_payload_is_a_reference_definition() {
     assert_eq!(unnamed(&view), unnamed(&second));
 }
 
+/// A text box's words are document text, not payload (#1101 A): the
+/// view prints them as the paragraphs after the anchor, and the payload
+/// holds the box's frame only. A docx whose middle paragraph anchors a
+/// plain text box reading `Added box`.
+fn text_box_docx() -> Vec<u8> {
+    let box_run = "<w:r><w:drawing><wp:anchor \
+        xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+        distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+        relativeHeight=\"251658240\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" \
+        allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+        <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset>\
+        </wp:positionH><wp:positionV relativeFrom=\"paragraph\">\
+        <wp:posOffset>0</wp:posOffset></wp:positionV>\
+        <wp:extent cx=\"2374265\" cy=\"457200\"/><wp:effectExtent l=\"0\" t=\"0\" \
+        r=\"0\" b=\"0\"/><wp:wrapSquare wrapText=\"bothSides\"/>\
+        <wp:docPr id=\"7\" name=\"Text Box 7\"/><wp:cNvGraphicFramePr/>\
+        <a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+        <a:graphicData \
+        uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+        <wps:wsp \
+        xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+        <wps:cNvSpPr txBox=\"1\"/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/>\
+        <a:ext cx=\"2374265\" cy=\"457200\"/></a:xfrm>\
+        <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+        <wps:txbx><w:txbxContent>\
+        <w:p><w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r></w:p>\
+        </w:txbxContent></wps:txbx><wps:bodyPr rot=\"0\" vert=\"horz\" \
+        wrap=\"square\" lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\" \
+        anchor=\"t\"/></wps:wsp></a:graphicData></a:graphic></wp:anchor>\
+        </w:drawing></w:r>";
+    docx_with(
+        &(para("Before.") + "<w:p>" + box_run + "</w:p>" + &para("After.")),
+        &[],
+    )
+}
+
+/// The view of a text box holds its words as the paragraphs after the
+/// anchor, never inside an HTML comment: a reader sees them and an edit
+/// has somewhere to land (#1101 A).
+#[test]
+fn a_text_boxs_words_print_as_paragraphs_not_comments() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), text_box_docx()).unwrap();
+    let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
+    let body = view.splitn(3, "---\n").nth(2).unwrap_or_default();
+    assert!(body.contains("\nAdded box\n"), "{body}");
+    assert!(!body.contains("<!-- Added box"), "{body}");
+}
+
+/// Editing a text box's words in the view writes the new words into the
+/// box (`w:txbxContent`) of the document written back; the old words are
+/// gone (#1101 A).
+#[test]
+fn editing_a_text_boxs_words_writes_them_into_the_box() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), text_box_docx()).unwrap();
+    let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
+    let edited = view.replace("Added box", "Edited words");
+    assert_ne!(edited, view);
+    std::fs::write(dir.path().join("edit.md"), edited).unwrap();
+    jubarte(dir.path(), &["convert", "edit.md", "-o", "out.docx"]);
+    let document = std::fs::read(dir.path().join("out.docx").canonicalize().unwrap()).unwrap();
+    let document = part(&document, "word/document.xml");
+    let box_at = document
+        .find("txbxContent")
+        .unwrap_or_else(|| panic!("no text box:\n{document}"));
+    let box_xml = &document[box_at - 3..];
+    assert!(box_xml.contains("Edited words"), "{document}");
+    assert!(!document.contains("Added box"), "{document}");
+}
+
+/// An unedited round trip restores the original drawing: the payload's
+/// frame plus the words the view printed give the box back, and the
+/// second view is the first again (#1101 A).
+#[test]
+fn an_unedited_text_box_round_trips_to_the_same_drawing() {
+    let (view, out) = docx_round_trip(&text_box_docx());
+    let document = part(&out, "word/document.xml");
+    for want in [
+        "<wp:anchor",
+        "name=\"Text Box 7\"",
+        "<wp:extent cx=\"2374265\" cy=\"457200\"/>",
+        "<wps:txbx><w:txbxContent>",
+        ">Added box</w:t>",
+    ] {
+        assert!(document.contains(want), "{want}: {document}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("out.docx"), &out).unwrap();
+    let second = jubarte(dir.path(), &["read", "out.docx", "--no-page-markers"]);
+    let unnamed = |view: &str| {
+        view.lines()
+            .filter(|l| !l.starts_with("source: ") && !l.starts_with("sha256: "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(unnamed(&view), unnamed(&second));
+}
+
 /// A raster drawing — here a floating anchor — is image bytes to the
 /// readable layer: `![descr][imageN]` backed by a `data:` definition and a
 /// `drawing:` comment that keeps the anchor XML. Written back, the

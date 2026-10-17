@@ -12,7 +12,6 @@
 //! properties are not read.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::Write as _;
 
 mod agent;
 mod critic;
@@ -956,6 +955,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                         &path,
                                         story_scopes.scope(element),
                                         wrap,
+                                        // A header's box prints no blocks
+                                        // of its own: the payload keeps
+                                        // its words.
+                                        false,
                                     ))
                                 }),
                                 own,
@@ -3360,9 +3363,10 @@ impl Writer<'_> {
     /// Drawings as Markdown: `![alt](name)` for a plain inline image whose
     /// raster extracts to a file, a `drawing:` payload (its element, parts
     /// and relationships verbatim) for everything else — anchors, shapes,
-    /// text boxes, VML, AlternateContent and unextracted images. Inside a
-    /// comment the writer cannot restore a payload, so the drawing prints
-    /// its text instead.
+    /// text boxes, VML, AlternateContent and unextracted images. A text
+    /// box's words print as the blocks after the anchor, its payload
+    /// carrying the frame only. Inside a comment the writer cannot
+    /// restore a payload, so the drawing prints its text instead.
     fn drawing(
         &mut self,
         element: &Element,
@@ -3380,7 +3384,10 @@ impl Writer<'_> {
             self.drawing_text(element, out, extra);
             return;
         }
-        self.box_comments(element, extra);
+        // The box's words are document text: they print as the blocks
+        // after the anchor, and the payload keeps the frame only when the
+        // blocks say the box whole.
+        let story = self.story.is_none() && self.box_blocks(element, extra);
         let mut plain_image = false;
         if drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
@@ -3409,17 +3416,20 @@ impl Writer<'_> {
                 &part,
                 scope,
                 wrap,
+                story,
             ));
         }
     }
 
     /// The `txbxContent` Word renders of `element` — under an
     /// `mc:AlternateContent`, only the shown branch's, never the
-    /// `mc:Fallback` copy — each rendered as a block of `<!-- -->` comment
-    /// lines pushed to `extra`. The drawing's `dN` payload already carries
-    /// the text, so printing it as a real paragraph would write it twice;
-    /// the comment keeps the view readable without cost to the write.
-    fn box_comments(&mut self, element: &Element, extra: &mut Vec<String>) {
+    /// `mc:Fallback` copy — each printed as a block of `extra`: the box's
+    /// words, where a reader reads them and an edit lands (#1101 A).
+    /// `false` when the blocks cannot carry the box whole — a tracked
+    /// change of its own, which prints without its own mark, or a Word
+    /// `Fallback` twin — so the payload keeps the words and the write
+    /// stays exact.
+    fn box_blocks(&mut self, element: &Element, extra: &mut Vec<String>) -> bool {
         let mut boxes = Vec::new();
         let root = match element
             .child("Choice")
@@ -3430,7 +3440,7 @@ impl Writer<'_> {
         };
         root.find_all("txbxContent", &mut boxes);
         if boxes.is_empty() {
-            return;
+            return false;
         }
         let open_comments = std::mem::take(&mut self.open_comments);
         let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
@@ -3439,22 +3449,12 @@ impl Writer<'_> {
             let mut blocks = Blocks::new();
             let mut list = ListIndent::default();
             self.blocks(content, &mut blocks, &mut list);
-            let block = blocks.finish();
-            let mut comment = String::new();
-            for line in block.lines() {
-                // A line ending `-->` would close the comment early.
-                let line = line.replace("-->", "-- >");
-                if line.is_empty() {
-                    comment.push('\n');
-                } else {
-                    let _ = writeln!(comment, "<!-- {line} -->");
-                }
-            }
-            extra.push(comment.trim_end_matches('\n').to_string());
+            extra.push(blocks.finish());
         }
         self.in_box = in_box;
         self.open_comments = open_comments;
         self.hidden_ranges = hidden_ranges;
+        !holds_boxed_change(element)
     }
 
     /// A drawing's printable content inside a comment or a drawn text box:
@@ -3915,6 +3915,29 @@ fn collect_named<'a>(
             collect_named(child, name, wrappers, out);
         }
     }
+}
+
+/// Whether a tracked change sits inside any text box of `element` —
+/// the branch Word shows or a `mc:Fallback` copy. Such a box's blocks
+/// print without the change's own mark (a paragraph mark's change, a
+/// nested change the outer one absorbs), so the view cannot rebuild it:
+/// its payload keeps the words and the round trip stays exact.
+fn holds_boxed_change(element: &Element) -> bool {
+    fn revised(element: &Element) -> bool {
+        matches!(
+            element.local(),
+            "ins" | "del" | "moveFrom" | "moveTo" | "cellIns" | "cellDel" | "cellMerge"
+        ) || element.local().ends_with("PrChange")
+            || element.local() == "tblGridChange"
+            || element.elements().any(revised)
+    }
+    fn walk(element: &Element) -> bool {
+        if element.is("txbxContent") {
+            return revised(element);
+        }
+        element.elements().any(walk)
+    }
+    walk(element)
 }
 
 /// Office Math (OMML) to LaTeX, covering the structures Word's equation
@@ -4686,6 +4709,30 @@ mod tests {
         convert(bytes, &Options::default()).unwrap().markdown
     }
 
+    /// `markdown` with each drawing definition's payload elided: the
+    /// expectation names the reference (`[d1]: drawing:…`) without quoting
+    /// the base64 the payload is. The payload's own correctness is what
+    /// the round-trip tests gate.
+    fn payloads_elided(markdown: &str) -> String {
+        let mut elided = markdown
+            .lines()
+            .map(|line| match line.split_once("]: ") {
+                Some((name, dest)) if dest.starts_with("drawing:") => {
+                    format!("{name}]: drawing:…")
+                }
+                Some((name, dest)) if dest.starts_with("<data:") => {
+                    format!("{name}]: <data:…>")
+                }
+                _ => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if markdown.ends_with('\n') {
+            elided.push('\n');
+        }
+        elided
+    }
+
     fn p(style: &str, runs: &str) -> String {
         let ppr = if style.is_empty() {
             String::new()
@@ -5110,9 +5157,15 @@ mod tests {
                 ),
             ],
         );
+        // The image's part is missing from the package, so no `data:`
+        // definition can hold its bytes: the `dN` payload form keeps the
+        // relationship's target exactly, where the old link form invented
+        // a file name. The empty inline prints its reference too — a
+        // drawing the readable forms cannot say (#1101 A).
         assert_eq!(
-            md(&bytes),
-            "Claim[^1]\n\n[field link](https://f.example)\n\n![A chart of sales](image1.png)\n\n[^1]: Source: survey.\n"
+            payloads_elided(&md(&bytes)),
+            "Claim[^1]\n\n[field link](https://f.example)\n\n![A chart of sales][d1]\n\n\
+             ![Picture 2][d2]\n\n[^1]: Source: survey.\n\n[d1]: drawing:…\n[d2]: drawing:…\n"
         );
     }
 
@@ -5182,8 +5235,14 @@ mod tests {
             )],
         );
         // `{`, `}`, `<` and `>` may not appear in a URI; encoded, they cannot form a
-        // delimiter, so the destination reaches the Markdown unchanged.
-        assert_eq!(md(&bytes), "{--![x](a--%7D~%3E%7Bb%7D%3C.png)--}\n");
+        // delimiter, so the destination reaches the Markdown unchanged. The
+        // part is missing from the package, so the reference is the `dN`
+        // payload form: the target travels inside it, base64, where no
+        // delimiter can form (#1101 A).
+        assert_eq!(
+            payloads_elided(&md(&bytes)),
+            "{--![x][d1]--}\n\n[d1]: drawing:…\n"
+        );
     }
 
     #[test]
@@ -5302,10 +5361,16 @@ mod tests {
             ),
         ]
         .concat();
-        // The deleted box leaves no empty `{----}` paragraph behind.
+        // The deleted box leaves no empty `{----}` paragraph behind: its
+        // anchor prints the token in the deletion's mark, and its words
+        // print as the block after it, in the same mark.
         assert_eq!(
-            md(&docx(&body, &[])),
-            "{--Deleted box--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\nKeep\n\n{++Added box++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
+            payloads_elided(&md(&docx(&body, &[]))),
+            "{--![Text Box 7][d1]--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n\
+             {--Deleted box--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n\
+             Keep{++![Text Box 7][d2]++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n\
+             {++Added box++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n\
+             [d1]: drawing:…\n[d2]: drawing:…\n"
         );
     }
 
@@ -5675,9 +5740,12 @@ mod tests {
             ),
         );
         let xml = comments(&[("1", "Ana", "", &p("", &r("n")))]);
+        // The token is the anchor's own content, so the range covers it;
+        // the box is a story of its own, so its words do not join the
+        // range: they print as the block after it.
         assert_eq!(
-            with_comments(&body, &xml),
-            "{==anchor==}{>>Ana: n<<}\n\ninside\n"
+            payloads_elided(&with_comments(&body, &xml)),
+            "{==anchor![Text Box 7][d1]==}{>>Ana: n<<}\n\ninside\n\n[d1]: drawing:…\n"
         );
     }
 
@@ -5834,8 +5902,11 @@ mod tests {
         ]
         .concat();
         assert_eq!(
-            md(&docx(&body, &[("word/numbering.xml", &numbering)])),
-            "A{++\n\n## ++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n\n1. one{--\n2. two--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}E\n\nF\n\n|G|\n|-|\n\nH\n\nbox\n\nI\n\nJ\n"
+            payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
+            "A{++\n\n## ++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n\n\
+             1. one{--\n2. two--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\
+             3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}E\n\n\
+             F\n\n|G|\n|-|\n\nH![Text Box 7][d1]\n\nbox\n\nI\n\nJ\n\n[d1]: drawing:…\n"
         );
     }
 
@@ -5922,8 +5993,8 @@ mod tests {
             p("", &r("control")),
         );
         assert_eq!(
-            md(&docx(&body, &[])),
-            "|{--cell<br>box--}|{--control--}|\n|-|-|\n"
+            payloads_elided(&md(&docx(&body, &[]))),
+            "|{--cell![Text Box 7][d1]<br>box--}|{--control--}|\n|-|-|\n\n[d1]: drawing:…\n"
         );
     }
 
@@ -5948,7 +6019,7 @@ mod tests {
         let numbering = format!(
             r#"<w:numbering {W}><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#
         );
-        let expected = "## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n";
+        let expected = "{--![][d1]--}\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n[d1]: drawing:…\n";
         for drawing in ["drawing", "pict", "object"] {
             let run = format!("<w:r><w:{drawing}>{content}</w:{drawing}></w:r>");
             for body in [
@@ -5962,7 +6033,7 @@ mod tests {
                 ),
             ] {
                 assert_eq!(
-                    md(&docx(&body, &[("word/numbering.xml", &numbering)])),
+                    payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
                     expected
                 );
             }
@@ -5974,9 +6045,12 @@ mod tests {
                 r("Keep ")
             ),
         );
+        // The box rides inside the deletion that holds the text before it,
+        // so the token joins that mark instead of opening its own line.
         assert_eq!(
-            md(&docx(&body, &[("word/numbering.xml", &numbering)])),
-            format!("Keep {{--Old--}}\n\n{expected}")
+            payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
+            "Keep {--Old![][d1]--}\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n\
+             [d1]: drawing:…\n"
         );
     }
 
@@ -6364,12 +6438,14 @@ mod tests {
         );
         let bytes = docx(&body, &[("word/footnotes.xml", &footnotes)]);
         assert_eq!(
-            resolved(&bytes, Revisions::Accept),
-            "Keep[^1]\n\nAdded box\n\n[^1]: Source updatedpage 4\n"
+            payloads_elided(&resolved(&bytes, Revisions::Accept)),
+            "Keep![Text Box 7][d1][^1]\n\nAdded box\n\n[^1]: Source updatedpage 4\n\n\
+             [d1]: drawing:…\n"
         );
         assert_eq!(
-            resolved(&bytes, Revisions::Reject),
-            "Deleted box\n\nKeep[^1]\n\n[^1]: Source page 4\n"
+            payloads_elided(&resolved(&bytes, Revisions::Reject)),
+            "![Text Box 7][d1]\n\nDeleted box\n\nKeep[^1]\n\n[^1]: Source page 4\n\n\
+             [d1]: drawing:…\n"
         );
     }
 

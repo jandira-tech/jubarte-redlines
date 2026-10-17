@@ -148,12 +148,19 @@ fn rendered(markdown: &str) -> String {
 }
 
 /// Paragraphs as Writer's plain text has them: one per line, no Markdown
-/// syntax, no blank lines. Space that Markdown does not show (padding in a
-/// table cell, a run of spaces) is normalised; a missing space is not.
+/// syntax, no blank lines. A drawing payload's reference definition
+/// (`[d1]: drawing:…`) is not the document's words, so it is no line
+/// either. Space that Markdown does not show (padding in a table cell, a
+/// run of spaces) is normalised; a missing space is not.
 fn lines(markdown: &str) -> Vec<String> {
     markdown
         .lines()
         .filter(|line| !line.trim().is_empty())
+        .filter(|line| {
+            !line
+                .split_once(": ")
+                .is_some_and(|(name, rest)| name.starts_with('[') && rest.starts_with("drawing:"))
+        })
         .map(|line| {
             let line = line
                 .trim_start_matches('#')

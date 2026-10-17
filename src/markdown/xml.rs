@@ -313,6 +313,10 @@ pub(super) struct Document {
     pub pictures: Vec<Picture>,
     /// `drawing:` payloads to splice back, in the order the runs name them.
     pub drawings: Vec<super::from_docx::drawing::Drawing>,
+    /// A text box drawing's story, by its index in `drawings`: the items
+    /// the view printed as the blocks after the anchor, which refill the
+    /// frame's empty `w:txbxContent` when the view is written back.
+    pub box_stories: HashMap<usize, Vec<Item>>,
     /// The view's drawing reference definitions, by name: a `dN` maps to
     /// its `drawing:` destination, an `imageK` to its `data:` one. The
     /// stories' `![…][dN]` and `![…][imageK]` tokens resolve through them.
@@ -473,8 +477,14 @@ pub(super) trait Relate {
     fn picture(&mut self, index: usize) -> String;
     /// The XML of drawing `index` written into the package beside this
     /// story's part: its relationships and dependent parts too. `None`
-    /// when the payload's parts could not be written.
-    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String>;
+    /// when the payload's parts could not be written. `story` is a text
+    /// box's, spliced into the frame's empty `w:txbxContent`.
+    fn drawing(
+        &mut self,
+        index: usize,
+        next_doc_pr: &mut u32,
+        story: Option<&str>,
+    ) -> Option<String>;
 }
 
 /// Numbers shared by every story of one document.
@@ -1965,7 +1975,18 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
                 .drawings
                 .get(*index)
                 .is_some_and(|drawing| drawing.wraps_run());
-            if let Some(drawing) = relate.drawing(*index, &mut context.next_drawing) {
+            // A text box's payload holds its frame only: the story the
+            // view printed as the blocks after the anchor refills it.
+            let story = context
+                .document
+                .drawings
+                .get(*index)
+                .filter(|drawing| drawing.holds_empty_text_box())
+                .and_then(|_| context.document.box_stories.get(index))
+                .map(|items| story(context, items, relate, None));
+            if let Some(drawing) =
+                relate.drawing(*index, &mut context.next_drawing, story.as_deref())
+            {
                 if wraps_run {
                     out.push_str(&drawing);
                 } else {

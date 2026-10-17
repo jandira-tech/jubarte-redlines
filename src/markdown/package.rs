@@ -1538,17 +1538,27 @@ impl Relate for PartRelate<'_, '_, '_> {
             .add_document_relationship(&self.part, &format!("{RELS}/image"), &rel_target)
     }
 
-    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {
+    fn drawing(
+        &mut self,
+        index: usize,
+        next_doc_pr: &mut u32,
+        story: Option<&str>,
+    ) -> Option<String> {
         let drawing = self.document.drawings.get(index)?;
         let existing: HashSet<String> = self.package.parts().into_iter().collect();
-        super::from_docx::drawing::materialize(
+        let xml = super::from_docx::drawing::materialize(
             drawing,
             self.package,
             &self.part,
             &existing,
             &mut self.media.used,
             next_doc_pr,
-        )
+        )?;
+        // A text box's frame is refilled from the story the view printed.
+        match story {
+            Some(story) => Some(super::from_docx::drawing::fill_empty_boxes(&xml, story)),
+            None => Some(xml),
+        }
     }
 }
 
