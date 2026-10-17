@@ -1650,6 +1650,14 @@ pub(super) struct PageSetup {
     /// Text columns and the gap between them.
     pub columns: u32,
     pub column_gap: u32,
+    /// A line between the columns (`w:cols w:sep`).
+    pub column_line: bool,
+    /// The grid the lines snap to (`w:docGrid`): Word's type (`lines`,
+    /// `linesAndChars`, `snapToChars`) and line pitch in twips, which a
+    /// character grid may leave out.
+    pub grid: Option<(&'static str, Option<u32>)>,
+    /// `w:docGrid w:charSpace`, for a grid with characters.
+    pub char_space: i32,
 }
 
 impl PageSetup {
@@ -1666,10 +1674,23 @@ impl PageSetup {
         } else {
             ""
         };
+        let sep = if self.column_line { " w:sep=\"1\"" } else { "" };
+        let grid = match self.grid {
+            Some((kind, pitch)) => {
+                let pitch = pitch.map_or_else(String::new, |p| format!(" w:linePitch=\"{p}\""));
+                let space = if kind == "lines" {
+                    String::new()
+                } else {
+                    format!(" w:charSpace=\"{}\"", self.char_space)
+                };
+                format!("<w:docGrid w:type=\"{kind}\"{pitch}{space}/>")
+            }
+            None => String::new(),
+        };
         format!(
             "<w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
              w:right=\"{right}\" w:bottom=\"{bottom}\" w:left=\"{left}\" w:header=\"{}\" \
-             w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"{}\"{num}/></w:sectPr>",
+             w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"{}\"{num}{sep}/>{grid}</w:sectPr>",
             self.width, self.height, self.header, self.footer, self.gutter, self.column_gap
         )
     }
@@ -1682,6 +1703,14 @@ const MOST_COLUMNS: u32 = 45;
 const MOST_PAGE: u32 = 31_680;
 
 /// Twips from the view's inches (`0.49in`), within Word's page.
+/// A grid's line pitch, `15.6pt`, in twips.
+fn grid_pitch(value: &str) -> Option<u32> {
+    let points: f64 = value.strip_suffix("pt")?.parse().ok()?;
+    let twips = (points * 20.0).round();
+    // `as` cannot overflow: the bound is checked first.
+    (twips.is_finite() && (1.0..=f64::from(MOST_PAGE)).contains(&twips)).then_some(twips as u32)
+}
+
 fn page_twips(value: &str) -> Option<u32> {
     let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
     let twips = (inches * 1440.0).round();
@@ -1692,8 +1721,10 @@ fn page_twips(value: &str) -> Option<u32> {
 /// The page `text` names: `Letter portrait`, `A4 landscape`, `8.5x14in
 /// portrait`, then `margins 1in` (or `margins top 1in, right 1.25in,
 /// bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header 0.5in,
-/// footer 0.6in`), `gutter 0.2in`, `columns 2` and `column gap 0.25in`.
-/// A `; fmt …` tail is left out.
+/// footer 0.6in`), `gutter 0.2in`, `columns 2`, `column gap 0.25in`,
+/// `column line`, and a grid (`line grid 15.6pt`, `line and char grid
+/// 18pt`, `char grid 18pt`, then `char space 4096`). A `; fmt …` tail is
+/// left out.
 pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
     let text = text.split(';').next()?.trim();
     let mut clauses = text.split(", ");
@@ -1729,9 +1760,35 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
         gutter: 0,
         columns: 1,
         column_gap: 720,
+        column_line: false,
+        grid: None,
+        char_space: 0,
     };
     for clause in clauses {
+        if clause == "column line" {
+            page.column_line = true;
+            continue;
+        }
+        if clause == "char grid" {
+            // A character grid with no line pitch.
+            page.grid = Some(("snapToChars", None));
+            continue;
+        }
         let (name, value) = clause.rsplit_once(' ')?;
+        let grid = match name {
+            "line grid" => Some("lines"),
+            "line and char grid" => Some("linesAndChars"),
+            "char grid" => Some("snapToChars"),
+            _ => None,
+        };
+        if let Some(kind) = grid {
+            page.grid = Some((kind, Some(grid_pitch(value)?)));
+            continue;
+        }
+        if name == "char space" {
+            page.char_space = value.parse().ok()?;
+            continue;
+        }
         if name == "columns" {
             page.columns = value
                 .parse()

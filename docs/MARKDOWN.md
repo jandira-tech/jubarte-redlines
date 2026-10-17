@@ -325,7 +325,13 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   its `w:pPr` holds `w:sectPr`; reading the view back, it takes the page
   the YAML header names for its section (`page:` for the first,
   `sections:` for the others). A page's text columns are its clauses
-  too: `columns 2`, and `column gap 0.25in` when not Word's 0.5in.
+  too: `columns 2`, `column gap 0.25in` when not Word's 0.5in, and
+  `column line` for a rule between them (`w:cols w:sep`). A grid the lines
+  snap to (`w:docGrid` with a type) is a clause as well: `line grid 15.6pt`,
+  `line and char grid 18pt` or `char grid 18pt` (a character grid with no
+  line pitch is plain `char grid`), then `char space N` when a character
+  grid sets one. A pitch with no grid type is not printed:
+  Word does not snap to it.
 - `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
 - `rev`: in the accept and reject views, every revision the paragraph

@@ -333,6 +333,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Markdown views keep a section's column line and line grid.** `page:` and
+  `sections:` print `column line` (`w:cols w:sep`) and `line grid 15.6pt`
+  (`w:docGrid`; also `line and char grid`, `char grid`, `char space N`), and
+  the writer writes them back. Demo.docx's two columns had lost their
+  divider, and every line had moved off Word's 15.6pt grid.
+
 - **A highlight prints as `<mark>`, so `{==…==}` is only a comment's
   scope.** With `==` for both, a highlight at the edge of a comment's scope
   printed `{====lit==…==}` and came back as the literal text `==lit==`, and
