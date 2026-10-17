@@ -366,6 +366,40 @@ fn wrong_target_and_repeated_anchor_return_context() {
     );
 }
 
+/// A source path that starts with `-` would parse as an option of `jubarte
+/// read`, so every continuation puts it last, after `--`: the argv stays
+/// executable as given (#1074 review). Other paths keep their place.
+#[test]
+fn a_dash_leading_source_path_follows_the_end_of_options() {
+    let source = docx(&format!("{}{}", para("one two"), para("three")));
+    let refusal = |target: &'static str, anchor: &'static str| AnchorRefusal {
+        operation: None,
+        target,
+        anchor,
+        path: Some("-draft.docx"),
+    };
+    let missing = v2_resolve(&source, Working::InSource, &refusal("p99", "two"), None).unwrap_err();
+    assert_eq!(
+        missing.next_actions[0].argv,
+        ["jubarte", "read", "--head", "20", "--", "-draft.docx"]
+    );
+    let elsewhere =
+        v2_resolve(&source, Working::InSource, &refusal("p0", "three"), None).unwrap_err();
+    let argvs: Vec<&Vec<String>> = elsewhere.next_actions.iter().map(|a| &a.argv).collect();
+    assert!(
+        argvs
+            .iter()
+            .any(|a| *a == &["jubarte", "read", "-p", "p0", "--", "-draft.docx"]),
+        "{argvs:?}"
+    );
+    assert!(
+        argvs
+            .iter()
+            .any(|a| *a == &["jubarte", "read", "-p", "p1", "--", "-draft.docx"]),
+        "{argvs:?}"
+    );
+}
+
 /// V2-11 (#841): the refusal of a target that does not exist, of an invalid
 /// anchor, and the bounded all-matches refusals carry the same structured
 /// facts, and a pathless refusal still binds the digest and says what its

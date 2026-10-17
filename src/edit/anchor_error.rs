@@ -590,43 +590,51 @@ fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
-/// `jubarte read …` argv prefix: the program, the task and, when known, the
-/// source path. Without a path the continuation says what is missing.
-fn read_action(refusal: &AnchorRefusal<'_>) -> NextAction {
+/// `jubarte read …` argv: the program, the task, the source path when known,
+/// and `options`. A path that starts with `-` would parse as an option, so it
+/// goes last, after `--`, and the argv stays executable as given. Without a
+/// path the continuation says what is missing.
+fn read_action(refusal: &AnchorRefusal<'_>, options: [String; 2]) -> NextAction {
     let mut argv = vec!["jubarte".to_string(), "read".to_string()];
     match refusal.path {
-        Some(path) => {
-            argv.push(path.to_string());
+        Some(path) if path.starts_with('-') => {
+            argv.extend(options);
+            argv.extend(["--".to_string(), path.to_string()]);
             NextAction::new(argv)
         }
-        None => NextAction::new(argv).with_prerequisites(vec![
-            "the source file path (the refusal binds its digest)".to_string(),
-        ]),
+        Some(path) => {
+            argv.push(path.to_string());
+            argv.extend(options);
+            NextAction::new(argv)
+        }
+        None => {
+            argv.extend(options);
+            NextAction::new(argv).with_prerequisites(vec![
+                "the source file path (the refusal binds its digest)".to_string(),
+            ])
+        }
     }
 }
 
 /// The read continuation for the requested target.
 fn read_target(refusal: &AnchorRefusal<'_>) -> NextAction {
-    let mut action = read_action(refusal);
-    action.argv.push("-p".to_string());
-    action.argv.push(refusal.target.to_string());
-    action.with_purpose(format!("read the actual text of {}", refusal.target))
+    read_action(refusal, ["-p".to_string(), refusal.target.to_string()])
+        .with_purpose(format!("read the actual text of {}", refusal.target))
 }
 
 /// The bounded read continuation for a target that does not exist.
 fn read_head(refusal: &AnchorRefusal<'_>) -> NextAction {
-    let mut action = read_action(refusal);
-    action.argv.push("--head".to_string());
-    action.argv.push(READ_SUGGESTION_HEAD.to_string());
-    action.with_purpose("list the paragraphs that exist, bounded".to_string())
+    read_action(
+        refusal,
+        ["--head".to_string(), READ_SUGGESTION_HEAD.to_string()],
+    )
+    .with_purpose("list the paragraphs that exist, bounded".to_string())
 }
 
 /// The read continuation that offers a candidate elsewhere — a suggestion,
 /// never a retarget.
 fn suggest_read(refusal: &AnchorRefusal<'_>, id: &str, hits: usize) -> NextAction {
-    let mut action = read_action(refusal);
-    action.argv.push("-p".to_string());
-    action.argv.push(id.to_string());
+    let mut action = read_action(refusal, ["-p".to_string(), id.to_string()]);
     let mut prerequisites = action.prerequisites.take().unwrap_or_default();
     prerequisites.push("re-targeting is the caller's decision".to_string());
     action
