@@ -283,6 +283,7 @@ jobs:
         run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version; print(sys.version)'
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 scripts/test_release_sh.py
+      - run: python3 scripts/test_check_engine_commit.py
       - name: OpenSSF attestation script tests with coverage
         run: |
           uv run --with coverage coverage run --branch --include='scripts/openssf_attest.py' scripts/test_openssf_attest.py
