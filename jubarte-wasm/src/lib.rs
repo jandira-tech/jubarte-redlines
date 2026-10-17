@@ -1221,6 +1221,22 @@ pub fn capabilities() -> Result<String, JsValue> {
     serde_json::to_string_pretty(&manifest()).map_err(js_err)
 }
 
+/// Focused edit discovery; no filters returns this runtime's edit support matrix.
+#[wasm_bindgen(js_name = capabilityQuery)]
+pub fn capability_query(operation: Option<String>, field: Option<String>) -> String {
+    jubarte::capabilities::discovery("wasm", operation.as_deref(), field.as_deref()).to_string()
+}
+
+/// Render a focused query in the same text form as the native CLI.
+#[wasm_bindgen(js_name = capabilityQueryText)]
+pub fn capability_query_text(operation: Option<String>, field: Option<String>) -> String {
+    jubarte::capabilities::discovery_text(&jubarte::capabilities::discovery(
+        "wasm",
+        operation.as_deref(),
+        field.as_deref(),
+    ))
+}
+
 /// [`capabilities`] as the text summary `jubarte capabilities` prints; of
 /// `manifestJson` when given (a manifest a host narrowed to what it does),
 /// else of this build's.
@@ -1702,7 +1718,9 @@ mod tests {
     fn refused_input_and_plan_error_are_the_binary_lines() {
         assert_eq!(
             refused_input("fake.docx", b"hello", true).as_deref(),
-            Some("INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record")
+            Some(
+                "INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record"
+            )
         );
         // Markdown is no ZIP and is read.
         assert_eq!(refused_input("a.md", b"# Title", false), None);

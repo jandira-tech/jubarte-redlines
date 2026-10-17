@@ -15,6 +15,9 @@
 //! plan schema version and the story kinds come from `crate::inspect`, so
 //! the manifest cannot drift from the parser.
 
+mod discovery;
+pub use discovery::{discovery, discovery_text};
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -382,35 +385,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             audit: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
-        edit_operations: [
-            "replace",
-            "insert",
-            "delete",
-            "comment",
-            "insert_paragraph",
-            "delete_paragraph",
-            "format_paragraph",
-            "merge_paragraphs",
-            "rewrite",
-            "reply_comment",
-            "resolve_comment",
-            "edit_comment",
-            "delete_comment",
-            "insert_table",
-            "list",
-            "watermark",
-            "fill_control",
-            "format_run",
-            "insert_footnote",
-            "insert_image",
-            "page_setup",
-            "insert_toc",
-            "redact",
-            "settings",
-        ]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect(),
+        edit_operations: crate::edit::dispatched_operation_kinds(),
         limits: Limits {
             stories: std::iter::once(crate::inspect::BODY_STORY)
                 .chain(crate::inspect::STORY_KINDS.iter().copied())

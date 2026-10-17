@@ -22,7 +22,7 @@ use crate::namespaces::{W, W14};
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 /// Which content control to fill; every form must match exactly one.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ControlSelector {
     /// `"p3.cc0"` or `"cc1"`, the same as `{"id": "p3.cc0"}`.
