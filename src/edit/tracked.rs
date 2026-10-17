@@ -184,7 +184,10 @@ pub(super) struct TrackedParagraphs {
     /// replay's own DOM before this call returns and that DOM is dropped.
     /// The correspondence reads the redline's marks here instead of
     /// reopening the emitted bytes (#1087); `None` when the caller asked
-    /// for no final-view scan.
+    /// for no final-view scan. These equal a reparse of the emitted
+    /// redline because `finish` changes that DOM only through
+    /// `apply_watermark`, which no v2 operation reaches; the regression
+    /// net under `v2_apply`'s tests pins that equivalence.
     pub(super) output_states: Option<Vec<super::v2_apply::FinalView>>,
 }
 
@@ -233,8 +236,10 @@ fn result_with_order(
 /// Returns the redline, the first id its own revisions took (every
 /// source revision's id is below it) and the replay's paragraph walks
 /// ([`TrackedParagraphs`]); the walk is taken after the emission and
-/// before `finish`, which serializes stories and only ever removes
-/// bookmarks or comment definitions, never a `w:p`. When `final_views` is
+/// before `finish`. `finish` changes the DOM only through
+/// `apply_watermark`, a step no v2 operation reaches, so the walk still
+/// addresses the emitted redline's paragraphs; the regression net under
+/// `v2_apply`'s tests pins that. When `final_views` is
 /// set, each output paragraph's final-view disposition is scanned off the
 /// replay's DOM here, while that DOM still lives — the one place the
 /// emitted redline's marks can be read without reopening its bytes.

@@ -20,6 +20,31 @@ use crate::inspect::{Opened, source_sha256};
 use crate::namespaces::{W, W14};
 use crate::xmllinq::{Dom, NodeId};
 
+// The final-view states the last effectful `apply_plan` handed its
+// expectations correspondence. Tests clear this, run an apply, and
+// compare the captured states with a reparse of the emitted primary,
+// reading exactly what production used (#1087).
+#[cfg(test)]
+thread_local! {
+    static CORRESPONDENCE_STATES: std::cell::RefCell<Vec<FinalView>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Replace this thread's [`CORRESPONDENCE_STATES`] with the states the
+/// correspondence is about to read.
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn capture_correspondence_states(states: &[FinalView]) {
+    CORRESPONDENCE_STATES.with(|cell| *cell.borrow_mut() = states.to_vec());
+}
+
+/// Take this thread's [`CORRESPONDENCE_STATES`], clearing the slot.
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn correspondence_states() -> Vec<FinalView> {
+    CORRESPONDENCE_STATES.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
 /// In-memory v2 artifacts and disclosed settlement dependencies.
 #[derive(Debug)]
 pub struct V2EditResult {
@@ -206,13 +231,18 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
         // produced those bytes — the replay's own scan for a tracked
         // primary (its DOM dies with the emission), the transaction's own
         // for a direct one — so the correspondence never reopens the
-        // emitted zip (#1087).
+        // emitted zip (#1087). Sound because `finish` changes that DOM
+        // only through `apply_watermark`, which no v2 operation reaches;
+        // the regression net under this module's tests pins the
+        // equivalence against a reparse.
         let states: Vec<FinalView> = replay_states.unwrap_or_else(|| {
             primary_output
                 .iter()
                 .map(|&node| paragraph_final_state(&tx.opened.dom, node))
                 .collect()
         });
+        #[cfg(test)]
+        capture_correspondence_states(&states);
         let correspondence = expectation_correspondence(
             &model,
             &tx,
@@ -354,6 +384,7 @@ fn expectation_correspondence(
 /// One emitted primary paragraph's final-view disposition: whether its
 /// paragraph mark is tracked-deleted, and whether any of its content
 /// survives the final projection.
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Clone, Debug)]
 pub(super) struct FinalView {
     deleted_mark: bool,
@@ -439,6 +470,33 @@ pub(super) fn paragraph_final_state(dom: &Dom, paragraph: NodeId) -> FinalView {
         deleted_mark: mark_deleted(dom, paragraph),
         survives: final_run(dom, paragraph),
     }
+}
+
+/// The emitted primary's final-view states, recomputed the way the
+/// correspondence computed them before #1087: reopen the bytes and walk
+/// their paragraphs again, in the checker's projection order (the body's,
+/// then each story part's). `finish` changes the producing DOM only
+/// through `apply_watermark`, which no v2 operation reaches, so these
+/// must equal the states read off that DOM —
+/// `final_views_read_off_the_dom_match_a_reparse_of_the_emitted_primary`
+/// pins that equivalence.
+#[cfg(test)]
+fn reparsed_final_views(primary: &[u8]) -> Vec<FinalView> {
+    let opened = Opened::open(primary).expect("reopen the emitted primary");
+    let mut states: Vec<FinalView> = crate::inspect::body_paragraph_nodes(&opened.dom, opened.body)
+        .into_iter()
+        .map(|node| paragraph_final_state(&opened.dom, node))
+        .collect();
+    for (_, _, part) in opened.story_parts() {
+        let (dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part)
+            .unwrap_or_else(|e| panic!("reparse {part}: {e}"));
+        states.extend(
+            crate::inspect::story_paragraph_nodes(&dom, root)
+                .into_iter()
+                .map(|node| paragraph_final_state(&dom, node)),
+        );
+    }
+    states
 }
 
 /// Whether the paragraph's mark (`w:pPr/w:rPr`) is tracked-deleted
@@ -2218,6 +2276,7 @@ fn preserve_history(working: &[u8], candidate: &[u8]) -> Result<(), EditError> {
 mod tests {
     use super::*;
     use crate::edit::deeper_boundary_fixture::{docx, para};
+    use crate::edit::for_edit::{ForEditRequest, ForEditRow, for_edit};
 
     /// An effectful v2 apply builds its expectations correspondence without
     /// reopening the emitted primary: the final-view dispositions come from
@@ -2259,6 +2318,184 @@ mod tests {
                 0,
                 "track {track}: the correspondence reopened the emitted primary"
             );
+        }
+    }
+
+    /// The regression net behind #1087: the final-view states `apply_plan`
+    /// hands the correspondence, read off the DOM that produced the
+    /// primary, must equal a reparse of the emitted primary itself. That
+    /// holds because `finish` changes the producing DOM only through
+    /// `apply_watermark`, which no v2 operation reaches; a future
+    /// DOM-mutating step in `finish` would silently misalign the
+    /// correspondence's output indices, and this test must catch it first.
+    ///
+    /// The fixtures together carry headers and footers (Strict01, f4),
+    /// footnotes and endnotes (Strict01, f4), existing comments (all),
+    /// text boxes (Strict01, hard-tables), existing tracked changes (all)
+    /// with deleted paragraph marks (Strict01, hard-tables), content
+    /// controls (Strict01) and tables (all), nested ones included
+    /// (hard-tables). Every plan kind runs on every fixture under both
+    /// tracking policies, so the tracked replay's scan and the direct
+    /// DOM walk are each pinned. The reparse runs here, after `apply_plan`
+    /// returns — never inside the counted phase of
+    /// `effectful_apply_never_reopens_its_primary_for_the_correspondence`.
+    #[test]
+    fn final_views_read_off_the_dom_match_a_reparse_of_the_emitted_primary() {
+        // One (fixture, kind → target row) net per shape family; rows are
+        // the paired ids `read --for-edit` prints for the frozen fixture.
+        const STRICT01: &[u8] = include_bytes!("../../tests/fixtures/strict/Strict01.docx");
+        const HARD_TABLES: &[u8] =
+            include_bytes!("../../tests/fixtures/from-docx/critic/synthetic/hard-tables.docx");
+        const F4_ORIGINAL: &[u8] = include_bytes!("../../tests/fixtures/f4/original.docx");
+        type Net = (
+            &'static str,
+            &'static [u8],
+            &'static [(&'static str, &'static str)],
+        );
+        const NET: &[Net] = &[
+            (
+                "strict01",
+                STRICT01,
+                &[
+                    ("delete_paragraph", "p2"),
+                    ("replace", "p31"),                // a table cell's paragraph
+                    ("insert_paragraph", "footnotes"), // a footnote story
+                    ("rewrite", "p50"),                // a table cell's paragraph
+                    ("comment", "p47"),                // a paragraph holding a text box
+                ],
+            ),
+            (
+                "hard-tables",
+                HARD_TABLES,
+                &[
+                    ("delete_paragraph", "p0"),
+                    ("replace", "p0"),
+                    ("insert_paragraph", "p0"),
+                    ("rewrite", "p2"),  // a nested table cell's paragraph
+                    ("comment", "p14"), // a paragraph holding a text box
+                ],
+            ),
+            (
+                "f4-original",
+                F4_ORIGINAL,
+                &[
+                    ("delete_paragraph", "p0"),
+                    ("replace", "p0"),
+                    ("insert_paragraph", "header1"), // a header story
+                    ("rewrite", "p0"),
+                    ("comment", "p10"), // a table cell's paragraph
+                ],
+            ),
+        ];
+        for (name, source, kinds) in NET {
+            let view = for_edit(
+                source,
+                &ForEditRequest {
+                    all: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            for (kind, row_id) in *kinds {
+                let row = view
+                    .paragraphs
+                    .iter()
+                    .find(|row| &row.target.short_id == row_id)
+                    .unwrap_or_else(|| panic!("{name}: no for-edit row {row_id}"));
+                for track in ["on", "off"] {
+                    let operation = net_operation(kind, row);
+                    let plan = PlanV2::from_json(&net_plan(source, track, &operation)).unwrap();
+                    let _ = correspondence_states(); // clear any earlier capture
+                    let applied = apply_plan(source, &plan)
+                        .unwrap_or_else(|e| panic!("{name}/{kind} track {track}: {e}"));
+                    // The redline is the primary under tracking, the clean
+                    // copy otherwise, exactly how `apply_plan` picks it.
+                    let primary = if track == "on" {
+                        &applied.redline
+                    } else {
+                        &applied.clean
+                    };
+                    let states = correspondence_states();
+                    let reparsed = reparsed_final_views(primary);
+                    assert!(
+                        !states.is_empty(),
+                        "{name}/{kind} track {track}: no states captured"
+                    );
+                    assert_eq!(
+                        states, reparsed,
+                        "{name}/{kind} track {track}: the DOM-read states diverge from a reparse"
+                    );
+                }
+            }
+        }
+    }
+
+    /// One single-operation PlanV2 for the equivalence net.
+    fn net_plan(source: &[u8], track: &str, operation: &serde_json::Value) -> String {
+        serde_json::json!({
+            "schema_version": 2,
+            "source": {"sha256": source_sha256(source)},
+            "policy": {"track": track, "existing_revisions": "keep", "text_view": "final"},
+            "resolve_revisions": {"accept": [], "reject": []},
+            "author": "T",
+            "date": "2026-10-18T00:00:00Z",
+            "scope": {"kind": "all"},
+            "operations": [operation],
+        })
+        .to_string()
+    }
+
+    /// One operation of the equivalence net, addressed at `row`'s paired ids.
+    fn net_operation(kind: &str, row: &ForEditRow) -> serde_json::Value {
+        let target = serde_json::json!({
+            "short_id": row.target.short_id,
+            "long_id": row.target.long_id,
+        });
+        match kind {
+            "delete_paragraph" => serde_json::json!({
+                "kind": "delete_paragraph",
+                "target": target,
+            }),
+            "replace" => {
+                // The row's first word: a literal anchor a replace admits.
+                let find = row
+                    .working
+                    .as_ref()
+                    .and_then(|working| working.value.text.as_deref())
+                    .and_then(|text| text.split_whitespace().next())
+                    .unwrap_or_else(|| panic!("{} has no literal to replace", row.target.short_id));
+                serde_json::json!({
+                    "kind": "replace",
+                    "target": target,
+                    "find": find,
+                    "text": "X",
+                })
+            }
+            "insert_paragraph" => serde_json::json!({
+                "kind": "insert_paragraph",
+                "target": target,
+                "position": "after",
+                "text": "New paragraph.",
+            }),
+            "rewrite" => {
+                let before = row
+                    .working
+                    .as_ref()
+                    .and_then(|working| working.before_sha256.as_deref())
+                    .unwrap_or_else(|| panic!("{} has no working hash", row.target.short_id));
+                serde_json::json!({
+                    "kind": "rewrite",
+                    "target": target,
+                    "before_sha256": before,
+                    "text": "Rewritten.",
+                })
+            }
+            "comment" => serde_json::json!({
+                "kind": "comment",
+                "target": target,
+                "text": "A note.",
+            }),
+            other => panic!("unknown plan kind {other}"),
         }
     }
 
