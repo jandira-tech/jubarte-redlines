@@ -2341,6 +2341,170 @@ mod generator {
         q["resolve_revisions"]["reject"] = json!([r(7)]);
         assert_eq!(run(&s, &q).unwrap_err().code, "WORKING_BASE_CHANGED");
     }
+
+    fn regenerate_stale_rows(s: &[u8], q: &Value, ids: &str, expected: &[&str]) {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source ' $(literal).docx");
+        let plan_path = dir.path().join("edits ; draft.json");
+        let previous_regeneration = plan_path.with_extension("regenerated.json");
+        std::fs::write(&previous_regeneration, "previous recovery").unwrap();
+        let output = dir.path().join("revised.docx");
+        std::fs::write(&input, s).unwrap();
+        let original_plan = q.to_string();
+        std::fs::write(&plan_path, &original_plan).unwrap();
+        let out = cli(&[
+            "edit",
+            "apply",
+            path(&input),
+            "--plan",
+            path(&plan_path),
+            "-o",
+            path(&output),
+            "--json",
+        ]);
+        assert_eq!(out.status.code(), Some(3));
+        let receipt = value(&out);
+        let error = &receipt["error"];
+        assert_eq!(error["code"], "WORKING_BASE_CHANGED");
+        assert_eq!(error["commit_state"], "not_committed");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains(&source_sha256(expected[0].as_bytes()))
+        );
+        assert!(!output.exists());
+        let actions = error["next_actions"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(actions.len(), 1, "{error}");
+        let action = &actions[0];
+        assert!(
+            action
+                .get("prerequisites")
+                .is_none_or(|p| p.as_array().unwrap().is_empty())
+        );
+        assert!(action["purpose"].as_str().unwrap().contains("only"));
+        let argv: Vec<_> = action["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap())
+            .collect();
+        assert_eq!(&argv[..3], ["jubarte", "edit", "template"]);
+        assert_eq!(
+            Path::new(argv[3]).canonicalize().unwrap(),
+            input.canonicalize().unwrap()
+        );
+        let flags: Vec<_> = argv[4..].windows(2).collect();
+        let arguments = |flag| {
+            flags
+                .iter()
+                .filter(|pair| pair[0] == flag)
+                .map(|pair| pair[1])
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(arguments("--select"), [ids]);
+        for (key, flag) in [("accept", "--accept-change"), ("reject", "--reject-change")] {
+            let decisions: Vec<_> = q["resolve_revisions"][key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["short_id"].as_str().unwrap())
+                .collect();
+            assert_eq!(arguments(flag), decisions);
+        }
+        assert_eq!(
+            arguments("--existing-revisions"),
+            [q["policy"]["existing_revisions"].as_str().unwrap()]
+        );
+        assert!(
+            !argv
+                .iter()
+                .any(|arg| matches!(*arg, "--force" | "--accept-all" | "--accept-all-changes"))
+        );
+        let new_paths = arguments("-o");
+        assert_eq!(new_paths.len(), 1);
+        let regenerated_path = Path::new(new_paths[0]);
+        assert!(!regenerated_path.exists());
+        assert_ne!(regenerated_path, plan_path);
+        let generated = cli(&argv[1..]);
+        assert!(
+            generated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let regenerated: Value =
+            serde_json::from_slice(&std::fs::read(regenerated_path).unwrap()).unwrap();
+        let rows = regenerated["operations"].as_array().unwrap();
+        assert_eq!(rows.len(), expected.len());
+        let targets: Vec<_> = rows
+            .iter()
+            .map(|row| row["target"]["short_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(targets.join(","), ids);
+        for (row, text) in rows.iter().zip(expected) {
+            assert_eq!(row["text"], *text);
+            assert_eq!(row["before_sha256"], source_sha256(text.as_bytes()));
+        }
+        for field in ["source", "policy", "resolve_revisions", "author", "date"] {
+            assert_eq!(
+                regenerated[field], q[field],
+                "regeneration must preserve {field}"
+            );
+        }
+        assert!(run(s, &regenerated).is_ok());
+        assert_eq!(std::fs::read(&input).unwrap(), s);
+        assert_eq!(std::fs::read_to_string(&plan_path).unwrap(), original_plan);
+        assert_eq!(
+            std::fs::read_to_string(previous_regeneration).unwrap(),
+            "previous recovery"
+        );
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn working_base_changed_regenerates_only_stale_payment_rows() {
+        let s = docx(&format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Payment is due within </w:t></w:r><w:del w:id="6" {STAMP}><w:r><w:delText>30</w:delText></w:r></w:del>{}<w:r><w:t> days.</w:t></w:r></w:p><w:p>{}</w:p>{}"#,
+            insertion(7, "45"),
+            insertion(8, "Unrelated"),
+            para("Last.")
+        ));
+        let mut q = generate(&s, &["--author=-Reviewer"]);
+        q["resolve_revisions"]["reject"] = json!([
+            {"short_id":"r6","long_id":"document.w:del.w:id.6"}, r(7)
+        ]);
+        q["resolve_revisions"]["accept"] = json!([r(8)]);
+        for policy in ["keep", "accept", "refuse"] {
+            q["policy"]["existing_revisions"] = json!(policy);
+            regenerate_stale_rows(&s, &q, "p0", &["Payment is due within 30 days."]);
+        }
+    }
+
+    #[test]
+    fn working_base_changed_regeneration_keeps_source_ids_after_merge() {
+        let s = docx(&format!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {STAMP}/></w:rPr></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>{}<w:p>{}</w:p><w:p>{}</w:p>{}"#,
+            para("Beta"),
+            insertion(7, "First"),
+            insertion(8, "Second"),
+            para("Last.")
+        ));
+        let mut q = generate(
+            &s,
+            &[
+                "--select", "p2-p4", "--track", "off", "--author", "Reviewer",
+            ],
+        );
+        q["resolve_revisions"]["accept"] =
+            json!([{"short_id":"r1","long_id":"document.w:del.w:id.1"}]);
+        q["policy"]["existing_revisions"] = json!("reject");
+        let duplicate = q["operations"][0].clone();
+        q["operations"].as_array_mut().unwrap().push(duplicate);
+        regenerate_stale_rows(&s, &q, "p2,p3", &["", ""]);
+    }
     #[test]
     fn unrepresentable_and_removed_rows_are_inventory_not_rewrites() {
         let s = docx(

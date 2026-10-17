@@ -9,8 +9,8 @@ use jubarte::cli::edit_actions::{EditAction, TypedEdit};
 use jubarte::edit::{EditPlan, PrepareOptions, PreparedEdit, PrimaryRole, v2::PlanV2};
 use jubarte::expect::{ExpectationReport, ReceiptMeta, evaluate_with_receipt, parse_expectations};
 use jubarte::result::{
-    Artifact, CommitState, Effect, Envelope, Error, MediaRole, Phase, PredictedEffect, ResultData,
-    Runtime, Source, Status,
+    Artifact, CommitState, Effect, Envelope, Error, MediaRole, NextAction, Phase, PredictedEffect,
+    ResultData, Runtime, Source, Status,
 };
 
 type Failure = Box<Error>;
@@ -68,9 +68,13 @@ enum Request {
     V2(PlanV2),
 }
 impl Request {
-    fn prepare(&self, source: &[u8], base: &PrepareOptions) -> Result<PreparedEdit, Failure> {
+    fn prepare(
+        &self,
+        source: &[u8],
+        base: &PrepareOptions,
+    ) -> Result<PreparedEdit, jubarte::edit::EditError> {
         match self {
-            Self::V2(plan) => jubarte::edit::prepare_v2(source, plan, base).map_err(edit_error),
+            Self::V2(plan) => jubarte::edit::prepare_v2(source, plan, base),
             Self::V1(plan) => {
                 // The v1 typed route publishes the redline when the
                 // transaction is tracked: ask `prepare` for the redline
@@ -83,7 +87,7 @@ impl Request {
                     role: PrimaryRole::Redline,
                     ..*base
                 };
-                jubarte::edit::prepare(source, plan, &options).map_err(edit_error)
+                jubarte::edit::prepare(source, plan, &options)
             }
         }
     }
@@ -93,6 +97,78 @@ impl Request {
             Self::V2(p) => p.operations.len(),
         }
     }
+}
+
+fn regeneration_action(
+    error: &jubarte::edit::EditError,
+    plan: &PlanV2,
+    source: &Path,
+    plan_path: &Path,
+) -> Option<NextAction> {
+    let mut seen = std::collections::BTreeSet::new();
+    let targets: Vec<_> = error
+        .outcomes
+        .iter()
+        .filter(|o| o.code.as_deref() == Some("WORKING_BASE_CHANGED"))
+        .filter_map(|o| o.id.strip_prefix("/operations/")?.parse::<usize>().ok())
+        .filter_map(|i| match plan.operations.get(i)? {
+            jubarte::edit::v2::Operation::Rewrite { target, .. } => Some(&target.short_id),
+            _ => None,
+        })
+        .filter(|id| seen.insert(*id))
+        .map(String::as_str)
+        .collect();
+    if targets.is_empty() {
+        return None;
+    }
+    let mut output = plan_path.with_extension("regenerated.json");
+    let mut suffix = 1;
+    while output.symlink_metadata().is_ok() {
+        output = plan_path.with_extension(format!("regenerated-{suffix}.json"));
+        suffix += 1;
+    }
+    let mut argv = vec![
+        "jubarte".into(),
+        "edit".into(),
+        "template".into(),
+        absolute(source),
+        "--select".into(),
+        targets.join(","),
+    ];
+    for (flag, decisions) in [
+        ("--accept-change", &plan.resolve_revisions.accept),
+        ("--reject-change", &plan.resolve_revisions.reject),
+    ] {
+        for target in decisions {
+            argv.extend([flag.into(), target.short_id.clone()]);
+        }
+    }
+    let policy = match plan.policy.existing_revisions {
+        jubarte::edit::ExistingRevisions::Keep => "keep",
+        jubarte::edit::ExistingRevisions::Accept => "accept",
+        jubarte::edit::ExistingRevisions::Reject => "reject",
+        jubarte::edit::ExistingRevisions::Refuse => "refuse",
+    };
+    let track = match plan.policy.track {
+        jubarte::edit::v2::Track::On => "on",
+        jubarte::edit::v2::Track::Off => "off",
+    };
+    argv.extend([
+        "--existing-revisions".into(),
+        policy.into(),
+        "--track".into(),
+        track.into(),
+        format!("--author={}", plan.author),
+        "--datetime".into(),
+        plan.date.clone(),
+        "--expect-sha256".into(),
+        plan.source.sha256.clone(),
+        "-o".into(),
+        absolute(&output),
+    ]);
+    Some(NextAction::new(argv).with_purpose(
+        "regenerate replacements for only the stale rows; deliberately incorporate them into the original plan without overwriting authored desired text",
+    ))
 }
 
 /// Read, bind and evaluate the optional expectation contract on the
@@ -351,14 +427,28 @@ fn prepare_and_publish(
             "--expect requires a PlanV2 request in this layer; re-save the plan as v2 (edit template / --save-plan) or use jubarte check on the output",
         ));
     }
-    let prepared = request.prepare(
-        source,
-        &PrepareOptions {
-            require_change: delivery.require_change,
-            exact_text: matches!(request, Request::V2(_)),
-            role: PrimaryRole::Clean,
-        },
-    )?;
+    let prepared = request
+        .prepare(
+            source,
+            &PrepareOptions {
+                require_change: delivery.require_change,
+                exact_text: matches!(request, Request::V2(_)),
+                role: PrimaryRole::Clean,
+            },
+        )
+        .map_err(|e| {
+            let next = match (&request, plan_path) {
+                (Request::V2(plan), Some(path)) if e.code == "WORKING_BASE_CHANGED" => {
+                    regeneration_action(&e, plan, action.file(), path)
+                }
+                _ => None,
+            };
+            let mut error = edit_error(e);
+            if let Some(next) = next {
+                error.push_next_action(next);
+            }
+            error
+        })?;
     // Optional expectations (V2-13): evaluate on the prepared transaction's
     // chosen primary bytes, reopened, through the source-to-output
     // correspondence the transaction built. Any failed executable check and
