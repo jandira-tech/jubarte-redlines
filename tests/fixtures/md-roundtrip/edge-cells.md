@@ -9,6 +9,7 @@ body: p0-p18, 1 table, 1 page      # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  table: TableNormal
 ---
 
 <!-- p0 -->

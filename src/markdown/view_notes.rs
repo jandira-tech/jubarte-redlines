@@ -410,6 +410,25 @@ pub(super) struct CommentHead {
     pub resolved: bool,
 }
 
+/// The cells a `cell-borders` group names: every cell, a row's, or one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CellsAt {
+    All,
+    Row(usize),
+    Cell(usize, usize),
+}
+
+impl CellsAt {
+    /// Whether the cell at `row`, `cell` is one of these.
+    pub(super) fn holds(self, row: usize, cell: usize) -> bool {
+        match self {
+            Self::All => true,
+            Self::Row(r) => r == row,
+            Self::Cell(r, c) => (r, c) == (row, cell),
+        }
+    }
+}
+
 /// What a table's id line says about its rows (`<!-- t0 4x7, cells
 /// t0.row0 p1-p13 t0.row1 p14-p50, header row repeats -->`): how many
 /// paragraphs each row holds, when it counts them row by row, and whether
@@ -439,6 +458,14 @@ pub(super) struct TableLine {
     pub styles: HashMap<usize, String>,
     /// The table's style (`style Ledger`) when tables differ in theirs.
     pub style: Option<String>,
+    /// The table's own borders (`borders single 0.5pt 000000`).
+    pub borders: Option<super::borders::Sides>,
+    /// Its cells' own borders (`cell-borders bottom single 1pt in t0.row0`),
+    /// with the cells each names.
+    pub cell_borders: Vec<(CellsAt, super::borders::Sides)>,
+    /// Its rows' own table borders (`row-borders top double 0.5pt in
+    /// t0.row1`, Word's `w:tblPrEx`), by row.
+    pub row_borders: Vec<(usize, super::borders::Sides)>,
     /// A comment's range runs through the table (`in c5`).
     pub in_comment: bool,
     /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
@@ -591,6 +618,9 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         aligns: HashMap::new(),
         styles: HashMap::new(),
         style: None,
+        borders: None,
+        cell_borders: Vec::new(),
+        row_borders: Vec::new(),
         in_comment: false,
         fmt: None,
         grid_fmt: None,
@@ -716,6 +746,46 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         }
         if let Some((style, "")) = clause.strip_prefix("style ").and_then(take_style) {
             parsed.style = Some(style);
+        }
+        if let Some(text) = clause.strip_prefix("borders ") {
+            parsed.borders = super::borders::parse(text, &super::borders::TABLE_SIDES);
+        }
+        if let Some(groups) = clause.strip_prefix("row-borders ") {
+            // `top double 0.5pt FF0000 in t0.row1 t0.row3; left none in t0.row2`
+            for group in groups.split("; ") {
+                let Some((text, at)) = group.rsplit_once(" in ") else {
+                    continue;
+                };
+                let Some(sides) = super::borders::parse(text, &super::borders::TABLE_SIDES) else {
+                    continue;
+                };
+                for row in at.split(' ').filter_map(row_of) {
+                    parsed.row_borders.push((row, sides.clone()));
+                }
+            }
+        }
+        if let Some(groups) = clause.strip_prefix("cell-borders ") {
+            // `top,bottom single 1pt in all; left none in t0.row1 t0.row2.cell0`
+            for group in groups.split("; ") {
+                let Some((text, at)) = group.rsplit_once(" in ") else {
+                    continue;
+                };
+                let Some(sides) = super::borders::parse(text, &super::borders::CELL_SIDES) else {
+                    continue;
+                };
+                for target in at.split(' ') {
+                    let target = if target == "all" {
+                        Some(CellsAt::All)
+                    } else if let Some((row, cell)) = row_and_cell(target) {
+                        Some(CellsAt::Cell(row, cell))
+                    } else {
+                        row_of(target).map(CellsAt::Row)
+                    };
+                    if let Some(target) = target {
+                        parsed.cell_borders.push((target, sides.clone()));
+                    }
+                }
+            }
         }
         // The size opens the clauses, after the alignment: `center 3x2`.
         if i == 0
@@ -940,8 +1010,11 @@ const CLAUSE_WORDS: [&str; 20] = [
 
 /// The words that open a table line's own clauses (`cells p0-p3 by row`,
 /// `merged …`): beside [`CLAUSE_WORDS`], what a style id must not read as.
-const TABLE_WORDS: [&str; 7] = [
+const TABLE_WORDS: [&str; 10] = [
     "cells",
+    "borders",
+    "cell-borders",
+    "row-borders",
     "merged",
     "gaps",
     "style",

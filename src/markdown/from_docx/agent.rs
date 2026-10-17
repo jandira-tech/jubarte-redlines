@@ -1598,6 +1598,106 @@ fn merged_cells(t: &str, grid: &[Vec<(usize, usize, Option<bool>)>]) -> Vec<Stri
     out
 }
 
+/// The borders `tbl` and its cells carry themselves, as its line prints them
+/// (`borders single 0.5pt 000000`, `cell-borders bottom single 1pt in
+/// t0.row0`): what Word passes comes back as it was.
+fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
+    use crate::markdown::borders::{self, CELL_SIDES, TABLE_SIDES};
+    let read = |props: Option<&Element>, all: &[&'static str]| -> borders::Sides {
+        let found: Vec<_> = props
+            .into_iter()
+            .flat_map(|e| e.elements())
+            .filter_map(|side| {
+                let name = borders::side(side.local(), all)?;
+                let border = borders::Border::new(
+                    side.attr("val")?,
+                    side.attr("sz"),
+                    side.attr("color"),
+                    side.attr("space"),
+                )
+                .with_theme(
+                    side.attr("themeColor"),
+                    side.attr("themeTint"),
+                    side.attr("themeShade"),
+                );
+                Some((name, border))
+            })
+            .collect();
+        borders::ordered(&found, all)
+    };
+    let mut clauses = Vec::new();
+    let own = read(tbl.path(&["tblPr", "tblBorders"]), &TABLE_SIDES);
+    if !own.is_empty() {
+        clauses.push(format!("borders {}", borders::describe(&own, &TABLE_SIDES)));
+    }
+    // A row's own table borders (`w:tblPrEx/w:tblBorders`), the rows that
+    // share one in one group: `row-borders top double 0.5pt in t0.row1`.
+    let mut row_groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (r, tr) in rows.iter().enumerate() {
+        let sides = read(tr.path(&["tblPrEx", "tblBorders"]), &TABLE_SIDES);
+        if sides.is_empty() {
+            continue;
+        }
+        let text = borders::describe(&sides, &TABLE_SIDES);
+        let at = format!("t{t}.row{r}");
+        match row_groups.iter_mut().find(|(g, _)| *g == text) {
+            Some((_, rows)) => rows.push(at),
+            None => row_groups.push((text, vec![at])),
+        }
+    }
+    if !row_groups.is_empty() {
+        let groups: Vec<String> = row_groups
+            .iter()
+            .map(|(text, at)| format!("{text} in {}", at.join(" ")))
+            .collect();
+        clauses.push(format!("row-borders {}", groups.join("; ")));
+    }
+    // Each cell's borders, as text, by row; the cells that share one print
+    // as one group, a whole row as the row, every cell as `all`.
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .map(|tr| {
+            super::row_cells(tr)
+                .map(|tc| {
+                    let sides = read(tc.path(&["tcPr", "tcBorders"]), &CELL_SIDES);
+                    borders::describe(&sides, &CELL_SIDES)
+                })
+                .collect()
+        })
+        .collect();
+    let mut texts: Vec<&String> = Vec::new();
+    for text in cells.iter().flatten().filter(|t| !t.is_empty()) {
+        if !texts.contains(&text) {
+            texts.push(text);
+        }
+    }
+    let groups: Vec<String> = texts
+        .iter()
+        .map(|text| {
+            if cells.iter().flatten().all(|c| c == *text) {
+                return format!("{text} in all");
+            }
+            let mut at = Vec::new();
+            for (r, row) in cells.iter().enumerate() {
+                if !row.is_empty() && row.iter().all(|c| c == *text) {
+                    at.push(format!("t{t}.row{r}"));
+                    continue;
+                }
+                for (c, cell) in row.iter().enumerate() {
+                    if cell == *text {
+                        at.push(format!("t{t}.row{r}.cell{c}"));
+                    }
+                }
+            }
+            format!("{text} in {}", at.join(" "))
+        })
+        .collect();
+    if !groups.is_empty() {
+        clauses.push(format!("cell-borders {}", groups.join("; ")));
+    }
+    clauses
+}
+
 /// `<!-- t0 center 3x3, cells p8-p16 by row, p9 center, header row repeats -->`
 /// (`aligned`: the cell paragraphs aligned against their column);
 /// `None` for a nested table (not numbered). With `comments` (comments
@@ -1857,6 +1957,7 @@ pub(crate) fn table_line(
             crate::markdown::view_notes::style_token(style)
         ));
     }
+    clauses.extend(border_clauses(tbl, t, &rows));
     let merged = merged_cells(t, &grid);
     if !merged.is_empty() {
         clauses.push(format!("merged {}", merged.join("; ")));

@@ -142,8 +142,8 @@ fn every_block_kind_is_written() {
     ] {
         assert!(styles.contains(&format!("w:styleId=\"{id}\"")), "{id}");
     }
-    // A plain Markdown table is Word's Normal Table: no style is forced.
-    assert!(!styles.contains("w:styleId=\"TableGrid\""), "{styles}");
+    // A plain Markdown table takes Word's thin grid (Arthur, 2026-10-15).
+    assert!(styles.contains("w:styleId=\"TableGrid\""), "{styles}");
 }
 
 #[test]
@@ -1035,10 +1035,13 @@ fn the_tracking_option_overrides_the_key() {
 }
 
 #[test]
-fn a_table_takes_the_style_the_view_names_and_otherwise_none() {
-    // No style named: Word's Normal Table, no forced Table Grid.
+fn a_table_takes_the_style_the_view_names_and_otherwise_table_grid() {
+    // No style named: Word's thin grid, as Insert Table makes it.
     let plain = document_xml(&write("|a|b|\n|-|-|\n|c|d|\n"));
-    assert!(!plain.contains("w:tblStyle"), "{plain}");
+    assert!(
+        plain.contains(r#"<w:tblStyle w:val="TableGrid"/>"#),
+        "{plain}"
+    );
     // The legend's `table:` styles every table.
     let legend = markdown_to_docx(
         "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt  # default\n  table: TableGrid, all borders 0.5pt\n---\n\n\
@@ -1051,7 +1054,7 @@ fn a_table_takes_the_style_the_view_names_and_otherwise_none() {
     let styles = part_string(&legend.docx, "word/styles.xml").unwrap();
     assert!(styles.contains(r#"w:styleId="TableGrid""#), "{styles}");
     // Tables of several styles name theirs on their lines; one naming
-    // none has none. A style Word does not know is defined by its name.
+    // none takes Table Grid. A style Word does not know is defined by its name.
     let mixed = markdown_to_docx(
         "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt  # default\n  tables: TableGrid, Ledger\n---\n\n\
          <!-- t0 1x1, cells p0-p0 by row -->\n|a|\n|-|\n\n\
@@ -1070,7 +1073,7 @@ fn a_table_takes_the_style_the_view_names_and_otherwise_none() {
                 .map_or("", |(_, rest)| rest.split('"').next().unwrap())
         })
         .collect();
-    assert_eq!(styles_of, ["", "TableGrid", "Ledger"], "{xml}");
+    assert_eq!(styles_of, ["TableGrid", "TableGrid", "Ledger"], "{xml}");
     let styles = part_string(&mixed.docx, "word/styles.xml").unwrap();
     assert!(
         styles.contains(r#"<w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/>"#),

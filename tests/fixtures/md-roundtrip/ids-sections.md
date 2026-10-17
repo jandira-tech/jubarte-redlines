@@ -12,7 +12,6 @@ styles:
   Normal: Cambria 12pt, left       # default; unannotated paragraphs use it
   ListParagraph: Cambria 12pt, indent 0.5in, contextual spacing, named List Paragraph
   Cuerpo: Calibri 11pt, after 8pt, line 1.08
-  table: TableGrid, all borders 0.5pt
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   default: {id: header1, text: ""}
@@ -29,7 +28,7 @@ Supplementary Table 1. Difference in baseline charactheristics of patients accep
 
 <!-- p2 empty -->
 
-<!-- t0 17x4, cells t0.row0 p3-p6 t0.row1 p7-p10 t0.row2 p11-p14 t0.row3 p15-p18 t0.row4 p19-p22 t0.row5 p23-p26 t0.row6 p27-p30 t0.row7 p31-p34 t0.row8 p35-p38 t0.row9 p39-p42 t0.row10 p43-p46 t0.row11 p47-p50 t0.row12 p51-p64 t0.row13 p65-p96 t0.row14 p97-p132 t0.row15 p133-p136 t0.row16 p137-p140, p52-p54 ListParagraph, p66-p72 ListParagraph, p98-p105 ListParagraph -->
+<!-- t0 17x4, cells t0.row0 p3-p6 t0.row1 p7-p10 t0.row2 p11-p14 t0.row3 p15-p18 t0.row4 p19-p22 t0.row5 p23-p26 t0.row6 p27-p30 t0.row7 p31-p34 t0.row8 p35-p38 t0.row9 p39-p42 t0.row10 p43-p46 t0.row11 p47-p50 t0.row12 p51-p64 t0.row13 p65-p96 t0.row14 p97-p132 t0.row15 p133-p136 t0.row16 p137-p140, p52-p54 ListParagraph, p66-p72 ListParagraph, p98-p105 ListParagraph, borders none, cell-borders bottom single 0.5pt in t0.row0 t0.row16; top single 0.5pt in t0.row1 -->
 ||Accepted Participation|Rejected Participation|p|
 |-|-|-|-|
 |n (%)|46 (63.9%)|26 (36.1%)|-|

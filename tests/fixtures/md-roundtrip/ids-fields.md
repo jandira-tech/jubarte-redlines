@@ -13,7 +13,6 @@ styles:
   "#": Heading1, Calibri Light 16pt, before 12pt, keep-next, keep-lines
   "##": Heading2, Calibri Light 13pt, before 2pt, keep-next, keep-lines
   NoSpacing: Calibri 11pt, named No Spacing
-  table: TableGrid, all borders 0.5pt
 ---
 
 <!-- p0 break-ins r0 @SW -->

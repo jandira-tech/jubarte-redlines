@@ -355,9 +355,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         heading_slug: None,
         slugger: super::write::Slugger::default(),
         tables_differ: {
-            let (styles, unstyled) = table_styles(document.child("body").unwrap_or(&document));
+            let (styles, unstyled) = table_styles(
+                document.child("body").unwrap_or(&document),
+                custom_table_grid(styles_root.as_ref()),
+            );
             styles.len() > 1 || (!styles.is_empty() && unstyled)
         },
+        custom_grid: custom_table_grid(styles_root.as_ref()),
         bookmarks: bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
@@ -819,7 +823,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                 other_styles.push(style.to_string());
             }
         }
-        let (table_styles, _) = table_styles(body);
+        let (table_styles, _) = table_styles(body, custom_table_grid(styles_root.as_ref()));
         let even_odd = settings
             .as_ref()
             .is_some_and(|s| s.child("evenAndOddHeaders").is_some());
@@ -2152,6 +2156,9 @@ struct Writer<'a> {
     /// The tables differ in style (two styles, or one and none): each
     /// table line names its own, `style Ledger`.
     tables_differ: bool,
+    /// The source defines Table Grid with borders of its own
+    /// ([`custom_table_grid`]), so the view names it.
+    custom_grid: bool,
     /// In a heading: the name a Markdown link names it by, whose bookmark
     /// the writer makes again and so prints no `<a id>`.
     heading_slug: Option<String>,
@@ -2275,7 +2282,7 @@ impl Writer<'_> {
                         && let Some(line) = agent::table_line(
                             child,
                             self.tables_differ
-                                .then(|| child.path(&["tblPr", "tblStyle"])?.attr("val"))
+                                .then(|| view_table_style(child, self.custom_grid))
                                 .flatten(),
                             &[self.column_alignments(child).1, self.cell_styles(child)].concat(),
                             self.resolved,
@@ -4095,13 +4102,52 @@ fn hyperlink_instruction(instruction: &str) -> Option<String> {
     link_target(url, anchor).map(|t| ooxml::titled(&t, title))
 }
 
-/// The table styles of `body`'s tables, in the order they first come, and
-/// whether a table has none.
-fn table_styles(body: &Element) -> (Vec<String>, bool) {
+/// The table style the view names for `t`. Table Grid, the writer's
+/// default (Word's Insert Table), is none unless the source defines one of
+/// its own (`custom_grid`); no style is Word's Normal Table, which the view
+/// names so the writer adds none. Borders the table carries itself print on
+/// its line (`borders …`).
+fn view_table_style(t: &Element, custom_grid: bool) -> Option<&str> {
+    match t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
+        Some("TableGrid") if !custom_grid => None,
+        Some(style) => Some(style),
+        None => Some("TableNormal"),
+    }
+}
+
+/// Whether `styles` defines Table Grid with one single border all round
+/// that is not Word's 0.5pt: a grid the legend can name (`TableGrid, all
+/// borders 1.5pt`) and the writer would otherwise replace with the thin
+/// one. Borders that vary, or none, keep Word's grid.
+fn custom_table_grid(styles: Option<&Element>) -> bool {
+    let Some(borders) = styles
+        .and_then(|s| {
+            s.children_named("style")
+                .find(|s| s.attr("styleId") == Some("TableGrid"))
+        })
+        .and_then(|s| s.path(&["tblPr", "tblBorders"]))
+    else {
+        return false;
+    };
+    let sizes: Option<Vec<&str>> = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .iter()
+        .map(|side| {
+            borders
+                .child(side)
+                .filter(|b| b.attr("val") == Some("single"))
+                .and_then(|b| b.attr("sz"))
+        })
+        .collect();
+    sizes.is_some_and(|sizes| sizes.iter().all(|&sz| sz == sizes[0]) && sizes[0] != "4")
+}
+
+/// The table styles of `body`'s tables the view names, in the order they
+/// first come, and whether a table has none (the writer's Table Grid).
+fn table_styles(body: &Element, custom_grid: bool) -> (Vec<String>, bool) {
     let mut styles: Vec<String> = Vec::new();
     let mut unstyled = false;
     for t in agent::tables(body) {
-        match t.path(&["tblPr", "tblStyle"]).and_then(|s| s.attr("val")) {
+        match view_table_style(t, custom_grid) {
             Some(s) => {
                 if !styles.iter().any(|x| x == s) {
                     styles.push(s.to_string());

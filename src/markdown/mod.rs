@@ -36,6 +36,7 @@
 //! bindings over them.
 
 mod anchor;
+pub(crate) mod borders;
 mod critic;
 mod diff;
 mod from_docx;

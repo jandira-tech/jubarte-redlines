@@ -876,6 +876,36 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     {
         s.push_str(&format!(" shd={fill}"));
     }
+    // The borders the table and its cells carry themselves, as a table
+    // line prints them.
+    let borders = |props: Option<NodeId>, all: &[&'static str]| -> String {
+        use crate::markdown::borders::{self, Border};
+        let found: Vec<_> = props
+            .map(|x| dom.elements(x, None))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|side| {
+                let name = borders::side(&local(dom, side), all)?;
+                let get = |key: &str| Some(attr(dom, side, key)).filter(|v| !v.is_empty());
+                let border = Border::new(
+                    &get("val")?,
+                    get("sz").as_deref(),
+                    get("color").as_deref(),
+                    get("space").as_deref(),
+                );
+                Some((name, border))
+            })
+            .collect();
+        borders::describe(&borders::ordered(&found, all), all)
+    };
+    let own = borders(
+        tblpr.and_then(|x| child(dom, x, "tblBorders")),
+        &crate::markdown::borders::TABLE_SIDES,
+    );
+    if !own.is_empty() {
+        s.push_str(&format!(" borders[{own}]"));
+    }
+    let mut cell_borders: BTreeMap<String, usize> = BTreeMap::new();
     let mut cells: BTreeMap<String, usize> = BTreeMap::new();
     for tc in dom.descendants(t, None) {
         if local(dom, tc) != "tc" || nearest(dom, tc, "tbl") != Some(t) {
@@ -887,6 +917,20 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         {
             *cells.entry(fill).or_default() += 1;
         }
+        let own = borders(
+            child(dom, tc, "tcPr").and_then(|x| child(dom, x, "tcBorders")),
+            &crate::markdown::borders::CELL_SIDES,
+        );
+        if !own.is_empty() {
+            *cell_borders.entry(own).or_default() += 1;
+        }
+    }
+    if !cell_borders.is_empty() {
+        let items: Vec<String> = cell_borders
+            .iter()
+            .map(|(b, k)| format!("{b}×{k}"))
+            .collect();
+        s.push_str(&format!(" cells-borders[{}]", items.join(",")));
     }
     if !cells.is_empty() {
         let items: Vec<String> = cells.iter().map(|(f, k)| format!("{f}×{k}")).collect();
@@ -1277,6 +1321,19 @@ mod story_diagnostic_contract_tests {
                 ],
                 1
             )
+        );
+    }
+
+    #[test]
+    fn a_table_reports_its_own_borders_and_its_cells() {
+        // 5331b981b7's shape: a grid written with start/end, grey cells.
+        let body = r#"<w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="2" w:color="000000"/><w:start w:val="single" w:sz="2" w:color="000000"/><w:bottom w:val="nil"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcBorders><w:top w:val="single" w:sz="8" w:color="CCCCCC"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcBorders><w:top w:val="single" w:sz="8" w:color="CCCCCC"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        assert_eq!(
+            report(body, &StyleBook::default(), &[]).0,
+            vec![
+                "  table 1 1x2 borders[top,left single 0.25pt 000000 + bottom none] cells-borders[top single 1pt CCCCCC×2] \"A | B\""
+                    .to_string()
+            ]
         );
     }
 

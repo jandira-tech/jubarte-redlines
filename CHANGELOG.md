@@ -117,6 +117,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **Tables keep the borders Word passes; a Markdown table takes Word's thin
+  grid.** The agent view prints a table's own borders (`borders single 0.5pt
+  000000`), its rows' own (`row-borders … in t0.row1`, `w:tblPrEx`) and its
+  cells' (`cell-borders … in all`, a row, or a cell), theme colours included
+  (`theme accent1 tint 99 shade BF`), and the writer writes them back as they
+  were. A Table Grid the source defines with its own uniform border keeps it. A table without a style is
+  `TableNormal` (written with no `tblStyle`); a table that names nothing, as a
+  plain Markdown table, takes Table Grid (single 0.5pt borders all round, as
+  Word's Insert Table makes it) instead of the borderless Normal Table.
+  `debug --check render` reports both kinds of border.
+
 - **No PDF comment note by default.** `--revisions conventional` and
   `custom` no longer write a `/Text` annotation per comment: viewers
   painted it as a note icon over the commented words. The balloon still

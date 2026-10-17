@@ -1902,7 +1902,6 @@ page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   \"#\": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
-  table: TableGrid, all borders 0.5pt
 headers:
   first: {id: header2, text: [DRAFT, \"\"], style: Normal}  # page 1 only (different first page)
   default: {id: header1, text: SIGNATURE PAGE, right, style: Normal}
@@ -2720,10 +2719,12 @@ fn an_orphan_comment_reference_in_a_cell_is_not_listed() {
 #[test]
 fn header_table_styles_skip_tables_in_text_boxes() {
     let boxed = r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:tbl><w:tblPr><w:tblStyle w:val="PlainTable"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>in box</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#;
-    let top = r#"<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>top</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    // Table Grid is the view's default and goes unnamed; the top table
+    // takes a style the legend must name.
+    let top = r#"<w:tbl><w:tblPr><w:tblStyle w:val="Ledger"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>top</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = agent(&docx(&format!("{top}{boxed}")));
     assert!(!out.contains("PlainTable"), "{out}");
-    assert!(out.contains("TableGrid"), "{out}");
+    assert!(out.contains("\n  table: Ledger\n"), "{out}");
 }
 
 /// Review t09-15: underline from a character style shows as `<u>`, as bold

@@ -325,6 +325,10 @@ struct TablePlan {
     aligns: HashMap<usize, &'static str>,
     /// The style the table's line names (`style Ledger`).
     style: Option<String>,
+    /// The table's own borders and its cells' (`borders …`, `cell-borders …`).
+    borders: Option<crate::markdown::borders::Sides>,
+    cell_borders: Vec<(view_notes::CellsAt, crate::markdown::borders::Sides)>,
+    row_borders: Vec<(usize, crate::markdown::borders::Sides)>,
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
     styles: HashMap<usize, String>,
     /// A comment's range runs through the table (`in c5`).
@@ -753,6 +757,9 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         aligns: line.aligns,
         styles: line.styles,
         style: line.style,
+        borders: line.borders,
+        cell_borders: line.cell_borders,
+        row_borders: line.row_borders,
         in_comment: line.in_comment,
         fmt: line.fmt,
         grid_fmt: line.grid_fmt,
@@ -1481,22 +1488,29 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
                 let align = self.table_plan.as_ref().and_then(|plan| plan.align);
                 // The style the table's line names, else the legend's for
-                // every table, else none (Word's Normal Table).
+                // every table, else Word's thin grid, as Insert Table makes
+                // (Arthur, 2026-10-15). A view names Normal Table for a
+                // table without borders: no tblStyle, Word's default table
+                // style, as the source had it.
                 let style = self
                     .table_plan
                     .as_ref()
                     .and_then(|plan| plan.style.clone())
-                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()));
+                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()))
+                    .or_else(|| Some("TableGrid".to_string()))
+                    .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
-                    if id == "TableGrid" {
+                    let border = self
+                        .document
+                        .table_style
+                        .as_ref()
+                        .filter(|(legend, _)| legend == id)
+                        .and_then(|(_, border)| *border);
+                    // Word's thin Table Grid, unless the legend gives it a
+                    // border of its own (`TableGrid, all borders 1.5pt`).
+                    if id == "TableGrid" && border.is_none_or(|sz| sz == 4) {
                         self.document.styles.insert("TableGrid");
                     } else {
-                        let border = self
-                            .document
-                            .table_style
-                            .as_ref()
-                            .filter(|(legend, _)| legend == id)
-                            .and_then(|(_, border)| *border);
                         self.document.table_styles.insert(id.clone(), border);
                     }
                 }
@@ -2042,9 +2056,14 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some(id) = grid {
             self.document.reserved_ids.insert(id);
         }
+        let (borders, cell_borders) = (plan.borders.clone(), plan.cell_borders.clone());
+        let row_borders = plan.row_borders.iter().cloned().collect();
         TableFormats {
             table: table.map(|tag| self.format_mark(&tag)),
             grid,
+            borders,
+            cell_borders,
+            row_borders,
             row_marks: row_marks
                 .into_iter()
                 .map(|(row, (inserted, tag))| {

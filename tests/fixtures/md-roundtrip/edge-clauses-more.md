@@ -11,6 +11,7 @@ body: p0-p21, 5 tables, 1 page     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  table: TableNormal
 unplaced: [r109 @AL in p20]        # changes no other line shows (text boxes, Word's Fallback copies)
 ---
 
