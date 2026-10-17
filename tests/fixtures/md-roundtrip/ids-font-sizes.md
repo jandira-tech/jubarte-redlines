@@ -5,7 +5,7 @@ revisions: 1                       # 1 formatting
 comments: 0
 authors:
   document_owner: Belen Civera     # dc:creator
-  ATGH: Achensee Tourismus - Gunther Hochhold  # 1 revision, 2026-09-22T12:22:00Z
+  ATGH: Achensee Tourismus - Gunther Hochhold  # 1 revision, 2026-09-22T16:22:00Z
 body: p0-p172, 5 tables, 2 pages   # pages from Word's cached layout
 page: 8.264x11.6806in portrait, margins top 1.2035in, right 0.764in, bottom 0.616in, left 0.903in, header 0.193in, footer 0.5in, starts continuous
 styles:

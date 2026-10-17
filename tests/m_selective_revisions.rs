@@ -615,9 +615,9 @@ fn changes_text_is_the_listing() {
     let changes = list_changes(&three_changes()).unwrap();
     assert_eq!(
         jubarte::changes::changes_text(&changes),
-        "r1\tinsertion\ttext\tAnn\tp0\t\"new\"\n\
-         r2\tdeletion\ttext\tBob\tp0\t\"old\"\n\
-         r3\tformatting\tproperties\tAnn\tp1\t\"Centred\"\n\
+        "r1\tinsertion\ttext\tAnn\t2026-01-01T00:00:00Z\tp0\t\"new\"\n\
+         r2\tdeletion\ttext\tBob\t2026-01-02T00:00:00Z\tp0\t\"old\"\n\
+         r3\tformatting\tproperties\tAnn\t2026-01-01T00:00:00Z\tp1\t\"Centred\"\n\
          3 change(s)\n"
     );
 }

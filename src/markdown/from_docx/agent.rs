@@ -30,7 +30,7 @@ pub(crate) struct Handles {
     /// order, then comment-only authors in part order, then authors only the
     /// styles' changes name.
     pub order: Vec<String>,
-    /// Author → every `w:date` on their marks and comments.
+    /// Author → every timestamp on their marks and comments.
     pub dates: HashMap<String, BTreeSet<String>>,
     /// Comment ids whose ranges the view prints (`{==…==}`) and bookmark
     /// names it prints (`<a id>`): either one between two marks keeps them
@@ -412,7 +412,7 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
             kind,
             tag: tag_of(e, handles),
             author: e.attr("author").map(str::to_string),
-            date: e.attr("date").map(str::to_string),
+            date: e.revision_date().map(str::to_string),
         }));
         if opens {
             slots.push(None);
@@ -683,7 +683,7 @@ fn walk_revision_authors(
         if !out.iter().any(|a| a == author) {
             out.push(author.to_string());
         }
-        if let Some(date) = e.attr("date") {
+        if let Some(date) = e.revision_date() {
             dates
                 .entry(author.to_string())
                 .or_default()
@@ -2184,7 +2184,7 @@ fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
     let attribution = |m: &Element| {
         (
             m.attr("author").map(str::to_string),
-            m.attr("date").map(str::to_string),
+            m.revision_date().map(str::to_string),
         )
     };
     if e.is("p") {

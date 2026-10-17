@@ -5,7 +5,7 @@ revisions: 226                     # 213 marks shown as 211 changes: 2 insertion
 comments: 1 thread open, style Normal  # 1 comment: c73
 authors:
   document_owner: Un-named         # dc:creator
-  ASR: Arthur Souza Rodrigues      # 226 revisions, 2026-09-26T14:54:00Z
+  ASR: Arthur Souza Rodrigues      # 226 revisions, 2026-09-26T18:54:00Z
   U: User                          # 1 comment, 2026-03-05T19:41:00Z
 body: p0-p110, 6 tables, 3 pages   # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in; fmt r226 @ASR

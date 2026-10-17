@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::sync::Arc;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -261,6 +262,8 @@ pub(crate) struct Element {
     pub name: String,
     pub attrs: Vec<(String, String)>,
     pub children: Vec<Node>,
+    /// Namespace bindings shared by elements in the same scope.
+    pub namespaces: Arc<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -288,6 +291,29 @@ impl Element {
             .iter()
             .find(|(k, _)| local(k) == name)
             .map(|(_, v)| v.as_str())
+    }
+
+    /// Attribute by namespace URI and local name.
+    fn attr_ns(&self, namespace: &str, name: &str) -> Option<&str> {
+        self.attrs.iter().find_map(|(key, value)| {
+            let (prefix, local) = key.split_once(':')?;
+            (local == name
+                && self
+                    .namespaces
+                    .get(prefix)
+                    .is_some_and(|ns| ns == namespace))
+            .then_some(value.as_str())
+        })
+    }
+
+    pub(crate) fn revision_date(&self) -> Option<&str> {
+        crate::changes::revision_date(|ns, local| {
+            if ns == crate::namespaces::W::URI {
+                self.attr(local)
+            } else {
+                self.attr_ns(ns, local)
+            }
+        })
     }
 
     /// A relationship reference (`r:id`, `r:embed`): a prefixed attribute with this local name.
@@ -378,10 +404,14 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
                 if stack.len() > MAX_DEPTH {
                     return Err("XML nesting too deep".into());
                 }
-                stack.push(element_from(&start)?);
+                stack.push(element_from(
+                    &start,
+                    &stack.last().expect("document scope").namespaces,
+                )?);
             }
             Event::Empty(start) => {
-                let element = element_from(&start)?;
+                let element =
+                    element_from(&start, &stack.last().expect("document scope").namespaces)?;
                 push_child(&mut stack, Node::Element(element));
             }
             Event::End(_) => {
@@ -458,7 +488,10 @@ fn decode(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn element_from(start: &quick_xml::events::BytesStart<'_>) -> Result<Element, String> {
+fn element_from(
+    start: &quick_xml::events::BytesStart<'_>,
+    inherited: &Arc<HashMap<String, String>>,
+) -> Result<Element, String> {
     let name = start.name().as_ref().to_string();
     let mut attrs = Vec::new();
     for attr in start.attributes().with_checks(false) {
@@ -470,10 +503,17 @@ fn element_from(start: &quick_xml::events::BytesStart<'_>) -> Result<Element, St
         };
         attrs.push((key, value));
     }
+    let mut namespaces = Arc::clone(inherited);
+    for (key, value) in &attrs {
+        if let Some(prefix) = key.strip_prefix("xmlns:") {
+            Arc::make_mut(&mut namespaces).insert(prefix.to_string(), value.clone());
+        }
+    }
     Ok(Element {
         name,
         attrs,
         children: Vec::new(),
+        namespaces,
     })
 }
 

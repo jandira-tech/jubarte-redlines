@@ -253,8 +253,8 @@ fn kind_name(kind: ChangeKind) -> &'static str {
 }
 
 /// `jubarte changes`' listing: one line per change, `{ref}\t{kind}\t{target}
-/// \t{author}\t{paragraph}\t{text}[\tinside {ref}]` (`-` for an absent
-/// author or paragraph; the text quoted, its first 60 characters), then
+/// \t{author}\t{date}\t{paragraph}\t{text}[\tinside {ref}]` (`-` for an absent
+/// author, date or paragraph; the text quoted, its first 60 characters), then
 /// `{n} change(s)`.
 pub fn changes_text(changes: &[Change]) -> String {
     let mut out = String::new();
@@ -267,11 +267,12 @@ pub fn changes_text(changes: &[Change]) -> String {
             .map(|id| format!("\tinside {id}"))
             .unwrap_or_default();
         out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
+            "{}\t{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
             c.r#ref,
             kind_name(c.kind),
             c.target,
             c.author.as_deref().unwrap_or("-"),
+            c.date.as_deref().unwrap_or("-"),
         ));
     }
     out.push_str(&format!("{} change(s)\n", changes.len()));
@@ -437,6 +438,17 @@ const FORMATTING: &[&str] = &[
     "cellMerge",
 ];
 
+/// Word's UTC revision instant, or the legacy date when it is absent.
+pub(crate) fn revision_date<'a>(
+    mut attribute: impl FnMut(&str, &str) -> Option<&'a str>,
+) -> Option<&'a str> {
+    attribute(
+        "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
+        "dateUtc",
+    )
+    .or_else(|| attribute(W::URI, "date"))
+}
+
 /// The revision elements under `root`, in document order.
 fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
     let id_attr = W::name("id");
@@ -524,7 +536,8 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
                 kind,
                 target,
                 author: dom.attribute(e, &W::name("author")).map(str::to_string),
-                date: dom.attribute(e, &W::name("date")).map(str::to_string),
+                date: revision_date(|ns, local| dom.attribute(e, &XName::get(local, ns)))
+                    .map(str::to_string),
                 text,
                 paragraph: None,
                 move_name,

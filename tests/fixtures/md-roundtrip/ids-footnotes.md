@@ -5,7 +5,7 @@ revisions: 178                     # 172 marks shown as 172 changes: 48 insertio
 comments: 1 thread open, style Normal  # 3 comments: c2 (+ replies c3, c4)
 authors:
   document_owner: Arthur Souza Rodrigues  # dc:creator
-  AS: Arthur Souza Rodrigues       # 178 revisions, 3 comments, latest 2026-07-10T21:32:00Z
+  AS: Arthur Souza Rodrigues       # 178 revisions, 3 comments, latest 2026-07-11T01:32:00Z
 body: p0-p146, 3 tables, 5 pages   # pages from Word's cached layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:

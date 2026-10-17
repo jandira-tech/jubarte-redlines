@@ -2191,7 +2191,7 @@ fn change_of(element: &Element, story: Option<&str>) -> Change {
 
 /// Which change it is, and who made it when: a plain-view tag
 /// ([`critic::PLAIN`]) of the change's `w:id` in `story` and its note,
-/// `w:author` and `w:date` exactly as stored, in the same form as a
+/// `w:author` and the preferred revision date, in the same form as a
 /// comment's. It prints `r5 Ana Lima (2026-09-29T14:05:00Z)`: the number
 /// tells the writer the note names the change's author, not a comment.
 fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
@@ -2199,7 +2199,7 @@ fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
     let author = element
         .attr("author")
         .map(|a| a.trim_start_matches(['\u{E000}', '\u{E001}']));
-    let note = comment_note(author, element.attr("date"), "");
+    let note = comment_note(author, element.revision_date(), "");
     // A mark with no id, author or date (only a malformed file has one)
     // names nothing.
     if note.is_empty() && element.attr("id").is_none() {
@@ -3773,7 +3773,7 @@ impl Writer<'_> {
         );
         if self.dates
             && self.handles.needs_date(element.attr("author"))
-            && let Some(date) = element.attr("date")
+            && let Some(date) = element.revision_date()
         {
             tagged.push(' ');
             tagged.push_str(date);
