@@ -166,7 +166,7 @@ jsonschema = { version = "0.59", default-features = false }
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
-ooxmlsdk = { version = "0.13.1", default-features = false, features = ["parts"] }
+ooxmlsdk = { version = "0.13.2", default-features = false, features = ["parts"] }
 # tests/agent_text_view.rs: read revision ids back out of the agent view.
 regex = "1"
 # tests/agent_text_view.rs: the agent view's header must parse as YAML.
@@ -181,3 +181,8 @@ tar = { version = "0.4", default-features = false }
 [[bench]]
 name = "redline"
 harness = false
+
+# Use zip 9 for RUSTSEC-2026-0367, -0368 and -0369 (jandira-tech/ooxmlsdk#1).
+# Remove this patch when an ooxmlsdk release requires zip >= 9 (#1092).
+[patch.crates-io]
+ooxmlsdk = { git = "https://github.com/jandira-tech/ooxmlsdk", rev = "d7c3ae016da8ef661d9a04e12c47003d8fe51eff" }
