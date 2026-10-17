@@ -6,7 +6,8 @@
 mod common;
 
 use common::docx::{docx, para};
-use jubarte::edit::{EditPlan, apply_plan};
+use jubarte::edit::{AnchorRefusal, EditPlan, apply_plan, v2_resolve};
+use jubarte::inspect::paragraphs;
 
 fn plan(operations: &str) -> EditPlan {
     EditPlan::from_json(&format!(
@@ -501,4 +502,76 @@ fn a_leading_space_the_view_writes_as_a_reference_is_found_as_a_space() {
     .expect("the anchor reads as the paragraph's leading space");
     let op = &out.report.operations[0];
     assert_eq!(op.anchor_read_as.as_deref(), Some(" lead"));
+}
+
+/// V2-11 (#841), edit plan §5: a wrong target and a repeated anchor return
+/// context. v2 matches exact characters only, so an anchor typed with a
+/// straight apostrophe against a curly one misses — and the refusal shows
+/// the actual target characters, bounded and escaped, so the agent can copy
+/// the real text instead of guessing at what it cannot see.
+#[test]
+fn wrong_target_and_repeated_anchor_return_context() {
+    let source = docx(&format!(
+        "{}{}",
+        para("don’t pay\u{a0}upfront."),
+        para("tail")
+    ));
+    let p0 = paragraphs(&source).unwrap()[0].text.clone();
+    assert_eq!(p0, "don’t pay\u{a0}upfront.");
+
+    // The lookalike anchor misses under the v2 exact rules.
+    let refused = v2_resolve(
+        &source,
+        &p0,
+        &AnchorRefusal {
+            operation: Some("/operations/0"),
+            target: "p0",
+            anchor: "don't pay upfront",
+            path: Some("lookalike.docx"),
+        },
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(refused.target.as_deref(), Some("p0"));
+    assert_eq!(refused.matches, Some(0));
+    // The whole paragraph fits the window: complete, untruncated context
+    // carrying the document's actual characters as data.
+    let context = refused.context.as_ref().unwrap();
+    assert_eq!(context.before, "don’t pay\u{a0}upfront.");
+    assert_eq!(context.matched, "");
+    assert!(!context.truncated);
+    // The message escapes what the eye cannot tell apart.
+    assert!(
+        refused.message.contains("\\u{2019}") && refused.message.contains("\\u{a0}"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        refused.next_actions[0].argv,
+        ["jubarte", "read", "lookalike.docx", "-p", "p0"]
+    );
+
+    // The exact characters resolve; and v1 keeps its lookalike reading in
+    // its own versioned adapter, so the two boundaries stay distinct.
+    assert!(
+        v2_resolve(
+            &source,
+            &p0,
+            &AnchorRefusal {
+                operation: None,
+                target: "p0",
+                anchor: "don’t pay\u{a0}upfront",
+                path: None
+            },
+            None,
+        )
+        .is_ok()
+    );
+    let out = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"replace","paragraph":"p0","find":"don't pay upfront","replacement":"pay first"}]"#),
+    )
+    .unwrap();
+    assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "pay first.");
 }
