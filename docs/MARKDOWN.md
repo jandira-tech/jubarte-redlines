@@ -444,7 +444,12 @@ line of the legend ends `, named Normal Table` the same way when the
 style's name is not the one the writer would give its id; a style the
 writer knows as Word's own (Table Grid, the Grid and List Tables, the
 older Light Shading and Medium List families) needs no `named`, and is
-written as Word defines it, shading bands and all. Converting the
+written as Word defines it, shading bands and all — but its `named`,
+when the view gives one, renames it: the document renamed the built-in.
+When the tables differ the legend is plural, one entry per style in
+first-use order (`tables: TableNormal, Ledger, borders vary`), each
+entry saying what the singular `table:` line says (the borders clause,
+the name). Converting the
 view back defines each style as its line says, and a style Word knows
 (`ListParagraph`, `Quote`) keeps Word's own gallery settings.
 
