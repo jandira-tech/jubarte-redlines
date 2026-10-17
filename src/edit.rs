@@ -1592,6 +1592,23 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
     apply_plan(source, &EditPlan::from_json(plan_json)?)
 }
 
+/// [`apply_plan_json`] with the shared preparation's options:
+/// `require_change` and `exact_text` reach the JSON callers the CLI
+/// already exposes.
+///
+/// # Errors
+///
+/// As [`apply_plan_json`], plus `NO_CHANGES_REQUESTED` under
+/// [`PrepareOptions::require_change`] and the [`PrepareOptions::exact_text`]
+/// form of `POSTCONDITION_FAILED`.
+pub fn apply_plan_json_with(
+    source: &[u8],
+    plan_json: &str,
+    options: &PrepareOptions,
+) -> Result<EditResult, EditError> {
+    prepared::prepare(source, &EditPlan::from_json(plan_json)?, options).map(|p| p.result)
+}
+
 /// Resolve and apply the plan; compare source and copy into a redline.
 ///
 /// Nothing is written: the clean copy, the redline and the report are
@@ -1662,14 +1679,13 @@ pub fn preview_plan_with(
     plan: &EditPlan,
     options: &PrepareOptions,
 ) -> Result<EditReport, EditError> {
-    let tx = resolved(source, plan)?;
-    let mut report = tx.report(true);
-    // The summary is what applying reports: apply in memory and keep its
-    // counts, so a dry run never prints `0` revisions for an edit it makes.
-    let applied = prepared::prepare(source, plan, options)?.result.report;
-    report.paragraphs = applied.paragraphs;
-    report.revisions = applied.revisions;
-    report.comments_added = applied.comments_added;
+    // One preparation, resolved once: the dry run's report is the apply's
+    // own report — outcomes (comment ids among them), paragraphs, revisions
+    // and comments_added all come from the produced candidate. `fields`
+    // keeps its v1 dry-run meaning: a preview never publishes the clean
+    // copy the refreshes land in, so it reports none.
+    let mut report = prepared::prepare(source, plan, options)?.result.report;
+    report.fields = Vec::new();
     Ok(report)
 }
 
@@ -1910,6 +1926,9 @@ struct Transaction<'p> {
     notes_story: Option<usize>,
     /// The plan's settings, written into the settings part at finish.
     settings: Option<crate::settings::SettingsRequest>,
+    /// The story indices `finish` last wrote, body included: the
+    /// serialized-stories check compares each one's DOM against the bytes.
+    written_stories: std::collections::BTreeSet<usize>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -2035,6 +2054,7 @@ impl<'p> Transaction<'p> {
             control_records,
             notes_story: None,
             settings: None,
+            written_stories: std::collections::BTreeSet::new(),
         })
     }
 
@@ -5051,6 +5071,7 @@ impl<'p> Transaction<'p> {
             Some(bytes)
         };
         self.write_stories(&written);
+        self.written_stories = written;
         if lost_reference {
             // A comment whose reference went with deleted text goes too, as
             // Accept All takes it (Word rule R1): no definition is left
