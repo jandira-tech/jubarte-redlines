@@ -1056,37 +1056,27 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
             ));
         }
     }
-    let family = tx
-        .family
-        .as_ref()
-        .ok_or_else(|| err("INTERNAL", None, "missing comment family"))?;
-    let mut states = BTreeSet::new();
-    for (i, r) in &tx.resolved {
-        if let Resolved::Thread {
-            op: super::ThreadOp::Resolve { id, .. },
-            ..
-        } = r
-            && !states.insert(family.thread_root(*id))
-        {
-            return Err(err(
-                "CONFLICT",
-                Some(&pointer(*i)),
-                "only one final state is allowed per thread",
-            ));
-        }
-    }
     check_boundary_ownership(tx)?;
-    tx.check_conflicts().map_err(|mut e| {
-        if e.code == "OVERLAPPING_EDITS" {
-            e.code = "CONFLICT".into();
-            for o in &mut e.outcomes {
-                if o.code.as_deref() == Some("OVERLAPPING_EDITS") {
-                    o.code = Some("CONFLICT".into());
+    compose_threads(tx)?;
+    if let Err(mut error) = tx.check_conflicts() {
+        // Keep the engine's real text/thread conflict when one exists. Its
+        // generic comment-mapping conflicts receive the v2 anchor diagnosis.
+        if error.message == "comment range cuts through an edited range"
+            || error.message == "comments on a deleted paragraph"
+        {
+            check_comment_anchors(tx, plan.policy.track == Track::On)?;
+        }
+        if error.code == "OVERLAPPING_EDITS" {
+            error.code = "CONFLICT".into();
+            for outcome in &mut error.outcomes {
+                if outcome.code.as_deref() == Some("OVERLAPPING_EDITS") {
+                    outcome.code = Some("CONFLICT".into());
                 }
             }
         }
-        e
-    })
+        return Err(error);
+    }
+    check_comment_anchors(tx, plan.policy.track == Track::On)
 }
 
 /// Same-position inserts share array order only when they agree on the
@@ -1123,6 +1113,255 @@ fn check_boundary_ownership(tx: &Transaction<'_>) -> Result<(), EditError> {
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+/// All aliases of a thread share one deletion/conflict domain and one final
+/// state. The engine writes replies before state changes. Internal state
+/// preservation reuses that path without inventing a public operation/result.
+fn compose_threads(tx: &mut Transaction<'_>) -> Result<(), EditError> {
+    use super::ThreadOp;
+    let family = tx.family.as_ref().expect("loaded in start");
+    let mut states = BTreeSet::new();
+    let mut replies = BTreeMap::new();
+    let deleted: Vec<_> = tx
+        .resolved
+        .iter()
+        .filter_map(|(i, r)| match r {
+            Resolved::Thread {
+                op: ThreadOp::Delete { id },
+                ..
+            } => Some((*i, family.thread_root(*id))),
+            _ => None,
+        })
+        .collect();
+    for (i, r) in &tx.resolved {
+        let Resolved::Thread { op, .. } = r else {
+            continue;
+        };
+        let root = family.thread_root(op.target());
+        if deleted.iter().any(|(j, gone)| j != i && *gone == root) {
+            return Err(comment_error(
+                tx,
+                *i,
+                "CONFLICT",
+                "delete_comment conflicts with another mutation of its thread",
+            ));
+        }
+        match op {
+            ThreadOp::Resolve { .. } if !states.insert(root) => {
+                return Err(comment_error(
+                    tx,
+                    *i,
+                    "CONFLICT",
+                    "only one final state is allowed per thread",
+                ));
+            }
+            ThreadOp::Reply { .. } => {
+                replies.entry(root).or_insert(*i);
+            }
+            _ => {}
+        }
+    }
+    let prior: Vec<_> = replies
+        .into_iter()
+        .filter(|(root, _)| !states.contains(root))
+        .map(|(root, i)| {
+            (
+                i,
+                root,
+                family.thread_state(root).expect("resolved thread").1,
+            )
+        })
+        .collect();
+    for (_, r) in &mut tx.resolved {
+        if let Resolved::Thread {
+            op: ThreadOp::Resolve { id, .. },
+            ..
+        } = r
+        {
+            *id = family.thread_root(*id);
+        }
+    }
+    for (i, id, done) in prior {
+        tx.resolved.push((
+            i,
+            Resolved::Thread {
+                op: ThreadOp::Resolve { id, done },
+                stories: Vec::new(),
+                anchor: None,
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn comment_error(tx: &Transaction<'_>, i: usize, code: &str, message: &str) -> EditError {
+    let mut error = tx.conflict(i, message);
+    error.code = code.into();
+    error.outcomes[i].code = Some(code.into());
+    error
+}
+
+/// A supported range keeps its endpoints through composition. An exact
+/// nonempty replacement is a defined correspondence (the replacement is the
+/// anchor); containing/disjoint ranges retain their surviving content. No
+/// rule maps a boundary strictly inside removed text or invents a neighbor
+/// for an emptied anchor. An existing anchor may instead retain its original
+/// markers on pure tracked deletion. Check existing and requested anchors.
+fn check_comment_anchors(tx: &Transaction<'_>, tracked: bool) -> Result<(), EditError> {
+    let family = tx.family.as_ref().expect("loaded in start");
+    let deleted_comments: BTreeSet<_> = tx
+        .resolved
+        .iter()
+        .filter_map(|(_, r)| match r {
+            Resolved::Thread {
+                op: super::ThreadOp::Delete { id },
+                ..
+            } => Some(family.with_replies(*id)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    for id in family.order() {
+        if !deleted_comments.contains(&id)
+            && let Ok(covered) = tx.comment_text(id)
+        {
+            check_comment_anchor(tx, covered, None, false, tracked)?;
+        }
+    }
+    for (i, r) in &tx.resolved {
+        let covered = match r {
+            Resolved::CommentRange {
+                para, start, end, ..
+            } => super::Covered {
+                first: *para,
+                start: *start,
+                last: *para,
+                end: *end,
+            },
+            Resolved::CommentSpan { para, last, .. } => super::Covered {
+                first: *para,
+                start: 0,
+                last: *last,
+                end: tx.projections[*last].text.len(),
+            },
+            _ => continue,
+        };
+        check_comment_anchor(
+            tx,
+            covered,
+            Some(*i),
+            matches!(r, Resolved::CommentSpan { .. }),
+            false,
+        )?;
+    }
+    Ok(())
+}
+
+fn check_comment_anchor(
+    tx: &Transaction<'_>,
+    covered: super::Covered,
+    owner: Option<usize>,
+    full_paragraphs: bool,
+    mut preserve_deleted: bool,
+) -> Result<(), EditError> {
+    let mut remaining = 0_i128;
+    let mut original = 0;
+    let mut changed = None;
+    let mut boundary = None;
+    let mut removed_paragraph = None;
+    for para in covered.first..=covered.last {
+        let start = if para == covered.first {
+            covered.start
+        } else {
+            0
+        };
+        let end = if para == covered.last {
+            covered.end
+        } else {
+            tx.projections[para].text.len()
+        };
+        original += end - start;
+        if let Some((i, _)) = tx
+            .resolved
+            .iter()
+            .find(|(_, r)| matches!(r, Resolved::DeleteParagraph { para: p } if *p == para))
+        {
+            changed = Some(*i);
+            // An existing containing range keeps both markers when an
+            // interior paragraph disappears. Its endpoints need no remapping.
+            // Newly requested spans still use the engine's conflict gate.
+            if para == covered.first || para == covered.last || owner.is_some() {
+                removed_paragraph = Some(*i);
+            }
+            continue;
+        }
+        let mut length = (end - start) as i128;
+        for (i, r) in &tx.resolved {
+            let Resolved::Text {
+                para: p,
+                start: s,
+                end: e,
+                replacement,
+                ..
+            } = r
+            else {
+                continue;
+            };
+            if *p != para {
+                continue;
+            }
+            // Only an existing anchor on pure tracked deletion has this
+            // preservation rule. A replacement or insertion touching it
+            // needs a correspondence into nonempty resulting content.
+            if !replacement.is_empty() && *s <= end && *e >= start {
+                preserve_deleted = false;
+            }
+            if *s < end && *e > start {
+                changed = Some(*i);
+                length -= (end.min(*e) - start.max(*s)) as i128;
+            }
+            // Replacement characters have a correspondence only when
+            // their complete source interval belongs to the anchor. Range
+            // anchors exclude edge insertions; paragraph anchors include them.
+            let contained = *s >= start && *e <= end;
+            let owns_insertion = full_paragraphs || (start < *s && *s < end);
+            if contained && (*e > *s || owns_insertion) {
+                length += replacement.len() as i128;
+            }
+            if (*s < start && start < *e) || (*s < end && end < *e) {
+                boundary = Some(*i);
+            }
+        }
+        remaining += length;
+    }
+    if let Some(i) = changed
+        && remaining <= 0
+        && (original > 0 || removed_paragraph.is_some())
+    {
+        // The preserving emitter leaves the original markers around the
+        // deleted runs/paragraph. They still anchor the original comment in
+        // the tracked primary; rejecting the deletion restores its source
+        // range. New comments cannot acquire this deleted-content anchor.
+        if preserve_deleted {
+            return Ok(());
+        }
+        return Err(comment_error(
+            tx,
+            owner.unwrap_or(i),
+            "COMMENT_ANCHOR_REMOVED",
+            "composed edits remove the entire comment anchor; no supported preservation rule applies",
+        ));
+    }
+    if let Some(i) = boundary.or(removed_paragraph) {
+        return Err(comment_error(
+            tx,
+            owner.unwrap_or(i),
+            "COMMENT_ANCHOR_UNMAPPABLE",
+            "comment boundary has no supported mapping through removed text or paragraphs",
+        ));
     }
     Ok(())
 }
@@ -1225,17 +1464,27 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
+            if old.is_empty() && !text.is_empty() {
+                return Err(err(
+                    "UNSUPPORTED_STRUCTURE",
+                    None,
+                    "cannot insert text into an empty paragraph; use insert_paragraph",
+                ));
+            }
             let mut resolved = Vec::new();
             for (start, end, replacement) in exact_rewrite_ranges(&old, text) {
                 resolved.push(text_component(tx, p, start, end, &replacement, None, true)?);
             }
-            resolved.extend(comment_component(
-                tx,
-                p,
-                0,
-                old.len(),
-                note(attached_comment),
-            )?);
+            if let Some(note) = note(attached_comment) {
+                // Reuse the engine's full-paragraph anchoring after text
+                // composition, including characters inserted at either edge.
+                comment_component(tx, p, 0, old.len(), Some(note.clone()))?;
+                resolved.push(Resolved::CommentSpan {
+                    para: p,
+                    last: p,
+                    text: note,
+                });
+            }
             Ok(resolved)
         }
         V::Comment {
