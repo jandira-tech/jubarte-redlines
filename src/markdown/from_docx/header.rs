@@ -549,7 +549,9 @@ fn page_setup(sect: &Element) -> String {
     );
     let landscape = size.and_then(|s| s.attr("orient")) == Some("landscape") || w > h;
     let (short, long) = if w < h { (w, h) } else { (h, w) };
-    let name = match (short as i64, long as i64) {
+    // Named sizes match on the rounded twip: 210mm is the 11906 an A4
+    // spells, not the 11905 a truncating cast reads (#531).
+    let name = match (short.round() as i64, long.round() as i64) {
         (12240, 15840) => "Letter".to_string(),
         (12240, 20160) => "Legal".to_string(),
         (11906, 16838) => "A4".to_string(),
@@ -1842,6 +1844,24 @@ mod tests {
             "A4 portrait, margins 0.75in, header/footer 0.75in"
         );
         assert_eq!(page_setup(&strict), page_setup(&transitional));
+    }
+
+    /// An mm-spelled page is the page its twips twin names: 210mm x 297mm
+    /// is A4 once rounded to the twips it is (11905.5 → 11906), not the
+    /// `8.268x11.693in` a truncating cast reads from any producer whose
+    /// spelling is not Word's own `595.3pt` (#531 review defect 6).
+    #[test]
+    fn an_mm_spelled_page_is_the_page_its_twips_twin_names() {
+        let mm = parse_xml(
+            format!(r#"<w:sectPr {W}><w:pgSz w:w="210mm" w:h="297mm"/></w:sectPr>"#).as_bytes(),
+        )
+        .unwrap();
+        let twin = parse_xml(
+            format!(r#"<w:sectPr {W}><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>"#).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(page_setup(&mm), "A4 portrait");
+        assert_eq!(page_setup(&mm), page_setup(&twin));
     }
 
     /// A strict table style names its side borders `start`/`end`: the
