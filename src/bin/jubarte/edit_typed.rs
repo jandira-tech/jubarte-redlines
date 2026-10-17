@@ -7,6 +7,7 @@
 use super::*;
 use jubarte::cli::edit_actions::{EditAction, TypedEdit};
 use jubarte::edit::{EditPlan, PrepareOptions, PreparedEdit, v2::PlanV2};
+use jubarte::expect::{ExpectationReport, ReceiptMeta, evaluate_with_receipt, parse_expectations};
 use jubarte::result::{
     Artifact, CommitState, Effect, Envelope, Error, MediaRole, Phase, PredictedEffect, ResultData,
     Runtime, Source, Status,
@@ -89,6 +90,82 @@ impl Request {
             Self::V2(p) => p.operations.len(),
         }
     }
+}
+
+/// Read, bind and evaluate the optional expectation contract on the
+/// prepared transaction's chosen primary bytes (V2-13, proposal §10).
+///
+/// A malformed file refuses `USAGE` (the malformed-request class, exit 64);
+/// a `source.sha256` that does not name the plan's source digest refuses
+/// `STALE_SOURCE`; and any failed or refused check refuses
+/// `EXPECTATION_FAILED` before anything is written, with the bounded
+/// report riding in the error block. On success the returned report
+/// carries the output-bound copy of the evaluated expectations (the
+/// caller's file is never rewritten).
+fn evaluate_expectations(
+    path: &Path,
+    prepared: &PreparedEdit,
+    source: &[u8],
+) -> Result<ExpectationReport, Failure> {
+    let bytes = read(path)?;
+    let text = std::str::from_utf8(&bytes).map_err(|e| {
+        failure(
+            "USAGE",
+            format!("--expect {}: not UTF-8: {e}", path.display()),
+        )
+    })?;
+    let spec = parse_expectations(text)
+        .map_err(|e| failure("USAGE", format!("--expect {}: {e}", path.display())))?;
+    if spec.source.sha256 != prepared.source_sha256 {
+        return Err(failure(
+            "STALE_SOURCE",
+            "expectations source.sha256 does not match the plan's source digest",
+        ));
+    }
+    let Some(correspondence) = prepared.correspondence.as_ref() else {
+        return Err(failure(
+            "INTERNAL",
+            "this request produced no source-to-output correspondence",
+        ));
+    };
+    let report = evaluate_with_receipt(
+        &spec,
+        source,
+        &prepared.primary,
+        correspondence,
+        ReceiptMeta {
+            path: Some(path.display().to_string()),
+            digest: Some(jubarte::expect::content_sha256(&bytes)),
+            declared_provenance: None,
+        },
+    );
+    if let Some(blocking) = report.blocking_failure() {
+        let mut error = failure(
+            "EXPECTATION_FAILED",
+            format!(
+                "expectation requirement {:?} on {} did not hold ({}); no output was published",
+                blocking.key,
+                blocking.target,
+                match blocking.outcome {
+                    jubarte::expect::Outcome::Failed => "check failed".to_string(),
+                    _ => format!(
+                        "could not evaluate: {}",
+                        blocking
+                            .reason
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .unwrap_or_default()
+                    ),
+                }
+            ),
+        );
+        error.expectations = Some(report);
+        return Err(error);
+    }
+    let mut report = report;
+    report.output_bound =
+        jubarte::expect::rebind_to_output(&spec, correspondence, &prepared.primary);
+    Ok(report)
 }
 
 fn check_hash(
@@ -266,13 +343,16 @@ fn prepare_and_publish(
             ));
         }
     }
-    if delivery.expect.is_some() {
+    let (request, binding) = request(action, source, payload, plan_bytes.as_deref())?;
+    if delivery.expect.is_some() && matches!(&request, Request::V1(_)) {
+        // The v1 primary is a comparer redline with no tracked
+        // source-to-output correspondence; guessing one could grade the
+        // wrong paragraph, so the combination refuses.
         return Err(failure(
             "UNSUPPORTED_EXPECTATION",
-            "this build has no typed expectation evaluator; no contract was silently ignored",
+            "--expect requires a PlanV2 request in this layer; re-save the plan as v2 (edit template / --save-plan) or use jubarte check on the output",
         ));
     }
-    let (request, binding) = request(action, source, payload, plan_bytes.as_deref())?;
     let prepared = request.prepare(
         source,
         &PrepareOptions {
@@ -280,6 +360,15 @@ fn prepare_and_publish(
             exact_text: matches!(request, Request::V2(_)),
         },
     )?;
+    // Optional expectations (V2-13): evaluate on the prepared transaction's
+    // chosen primary bytes, reopened, through the source-to-output
+    // correspondence the transaction built. Any failed executable check and
+    // any refused check blocks publication; unassessed natural-language
+    // requirements never do. A dry run evaluates the same way.
+    let expectations = match &delivery.expect {
+        Some(path) => Some(evaluate_expectations(path, &prepared, source)?),
+        None => None,
+    };
     let phase = if save.is_some() {
         Phase::Generated
     } else if delivery.dry_run {
@@ -363,6 +452,10 @@ fn prepare_and_publish(
     }
     let data = receipt.data.as_mut().expect("data");
     data.verification = prepared.checks.verification();
+    if let Some(report) = &expectations {
+        data.verification.expectations = "passed".to_string();
+        data.expectations = Some(report.clone());
+    }
     data.counts.requested_operations = request.count();
     data.counts.body_operations_applied = prepared
         .result
@@ -535,12 +628,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
         Ok(source) => prepare_and_publish(action, source, &command).unwrap_or_else(|error| {
             if matches!(
                 error.code.as_str(),
-                "IO_ERROR"
-                    | "OUTPUT_EXISTS"
-                    | "USAGE"
-                    | "OUTPUT_ALIAS"
-                    | "INVALID_UTF8"
-                    | "UNSUPPORTED_EXPECTATION"
+                "IO_ERROR" | "OUTPUT_EXISTS" | "USAGE" | "OUTPUT_ALIAS" | "INVALID_UTF8"
             ) {
                 Envelope::new_error(&command, Source::new(source), *error)
             } else {
@@ -577,8 +665,30 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             .map(|a| a.path.as_str())
             .collect::<Vec<_>>()
             .join(", ");
+        // An expectations note that stays honest about what ran and what
+        // stayed unassessed (proposal §10's completion reporting).
+        let expectations = data
+            .expectations
+            .as_ref()
+            .map(|report| {
+                let receipt = &report.receipt;
+                let mut note = format!("; {} expectation checks run", receipt.checks_run);
+                if receipt.requirements_unassessed > 0 {
+                    note.push_str(&format!(
+                        ", {} requirement{} not assessed",
+                        receipt.requirements_unassessed,
+                        if receipt.requirements_unassessed == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ));
+                }
+                note
+            })
+            .unwrap_or_default();
         format!(
-            "{}: {outcome}{}\n",
+            "{}: {outcome}{}{expectations}\n",
             receipt.command,
             if paths.is_empty() {
                 String::new()

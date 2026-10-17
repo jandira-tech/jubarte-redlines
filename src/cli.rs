@@ -1409,6 +1409,34 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Check a document against a source-bound expectation contract.
+    ///
+    /// The only profile this build supports is `--expect`: an optional,
+    /// separately supplied, hash-bound expectations file whose typed
+    /// paragraph-text predicates (exact equality, containment, absence)
+    /// are evaluated on FILE's own final projection. The other check
+    /// profiles (integrity, quality, layout, baseline tracking) are #961;
+    /// `jubarte validate` remains the validity audit. Passing checks and
+    /// natural-language requirements without executable checks never claim
+    /// the task complete.
+    #[command(after_help = "Examples:\n  \
+        jubarte check revised.docx --expect expectations.json\n  \
+        jubarte check revised.docx --expect expectations.json --json\n\n\
+        The expectations' source.sha256 must name FILE's own bytes: an\n\
+        expectation file bound to the pre-edit source refuses as stale on\n\
+        the edited output. Use the output-bound copy an `edit apply --expect`\n\
+        receipt carries to re-check a published output.")]
+    Check {
+        /// The document (.docx) whose own digest the expectations must name.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Expectation contract (the only supported profile in this build).
+        #[arg(long, value_name = "FILE")]
+        expect: Option<PathBuf>,
+        /// One result envelope, including refusals.
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove authors, editing IDs, metadata and comments before sharing.
     #[command(after_help = "Examples:\n  \
         jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \

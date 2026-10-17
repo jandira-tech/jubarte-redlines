@@ -2403,3 +2403,263 @@ fn bundled_schema_is_loaded_from_disk_in_tests() {
         "bundled schema cites the design artifact it derives from"
     );
 }
+
+// ---------------------------------------------------------------------------
+// V2-13 wiring (issue #845): the correspondence the apply path builds.
+// ---------------------------------------------------------------------------
+
+use jubarte::edit::{PrepareOptions, prepare_v2, v2::PlanV2};
+
+fn prepare_plan(source: &[u8], plan_json: &str) -> jubarte::edit::PreparedEdit {
+    let plan = PlanV2::from_json(plan_json).expect("plan parses");
+    prepare_v2(source, &plan, &PrepareOptions::default()).expect("prepare")
+}
+
+fn correspondence_of(
+    prepared: &jubarte::edit::PreparedEdit,
+) -> &jubarte::expect::SourceToOutputCorrespondence {
+    prepared
+        .correspondence
+        .as_ref()
+        .expect("v2 carries a correspondence")
+}
+
+#[test]
+fn apply_correspondence_maps_source_targets_into_the_chosen_primary() {
+    // The design example: template.edited.json rewrites p0 and p1 and
+    // inserts a paragraph after p0, tracked. The chosen primary is the
+    // tracked redline; its final projection holds five paragraphs, so the
+    // source's p0 stays at output 0 and p1 shifts to 2 — exactly what the
+    // apply path knows from the transaction, not from re-matching text.
+    let prepared = prepare_plan(
+        EXAMPLE_SOURCE,
+        include_str!("fixtures/edit-v2/template.edited.json"),
+    );
+    let correspondence = correspondence_of(&prepared);
+    for (id, output) in [("p0", 0), ("p1", 2), ("p2", 3), ("p3", 4)] {
+        let entry = correspondence.lookup(id).unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(
+            entry.output,
+            [output],
+            "{id} must map one-to-one to output paragraph {output}"
+        );
+    }
+    let parsed = parse_expectations(EXAMPLE_EXPECTATIONS).expect("parse expectations");
+    let report = evaluate(&parsed, EXAMPLE_SOURCE, &prepared.primary, correspondence);
+    assert!(!report.has_blocking_failure(), "{:?}", report.checks);
+    assert_eq!(report.receipt.checks_run, 3);
+    assert_eq!(report.receipt.requirements_unassessed, 1);
+    let payment = report
+        .checks
+        .iter()
+        .find(|c| c.key == "payment-period")
+        .expect("payment check ran");
+    // The chosen-primary final text: 45 days, judged on the reopened
+    // tracked redline's final projection.
+    assert_eq!(payment.outcome, Outcome::Passed);
+    assert_eq!(
+        payment.evidence.as_deref(),
+        Some("Payment is due within 45 days.")
+    );
+}
+
+#[test]
+fn unchanged_primary_evaluates_identity_and_reports_the_missing_change() {
+    // The generated template is an all-unchanged scaffold: the primary is
+    // the exact source bytes, so the identity correspondence over the
+    // source is the output walk. The expectations honestly FAIL on it (the
+    // 45-day period was never made); an unchanged result is never a pass.
+    let prepared = prepare_plan(
+        EXAMPLE_SOURCE,
+        include_str!("fixtures/edit-v2/template.generated.json"),
+    );
+    assert_eq!(prepared.primary, EXAMPLE_SOURCE);
+    let correspondence = correspondence_of(&prepared);
+    let identity = identity_correspondence(EXAMPLE_SOURCE);
+    assert_eq!(
+        correspondence.entries(),
+        identity.entries(),
+        "an unchanged primary's correspondence is the identity over the source"
+    );
+    let parsed = parse_expectations(EXAMPLE_EXPECTATIONS).expect("parse expectations");
+    let report = evaluate(&parsed, EXAMPLE_SOURCE, &prepared.primary, correspondence);
+    assert!(report.has_blocking_failure());
+    assert_eq!(report.receipt.checks_run, 3);
+    let payment = report
+        .checks
+        .iter()
+        .find(|c| c.key == "payment-period")
+        .expect("payment check ran");
+    assert_eq!(payment.outcome, Outcome::Failed);
+    assert_eq!(
+        payment.evidence.as_deref(),
+        Some("Payment is due within 30 days.")
+    );
+}
+
+#[test]
+fn directly_deleted_paragraph_target_refuses_split() {
+    // Track off: delete_paragraph removes the node from the primary, so
+    // the source paragraph maps to nothing and every check on it refuses
+    // Split — a vanished paragraph never passes text_absent.
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Alpha.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Beta.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Gamma.</w:t></w:r></w:p>"#,
+    );
+    let source = docx(body);
+    let hash = source_sha256(&source);
+    let plan = format!(
+        r#"{{
+  "schema_version": 2,
+  "source": {{"sha256": "{hash}"}},
+  "policy": {{"track": "off", "existing_revisions": "keep", "text_view": "final"}},
+  "resolve_revisions": {{"accept": [], "reject": []}},
+  "author": "T",
+  "date": "2026-10-17T07:00:00Z",
+  "scope": {{"kind": "all"}},
+  "operations": [
+    {{"kind": "delete_paragraph", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}}}
+  ]
+}}"#
+    );
+    let prepared = prepare_plan(&source, &plan);
+    let correspondence = correspondence_of(&prepared);
+    for (id, output) in [("p0", vec![0]), ("p1", Vec::new()), ("p2", vec![1])] {
+        assert_eq!(
+            correspondence.lookup(id).expect(id).output,
+            output,
+            "{id} maps through the deletion"
+        );
+    }
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "beta-gone",
+      "description": "Beta removed.",
+      "checks": [
+        {{"kind": "text_absent", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}, "text": "Beta"}}
+      ]
+    }}
+  ]
+}}"#
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &source, &prepared.primary, correspondence);
+    assert!(report.has_blocking_failure());
+    assert_eq!(report.checks[0].outcome, Outcome::Refused);
+    assert_eq!(report.checks[0].reason, Some(RefusalReason::Split));
+}
+
+#[test]
+fn rebound_output_copy_targets_output_ids_and_round_trips() {
+    // The apply-side receipt copy: the edited primary's own digest, p1
+    // rebound to the output's p2, and the copy is a schema-valid
+    // expectations document that standalone check semantics accept on the
+    // published bytes (identity correspondence).
+    let prepared = prepare_plan(
+        EXAMPLE_SOURCE,
+        include_str!("fixtures/edit-v2/template.edited.json"),
+    );
+    let parsed = parse_expectations(EXAMPLE_EXPECTATIONS).expect("parse expectations");
+    let rebound =
+        jubarte::expect::rebind_to_output(&parsed, correspondence_of(&prepared), &prepared.primary)
+            .expect("rebind");
+    assert_eq!(rebound.source.sha256, source_sha256(&prepared.primary));
+    let targets: Vec<(String, String)> = rebound
+        .requirements
+        .iter()
+        .flat_map(|r| {
+            r.checks
+                .iter()
+                .map(|c| (c.target.short_id.clone(), c.target.long_id.clone()))
+        })
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            ("p0".to_string(), "document.w:p.j:short.p0".to_string()),
+            ("p2".to_string(), "document.w:p.j:short.p2".to_string()),
+            ("p2".to_string(), "document.w:p.j:short.p2".to_string()),
+        ]
+    );
+    // Round trip: the copy parses and evaluates clean on the primary.
+    let json = serde_json::to_string(&rebound).expect("serializes");
+    let reparsed = parse_expectations(&json).expect("rebound copy is schema-valid");
+    let report = evaluate(
+        &reparsed,
+        &prepared.primary,
+        &prepared.primary,
+        &identity_correspondence(&prepared.primary),
+    );
+    assert!(!report.has_blocking_failure(), "{:?}", report.checks);
+    assert_eq!(report.receipt.checks_run, 3);
+    // The unassessed requirement travels as unassessed.
+    assert_eq!(report.receipt.requirements_unassessed, 1);
+}
+
+#[test]
+fn settlement_merged_target_refuses_merged() {
+    // A deleted paragraph mark, accepted by the plan's policy, merges p0
+    // into p1: two source paragraphs share one settled paragraph, so both
+    // refuse as merged — the initial profile requires exact one-to-one
+    // correspondence (proposal §10).
+    const REV: &str = r#"w:author="Other" w:date="2026-09-01T00:00:00Z""#;
+    let body = format!(
+        concat!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>Beta</w:t></w:r></w:p>"#,
+        ),
+        REV = REV,
+    );
+    let source = docx(&body);
+    let hash = source_sha256(&source);
+    let plan = format!(
+        r#"{{
+  "schema_version": 2,
+  "source": {{"sha256": "{hash}"}},
+  "policy": {{"track": "on", "existing_revisions": "accept", "text_view": "final"}},
+  "resolve_revisions": {{"accept": [], "reject": []}},
+  "author": "T",
+  "date": "2026-10-17T07:00:00Z",
+  "scope": {{"kind": "all"}},
+  "operations": []
+}}"#
+    );
+    let prepared = prepare_plan(&source, &plan);
+    let correspondence = correspondence_of(&prepared);
+    for id in ["p0", "p1"] {
+        let entry = correspondence.lookup(id).expect(id);
+        assert_eq!(
+            entry.output.len(),
+            2,
+            "{id} refuses as merged: {:?}",
+            entry.output
+        );
+    }
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "alpha",
+      "description": "Alpha text.",
+      "checks": [
+        {{"kind": "text_contains", "target": {{"short_id": "p0", "long_id": "document.w:p.j:short.p0"}}, "text": "Alpha"}}
+      ]
+    }}
+  ]
+}}"#
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &source, &prepared.primary, correspondence);
+    assert!(report.has_blocking_failure());
+    assert_eq!(report.checks[0].outcome, Outcome::Refused);
+    assert_eq!(report.checks[0].reason, Some(RefusalReason::Merged));
+}

@@ -3885,6 +3885,26 @@ impl<'p> Transaction<'p> {
         crate::ids::paragraph_id(&self.stories[story].id, local)
     }
 
+    /// Every paragraph of the transaction's current DOM, in the fixed
+    /// projection order the expectations checker reopens bytes in: the
+    /// body's paragraphs in body order, then each story's own, story by
+    /// story (the same collectors `load_stories` numbers paragraphs
+    /// with). Structural edits shift what this walk returns; the
+    /// expectations correspondence reads it off the DOM that produced the
+    /// chosen primary bytes, so it never re-matches text.
+    pub(super) fn paragraph_walk(&self) -> Vec<NodeId> {
+        let dom = &self.opened.dom;
+        let mut nodes = Vec::new();
+        for (index, story) in self.stories.iter().enumerate() {
+            if index == 0 {
+                nodes.extend(crate::inspect::body_paragraph_nodes(dom, story.root));
+            } else {
+                nodes.extend(crate::inspect::story_paragraph_nodes(dom, story.root));
+            }
+        }
+        nodes
+    }
+
     /// The body, header, footer or note a paragraph belongs to, for the
     /// "keeps one paragraph" checks.
     fn story_container(&self, node: NodeId) -> (NodeId, &'static str) {

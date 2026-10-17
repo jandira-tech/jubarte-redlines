@@ -44,7 +44,7 @@ pub const EXPECTATIONS_SCHEMA_VERSION: u32 = 1;
 
 /// Text view required by the initial profile: the FINAL logical projection
 /// (insertions included, deletions excluded, no review markup).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextView {
     /// Insertions included, deletions excluded, with no review markup.
@@ -55,7 +55,7 @@ pub enum TextView {
 /// same entity in the hash-bound original source; the parser checks shape
 /// and non-empty strings, the evaluator checks identity against the
 /// correspondence and refuses on a mismatch.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Target {
     /// Snapshot-relative short id (`p12`, `header1.p0`).
@@ -65,7 +65,7 @@ pub struct Target {
 }
 
 /// The three typed checks of the initial profile.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckKind {
     /// Exact final text of the target paragraph; empty is allowed.
@@ -77,7 +77,7 @@ pub enum CheckKind {
 }
 
 /// One typed check, with kind, target and text payload.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Check {
     /// Which typed check to run.
@@ -90,7 +90,7 @@ pub struct Check {
 
 /// One requirement: a key, a natural-language description, and zero or
 /// more typed checks. A requirement with zero checks stays `unassessed`.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Requirement {
     /// Settled id: `[A-Za-z][A-Za-z0-9_.-]*`, unique per document.
@@ -104,7 +104,7 @@ pub struct Requirement {
 }
 
 /// The source-digest binding.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
     /// Exactly 64 lowercase hexadecimal characters.
@@ -112,7 +112,7 @@ pub struct Source {
 }
 
 /// The closed `schema_version: 1` expectations document.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectationsV1 {
     /// Always 1 in this profile.
@@ -126,7 +126,8 @@ pub struct ExpectationsV1 {
 }
 
 /// The outcome of a single typed check.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Outcome {
     /// The predicate held against the reopened output.
     Passed,
@@ -142,7 +143,8 @@ pub enum Outcome {
 }
 
 /// A `Refused` reason, kept for the receipt (proposal §10).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RefusalReason {
     /// The target's `short_id` is not present in the correspondence.
     TargetMissing,
@@ -166,7 +168,7 @@ pub enum RefusalReason {
 }
 
 /// Per-check report.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CheckOutcome {
     /// Requirement key this check belongs to.
     pub key: String,
@@ -183,9 +185,34 @@ pub struct CheckOutcome {
     pub reason: Option<RefusalReason>,
 }
 
+/// Marker fields the receipt never prints: a separately supplied file is
+/// not an independence claim, and no deterministic profile completes the
+/// caller's task. They stay `false` for library readers and out of the
+/// wire shape entirely.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Human-readable refusal reasons, matching the serde names.
+impl std::fmt::Display for RefusalReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::TargetMissing => "target missing",
+            Self::Merged => "merged target",
+            Self::Split => "split or removed target",
+            Self::Ambiguous => "ambiguous target ids",
+            Self::Unsupported => "unsupported target",
+            Self::StaleSource => "stale source binding",
+            Self::InvalidOutput => "unopenable output",
+            Self::StaleCorrespondence => "stale correspondence",
+        };
+        f.write_str(name)
+    }
+}
+
 /// The compact, structured receipt (proposal §10 / #1017, edit plan P5:
 /// "state which checks ran, were unsupported or remained unassessed").
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ExpectationReceipt {
     /// Schema version of the parsed expectations.
     pub schema_version: u32,
@@ -219,9 +246,11 @@ pub struct ExpectationReceipt {
     /// verbatim but does not verify it.
     pub declared_provenance: Option<String>,
     /// Always `false`. A separately supplied file is not a claim of
-    /// independence.
+    /// independence. Never serialized: the wire never carries the word.
+    #[serde(default, skip_serializing_if = "is_false")]
     pub independent: bool,
     /// Always `false`. The CLI cannot claim the user's task is complete.
+    #[serde(default, skip_serializing_if = "is_false")]
     pub complete_task: bool,
 }
 
@@ -238,6 +267,24 @@ pub struct CorrespondenceEntry {
     /// Whether the target's two ids name the same source entity. The
     /// initial profile refuses when they disagree.
     pub identity_ok: bool,
+}
+
+impl ExpectationReport {
+    /// The first check that blocks publication: a `Failed` predicate, or
+    /// any `Refused` check (missing, ambiguous, stale, unsupported or
+    /// unopenable target). `None` when every typed check passed or stayed
+    /// unassessed; unassessed requirements never block (proposal §10).
+    pub fn blocking_failure(&self) -> Option<&CheckOutcome> {
+        self.checks
+            .iter()
+            .find(|c| matches!(c.outcome, Outcome::Failed | Outcome::Refused))
+    }
+
+    /// Whether any typed check blocks publication (see
+    /// [`Self::blocking_failure`]).
+    pub fn has_blocking_failure(&self) -> bool {
+        self.blocking_failure().is_some()
+    }
 }
 
 impl CorrespondenceEntry {
@@ -320,7 +367,7 @@ impl SourceToOutputCorrespondence {
 }
 
 /// The full per-check report and the receipt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ExpectationReport {
     /// Per-check outcomes in encounter order. Only typed checks appear
     /// here; an unassessed requirement is listed below, never as a
@@ -329,6 +376,12 @@ pub struct ExpectationReport {
     /// Requirement keys whose `checks` list was empty: reported
     /// `unassessed`, apart from the checks, in encounter order.
     pub unassessed_requirements: Vec<String>,
+    /// An output-bound copy of the evaluated expectations (new
+    /// `source.sha256` naming the inspected primary, references rebound
+    /// to the output's own ids), when the caller supplied one. The
+    /// caller's input file is never rewritten (proposal §10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bound: Option<ExpectationsV1>,
     /// The compact, structured receipt.
     pub receipt: ExpectationReceipt,
 }
@@ -780,6 +833,7 @@ fn assemble_report(
     ExpectationReport {
         checks,
         unassessed_requirements,
+        output_bound: None,
         receipt: ExpectationReceipt {
             schema_version: spec.schema_version,
             source_sha256: spec.source.sha256.clone(),
@@ -859,4 +913,74 @@ fn is_paragraph_target(short_id: &str) -> bool {
         Ok(_) => false,
         Err(_) => false,
     }
+}
+
+/// Build the output-bound copy of evaluated expectations (proposal §10:
+/// "The apply receipt may expose an explicitly output-bound copy of
+/// evaluated text expectations, with new references/hash, for later
+/// rechecking"). Each typed check's target is rebound through the
+/// correspondence to the output paragraph it was evaluated against, and
+/// `source.sha256` becomes the primary's own digest, so standalone
+/// `check OUTPUT --expect` accepts the copy. Requirements whose checks
+/// did not survive one-to-one are left out; the caller's input file is
+/// never rewritten. `None` when the output cannot be opened for the
+/// identity walk or a target cannot be spelled in the output's own ids.
+pub fn rebind_to_output(
+    spec: &ExpectationsV1,
+    correspondence: &SourceToOutputCorrespondence,
+    output: &[u8],
+) -> Option<ExpectationsV1> {
+    let identity = identity_correspondence(output).ok()?;
+    // output index -> the output's own short id (the identity walk).
+    let mut by_index = std::collections::HashMap::new();
+    for entry in identity.entries() {
+        if let [index] = entry.output.as_slice() {
+            by_index.insert(index, entry.short_id.clone());
+        }
+    }
+    let long_id_of = |short: &str| -> Option<String> {
+        use crate::ids::{ShortId, Story};
+        let parsed = short.parse::<ShortId>().ok()?;
+        let part = match &parsed {
+            ShortId::Block { story, .. } => match story {
+                Story::Body => "document",
+                Story::Part(stem) => stem.as_str(),
+            },
+            _ => return None,
+        };
+        Some(format!("{part}.w:p.j:short.{short}"))
+    };
+    let mut requirements = Vec::with_capacity(spec.requirements.len());
+    for requirement in &spec.requirements {
+        let mut checks = Vec::with_capacity(requirement.checks.len());
+        for check in &requirement.checks {
+            let entry = correspondence.lookup(&check.target.short_id)?;
+            let [index] = entry.output.as_slice() else {
+                return None;
+            };
+            let short = by_index.get(&index)?.clone();
+            let long = long_id_of(&short)?;
+            checks.push(Check {
+                kind: check.kind,
+                target: Target {
+                    short_id: short,
+                    long_id: long,
+                },
+                text: check.text.clone(),
+            });
+        }
+        requirements.push(Requirement {
+            key: requirement.key.clone(),
+            description: requirement.description.clone(),
+            checks,
+        });
+    }
+    Some(ExpectationsV1 {
+        schema_version: spec.schema_version,
+        source: Source {
+            sha256: content_sha256(output),
+        },
+        text_view: spec.text_view,
+        requirements,
+    })
 }
