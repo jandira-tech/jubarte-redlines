@@ -15,6 +15,23 @@ Engine defects and unresolved design conflicts.
 
 ## Open
 
+### 12. Strict `lineRule="auto"` values carry units no rule defines — **OPEN, spec gap**
+
+**Seen:** `tests/fixtures/strict/Strict01.docx` (#531), checked 2026-10-16.
+ISO/IEC 29500 defines an auto `w:line` in 240ths of a line and stays silent
+on unit-suffixed values; Word's own Strict writer emits `12pt` for single
+spacing and `12.95pt` for 1.08.
+
+**Done so far (#531):** the Markdown reader and the render diagnostic decode
+a unit-bearing auto value like twips (`×20`): `12pt` → 240 and `12.95pt` →
+259, the integers the Transitional twin carries. This reproduces the only
+observed producer (Word) and needs no baseline assumption, but it is a
+producer convention, not a normative rule. The renderer keeps its own
+11pt-per-line heuristic (`src/convert/mod.rs`), as before.
+
+**Open:** the maintained Word workflow has not confirmed the values on a
+layout-level comparison.
+
 ### 11. Word splits and pairs mismatched tables that jubarte keeps whole — **OPEN, Word parity**
 
 **Seen:** Task 22, corpus pair `aeb0ace263` vs `1000537d17` (Word redline

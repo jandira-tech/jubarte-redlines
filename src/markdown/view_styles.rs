@@ -342,8 +342,7 @@ fn unquote(value: &str) -> Option<String> {
 /// heading's (`"#": Heading1, …`) and each other style's (`TOC2: …`), after
 /// the default's. Lines that do not read are left out.
 /// The legend's `table:` style, which every table takes: its id and, when
-/// the legend says `all borders 0.5pt`, that border in eighths of a point;
-/// `, named …` keeps the style's own name when it is not the writer's.
+/// the legend says `all borders 0.5pt`, that border in eighths of a point.
 pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<String>)> {
     let mut inside = false;
     for line in yaml.lines() {
@@ -359,11 +358,13 @@ pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<Str
         else {
             continue;
         };
+        // The style's name, when the view says it differs from the
+        // writer's own for the id (`9, named Normal Table`).
         let (value, name) = match value.rsplit_once(", named ") {
-            Some((value, name)) => (value, Some(name.to_string())),
-            None => (value.as_str(), None),
+            Some((value, name)) => (value.to_string(), Some(name.to_string())),
+            None => (value, None),
         };
-        let (id, rest) = value.split_once(", ").unwrap_or((value, ""));
+        let (id, rest) = value.split_once(", ").unwrap_or((&value, ""));
         let border = rest
             .strip_prefix("all borders ")
             .and_then(|pt| pt.strip_suffix("pt"))

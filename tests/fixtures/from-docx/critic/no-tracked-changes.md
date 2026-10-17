@@ -2,7 +2,7 @@
 
 Plain text, **bold** and _italic_ runs, and a note.[^1]
 
-Text that looks like markup stays as written: a {++ b ++} ~> c --} and {>> d <<}.
+Text that looks like markup stays as written: a {\++ b ++\} \~\> c --\} and {\>> d <<\}.
 
 ## A table
 

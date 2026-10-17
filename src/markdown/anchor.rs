@@ -132,7 +132,8 @@ fn blank(c: char) -> bool {
 }
 
 /// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>`,
-/// `<mark>`, `<s>` and their closers always; single `*` and `_` runs only when they pair up (`*x*`,
+/// `<mark>` (with or without the `class="hl-…"` colour the view prints
+/// for a highlight that is not yellow), `<s>` and their closers always; single `*` and `_` runs only when they pair up (`*x*`,
 /// `_x_`, `__x__`), so `2 * 3`, `snake_case`, `snake__case` and
 /// `foo__bar__` keep theirs.
 fn without_emphasis(text: &str) -> String {
@@ -141,6 +142,14 @@ fn without_emphasis(text: &str) -> String {
         "**", "~~", "==", "<u>", "</u>", "<mark>", "</mark>", "<s>", "</s>",
     ] {
         text = text.replace(mark, "");
+    }
+    // `<mark class="hl-cyan">`: the open tag the view writes for a
+    // highlight that is not yellow.
+    while let Some(at) = text.find("<mark class=\"") {
+        let end = text[at..]
+            .find("\">")
+            .map_or(text.len(), |found| at + found + 2);
+        text.replace_range(at..end, "");
     }
     // A `*` with spaces on both sides (`2 * 3`) is text; the rest are marks
     // when they pair up.
@@ -232,8 +241,8 @@ fn without_emphasis(text: &str) -> String {
 /// - substitutions become their new side (`{~~old~>new~~}` → `new`);
 /// - a block mark that leads the line (`#`–`######`, `> `, `- `, `+ `,
 ///   `* `, `1. `, `2) `, after any leading spaces) dropped;
-/// - emphasis marks (`**`, `~~`, `==`, `<u>`, `<mark>`, `<s>`, paired
-///   `*`/`_` runs) dropped;
+/// - emphasis marks (`**`, `~~`, `==`, `<u>`, `<mark>` (with or without
+///   its `class="hl-…"` colour), `<s>`, paired `*`/`_` runs) dropped;
 /// - backslash escapes (`\*`, `\[`, ...) resolved.
 ///
 /// A mark inside a change mark (`{++1. one++}`) is the change's own
@@ -300,6 +309,11 @@ mod tests {
             ("**secret**", "secret"),
             ("<u>secret</u>", "secret"),
             ("<mark>secret</mark>", "secret"),
+            // A highlight that is not yellow opens with its colour
+            // (any case the writer reads back).
+            ("<mark class=\"hl-cyan\">secret</mark>", "secret"),
+            ("<mark class=\"hl-Cyan\">secret</mark> tail", "secret tail"),
+            ("A <mark class=\"hl-cyan\">-</mark> B", "A - B"),
             ("<s>secret</s>", "secret"),
             ("{==keep it secret.==}{>>c5 @AC: Cap?<<}", "keep it secret."),
             ("keep {++it++}{>>r0 @AC<<} secret", "keep it secret"),

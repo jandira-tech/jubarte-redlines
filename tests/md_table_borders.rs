@@ -461,3 +461,87 @@ fn a_source_table_grid_of_its_own_comes_back() {
     assert!(!first.contains("table:"), "{first}");
     assert!(thin_grid(&part(&again, "word/styles.xml")));
 }
+
+/// A table style the view names keeps the name the document gives it: a
+/// style id is not its name (`9` is named `Normal Table`, ids-fonts,
+/// #528), so the legend says both and the writer defines both.
+#[test]
+fn a_table_style_keeps_its_name() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="9"><w:name w:val="Normal Table"/><w:tblPr><w:tblCellMar><w:top w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>"#,
+        jubarte::namespaces::W::URI
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let body = table(r#"<w:tblStyle w:val="9"/>"#);
+    let docx = common::docx::docx_with(&body, &parts);
+    let (first, again, second) = round_trip(&docx);
+    assert!(first.contains("table: 9, named Normal Table"), "{first}");
+    let document = part(&again, "word/document.xml");
+    assert_eq!(table_styles(&document), [Some("9".to_string())]);
+    let written = part(&again, "word/styles.xml");
+    let definition = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"9\""))
+        .unwrap_or_else(|| panic!("no style 9: {written}"));
+    assert!(
+        definition.contains(r#"<w:name w:val="Normal Table"/>"#),
+        "{definition}"
+    );
+    assert_eq!(second, first);
+}
+
+/// Word's older table styles (Light Shading Accent 1, Medium List 2) keep
+/// Word's names without the view naming them (docx_lots_of_comments,
+/// #528): the writer derives them from the id, as Word spells them.
+#[test]
+fn words_older_table_styles_get_their_own_names() {
+    let w = jubarte::namespaces::W::URI;
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{w}"><w:style w:type="table" w:styleId="LightShading-Accent1"><w:name w:val="Light Shading Accent 1"/><w:basedOn w:val="TableNormal"/></w:style><w:style w:type="table" w:styleId="MediumList2"><w:name w:val="Medium List 2"/><w:basedOn w:val="TableNormal"/></w:style></w:styles>"#
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let body = format!(
+        "{}{}",
+        table(r#"<w:tblStyle w:val="MediumList2"/>"#),
+        table(r#"<w:tblStyle w:val="LightShading-Accent1"/>"#)
+    );
+    let docx = common::docx::docx_with(&body, &parts);
+    let (first, again, second) = round_trip(&docx);
+    assert!(!first.contains("named "), "{first}");
+    let written = part(&again, "word/styles.xml");
+    // Word's own definitions, band shading and all, not a bare name.
+    let shading = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"MediumList2\""))
+        .unwrap_or_else(|| panic!("no MediumList2: {written}"));
+    assert!(
+        shading.contains(r#"<w:tblStylePr w:type="band1Horz">"#) || shading.contains("band1Vert"),
+        "{shading}"
+    );
+    for (id, name) in [
+        ("LightShading-Accent1", "Light Shading Accent 1"),
+        ("MediumList2", "Medium List 2"),
+    ] {
+        let definition = written
+            .split("<w:style ")
+            .find(|s| s.contains(&format!("w:styleId=\"{id}\"")))
+            .unwrap_or_else(|| panic!("no {id}: {written}"));
+        assert!(
+            definition.contains(&format!(r#"<w:name w:val="{name}"/>"#)),
+            "{definition}"
+        );
+    }
+    assert_eq!(second, first);
+}

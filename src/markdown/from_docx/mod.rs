@@ -15,8 +15,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod agent;
 mod critic;
+pub(crate) mod drawing;
 mod header;
 mod media;
+mod mermaid;
 mod ooxml;
 mod revise;
 
@@ -123,6 +125,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let mut note_roots = Vec::new();
     // The notes parts' stems (`footnotes`), which name their changes' story.
     let mut note_stories: HashMap<bool, String> = HashMap::new();
+    // Each notes part's name and `xmlns` scope, for drawings it holds.
+    let mut note_scopes: HashMap<bool, (String, drawing::ScopeMap)> = HashMap::new();
     for (kind, fallback, name) in [
         ("/footnotes", "word/footnotes.xml", "footnote"),
         ("/endnotes", "word/endnotes.xml", "endnote"),
@@ -130,6 +134,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let path = part(kind, fallback);
         if let Ok(Some(root)) = package.xml(&path) {
             note_stories.insert(name == "endnote", part_stem(&path));
+            note_scopes.insert(name == "endnote", (path, drawing::ScopeMap::of(&root)));
             note_roots.push((name, root));
         }
     }
@@ -383,13 +388,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         hidden_ranges: Vec::new(),
         pending_notes: Vec::new(),
         in_comment: false,
-        plain: false,
         agent: options.ids,
         comments_inline: options.comments,
         resolved: accept.is_some(),
         dates: options.dates,
         handles: handles.clone(),
-        default_style: default_style.clone(),
         pending_empty: Vec::new(),
         line_indent: 0,
         cached_pages,
@@ -400,6 +403,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         para_comments: Vec::new(),
         threads: threads.clone(),
         story: None,
+        part: main.clone(),
+        scopes: drawing::ScopeMap::of(&document),
+        pendings: Vec::new(),
     };
     if let Some(root) = &comments {
         writer.comments = root
@@ -417,13 +423,6 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .filter_map(|r| r.attr("id"))
         .map(str::to_string)
         .collect();
-    // The agent view always reads as CriticMarkup: document text that looks
-    // like a mark is escaped even when the document has none.
-    writer.plain = !writer.agent
-        && !has_markup(&document, &writer.comments)
-        && !notes
-            .values()
-            .any(|note| has_markup(note, &writer.comments));
     let body = document.child("body").unwrap_or(&document);
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
@@ -468,6 +467,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         let around = std::mem::replace(&mut writer.revisions, changes);
         writer.lead = Some(format!("[^{index}]: "));
         writer.story = note_stories.get(&key.0).cloned();
+        // Drawings a note prints name the notes part's relationships.
+        let story_part = note_scopes.get(&key.0).map(|(part, scopes)| {
+            (
+                std::mem::replace(&mut writer.part, part.clone()),
+                std::mem::replace(&mut writer.scopes, scopes.clone()),
+            )
+        });
         // Every paragraph the id line counts, a table's cells' too: the
         // view has no table in a note, so they are the note's paragraphs.
         let paragraphs = agent::paragraphs(note);
@@ -489,13 +495,16 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         .filter(|id| Some(*id) != default_style.as_deref());
                     match id {
                         None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
-                        // Word's own, under any id (`a5` in a localized document).
+                        // Word's own, under any id (`a5` in a localized
+                        // document), spelled as Word spells it.
                         Some(id)
                             if writer
                                 .styles
                                 .by_id
                                 .get(id)
-                                .map_or(id.eq_ignore_ascii_case(own), |s| s.name == own_name) =>
+                                .map_or(id.eq_ignore_ascii_case(own), |s| {
+                                    s.exact_name == own_name
+                                }) =>
                         {
                             None
                         }
@@ -549,6 +558,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             })
             .collect();
         writer.revisions = around;
+        if let Some((part, scopes)) = story_part {
+            writer.part = part;
+            writer.scopes = scopes;
+        }
         let story = writer.story.take();
         // Still set: no paragraph had text, so there is no note.
         if writer.lead.take().is_none() {
@@ -856,10 +869,12 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let mut sections: Vec<header::SectionFact> = Vec::new();
             let mut first = 0;
             for (last, sect) in ends {
-                // `w:titlePg w:val="0"` is different-first-page off, not on.
+                // `w:titlePg w:val="0"` states the default: off. Word writes
+                // the switch out when a change turns the first page off
+                // (ids-tables, #528).
                 let title_page = sect
                     .child("titlePg")
-                    .is_some_and(|t| t.attr("val") != Some("0") && t.attr("val") != Some("false"));
+                    .is_some_and(|t| !matches!(t.attr("val"), Some("0" | "false" | "off")));
                 let mut stories = Vec::new();
                 for reference in sect.elements() {
                     let kind = match reference.local() {
@@ -889,6 +904,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         continue;
                     };
                     let paragraphs = header::story_paragraphs(&root);
+                    let story_scopes = drawing::ScopeMap::of(&root);
                     let read: Vec<(usize, String, header::ParaFact)> = paragraphs
                         .iter()
                         .enumerate()
@@ -929,7 +945,19 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                     )
                                 }),
                             };
-                            (i, header::story_text(p, view), own)
+                            (
+                                i,
+                                header::story_text_with(p, view, &mut |element, wrap| {
+                                    Some(drawing::Pending::push(
+                                        &mut writer.pendings,
+                                        element,
+                                        &path,
+                                        story_scopes.scope(element),
+                                        wrap,
+                                    ))
+                                }),
+                                own,
+                            )
                         })
                         .collect();
                     // From the first paragraph with text to the part's last:
@@ -1239,6 +1267,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     if !markdown.is_empty() {
         markdown.push('\n');
     }
+
+    let types = drawing::content_types(&mut package);
+    let markdown = drawing::fill(&markdown, &mut package, &types, &writer.pendings);
 
     Ok(Converted {
         markdown,
@@ -1655,6 +1686,10 @@ fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) 
 #[derive(Default, Clone)]
 struct Style {
     name: String,
+    /// The name as the document writes it: Word's own are lower case
+    /// (`footnote text`), and a style that spells one differently is the
+    /// document's own (#528).
+    exact_name: String,
     based_on: Option<String>,
     outline: Option<usize>,
     num: Option<(String, usize)>,
@@ -1695,6 +1730,11 @@ impl Styles {
                         .and_then(|n| n.attr("val"))
                         .unwrap_or(id)
                         .to_ascii_lowercase(),
+                    exact_name: style
+                        .path(&["name"])
+                        .and_then(|n| n.attr("val"))
+                        .unwrap_or(id)
+                        .to_string(),
                     based_on: style
                         .path(&["basedOn"])
                         .and_then(|n| n.attr("val"))
@@ -1835,6 +1875,24 @@ fn font_of(rpr: &Element) -> Option<String> {
         .attr("ascii")
         .or_else(|| fonts.attr("hAnsi"))
         .map(str::to_string)
+}
+
+/// `w:highlight w:val="…"` as one of Word's 16 named highlight colours
+/// (`ST_HighlightColor`), the static `&str` the view prints. `None` when
+/// `val` is empty or `none`; a colour Word does not name is the default
+/// yellow, so the highlight round-trips even when the name does not.
+fn highlight_color(c: &str) -> Option<&'static str> {
+    let v = c.trim();
+    if v.is_empty() || v == "none" {
+        return None;
+    }
+    Some(
+        crate::edit::HIGHLIGHTS
+            .iter()
+            .copied()
+            .find(|h| *h != "none" && *h == v)
+            .unwrap_or("yellow"),
+    )
 }
 
 /// Whether `font` is a monospace face: the common code and typewriter faces,
@@ -2110,24 +2168,6 @@ fn printed_code(instruction: &str) -> Option<String> {
         .then(|| format!("{{{}}}", instruction.trim()))
 }
 
-/// Whether a part holds a tracked change, or a comment anchor for a comment
-/// that exists. Formatting-only changes (`w:rPrChange`...) do not count: they
-/// are not shown.
-fn has_markup(part: &Element, comments: &HashMap<String, Element>) -> bool {
-    part.elements().any(|child| {
-        let anchored = matches!(
-            child.local(),
-            "commentRangeStart" | "commentRangeEnd" | "commentReference"
-        ) && child.attr("id").is_some_and(|id| comments.contains_key(id));
-        anchored
-            || matches!(
-                child.local(),
-                "ins" | "del" | "moveTo" | "moveFrom" | "cellIns" | "cellDel"
-            )
-            || has_markup(child, comments)
-    })
-}
-
 /// A revision element (`w:ins`, `w:del`, `w:moveTo`, `w:moveFrom`) as a tracked
 /// change. Insertions and move destinations are insertions; deletions and move
 /// sources are deletions (the representation pandiff uses too).
@@ -2256,10 +2296,10 @@ struct Writer<'a> {
     revisions: Vec<Change>,
     /// Comment id → its `w:comment` element.
     comments: HashMap<String, Element>,
-    /// Comment id → the inside of its `{>>…<<}` note, rendered at first use so
-    /// that anything numbered inside it (a footnote) is numbered where the
-    /// comment is.
-    notes: HashMap<String, String>,
+    /// Comment id → the inside of its `{>>…<<}` note, in each of the forms
+    /// its contexts print, rendered at first use so that anything numbered
+    /// inside it (a footnote) is numbered where the comment is.
+    notes: HashMap<String, critic::Note>,
     /// Comments with a `commentReference`, where their note goes. Others get
     /// their note where their range ends.
     referenced: HashSet<String>,
@@ -2277,14 +2317,11 @@ struct Writer<'a> {
     hidden_ranges: Vec<String>,
     /// Notes of unreferenced comments whose range ended between paragraphs;
     /// they open the next paragraph.
-    pending_notes: Vec<String>,
+    pending_notes: Vec<critic::Note>,
     /// Writing a comment's own text, where a `{>>…<<}` cannot appear: tracked
     /// changes keep their marks but not their author, and comment anchors are
     /// ignored.
     in_comment: bool,
-    /// No tracked change or comment anywhere: text is written as is, the way
-    /// it was before tracked changes were rendered.
-    plain: bool,
     /// Agent view (`Options::ids`).
     agent: bool,
     /// Agent view: comments inline, or hidden and listed on id lines.
@@ -2294,8 +2331,6 @@ struct Writer<'a> {
     /// Agent view: inline timestamps on notes (`Options::dates`).
     dates: bool,
     handles: agent::Handles,
-    /// Agent view: the default paragraph style id (`w:default="1"`).
-    default_style: Option<String>,
     /// Agent view: empty paragraphs not yet written as `<!-- pN empty -->`.
     pending_empty: Vec<usize>,
     /// Agent view: the indentation of the comment lines written before a
@@ -2322,14 +2357,22 @@ struct Writer<'a> {
     /// Agent view: the story being written (`footnotes`, `header1`), whose
     /// stem prefixes its change tags; `None` in the body.
     story: Option<String>,
+    /// The part being written (`word/document.xml`, `word/footnotes.xml`):
+    /// whose relationships a captured drawing names.
+    part: String,
+    /// `xmlns` scopes of the part being written, by drawing element.
+    scopes: drawing::ScopeMap,
+    /// Drawings queued for `drawing:` payloads, in print order.
+    pendings: Vec<drawing::Pending>,
 }
 
 impl Writer<'_> {
-    /// The notes waiting for the next paragraph, as CriticMarkup comments.
+    /// The notes waiting for the next paragraph, as CriticMarkup comments:
+    /// their block is prose, whatever their anchor was.
     fn take_notes(&mut self) -> String {
         std::mem::take(&mut self.pending_notes)
             .iter()
-            .map(|note| format!("{{>>{note}<<}}"))
+            .map(|note| format!("{{>>{}<<}}", note.prose))
             .collect()
     }
 
@@ -2571,6 +2614,7 @@ impl Writer<'_> {
             };
             if empty
                 && !numbered
+                && style.is_none()
                 && comments.is_empty()
                 && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
@@ -2617,8 +2661,11 @@ impl Writer<'_> {
             let facts = agent::LineFacts {
                 index,
                 style: style.as_deref(),
-                default_style: self.default_style.as_deref(),
                 heading,
+                // The level the paragraph states itself (`w:outlineLvl`),
+                // which without a `w:pStyle` is the only place a `#` can
+                // come from: `outline 2`.
+                outline: style.is_none().then_some(heading).flatten(),
                 marker,
                 level,
                 page_break,
@@ -2643,13 +2690,11 @@ impl Writer<'_> {
                 if let Some((label, _)) = &heading_marker {
                     text = format!("{label} {text}");
                 }
-                if self.agent {
-                    text = agent::escape_closing_hashes(&text);
-                }
+                text = agent::escape_closing_hashes(&text);
                 blocks.push_paragraph(&format!("{} ", "#".repeat(level)), &text, false, edges);
             } else if let Some(marker) = list_marker {
                 let (marker, _, ilvl) = marker;
-                let text = self.block_text(inline.render(true));
+                let text = self.block_text(&inline.render(true));
                 let item = list.item(ilvl, &marker, &hard_breaks(&text));
                 let prefix = item.len() - item.trim_start().len() + marker.len() + 1;
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
@@ -2658,7 +2703,7 @@ impl Writer<'_> {
                 blocks.push_paragraph("", &fenced(&inline.render(false)), false, edges);
             } else {
                 list.reset();
-                let text = self.block_text(inline.render(true));
+                let text = self.block_text(&inline.render(true));
                 blocks.push_paragraph("", &hard_breaks(&text), false, edges);
             }
         }
@@ -2683,15 +2728,11 @@ impl Writer<'_> {
         blocks.set_separator(mark);
     }
 
-    /// A paragraph's rendered text as its block holds it: in the agent view
-    /// a line that would open a Markdown block (`# `, `- `, `1. `) is
-    /// escaped, so it reads back as text.
-    fn block_text(&self, rendered: String) -> String {
-        if self.agent {
-            agent::escape_line_starts(&rendered)
-        } else {
-            rendered
-        }
+    /// A paragraph's rendered text as its block holds it: a line that would
+    /// open a Markdown block (`# `, `- `, `1. `) is escaped, so it reads
+    /// back as text.
+    fn block_text(&self, rendered: &str) -> String {
+        agent::escape_line_starts(rendered)
     }
 
     /// Agent view: writes the pending `<!-- pN empty -->` lines, after the
@@ -2892,11 +2933,7 @@ impl Writer<'_> {
     /// Tracked changes around the paragraph and comment ranges still open from
     /// earlier paragraphs are opened again at its start.
     fn paragraph_inline(&mut self, p: &Element) -> (Critic, Vec<String>) {
-        let mut inline = if self.plain {
-            Critic::plain()
-        } else {
-            Critic::default()
-        };
+        let mut inline = Critic::default();
         if self.flattening > 0 {
             inline.set_inline_end();
         }
@@ -2920,7 +2957,12 @@ impl Writer<'_> {
             }
         }
         for (mark, by) in &self.revisions {
-            inline.open(*mark, by.as_deref());
+            // A change the container carries (a row's or cell's own mark, or
+            // one that goes on past this paragraph) is not the content's:
+            // [`critic::CARRIED`] keeps a sole change under it from naming
+            // it in a note, which the writer would wrap again.
+            let carried = by.as_deref().map(|by| format!("{by}{}", critic::CARRIED));
+            inline.open(*mark, carried.as_deref());
         }
         // A note's label goes inside its tracked changes, before any comment.
         let start = inline.len();
@@ -2998,6 +3040,16 @@ impl Writer<'_> {
                 "commentRangeStart" | "commentRangeEnd" => self.comment_range(child, Some(out)),
                 "smartTag" | "customXml" | "sdt" | "sdtContent" | "bdo" | "dir" => {
                     self.inline(child, link, base, fields, out, extra);
+                }
+                "AlternateContent" if drawing::capturable_alternate(child) => {
+                    // Sits where a `w:r` may, holding one whole drawing.
+                    self.drawing(child, false, out, extra);
+                }
+                "AlternateContent" => {
+                    if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback"))
+                    {
+                        self.inline(choice, link, base, fields, out, extra);
+                    }
                 }
                 "oMathPara" | "oMath" => {
                     let latex = if child.is("oMath") {
@@ -3078,12 +3130,20 @@ impl Writer<'_> {
                 })
                 .unwrap_or(false);
         // Agent view only, as underline: a highlight of any colour and a
-        // single strike (spec §3).
-        let highlight = self.agent
-            && rpr
-                .and_then(|r| r.child("highlight"))
-                .and_then(|h| h.attr("val"))
-                .is_some_and(|val| val != "none");
+        // single strike (spec §3). The colour (`w:highlight w:val`) round-
+        // trips through the view as `<mark class="hl-<colour>">`; the
+        // default yellow is the bare `<mark>`, and a colour Word does not
+        // name prints as it.
+        let val = self
+            .agent
+            .then(|| {
+                rpr.and_then(|r| r.child("highlight"))
+                    .and_then(|h| h.attr("val"))
+            })
+            .flatten();
+        let highlight = val
+            .is_some_and(|val| val != "none")
+            .then(|| val.and_then(highlight_color).unwrap_or("yellow"));
         let strike = self.agent && rpr.and_then(|r| r.toggle("strike")).unwrap_or(false);
         // Code: a `VerbatimChar` run, or a run in a monospace face inside
         // a paragraph that is not (spec §3).
@@ -3253,7 +3313,10 @@ impl Writer<'_> {
                     self.noted_at_reference.insert(id.to_string());
                 }
             }
-            "drawing" | "pict" | "object" if !hidden => self.drawing(child, out, extra),
+            "drawing" | "pict" | "object" if !hidden => self.drawing(child, true, out, extra),
+            "AlternateContent" if !hidden && drawing::capturable_alternate(child) => {
+                self.drawing(child, true, out, extra);
+            }
             "AlternateContent" => {
                 if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
                     for inner in choice.elements() {
@@ -3265,10 +3328,59 @@ impl Writer<'_> {
         }
     }
 
-    /// Images with alt text become `![alt](name)`; text boxes become extra blocks,
-    /// inside any tracked change around the drawing. A text box is a story of
-    /// its own, so comment ranges around its anchor do not cover it.
-    fn drawing(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
+    /// Drawings as Markdown: `![alt](name)` for a plain inline image whose
+    /// raster extracts to a file, a `drawing:` payload (its element, parts
+    /// and relationships verbatim) for everything else — anchors, shapes,
+    /// text boxes, VML, AlternateContent and unextracted images. Inside a
+    /// comment the writer cannot restore a payload, so the drawing prints
+    /// its text instead.
+    fn drawing(
+        &mut self,
+        element: &Element,
+        wrap: bool,
+        out: &mut Critic,
+        extra: &mut Vec<String>,
+    ) {
+        if self.in_comment {
+            self.drawing_text(element, out, extra);
+            return;
+        }
+        let mut plain_image = false;
+        if drawing::is_plain_inline(element)
+            && let Some(doc_pr) = element.find("docPr")
+        {
+            let alt = doc_pr
+                .attr("descr")
+                .filter(|d| !d.trim().is_empty())
+                .or_else(|| doc_pr.attr("title"))
+                .unwrap_or("");
+            let target = element
+                .find("blip")
+                .and_then(|b| b.rel_attr("embed").or_else(|| b.rel_attr("link")))
+                .and_then(|id| self.rels.get(id))
+                .map(|r| r.target.clone());
+            if let Some(image) = self.media.extracted_markdown(alt, target.as_deref()) {
+                out.raw(&image);
+                plain_image = true;
+            }
+        }
+        if !plain_image {
+            let scope = self.scopes.scope(element);
+            let part = self.part.clone();
+            out.raw(&drawing::Pending::push(
+                &mut self.pendings,
+                element,
+                &part,
+                scope,
+                wrap,
+            ));
+        }
+    }
+
+    /// A drawing's printable content inside a comment: its text boxes as
+    /// extra blocks (a text box is a story of its own, so comment ranges
+    /// around its anchor do not cover it) and its image's alt text.
+    fn drawing_text(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
         drawing.find_all("txbxContent", &mut boxes);
         let open_comments = std::mem::take(&mut self.open_comments);
@@ -3352,7 +3464,9 @@ impl Writer<'_> {
         }
         let (mut aligns, _) = self.column_alignments(table);
         aligns.resize(width, None);
-        markdown_table(&rows, &aligns, self.agent)
+        // Both views escape their cell text (#519), so every cell holds
+        // what `table_cell` reads as already escaped.
+        markdown_table(&rows, &aligns, true)
     }
 
     /// Each grid column's alignment, as most of its cell paragraphs have
@@ -3363,7 +3477,6 @@ impl Writer<'_> {
     /// paragraphs in a style other than the default, consecutive ones in
     /// one style as a range.
     fn cell_styles(&self, table: &Element) -> Vec<String> {
-        let default = self.default_style.as_deref().unwrap_or("Normal");
         let mut runs: Vec<(usize, usize, &str)> = Vec::new();
         for tr in table_rows(table) {
             for tc in row_cells(tr) {
@@ -3377,9 +3490,8 @@ impl Writer<'_> {
                     ) else {
                         continue;
                     };
-                    if style == default || style == "Normal" {
-                        continue;
-                    }
+                    // A cell that states a style names it, the default too
+                    // (#528); one without `w:pStyle` names none.
                     match runs.last_mut() {
                         Some((_, last, said)) if *last + 1 == index && *said == style => {
                             *last = index;
@@ -3620,7 +3732,7 @@ impl Writer<'_> {
     /// A comment's note, rendered the first time it is needed. Its text is
     /// written apart from the document around its anchor: no tracked change
     /// or comment range there applies to it.
-    fn note(&mut self, id: &str) -> Option<String> {
+    fn note(&mut self, id: &str) -> Option<critic::Note> {
         if let Some(note) = self.notes.get(id) {
             return Some(note.clone());
         }
@@ -3628,36 +3740,58 @@ impl Writer<'_> {
         let revisions = std::mem::take(&mut self.revisions);
         let open_comments = std::mem::take(&mut self.open_comments);
         self.in_comment = true;
+        let paragraphs: Vec<_> = comment.children_named("p").collect();
+        let prose = self.note_text(&paragraphs, false);
+        let code = self.note_text(&paragraphs, true);
+        self.in_comment = false;
+        self.revisions = revisions;
+        self.open_comments = open_comments;
+        let note = if self.agent {
+            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
+                .then(|| comment.attr("date"))
+                .flatten();
+            let head = |text: String| {
+                let mut inner = agent::comment_head(
+                    id,
+                    comment.attr("author"),
+                    date,
+                    &self.handles,
+                    &self.threads,
+                );
+                inner.push_str(&text);
+                inner
+            };
+            critic::Note {
+                prose: head(prose),
+                code: head(code),
+            }
+        } else {
+            critic::Note {
+                prose: comment_note(comment.attr("author"), comment.attr("date"), &prose),
+                code: comment_note(comment.attr("author"), comment.attr("date"), &code),
+            }
+        };
+        self.notes.insert(id.to_string(), note.clone());
+        Some(note)
+    }
+
+    /// The note's paragraphs as one line of text. `code` renders them as
+    /// the code block the note is anchored in: a fence holds the text as
+    /// written and unwinds only the escape that form uses, so the note
+    /// round-trips there too (#518).
+    fn note_text(&mut self, paragraphs: &[&Element], code: bool) -> String {
         let mut parts = Vec::new();
-        for p in comment.children_named("p") {
-            let (inline, extra) = self.paragraph_inline(p);
+        for p in paragraphs {
+            let (mut inline, extra) = self.paragraph_inline(p);
+            if code {
+                inline.set_code_block();
+            }
             let mark = self.paragraph_mark(p).filter(|_| extra.is_empty());
             let inline = inline.into_inline();
             parts.push((inline.render(true), mark, inline.edges()));
             parts.extend(extra.into_iter().map(|block| (block, None, (false, false))));
         }
-        self.in_comment = false;
-        self.revisions = revisions;
-        self.open_comments = open_comments;
-        let text = critic::join_marked(parts, " ").replace('\n', " ");
-        let note = if self.agent {
-            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
-                .then(|| comment.attr("date"))
-                .flatten();
-            let mut inner = agent::comment_head(
-                id,
-                comment.attr("author"),
-                date,
-                &self.handles,
-                &self.threads,
-            );
-            inner.push_str(&text);
-            inner
-        } else {
-            comment_note(comment.attr("author"), comment.attr("date"), &text)
-        };
-        self.notes.insert(id.to_string(), note.clone());
-        Some(note)
+        critic::join_marked(parts, " ").replace('\n', " ")
     }
 }
 
@@ -5017,7 +5151,7 @@ mod tests {
         // rejecting removes the cell, so the text is gone either way.
         assert_eq!(
             md(&docx(&body, &[])),
-            "|Before|After|\n|-|-|\n|{--old--}|{--{++new++}--}|\n"
+            "|Before|After|\n|-|-|\n|{--old--}|{++new++}|\n"
         );
     }
 
@@ -5526,7 +5660,8 @@ mod tests {
             p("", &format!("{}{}{}", ins(&r("one ")), ins(&r("insertion")), r("."))),
             // Empty change elements vanish; an inserted space stays.
             p("", &format!("{}{}{}{}", r("a"), ins(""), del(&r("")), ins(&r(" ")))),
-            // Inserted by one author and deleted by another.
+            // Inserted by one author and deleted by another: the insertion
+            // held nothing else, so the note names it after ` on `.
             p("", &format!("{}{}", r("x"), ins(&del(&dr("y"))))),
             // Moves are an insertion and a deletion; the inserted side then
             // the deleted one read as a substitution.
@@ -5535,7 +5670,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{++{--y--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
+            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{--y--}{>>r91 Ana (2026-01-02T03:04:00Z) on r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
         );
     }
 
@@ -5545,11 +5680,12 @@ mod tests {
         let body = p("", &r("x {++ y ++} ~> z")) + &p("", &ins(&r("new")));
         assert_eq!(
             md(&docx(&body, &[])),
-            "x {\\++ y ++\\} ~\\> z\n\n{++new++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
+            "x {\\++ y ++\\} \\~\\> z\n\n{++new++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
-        // Without one, nothing is marked up, so the text is kept as is.
+        // Without one the text is escaped all the same (#519): a later
+        // convert cannot read it as changes.
         let body = p("", &r("x {++ y ++} ~> z"));
-        assert_eq!(md(&docx(&body, &[])), "x {++ y ++} ~> z\n");
+        assert_eq!(md(&docx(&body, &[])), "x {\\++ y ++\\} \\~\\> z\n");
     }
 
     #[test]
@@ -5633,7 +5769,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{++{--n1--}; {--n2--}++}|{++{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}++}|\n"
+            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{--n1; n2--}|{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}|\n"
         );
     }
 
@@ -5874,7 +6010,7 @@ mod tests {
             md(&docx(&body, &[])),
             "{--A--}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{--\n\n--}{>>r8 Bo Chen (2026-09-29T15:10:00Z)<<}Next\n\n\
              {--B\n\nC--}{>>r7+8 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
-             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{++{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|\n|-|-|\n"
+             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}|\n|-|-|\n"
         );
     }
 
@@ -6202,7 +6338,7 @@ mod tests {
         assert_eq!(
             md(&bytes),
             format!(
-                "Kept[^1]\n\n{{++Added[^2]++}}{added}\n\n{{--Gone[^3]--}}{gone}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{added}\n{{--[^3]: Gone {{++note++}}{}--}}{gone}\n",
+                "Kept[^1]\n\n{{++Added[^2]++}}{added}\n\n{{--Gone[^3]--}}{gone}\n\n[^1]: Plain note.\n{{++[^2]: Added note.++}}{added}\n{{--[^3]: Gone --}}{gone}{{++note++}}{}\n",
                 by("footnotes.r90")
             )
         );
