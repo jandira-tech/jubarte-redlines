@@ -16,6 +16,32 @@
 
 use super::{EditError, err};
 
+// Byte comparisons performed by [`v2_candidates`] on this thread. A
+// linear-time overlapping search is `O(n+m)` (a KMP prefix-function table of
+// the anchor plus one pass of the text); a `starts_with` re-scan at every char
+// index is `O(n*m)`. The tests use the count to reject the quadratic path. It
+// is per thread, so tests running side by side under `cargo test` do not
+// disturb each other's count.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static ANCHOR_BYTE_PROBES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Count one byte comparison. Test-only; an empty inline function in
+/// production builds, so the runtime cost is zero.
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[inline]
+fn probe_compare() {
+    ANCHOR_BYTE_PROBES.with(|probes| probes.set(probes.get() + 1));
+}
+
+#[cfg(not(test))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[inline]
+fn probe_compare() {}
+
 /// What `c` reads as, or `None` for a character that shows nothing.
 fn reads_as(c: char) -> Option<char> {
     match c {
@@ -93,12 +119,55 @@ pub fn v2_candidates(haystack: &str, anchor: &str) -> Vec<(usize, usize)> {
     if anchor.is_empty() {
         return Vec::new();
     }
-    haystack
-        .char_indices()
-        .map(|(i, _)| i)
-        .filter(|&i| haystack[i..].starts_with(anchor))
-        .map(|i| (i, i + anchor.len()))
-        .collect()
+    let needle = anchor.as_bytes();
+    let text = haystack.as_bytes();
+    let m = needle.len();
+    // KMP prefix function: `pi[i]` is the length of the longest proper
+    // prefix of `needle[..=i]` that is also a suffix of it.
+    let mut pi = vec![0usize; m];
+    {
+        let mut k = 0usize;
+        for (i, &b) in needle.iter().enumerate().skip(1) {
+            while k > 0 && needle[k] != b {
+                probe_compare();
+                k = pi[k - 1];
+            }
+            if k > 0 {
+                probe_compare();
+            }
+            if needle[k] == b {
+                k += 1;
+            }
+            pi[i] = k;
+        }
+    }
+    // KMP search. A valid UTF-8 anchor begins with a lead byte, so a
+    // byte-level match against valid UTF-8 text always lands on a char
+    // boundary; that is exactly what callers rely on.
+    let mut hits = Vec::new();
+    let mut k = 0usize;
+    for (i, &b) in text.iter().enumerate() {
+        while k > 0 {
+            probe_compare();
+            if needle[k] == b {
+                break;
+            }
+            k = pi[k - 1];
+        }
+        if k == 0 {
+            probe_compare();
+            if needle[0] == b {
+                k = 1;
+            }
+        } else {
+            k += 1;
+        }
+        if k == m {
+            hits.push((i + 1 - m, i + 1));
+            k = pi[k - 1];
+        }
+    }
+    hits
 }
 
 /// Select the unique v2 literal candidate, or the 1-based `occurrence`
@@ -122,31 +191,37 @@ pub fn v2_select(
         return Err(err("INVALID_EDIT", None, "occurrence is 1-based"));
     }
     let candidates = v2_candidates(haystack, anchor);
-    let shown = shown(anchor);
     match (candidates.as_slice(), occurrence) {
-        ([], _) => Err(err(
-            "ANCHOR_NOT_FOUND",
-            None,
-            format!("{shown} occurs 0 times in the text"),
-        )),
+        ([], _) => {
+            let shown = shown(anchor);
+            Err(err(
+                "ANCHOR_NOT_FOUND",
+                None,
+                format!("{shown} occurs 0 times in the text"),
+            ))
+        }
         ([one], None) => Ok(*one),
-        (many, None) => Err(err(
-            "AMBIGUOUS_ANCHOR",
-            None,
-            format!(
-                "{shown} occurs {n} times in the text; set \"occurrence\" to 1..={n}",
-                n = many.len()
-            ),
-        )),
+        (many, None) => {
+            let shown = shown(anchor);
+            let n = many.len();
+            Err(err(
+                "AMBIGUOUS_ANCHOR",
+                None,
+                format!("{shown} occurs {n} times in the text; set \"occurrence\" to 1..={n}"),
+            ))
+        }
         (many, Some(k)) if k <= many.len() => Ok(many[k - 1]),
-        (many, Some(k)) => Err(err(
-            "AMBIGUOUS_ANCHOR",
-            None,
-            format!(
-                "{shown} occurs {n} times in the text; occurrence {k} is outside occurrence 1..={n}",
-                n = many.len()
-            ),
-        )),
+        (many, Some(k)) => {
+            let shown = shown(anchor);
+            let n = many.len();
+            Err(err(
+                "AMBIGUOUS_ANCHOR",
+                None,
+                format!(
+                    "{shown} occurs {n} times in the text; occurrence {k} is outside occurrence 1..={n}"
+                ),
+            ))
+        }
     }
 }
 
@@ -169,9 +244,9 @@ pub fn v2_select_all(
         return Err(err("INVALID_EDIT", None, "anchor must be nonempty"));
     }
     let candidates = v2_candidates(haystack, anchor);
-    let shown = shown(anchor);
     let n = candidates.len();
     if candidates.is_empty() {
+        let shown = shown(anchor);
         return Err(err(
             "ANCHOR_NOT_FOUND",
             None,
@@ -179,6 +254,7 @@ pub fn v2_select_all(
         ));
     }
     if n != expected {
+        let shown = shown(anchor);
         return Err(err(
             "AMBIGUOUS_ANCHOR",
             None,
@@ -188,11 +264,12 @@ pub fn v2_select_all(
     // Equal-length ranges are sorted by start, so any overlap appears
     // between neighbours. Equality at the boundary is not overlap.
     if candidates.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        let shown = shown(anchor);
         return Err(err(
             "OVERLAPPING_EDITS",
             None,
             format!(
-                "{shown} occurs {n} times and those ranges overlap; all-matches refuses them all"
+                "{shown} occurs {n} times and those ranges overlap, so none of them is replaced"
             ),
         ));
     }
@@ -461,5 +538,122 @@ mod tests {
         let e = v2_select("abc", "b", Some(usize::MAX)).unwrap_err();
         assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
         assert!(e.message.contains("occurs 1 times"), "{}", e.message);
+    }
+
+    /// The quadratic reference: `starts_with` re-scanned at every char
+    /// index. Kept private so the equivalence test can prove the new
+    /// linear search returns identical byte ranges on every fixture.
+    fn naive_v2_candidates(haystack: &str, anchor: &str) -> Vec<(usize, usize)> {
+        if anchor.is_empty() {
+            return Vec::new();
+        }
+        haystack
+            .char_indices()
+            .map(|(i, _)| i)
+            .filter(|&i| haystack[i..].starts_with(anchor))
+            .map(|i| (i, i + anchor.len()))
+            .collect()
+    }
+
+    #[test]
+    fn v2_overlapping_search_matches_naive_scan_on_a_deterministic_corpus() {
+        // Covers: overlaps, no overlap, multibyte, astral, touching
+        // ranges, empty, single char, anchor longer than text, multiple
+        // disjoint matches, anchor at the start / middle / end.
+        let corpus: &[(&str, &str)] = &[
+            // Overlaps.
+            ("aaa", "aa"),
+            ("aaaa", "aa"),
+            ("ababab", "abab"),
+            ("abcabcabc", "abcabc"),
+            // No overlap.
+            ("abc", "b"),
+            ("", "a"),
+            ("a", "aa"),
+            ("abc", ""),
+            ("", ""),
+            // Single-char matches, disjoint.
+            ("a-a-a", "a"),
+            ("xxxx", "x"),
+            // Multibyte anchors / haystacks.
+            ("ééé", "éé"),
+            ("ééé", "é"),
+            ("café", "fé"),
+            // Astral (4-byte UTF-8) anchors and haystacks.
+            ("𐀀𐀀𐀀", "𐀀𐀀"),
+            ("𐀀𐀀𐀀", "𐀀"),
+            // Touching ranges (disjoint, not overlap).
+            ("éé", "é"),
+            ("abcd", "ab"),
+            ("abcdef", "cd"),
+            // Anchor at start / middle / end.
+            ("abcabc", "abc"),
+            ("xyzabcxyz", "abc"),
+            ("abc", "abc"),
+            // Mixed multibyte + ASCII.
+            ("aébéc", "éb"),
+            // Repeated anchor with one-off shift.
+            ("abababab", "abab"),
+            // Long with no match.
+            ("the quick brown fox", "cat"),
+        ];
+        for &(text, anchor) in corpus {
+            assert_eq!(
+                v2_candidates(text, anchor),
+                naive_v2_candidates(text, anchor),
+                "text={text:?}, anchor={anchor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_overlapping_search_probes_in_linear_time() {
+        // Pathological input: 200k of `a` against a 100k `a` anchor. The
+        // naive scan re-runs `starts_with` at every char index, so it
+        // performs ~2·10¹⁰ byte comparisons before deciding AMBIGUOUS.
+        // The linear search does at most `c·(n+m)` probes for a small
+        // constant `c`; the assertion would time out long before failing
+        // on the naive scan, so it gates the asymptotic improvement.
+        let n: usize = 200_000;
+        let m: usize = 100_000;
+        let haystack = "a".repeat(n);
+        let anchor = "a".repeat(m);
+        let before = ANCHOR_BYTE_PROBES.with(std::cell::Cell::get);
+        let hits = v2_candidates(&haystack, &anchor);
+        let probes = ANCHOR_BYTE_PROBES.with(std::cell::Cell::get) - before;
+        // Sanity: the result is the well-known all-overlapping match.
+        assert_eq!(hits.len(), n - m + 1);
+        assert_eq!(hits[0], (0, m));
+        assert_eq!(hits[hits.len() - 1], (n - m, n));
+        // Linear-time bound: a small constant times (n + m). The naive
+        // scan is Θ(n·m), which dwarfs any linear bound by ~5 orders.
+        const C: usize = 4;
+        assert!(
+            probes <= C * (n + m),
+            "linear search used {probes} probes for n={n}, m={m}; \
+             expected at most {bound}",
+            bound = C * (n + m)
+        );
+    }
+
+    #[test]
+    fn v2_overlap_message_states_the_condition_without_naming_a_flag() {
+        // The library error names the overlap condition itself, not a
+        // CLI flag. PlanV2 has no `all_matches` field; the message must
+        // remain intelligible for Python, WASM, and JSON callers.
+        let e = v2_select_all("aaa", "aa", 2).unwrap_err();
+        assert_eq!(e.code, "OVERLAPPING_EDITS");
+        assert!(
+            e.message.contains("occurs 2 times")
+                && e.message.contains("those ranges overlap")
+                && e.message.contains("so none of them is replaced"),
+            "{}",
+            e.message
+        );
+        assert!(
+            !e.message.contains("all-matches"),
+            "message must not name the CLI flag: {}",
+            e.message
+        );
     }
 }
