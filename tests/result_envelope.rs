@@ -14,8 +14,8 @@ use std::collections::BTreeSet;
 use jubarte::inspect::source_sha256;
 use jubarte::result::{
     Artifact, Context, Counts, Envelope, Error, ExitStatus, MediaRole, NextAction, Phase,
-    PredictedEffect, ProgressEvent, ResultData, Runtime, Source, Status, Verification,
-    exit_status_for, jsonl_terminal_line, read_jsonl_stream, write_jsonl_stream,
+    PredictedEffect, ProgressEvent, ResultData, ResultDataError, Runtime, Source, Status,
+    Verification, exit_status_for, jsonl_terminal_line, read_jsonl_stream, write_jsonl_stream,
 };
 
 // ---------------------------------------------------------------------------
@@ -36,10 +36,11 @@ fn ok_envelope(_status_data: Status, effect_data: jubarte::result::Effect) -> En
         data,
         Runtime::native(),
     )
+    .expect("valid result data")
 }
 
 // ---------------------------------------------------------------------------
-// Type-safety: invalid (phase, effect) combinations are not constructible.
+// Type-safety: an ok envelope refuses invalid (phase, effect) combinations.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -49,6 +50,44 @@ fn generated_phase_forces_not_applied_effect() {
     assert!(
         err.is_err(),
         "generated phase with changed effect must be refused by the constructor"
+    );
+}
+
+#[test]
+fn ok_envelope_refuses_generated_phase_with_changed_effect() {
+    let data = ResultData::new(Phase::Generated, jubarte::result::Effect::Changed);
+    let built = Envelope::ok(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        data,
+        Runtime::native(),
+    );
+    assert_eq!(
+        built.err(),
+        Some(ResultDataError::NotAppliedRequired {
+            phase: Phase::Generated,
+            effect: jubarte::result::Effect::Changed,
+        }),
+        "an ok envelope must not carry a generated phase with a changed effect"
+    );
+}
+
+#[test]
+fn ok_envelope_refuses_predicted_effect_outside_validated_phase() {
+    let mut data = ResultData::new(Phase::Committed, jubarte::result::Effect::Changed);
+    data.set_predicted(PredictedEffect::Changed);
+    let built = Envelope::ok(
+        "edit apply",
+        Source::new(&fixture_bytes()),
+        data,
+        Runtime::native(),
+    );
+    assert_eq!(
+        built.err(),
+        Some(ResultDataError::PredictedWithoutValidation {
+            phase: Phase::Committed,
+        }),
+        "predicted_effect belongs to dry runs (validated phase) only"
     );
 }
 
@@ -108,7 +147,8 @@ fn p4_generated_plan_row() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     let plan_artifact = Artifact::committed(
         "/tmp/plan.json",
         MediaRole::Plan,
@@ -148,7 +188,8 @@ fn p4_untouched_template_apply_row() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     envelope.push_artifact(Artifact::committed(
         "/tmp/out.docx",
         MediaRole::Document,
@@ -209,7 +250,8 @@ fn p4_dry_run_row() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     let json = serde_json::to_string(&envelope).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
@@ -237,7 +279,8 @@ fn p4_dry_run_predicts_changed_when_plan_alters_text() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     let json = serde_json::to_string(&envelope).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
@@ -258,7 +301,8 @@ fn p4_review_only_effects_row() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     envelope.push_artifact(Artifact::committed(
         "/tmp/out.docx",
         MediaRole::Document,
@@ -393,7 +437,8 @@ fn artifact_committed_flag_is_independent_of_document_effect() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     envelope.push_artifact(
         Artifact::new(
             "/tmp/plan.json",
@@ -511,7 +556,8 @@ fn jsonl_stream_writes_progress_lines_then_terminal_result() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
 
     let events = vec![
         ProgressEvent::from(serde_json::json!({
@@ -546,7 +592,8 @@ fn jsonl_terminal_line_helper_writes_only_the_terminal_record() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     let line = jsonl_terminal_line(&terminal);
     let value: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
     assert_eq!(value["status"], "ok");
@@ -583,7 +630,8 @@ fn jsonl_stream_with_terminal_record_is_complete() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     let stream = write_jsonl_stream(&[], &terminal);
     let parsed = read_jsonl_stream(&stream).expect("complete stream parses");
     assert_eq!(parsed.terminal.status, Status::Ok);
@@ -602,7 +650,8 @@ fn jsonl_stream_rejects_two_terminal_records() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     // Two terminals concatenated: invalid stream.
     let stream = format!(
         "{}\n{}\n",
@@ -720,7 +769,8 @@ fn envelope_includes_command_engine_version_runtime_and_verification() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     let json = serde_json::to_string(&envelope).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["command"], "edit apply");
@@ -818,7 +868,8 @@ fn ok_envelope_snapshot_matches_proposal_shape() {
         Source::new(&fixture_bytes()),
         data,
         Runtime::native(),
-    );
+    )
+    .expect("valid result data");
     let value: serde_json::Value =
         serde_json::from_str(&serde_json::to_string(&envelope).unwrap()).unwrap();
 
