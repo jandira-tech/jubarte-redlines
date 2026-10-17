@@ -302,7 +302,9 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - `outline {n}` prints when the paragraph states its `w:outlineLvl` with
   no style at all: `# Text` alone would give the writer's `HeadingN`
   where the document had none (the writer then writes the `w:outlineLvl`
-  alone).
+  alone). `n` runs 1 to 9; past the heading styles (`outline 7` to
+  `outline 9`) no `#` count reaches the level, so the paragraph stays
+  body text and the clause alone carries it.
 - `align` prints only when the paragraph sets `w:jc` itself: `center`,
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches, with as many decimals (two to four) as it takes to

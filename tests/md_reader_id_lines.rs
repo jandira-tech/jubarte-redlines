@@ -2385,3 +2385,47 @@ fn a_heading_that_states_its_outline_writes_no_style() {
     assert!(!document.contains("w:pStyle"), "{document}");
     assert_eq!(view, once);
 }
+
+/// Every outline level 0-8 survives the round trip: the `#` count stops
+/// at the writer's heading styles, so a level past them (7-9) is body
+/// text whose id line alone carries it (`outline 7` to `outline 9`),
+/// and the writer writes the `w:outlineLvl` it says (#549).
+#[test]
+fn outline_levels_past_the_heading_styles_survive() {
+    let mut body = String::new();
+    for level in 0..=8 {
+        body.push_str(&format!(
+            r#"<w:p><w:pPr><w:outlineLvl w:val="{level}"/></w:pPr><w:r><w:t>L{level}.</w:t></w:r></w:p>"#
+        ));
+    }
+    let parts = [default_normal_styles()];
+    let docx = common::docx::docx_with(&body, &parts);
+    let (view, again, once) = docx_round_trip(&docx);
+    for level in 0..=5 {
+        assert!(
+            view.contains(&format!("{} L{level}.", "#".repeat(level + 1))),
+            "{view}"
+        );
+    }
+    // Past the heading styles there is no `#` to print: the clause alone
+    // says the level, and the text stays a plain paragraph.
+    for level in 6..=8 {
+        assert!(
+            view.contains(&format!("outline {} -->\nL{level}.", level + 1)),
+            "{view}"
+        );
+    }
+    assert!(!view.contains("###### L6."), "{view}");
+    assert!(!view.contains("###### L7."), "{view}");
+    assert!(!view.contains("###### L8."), "{view}");
+    let document = part_string(&again, "word/document.xml").unwrap();
+    assert_eq!(document.matches("<w:outlineLvl").count(), 9, "{document}");
+    for level in 0..=8 {
+        assert!(
+            document.contains(&format!(r#"<w:outlineLvl w:val="{level}"/>"#)),
+            "{document}"
+        );
+    }
+    assert!(!document.contains("w:pStyle"), "{document}");
+    assert_eq!(view, once);
+}

@@ -1946,7 +1946,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 // writer's `HeadingN` must not step in where the document
                 // had none.
                 paragraph.style = None;
-                // The clause's bound is 1..=6, so the level cannot be empty.
+                // The clause's bound is 1..=9, so the level cannot be empty.
                 paragraph.outline = outline.checked_sub(1).map(|level| level as usize);
             }
             paragraph.align = line.align.or(paragraph.align);
