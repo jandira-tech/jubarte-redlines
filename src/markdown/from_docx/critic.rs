@@ -388,7 +388,7 @@ impl Critic {
         let mut changed = 0usize;
         self.tokens.iter().all(|token| match token {
             Token::Leaf(Leaf::Text { text, marks, .. }) => {
-                let marked = marks.underline || marks.highlight || marks.strike;
+                let marked = marks.underline || marks.highlight.is_some() || marks.strike;
                 let spaces = !text.is_empty() && text.chars().all(|c| c == ' ');
                 let visible = !text.trim().is_empty() || (spaces && marked);
                 changed == 0 && !visible
