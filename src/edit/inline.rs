@@ -100,6 +100,13 @@ pub fn compile(
     action: &EditAction,
     text: Option<&str>,
 ) -> Result<PlanV2, Box<Error>> {
+    if let Some(text) = text {
+        v2::check_payload_text(
+            text,
+            action.payload().is_some_and(|p| p.text_file.is_some()),
+        )
+        .map_err(edit_error)?;
+    }
     let inline = action
         .inline()
         .ok_or_else(|| refusal("USAGE", "apply does not compile an inline action"))?;
@@ -171,7 +178,9 @@ pub fn compile(
                 return Err(refusal("INVALID_EDIT", "--find must not be empty"));
             }
             if at.is_none() {
-                candidates.retain(|r| r.story == story.as_deref().unwrap_or("body"));
+                let story = story.as_deref().unwrap_or("body");
+                super::anchor_error::require_story(source, story)?;
+                candidates.retain(|r| r.story == story);
             }
             let mut hits = Vec::new();
             for row in &candidates {
@@ -188,7 +197,11 @@ pub fn compile(
             if *all_matches {
                 if hits.len() != expect_count.unwrap_or_default() {
                     return Err(refusal(
-                        "AMBIGUOUS_ANCHOR",
+                        if hits.is_empty() {
+                            "ANCHOR_NOT_FOUND"
+                        } else {
+                            "AMBIGUOUS_ANCHOR"
+                        },
                         format!(
                             "expected {} matches; found {}",
                             expect_count.unwrap_or_default(),
@@ -241,7 +254,11 @@ pub fn compile(
                 };
                 let hit = hits.get(index).copied().ok_or_else(|| {
                     refusal(
-                        "ANCHOR_NOT_FOUND",
+                        if hits.is_empty() {
+                            "ANCHOR_NOT_FOUND"
+                        } else {
+                            "AMBIGUOUS_ANCHOR"
+                        },
                         format!("occurrence is outside {} exact matches", hits.len()),
                     )
                 })?;
@@ -505,7 +522,8 @@ mod tests {
                     "--text",
                     "x",
                 ],
-                "ANCHOR_NOT_FOUND",
+                // Row 5: the anchor module owns the occurrence error code.
+                "AMBIGUOUS_ANCHOR",
             ),
             (
                 vec!["replace", "--at", "p0", "--find", "fee", "--text", "x"],

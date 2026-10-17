@@ -236,7 +236,7 @@ fn prepare_and_publish(
     }
     if let Some(dir) = &delivery.out_dir {
         // Bundles must be new. A directory containing an input cannot be replaced.
-        if dir.exists() {
+        if dir.symlink_metadata().is_ok() {
             return Err(failure(
                 "OUTPUT_EXISTS",
                 "--out-dir requires a new directory; --force replaces only an explicitly named output file",
@@ -278,9 +278,68 @@ fn prepare_and_publish(
         "request_sha256".into(),
         prepared.request_sha256.clone().into(),
     );
+    let report_path = delivery.report.clone().or_else(|| {
+        if delivery.out_dir.is_some()
+            && (delivery.emit.is_empty() || delivery.emit.iter().any(|r| r == "report"))
+        {
+            delivery.out_dir.as_ref().map(|dir| dir.join("report.json"))
+        } else if delivery.emit.iter().any(|r| r == "report") {
+            delivery
+                .output
+                .as_ref()
+                .map(|path| path.with_extension("report.json"))
+        } else {
+            None
+        }
+    });
+    let (author, datetime, track, existing_revisions) = match &request {
+        Request::V2(plan) => (
+            plan.author.clone(),
+            plan.date.clone(),
+            serde_json::to_value(plan.policy.track).expect("track"),
+            serde_json::to_value(plan.policy.existing_revisions).expect("policy"),
+        ),
+        Request::V1(_) => (
+            prepared.result.report.author.clone(),
+            prepared.result.report.date.clone(),
+            serde_json::json!("on"),
+            serde_json::to_value(prepared.result.report.existing_revisions).expect("policy"),
+        ),
+    };
+    let emit = if delivery.emit.is_empty() {
+        if save.is_some() {
+            vec![]
+        } else if delivery.out_dir.is_some() {
+            vec!["document", "patch", "report"]
+        } else {
+            vec!["document"]
+        }
+    } else {
+        delivery.emit.iter().map(String::as_str).collect()
+    };
+    for (key, value) in [
+        ("author", serde_json::json!(author)),
+        ("datetime", serde_json::json!(datetime)),
+        ("track", track),
+        ("existing_revisions", existing_revisions),
+        ("emit", serde_json::json!(emit)),
+        ("force", serde_json::json!(delivery.force)),
+        ("dry_run", serde_json::json!(delivery.dry_run)),
+        (
+            "report",
+            serde_json::json!(report_path.as_deref().map(absolute)),
+        ),
+    ] {
+        receipt.effective_options.insert(key.into(), value);
+    }
+    for finding in &prepared.checks.introduced {
+        receipt.warnings.push(format!(
+            "{} in {}#{}: {}",
+            finding.code, finding.part, finding.location, finding.message
+        ));
+    }
     let data = receipt.data.as_mut().expect("data");
-    data.verification.operation_postconditions = "passed".into();
-    data.verification.integrity = "passed".into();
+    data.verification = prepared.checks.verification();
     data.counts.requested_operations = request.count();
     data.counts.body_operations_applied = prepared
         .result
@@ -356,22 +415,7 @@ fn prepare_and_publish(
     for (path, bytes, role) in &outputs {
         receipt.artifacts.push(artifact(path, *role, bytes));
     }
-    let bundle_report = delivery
-        .out_dir
-        .as_ref()
-        .filter(|_| delivery.emit.is_empty() || delivery.emit.iter().any(|r| r == "report"))
-        .map(|dir| dir.join("report.json"));
-    let single_report = delivery
-        .output
-        .as_ref()
-        .filter(|_| delivery.emit.iter().any(|r| r == "report"))
-        .map(|path| path.with_extension("report.json"));
-    if let Some(path) = delivery
-        .report
-        .as_ref()
-        .or(bundle_report.as_ref())
-        .or(single_report.as_ref())
-    {
+    if let Some(path) = report_path.as_ref() {
         if outputs.iter().any(|(other, _, _)| same_path(path, other)) {
             return Err(failure(
                 "OUTPUT_ALIAS",
@@ -549,22 +593,9 @@ pub(super) fn usage(argv: &[String], error: &clap::Error) -> bool {
         .chain(argv.iter().map(String::as_str))
         .map(Into::into)
         .collect();
-    let model = jubarte::cli::top_level_command();
-    let routed = jubarte::cli::edit_actions::route(&args, &model);
-    if !routed.iter().any(|a| a == "__edit-v2") {
+    let Some((action, jsonl)) = jubarte::cli::typed_edit_protocol(&args) else {
         return false;
-    }
-    let json = argv.iter().any(|a| a == "--json");
-    let jsonl = argv.iter().any(|a| a == "--jsonl");
-    if !json && !jsonl {
-        return false;
-    }
-    let action = routed
-        .iter()
-        .skip_while(|a| a.as_os_str() != "__edit-v2")
-        .skip(1)
-        .find_map(|a| a.to_str().filter(|s| !s.starts_with('-')))
-        .unwrap_or("apply");
+    };
     let receipt = Envelope::new_error(
         format!("edit {action}"),
         Source::from_digest(""),

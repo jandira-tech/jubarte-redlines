@@ -80,6 +80,27 @@ pub struct CandidateChecks {
     /// Findings the edit introduced. Only blocking ones fail preparation;
     /// the rest are disclosed here.
     pub introduced: Vec<Finding>,
+    /// Findings persisting in either validated representation, deduplicated by identity.
+    pub unresolved: Vec<Finding>,
+    /// Both serialized representations passed the required integrity gate.
+    pub integrity: bool,
+    /// DOM-realized and serialized-story postconditions completed successfully.
+    pub operation_postconditions: bool,
+}
+
+impl CandidateChecks {
+    /// Report only completed checks and their computed findings.
+    pub fn verification(&self) -> crate::result::Verification {
+        let outcome = |ran| if ran { "passed" } else { "skipped" }.to_string();
+        crate::result::Verification {
+            integrity: outcome(self.integrity),
+            operation_postconditions: outcome(self.operation_postconditions),
+            baseline_findings: Some(self.baseline.clone()),
+            introduced_findings: Some(self.introduced.clone()),
+            unresolved_findings: Some(self.unresolved.clone()),
+            ..Default::default()
+        }
+    }
 }
 
 /// What to check beyond the shared candidate checks.
@@ -149,7 +170,8 @@ pub fn prepare(
         Effect::Unchanged => (source.to_vec(), PrimaryBytes::Source),
         _ => (result.clean.clone(), PrimaryBytes::Candidate),
     };
-    let checks = check_candidates(source, &result)?;
+    let mut checks = check_candidates(source, &result)?;
+    checks.operation_postconditions = true;
     if options.require_change && effect == Effect::Unchanged {
         return Err(err(
             codes::NO_CHANGES_REQUESTED,
@@ -222,6 +244,7 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
     // validation below still gates what the edit produced).
     let baseline = validate::validate(source).ok();
     let mut introduced = Vec::new();
+    let mut unresolved = Vec::new();
     for bytes in [&result.clean, &result.redline] {
         let findings = validate::validate(bytes).map_err(|e| {
             err(
@@ -230,6 +253,14 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
                 format!("the serialized candidate cannot be validated: {e}"),
             )
         })?;
+        for finding in &findings {
+            if !unresolved
+                .iter()
+                .any(|f| finding_key(f) == finding_key(finding))
+            {
+                unresolved.push(finding.clone());
+            }
+        }
         let Some(baseline) = &baseline else {
             continue;
         };
@@ -255,6 +286,9 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
     Ok(CandidateChecks {
         baseline: baseline.unwrap_or_default(),
         introduced,
+        unresolved,
+        integrity: true,
+        operation_postconditions: false,
     })
 }
 
@@ -494,7 +528,7 @@ fn attached(tx: &Transaction<'_>, para: usize) -> bool {
 /// Each expected paragraph reads exactly so after apply, in the DOM the
 /// candidate is serialized from. A realized difference is
 /// `POSTCONDITION_FAILED` with the plan's outcomes, never a silent miss.
-fn check_dom_realized(tx: &Transaction<'_>, exact: bool) -> Result<(), EditError> {
+pub(super) fn check_dom_realized(tx: &Transaction<'_>, exact: bool) -> Result<(), EditError> {
     for (para, expected) in expected_texts(tx, exact) {
         if !attached(tx, para) {
             // Merged-away or deleted paragraphs carry no text postcondition;
@@ -545,7 +579,10 @@ fn control_text(dom: &crate::xmllinq::Dom, sdt: crate::xmllinq::NodeId) -> Strin
 /// as the DOM they were written from — the body always, plus each header,
 /// footer and notes story an operation touched: a character the writer
 /// dropped or restated is `POSTCONDITION_FAILED`.
-fn check_serialized_stories(tx: &Transaction<'_>, clean: &[u8]) -> Result<(), EditError> {
+pub(super) fn check_serialized_stories(
+    tx: &Transaction<'_>,
+    clean: &[u8],
+) -> Result<(), EditError> {
     let post = body_paragraph_nodes(&tx.opened.dom, tx.opened.body);
     let reopened = crate::inspect::paragraphs(clean)
         .map_err(|e| err("POSTCONDITION_FAILED", None, e.to_string()))?;
@@ -744,7 +781,8 @@ pub fn prepare_v2(
     } else {
         Effect::Changed
     };
-    let checks = check_candidates(source, &result)?;
+    let mut checks = check_candidates(source, &result)?;
+    checks.operation_postconditions = true;
     if options.require_change && unchanged {
         return Err(err(
             codes::NO_CHANGES_REQUESTED,
@@ -774,7 +812,7 @@ pub fn prepare_v2(
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
-mod tests {
+pub(crate) mod tests {
     use super::super::{
         EditReport, EditResult, ExistingRevisions, ParagraphDelta, deeper_boundary_fixture,
     };
@@ -822,5 +860,82 @@ mod tests {
         let checks = check_candidates(b"not a zip at all", &result_of(orphan)).unwrap();
         assert!(checks.introduced.is_empty(), "{:?}", checks.introduced);
         assert!(checks.baseline.is_empty());
+    }
+
+    #[test]
+    fn verification_reports_only_completed_candidate_checks() {
+        let skipped = CandidateChecks::default().verification();
+        assert_eq!(skipped.integrity, "skipped");
+        assert_eq!(skipped.operation_postconditions, "skipped");
+        let source = deeper_boundary_fixture::docx("<w:p><w:r><w:t>old</w:t></w:r></w:p>");
+        let plan = EditPlan::from_json(
+            r#"{"schema_version":1,"author":"T","date":"2026-10-17T12:00:00Z","operations":[]}"#,
+        )
+        .unwrap();
+        let checked = prepare(&source, &plan, &PrepareOptions::default())
+            .unwrap()
+            .checks
+            .verification();
+        assert_eq!(checked.integrity, "passed");
+        assert_eq!(checked.operation_postconditions, "passed");
+    }
+
+    thread_local! {
+        static SERIALIZED_CANDIDATE: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    // A deterministic serializer fake: only the current test thread sees it.
+    pub(crate) fn serialized_candidate(bytes: Vec<u8>) -> Vec<u8> {
+        SERIALIZED_CANDIDATE.with(|candidate| candidate.borrow().clone().unwrap_or(bytes))
+    }
+
+    #[test]
+    fn review_11_prepare_v2_checks_serialized_text_like_v1() {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                SERIALIZED_CANDIDATE.with(|c| *c.borrow_mut() = None);
+            }
+        }
+        let source = deeper_boundary_fixture::docx("<w:p><w:r><w:t>old</w:t></w:r></w:p>");
+        let legacy = EditPlan::from_json(r#"{"schema_version":1,"author":"T","date":"2026-10-17T12:00:00Z","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"p0","find":"old","replacement":"new"}]}"#).unwrap();
+        let view = super::super::for_edit::for_edit(
+            &source,
+            &super::super::for_edit::ForEditRequest {
+                all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let target = &view.paragraphs[0].target;
+        let value = serde_json::json!({
+            "schema_version": 2, "source": {"sha256": source_sha256(&source)},
+            "author": "T", "date": "2026-10-17T12:00:00Z",
+            "policy": {"track": "off", "existing_revisions": "keep", "text_view":"final"},
+            "resolve_revisions":{"accept":[],"reject":[]}, "scope": {"kind":"all"},
+            "operations": [{"kind":"replace", "target": {"short_id":target.short_id,"long_id":target.long_id}, "find":"old", "text":"new"}]
+        });
+        let plan = super::super::v2::PlanV2::from_json(&value.to_string()).unwrap();
+        // The requested DOM reads "new", while the fake serializer emits "wrong".
+        SERIALIZED_CANDIDATE.with(|c| {
+            *c.borrow_mut() = Some(deeper_boundary_fixture::docx(
+                "<w:p><w:r><w:t>wrong</w:t></w:r></w:p>",
+            ));
+        });
+        let _reset = Reset;
+        let v1 = prepare(&source, &legacy, &PrepareOptions::default());
+        assert!(v1.is_err(), "v1 must detect the serializer disagreement");
+        let expected = v1.unwrap_err();
+        assert_eq!(expected.code, "POSTCONDITION_FAILED");
+        for track in [super::super::v2::Track::Off, super::super::v2::Track::On] {
+            let mut plan = plan.clone();
+            plan.policy.track = track;
+            let actual = prepare_v2(&source, &plan, &PrepareOptions::default());
+            assert!(
+                actual.is_err(),
+                "prepare_v2 must refuse the same serialized-text disagreement as prepare"
+            );
+            assert_eq!(actual.unwrap_err().code, expected.code);
+        }
     }
 }

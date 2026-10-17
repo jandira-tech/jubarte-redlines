@@ -588,6 +588,13 @@ impl Operation {
     fn validate(&self) -> Result<(), EditError> {
         self.target().validate()?;
         match self {
+            Self::Replace { text, .. }
+            | Self::Rewrite { text, .. }
+            | Self::Insert { text, .. }
+            | Self::InsertParagraph { text, .. } => check_payload_text(text, false)?,
+            _ => {}
+        }
+        match self {
             Self::Rewrite {
                 before_sha256,
                 text,
@@ -786,6 +793,28 @@ pub fn logical_text(dom: &Dom, paragraph: NodeId) -> Result<String, EditError> {
     }
     check_text_content(dom, paragraph)?;
     Ok(crate::inspect::project_paragraph(dom, paragraph).text)
+}
+
+/// Validate exact typed payloads without normalization. A file's leading BOM
+/// is an encoding mark; every other U+FEFF remains content.
+pub(super) fn check_payload_text(text: &str, from_file: bool) -> Result<(), EditError> {
+    if from_file && text.starts_with('\u{feff}') {
+        return Err(super::err(
+            "INVALID_EDIT",
+            None,
+            "text file holds U+FEFF at character offset 0, an encoding mark; save exact UTF-8 without a BOM",
+        ));
+    }
+    if let Some(offset) = text.chars().position(|c| c == '\r') {
+        return Err(super::err(
+            "INVALID_EDIT",
+            None,
+            format!(
+                "text holds U+000D at character offset {offset}; use LF (U+000A) for line breaks"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Lowercase hexadecimal SHA-256 of the final logical projection of

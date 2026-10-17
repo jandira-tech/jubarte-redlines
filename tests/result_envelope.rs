@@ -837,6 +837,7 @@ fn envelope_includes_command_engine_version_runtime_and_verification() {
         integrity: "passed".to_string(),
         expectations: "not_requested".to_string(),
         task_semantics: "not_assessed".to_string(),
+        ..Default::default()
     };
     let envelope = Envelope::ok(
         "edit apply",
@@ -940,6 +941,7 @@ fn ok_envelope_snapshot_matches_proposal_shape() {
         integrity: "passed".to_string(),
         expectations: "not_requested".to_string(),
         task_semantics: "not_assessed".to_string(),
+        ..Default::default()
     };
     let envelope = Envelope::ok(
         "edit apply",

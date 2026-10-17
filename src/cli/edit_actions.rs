@@ -214,7 +214,7 @@ pub struct DeliveryOptions {
     #[arg(long, value_name = "HASH", value_parser = digest)]
     pub expect_sha256: Option<String>,
     /// Prepare and validate the actual candidate; write no files.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["output", "out_dir"])]
     pub dry_run: bool,
     /// Require a primary document change, independently of derived artifacts.
     #[arg(long)]

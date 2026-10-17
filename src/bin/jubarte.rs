@@ -1885,7 +1885,12 @@ struct EditFlags<'a> {
 }
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
-    let source = read_word(flags.file).map_err(|m| (1u8, m))?;
+    let source = read_word(flags.file).map_err(|mut message| {
+        if !flags.file.exists() && flags.plan.is_some() && matches!(flags.file.to_str(), Some("apply" | "replace" | "rewrite" | "insert" | "delete")) {
+            message.push_str("; this is legacy edit FILE --plan PLAN; for typed apply use: jubarte edit apply FILE --plan PLAN");
+        }
+        (1u8, message)
+    })?;
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
