@@ -566,8 +566,8 @@ fn nested_changes_keep_both_authors_and_dates() {
 /// front matter names the bytes, a comment's number and the paragraph a
 /// story that ends in a table gets are the writer's, so none of them
 /// survives a round trip to compare.
-fn body(view: String) -> String {
-    let body = view.split("\n---\n").nth(1).unwrap_or(&view).to_string();
+fn body(view: &str) -> String {
+    let body = view.split("\n---\n").nth(1).unwrap_or(view).to_string();
     let ended = body.ends_with('\n');
     let mut body = body
         .lines()
@@ -602,8 +602,8 @@ fn body(view: String) -> String {
 
 /// The docx `markdown` writes, its plain view the same markdown again,
 /// Word-valid, and resolving it the way the source resolves.
-fn round_trips(source: &Vec<u8>, markdown: String, view: &str) {
-    let docx = written(&markdown);
+fn round_trips(source: &[u8], markdown: &str, view: &str) {
+    let docx = written(markdown);
     assert_eq!(plain(&docx), markdown, "{view}: plain fixed point");
     keeps_the_source(source, &docx, view);
 }
@@ -611,12 +611,12 @@ fn round_trips(source: &Vec<u8>, markdown: String, view: &str) {
 /// The docx the agent view of `source` writes, its agent view (body only,
 /// see [`body`]) the same again, Word-valid, and resolving it the way the
 /// source resolves.
-fn agent_round_trips(source: &Vec<u8>, view: &str) {
+fn agent_round_trips(source: &[u8], view: &str) {
     let markdown = agent(source);
     let docx = written(&markdown);
     assert_eq!(
-        body(agent(&docx)),
-        body(markdown),
+        body(&agent(&docx)),
+        body(&markdown),
         "{view}: agent fixed point"
     );
     keeps_the_source(source, &docx, view);
@@ -624,10 +624,10 @@ fn agent_round_trips(source: &Vec<u8>, view: &str) {
 
 /// The round-tripped `docx` is Word-valid, its agent view matches the
 /// source's, and resolving it matches the source, accept and reject.
-fn keeps_the_source(source: &Vec<u8>, docx: &Vec<u8>, view: &str) {
+fn keeps_the_source(source: &[u8], docx: &[u8], view: &str) {
     assert_eq!(
-        body(agent(docx)),
-        body(agent(source)),
+        body(&agent(docx)),
+        body(&agent(source)),
         "{view}: agent view of the round docx"
     );
     assert!(
@@ -658,8 +658,7 @@ fn a_comment_in_a_split_piece_stays_inside_the_outer_insertion() {
     assert!(ins.contains(r#"<w:del w:id="3""#), "{document}");
     assert!(ins.contains("commentReference"), "{document}");
     assert!(ins.contains("> three"), "{document}");
-    round_trips(&source, markdown, "defect 1 plain");
-    let agent_view = agent(&source);
+    round_trips(&source, &markdown, "defect 1 plain");
     agent_round_trips(&source, "defect 1 agent");
 }
 
@@ -679,7 +678,7 @@ fn a_comment_inside_a_sole_nests_outer_keeps_the_outer() {
     assert!(ins.starts_with(r#"w:id="1""#), "{document}");
     assert!(ins.contains(r#"<w:del w:id="3""#), "{document}");
     assert!(document.contains("commentReference"), "{document}");
-    round_trips(&source, markdown, "defect 2 plain");
+    round_trips(&source, &markdown, "defect 2 plain");
     agent_round_trips(&source, "defect 2 agent");
 }
 
@@ -694,7 +693,7 @@ fn two_inner_changes_without_outer_text_keep_the_outer() {
     assert!(ins.contains(r#"<w:del w:id="3""#), "{document}");
     assert!(ins.contains(r#"<w:del w:id="4""#), "{document}");
     assert!(ins.contains("<w:delText"), "{document}");
-    round_trips(&source, markdown, "defect 3 plain");
+    round_trips(&source, &markdown, "defect 3 plain");
     agent_round_trips(&source, "defect 3 agent");
 }
 
@@ -708,7 +707,7 @@ fn two_inner_changes_with_outer_text_between_stay_nested() {
     assert_eq!(document.matches("<w:ins ").count(), 1, "{document}");
     assert_eq!(document.matches("<w:del ").count(), 2, "{document}");
     assert!(document.contains("<w:ins "), "{document}");
-    round_trips(&source, markdown, "defect 4 plain");
+    round_trips(&source, &markdown, "defect 4 plain");
     agent_round_trips(&source, "defect 4 agent");
 }
 
@@ -720,16 +719,47 @@ fn an_outer_continued_into_the_next_paragraph_keeps_its_id() {
         markdown.contains(" on r1 Ana Lima (2026-09-29T14:05:00Z)<<}"),
         "{markdown}"
     );
-    let document = part_string(&written(&markdown), "word/document.xml").unwrap();
+    let docx = written(&markdown);
+    let document = part_string(&docx, "word/document.xml").unwrap();
     // Two paragraphs, the second's nest naming the id the first spent: one
-    // revision across the paragraph mark, as Word writes it.
+    // revision across the paragraph mark, as Word writes it — the same
+    // `w:id` twice, which the source carries too (Ring-1 warns of it and
+    // nothing else; a revision nested in its own kind is what the gate
+    // refuses).
     assert_eq!(document.matches("<w:p>").count(), 2, "{document}");
     assert!(
         document.contains(r#"<w:ins w:id="1""#) && !document.contains(r#"<w:ins w:id="4""#),
         "{document}"
     );
-    round_trips(&source, markdown, "defect 5 plain");
-    agent_round_trips(&source, "defect 5 agent");
+    assert_eq!(
+        document.matches(r#"<w:ins w:id="1""#).count(),
+        2,
+        "{document}"
+    );
+    let findings = check_word_valid_package(&docx);
+    assert!(
+        findings.findings.is_empty()
+            || findings
+                .findings
+                .iter()
+                .all(|f| f.code == "DUPLICATE_REVISION_ID"),
+        "defect 5: {}",
+        findings.errors.join("\n")
+    );
+    for accept in [false, true] {
+        assert_eq!(
+            resolved(&docx, accept),
+            resolved(&source, accept),
+            "defect 5: {}",
+            if accept { "accept" } else { "reject" }
+        );
+    }
+    // Both views are fixed points, the agent view agreeing with the
+    // source's.
+    assert_eq!(plain(&docx), markdown, "defect 5: plain fixed point");
+    let view = agent(&source);
+    let agent_docx = written(&view);
+    assert_eq!(body(&agent(&agent_docx)), body(&view), "defect 5: agent");
 }
 
 #[test]
@@ -783,7 +813,7 @@ fn an_outer_author_with_parentheses_round_trips() {
         "{markdown}: {document}"
     );
     assert!(!document.contains("{>>"), "{document}");
-    round_trips(&source, markdown, "defect 7 plain");
+    round_trips(&source, &markdown, "defect 7 plain");
 }
 
 #[test]
@@ -799,7 +829,7 @@ fn an_inner_author_holding_the_separator_round_trips() {
         document.contains(r#"w:author="Ana Lima""#),
         "{markdown}: {document}"
     );
-    round_trips(&source, markdown, "defect 8 plain");
+    round_trips(&source, &markdown, "defect 8 plain");
 }
 
 #[test]
