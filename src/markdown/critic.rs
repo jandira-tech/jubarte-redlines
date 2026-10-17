@@ -1576,6 +1576,15 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
     resolve_with_policy(markdown, accept, false)
 }
 
+/// Whether `note` names, after ` on `, a change the one it follows sits
+/// inside (either view's grammar): resolving that change removes its text
+/// either way, for rejecting the outer removes what it holds and accepting
+/// the inner removes the text.
+fn names_outer(note: &str) -> bool {
+    super::view_notes::nested_revision_tags(note).is_some_and(|tags| tags.len() > 1)
+        || super::view_notes::nested_plain_revisions(note).is_some_and(|parts| parts.len() > 1)
+}
+
 /// Accepted document clauses omit a wholly deleted paragraph's line break.
 pub(crate) fn accept_clauses(markdown: &str) -> String {
     resolve_with_policy(markdown, true, true)
@@ -1601,8 +1610,17 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     // The state each open span interrupted, innermost last.
     let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
+    // The change span just closed, where its note would sit: a note that
+    // names the change it sits inside (` on `) folds it, and resolving
+    // removes its text either way — rejecting the outer removes what it
+    // holds, accepting the inner removes the text.
+    let mut folded_at: Option<usize> = None;
+    let mut comment = String::new();
     Pieces::default().feed(&encode_spans_kept(markdown), |piece| match piece {
         Piece::Text(text) => {
+            if state == In::Comment {
+                comment.push_str(text);
+            }
             let shown = match state {
                 In::Text => true,
                 In::Inserted | In::New => accept,
@@ -1610,6 +1628,11 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 In::Comment => false,
             };
             if shown {
+                if state == In::Text {
+                    // Text after the change ended: a note now is on this
+                    // point, not on the change.
+                    folded_at = None;
+                }
                 if remove_deleted_lines {
                     for ch in text.chars() {
                         if ch == '\n' {
@@ -1664,12 +1687,23 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     };
                     if shown {
                         out.push_str(delimiter(token));
+                        // Markup after the change ended: a note now is on
+                        // this point, not on the change.
+                        folded_at = None;
                     }
                     None
                 }
-                Token::InsertStart => Some(In::Inserted),
-                Token::DeleteStart => Some(In::Deleted),
-                Token::SubstituteStart => Some(In::Old),
+                Token::InsertStart | Token::DeleteStart => {
+                    folded_at = Some(out.len());
+                    match token {
+                        Token::InsertStart => Some(In::Inserted),
+                        _ => Some(In::Deleted),
+                    }
+                }
+                Token::SubstituteStart => {
+                    folded_at = None;
+                    Some(In::Old)
+                }
                 Token::CommentStart => Some(In::Comment),
                 // A highlight shows its text as the text around it does.
                 Token::HighlightStart => Some(state),
@@ -1680,14 +1714,31 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 Token::HighlightEnd
                 | Token::InsertEnd
                 | Token::DeleteEnd
-                | Token::SubstituteEnd
-                | Token::CommentEnd => {
+                | Token::SubstituteEnd => {
                     state = outer.pop().unwrap_or(In::Text);
                     None
                 }
                 // A comment paragraph break: comments resolve to nothing,
                 // so the break is dropped with the comment's text.
                 Token::CommentBreak => None,
+                Token::CommentEnd => {
+                    state = outer.pop().unwrap_or(In::Text);
+                    // The note folds the change it follows, naming the one
+                    // it sits inside after ` on `: its text goes, either
+                    // way it resolves — rejecting the outer removes what it
+                    // holds, accepting the inner removes the text.
+                    if state == In::Text
+                        && let Some(at) = folded_at.take()
+                        && names_outer(&comment)
+                    {
+                        out.truncate(at);
+                        line_start = out.rfind('\n').map_or(0, |at| at + 1);
+                        visible_text = false;
+                        dropped_line = false;
+                    }
+                    comment.clear();
+                    None
+                }
             };
             if let Some(opened) = opened {
                 outer.push(state);
