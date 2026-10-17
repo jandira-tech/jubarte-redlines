@@ -1028,12 +1028,13 @@ pub(crate) fn emit<P: std::borrow::Borrow<Page>>(
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
-        // Word's Save as PDF writes no annotation for a comment: its
-        // balloon is the print. The other styles keep the sticky note.
-        let sticky: &[PdfComment] = if options.revisions == super::RevisionStyle::Word {
-            &[]
-        } else {
+        // A viewer paints a note as an icon over the text, and the balloon
+        // already shows the comment (Word's Save as PDF writes none): a
+        // note is written only when asked.
+        let sticky: &[PdfComment] = if options.comment_notes {
             &page.comments
+        } else {
+            &[]
         };
         for note in sticky {
             let id = objs.len() + 1;

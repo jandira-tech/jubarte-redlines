@@ -267,6 +267,7 @@ pub fn docx_to_pdf(
         } else {
             jubarte::convert::CommentPlacement::Margin
         },
+        comment_notes: false,
         changed_only: changed_only.unwrap_or(false),
     };
     jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
