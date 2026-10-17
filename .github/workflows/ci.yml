@@ -282,7 +282,6 @@ jobs:
       - name: python3 is 3.14
         run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version; print(sys.version)'
       - run: python3 scripts/test_convert_sweep.py
-      - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
       - name: OpenSSF attestation script tests with coverage
         run: |

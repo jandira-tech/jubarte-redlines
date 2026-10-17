@@ -24,7 +24,8 @@ Disposition is the action, not a score. Parked items stay parked; this table doe
 **“KEEP pending 398+76 remeasure” — trigger state, restated 2026-10-01.**
 Both-set scores now exist: the 76-fixture and 398-corpus means were
 recorded 2026-09-06 in `planning/report.md` §16 (commit `69abd8d5`) and
-are pinned by `tests/report_measurement.rs`. That run scored the converter
+were pinned by `tests/report_measurement.rs` until both left the repository
+with `planning/` in `f47b9d1f`. That run scored the converter
 as built, with every mini gate in place, and its commit says “parked items
 stay parked”; it did not toggle sites and re-score. The per-site A/B
 sweep these rows await — flip one mini gate at a time, score both sets —

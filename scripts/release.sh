@@ -661,7 +661,6 @@ if [ "$SKIP_GATES" = 0 ]; then
   # The docs.rs build: a dead intra-doc link renders as bare brackets there.
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
   python3 scripts/test_convert_sweep.py
-  python3 planning/test_sample50_check.py
   python3 scripts/test_release_sh.py
   python3 scripts/test_check_release_info.py
   python3 scripts/test_library_readmes.py
