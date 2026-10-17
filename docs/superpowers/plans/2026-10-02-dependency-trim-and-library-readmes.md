@@ -6,8 +6,39 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Dependency trim (2 PRs) and per-library READMEs in the release
 
-Status: PLANNED (2026-10-02). It comes from a `Cargo.lock` audit: 345
-packages, 15 of them present in two or more versions.
+Status: PARTIALLY IMPLEMENTED (2026-10-02 → re-checked 2026-10-17). It
+comes from a `Cargo.lock` audit: 345 packages, 15 of them present in two
+or more versions.
+
+- **PR A: shipped** — `e90314c8`, merged #340 (`2fab68dc`). `Cargo.toml`
+  now pins `tiny-skia = "0.12"` and `ooxmlsdk = "0.13.1"` (dev-dep).
+- **PR B: not shipped** — `rdocx-opc = "0.2"` is still the package layer
+  (`src/opc/mod.rs` imports `rdocx_opc`; `zip = "8.6.0"` is the
+  fallback). The in-tree port exists only on branch `fix/zip9-migration`
+  (`9ad624a4`, not in `main`). Two premises are stale: upstream shipped
+  rdocx-opc 0.2 (pure-Rust deflate, patched quick-xml ≥0.41, fixes
+  RUSTSEC-2026-0194), so the `jubarte-wasm/patches/rdocx-opc` vendor copy
+  is already gone and quick-xml 0.37 is no longer in the tree for it.
+- **PR C: shipped, with a different mechanism** — `69c129cb` (merged
+  #339), regenerated in `6832870b`. `scripts/library_readmes.py` exists
+  and the release gates on it, but the spec is the script's docstring and
+  fragments are named `README.fragment.md` beside each output — there is
+  no `library_readmes.toml` and no `README.extra.md`. Generated READMEs
+  (`README.crates.md`, `jubarte-python/README.md`, `jubarte-wasm/npm/README.md`,
+  `jubarte-wasm/cli/README.md`) carry the version stamp.
+- **PR D: not shipped** — `sha1 = "0.11"` still keys the comparer's
+  content hashes (`src/util/sha1.rs`, `src/xmllinq/serialize.rs`;
+  `tests/sha1_key_invariant.rs` still pins SHA-1 values). The
+  measurement gate was never run.
+
+The ID-contract note that applies to every document-address example in
+this repo's plans: the v3 contract
+(`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, docs
+in `4612a155`) is **not implemented on any branch**. Today's transitional
+spellings are `pN`, `rN`, `ccN`/`pN.ccK`, `story.pN`, `sN`,
+`tN.rowN.cellN` and scoped `.pN` (`t0.row1.cell2.p1`); the contract's
+`psN` scoped step (`t0.row1.cell2.ps1`), `j:short` long ids and paired
+`short_id`/`long_id` JSON fields land only with the schema-2 cutover.
 
 PRs A and B trim dependencies. PR C changes the release. Optional PR D swaps
 the comparer hash, and only lands if its measurements say so. Each PR

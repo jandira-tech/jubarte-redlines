@@ -8,6 +8,22 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 No code changed. All change points were read in the tree on branch `cli-std/25a-reader-threads`. Ordered smallest-safe-first; each is a PR over the previous (spec §7 discipline).
 
+> **Status (reconciled 2026-10-17, `main` `aba48bd5`).** Mostly landed.
+> Task 1 slugs: landed (`ccf2566b` github-slugger names; `9eafa752`,
+> `5c976a42` link/bookmark chain; `605f72c4` reader pairing).
+> Task 2 `track_changes`: landed (`81f3d936`; `--track-changes` overrides the key
+> on `convert -t docx`). Task 3 inline HTML: landed (b/strong, i/em, s/del/strike,
+> code, mark, with warnings on dropped tags — `write.rs:3482` `inline_html`).
+> Task 4: partially landed — column alignment read-back landed
+> (`tests/md_reader_id_lines.rs:606` `:-`/`:-:`/`-:` and `pN center` exceptions);
+> `wp:docPr title` **not** landed (`xml.rs:1804` still emits `descr` only).
+> Task 5 checklist: **not** landed — `- [ ]`/`- [x]` still write `☐`/`☒` text
+> (`write.rs:1698`), not the Wingdings-U+F0A8 `abstractNum`. Task 6 math: landed
+> (`src/markdown/math.rs`; `tests/md_math_word.rs` round-trips Word's files; the
+> separate layout engine is `2026-10-13-math-layout.md`). No id-contract impact:
+> this plan touches no id spelling; `pN` cell refs here are the transitional
+> numbering the contract spells `psN`.
+
 Repo constraints honored throughout: test-first (red then green); no `#[allow]`; `clippy -D warnings`; `cargo nextest`, one cargo process at a time; Word only via the bench scripts; Microsoft Word parity, never LibreOffice.
 
 ## Arthur's decisions (2026-10-13)
@@ -40,7 +56,7 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 - Surveyed on crates.io: `latex2mathml` / `latex2mmlc` (pure-Rust LaTeX→**MathML**, e.g. [latex2mathml](https://crates.io/crates/latex2mathml)). Wrong target: we need LaTeX→**OMML**, so it buys a parser but still needs a full MathML→OMML second stage plus version/supply-chain drift. No Rust crate writing OMML (`m:oMath`, `m:f`, `m:rad`, `m:nary`…) was found; `pulldown-latex`/`katex-rs` have no such crate pages (search returned only bindings/docs tooling). Haskell `texmath` writes OMML but is not a Rust dependency option.
 - The contract is finite and already enumerated: the reader's OMML→LaTeX table (`src/markdown/from_docx/mod.rs:2291-2470`: `f` at :2321, scripts :2322-2335, `rad` :2336-2343, `d` :2344-2363, `func` :2364-2368, `nary` :2369-2395, `acc` :2396-2406, `bar` :2407-2413, `limLow/limUpp` :2415-2416, `m` :2417-2428, `eqArr` :2429-2435, `MATH_FUNCTIONS` :2453-2457, `group`/`base` :2444-2469). Every LaTeX the reader prints must parse back to the OMML it came from — a hand parser closed over exactly this table is smaller and round-trip-exact where a general crate would drift (brace normalization, `sSubSup` vs sequential scripts, `m:nary` limits).
 
-## Task 1 — github-slugger fixes (item 2 scope only)
+## Task 1 — github-slugger fixes (item 2 scope only) — landed (`ccf2566b`)
 
 **Goal.** Duplicate headings follow github-slugger retry semantics; combining marks stay; only U+0020 becomes `-` (NBSP dropped); empty headings get no bookmark.
 
@@ -68,7 +84,7 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 
 **Commit (1, ≤5 files).** `src/markdown/write.rs`, `tests/markdown_to_docx.rs`.
 
-## Task 2 — Honor `track_changes` (item 5, track_changes only; columns already done)
+## Task 2 — Honor `track_changes` (item 5, track_changes only; columns already done) — landed (`81f3d936`)
 
 **Goal.** The YAML key the reader prints controls `w:trackRevisions`; revisions alone never turn tracking on. A CLI flag overrides the key (decision 2).
 
@@ -97,7 +113,7 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 
 **Commit (1).** `src/markdown/write.rs`, `src/markdown/xml.rs`, `src/markdown/package.rs`, `tests/markdown_to_docx.rs`.
 
-## Task 3 — Inline HTML breadth (item 4)
+## Task 3 — Inline HTML breadth (item 4) — landed
 
 **Goal.** `<b>/<strong>`, `<i>/<em>`, `<s>/<del>`, `<code>`, `<mark>` work; anything still dropped warns.
 
@@ -126,7 +142,12 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 
 **Commit (1).** `src/markdown/write.rs`, `src/markdown/xml.rs`, `tests/markdown_to_docx.rs`.
 
-## Task 4 — Small wins (item 6, split in two commits)
+## Task 4 — Small wins (item 6, split in two commits) — partially landed
+
+Sub-item status: (1) `wp:docPr title` **not landed** — `xml.rs:1804` writes
+`descr="{alt}"` with no `title`. (6) column alignment read-back landed. The rest
+(linked FootnoteTextChar, code-in-link, core props, legend fontTable, fixture
+shapes) shipped to varying degrees with the writer hardening; verify per-test.
 
 **Goal.** Six remark-docx gaps and the table alignment the reader drops, each tiny, each Word-exact.
 
@@ -135,7 +156,7 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 3. Code-in-link keeps code face — `` [`c`](url) `` keeps `VerbatimChar` and `Hyperlink` (today `link` masks `code`: `src/markdown/xml.rs:631-636`).
 4. Fuller core properties from front matter — beyond `title:`/`author:` (`src/markdown/write.rs:1606-1608`, `src/markdown/package.rs:634-670`); scope: `description`, `keywords`, `category` (front-matter keys to agree; Word shows them in File → Info).
 5. `fontTable` entries for legend fonts — default template (`src/markdown/package.rs:735-808`) has no `fontTable`; legend fonts (`src/markdown/view_styles.rs:153-193`, applied at `src/markdown/package.rs:122-130`) must have `w:fonts` entries or Word substitutes.
-6. Table column alignment read back (Arthur, 2026-10-13). The writer already keeps `| :--- | :---: | ---: |` (each cell paragraph gets `<w:jc w:val="left|center|right"/>`, `src/markdown/write.rs:634-636`, `alignment()` at :2268). The reader drops it: the delimiter row is always `|-|-|…|` (`src/markdown/from_docx/mod.rs:836-841`). Probe: `| Left | Center | Right | None |` round-tripped to `|-|-|-|-|`. Three alignments, kept apart. (a) The table's position on the page is `w:tblPr/w:jc`, the `t0 center` / `t0 right` clause on the table line; it already round-trips and this item does not touch it. (b) The GFM column marker aligns the content of that column's cells (GitHub renders `<td align="center">`), never the table. Word has no column property for it, so the writer sets each cell paragraph's `w:jc` and the reader infers the marker back: a column whose every cell paragraph has the same effective `w:jc` (direct, else the paragraph style's) prints `:-` (left/start), `:-:` (center) or `-:` (right/end). (c) A column whose cells disagree takes the alignment most of its cell paragraphs have (a tie, or no alignment anywhere, prints `-`; justified prints `-`). (d) Each cell paragraph that differs from its column's marker is listed on the table line as an exception, with the paragraph clause words (`center`, `right`, `justify`, `left`): `<!-- t0 3x3, cells p0-p8 by row, p5 center, p7 right -->` (Arthur chose A, 2026-10-13). The writer applies a column's marker first, then the exceptions. Test: `tests/md_reader_id_lines.rs::table_column_alignment_comes_back` (md → docx → read gives the same delimiter row and the same exceptions, including a mixed column and a tie); gate `tests/md_fixed_point.rs` (committed views with aligned tables regenerate via `jubarte read SRC --no-page-markers`).
+6. Table column alignment read back (Arthur, 2026-10-13). The writer already keeps `| :--- | :---: | ---: |` (each cell paragraph gets `<w:jc w:val="left|center|right"/>`, `src/markdown/write.rs:634-636`, `alignment()` at :2268). The reader drops it: the delimiter row is always `|-|-|…|` (`src/markdown/from_docx/mod.rs:836-841`). Probe: `| Left | Center | Right | None |` round-tripped to `|-|-|-|-|`. Three alignments, kept apart. (a) The table's position on the page is `w:tblPr/w:jc`, the `t0 center` / `t0 right` clause on the table line; it already round-trips and this item does not touch it. (b) The GFM column marker aligns the content of that column's cells (GitHub renders `<td align="center">`), never the table. Word has no column property for it, so the writer sets each cell paragraph's `w:jc` and the reader infers the marker back: a column whose every cell paragraph has the same effective `w:jc` (direct, else the paragraph style's) prints `:-` (left/start), `:-:` (center) or `-:` (right/end). (c) A column whose cells disagree takes the alignment most of its cell paragraphs have (a tie, or no alignment anywhere, prints `-`; justified prints `-`). (d) Each cell paragraph that differs from its column's marker is listed on the table line as an exception, with the paragraph clause words (`center`, `right`, `justify`, `left`): `<!-- t0 3x3, cells p0-p8 by row, p5 center, p7 right -->` (Arthur chose A, 2026-10-13). [Landed in this exact shape; note `pN` cell refs are the transitional numbering — the contract spells them `psN`.] The writer applies a column's marker first, then the exceptions. Test: `tests/md_reader_id_lines.rs::table_column_alignment_comes_back` (md → docx → read gives the same delimiter row and the same exceptions, including a mixed column and a tie); gate `tests/md_fixed_point.rs` (committed views with aligned tables regenerate via `jubarte read SRC --no-page-markers`).
 7. Fixture shapes as new tests (`tests/markdown_to_docx.rs` + `tests/fixtures/md-roundtrip/`): headings in lists/quotes, notes inside links/bold/quotes, reference links, fence info strings, nested tasks, HTML zoo (exact list in `crush_capabilities.md:195-211`).
 
 **Failing tests first.**
@@ -164,7 +185,11 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 
 **Commits (2).** 4a: `src/markdown/xml.rs`, `src/markdown/write.rs`, `tests/markdown_to_docx.rs` (docPr title, code-in-link, FootnoteTextChar). 4b: `src/markdown/package.rs`, `src/markdown/write.rs`, `src/markdown/view_styles.rs`, `tests/fixtures/md-roundtrip/remark-shapes.md`, `tests/markdown_to_docx.rs` (core props, fontTable, fixture shapes). Keep each ≤5 files (split further if needed).
 
-## Task 5 — Checklist as Word's own list (item 3)
+## Task 5 — Checklist as Word's own list (item 3) — not landed
+
+The writer still emits `☐`/`☒` (U+2610/U+2612) literal text runs
+(`src/markdown/write.rs:1698`), and the reader does not detect the
+U+F0A8-Wingdings `abstractNum`. The plan below is still the accepted shape.
 
 **Goal.** `- [ ]`/`- [x]` become Word's checklist shape from Arthur's sample, not `☒` text or `w14:checkbox` SDTs.
 
@@ -205,7 +230,13 @@ Asked as eight choices with three alternatives each; his answer: "1a 2a but the 
 
 **Commits (3, in order).** 5a writer numbering: `src/markdown/xml.rs`, `src/markdown/package.rs`, `tests/markdown_to_docx.rs`. 5b reader: `src/markdown/from_docx/mod.rs`, `src/markdown/from_docx/ooxml.rs`, `tests/agent_text_view.rs` (+ `tests/md_reader_id_lines.rs` if the tilde-suppression test lives there — still ≤5). 5c fixtures/gate: regenerated views + `tests/fixtures/md-roundtrip/*.md`, `tests/md_fixed_point.rs` only if the harness needs task-aware comparison (avoid touching the harness if possible).
 
-## Task 6 — LaTeX→OMML writer (item 1)
+## Task 6 — LaTeX→OMML writer (item 1) — landed
+
+Landed: `src/markdown/math.rs` (hand parser closed over the reader table), the
+reader rewrite as its inverse, and `tests/md_math_word.rs` over Word's own math
+fixtures. The 2026-10-13 "built" note inside this section already records the
+delta from the original plan; the 2D layout engine moved to
+`2026-10-13-math-layout.md` and landed separately.
 
 **Agent survey (2026-10-13, Arthur's request; `jubarte-loop/cli-std/math/RECOMMENDATION.md`).** docxy (MIT) and rstex2word (MIT) compared by two grok and two muse runs (five reports). rstex2word is ruled out as a base (drops unknown commands, no `m:func`, `m:fPr` on every fraction). docxy's forward half has Word's core shapes but swallows the rest of the formula after a function or n-ary, puts `limLoc=subSup` on sums and lacks `acc`/`bar`/`m`/`eqArr`/`sPre`/`limLow`. Recommended: hand-write `src/markdown/math.rs` closed over the reader's grammar, docxy as a structural reference (any copied lines keep its MIT notice). Correction to the change points below: `tests/fixtures/agent-view/quadratic.docx` was written by jubarte, so it is not Word truth; Word's own math files put Cambria Math on every `m:r` and `m:ctrlPr`. Revisions go inside math (`tests/m463_math_internal_revision_marks.rs`), and the document root needs `xmlns:m`. The reader is lossy on binomials (`noBar`), U+2061 functions and `eqArr`; fix it in this task.
 

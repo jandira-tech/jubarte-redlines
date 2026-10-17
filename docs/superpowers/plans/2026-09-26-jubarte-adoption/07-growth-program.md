@@ -4,6 +4,16 @@
 > `examples/adoption`, `docs/adoption/experiments.csv`, the playground or
 > `examples/document-ci` exists. This is a proposal shelf, not a running
 > program; re-decide before executing any of it.
+>
+> **ID contract (2026-10-17, `aba48bd5`):** the identity grammar settled
+> after this plan was written —
+> `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md` (v3,
+> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**).
+> The `schema_version` in the CI manifest below is that fixture format's
+> own version, unrelated to the contract's `schema_version`/`id_contract`
+> envelope; the G05 replayable edit proposal is the contract's
+> snapshot-scoped, `STALE_SOURCE`-checked plan — schema 1 today, schema 2
+> with paired `short_id`/`long_id` references after the cutover.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -2,6 +2,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
 > **Status: LIVING — maintained as of 2026-10-01 (bd262981).** Facts below were verified against this commit; the next editor re-verifies before trusting. The study is pinned against `b493cb58` (2026-10-01); the section 4 questions are undecided — pending decisions, not commitments — and no `src/markdown/projection/` module exists yet (re-verified at bd262981).
+>
+> **ID note (2026-10-18):** the `body:p:N` / `[body:p:N]` spellings mapped below describe `inspect::render_markdown` and friends as they still behave — they are the transitional schema-1 identity layer. The 17 October 2026 short-and-long-ID contract (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, unimplemented) replaces them with the four-field long-ID / `short_id`+`long_id` pair at cutover.
 
 # C# Markdown Projection → Rust Mapping Study (Swarm Report)
 

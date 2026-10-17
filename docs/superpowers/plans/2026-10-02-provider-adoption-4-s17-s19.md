@@ -13,6 +13,33 @@ SPDX-License-Identifier: AGPL-3.0-only
 > **Baseline:** `main` at `b420d64` (2026-10-02); the verified facts, gates
 > and license position are in plan 1
 > ([2026-10-02-provider-adoption-1-s01-s10.md](2026-10-02-provider-adoption-1-s01-s10.md)).
+>
+> **Status (2026-10-17): all three tasks shipped.** Task 1 (S18) #307
+> `728454ed` (`f609a3bb`): `LEGACY_DOC` for OLE, `UNSUPPORTED_PACKAGE` for
+> RTF, on every entry point. Task 2 (S17) #291 `0158a8f1`: the `watermark`
+> operation writes Word's VML shape into default headers. Task 3 (S19)
+> #287 `2f117685` plus #303 `0572518a`: `existing_revisions: "keep"`
+> emits the plan's edits as tracked changes beside the other party's,
+> with no compare. The C4 memo
+> (`docs/C4_preexisting_revisions_decision.md`) carries the promised
+> footnote: the compare contract is untouched — `accept(redline) ≡ B`
+> still holds and the A/B/C decision is still open.
+>
+> **ID spelling note:** snippets below have been updated to current
+> spellings — paragraph selectors `pN`, change ids `rN` (`Change.id` and
+> `ref` both carry `rN` today for a canonical `w:id`; a noncanonical
+> source `w:id` still prints through the transitional `{story}:rev:{wid}`
+> fallback, a divergence the contract lists). The plan was written
+> against the retired `body`-prefixed paragraph/revision grammar — those
+> spellings are refused on input and only ever appear via that fallback.
+> The shipped admission test file is
+> `tests/input_admission.rs`, not `admission_everywhere.rs`. The v3
+> short/long-ID contract
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> docs in `4612a155`) is **not implemented on any branch**: when it
+> lands, `keep`-emitted revisions get label-allocated `rN` short ids and
+> paired `short_id`/`long_id` JSON references, and duplicate group
+> labels like `r43+43` stop printing.
 
 **Goal:** Refuse legacy `.doc` with a stable code at every surface (S18),
 author watermarks (S17), and edit documents that already carry another
@@ -57,11 +84,17 @@ tool reproduces that without hand-written XML.
 
 ### Task 1: S18, legacy `.doc` refused with `LEGACY_DOC`
 
+> **Status (2026-10-17): shipped** (#307 `728454ed`, `f609a3bb`).
+> `AdmissionErrorKind::LegacyDocument` and the RTF
+> `UNSUPPORTED_PACKAGE` branch exist; the same code reaches compare,
+> revisions, convert, changes, inspect/edit and the bindings — including
+> `tests/input_admission.rs`, the shipped name of plan 2's suite.
+
 **Files:**
 - Modify: `src/admission.rs:60-115` (`AdmissionErrorKind::LegacyDocument`), `:148` (`admit` checks the OLE signature before `declared_entry_count`)
 - Modify: `src/bin/jubarte.rs:1446-1460` (`read_document` keeps its early check but takes the message from `AdmissionError`, so the two cannot drift)
 - Modify: `src/capabilities.rs` (document `reads_legacy_doc` next to the new code), skill "Dependencies"
-- Test: unit test in `src/admission.rs`, `tests/admission_everywhere.rs` (plan 2) gains one case, `jubarte-python/tests/test_admission.py` gains one case
+- Test: unit test in `src/admission.rs`, `tests/input_admission.rs` (the shipped name of plan 2's every-entry-point suite) gains one case, `jubarte-python/tests/test_admission.py` gains one case
 - Docs: CHANGELOG
 
 - [ ] **Step 1: Failing test** (append to the `tests` module of `src/admission.rs`)
@@ -85,7 +118,7 @@ tool reproduces that without hand-written XML.
     }
 ```
 
-And in `tests/admission_everywhere.rs`:
+And in `tests/input_admission.rs` (shipped under that name):
 
 ```rust
 #[test]
@@ -145,6 +178,11 @@ CHANGELOG. **Step 6: Commit** `feat(admission): LEGACY_DOC for OLE files, UNSUPP
 ---
 
 ### Task 2: S17, watermark authoring
+
+> **Status (2026-10-17): shipped** (#291 `0158a8f1`). The `watermark`
+> operation writes the `PowerPlusWaterMarkObject` VML shape into every
+> default header, creating headers as needed; a second watermark refuses
+> with `UNSUPPORTED_STRUCTURE`.
 
 **Files:**
 - Create: `src/edit/watermark.rs`
@@ -246,11 +284,18 @@ into every default header; one per document"); CHANGELOG. **Step 6:
 Commit** `feat(edit): watermark operation writing Word's VML text watermark into default headers`.
 
 **Evidence this task hands a provider:** the PNG before and after, and the
-`diff-render` overlay, in `docs/adoption/watermark.md`.
+`visual-diff` overlay, in `docs/adoption/watermark.md` (not written as of
+2026-10-17).
 
 ---
 
 ### Task 3: S19, `existing_revisions: "keep"`: edit on top of another party's redline
+
+> **Status (2026-10-17): shipped** (#287 `2f117685`; direct-emission
+> follow-up #303 `0572518a`). `ExistingRevisions::Keep`,
+> `src/edit/tracked.rs` and `tests/edit_keep_revisions.rs` exist;
+> `list_changes` reports the other party's revisions under their own
+> ids (`rN`, with author intact) and the plan's under fresh `w:id`s.
 
 **Files:**
 - Create: `src/edit/tracked.rs` (direct tracked-change emission)
@@ -348,7 +393,7 @@ fn mine() -> ChangeFilter {
 #[test]
 fn keep_leaves_their_changes_and_adds_mine() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","date":"2026-10-02T00:00:00Z","existing_revisions":"keep","operations":[
-        {"kind":"replace","paragraph":"body:p:1","find":"Delaware","replacement":"New York"}]}"#).unwrap();
+        {"kind":"replace","paragraph":"p1","find":"Delaware","replacement":"New York"}]}"#).unwrap();
     let out = apply_plan(&source(), &plan).unwrap();
     assert_word_valid_package(&out.clean);
     assert_word_valid_package(&out.redline);
@@ -361,10 +406,10 @@ fn keep_leaves_their_changes_and_adds_mine() {
     // redline: theirs by id and author, mine new.
     let changes = list_changes(&out.redline).unwrap();
     let theirs: Vec<_> = changes.iter().filter(|c| c.author.as_deref() == Some("Other")).map(|c| c.id.as_str()).collect();
-    assert_eq!(theirs, ["body:rev:7", "body:rev:8"]);
+    assert_eq!(theirs, ["r7", "r8"]);
     let mine_kinds: Vec<_> = changes.iter().filter(|c| c.author.as_deref() == Some("Me")).map(|c| (c.kind, c.text.as_str())).collect();
     assert_eq!(mine_kinds, [(ChangeKind::Deletion, "Delaware"), (ChangeKind::Insertion, "New York")]);
-    assert!(changes.iter().filter(|c| c.author.as_deref() == Some("Me")).all(|c| c.id != "body:rev:7" && c.id != "body:rev:8"));
+    assert!(changes.iter().filter(|c| c.author.as_deref() == Some("Me")).all(|c| c.id != "r7" && c.id != "r8"));
 
     // The invariants.
     assert_eq!(texts(&accept_changes(&out.redline, &mine()).unwrap()), texts(&out.clean));
@@ -377,7 +422,7 @@ fn keep_leaves_their_changes_and_adds_mine() {
 #[test]
 fn an_edit_inside_their_insertion_is_still_refused() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
-        {"kind":"replace","paragraph":"body:p:0","find":"45","replacement":"60"}]}"#).unwrap();
+        {"kind":"replace","paragraph":"p0","find":"45","replacement":"60"}]}"#).unwrap();
     let e = apply_plan(&source(), &plan).unwrap_err();
     assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
     assert!(e.message.contains("revision"));
@@ -386,9 +431,9 @@ fn an_edit_inside_their_insertion_is_still_refused() {
 #[test]
 fn paragraph_operations_emit_marks_under_keep() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
-        {"kind":"insert_paragraph","paragraph":"body:p:1","position":"after","runs":[{"text":"Venue: New York County."}]},
-        {"kind":"delete_paragraph","paragraph":"body:p:1"},
-        {"kind":"rewrite","paragraph":"body:p:0","text":"Payment within 45 days of invoice."}]}"#).unwrap();
+        {"kind":"insert_paragraph","paragraph":"p1","position":"after","runs":[{"text":"Venue: New York County."}]},
+        {"kind":"delete_paragraph","paragraph":"p1"},
+        {"kind":"rewrite","paragraph":"p0","text":"Payment within 45 days of invoice."}]}"#).unwrap();
     let out = apply_plan(&source(), &plan).unwrap();
     assert_word_valid_package(&out.redline);
     let changes = list_changes(&out.redline).unwrap();
@@ -404,8 +449,8 @@ fn keep_without_existing_revisions_equals_the_compare_redline_in_text() {
     // On a source with no revisions, keep and the default produce the same
     // visible result, so an agent can always send keep.
     let plain = docx(&para("Fee is 10."));
-    let keep = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"body:p:0","find":"10","replacement":"12"}]}"#).unwrap();
-    let default = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","operations":[{"kind":"replace","paragraph":"body:p:0","find":"10","replacement":"12"}]}"#).unwrap();
+    let keep = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"p0","find":"10","replacement":"12"}]}"#).unwrap();
+    let default = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","operations":[{"kind":"replace","paragraph":"p0","find":"10","replacement":"12"}]}"#).unwrap();
     let a = apply_plan(&plain, &keep).unwrap();
     let b = apply_plan(&plain, &default).unwrap();
     assert_eq!(texts(&a.clean), texts(&b.clean));

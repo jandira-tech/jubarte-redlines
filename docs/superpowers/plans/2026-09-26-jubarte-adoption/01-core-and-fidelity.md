@@ -5,6 +5,16 @@
 > limits), landed with 0.10.0: the agent surfaces refuse packages over
 > explicit budgets (64 MiB file, 10,000 entries, 256 MiB inflated total,
 > XML nesting 256, …) with `INPUT_LIMIT`-family codes (CHANGELOG 0.10.0).
+>
+> **ID contract (2026-10-17, `aba48bd5`):** the "opaque paragraph IDs" and
+> the "story-aware v2 inspection DTO" below land as the 2026-10-17 contract
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, v3
+> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**).
+> The story-aware snapshot already shipped — `inspect --json` carries
+> `stories`, `source_sha256` and paragraph `index`/`id` under
+> `schema_version: 1` (`src/inspect.rs`); schema 2 renames the bare `id`
+> field to a paired `short_id`/`long_id` and adds
+> `id_contract: "jubarte.ids/2"` to the envelope.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -21,7 +31,9 @@
 > parser progress guard and `validate_xml` (`src/xmllinq/parse.rs`), and
 > `src/inspect.rs` with a richer read model than patch 0001 proposed:
 > `Paragraph { index, id, text, style, numbered, in_table, page_break, runs,
-> limitations }`, `summary`, `markdown`, `inspect_json`, `source_sha256`.
+> limitations }` (the `id` is the short id — `p12`, `header1.p2`, schema 1;
+> schema 2 pairs it as `short_id`/`long_id`), `summary`, `markdown`,
+> `inspect_json`, `source_sha256`.
 > Correction applied: `mc:AlternateContent`, `w:sym`, column breaks, fields,
 > hyperlinks and content controls are per-paragraph **limitations**, not
 > refusals (patch 0001 refused the document). Task C2 (ZIP admission limits)
@@ -38,13 +50,13 @@ Initial findings were on `23f6e30`; current reviewed HEAD advanced to `722de2a`.
 
 ## Read model and limitations
 
-`inspect::paragraphs(bytes)` returns `Vec<ParagraphInfo { index, text, page_break }>`. Index is zero-based and valid only for this snapshot. Text preserves tabs, line breaks, NBSP, soft/nonbreaking hyphens and Unicode; source-anchor text is never lowercased or whitespace-normalized. Paragraphs are in body XML order including table cells, not visual reading order. Textbox stories are omitted from this body API; the owner paragraph must not duplicate their text.
+`inspect::paragraphs(bytes)` returns `Vec<ParagraphInfo { index, text, page_break }>`. Index is zero-based and valid only for this snapshot. Text preserves tabs, line breaks, NBSP, soft/nonbreaking hyphens and Unicode; source-anchor text is never lowercased or whitespace-normalized. Paragraphs are in body XML order including table cells, not visual reading order. Textbox stories are omitted from this body API; the owner paragraph must not duplicate their text. (The contract keeps this inventory rule: cell paragraphs count in the owning story, text-box paragraphs in their own — §3.)
 
 Inspection excludes `w:del` and `w:moveFrom` run content. It is a visible-run projection, **not** a promise of complete Word “final view”: deleted paragraph marks, field recalculation, hidden text and layout-dependent order need a richer story model. Field instructions are omitted; cached field-result text is not recomputed. `AlternateContent`, `altChunk`, subdocuments, font-dependent symbols and unsupported breaks produce an explicit error in this first read model.
 
 `summary(bytes)` counts namespace-qualified XML elements and actual relationship targets, not string prefixes or guessed filenames. `revisions` is a raw carrier count, not the number of human-visible revision groups; inspection errors cannot become a zero count. Header/footer/comment/note discovery follows OPC relationships, including unusual valid target names. Page count is absent until the renderer computes it.
 
-Before public release, add a story-aware v2 inspection DTO with `schema_version`, `source_sha256`, `stories`, opaque paragraph IDs, style/list context, raw text and capabilities. A bounded result window with `after` cursor prevents large documents from filling an agent context. Start with explicit `body` scope; do not expose an all-stories promise before headers, footers, notes and textboxes are individually covered.
+Before public release, add a story-aware v2 inspection DTO with `schema_version`, `source_sha256`, `stories`, opaque paragraph IDs, style/list context, raw text and capabilities. (Shipped in part at `schema_version: 1`: `stories`, `source_sha256` and short-id `id`s exist today. The contract's schema-2 DTO is what remains: `id_contract: "jubarte.ids/2"`, paired `short_id`/`long_id` per reference — staged in the implementation plan, task 7/9, not yet implemented.) A bounded result window with `after` cursor prevents large documents from filling an agent context. Start with explicit `body` scope; do not expose an all-stories promise before headers, footers, notes and textboxes are individually covered.
 
 ## Task C1: checked XML and conservative inspection
 

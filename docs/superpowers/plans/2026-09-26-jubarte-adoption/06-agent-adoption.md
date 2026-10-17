@@ -6,6 +6,20 @@
 > not started.** The deferred "Markdown/template authoring" row below
 > shipped anyway on unreleased main (`src/markdown/`, `docs/MARKDOWN.md`)
 > without the 5-request evidence that table demanded.
+>
+> **ID contract (2026-10-17, `aba48bd5`):** `capabilities --json` today
+> emits `schema_version: 1` with the 13 October spellings (`p12`,
+> `header1.p2`, `t0.row1.cell2`, `r12`, `c5`, `c5.text`). The v3 contract
+> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
+> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**)
+> is the stable contract A2 aimed at: schema 2 carries
+> `id_contract`, `identity_profile` and `source_sha256` in the envelope,
+> pairs every reference as `short_id`/`long_id`, and changes the spelling
+> samples (`header1.p0` for a story's first paragraph,
+> `t0.row1.cell2.ps1`, added `s0`/`toc0`/`cc0`). The deferred "Local MCP"
+> row also shipped meanwhile as
+> `jubarte-python/python/jubarte_redlines/mcp_server.py` — its tool docs
+> still describe schema 1 until the cutover.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -85,7 +99,7 @@ The result must be derived from the built feature set, not a hand-maintained opt
 }
 ```
 
-This is an illustrative honest current slim capability result; proposed new features switch only when their exports and gates ship. Capability tests assert full/slim differences and the absence of unimplemented operation kinds. Return a stable error for unknown schema version; an agent cannot infer support from a similar function name.
+This is an illustrative honest current slim capability result; proposed new features switch only when their exports and gates ship. (Still `schema_version: 1` today; the v3 ID contract's schema-2 envelope adds `id_contract`/`identity_profile` and rewrites the advertised id spellings — see the banner.) Capability tests assert full/slim differences and the absence of unimplemented operation kinds. Return a stable error for unknown schema version; an agent cannot infer support from a similar function name.
 
 Add `doctor --json` as a separate diagnostic command only where valuable: package/engine version, font resources, supported outputs, runtime and configured limits. Do not include secrets, home-directory paths or customer file contents. “doctor passed” means environment readiness, not that an arbitrary input will render faithfully.
 
@@ -124,7 +138,7 @@ Unit-test the scorer on synthetic success/failure records without invoking model
 
 | Proposal | Proposed files and user interface | Evidence required before implementation |
 |---|---|---|
-| Local MCP | `jubarte-mcp/server.py`, `schemas/tool-inputs/`, shared service adapter; tools `inspect_document`, `preview_edits`, `render_document` operating on workspace handles, not arbitrary remote URLs | users need persistent discovery; permission/file-boundary design; same schema outcomes as direct API |
+| Local MCP | `jubarte-mcp/server.py`, `schemas/tool-inputs/`, shared service adapter; tools `inspect_document`, `preview_edits`, `render_document` operating on workspace handles, not arbitrary remote URLs | users need persistent discovery; permission/file-boundary design; same schema outcomes as direct API. (Shipped meanwhile, differently: `jubarte-python/python/jubarte_redlines/mcp_server.py` exposes `docx_validate`/`docx_edit` tools on the schema-1 wire; the contract's schema-2 cutover retargets it) |
 | Native Node | `jubarte-node/{Cargo.toml,build.rs,src/lib.rs,src/tasks.rs}`, platform npm packages; same `Client`/byte functions | ≥20% workload gain or real WASM memory blocker, clean install and parity evidence |
 | Slim Python | core `pdf` feature and optional companion distribution; capability-discovered render availability | meaningful measured install/cold-start constraint; extras only add packages, they cannot subtract fonts from a wheel |
 | Markdown/template authoring | separate `src/author/` or adapter crate, typed DocumentBuilder, constrained Markdown AST import | 5 repeated requests, defined format subset and Word layout/roundtrip corpus; no generic Pandoc replacement claim |
