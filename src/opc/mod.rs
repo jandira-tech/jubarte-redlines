@@ -22,7 +22,7 @@
 //! oblivious to the difference.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 use std::ops::{Deref, DerefMut};
 
@@ -140,30 +140,70 @@ pub fn relative_rel_target(source_part: &str, target_part: &str) -> String {
 /// explicit closes, then let upstream decode and validate each record. Parsing
 /// records separately preserves identical-duplicate repair and last-wins content
 /// types before the newer whole-document parsers reject those producer shapes.
+/// A record's own default-namespace declaration is dropped: it would unbind
+/// the synthetic root's OPC namespace (`<Relationship xmlns=""/>`) and upstream
+/// would silently skip the record instead of validating it, where the legacy
+/// parser matched records by local name whatever namespaces declared.
 fn metadata_records(
     xml: &[u8],
     root: &str,
     namespace: &str,
     tags: &[&str],
 ) -> Result<Vec<Vec<u8>>, OpcError> {
-    use quick_xml::events::{BytesEnd, BytesStart, Event};
-    let folded = fold_explicit_closes(xml, tags);
-    let mut reader = quick_xml::Reader::from_reader(folded.as_deref().unwrap_or(xml));
+    // quick-xml 0.41 is the version `OpcError::Xml`/`XmlAttr` carry (oxml-opc
+    // 0.14.2), so the scanner's errors convert into those variants directly;
+    // 0.42's error types do not, and wrapping them made every syntax error an
+    // I/O refusal.
+    use quick_xml_041::events::{BytesEnd, BytesStart, Event};
+    let fold = |name: &str, tag: quick_xml_041::events::BytesStart<'_>| {
+        let mut record = BytesStart::new(name);
+        for attr in tag.attributes().with_checks(false) {
+            let attr = attr?;
+            if attr.key.as_ref() != &b"xmlns"[..] {
+                record.push_attribute(attr);
+            }
+        }
+        let mut writer = quick_xml_041::Writer::new(Vec::new());
+        let mut start = BytesStart::new(root);
+        start.push_attribute(("xmlns", namespace));
+        writer.write_event(Event::Start(start))?;
+        writer.write_event(Event::Empty(record))?;
+        writer.write_event(Event::End(BytesEnd::new(root)))?;
+        Ok::<_, OpcError>(writer.into_inner())
+    };
+    let mut reader = quick_xml_041::Reader::from_reader(xml);
+    let mut buf = Vec::new();
     let mut records = Vec::new();
+    // An explicit close (`<Relationship …></Relationship>`) is folded between
+    // events: a `Start` immediately followed by its matching `End`, with no
+    // other event between, is one `Empty` record. The reader still checks end
+    // names, so a mismatched close stays an XML error, and a `>` inside an
+    // attribute value (`Target="a></Relationship>b"`, legal unescaped) is
+    // never rewritten — a textual `></tag>` replacement did both.
+    let mut pending: Option<(&str, BytesStart<'static>)> = None;
     loop {
-        match reader.read_event().map_err(refused)? {
-            Event::Empty(tag) if tags.iter().any(|name| tag.name().as_ref() == *name) => {
-                let mut writer = quick_xml::Writer::new(Vec::new());
-                let mut start = BytesStart::new(root);
-                start.push_attribute(("xmlns", namespace));
-                writer.write_event(Event::Start(start)).map_err(refused)?;
-                writer
-                    .write_event(Event::Empty(tag.into_owned()))
-                    .map_err(refused)?;
-                writer
-                    .write_event(Event::End(BytesEnd::new(root)))
-                    .map_err(refused)?;
-                records.push(writer.into_inner());
+        let event = reader.read_event_into(&mut buf).map_err(OpcError::from)?;
+        if let Some((name, tag)) = pending.take()
+            && matches!(&event, Event::End(end) if end.name() == tag.name())
+        {
+            records.push(fold(name, tag)?);
+            continue;
+        }
+        let matched = |tag: &BytesStart<'_>| {
+            tags.iter()
+                .copied()
+                .find(|name| tag.name().as_ref() == name.as_bytes())
+        };
+        match event {
+            Event::Start(ref tag) => {
+                if let Some(name) = matched(tag) {
+                    pending = Some((name, tag.to_owned()));
+                }
+            }
+            Event::Empty(ref tag) => {
+                if let Some(name) = matched(tag) {
+                    records.push(fold(name, tag.to_owned())?);
+                }
             }
             Event::Eof => return Ok(records),
             _ => {}
@@ -226,12 +266,29 @@ fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
 fn read_package(bytes: &[u8]) -> Result<PartFs, OpcError> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
     let mut parts = HashMap::new();
+    let mut source_order = HashMap::new();
+    let mut identities = HashSet::new();
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name()?.into_owned();
+        // zip 8's name decode (bit 11/CP437, 0x7075 override): the same one
+        // `admit` applies, so both readers see one name per entry (#524).
+        let name = crate::admission::zip_entry_name(
+            entry.name_raw(),
+            entry.flags().as_u16(),
+            crate::admission::unicode_path_fields(entry.extra_data_fields().cloned()),
+        )?;
+        source_order.insert(name.clone(), index);
+        // OPC part names are case-insensitive: two entries whose decoded
+        // names collide (a legacy CP437 alias or an ASCII case pair) are the
+        // same part, and the second insert used to overwrite the first
+        // silently. Upstream's reader refuses `DuplicatePartName`; so does
+        // the compatibility loader, so no part is lost.
+        if !identities.insert(name.to_ascii_lowercase()) {
+            return Err(OpcError::DuplicatePartName(name));
+        }
         let mut data = Vec::new();
         entry.read_to_end(&mut data)?;
         parts.insert(name, data);
@@ -240,7 +297,7 @@ fn read_package(bytes: &[u8]) -> Result<PartFs, OpcError> {
         pkg: OpcPackage::new(),
         package_rels: Relationships::new(),
         part_rels: HashMap::new(),
-        source_order: HashMap::new(),
+        source_order,
         repaired_duplicate_ids: Vec::new(),
     };
     package.pkg.content_types = read_content_types(
@@ -267,21 +324,6 @@ fn read_package(bytes: &[u8]) -> Result<PartFs, OpcError> {
 
 fn denorm(name: &str) -> String {
     name.trim_start_matches('/').to_string()
-}
-
-/// `xml` with every `<tag …></tag>` folded into `<tag …/>`, or None when
-/// it has no explicit close of those tags.
-fn fold_explicit_closes(xml: &[u8], tags: &[&str]) -> Option<Vec<u8>> {
-    let mut text = std::str::from_utf8(xml).ok()?.to_string();
-    let mut changed = false;
-    for tag in tags {
-        let close = format!("></{tag}>");
-        if text.contains(&close) {
-            text = text.replace(&close, "/>");
-            changed = true;
-        }
-    }
-    changed.then(|| text.into_bytes())
 }
 
 /// `.rels` file path (e.g. `word/_rels/document.xml.rels`). Mirrors the
@@ -408,8 +450,9 @@ impl PartFs {
     /// # Errors
     ///
     /// [`OpcError`] for an unreadable zip, an OPC metadata element
-    /// exceeding 256 attributes, or two relationships under the same
-    /// `Id` that differ in any attribute.
+    /// exceeding 256 attributes, two relationships under the same `Id` that
+    /// differ in any attribute, or two entries whose decoded part names
+    /// collide case-insensitively ([`OpcError::DuplicatePartName`]).
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
         check_package_metadata(
             bytes,
@@ -434,14 +477,6 @@ impl PartFs {
                 );
             }
         }
-        let archive = ZipArchive::new(Cursor::new(bytes))?;
-        fs.source_order = (0..archive.len())
-            .filter_map(|i| {
-                archive
-                    .name_for_index(i)
-                    .map(|name| name.map(|name| (name.into_owned(), i)))
-            })
-            .collect::<Result<_, _>>()?;
         fs.repaired_duplicate_ids = repaired_duplicate_ids;
         Ok(fs)
     }
@@ -802,6 +837,7 @@ impl PartFs {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use crate::admission::zip_names;
 
     #[test]
     fn opc_attribute_budget_bounds_upstream_duplicate_checks() {
@@ -1378,5 +1414,132 @@ mod tests {
             PartFs::open(&bytes),
             Err(OpcError::InvalidContentTypes)
         ));
+    }
+
+    #[test]
+    fn a_record_local_default_namespace_cannot_bypass_metadata_validation() {
+        // `<Default xmlns=""/>` unbinds the OPC namespace the reader wraps
+        // records in, so upstream skipped the record and the package lost its
+        // missing-attribute refusal; the same shape reaches `.rels` parts.
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("[Content_Types].xml", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .write_all(
+                br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default xmlns="" Extension="xml"/></Types>"#,
+            )
+            .unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        assert!(matches!(
+            PartFs::open(&bytes),
+            Err(OpcError::InvalidContentTypes)
+        ));
+        let bytes = package_with_document_rels("<Relationship xmlns='' Id='rId1'/>");
+        assert!(matches!(
+            PartFs::open(&bytes),
+            Err(OpcError::InvalidRelationship)
+        ));
+    }
+
+    /// A minimal package whose one media entry carries the raw name bytes and
+    /// flag `media` names, with the document relationship pointing at the
+    /// CP437 spelling of `\xc3\xa9` (`├⌐`), as a legacy writer left it.
+    fn legacy_media_package(media: zip_names::RawEntry<'_>) -> Vec<u8> {
+        let rels = format!(
+            "<Relationship Id=\"rId1\" Type=\"{HYPERLINK}\" Target=\"media/\u{251C}\u{2310}.png\"/>"
+        );
+        zip_names::docx_package(&rels, &[media])
+    }
+
+    #[test]
+    fn legacy_cp437_entry_names_keep_resolving_their_relationships() {
+        // zip 8 decoded a flag-clear name as CP437 (zip-8.6.0/src/read.rs
+        // 523-529: bit 11 set means UTF-8, clear means CP437); zip 9's
+        // `name()` tries UTF-8 first whatever the flag says
+        // (zip-9.0.4/src/types.rs:122-130), so `word/media/\xc3\xa9.png`
+        // became `word/media/é.png` while the relationship still named
+        // `media/├⌐.png`, and the media lookup (the one convert uses) came
+        // back empty (#524: no read/write regressions).
+        let bytes = legacy_media_package(zip_names::RawEntry::raw(
+            b"word/media/\xc3\xa9.png",
+            b"PNGPAYLOAD",
+        ));
+        let fs = PartFs::open(&bytes).unwrap();
+        let rel = &fs.read_rels_for("word/document.xml").unwrap().items[0];
+        assert_eq!(rel.target, "media/\u{251C}\u{2310}.png");
+        let part = fs.resolve_rel_target("word/document.xml", &rel.target);
+        assert_eq!(part, "word/media/\u{251C}\u{2310}.png");
+        assert_eq!(fs.part_bytes(&part), Some(b"PNGPAYLOAD".as_slice()));
+        // The UTF-8 spelling of the same bytes is not a part of this package.
+        assert_eq!(fs.part_bytes("word/media/\u{e9}.png"), None);
+    }
+
+    #[test]
+    fn decoded_part_name_aliases_are_refused_not_overwritten() {
+        // Two entries whose decoded names collide are one OPC part: the second
+        // `parts.insert` used to overwrite the first silently, `parts()` lost
+        // a member and `to_zip()` dropped it. Upstream's reader refuses
+        // `DuplicatePartName` on the ASCII-lowercased name
+        // (oxml-opc-0.14.2/src/package.rs 159-162); the compatibility loader
+        // refuses the same way, so nothing is lost (#524).
+        let base = |extra: &[zip_names::RawEntry<'_>]| zip_names::docx_package("", extra);
+        // (a) two raw names, bit 11 set, whose lossy UTF-8 decode is the same
+        // `x\u{FFFD}.bin`: two parts, one name.
+        let aliased = base(&[
+            zip_names::RawEntry::raw(b"x\x82.bin", b"FIRST").utf8(),
+            zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
+        ]);
+        assert!(matches!(
+            PartFs::open(&aliased),
+            Err(OpcError::DuplicatePartName(name)) if name == "x\u{FFFD}.bin"
+        ));
+        // (b) two names that differ only in ASCII case: one part, OPC names
+        // are case-insensitive.
+        let cased = base(&[
+            zip_names::RawEntry::raw(b"word/A.bin", b"FIRST"),
+            zip_names::RawEntry::raw(b"word/a.bin", b"SECOND"),
+        ]);
+        assert!(matches!(
+            PartFs::open(&cased),
+            Err(OpcError::DuplicatePartName(name)) if name == "word/a.bin"
+        ));
+        // (c) the zip 8 shape: both names flag-clear, CP437 decodes them
+        // apart (`x\x82.bin` → `xé.bin`, `x\xc3\xa9.bin` → `x├⌐.bin`), and
+        // both payloads survive instead of aliasing as zip 9's UTF-8-first
+        // `name()` had them.
+        let apart = base(&[
+            zip_names::RawEntry::raw(b"x\x82.bin", b"FIRST"),
+            zip_names::RawEntry::raw(b"x\xc3\xa9.bin", b"SECOND"),
+        ]);
+        let fs = PartFs::open(&apart).unwrap();
+        assert_eq!(fs.part_bytes("x\u{e9}.bin"), Some(b"FIRST".as_slice()));
+        assert_eq!(
+            fs.part_bytes("x\u{251C}\u{2310}.bin"),
+            Some(b"SECOND".as_slice())
+        );
+    }
+    #[test]
+    fn unicode_path_extra_fields_override_entry_names_as_zip8_did() {
+        // zip 8 replaced the header name with the 0x7075 field's CRC-checked
+        // UTF-8 content (zip-8.6.0/src/read.rs:705-709) and refused the
+        // archive when the content was not UTF-8; zip 9 applies the valid
+        // case itself and ignores the invalid one, so the readers refuse it.
+        let bytes = legacy_media_package(
+            zip_names::RawEntry::raw(b"word/media/plain.bin", b"BINPAYLOAD")
+                .unicode_path("word/media/\u{2714}.bin".as_bytes()),
+        );
+        let fs = PartFs::open(&bytes).unwrap();
+        assert!(fs.parts().contains(&"word/media/\u{2714}.bin".to_string()));
+        assert_eq!(
+            fs.part_bytes("word/media/\u{2714}.bin"),
+            Some(b"BINPAYLOAD".as_slice())
+        );
+
+        let bytes = legacy_media_package(
+            zip_names::RawEntry::raw(b"word/media/plain.bin", b"BINPAYLOAD")
+                .unicode_path(b"\xff\xfe"),
+        );
+        assert!(matches!(PartFs::open(&bytes), Err(OpcError::Zip(_))));
     }
 }

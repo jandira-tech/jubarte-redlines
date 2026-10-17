@@ -347,9 +347,14 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         let entry = archive
             .by_index_raw(i)
             .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
-        let name = entry
-            .name()
-            .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
+        // zip 8's name decode: bit 11 means UTF-8, otherwise CP437, and a
+        // 0x7075 extra field overrides the header name (see `zip_entry_name`).
+        let name = zip_entry_name(
+            entry.name_raw(),
+            entry.flags().as_u16(),
+            unicode_path_fields(entry.extra_data_fields().cloned()),
+        )
+        .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
         check_part_name(&name)?;
         if !canonical.insert(name.to_ascii_lowercase()) {
             return Err(AdmissionError::new(
@@ -396,10 +401,12 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         if entry.is_dir() {
             continue;
         }
-        let name = entry
-            .name()
-            .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?
-            .into_owned();
+        let name = zip_entry_name(
+            entry.name_raw(),
+            entry.flags().as_u16(),
+            unicode_path_fields(entry.extra_data_fields().cloned()),
+        )
+        .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
         let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let lower = name.to_ascii_lowercase();
@@ -505,6 +512,115 @@ fn declared_entry_count(bytes: &[u8]) -> Result<u64, AdmissionError> {
         .and_then(|field| <[u8; 8]>::try_from(field).ok())
         .ok_or_else(|| invalid("ZIP64 end record truncated"))?;
     Ok(u64::from_le_bytes(count))
+}
+
+/// IBM code page 437's high half, byte 0x80–0xFF to its Unicode character
+/// (the Unicode Consortium's CP437 mapping, which zip 8 used for flag-clear
+/// names; zip 9 keeps its own `cp437` module private, so the table lives
+/// beside the only users). Bytes below 0x80 map to themselves.
+const CP437_HIGH: [char; 128] = [
+    '\u{00C7}', '\u{00FC}', '\u{00E9}', '\u{00E2}', '\u{00E4}', '\u{00E0}', '\u{00E5}', '\u{00E7}',
+    '\u{00EA}', '\u{00EB}', '\u{00E8}', '\u{00EF}', '\u{00EE}', '\u{00EC}', '\u{00C4}', '\u{00C5}',
+    '\u{00C9}', '\u{00E6}', '\u{00C6}', '\u{00F4}', '\u{00F6}', '\u{00F2}', '\u{00FB}', '\u{00F9}',
+    '\u{00FF}', '\u{00D6}', '\u{00DC}', '\u{00A2}', '\u{00A3}', '\u{00A5}', '\u{20A7}', '\u{0192}',
+    '\u{00E1}', '\u{00ED}', '\u{00F3}', '\u{00FA}', '\u{00F1}', '\u{00D1}', '\u{00AA}', '\u{00BA}',
+    '\u{00BF}', '\u{2310}', '\u{00AC}', '\u{00BD}', '\u{00BC}', '\u{00A1}', '\u{00AB}', '\u{00BB}',
+    '\u{2591}', '\u{2592}', '\u{2593}', '\u{2502}', '\u{2524}', '\u{2561}', '\u{2562}', '\u{2556}',
+    '\u{2555}', '\u{2563}', '\u{2551}', '\u{2557}', '\u{255D}', '\u{255C}', '\u{255B}', '\u{2510}',
+    '\u{2514}', '\u{2534}', '\u{252C}', '\u{251C}', '\u{2500}', '\u{253C}', '\u{255E}', '\u{255F}',
+    '\u{255A}', '\u{2554}', '\u{2569}', '\u{2566}', '\u{2560}', '\u{2550}', '\u{256C}', '\u{2567}',
+    '\u{2568}', '\u{2564}', '\u{2565}', '\u{2559}', '\u{2558}', '\u{2552}', '\u{2553}', '\u{256B}',
+    '\u{256A}', '\u{2518}', '\u{250C}', '\u{2588}', '\u{2584}', '\u{258C}', '\u{2590}', '\u{2580}',
+    '\u{03B1}', '\u{00DF}', '\u{0393}', '\u{03C0}', '\u{03A3}', '\u{03C3}', '\u{00B5}', '\u{03C4}',
+    '\u{03A6}', '\u{0398}', '\u{03A9}', '\u{03B4}', '\u{221E}', '\u{03C6}', '\u{03B5}', '\u{2229}',
+    '\u{2261}', '\u{00B1}', '\u{2265}', '\u{2264}', '\u{2320}', '\u{2321}', '\u{00F7}', '\u{2248}',
+    '\u{00B0}', '\u{2219}', '\u{00B7}', '\u{221A}', '\u{207F}', '\u{00B2}', '\u{25A0}', '\u{00A0}',
+];
+
+/// A name decoded as IBM code page 437, as zip 8 decoded flag-clear names:
+/// every byte maps (the code page is total), so decoding cannot fail.
+fn cp437_name(bytes: &[u8]) -> String {
+    if bytes.is_ascii() {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    bytes
+        .iter()
+        .map(|&byte| {
+            if byte < 0x80 {
+                char::from(byte)
+            } else {
+                // byte >= 0x80 holds here; the checked form only satisfies
+                // the module's no-panics policy.
+                byte.checked_sub(0x80)
+                    .and_then(|high| CP437_HIGH.get(usize::from(high)).copied())
+                    .unwrap_or(char::REPLACEMENT_CHARACTER)
+            }
+        })
+        .collect()
+}
+
+/// The Info-ZIP Unicode Path (0x7075) extra fields of an entry, in file order.
+pub(crate) fn unicode_path_fields(
+    fields: impl Iterator<Item = zip::ExtraField>,
+) -> impl Iterator<Item = zip::extra_fields::UnicodeExtraField> {
+    fields.filter_map(|field| match field {
+        zip::ExtraField::UnicodePath(unicode) => Some(unicode),
+        _ => None,
+    })
+}
+
+/// An entry name decoded exactly as the zip 8 reader did, from the raw name
+/// bytes, the general-purpose flag field and the Info-ZIP Unicode Path
+/// (0x7075) extra fields: bit 11 set means UTF-8 (lossy), clear means CP437,
+/// and a Unicode Path field whose CRC32 matches the header name replaces it
+/// (`zip-8.6.0/src/read.rs` 523-529 and 705-709). zip 9's `ZipFile::name`
+/// instead tries UTF-8 first whatever the flag says
+/// (`zip-9.0.4/src/types.rs` 122-130), so [`admit`] and
+/// [`crate::opc::PartFs::open`] both decode here and keep one name per entry
+/// (#524: no read/write regressions).
+///
+/// # Errors
+///
+/// [`zip::result::ZipError`] when a Unicode Path field's CRC matches the
+/// visible name but its content is not UTF-8 — the archive zip 8 refused to
+/// open (`String::from_utf8` on the adopted content) rather than read under
+/// the header name.
+///
+/// A field matching neither the header name nor the adopted one (a plain CRC
+/// mismatch, or a second field chained after an adopted one) is
+/// indistinguishable from an adopted field through zip 9's public surface
+/// (adoption replaces `name_raw` and sets bit 11,
+/// `zip-9.0.4/src/extra_fields/extra_field.rs` 276-286): such an archive is
+/// read under the visible name where zip 8 refused it.
+pub(crate) fn zip_entry_name(
+    raw: &[u8],
+    flags: u16,
+    unicode_paths: impl Iterator<Item = zip::extra_fields::UnicodeExtraField>,
+) -> Result<String, zip::result::ZipError> {
+    let raw = raw.to_vec();
+    for field in unicode_paths {
+        match field.unwrap_valid(&raw) {
+            // The field was adopted (the visible name is its content), or the
+            // archive repeats it verbatim: nothing to decide.
+            Ok(content) if content.as_ref() == raw.as_slice() => {}
+            // The CRC matches the visible name and zip 9 still did not adopt
+            // the field, so the content is not UTF-8: refuse as zip 8 did.
+            Ok(_) => {
+                return Err(zip::result::ZipError::InvalidArchive(
+                    "Info-ZIP Unicode Path extra field content is not UTF-8".into(),
+                ));
+            }
+            // The CRC matches neither the header nor the adopted name.
+            Err(_) => {}
+        }
+    }
+    // Bit 11 (0x0800) is the language-encoding flag: `ZipFlags::LanguageEncoding`
+    // in zip-9.0.4/src/format/flags.rs, `is_utf8` in zip-8.6.0/src/read.rs.
+    Ok(if flags & 0x0800 != 0 {
+        String::from_utf8_lossy(&raw).into_owned()
+    } else {
+        cp437_name(&raw)
+    })
 }
 
 /// A ZIP name must be a relative part name: no leading slash or drive, no
@@ -690,6 +806,207 @@ fn elements(xml: &[u8], local: &str) -> Vec<BTreeMap<String, String>> {
     }
 }
 
+/// ZIP fixtures whose entry names carry legacy encodings: raw name bytes
+/// with a chosen language-encoding flag (bit 11), which the writer cannot
+/// express (it always writes UTF-8 names and sets the flag for non-ASCII
+/// ones), plus Info-ZIP Unicode Path extra field (0x7075) payloads. Shared by
+/// the admission and [`crate::opc`] tests so both readers are probed with the
+/// same archives.
+#[cfg(test)]
+pub(crate) mod zip_names {
+    use std::io::{Cursor, Write};
+
+    use zip::write::FullFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    /// One ZIP entry with a legacy-encoded name.
+    #[derive(Clone)]
+    pub(crate) struct RawEntry<'a> {
+        /// The exact header name bytes.
+        pub name: &'a [u8],
+        pub data: &'a [u8],
+        /// Whether the general-purpose bit 11 (language encoding) is set.
+        pub utf8_flag: bool,
+        /// A complete 0x7075 payload (version, CRC32 of `name`, content).
+        pub unicode_path: Option<Vec<u8>>,
+    }
+
+    impl<'a> RawEntry<'a> {
+        /// An entry with the given raw name, bit 11 clear, no extra field.
+        pub const fn raw(name: &'a [u8], data: &'a [u8]) -> Self {
+            Self {
+                name,
+                data,
+                utf8_flag: false,
+                unicode_path: None,
+            }
+        }
+
+        /// Set bit 11 (the name is UTF-8, whatever the bytes say).
+        pub const fn utf8(mut self) -> Self {
+            self.utf8_flag = true;
+            self
+        }
+
+        /// Add a 0x7075 field overriding `name` with `content`.
+        pub fn unicode_path(mut self, content: &[u8]) -> Self {
+            self.unicode_path = Some(unicode_path_field(self.name, content));
+            self
+        }
+    }
+
+    /// The 0x7075 payload for a field that replaces `name` with `content`.
+    pub fn unicode_path_field(name: &[u8], content: &[u8]) -> Vec<u8> {
+        let mut field = vec![1];
+        field.extend_from_slice(&crc32(name).to_le_bytes());
+        field.extend_from_slice(content);
+        field
+    }
+
+    /// A minimal package — `[Content_Types].xml`, `_rels/.rels`,
+    /// `word/document.xml` and `word/_rels/document.xml.rels` holding `rels`
+    /// — plus `extra` entries. `admit` and `PartFs::open` are probed with the
+    /// same bytes.
+    pub fn docx_package(rels: &str, extra: &[RawEntry<'_>]) -> Vec<u8> {
+        let mut entries = vec![
+            RawEntry::raw(
+                b"[Content_Types].xml",
+                br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="bin" ContentType="application/octet-stream"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            ),
+            RawEntry::raw(
+                b"_rels/.rels",
+                br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            ),
+            RawEntry::raw(b"word/document.xml", b"<w:document/>"),
+        ];
+        let rels_xml = format!(
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{rels}</Relationships>"
+        );
+        entries.push(RawEntry::raw(
+            b"word/_rels/document.xml.rels",
+            rels_xml.as_bytes(),
+        ));
+        entries.extend(extra.iter().cloned());
+        zip(&entries)
+    }
+
+    /// CRC-32 (IEEE, reflected) as the ZIP format and zip's Unicode extra
+    /// field checksum use.
+    pub fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let bit = crc & 1;
+                crc >>= 1;
+                if bit != 0 {
+                    crc ^= 0xEDB8_8320;
+                }
+            }
+        }
+        !crc
+    }
+
+    /// A Stored-method ZIP of `entries`. The writer emits a unique ASCII
+    /// placeholder of each name's byte length with bit 11 clear; the
+    /// placeholder bytes are then replaced in the local and central headers
+    /// (both store the name verbatim), and bit 11 is ORed into both flag
+    /// fields. A Stored entry's payload is never compressed, so it cannot
+    /// contain a placeholder unless the caller writes one.
+    pub fn zip(entries: &[RawEntry<'_>]) -> Vec<u8> {
+        let placeholders: Vec<String> = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let digits = index.to_string();
+                assert!(
+                    digits.len() <= entry.name.len(),
+                    "name {:?} is too short for a unique placeholder",
+                    entry.name
+                );
+                format!("{digits}{}", "x".repeat(entry.name.len() - digits.len()))
+            })
+            .collect();
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options: FullFileOptions<'_, '_> =
+            zip::write::FileOptions::default().compression_method(CompressionMethod::Stored);
+        for (entry, placeholder) in entries.iter().zip(&placeholders) {
+            assert!(
+                !entry
+                    .data
+                    .windows(placeholder.len())
+                    .any(|w| w == placeholder.as_bytes()),
+                "payload contains the placeholder {placeholder}"
+            );
+            let mut options = options.clone();
+            if let Some(field) = &entry.unicode_path {
+                options
+                    .add_extra_field(0x7075, field.as_slice(), true)
+                    .expect("write 0x7075 extra field");
+            }
+            writer
+                .start_file(placeholder.as_str(), options)
+                .expect("start");
+            writer.write_all(entry.data).expect("write");
+        }
+        let mut bytes = writer.finish().expect("finish").into_inner();
+        for (entry, placeholder) in entries.iter().zip(&placeholders) {
+            replace_all(&mut bytes, placeholder.as_bytes(), entry.name);
+        }
+        set_utf8_flags(&mut bytes, entries);
+        bytes
+    }
+
+    fn replace_all(bytes: &mut Vec<u8>, from: &[u8], to: &[u8]) {
+        let mut at = 0;
+        while let Some(found) = bytes[at..]
+            .windows(from.len())
+            .position(|window| window == from)
+        {
+            let start = at + found;
+            let end = start + from.len();
+            bytes.splice(start..end, to.iter().copied());
+            at = end;
+        }
+    }
+
+    /// OR bit 11 into the flag field of every header whose name is an entry
+    /// with `utf8_flag` set: local headers (flags at +6, name at +30) and
+    /// central headers (flags at +8, name at +46).
+    fn set_utf8_flags(bytes: &mut [u8], entries: &[RawEntry<'_>]) {
+        const LOCAL: [u8; 4] = [0x50, 0x4b, 0x03, 0x04];
+        const CENTRAL: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+        let mut at = 0;
+        while bytes.get(at..).is_some_and(|rest| rest.len() >= 4) {
+            let local = bytes[at..].starts_with(&LOCAL);
+            let central = bytes[at..].starts_with(&CENTRAL);
+            if local || central {
+                let (flags, name, len) = if local {
+                    (at + 6, at + 30, at + 26)
+                } else {
+                    (at + 8, at + 46, at + 28)
+                };
+                let name_len = bytes
+                    .get(len..len + 2)
+                    .map(|field| u16::from_le_bytes([field[0], field[1]]) as usize)
+                    .unwrap_or(0);
+                if bytes.get(name..name + name_len).is_some_and(|header_name| {
+                    entries
+                        .iter()
+                        .any(|entry| entry.utf8_flag && header_name == entry.name)
+                }) && let Some(field) = bytes.get_mut(flags..flags + 2)
+                {
+                    let flags = u16::from_le_bytes([field[0], field[1]]) | 0x0800;
+                    field.copy_from_slice(&flags.to_le_bytes());
+                }
+                at += 4;
+            } else {
+                at += 1;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
@@ -725,6 +1042,53 @@ mod tests {
 
     fn kind(bytes: &[u8], limits: InputLimits) -> AdmissionErrorKind {
         admit(bytes, limits).expect_err("refused").kind
+    }
+
+    /// `admit` and `PartFs::open` decode entry names with the same rule
+    /// (bit 11 / CP437 / the 0x7075 override) and refuse the same decoded
+    /// duplicates, so a package one reader accepts the other accepts with the
+    /// same part names (#524, #1069 zip9 review rows 1-2).
+    #[test]
+    fn admission_and_partfs_agree_on_decoded_names_and_duplicates() {
+        // Row 1: two raw names, bit 11 set, whose lossy UTF-8 decode collides —
+        // one part, refused by both readers.
+        let aliased = zip_names::docx_package(
+            "",
+            &[
+                zip_names::RawEntry::raw(b"x\x82.bin", b"FIRST").utf8(),
+                zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
+            ],
+        );
+        assert_eq!(
+            kind(&aliased, InputLimits::default()).code(),
+            "DUPLICATE_PART"
+        );
+        assert!(matches!(
+            crate::opc::PartFs::open(&aliased),
+            Err(oxml_opc::OpcError::DuplicatePartName(_))
+        ));
+
+        // Row 2: a flag-clear CP437 media name and the relationship that
+        // names its CP437 spelling — both readers admit the package under the
+        // same names, and the media resolves.
+        let cp437 = zip_names::docx_package(
+            "<Relationship Id=\"rId1\" Type=\"image\" Target=\"media/\u{251C}\u{2310}.png\"/>",
+            &[zip_names::RawEntry::raw(
+                b"word/media/\xc3\xa9.png",
+                b"PNGPAYLOAD",
+            )],
+        );
+        let admitted = admit(&cp437, InputLimits::default()).unwrap();
+        assert_eq!(admitted.main_part, "word/document.xml");
+        let fs = crate::opc::PartFs::open(&cp437).unwrap();
+        assert_eq!(
+            fs.main_document_part().as_deref(),
+            Some("word/document.xml")
+        );
+        assert_eq!(
+            fs.part_bytes("word/media/\u{251C}\u{2310}.png"),
+            Some(b"PNGPAYLOAD".as_slice())
+        );
     }
 
     /// Overwrite the 2-byte field at `local_off` / `central_off` in every

@@ -47,11 +47,17 @@ with the binding manifest, rather than assuming native compilation proves it.
 
 All direct old OPC imports are in `src/opc/mod.rs`. Public re-exports remain
 `jubarte::opc::{OpcError, Relationship, Relationships}` with the new upstream
-source. Relationship fields and existing method signatures remain available.
+source — except `Relationships` itself, which since #1069 is **this crate's
+type**: a private tuple over upstream's collection with `Deref`/`DerefMut` to
+it, so direct parsing runs the same wrapper the package reader uses.
+Relationship fields and existing method signatures remain available.
 `OpcError` gains `DuplicatePartName`, `PackageLimitExceeded` and
 `InvalidXmlCharacter`; exhaustive downstream enum matches may need updating.
-The XML/attribute error payloads still use quick-xml 0.41. Existing
-`refused()` continues wrapping typed admission errors in `OpcError::Io`.
+The XML/attribute error payloads still use quick-xml 0.41, and the local OPC
+record scanner reads with the same 0.41 (the `quick-xml-041` dependency alias)
+so a syntax error surfaces as `OpcError::Xml`, not as `OpcError::Io`.
+Existing `refused()` continues wrapping typed admission errors in
+`OpcError::Io`.
 
 | Call site / old item | New item and required behavior |
 | --- | --- |
@@ -66,9 +72,9 @@ The XML/attribute error payloads still use quick-xml 0.41. Existing
 | `part_name_to_rels_path` | Still a private fn in upstream's private package module. Keep the local copy. |
 | `get_part`, `set_part`, map access, `get_part_rels`, `get_or_create_part_rels` | Same items available. Upstream lookups now match OPC names case-insensitively; existing map edits preserve the stored spelling. |
 | `content_type_for`, `add_default`, `add_override` | Same methods; upstream matches identities case-insensitively and normalizes part paths. Standard-conforming lookup improvement; document edge-case drift rather than hiding it. |
-| `resolve_rel_target`, `main_document_part` | Same static/method surface; upstream normalizes dot segments and accepts Strict relationships too. Keep the adapter's canonical no-leading-slash result. |
+| `resolve_rel_target`, `main_document_part` | Same static/method surface; upstream normalizes dot segments. `main_document_part()` matches only the Transitional officeDocument relationship type (upstream `get_by_type` compares exact strings), so a Strict `officeDocument` relationship parses and is retained but is not found by this method; Strict documents reach the engine through the higher-level Strict translation path. Keep the adapter's canonical no-leading-slash result. |
 | `Relationships::new`, `Default`, `add`, `items` | New still allocates rId1, derived Default starts rId0. Preserve explicit new for new part scopes. Upstream avoids collisions and wraps exhausted numeric IDs instead of the old overflow panic. |
-| all indirect OPC consumers in src/tests/fuzz | Continue using jubarte's re-exports. Fuzz relationships target tests the new upstream parser; no local shadow types or crypto features. |
+| all indirect OPC consumers in src/tests/fuzz | Continue using jubarte's re-exports. `Relationships` is the crate's own wrapper type since #1069 (private tuple field, `Deref` to upstream); the fuzz relationships target still exercises the parser. No crypto features. |
 
 Attribute whitespace normalization (literal CR/LF/TAB to spaces, encoded
 references retained according to XML rules), rejection of duplicate content-type
@@ -77,24 +83,27 @@ relationship allocation are upstream semantic changes. They are distinct from
 ZIP byte determinism and must be reported if they affect measurements. No golden
 or existing assertion may be changed to conceal them.
 
-### Observed public-parser compatibility boundary
+### Public-parser compatibility boundary (closed by #1069)
 
 `tests/opc_relationships.rs::public_parser_refuses_duplicate_required_attributes`
 also asserts that an **unnamespaced** `<Relationship Id='rId1'/>` is refused
 for missing Type/Target. The upstream 0.14.2 parser scopes records to the OPC
-namespace and returns an empty collection for that input instead of
-`InvalidRelationship`. Its earlier duplicate-attribute assertion (on correctly
-namespaced input) still passes. The full after-run exposes this as a new
-failure; the test is deliberately unchanged.
+namespace and returned an empty collection for that input instead of
+`InvalidRelationship`; that upstream limitation was reported when the
+migration landed.
 
-PartFs's compatibility reader wraps each legacy-selected record in the OPC
-namespace, so its missing-attribute refusal and duplicate repairs remain
-active. Direct callers of the publicly re-exported upstream inherent
-`Relationships::from_xml` do not pass through that adapter. Preserving that
-legacy error contract would require an upstream change or replacing the
-public upstream type with a compatibility facade; neither is silently added
-here. This remains a reported public API compatibility limitation, separate
-from valid-document output identity.
+`jubarte::opc::Relationships` is now this crate's type (a private tuple over
+upstream's, `Deref`/`DerefMut` to it): its `from_xml` selects records through
+the same compatibility wrapper `PartFs::open` uses — unprefixed legacy records
+are read in the OPC namespace whatever default-namespace declaration they
+carry, an explicit `<Relationship …></Relationship>` close folds at the event
+level without rewriting attribute values, and a record missing a required
+attribute is refused. The documented input
+`<Relationships><Relationship Id='rId1'/></Relationships>` therefore returns
+`InvalidRelationship`, the pre-migration behavior; a mismatched end tag is an
+`OpcError::Xml` syntax error rather than a repaired document. This is the
+deliberate public API change accepted in #1069 (“`jubarte::opc::Relationships`
+becomes our type”).
 
 ## ZIP reader healing changes
 
@@ -106,19 +115,27 @@ from valid-document output identity.
 | `ZipArchive::new`, `by_index`, `by_index_raw`, `by_name`, `index_for_name`, `len`, `is_dir`, `size`, `compressed_size`, `encrypted`, `compression`, `Read` | same APIs used here | Keep existing bounds, duplicate checks, compression refusal and read policies. |
 | `ZipError` into io::Error | still implemented | The Markdown writer's `?` conversions remain valid. Error text on corrupt streams can differ; preserve typed refusal. |
 
-In zip 9.0.4 `ZipFileData::name` tries UTF-8, then CP437. CP437 maps every
-byte, so invalid UTF-8 (even with bit 11 set) does **not** establish an error
-case. Do not invent an impossible undecodable-name regression test. Handle the
-fallible contract for forward compatibility. zip 8 decoded invalid UTF-8 lossily;
-zip 9 preserves it as CP437. This is an intentional standards-compatible name
-interpretation change on malformed/legacy inputs, not byte identity for those
-inputs; ordinary UTF-8 names must retain their bytes.
+In zip 9.0.4 `ZipFileData::name` tries UTF-8, then CP437, ignoring the
+language-encoding flag (`zip-9.0.4/src/types.rs` 122-130); zip 8 decoded
+UTF-8 (lossily) only with bit 11 set and CP437 otherwise
+(`zip-8.6.0/src/read.rs` 523-529), and applied the Info-ZIP Unicode Path
+(0x7075) override (705-709). The two readers that own part names — `admit`'s
+two entry loops and `PartFs::open`'s compatibility loader — therefore decode
+from `ZipFile::name_raw()` and `flags()` themselves
+(`crate::admission::zip_entry_name`), restoring the zip 8 name per entry so a
+flag-clear CP437 media name still resolves the relationship that names its
+CP437 spelling (#524 review). CP437 maps every byte, so decoding cannot fail;
+bit-11-set names with invalid UTF-8 decode lossily as zip 8 did, where zip 9's
+`name()` would have returned CP437. `read_package` also refuses two entries
+whose decoded names collide case-insensitively (`DuplicatePartName`), the
+refusal upstream's own reader applies, instead of silently overwriting the
+first part. Other `name()` call sites keep zip 9's fallible contract.
 
 | Production site | Error/fallback and ownership |
 | --- | --- |
-| `src/admission.rs`: both entry loops | Map decode failures to InvalidPackage before path/duplicate/metadata checks; own the second-loop name before bounded inflation. |
+| `src/admission.rs`: both entry loops | Decode each entry name through `zip_entry_name` (bit 11 / CP437 / 0x7075 override, as zip 8) before path/duplicate/metadata checks; map decode failures to InvalidPackage; own the second-loop name before bounded inflation. |
 | `src/opc/mod.rs`: metadata guard | Propagate ZIP decode errors before selecting XML; no entry bypasses the guard. |
-| `src/opc/mod.rs`: compatibility loader, source-order map | Propagate errors; own names; retain exact source order. Missing indices and errors are distinct. |
+| `src/opc/mod.rs`: compatibility loader, source-order map | Decode names with the same `zip_entry_name`, refuse decoded aliases (`DuplicatePartName`); the loader records the source order while it reads. Missing indices and errors are distinct. |
 | `src/strict_translation.rs`: rebuilding loop | A decode failure returns the complete original bytes, never a partial archive. |
 | `src/scrub.rs::leaks` | Keep its best-effort skip policy when decoding or reading an entry fails. |
 | `src/debug.rs::Package::open` | Own decoded name first, return String error with entry index, retain name in read-error context. |

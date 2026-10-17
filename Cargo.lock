@@ -1450,6 +1450,7 @@ dependencies = [
  "ooxmlsdk",
  "oxml-opc",
  "pulldown-cmark",
+ "quick-xml 0.41.0",
  "quick-xml 0.42.0",
  "regex",
  "rustybuzz",

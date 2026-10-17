@@ -110,6 +110,11 @@ unicode-properties = { version = "0.1", default-features = false, features = ["g
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "gif"] } # raster images in the PDF writer
 flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
 quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser
+# `OpcError::Xml`/`XmlAttr` (oxml-opc 0.14.2) carry quick-xml 0.41's error types,
+# and 0.42's (`QName` now wraps `&str`, new error paths) do not convert to them.
+# The OPC record scanner reads with the same 0.41 the payload uses, so a syntax
+# error surfaces as `OpcError::Xml` instead of an I/O refusal (#524, #1069).
+quick-xml-041 = { package = "quick-xml", version = "0.41", default-features = false }
 sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
 schemars = "1.2.2" # Legacy edit discovery derives field facts from the Serde model.
 serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan / report wire types
