@@ -921,7 +921,7 @@ fn native_para_id(dom: &Dom, paragraph: NodeId) -> Option<u32> {
 /// The long ID of the revision element `el` (a `w:ins`, `w:del`,
 /// `w:moveFrom` or `w:moveTo`): its native `w:id` when usable, else the
 /// `j:short` form of its printed short ID.
-fn revision_pair(dom: &Dom, el: NodeId, story: &str, part: &str) -> TargetPair {
+pub(super) fn revision_pair(dom: &Dom, el: NodeId, story: &str, part: &str) -> TargetPair {
     let local = dom
         .name(el)
         .map(|n| n.local_name().to_string())
