@@ -1027,22 +1027,21 @@ fn changes_printed_nowhere_else_are_unplaced() {
 /// A textless change inside a printed container is not shown by the
 /// container's tag: accepting the inserted row keeps the row and leaves
 /// the deleted drawing tracked, so the drawing's own id must be printed.
+/// A deleted drawing prints its `dN` token inside its marks, so its tag
+/// rides with it — no `unplaced:` line at all when every change shows.
 #[test]
-fn a_textless_change_in_a_printed_row_is_unplaced() {
+fn a_textless_change_in_a_printed_row_prints_its_own_id() {
     let body = format!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
         ins(3, "Ann Counsel", "Cell")
     );
     let out = agent(&docx(&body));
+    assert!(
+        out.contains("|{--![][d1]--}{>>r2 @AC<<}{++Cell++}{>>r3 @AC<<}|"),
+        "{out}"
+    );
     let lines = header_lines(&out);
-    let unplaced = lines
-        .iter()
-        .find(|l| l.starts_with("unplaced: "))
-        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
-    assert!(unplaced.contains("r2 @AC"), "{out}");
-    // The row's own tag and the cell text's print, so neither is unplaced.
-    assert!(!unplaced.contains("r1 "), "{out}");
-    assert!(!unplaced.contains("r3 "), "{out}");
+    assert!(!lines.iter().any(|l| l.starts_with("unplaced: ")), "{out}");
 }
 
 /// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
