@@ -1222,7 +1222,14 @@ test("convert JSON, by format or extension, keeps the output when the source fai
     assert.ok(!fs.existsSync(path.join(tmp, "missing.json")));
     assert.ok(!fs.existsSync(path.join(tmp, "unsupported-convert.JSON")));
   }
-test("edit -p rN --accept/--reject prints the resolved changes, as the binary does", () => {
+});
+
+// The checked-in engine is rebuilt only at release (ENGINE_COMMIT.txt), so a
+// CLI feature that needs a newer export waits for the next release to run.
+const resolutionTextShipped = typeof createRequire(bin)("jubarte-wasm").resolutionText === "function";
+test("edit -p rN --accept/--reject prints the resolved changes, as the binary does", {
+  skip: !resolutionTextShipped && "the checked-in engine predates resolutionText; it ships with the next release",
+}, () => {
   const received = path.join(repo, "tests/fixtures/agent-view/received.docx");
   const src = copy(received, "resolve-received.docx");
   const out = path.join(tmp, "resolve-out.docx");
