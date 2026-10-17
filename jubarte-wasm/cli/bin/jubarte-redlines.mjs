@@ -276,6 +276,10 @@ const COMMANDS = {
   add: { run: (name, [file], o) => runEdit("add", file, o) },
   capabilities: {
     run(_, __, o) {
+      if (o.matrix || o.operation != null || o.field != null) {
+        if (o.json) return console.log(JSON.stringify(JSON.parse(wasm.capabilityQuery(o.operation, o.field)), null, 2));
+        return process.stdout.write(wasm.capabilityQueryText(o.operation, o.field));
+      }
       const manifest = cliManifest();
       if (o.json) return console.log(JSON.stringify(manifest, null, 2));
       process.stdout.write(wasm.capabilitiesText(JSON.stringify(manifest)));

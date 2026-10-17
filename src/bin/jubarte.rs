@@ -2949,7 +2949,25 @@ fn cli_main() -> ExitCode {
             };
             return edit_exit(run_flags(&flags));
         }
-        Some(Command::Capabilities { json }) => {
+        Some(Command::Capabilities {
+            json,
+            operation,
+            field,
+            matrix,
+        }) => {
+            if matrix || operation.is_some() || field.is_some() {
+                let answer =
+                    jubarte::capabilities::discovery("cli", operation.as_deref(), field.as_deref());
+                let printed = if json {
+                    write_stdout(format!(
+                        "{}\n",
+                        serde_json::to_string_pretty(&answer).expect("discovery serializes")
+                    ))
+                } else {
+                    write_stdout(jubarte::capabilities::discovery_text(&answer))
+                };
+                return exit_code(printed);
+            }
             let manifest = jubarte::capabilities::capabilities("cli");
             let printed = if json {
                 outln!(

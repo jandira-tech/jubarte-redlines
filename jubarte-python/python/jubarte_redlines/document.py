@@ -634,10 +634,14 @@ def _side(side: object, default: str) -> tuple[bytes | str, str]:
     raise TypeError("each side must be a Document, bytes, Markdown text or a path")
 
 
-def capabilities() -> dict[str, object]:
-    """What this build can do (``runtime: "python"``), as a plain dict."""
+def capabilities(
+    *, operation: str | None = None, field: str | None = None, matrix: bool = False
+) -> dict[str, object]:
+    """Task manifest, focused edit syntax, or support matrix for this Python build."""
     import json
 
+    if matrix or operation is not None or field is not None:
+        return json.loads(_native.capability_query(operation, field))
     return json.loads(_native.capabilities_json())
 
 

@@ -1045,9 +1045,18 @@ pub enum Command {
     },
     /// What this binary can do, for agents choosing an operation.
     Capabilities {
-        /// The manifest as JSON instead of the text summary.
+        /// The manifest or focused answer as JSON instead of text.
         #[arg(long)]
         json: bool,
+        /// Discover one edit kind, including its fields and execution conditions.
+        #[arg(long)]
+        operation: Option<String>,
+        /// Discover one field, optionally within --operation.
+        #[arg(long)]
+        field: Option<String>,
+        /// Publish operation × target × policy edit support.
+        #[arg(long, conflicts_with_all = ["operation", "field"])]
+        matrix: bool,
     },
     /// Check or install a release from GitHub.
     #[command(after_help = "Examples:\n  \

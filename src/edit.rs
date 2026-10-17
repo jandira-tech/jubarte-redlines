@@ -161,7 +161,7 @@ pub enum ExistingRevisions {
 }
 
 /// One operation. `id` defaults to `op-N` (1-based) in the report.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Operation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Caller-chosen operation id echoed in the report.
@@ -172,7 +172,7 @@ pub struct Operation {
 }
 
 /// The supported operation kinds (wire tag `kind`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationKind {
     /// Replace exactly one occurrence of `find` in the paragraph.
@@ -205,6 +205,7 @@ pub enum OperationKind {
     /// Insert `text` after/before exactly one occurrence of an anchor, or at
     /// the paragraph's start/end. Exactly one of `after`, `before`,
     /// `position` must be given.
+    #[schemars(extend("oneOf" = exactly_one(&["after", "before", "position"])))]
     Insert {
         /// Paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -248,6 +249,7 @@ pub enum OperationKind {
     /// Comment on exactly one occurrence of `find`, or on the whole paragraph.
     /// The range may cross tabs, symbols, hyperlinks, fields, content
     /// controls and revisions: a comment edits nothing.
+    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]))]
     Comment {
         /// Paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -309,6 +311,7 @@ pub enum OperationKind {
     /// Change a paragraph's style, alignment or spacing; the redline records
     /// the old properties (`w:pPrChange`). At least one field besides
     /// `paragraph`.
+    #[schemars(extend("anyOf" = at_least_one(&["style", "alignment", "line_spacing", "space_before", "space_after"])))]
     FormatParagraph {
         /// Paragraph to format; must match exactly one.
         paragraph: Selector,
@@ -328,6 +331,17 @@ pub enum OperationKind {
         /// Space after the paragraph, in points.
         space_after: Option<Points>,
     },
+    /// Join the paragraph with the one right after it. The first's text moves
+    /// to the start of the second, whose paragraph properties (and section
+    /// break) survive, as when Word accepts a deleted paragraph mark. The
+    /// redline deletes the first paragraph's mark.
+    MergeParagraphs {
+        /// First paragraph; the next paragraph must follow it directly.
+        paragraph: Selector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Plain text placed between the two (for example `" "`).
+        separator: Option<String>,
+    },
     /// Make the paragraph read as `text`: the engine applies the smallest
     /// word-level edits, so unchanged words keep their runs and formatting,
     /// and new words take the formatting of the run before them. A tab or a
@@ -340,17 +354,6 @@ pub enum OperationKind {
         /// The paragraph's new text, plain.
         text: String,
     },
-    /// Join the paragraph with the one right after it. The first's text moves
-    /// to the start of the second, whose paragraph properties (and section
-    /// break) survive, as when Word accepts a deleted paragraph mark. The
-    /// redline deletes the first paragraph's mark.
-    MergeParagraphs {
-        /// First paragraph; the next paragraph must follow it directly.
-        paragraph: Selector,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Plain text placed between the two (for example `" "`).
-        separator: Option<String>,
-    },
     /// Reply to comment `comment_id`, as the plan's author; the reply is
     /// anchored on the same range. Word threads are one level deep, so a
     /// reply to a reply joins the thread's first comment.
@@ -358,6 +361,7 @@ pub enum OperationKind {
         /// `w:id` of the comment replied to (`jubarte comments` lists them):
         /// a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
+        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
         /// Reply text; `\n` starts a new line.
         text: String,
@@ -367,6 +371,7 @@ pub enum OperationKind {
     ResolveComment {
         /// `w:id` of the comment: a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
+        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
         #[serde(default = "resolve_done")]
         /// Resolved (default) or open.
@@ -377,6 +382,7 @@ pub enum OperationKind {
     EditComment {
         /// `w:id` of the comment: a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
+        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
         /// New text; `\n` starts a new line.
         text: String,
@@ -386,11 +392,13 @@ pub enum OperationKind {
     DeleteComment {
         /// `w:id` of the comment: a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
+        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
     },
     /// Insert a table next to the anchor paragraph. Each cell holds one
     /// paragraph in the anchor's paragraph style; the redline shows the
     /// rows inserted. Body paragraphs outside tables only.
+    #[schemars(extend("x-jubarte-targets" = ["body"]))]
     InsertTable {
         /// Anchor paragraph; must match exactly one.
         paragraph: Selector,
@@ -414,6 +422,7 @@ pub enum OperationKind {
     /// Make the paragraphs a list: each gets direct numbering at `level`,
     /// and `ListParagraph` when it has no style. The redline records each
     /// paragraph's old properties (`w:pPrChange`).
+    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]))]
     List {
         /// Paragraphs to number, each selector matching exactly one; body
         /// only.
@@ -449,6 +458,7 @@ pub enum OperationKind {
     /// Fill one content control (`w:sdt`) in the body with exactly one of
     /// `text`, `choice`, `checked` or `date`. The control keeps its
     /// properties; its content becomes the value.
+    #[schemars(extend("x-jubarte-keep" = false), extend("oneOf" = exactly_one(&["text", "choice", "checked", "date"])))]
     FillControl {
         /// The control: `"p3.cc0"` / `"cc1"`, `{"id"}`, `{"tag"}` or `{"alias"}`;
         /// must match exactly one.
@@ -482,6 +492,7 @@ pub enum OperationKind {
     },
     /// Insert a footnote whose reference mark follows one occurrence of
     /// `after`; the note goes in the footnotes part, created when absent.
+    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]), extend("x-jubarte-keep" = false))]
     InsertFootnote {
         /// Body paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -495,6 +506,7 @@ pub enum OperationKind {
     },
     /// Insert a paragraph holding one inline picture next to the anchor
     /// paragraph. PNG, JPEG, GIF, BMP or TIFF.
+    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]), extend("x-jubarte-keep" = false))]
     InsertImage {
         /// Body paragraph the picture goes next to; must match exactly one.
         paragraph: Selector,
@@ -517,6 +529,7 @@ pub enum OperationKind {
     /// Set the page size, orientation and margins of the last section or of
     /// every section; the redline records the old ones (`w:sectPrChange`).
     /// At least one of `page`, `orientation`, `margins_dxa`.
+    #[schemars(extend("x-jubarte-keep" = false), extend("anyOf" = at_least_one(&["page", "orientation", "margins_dxa"])))]
     PageSetup {
         #[serde(default)]
         /// `last` (default) or `all`.
@@ -535,6 +548,7 @@ pub enum OperationKind {
     /// "1-{levels}" \h \z \u` field, after an optional title paragraph
     /// styled `TOCHeading`. Its entries are written when the plan sets
     /// `update_fields`; otherwise the field is empty until Word updates it.
+    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]))]
     InsertToc {
         /// Paragraph to insert next to; must match exactly one, in the body.
         paragraph: Selector,
@@ -566,6 +580,7 @@ pub enum OperationKind {
     /// Track Changes, update fields on open, editing restrictions. Settings
     /// are not revisions: the clean copy and the redline both carry them.
     /// One per plan; a setting left out stays as it is.
+    #[schemars(extend("anyOf" = at_least_one(&["track_revisions", "update_fields", "protection"])))]
     Settings {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Turn Track Changes on (`w:trackRevisions`) or off.
@@ -597,7 +612,9 @@ fn default_true() -> bool {
 }
 
 /// The numbering of a [`OperationKind::List`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ListKind {
     #[default]
@@ -629,8 +646,9 @@ impl ListKind {
 }
 
 /// Line spacing, stored as `w:line` (240 = single); JSON is the multiple.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LineSpacing(pub u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(transparent)]
+pub struct LineSpacing(#[schemars(with = "f64", range(min = 0.25, max = 10.0))] pub u32);
 
 impl Serialize for LineSpacing {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -651,8 +669,9 @@ impl<'de> Deserialize<'de> for LineSpacing {
 }
 
 /// A length stored in twips (1/20 pt); JSON is points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Points(pub u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(transparent)]
+pub struct Points(#[schemars(with = "f64", range(min = 0.0, max = 1584.0))] pub u32);
 
 impl Serialize for Points {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -681,7 +700,7 @@ struct Spacing {
 }
 
 /// Paragraph alignment for [`OperationKind::FormatParagraph`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Alignment {
     /// Left (start) aligned.
@@ -708,7 +727,7 @@ impl Alignment {
 
 /// Run formatting for inserted or replacement text. Fields not given keep
 /// the neighbouring run's formatting.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RunFormat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -741,8 +760,9 @@ pub struct RunFormat {
 }
 
 /// A font size stored in half points (`w:sz`); JSON is points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HalfPoints(pub u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(transparent)]
+pub struct HalfPoints(#[schemars(with = "f64", range(min = 0.0, max = 1638.0))] pub u32);
 
 impl Serialize for HalfPoints {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -763,7 +783,7 @@ impl<'de> Deserialize<'de> for HalfPoints {
 }
 
 /// Paragraph edge for an insertion without a text anchor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Edge {
     /// Paragraph start.
@@ -773,7 +793,9 @@ pub enum Edge {
 }
 
 /// Side of the anchor paragraph for [`OperationKind::InsertParagraph`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Side {
     /// Before the anchor paragraph.
@@ -795,7 +817,7 @@ pub enum Side {
 /// settles changes first; the text forms search the settled text. An edit
 /// anchored on text follows a paragraph into the one it merged with; a
 /// whole-paragraph edit of a merged or vanished paragraph is refused.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
     /// `"p12"`, the same as `{"id": "p12"}`.
@@ -833,7 +855,7 @@ pub enum Selector {
 
 /// A run of an inserted paragraph. Formatting not given is inherited from the
 /// anchor paragraph's first run.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RunSpec {
     /// Run text.
@@ -1406,6 +1428,78 @@ impl EditPlan {
     }
 }
 
+/// The legacy dispatcher contract, derived from its typed Serde operations.
+/// Native, Python and WASM all dispatch through `apply_plan_json` / `apply_plan`.
+/// The parser's key gate and capability discovery share these exact field facts.
+pub fn operation_schemas() -> &'static [serde_json::Value] {
+    static SCHEMAS: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(|| {
+        let settings = schemars::generate::SchemaSettings::draft2020_12()
+            .with(|s| s.inline_subschemas = true)
+            .for_deserialize();
+        let common = settings
+            .clone()
+            .into_generator()
+            .into_root_schema_for::<Operation>();
+        let common = serde_json::to_value(common).expect("common schema serializes");
+        let schema = settings
+            .into_generator()
+            .into_root_schema_for::<OperationKind>();
+        let value = serde_json::to_value(schema).expect("operation schema serializes");
+        let mut variants = value["oneOf"]
+            .as_array()
+            .expect("tagged operation variants")
+            .clone();
+        for variant in &mut variants {
+            variant["properties"]["id"] = common["properties"]["id"].clone();
+        }
+        variants
+    });
+    &SCHEMAS
+}
+
+/// Names accepted by the common v1 dispatcher, in the legacy manifest order.
+pub fn dispatched_operation_kinds() -> Vec<String> {
+    operation_schemas()
+        .iter()
+        .map(|schema| {
+            schema["properties"]["kind"]["const"]
+                .as_str()
+                .expect("operation tag")
+                .to_string()
+        })
+        .collect()
+}
+
+pub(crate) fn operation_supports_keep(kind: &str) -> bool {
+    operation_schemas()
+        .iter()
+        .find(|s| s["properties"]["kind"]["const"] == kind)
+        .is_some_and(|s| s["x-jubarte-keep"] != false)
+}
+
+fn at_least_one(fields: &[&str]) -> serde_json::Value {
+    serde_json::json!(
+        fields
+            .iter()
+            .map(|field| serde_json::json!({"required": [field]}))
+            .collect::<Vec<_>>()
+    )
+}
+
+fn exactly_one(fields: &[&str]) -> serde_json::Value {
+    // Each alternative requires one field and excludes every other field.
+    serde_json::json!(
+        fields
+            .iter()
+            .map(|field| serde_json::json!({
+                "required": [field],
+                "not": {"anyOf": fields.iter().filter(|other| *other != field)
+                    .map(|other| serde_json::json!({"required": [other]})).collect::<Vec<_>>()}
+            }))
+            .collect::<Vec<_>>()
+    )
+}
+
 /// Allowed keys per operation kind; serde's `flatten` cannot deny unknown
 /// fields itself, and a misspelled key must not silently change meaning.
 fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
@@ -1422,91 +1516,32 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ));
         };
         let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-        let allowed: &[&str] = match kind {
-            "replace" => &[
-                "find",
-                "replacement",
-                "format",
-                "comment",
-                "whole",
-                "occurrence",
-            ],
-            "insert" => &[
-                "after",
-                "before",
-                "position",
-                "text",
-                "format",
-                "comment",
-                "occurrence",
-            ],
-            "delete" => &["find", "occurrence"],
-            "comment" => &["find", "text", "through", "occurrence"],
-            "insert_paragraph" => &["position", "runs", "like", "style", "comment"],
-            "delete_paragraph" => &["comment"],
-            "format_paragraph" => &[
-                "style",
-                "alignment",
-                "line_spacing",
-                "space_before",
-                "space_after",
-            ],
-            "merge_paragraphs" => &["separator"],
-            "rewrite" => &["text"],
-            "reply_comment" => &["comment_id", "text"],
-            "resolve_comment" => &["comment_id", "done"],
-            "edit_comment" => &["comment_id", "text"],
-            "delete_comment" => &["comment_id"],
-            "insert_table" => &["position", "rows", "header_row", "widths_dxa", "style"],
-            "list" if map.contains_key("paragraph") => {
-                return Err(err(
-                    "INVALID_PLAN",
-                    None,
-                    format!("operations[{i}] (list): takes paragraphs, not paragraph"),
-                ));
-            }
-            "list" => &["paragraphs", "kind_of_list", "level", "restart"],
-            "watermark" => {
-                if map.contains_key("paragraph") {
-                    return Err(err(
-                        "INVALID_PLAN",
-                        None,
-                        format!("operations[{i}] (watermark): a watermark takes no paragraph"),
-                    ));
-                }
-                &["text", "color", "diagonal", "font"]
-            }
-            "fill_control" => &["control", "text", "choice", "checked", "date"],
-            "format_run" => &["find", "format", "occurrence"],
-            "insert_footnote" => &["after", "text", "occurrence"],
-            "insert_image" => &[
-                "position",
-                "image_base64",
-                "content_type",
-                "width_emu",
-                "alt",
-            ],
-            "page_setup" => &["section", "page", "orientation", "margins_dxa"],
-            "insert_toc" => &["position", "levels", "title"],
-            "redact" => &["find", "occurrence"],
-            "settings" => {
-                if map.contains_key("paragraph") {
-                    return Err(err(
-                        "INVALID_PLAN",
-                        None,
-                        format!("operations[{i}] (settings): settings take no paragraph"),
-                    ));
-                }
-                &["track_revisions", "update_fields", "protection"]
-            }
-            other => {
-                return Err(err(
-                    "INVALID_PLAN",
-                    None,
-                    format!("operations[{i}]: unknown kind {other:?}"),
-                ));
-            }
+        let Some(schema) = operation_schemas()
+            .iter()
+            .find(|schema| schema["properties"]["kind"]["const"] == kind)
+        else {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}]: unknown kind {kind:?}"),
+            ));
         };
+        let allowed = schema["properties"]
+            .as_object()
+            .expect("operation properties");
+        let refusal = match kind {
+            "list" => Some("takes paragraphs, not paragraph"),
+            "watermark" => Some("a watermark takes no paragraph"),
+            "settings" => Some("settings take no paragraph"),
+            _ => None,
+        };
+        if let Some(message) = refusal.filter(|_| map.contains_key("paragraph")) {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}] ({kind}): {message}"),
+            ));
+        }
         if kind == "fill_control" && map.contains_key("paragraph") {
             return Err(err(
                 "INVALID_PLAN",
@@ -1522,7 +1557,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ));
         }
         for key in map.keys() {
-            if !COMMON.contains(&key.as_str()) && !allowed.contains(&key.as_str()) {
+            if !COMMON.contains(&key.as_str()) && !allowed.contains_key(key) {
                 return Err(err(
                     "INVALID_PLAN",
                     None,
@@ -5240,7 +5275,7 @@ fn is_range_markup(dom: &Dom, node: NodeId) -> bool {
         .is_some_and(|n| n.namespace_name() == W::URI && RANGES.contains(&n.local_name()))
 }
 
-fn kind_name(kind: &OperationKind) -> &'static str {
+pub(crate) fn kind_name(kind: &OperationKind) -> &'static str {
     match kind {
         OperationKind::Replace { .. } => "replace",
         OperationKind::Insert { .. } => "insert",

@@ -1166,10 +1166,24 @@ fn capabilities_json() -> String {
     jubarte::capabilities::capabilities_json("python")
 }
 
+/// Focused edit discovery, or the edit support matrix when both filters are absent.
+#[pyfunction]
+#[pyo3(signature = (operation=None, field=None))]
+fn capability_query(operation: Option<&str>, field: Option<&str>) -> String {
+    jubarte::capabilities::discovery("python", operation, field).to_string()
+}
+
 /// [`capabilities_json`] as the text summary `jubarte capabilities` prints.
 #[pyfunction]
-fn capabilities_text() -> String {
-    jubarte::capabilities::capabilities_text(&jubarte::capabilities::capabilities("python"))
+#[pyo3(signature = (operation=None, field=None, matrix=false))]
+fn capabilities_text(operation: Option<&str>, field: Option<&str>, matrix: bool) -> String {
+    if matrix || operation.is_some() || field.is_some() {
+        jubarte::capabilities::discovery_text(&jubarte::capabilities::discovery(
+            "python", operation, field,
+        ))
+    } else {
+        jubarte::capabilities::capabilities_text(&jubarte::capabilities::capabilities("python"))
+    }
 }
 
 /// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
@@ -1196,10 +1210,8 @@ fn markdown_to_docx(
         .detach(|| {
             // Built here: `DocxOptions` can hold an image loader, which is
             // not `Send`, so it cannot cross into the detached call.
-            let options = jubarte::markdown::docx_options_from_json(
-                options_json.unwrap_or("{}"),
-                reference,
-            )?;
+            let options =
+                jubarte::markdown::docx_options_from_json(options_json.unwrap_or("{}"), reference)?;
             jubarte::markdown::markdown_to_docx(text, &options).map_err(|e| e.to_string())
         })
         .map_err(JubarteError::new_err)?;
@@ -1254,6 +1266,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preview_json, m)?)?;
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
+    m.add_function(wrap_pyfunction!(capability_query, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_text, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
