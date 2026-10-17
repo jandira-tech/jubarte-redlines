@@ -64,7 +64,8 @@ Tasks:
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
-                prints the changed paragraphs as the agent view (refusal: exit 3)
+                prints the changed paragraphs as the agent view (a pure
+                --accept/--reject prints the resolved changes; refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
                 -p per command). Writes FILE_modified.docx, as edit does, and prints the
                 changed paragraphs as the agent view
@@ -858,7 +859,7 @@ $ jubarte-redlines edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject or --style (several -p per command), or a JSON plan. Writes
 FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
-agent view (refusal: exit 3)
+agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
 
 Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
@@ -899,10 +900,12 @@ Options:
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
       --accept
-          Accept revision r12 (with -p r12; r1+2 for several)
+          Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
+          change (`accepted r1+2 in p3: "from" > "to"`)
 
       --reject
-          Reject revision r12 (with -p r12; r1+2 for several)
+          Reject revision r12 (with -p r12; r1+2 for several); prints the resolved
+          change (`rejected r0 in p3: "from" > "to"`)
 
       --style <SPEC>
           Formatting for the anchored text: bold, italic, underline, strike, caps,
