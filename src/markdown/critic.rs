@@ -1738,6 +1738,25 @@ impl Pieces {
     }
 }
 
+/// An equation may hold complete run revisions, but cannot enter or leave one.
+pub(super) fn math_crosses_boundary(latex: &str) -> bool {
+    let mut open = Vec::new();
+    let mut crosses = false;
+    Pieces::default().feed(latex, |piece| {
+        if let Piece::Token(token) = piece {
+            match token {
+                Token::InsertStart => open.push(Token::InsertEnd),
+                Token::DeleteStart => open.push(Token::DeleteEnd),
+                Token::InsertEnd | Token::DeleteEnd => {
+                    crosses |= open.pop() != Some(token);
+                }
+                _ => crosses = true,
+            }
+        }
+    });
+    crosses || !open.is_empty()
+}
+
 /// The Markdown with its CriticMarkup resolved: insertions kept and
 /// deletions dropped (`accept`), or the other way round; highlights keep
 /// their text and comments go.

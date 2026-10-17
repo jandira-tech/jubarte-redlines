@@ -243,3 +243,83 @@ fn display_lines_become_an_equation_array() {
         "{view}"
     );
 }
+
+#[test]
+fn dollar_amounts_keep_revision_ids_and_authors() {
+    let line = "The price is {--$100--}{>>r5 @A<<}{--$120--}{>>r7 @ASR on r6 @A<<}{++$110++}{>>r8 @ASR<<}.";
+    let markdown = format!(
+        "---\ntrack_changes: on\nauthors:\n  A: Alice\n  ASR: Arthur Souza Rodrigues\n---\n\n{line}\n"
+    );
+    let (view, xml) = round_trip(&markdown);
+    assert_eq!(view, line);
+    assert!(!xml.contains("<m:oMath"), "{xml}");
+}
+
+#[test]
+fn dollar_amounts_in_adjacent_changes_stay_text() {
+    let (view, xml) = round_trip("{--$5--}{++$7++}");
+    assert!(view.contains("{--$5--}"), "{view}");
+    assert!(view.contains("{++$7++}"), "{view}");
+    assert!(!xml.contains("<m:oMath"), "{xml}");
+}
+
+#[test]
+fn dollar_amount_next_to_a_formula_keeps_both() {
+    let (view, xml) = round_trip("{++costs $5++} and $x^2$");
+    assert!(view.contains("{++costs $5++}"), "{view}");
+    assert!(view.ends_with(" and $x^2$"), "{view}");
+    assert_eq!(xml.matches("</m:oMath>").count(), 1, "{xml}");
+}
+
+#[test]
+fn dollar_formula_wholly_inside_a_change_stays_math() {
+    let (view, xml) = round_trip("{++$a+b$++}");
+    assert!(view.contains("{++$a+b$++}"), "{view}");
+    assert_eq!(xml.matches("</m:oMath>").count(), 1, "{xml}");
+    assert!(xml.contains("<m:r><w:ins "), "{xml}");
+}
+
+#[test]
+fn dollar_pairs_do_not_cross_critic_delimiters() {
+    for source in [
+        "{++$a++}$b",
+        "$a{++b$++}",
+        "{--$a--}$b",
+        "$a{--b$--}",
+        "{~~$a~>b$~~}",
+        "{~~a~>$b~~}$c",
+        "$a{~~b~>c$~~}",
+        "{>>$a<<}$b",
+        "$a{>>b$<<}",
+        "{==$a==}$b",
+        "$a{==b$==}",
+    ] {
+        let (_, xml) = round_trip(source);
+        assert!(!xml.contains("<m:oMath"), "{source}: {xml}");
+    }
+}
+
+#[test]
+fn dollar_followed_by_a_digit_does_not_close_math() {
+    for source in ["The price is $100 and $120.", "$x$5", "$5 and $7 and $x^2$"] {
+        let (view, xml) = round_trip(source);
+        assert_eq!(view, source);
+        assert_eq!(
+            xml.matches("</m:oMath>").count(),
+            usize::from(source.ends_with("$x^2$")),
+            "{xml}"
+        );
+    }
+}
+
+#[test]
+fn dollar_formulas_keep_numeric_starts_and_literal_delimiters() {
+    for source in ["$2+2$", r"$a\$b$", "$a⸎b$", "`$x$5`", "$$2+2$$"] {
+        let (_, xml) = round_trip(source);
+        assert_eq!(
+            xml.matches("</m:oMath>").count(),
+            usize::from(!source.starts_with('`')),
+            "{source}: {xml}"
+        );
+    }
+}

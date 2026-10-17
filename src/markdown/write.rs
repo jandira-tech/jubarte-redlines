@@ -20,7 +20,7 @@ use pulldown_cmark::{
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
-use super::diff::{continues, marker_len, table_row, table_row_change};
+use super::diff::{continues, marker_len, opens_amount, table_row, table_row_change};
 use super::xml::{
     Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link, List, Note,
     Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
@@ -137,7 +137,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         (markdown.to_string(), Vec::new())
     };
     let source = page_commands(&source);
-    let source = table_pipes(&source);
+    let source = inline_math(table_pipes(&source));
     let mut writer = Writer::new(options);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
@@ -157,6 +157,40 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     document.warnings.splice(..0, critic_warnings);
     document.index_wrapping_parents();
     document
+}
+
+/// Keep rejected dollar pairs as text before any Markdown pass consumes them.
+fn inline_math(mut source: String) -> String {
+    if !source.contains('$') {
+        return source;
+    }
+    loop {
+        let rejected: Vec<_> = Parser::new_ext(&source, parser_options())
+            .into_offset_iter()
+            .filter_map(|(event, range)| match event {
+                Event::InlineMath(latex)
+                    if opens_amount(&source, range.end - 1)
+                        || critic::math_crosses_boundary(&latex) =>
+                {
+                    Some(range.start)
+                }
+                _ => None,
+            })
+            .collect();
+        if rejected.is_empty() {
+            return source;
+        }
+        // Reconsider the closers: one can open a real formula that follows.
+        let mut escaped = String::with_capacity(source.len() + rejected.len());
+        let mut from = 0;
+        for at in rejected {
+            escaped.push_str(&source[from..at]);
+            escaped.push('\\');
+            from = at;
+        }
+        escaped.push_str(&source[from..]);
+        source = escaped;
+    }
 }
 
 /// CriticMarkup changes that hold whole blocks, rewritten so the Markdown

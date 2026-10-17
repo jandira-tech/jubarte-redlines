@@ -1115,7 +1115,7 @@ fn extend(open: &mut [OpenSpan], range: (usize, usize)) {
 /// it: [`numbers`] reads the sign as part of the amount, so this `$` opens
 /// no equation — even where the parser pairs it with a later `$` as math
 /// (`$250,000 … exceeds **$5,000,000**`).
-fn opens_amount(text: &str, at: usize) -> bool {
+pub(super) fn opens_amount(text: &str, at: usize) -> bool {
     text.as_bytes().get(at) == Some(&b'$')
         && text.as_bytes().get(at + 1).is_some_and(u8::is_ascii_digit)
 }
