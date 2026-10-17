@@ -65,6 +65,7 @@ pub const PAIRS: &[(&str, &str, &str)] = &[
         "# Intro\n\nText.\n",
         "# Introduction and scope\n\nText.\n",
     ),
+    ("heading level", "# Title\n\nText.\n", "## Title\n\nText.\n"),
     ("heading added", "Text.\n", "# Title\n\nText.\n"),
     (
         "quote",
@@ -97,13 +98,29 @@ pub const PAIRS: &[(&str, &str, &str)] = &[
         "Text.[^1]\n\n[^1]: Old note.\n",
         "Text.[^1]\n\n[^1]: New note.\n",
     ),
+    ("task", "- [ ] write\n", "- [x] write\n"),
     ("to empty", "Some text.\n", ""),
     ("from empty", "", "Some text.\n"),
     ("delimiters in text", "a {++b++} c\n", "a {++d++} c\n"),
     (
+        "renumbered list",
+        "1. a\n2. b\n3. c\n",
+        "1. a\n2. new\n3. b\n4. c\n",
+    ),
+    (
         "list after paragraph",
         "Intro.\n",
         "Intro.\n\n- one\n- two\n",
+    ),
+    (
+        "list removed",
+        "Intro.\n\n- one\n- two\n\nEnd.\n",
+        "Intro.\n\nEnd.\n",
+    ),
+    (
+        "heading removed",
+        "# A\n\nText.\n\n# B\n\nMore.\n",
+        "# A\n\nText.\n\nMore.\n",
     ),
     (
         "setext heading",
@@ -121,9 +138,24 @@ pub const PAIRS: &[(&str, &str, &str)] = &[
     ("whitespace only", "a  b\n", "a b\n"),
     ("reordered", "A.\n\nB.\n\nC.\n", "C.\n\nA.\n\nB.\n"),
     (
+        "last replaced by heading",
+        "Intro.\n\nOld end.\n",
+        "Intro.\n\n# New end\n",
+    ),
+    (
+        "first replaced by list",
+        "Old start.\n\nRest.\n",
+        "- new start\n\nRest.\n",
+    ),
+    (
         "table added",
         "Intro.\n",
         "Intro.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+    ),
+    (
+        "table removed",
+        "Intro.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nEnd.\n",
+        "Intro.\n\nEnd.\n",
     ),
     (
         "mixed",

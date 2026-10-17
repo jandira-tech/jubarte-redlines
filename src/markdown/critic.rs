@@ -150,6 +150,81 @@ pub(crate) fn encode(source: &str) -> String {
     encode_spans(source, ALL, true)
 }
 
+/// A top-level change span of a source: an insertion, a deletion or a
+/// substitution that no other span holds.
+pub(crate) struct ChangeRegion {
+    /// Where the opener (`{++`, `{--`, `{~~`) starts.
+    pub(crate) open: usize,
+    /// The change's text, between its delimiters.
+    pub(crate) body: std::ops::Range<usize>,
+    /// Where a substitution's `~>` sits, inside `body`'s span in `source`.
+    pub(crate) split: Option<usize>,
+    /// Just past the closing delimiter.
+    pub(crate) close: usize,
+    /// An insertion (`{++`) against a deletion (`{--}`); a substitution is
+    /// both and names neither.
+    pub(crate) inserted: bool,
+}
+
+/// The top-level change spans of `source`, in order, outside the parts
+/// Markdown reads literally (code spans and fenced code blocks, where the
+/// marks are printed, not tracked). What
+/// [`write`](super::write) uses to rewrite a change that holds whole
+/// blocks so the Markdown reader still sees the blocks.
+pub(crate) fn change_regions(source: &str) -> Vec<ChangeRegion> {
+    let closers = Closers::new(source);
+    let mut regions = Vec::new();
+    let mut at = 0;
+    while at < source.len() {
+        if let Some(end) = closers.literal.verbatim_end(at) {
+            at = end;
+            continue;
+        }
+        let rest = &source[at..];
+        let here = if closers.literal.in_fence(at) {
+            ALL & !(MARK | FIELD)
+        } else {
+            ALL
+        };
+        let span = SPANS
+            .iter()
+            .find(|(open, ..)| rest.starts_with(*open))
+            .filter(|span| here & kind_of(span.3) != 0)
+            .filter(|_| !escaped(source, at))
+            .and_then(|&(open, close, separator, start, _)| {
+                let from = at + open.len();
+                let to = closers.find(close, from, source.len())?;
+                let split = match separator {
+                    Some(separator) => Some((closers.find(separator, from, to)?, separator.len())),
+                    None => None,
+                };
+                Some((from..to, to + close.len(), split, start))
+            });
+        match span {
+            Some((body, after, split, start)) => {
+                // Fenced code and the front matter print their marks; a
+                // change there is not blocks to hand them to.
+                if kind_of(start) & CHANGES != 0 && !closers.literal.in_fence(at) {
+                    regions.push(ChangeRegion {
+                        open: at,
+                        body,
+                        split: split.map(|(mid, _)| mid),
+                        close: after,
+                        inserted: start == Token::InsertStart,
+                    });
+                }
+                // Top level only: the span, nested changes and all, is one.
+                at = after;
+            }
+            None => {
+                let c = rest.chars().next().unwrap_or_default();
+                at += c.len_utf8();
+            }
+        }
+    }
+    regions
+}
+
 /// Which spans a text may open: bits of [`INSERT`], [`DELETE`]...
 type Allowed = u8;
 const INSERT: Allowed = 1;

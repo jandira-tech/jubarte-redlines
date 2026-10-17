@@ -7,9 +7,10 @@
 //!
 //! Lines are aligned first, then words within the lines that pair up. On
 //! lines both versions share, a list, heading or quote marker stays before
-//! the change (`# {~~Old~>New~~} title`); a marker that itself changed is
-//! the change, and a block one version alone has goes into one change with
-//! its marker and its line breaks, which
+//! the change (`# {~~Old~>New~~} title`); a marker that itself changed
+//! takes the whole block with it into one change, and a block one version
+//! alone has goes into one change with its marker and its line breaks,
+//! which
 //! [`markdown_to_docx`](super::markdown_to_docx) writes as a block added or
 //! removed whole. A line added or removed inside a paragraph takes the
 //! line break with it (`first line{++\nnew line++}`).
@@ -43,19 +44,23 @@ const REFLOW_MAX_BYTES: usize = 400_000;
 /// rejecting them all gives `old`. Critically, the block markers
 /// (heading `#`, list `-`, quote `>`, table `|`, footnote `[^…]:`, …)
 /// stay outside the changes on lines both versions share; when the marker
-/// itself changed, or a whole block came and went, it joins the change so
-/// the marked-up document rebuilds either version exactly.
+/// itself changed — a renumbered item, `#` becoming `##`, a task box
+/// ticked — or a whole block came and went, the block joins the change so
+/// the marked-up document rebuilds either version exactly and the Word
+/// writer reads it as a block changed whole.
 ///
 /// # How changes are scoped
 ///
 /// Lines are aligned first, then the words within the lines that pair up.
 /// On lines both versions share, the marker stays before the change
-/// (`- {~~old~>new~~}`); a marker that itself changed — a renumbered item,
-/// `#` becoming `##` — is the change, both markers in one substitution, and
-/// a block one version alone has goes into one change with its marker and
+/// (`- {~~old~>new~~}`); a marker that itself changed takes the whole
+/// block with it — both versions of the line in one substitution — and a
+/// block one version alone has goes into one change with its marker and
 /// its line breaks, so accepting and rejecting rebuild the documents
-/// exactly. A line added or removed inside a paragraph takes the line break
-/// with it (`first line{++\nnew line++}`). Numbers (`$5,000,000`,
+/// exactly and [`markdown_to_docx`](super::markdown_to_docx) writes the
+/// change as Word structure: a deleted heading is a deleted Heading
+/// paragraph. A line added or removed inside a paragraph takes the line
+/// break with it (`first line{++\nnew line++}`). Numbers (`$5,000,000`,
 /// `04/20/26`, `3.5%`), emphasis and strikethrough delimiters, and link
 /// syntax are read whole; a code span, an image, an equation, an autolink
 /// and an HTML comment are one atom, so a change that touches any of them
@@ -85,7 +90,7 @@ pub fn diff_markdown(old: &str, new: &str) -> String {
     let new_lines = lines(&new);
     let mut out = Output::default();
     let ops = capture_diff_slices(Algorithm::Patience, &old_lines, &new_lines);
-    for (index, op) in ops.iter().enumerate() {
+    for op in &ops {
         let (tag, olds, news) = op.as_tag_tuple();
         match tag {
             DiffTag::Equal => {
@@ -94,13 +99,7 @@ pub fn diff_markdown(old: &str, new: &str) -> String {
                 }
             }
             DiffTag::Delete | DiffTag::Insert | DiffTag::Replace => {
-                // The unchanged line after the hunk, which a change that ends
-                // inside its paragraph closes on.
-                let following = ops
-                    .get(index + 1)
-                    .map(|next| next.new_range().start)
-                    .and_then(|at| new_lines.get(at).copied());
-                hunk(&mut out, &old_lines[olds], &new_lines[news], following);
+                hunk(&mut out, &old_lines[olds], &new_lines[news]);
             }
         }
     }
@@ -249,7 +248,7 @@ pub(super) fn table_row(line: &str) -> bool {
 
 /// A table row added or removed whole: each cell's text is one change, so
 /// the row keeps its cells (a table drops text outside them).
-fn table_row_change(line: &str, open: &str, close: &str) -> String {
+pub(super) fn table_row_change(line: &str, open: &str, close: &str) -> String {
     let mut out = String::new();
     let mut cell = String::new();
     let mut escaped = false;
@@ -462,7 +461,7 @@ enum Entry<'a> {
     Only(Side, &'a str),
 }
 
-fn hunk(out: &mut Output, olds: &[&str], news: &[&str], following: Option<&str>) {
+fn hunk(out: &mut Output, olds: &[&str], news: &[&str]) {
     if let Some(body) = reflow(olds, news) {
         for line in body.split('\n') {
             out.line(line);
@@ -491,26 +490,10 @@ fn hunk(out: &mut Output, olds: &[&str], news: &[&str], following: Option<&str>)
                         })
                         .collect()
                 };
-                let next = match entries.get(end) {
-                    Some(Entry::Pair(_, new)) => Some(*new),
-                    Some(Entry::Only(_, line)) => Some(*line),
-                    None => following,
-                };
                 let deleted = only(Side::Delete);
                 let inserted = only(Side::Insert);
-                // A block that replaces one of the other version marks its
-                // marker too; one that only adds or removes keeps the marker
-                // outside where Word reads it as formatting.
-                let replaces = !deleted.is_empty() && !inserted.is_empty();
-                // Only the last group may close on the next line.
-                group(
-                    out,
-                    Side::Delete,
-                    &deleted,
-                    next.filter(|_| inserted.is_empty()),
-                    replaces,
-                );
-                group(out, Side::Insert, &inserted, next, replaces);
+                group(out, Side::Delete, &deleted);
+                group(out, Side::Insert, &inserted);
                 at = end;
             }
         }
@@ -889,16 +872,18 @@ fn words(line: &str) -> Vec<&str> {
 
 /// A line in both versions: its markers, then its text word by word. A
 /// marker that changed textually (a renumbered list item, `#` becoming
-/// `##`) is itself the change: rejecting must bring the old one back, so
-/// the two markers sit in one substitution before the body's diff.
+/// `##`, a task box ticked) takes the whole block with it: rejecting must
+/// bring the old marker back, and the Word reader reads a block inside a
+/// change as a block changed whole (`{~~2. b~>3. b~~}` is a deleted `2. b`
+/// item and an inserted `3. b` one), never as the marker text.
 fn paired(out: &mut Output, old: &str, new: &str) {
     let (old_marker, new_marker) = (&old[..marker_len(old)], &new[..marker_len(new)]);
-    let (old_text, new_text) = (&old[marker_len(old)..], &new[marker_len(new)..]);
-    let mut line = if old_marker == new_marker {
-        escape(new_marker).into_owned()
-    } else {
-        change(old_marker, new_marker)
-    };
+    if old_marker != new_marker {
+        out.line(&change(old, new));
+        return;
+    }
+    let (old_text, new_text) = (&old[old_marker.len()..], &new[new_marker.len()..]);
+    let mut line = escape(new_marker).into_owned();
     if similarity(old_text, new_text) < WORD_DIFF_SIMILARITY {
         line.push_str(&change(old_text, new_text));
     } else {
@@ -1250,13 +1235,10 @@ fn take(
 /// continue the paragraph written just before take their line breaks the
 /// same way, glued to that paragraph.
 ///
-/// Two shapes stand apart. A block at the very start of the document that
-/// only adds or removes keeps its marker outside the change: the marker is
-/// formatting there (`# `, `- `), and a mark before it would stop the
-/// reader seeing the block. And an inserted table row marks its cells, so
-/// the row stays a row of its table; a deleted row is a line like any
-/// other and goes into the change whole.
-fn group(out: &mut Output, side: Side, lines: &[&str], next: Option<&str>, replaces: bool) {
+/// A run of inserted table rows marks its cells, so the rows stay rows of
+/// their table; the Word reader reads the blocks inside any such change as
+/// blocks changed whole ([`super::write`]).
+fn group(out: &mut Output, side: Side, lines: &[&str]) {
     if lines.is_empty() {
         return;
     }
@@ -1281,10 +1263,6 @@ fn group(out: &mut Output, side: Side, lines: &[&str], next: Option<&str>, repla
         for line in rest {
             out.line(&table_row_change(line, open, close));
         }
-        return;
-    }
-    if !out.started && !replaces && marker_len(rest[0]) > 0 {
-        marker_outside(out, side, rest, next);
         return;
     }
     let run = rest;
@@ -1326,53 +1304,6 @@ fn group(out: &mut Output, side: Side, lines: &[&str], next: Option<&str>, repla
     }
     if carry_closer {
         out.carry = Some(close);
-    }
-}
-
-/// A block with its marker outside its change, one change per block: the
-/// shape [`group`] writes for a block at the start of the document that
-/// only adds or removes. Accepting such a change leaves the marker's line
-/// behind — the Word reader resolves it, as formatting, when the text
-/// reader cannot.
-fn marker_outside(out: &mut Output, side: Side, lines: &[&str], next: Option<&str>) {
-    let (open, close) = side.delimiters();
-    let mut at = 0;
-    while at < lines.len() {
-        let line = lines[at];
-        if line.trim().is_empty() {
-            out.line(line);
-            at += 1;
-            continue;
-        }
-        // A block: this line and the lines that continue it.
-        let length = 1 + lines[at + 1..].iter().take_while(|l| continues(l)).count();
-        let block = &lines[at..at + length];
-        if table_row(line) {
-            out.line(&table_row_change(line, open, close));
-            at += 1;
-            continue;
-        }
-        let marker = marker_len(block[0]);
-        let first = &block[0][marker..];
-        if first.is_empty() && block.len() == 1 {
-            out.line(&escape(block[0]));
-            at += length;
-            continue;
-        }
-        let mut text = format!("{}{open}{}", escape(&block[0][..marker]), escape(first));
-        for line in &block[1..] {
-            out.line(&text);
-            text = escape(line).into_owned();
-        }
-        let last_block = at + length == lines.len();
-        if last_block && next.is_some_and(continues) {
-            out.line(&text);
-            out.carry = Some(close);
-        } else {
-            text.push_str(close);
-            out.line(&text);
-        }
-        at += length;
     }
 }
 
@@ -1546,13 +1477,27 @@ mod tests {
 
     #[test]
     fn a_changed_marker_replaces_the_block() {
-        // The marker is the change: both markers sit in one substitution,
-        // so rejecting brings `#` back and accepting gives `##`.
+        // The marker is the change, and it takes the whole block with it:
+        // rejecting brings `# Title` back, accepting gives `## Title`, and
+        // the Word reader reads each side as a heading of its own level.
         assert_eq!(
             diff_markdown("# Title\n", "## Title\n"),
-            "{~~# ~>## ~~}Title\n"
+            "{~~# Title~>## Title~~}\n"
         );
         round_trip("# Title\n", "## Title\n");
+        // A task box ticked, a renumbered item: the same whole-block change.
+        assert_eq!(
+            diff_markdown("- [ ] write\n", "- [x] write\n"),
+            "{~~- [ ] write~>- [x] write~~}\n"
+        );
+        round_trip("- [ ] write\n", "- [x] write\n");
+        // A list item turned into a paragraph: the item, marker and all,
+        // against the paragraph.
+        assert_eq!(
+            diff_markdown("- hello world\n", "hello world\n"),
+            "{~~- hello world~>hello world~~}\n"
+        );
+        round_trip("- hello world\n", "hello world\n");
     }
 
     #[test]
@@ -1707,15 +1652,19 @@ mod tests {
         let new = "1. inserted\n2. alpha\n3. beta\n4. gamma\n";
         assert_eq!(
             diff_markdown(old, new),
-            "1. {++inserted++}\n{~~1. ~>2. ~~}alpha\n{~~2. ~>3. ~~}beta\n{~~3. ~>4. ~~}gamma\n"
+            "{++1. inserted\n++}{~~1. alpha~>2. alpha~~}\n{~~2. beta~>3. beta~~}\n{~~3. gamma~>4. gamma~~}\n"
         );
+        round_trip(old, new);
     }
 
     #[test]
     fn a_list_item_turned_into_a_paragraph_is_not_glued() {
         let old = "- hello world\n";
         let new = "hello world\n";
-        assert_eq!(diff_markdown(old, new), "{--- --}hello world\n");
+        assert_eq!(
+            diff_markdown(old, new),
+            "{~~- hello world~>hello world~~}\n"
+        );
         round_trip(old, new);
     }
 
@@ -1766,9 +1715,9 @@ mod tests {
 
     #[test]
     fn a_changed_list_number_is_marked() {
-        // The marker is part of the change: rejecting must bring `10.`
-        // back, so the old and new markers are both in the substitution.
-        assert_eq!(diff_markdown("10. a\n", "9. a\n"), "{~~10. ~>9. ~~}a\n");
+        // The marker is part of the change: rejecting must bring `10. a`
+        // back, so the whole item is in the substitution.
+        assert_eq!(diff_markdown("10. a\n", "9. a\n"), "{~~10. a~>9. a~~}\n");
         round_trip("10. a\n", "9. a\n");
     }
 
