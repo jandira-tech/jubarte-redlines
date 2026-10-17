@@ -193,6 +193,81 @@ pub(crate) fn encode(source: &str) -> String {
     encode_spans(source, ALL, true)
 }
 
+/// A top-level change span of a source: an insertion, a deletion or a
+/// substitution that no other span holds.
+pub(crate) struct ChangeRegion {
+    /// Where the opener (`{++`, `{--`, `{~~`) starts.
+    pub(crate) open: usize,
+    /// The change's text, between its delimiters.
+    pub(crate) body: std::ops::Range<usize>,
+    /// Where a substitution's `~>` sits, inside `body`'s span in `source`.
+    pub(crate) split: Option<usize>,
+    /// Just past the closing delimiter.
+    pub(crate) close: usize,
+    /// An insertion (`{++`) against a deletion (`{--}`); a substitution is
+    /// both and names neither.
+    pub(crate) inserted: bool,
+}
+
+/// The top-level change spans of `source`, in order, outside the parts
+/// Markdown reads literally (code spans and fenced code blocks, where the
+/// marks are printed, not tracked). What
+/// [`write`](super::write) uses to rewrite a change that holds whole
+/// blocks so the Markdown reader still sees the blocks.
+pub(crate) fn change_regions(source: &str) -> Vec<ChangeRegion> {
+    let closers = Closers::new(source);
+    let mut regions = Vec::new();
+    let mut at = 0;
+    while at < source.len() {
+        if let Some(end) = closers.literal.verbatim_end(at) {
+            at = end;
+            continue;
+        }
+        let rest = &source[at..];
+        let here = if closers.literal.in_fence(at) {
+            ALL & !(MARK | FIELD)
+        } else {
+            ALL
+        };
+        let span = SPANS
+            .iter()
+            .find(|(open, ..)| rest.starts_with(*open))
+            .filter(|span| here & kind_of(span.3) != 0)
+            .filter(|_| !escaped(source, at))
+            .and_then(|&(open, close, separator, start, _)| {
+                let from = at + open.len();
+                let to = closers.find(close, from, source.len())?;
+                let split = match separator {
+                    Some(separator) => Some((closers.find(separator, from, to)?, separator.len())),
+                    None => None,
+                };
+                Some((from..to, to + close.len(), split, start))
+            });
+        match span {
+            Some((body, after, split, start)) => {
+                // Fenced code and the front matter print their marks; a
+                // change there is not blocks to hand them to.
+                if kind_of(start) & CHANGES != 0 && !closers.literal.in_fence(at) {
+                    regions.push(ChangeRegion {
+                        open: at,
+                        body,
+                        split: split.map(|(mid, _)| mid),
+                        close: after,
+                        inserted: start == Token::InsertStart,
+                    });
+                }
+                // Top level only: the span, nested changes and all, is one.
+                at = after;
+            }
+            None => {
+                let c = rest.chars().next().unwrap_or_default();
+                at += c.len_utf8();
+            }
+        }
+    }
+    regions
+}
+
 /// [`encode`], plus a warning for every malformed delimiter that comes
 /// out text: an opener without its closer or separator, a closer that
 /// closed nothing.
@@ -857,6 +932,16 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
     ends
 }
 
+/// The end of the HTML comment that starts at `at` (`<!-- … -->`), if it
+/// closes. [`verbatim_ranges`] counts a comment whole; the CriticMarkup
+/// reader does not (#520: a closer inside one still closes its span).
+fn comment_end(source: &str, at: usize) -> Option<usize> {
+    if !source[at..].starts_with("<!--") {
+        return None;
+    }
+    source[at + 4..].find("-->").map(|close| at + 4 + close + 3)
+}
+
 /// The end of an autolink (`<https://a.example>`) at `at`: a scheme, `:`,
 /// then no space or `<` up to `>`.
 fn autolink_end(source: &str, at: usize) -> Option<usize> {
@@ -1474,6 +1559,39 @@ pub(crate) fn encode_spans_only(source: &str) -> String {
     encode_spans(source, ALL, false)
 }
 
+/// The ranges of `source` the Markdown diff escaper must leave alone:
+/// the reader's own verbatim (code spans across single line breaks, link
+/// destinations, autolinks) plus every complete HTML comment — a
+/// backslash inside one changes the comment's text, and the delimiter
+/// the escaper would escape drops with the comment anyway. The
+/// CriticMarkup reader still counts a delimiter inside a comment (#520:
+/// [`Literal`] leaves comments to it), so the comment ranges live here,
+/// not in [`Literal`]. Sorted, disjoint.
+pub(super) fn verbatim_ranges(source: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Literal::new(source).verbatim;
+    let mut at = 0;
+    while let Some(open) = source[at..].find("<!--") {
+        let open = at + open;
+        match comment_end(source, open) {
+            Some(end) => {
+                ranges.push(open..end);
+                at = end;
+            }
+            // An unclosed comment is text to the reader, not a comment.
+            None => at = open + "<!--".len(),
+        }
+    }
+    ranges.sort_by_key(|range| range.start);
+    let mut disjoint: Vec<std::ops::Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match disjoint.last_mut() {
+            Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
+            _ => disjoint.push(range),
+        }
+    }
+    disjoint
+}
+
 /// The source of text that holds no stand-ins, as it was.
 pub(crate) fn decode(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1576,6 +1694,15 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
     resolve_with_policy(markdown, accept, false)
 }
 
+/// Whether `note` names, after ` on `, a change the one it follows sits
+/// inside (either view's grammar): resolving that change removes its text
+/// either way, for rejecting the outer removes what it holds and accepting
+/// the inner removes the text.
+fn names_outer(note: &str) -> bool {
+    super::view_notes::nested_revision_tags(note).is_some_and(|tags| tags.len() > 1)
+        || super::view_notes::nested_plain_revisions(note).is_some_and(|parts| parts.len() > 1)
+}
+
 /// Accepted document clauses omit a wholly deleted paragraph's line break.
 pub(crate) fn accept_clauses(markdown: &str) -> String {
     resolve_with_policy(markdown, true, true)
@@ -1601,8 +1728,17 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     // The state each open span interrupted, innermost last.
     let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
+    // The change span just closed, where its note would sit: a note that
+    // names the change it sits inside (` on `) folds it, and resolving
+    // removes its text either way — rejecting the outer removes what it
+    // holds, accepting the inner removes the text.
+    let mut folded_at: Option<usize> = None;
+    let mut comment = String::new();
     Pieces::default().feed(&encode_spans_kept(markdown), |piece| match piece {
         Piece::Text(text) => {
+            if state == In::Comment {
+                comment.push_str(text);
+            }
             let shown = match state {
                 In::Text => true,
                 In::Inserted | In::New => accept,
@@ -1610,6 +1746,11 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 In::Comment => false,
             };
             if shown {
+                if state == In::Text {
+                    // Text after the change ended: a note now is on this
+                    // point, not on the change.
+                    folded_at = None;
+                }
                 if remove_deleted_lines {
                     for ch in text.chars() {
                         if ch == '\n' {
@@ -1664,12 +1805,23 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     };
                     if shown {
                         out.push_str(delimiter(token));
+                        // Markup after the change ended: a note now is on
+                        // this point, not on the change.
+                        folded_at = None;
                     }
                     None
                 }
-                Token::InsertStart => Some(In::Inserted),
-                Token::DeleteStart => Some(In::Deleted),
-                Token::SubstituteStart => Some(In::Old),
+                Token::InsertStart | Token::DeleteStart => {
+                    folded_at = Some(out.len());
+                    match token {
+                        Token::InsertStart => Some(In::Inserted),
+                        _ => Some(In::Deleted),
+                    }
+                }
+                Token::SubstituteStart => {
+                    folded_at = None;
+                    Some(In::Old)
+                }
                 Token::CommentStart => Some(In::Comment),
                 // A highlight shows its text as the text around it does.
                 Token::HighlightStart => Some(state),
@@ -1680,14 +1832,31 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 Token::HighlightEnd
                 | Token::InsertEnd
                 | Token::DeleteEnd
-                | Token::SubstituteEnd
-                | Token::CommentEnd => {
+                | Token::SubstituteEnd => {
                     state = outer.pop().unwrap_or(In::Text);
                     None
                 }
                 // A comment paragraph break: comments resolve to nothing,
                 // so the break is dropped with the comment's text.
                 Token::CommentBreak => None,
+                Token::CommentEnd => {
+                    state = outer.pop().unwrap_or(In::Text);
+                    // The note folds the change it follows, naming the one
+                    // it sits inside after ` on `: its text goes, either
+                    // way it resolves — rejecting the outer removes what it
+                    // holds, accepting the inner removes the text.
+                    if state == In::Text
+                        && let Some(at) = folded_at.take()
+                        && names_outer(&comment)
+                    {
+                        out.truncate(at);
+                        line_start = out.rfind('\n').map_or(0, |at| at + 1);
+                        visible_text = false;
+                        dropped_line = false;
+                    }
+                    comment.clear();
+                    None
+                }
             };
             if let Some(opened) = opened {
                 outer.push(state);

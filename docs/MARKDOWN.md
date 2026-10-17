@@ -565,7 +565,23 @@ own tag, each with its own timestamp as notes print them: `r3 @BO on
 r1 @AL`, or `r3 Ben Ode (2026-09-30T09:00:00Z) on r1 Ana Lima
 (2026-09-29T14:05:00Z)` in the plain view. The writer puts the change
 back inside the one it names. A row's or cell's own mark is never
-named: the writer rebuilds those where they stand.
+named: the writer rebuilds those where they stand. Deeper nests chain
+the same way, innermost first (`r5 @CD on r3 @BO on r1 @AL`); Word
+refuses a revision nested in its own kind, so the writer rebuilds only
+the first outer a chain names.
+
+A plain note's grammar is exact about where the name ends and the date
+begins: the date is the last parenthesised group, so a name may hold
+parentheses of its own (`r1 Ana (consultant) (2026-09-29T14:05:00Z)`
+names `Ana (consultant)`). In a note that names another change after
+` on `, each name spells its own parentheses percent-wise — `(` as `%28`,
+`)` as `%29`, `%` itself as `%25` (`r3 Ben Ode (…) on r1 Ana %28consultant%29
+(…)`) — so only the dates' parentheses are bare and the parts of the
+note split without doubt: the last ` on ` whose left side parses as one
+part and whose right side as the chain the rest names wins, so a name
+holding ` on r1 Kim` of its own stays one name. A part with a bare
+parenthesis in its name makes the note no fold: it reads as the change's
+plain attribution, or as a comment.
 
 Neighbouring marks of one kind by one author join, then an insertion
 directly followed by a deletion pairs as a substitution, left to right:
@@ -812,8 +828,9 @@ $ jubarte diff old.md new.md -a "Arthur Rodrigues"
 @@ [line:3] @@
 Payment is due in [-30-]{+45+} days.
 
-@@ [line:6] @@
-- {+Returns+}
+@@ [line:5] @@
+- Delivery{+
+- Returns+}
 ```
 
 - Only the changed paragraphs are shown, each whole. `@@ [line:N] @@` is
@@ -864,21 +881,26 @@ $ jubarte diff old.md new.md --format critic
 
 Payment is due in {~~30~>45~~} days.
 
-- Delivery
-- {++Returns++}
+- Delivery{++
+- Returns++}
 - Warranty
 ```
 
 Lines are aligned first, then words within the lines that pair up; changes
-separated only by spaces merge, so a rewritten phrase is one change. A
-change never starts a line, so list, heading, quote and footnote markers
-stay in place and both versions keep their structure. A block added or
-removed whole is one change over its text, which Word writes as a
-paragraph added or removed. A table row added or removed is marked cell by
-cell, since a table drops text outside its cells. An ordered list's numbers
-are not compared: Word numbers items itself. CriticMarkup delimiters
-already in either document are escaped, so they stay text. The patch is
-built from this alignment.
+separated only by spaces merge, so a rewritten phrase is one change. On
+lines both versions share, list, heading, quote and footnote markers stay
+outside the change. A marker that itself changed — a renumbered item, `#`
+becoming `##`, a task box ticked — takes the whole block with it into one
+substitution, and a block added or removed whole is one change over its
+text and line breaks, so accepting and rejecting rebuild both documents
+byte for byte. Word writes such a change as structure, never as text: a
+deleted heading is a deleted Heading paragraph, a ticked task box changes
+the box itself. A table row added or removed is marked cell by cell, since
+a table drops text outside its cells. An ordered list's numbers do not
+steer the line pairing: Word numbers items itself, and an item renumbered
+by an insertion above is changed whole. CriticMarkup delimiters already
+in either document are escaped, so they stay text. The patch is built from
+this alignment.
 
 For a Word redline (`jubarte compare old.md new.md -o r.docx`) the two
 Markdown documents are written to Word and compared by the same engine as

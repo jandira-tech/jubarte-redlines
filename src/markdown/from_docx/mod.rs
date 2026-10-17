@@ -3510,11 +3510,10 @@ impl Writer<'_> {
                 .unwrap_or(0);
             row.extend(std::iter::repeat_n(String::new(), before.min(64)));
             for tc in row_cells(tr) {
-                // In the agent view, text marked on its own keeps its tags,
-                // and the row's mark is the table line's
-                // (`agent::row_text_marked`); a cell's unmarked text shows
-                // the row's.
-                let marks = if self.agent && agent::text_marked(tc) {
+                // Text marked on its own keeps its tags in the agent view,
+                // and so does text that nests a change in a change in
+                // either view; a cell's other text shows the row's mark.
+                let marks = if (self.agent && agent::text_marked(tc)) || agent::nested_marked(tc) {
                     &[][..]
                 } else {
                     &row_marks[..]
@@ -3664,16 +3663,17 @@ impl Writer<'_> {
     }
 
     /// A cell's paragraphs joined with `<br>`, inside the tracked changes of its
-    /// row (`trPr`) and of the cell itself (`tcPr`).
+    /// row (`trPr`) and of the cell itself (`tcPr`). Text marked on its own
+    /// keeps its tags in the agent view (`agent::text_marked`), and so does
+    /// text that nests a change in a change in either view: the container's
+    /// mark cannot merge into the nest's outer change without losing it.
     fn cell_text(&mut self, row_marks: &[Change], cell: &Element) -> String {
         let depth = self.revisions.len();
-        self.revisions.extend_from_slice(row_marks);
-        // In the agent view, text marked on its own keeps its tags
-        // (`agent::text_marked`).
-        if let Some(properties) = cell
-            .child("tcPr")
-            .filter(|_| !(self.agent && agent::text_marked(cell)))
-        {
+        let marked = (self.agent && agent::text_marked(cell)) || agent::nested_marked(cell);
+        if !marked {
+            self.revisions.extend_from_slice(row_marks);
+        }
+        if let Some(properties) = cell.child("tcPr").filter(|_| !marked) {
             let marks = self.revision_marks(properties);
             self.revisions.extend(marks);
         }

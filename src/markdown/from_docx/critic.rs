@@ -125,14 +125,27 @@ fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
 }
 
 /// A note's text: the formatted tag, or the plain attribution. A note
-/// that names the change it sits inside prints ` on ` between the tags.
+/// that names the changes it sits inside prints ` on ` between them,
+/// one part per level, its own change first. Each plain part's author
+/// spells its parentheses percent-wise (`Ana %28consultant%29`), so its
+/// date's are the only bare ones and the writer's parser can split the
+/// note.
 fn display(by: &str) -> String {
     let by = bare(by);
-    let one = |tagged: &str| {
+    let Some(tagged) = by.strip_prefix(PLAIN).or_else(|| by.strip_prefix(TAG)) else {
+        return by.to_string();
+    };
+    let fold = tagged.contains(ON);
+    let one = |part: &str| {
         if by.starts_with(PLAIN) {
-            return super::agent::format_plain_tag(tagged);
+            let printed = super::agent::format_plain_tag(part);
+            return if fold {
+                escaped_author(&printed)
+            } else {
+                printed
+            };
         }
-        let (t, date) = tag_parts(tagged);
+        let (t, date) = tag_parts(part);
         let mut out = super::agent::format_tag(t);
         if let Some(date) = date {
             out.push(' ');
@@ -140,13 +153,33 @@ fn display(by: &str) -> String {
         }
         out
     };
-    let Some(tagged) = by.strip_prefix(PLAIN).or_else(|| by.strip_prefix(TAG)) else {
-        return by.to_string();
+    tagged.split(ON).map(one).collect::<Vec<_>>().join(" on ")
+}
+
+/// A printed plain part (`r1+2 Name (date)`) with the name's parentheses,
+/// backslashes and `%` percent-spelled (`%28` and its kin, `%` itself
+/// `%25`, the spelling the internal tags use): only the date's stay bare.
+fn escaped_author(part: &str) -> String {
+    let Some((ids, rest)) = part.split_once(' ') else {
+        return part.to_string();
     };
-    match tagged.split_once(ON) {
-        Some((own, outer)) => format!("{} on {}", one(own), one(outer)),
-        None => one(tagged),
+    let author_end = super::super::view_notes::trailing_bare_group(rest)
+        .filter(|&at| super::super::write::is_date(&rest[at + 1..rest.len() - 1]))
+        .unwrap_or(rest.len());
+    let mut out = String::with_capacity(part.len());
+    out.push_str(ids);
+    out.push(' ');
+    for c in rest[..author_end].chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '(' => out.push_str("%28"),
+            ')' => out.push_str("%29"),
+            '\\' => out.push_str("%5C"),
+            c => out.push(c),
+        }
     }
+    out.push_str(&rest[author_end..]);
+    out
 }
 
 /// Two attributions join as neighbours: equal notes, or two tags of one
@@ -232,11 +265,11 @@ enum Node {
     Leaf(Leaf),
     Span(Mark, Option<String>, Vec<Node>),
     /// A change's pieces around the changes it held, with the outer
-    /// change's attribution: each piece keeps it too. CriticMarkup cannot
-    /// nest a change in a change, so an insertion holding a deletion
-    /// prints `{++a++}…{++b++}`, and the pieces never pair as a
-    /// substitution.
-    Split(Option<String>, Vec<Node>),
+    /// change's mark and attribution: each piece keeps the attribution
+    /// too. CriticMarkup cannot nest a change in a change, so an insertion
+    /// holding a deletion prints `{++a++}…{++b++}`, and the pieces never
+    /// pair as a substitution.
+    Split(Mark, Option<String>, Vec<Node>),
 }
 
 impl Node {
@@ -244,7 +277,7 @@ impl Node {
         match self {
             Self::Leaf(Leaf::Comment(_)) => false,
             Self::Leaf(_) => true,
-            Self::Span(_, _, children) | Self::Split(_, children) => {
+            Self::Span(_, _, children) | Self::Split(.., children) => {
                 children.iter().any(Self::has_content)
             }
         }
@@ -445,7 +478,20 @@ fn tree(tokens: Vec<Token>) -> Vec<Node> {
     for token in tokens {
         match token {
             Token::Leaf(leaf) => children(&mut root, &mut open).push(Node::Leaf(leaf)),
-            Token::Open(mark, _) if open.iter().any(|(m, ..)| *m == mark) => {
+            Token::Open(mark, _)
+                if open
+                    .iter()
+                    .rposition(|(m, ..)| *m == mark)
+                    .is_some_and(|at| {
+                        // A span of a kind already open merges into it when only a
+                        // comment's scope lies between: a change of the other kind
+                        // between them makes a nest the reader must keep (`w:ins >
+                        // w:del > w:ins`), not a span to absorb.
+                        open[at + 1..]
+                            .iter()
+                            .all(|(m, ..)| matches!(m, Mark::Scope))
+                    }) =>
+            {
                 merged[mark.index()] += 1;
             }
             Token::Open(mark, by) => open.push((mark, by, Vec::new())),
@@ -492,17 +538,38 @@ fn close_from(root: &mut Vec<Node>, open: &mut Vec<Open>, at: usize) {
 /// writer puts the marks back one inside the other. Each piece keeps the
 /// outer change's attribution. A change is a span's direct child; inside a
 /// highlight or a comment it may stay.
-fn unnest(nodes: Vec<Node>) -> Vec<Node> {
-    /// `node` is a change, holds one (a comment's scope), or is the pieces
-    /// one split into: anything the outer change must break around.
-    fn is_change(node: &Node) -> bool {
-        match node {
-            Node::Split(..) => true,
-            Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
-            Node::Span(..) => true,
-            _ => false,
-        }
+/// A node is a change, holds one (a comment's scope), or is the pieces
+/// one split into: anything the outer change must break around.
+fn is_change(node: &Node) -> bool {
+    match node {
+        Node::Split(..) => true,
+        Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
+        Node::Span(..) => true,
+        _ => false,
     }
+}
+
+/// A piece of a split `mark` made is one of the changes it held, not a
+/// piece of the change itself: the writer nests it back inside, so the
+/// outer may fold into its note. Same-kind changes merge in [`tree`],
+/// so a held change never shares the outer's mark — save a level a
+/// deeper fold already dissolved into its sole change, whose note then
+/// names the change it sits inside.
+fn held_change(piece: &Node, outer: Mark) -> bool {
+    match piece {
+        Node::Split(..) => true,
+        Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
+        Node::Span(mark, by, _) => outer_of(by.as_deref()).is_some() || *mark != outer,
+        _ => false,
+    }
+}
+
+/// Splits a change around every change inside it: CriticMarkup cannot nest
+/// one, so `w:ins` holding `w:del` prints `{++a++}…{--x--}…{++b++}` and the
+/// writer puts the marks back one inside the other. Each piece keeps the
+/// outer change's attribution. A change is a span's direct child; inside a
+/// highlight or a comment it may stay.
+fn unnest(nodes: Vec<Node>) -> Vec<Node> {
     let mut out = Vec::new();
     for node in nodes {
         let Node::Span(mark, by, children) = node else {
@@ -528,7 +595,7 @@ fn unnest(nodes: Vec<Node>) -> Vec<Node> {
             if !piece.is_empty() {
                 pieces.push(Node::Span(mark, by, piece));
             }
-            out.push(Node::Split(outer, pieces));
+            out.push(Node::Split(mark, outer, pieces));
         } else {
             out.push(Node::Span(mark, by, children));
         }
@@ -542,6 +609,13 @@ fn unnest(nodes: Vec<Node>) -> Vec<Node> {
 /// Both must be tagged attributions of one view, and the sole change a
 /// change itself, or there is nothing to name.
 fn fold_on(node: &mut Node, outer: Option<&str>) {
+    /// The change `node` holds, when it is the sole one it names.
+    fn held(node: &mut Node) -> Option<&mut Option<String>> {
+        match node {
+            Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
+            _ => None,
+        }
+    }
     let Some(outer) = outer else {
         return;
     };
@@ -556,13 +630,12 @@ fn fold_on(node: &mut Node, outer: Option<&str>) {
     else {
         return;
     };
-    // The change may sit in a comment's scope, the only content left.
+    // The change may sit in a comment's scope, the only content left, or
+    // be one a change it held split around: the change the note follows.
     let by = match node {
         Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-        Node::Span(Mark::Scope, _, children) => children.iter_mut().find_map(|child| match child {
-            Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-            _ => None,
-        }),
+        Node::Span(Mark::Scope, _, children) => children.iter_mut().find_map(held),
+        Node::Split(_, _, pieces) => pieces.iter_mut().find_map(held),
         _ => None,
     };
     if let Some(by) = by
@@ -578,22 +651,40 @@ fn fold_on(node: &mut Node, outer: Option<&str>) {
 fn tidy(nodes: Vec<Node>) -> Vec<Node> {
     let mut out: Vec<Node> = Vec::new();
     for node in nodes {
-        let node = if let Node::Split(outer, pieces) = node {
+        let mut comments = Vec::new();
+        let node = if let Node::Split(mark, outer, pieces) = node {
             // The pieces tidy as one list: what emptied out of a child change
-            // leaves its neighbours adjacent, and they join again. A change a
-            // child swallowed whole is just the child, and joins as it would
-            // — but the note names the child after ` on `, so the writer
-            // puts it back inside.
+            // leaves its neighbours adjacent, and they join again. A piece
+            // with nothing in it can only hold comments: they move out and
+            // the piece goes, so where the outer's changes stand decides
+            // its fate, not where a comment chanced to sit.
             let mut pieces = tidy(pieces);
-            if !pieces.iter().any(Node::has_content) {
-                lift_comments(pieces, &mut out);
+            pieces.retain(|piece| {
+                if piece.has_content() {
+                    true
+                } else {
+                    lift_comments(std::slice::from_ref(piece).to_vec(), &mut comments);
+                    false
+                }
+            });
+            if pieces.is_empty() {
+                out.extend(comments);
                 continue;
-            } else if pieces.len() == 1 {
-                let mut sole = pieces.remove(0);
-                fold_on(&mut sole, outer.as_deref());
-                sole
+            }
+            // Every piece a change: the outer holds them and no text of its
+            // own, so it folds into each piece's note — the one the sole
+            // case names, and each of the several it may hold — and the
+            // writer nests them back inside it.
+            if pieces.iter().all(|piece| held_change(piece, mark)) {
+                for piece in &mut pieces {
+                    fold_on(piece, outer.as_deref());
+                }
+            }
+            if pieces.len() == 1 {
+                pieces.remove(0)
             } else {
-                out.push(Node::Split(outer, pieces));
+                out.push(Node::Split(mark, outer, pieces));
+                out.extend(comments);
                 continue;
             }
         } else {
@@ -601,9 +692,9 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
         };
         let Node::Span(mark, by, nodes) = node else {
             out.push(node);
+            out.extend(comments);
             continue;
         };
-        let mut comments = Vec::new();
         let nodes = if mark == Mark::Scope {
             lift_comments(nodes, &mut comments)
         } else {
@@ -697,8 +788,8 @@ fn lift_comments(nodes: Vec<Node>, comments: &mut Vec<Node>) -> Vec<Node> {
             Node::Span(mark, by, nodes) => {
                 kept.push(Node::Span(mark, by, lift_comments(nodes, comments)));
             }
-            Node::Split(outer, pieces) => {
-                kept.push(Node::Split(outer, lift_comments(pieces, comments)));
+            Node::Split(mark, outer, pieces) => {
+                kept.push(Node::Split(mark, outer, lift_comments(pieces, comments)));
             }
             leaf => kept.push(leaf),
         }
@@ -791,7 +882,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
             }
             // The pieces of a split change render side by side, never
             // paired as a substitution: their order is the document's.
-            (Node::Split(_, pieces), _) => {
+            (Node::Split(.., pieces), _) => {
                 for piece in pieces {
                     render(std::slice::from_ref(piece), out, escaping, ids);
                 }

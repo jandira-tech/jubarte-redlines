@@ -424,26 +424,77 @@ fn one_tag(part: &str) -> Option<Tag> {
 /// Ben Ode (2026-…) on r1 Ana Lima (2026-…)`. `None` for any other
 /// comment text.
 pub(super) fn nested_plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
-    let parts = nested_parts(text, plain_revision)?;
+    let parts = nested_parts(text, plain_part)?;
     (parts.len() > 1).then_some(parts)
+}
+
+/// One part of a fold note: its author holds no bare parenthesis — it
+/// spells its own percent-wise (`Ana %28consultant%29`), so the date is
+/// the only bare group and the split of the note stays sure. A part with
+/// a bare parenthesis is no part of a fold.
+fn plain_part(part: &str) -> Option<PlainRevision> {
+    let rest = part.trim().split_once(' ').map_or("", |(_, rest)| rest);
+    let author_end = trailing_bare_group(rest)
+        .filter(|&at| super::write::is_date(&rest[at + 1..rest.len() - 1]))
+        .unwrap_or(rest.len());
+    let mut escaped = false;
+    for c in rest[..author_end].chars() {
+        if matches!(c, '(' | ')') && !escaped {
+            return None;
+        }
+        escaped = c == '\\' && !escaped;
+    }
+    plain_revision(part)
+}
+
+/// Where the final bare parenthesised group of `text` opens, when one
+/// closes at its very end (`… (date)`): the outermost group that does.
+pub(super) fn trailing_bare_group(text: &str) -> Option<usize> {
+    if !text.ends_with(')') {
+        return None;
+    }
+    let mut escaped = false;
+    let mut depth = 0usize;
+    let mut open = None;
+    for (at, c) in text.char_indices() {
+        match c {
+            '\\' => escaped = !escaped,
+            '(' if !escaped => {
+                if depth == 0 {
+                    open = Some(at);
+                }
+                depth += 1;
+                escaped = false;
+            }
+            ')' if !escaped => {
+                depth = depth.saturating_sub(1);
+                if at + 1 == text.len() && depth == 0 {
+                    return open;
+                }
+                escaped = false;
+            }
+            _ => escaped = false,
+        }
+    }
+    None
 }
 
 /// The parts of a note joined by ` on `, each parsed by `one`: the first
 /// part is the note's own change, and each part after it names the change
-/// the one before sits inside. The first ` on ` whose left part parses and
-/// whose right part parses all the way down wins; `None` unless every
-/// part parses and there is an ` on ` among them.
+/// the one before sits inside. The last ` on ` that splits the note wins:
+/// the left side must parse as one part — its author may hold ` on ` of
+/// its own (`Bo on r1 Kim`) — and the right side all the way down.
+/// Earlier boundaries are tried only when these fail.
 fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
     let text = text.trim();
-    let mut from = 0;
-    while let Some(found) = text[from..].find(" on ") {
-        let at = from + found;
+    let mut from = text.len();
+    while let Some(at) = text[..from].rfind(" on ") {
+        from = at;
         if let Some(head) = one(text[..at].trim())
             && let Some(rest) = nested_parts(&text[at + " on ".len()..], one)
         {
             return Some([head].into_iter().chain(rest).collect());
         }
-        from = at + 1;
     }
     // The last part, or a note that names no other change.
     one(text).map(|last| vec![last])

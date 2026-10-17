@@ -20,6 +20,7 @@ use pulldown_cmark::{
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
+use super::diff::{continues, marker_len, table_row, table_row_change};
 use super::xml::{
     Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link, List, Note,
     Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
@@ -131,7 +132,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         markdown
     };
     let (source, critic_warnings) = if options.critic {
-        critic::encode_checked(markdown)
+        critic::encode_checked(&block_changes(markdown))
     } else {
         (markdown.to_string(), Vec::new())
     };
@@ -155,6 +156,134 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     let mut document = writer.finish();
     document.warnings.splice(..0, critic_warnings);
     document
+}
+
+/// CriticMarkup changes that hold whole blocks, rewritten so the Markdown
+/// reader still sees the blocks: a change that opens a line hands its marks
+/// to the blocks inside it — a deleted heading `# {--B--}` reads as a
+/// heading whose text, and paragraph mark, are deleted, where `{--# B`,
+/// the marks in front of the marker, reads as the plain paragraph `{--# B`.
+/// A substitution whose sides hold blocks becomes its deleted blocks, then
+/// its inserted ones. A change that opens inside a line is inline text and
+/// stays; the diff writes whole blocks as changes that open a line.
+fn block_changes(source: &str) -> String {
+    let regions = critic::change_regions(source);
+    let mut out = String::with_capacity(source.len());
+    let mut at = 0;
+    for region in regions {
+        out.push_str(&source[at..region.open]);
+        at = region.close;
+        // Only a change that opens a line holds blocks; one that opens
+        // inside a line is inline text and stays.
+        let starts_line = region.open == 0 || source[..region.open].ends_with('\n');
+        let after = &source[region.close..];
+        let rewritten = if !starts_line {
+            None
+        } else if let Some(mid) = region.split {
+            substitution_blocks(
+                &source[region.body.start..mid],
+                &source[mid + "~>".len()..region.body.end],
+                after.is_empty() || after.starts_with('\n'),
+            )
+        } else {
+            let (open, close) = if region.inserted {
+                ("{++", "++}")
+            } else {
+                ("{--", "--}")
+            };
+            // The closer ends a line, or begins one: the blocks end where
+            // a line does either way.
+            let ends_line = after.is_empty()
+                || after.starts_with('\n')
+                || source[..region.body.end].ends_with('\n');
+            let content = &source[region.body.clone()];
+            (ends_line && blocky(content))
+                .then(|| distribute(content, open, close))
+                .flatten()
+        };
+        match rewritten {
+            Some(text) => out.push_str(&text),
+            None => out.push_str(&source[region.open..region.close]),
+        }
+    }
+    out.push_str(&source[at..]);
+    out
+}
+
+/// A substitution whose sides hold blocks, as the deleted side's blocks
+/// then the inserted side's. `ends_line`: the substitution's closer ends
+/// its line, so no text after it belongs to a side.
+fn substitution_blocks(old: &str, new: &str, ends_line: bool) -> Option<String> {
+    if !ends_line || !(blocky(old) || blocky(new)) {
+        return None;
+    }
+    let (old, new) = (distribute(old, "{--", "--}"), distribute(new, "{++", "++}"));
+    Some(format!("{}\n{}", old?, new?))
+}
+
+/// Whether any line of the text begins a block a change's marks would
+/// hide: it has a marker, or is a table row or a code fence.
+fn blocky(content: &str) -> bool {
+    content.lines().any(|line| {
+        let fenced = ["```", "~~~"]
+            .iter()
+            .any(|fence| line.trim_start().starts_with(fence));
+        fenced || marker_len(line) > 0 || table_row(line)
+    })
+}
+
+/// The text of a change handed to the blocks inside it, the marks around
+/// each block: a heading or a list item keeps its marker and changes its
+/// text, a quote run opens after its first marker and closes on its last
+/// line, a table row marks its cells, and lines that continue one another
+/// share one change across their line breaks. `None` when a block cannot
+/// hold the marks: a code fence, whose text is literal, or a block whose
+/// first line is marker and nothing else.
+fn distribute(content: &str, open: &str, close: &str) -> Option<String> {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mut out = String::with_capacity(content.len());
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        if line.trim().is_empty() {
+            out.push_str(line);
+            at += 1;
+        } else if table_row(line) {
+            out.push_str(&table_row_change(line, open, close));
+            at += 1;
+        } else {
+            let marker = marker_len(line);
+            let length = if line.trim_start().starts_with('>') {
+                // A quote run: every quoted line, the marks across their
+                // line breaks.
+                1 + lines[at + 1..]
+                    .iter()
+                    .take_while(|l| l.trim_start().starts_with('>'))
+                    .count()
+            } else if line[..marker].contains('#') {
+                // A heading stands alone: the lines after it are not its.
+                1
+            } else {
+                1 + lines[at + 1..].iter().take_while(|l| continues(l)).count()
+            };
+            if length == 1 && line[marker..].is_empty() {
+                return None;
+            }
+            out.push_str(&line[..marker]);
+            out.push_str(open);
+            out.push_str(&line[marker..]);
+            for block_line in &lines[at + 1..at + length] {
+                out.push('\n');
+                out.push_str(block_line);
+            }
+            out.push_str(close);
+            at += length;
+        }
+        if at < lines.len() {
+            out.push('\n');
+        }
+    }
+    Some(out)
 }
 
 /// The styles [`DocxOptions::scholar`] sets, as the front matter's
@@ -1365,6 +1494,14 @@ impl Anchor {
 
 struct Writer<'o, 'a> {
     options: &'o DocxOptions<'a>,
+    /// A soft line break holds until the words after it arrive: the space
+    /// it stands for belongs inside the change delimiters around it, and
+    /// one the paragraph ends on (a change that takes the paragraph's own
+    /// line break) holds no words at all and is dropped.
+    soft_break: bool,
+    /// The change delimiters held behind a soft line break, replayed when
+    /// the words arrive (or when the paragraph ends, without the space).
+    held: Vec<critic::Token>,
     body: Vec<Item>,
     /// Footnote definitions by label.
     definitions: HashMap<String, Vec<Item>>,
@@ -1548,6 +1685,8 @@ struct Writer<'o, 'a> {
 impl<'o, 'a> Writer<'o, 'a> {
     fn new(options: &'o DocxOptions<'a>) -> Self {
         Self {
+            soft_break: false,
+            held: Vec::new(),
             options,
             body: Vec::new(),
             definitions: HashMap::new(),
@@ -1667,6 +1806,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Event::Text(text) => self.text(&text),
             Event::Code(text) => {
+                self.soft_break_resolved(true);
                 self.code += 1;
                 self.text(&text);
                 self.code -= 1;
@@ -1679,7 +1819,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 None => self.id_lines(&html),
             },
             Event::FootnoteReference(label) => self.note_reference(&label),
-            Event::SoftBreak => self.text(" "),
+            Event::SoftBreak => self.soft_break = true,
             Event::HardBreak => {
                 if let Some(comment) = &mut self.comment {
                     comment.paragraphs.push(String::new());
@@ -2640,6 +2780,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// Ends the open paragraph. Its mark is in the change still open, or in
     /// the change that is the paragraph's whole text.
     fn end_paragraph(&mut self) {
+        // A soft line break the paragraph ends on was the paragraph's own
+        // line break: no words follow it, so it holds no space.
+        self.soft_break_resolved(false);
         let Some(index) = self.paragraph.take() else {
             return;
         };
@@ -2689,6 +2832,10 @@ impl<'o, 'a> Writer<'o, 'a> {
         // A view's cell or note says its paragraph marks by its `<br>`s,
         // in a change or not: a paragraph changed whole keeps its mark.
         let says_marks = self.view && (self.cell.is_some() || self.target.is_some());
+        // A change that names another after ` on ` (a fold) is not the
+        // paragraph's own mark: the writer nests it back inside the one it
+        // names, and the row or cell it sits in keeps its own.
+        let folded = |serial: u32| self.document.wraps.contains_key(&serial);
         let (mark, whole) = match self.change {
             Some((kind, serial)) => (Some((kind, serial)), false),
             None => match self.span_start {
@@ -2697,6 +2844,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         && span.at_start
                         && span.paragraph == self.paragraph_serial
                         && self.closed == Some(span.serial)
+                        && !folded(span.serial)
                         && !self.run_after_close
                         && self.paragraph_runs > 0
                         && !after_break.is_some_and(|after| after) =>
@@ -2712,7 +2860,9 @@ impl<'o, 'a> Writer<'o, 'a> {
         let covered = self.span_start.and_then(|span| {
             let starts = span.paragraph != self.paragraph_serial || span.at_start;
             let ends = self.change == Some((span.kind, span.serial))
-                || (self.closed == Some(span.serial) && !self.run_after_close);
+                || (self.closed == Some(span.serial)
+                    && !folded(span.serial)
+                    && !self.run_after_close);
             (starts && ends).then_some((span.kind, span.serial))
         });
         let whole_in_cell = if whole { mark } else { covered };
@@ -2742,6 +2892,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             (None, Some(span))
                 if span.paragraph != self.paragraph_serial
                     && self.closed == Some(span.serial)
+                    && !folded(span.serial)
                     && !self.run_after_close
                     && self.paragraph_runs > 0
                     && self.cell.is_none() =>
@@ -2852,6 +3003,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn text(&mut self, text: &str) {
+        if self.metadata.is_some() || self.image.is_some() || !self.options.critic {
+            self.soft_break_resolved(true);
+        }
         if let Some(metadata) = &mut self.metadata {
             metadata.push_str(text);
             return;
@@ -2883,15 +3037,38 @@ impl<'o, 'a> Writer<'o, 'a> {
         });
         for piece in pieces {
             match piece {
-                Ok(text) => self.plain(&text),
-                Err(token) => self.token(token),
+                Ok(text) => {
+                    self.soft_break_resolved(true);
+                    self.plain(&text);
+                }
+                Err(token) => {
+                    if self.soft_break {
+                        self.held.push(token);
+                    } else {
+                        self.token(token);
+                    }
+                }
             }
+        }
+    }
+
+    /// Resolves a held soft line break: the words after it have arrived
+    /// (`words`) or the paragraph has ended. The change delimiters held
+    /// behind it replay either way; the space only when words follow, and
+    /// before them, inside the change it sat in.
+    fn soft_break_resolved(&mut self, words: bool) {
+        if std::mem::take(&mut self.soft_break) && words {
+            self.plain(" ");
+        }
+        for token in std::mem::take(&mut self.held) {
+            self.token(token);
         }
     }
 
     /// `$latex$` (or `$$latex$$` when `display`): an equation, or its
     /// LaTeX as text where an equation cannot go (a comment, alt text).
     fn math(&mut self, latex: &str, display: bool) {
+        self.soft_break_resolved(true);
         if self.metadata.is_some() || self.image.is_some() || self.comment.is_some() {
             let fence = if display { "$$" } else { "$" };
             let text = format!("{fence}{}{fence}", critic::restore(latex));
@@ -4396,6 +4573,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.text_boxes();
         self.held_comment_marks();
         let mut body = std::mem::take(&mut self.body);
+        clear_continued_marks(&mut body, &self.document);
         finish_story(&mut body);
         let targets: HashSet<&str> = body
             .iter()
@@ -5005,6 +5183,68 @@ fn renumber_comments(document: &mut Document) {
 }
 
 /// A story's last paragraph mark cannot be inserted or deleted in Word; a
+/// A paragraph changed whole whose change another paragraph continues
+/// keeps no mark of its own: the view names the same ids there — one
+/// revision across paragraphs, Word's one `w:id` on each — and the break
+/// between them is not the revision's.
+fn clear_continued_marks(items: &mut [Item], document: &Document) {
+    // Each serial's paragraphs: the runs that carry it and the marks that
+    // name it.
+    let mut paragraphs: HashMap<u32, HashSet<usize>> = HashMap::new();
+    let mut at = 0usize;
+    for item in items.iter() {
+        match item {
+            Item::Paragraph(paragraph) => {
+                at += 1;
+                if let Some(serial) = paragraph.mark_by {
+                    paragraphs.entry(serial).or_default().insert(at);
+                }
+            }
+            Item::Run(run) => {
+                if let Some((_, serial)) = run.change {
+                    paragraphs.entry(serial).or_default().insert(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    // A wrap's outer change is used wherever the change it holds is.
+    for (inner, (_, outer)) in document.wraps.iter() {
+        if let Some(ats) = paragraphs.get(inner).cloned() {
+            paragraphs.entry(*outer).or_default().extend(ats);
+        }
+    }
+    // Another serial naming any of this one's ids, used in another
+    // paragraph, continues it there.
+    let continued = |serial: u32, at: usize| {
+        document.revision_ids.get(&serial).is_some_and(|ids| {
+            document.revision_ids.iter().any(|(other, named)| {
+                *other != serial
+                    && named.iter().any(|id| ids.contains(id))
+                    && paragraphs
+                        .get(other)
+                        .is_some_and(|serials| serials.iter().any(|p| *p != at))
+            })
+        })
+    };
+    let mut at = 0usize;
+    for item in items.iter_mut() {
+        let Item::Paragraph(paragraph) = item else {
+            continue;
+        };
+        at += 1;
+        if !paragraph.mark_fixed
+            && paragraph
+                .mark_by
+                .is_some_and(|serial| continued(serial, at))
+        {
+            paragraph.mark = None;
+            paragraph.mark_by = None;
+            paragraph.whole = false;
+        }
+    }
+}
+
 /// last paragraph that was added or removed whole puts its change on the
 /// mark before it instead. A story that ends in a table gets the empty
 /// paragraph Word ends one with.
@@ -5120,22 +5360,77 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 }
 
 /// `Name (date)` or `(date)` at the start of `text`: the name, the date and
-/// the text after them.
+/// the text after them. The date is the first parenthesised date after a
+/// name whose own parentheses balance, for an author may hold some
+/// (`Ana (consultant)`) and a comment's text may hold a date; in a fold
+/// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`)
+/// and are read back off the name.
 pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
-    let open = text.find('(')?;
-    let close = open + text[open..].find(')')?;
-    let date = &text[open + 1..close];
-    if !is_date(date) {
-        return None;
+    // The first group that is a date after a name: a later one belongs to
+    // the text after the attribution (`Ana (d1): moved to (d2)`), and an
+    // earlier one that is no date to the name (`Ana (Legal) (d1)`).
+    let mut from = 0;
+    while let Some(open) = text[from..].find('(').map(|at| from + at) {
+        from = open + 1;
+        let Some(close) = text[open..].find(')').map(|at| open + at) else {
+            continue;
+        };
+        let date = &text[open + 1..close];
+        if !is_date(date) {
+            continue;
+        }
+        let name = &text[..open];
+        let author = match name.trim() {
+            "" if name.is_empty() => None,
+            "" => return None,
+            author if name.ends_with(' ') => Some(unescaped(author).to_string()),
+            _ => continue,
+        };
+        // The name's own parentheses, when it holds any, must balance:
+        // `A (b) (date)` names `A (b)`, `Ad)a (date)` names nothing.
+        let mut depth = 0i64;
+        let mut unbalanced = false;
+        for c in text[..open].chars() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    unbalanced |= depth < 0;
+                }
+                _ => {}
+            }
+        }
+        if unbalanced || depth != 0 {
+            return None;
+        }
+        return Some((author, date, &text[close + 1..]));
     }
-    let name = &text[..open];
-    let author = match name.trim() {
-        "" if name.is_empty() => None,
-        "" => return None,
-        author if name.ends_with(' ') && !author.contains(['(', ')']) => Some(author.to_string()),
-        _ => return None,
-    };
-    Some((author, date, &text[close + 1..]))
+    None
+}
+
+/// A name with its percent-spelled parentheses (`%28`, `%29`), backslash
+/// (`%5C`) and `%` (`%25`) read back off, as a fold note writes them;
+/// anything else a `%` starts stays as it is.
+fn unescaped(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        let spelled = match rest.get(at + 1..at + 3) {
+            Some("25") => Some('%'),
+            Some("28") => Some('('),
+            Some("29") => Some(')'),
+            Some("5C") | Some("5c") => Some('\\'),
+            _ => None,
+        };
+        match spelled {
+            Some(c) => out.push(c),
+            None => out.push('%'),
+        }
+        rest = &rest[at + 1 + usize::from(spelled.is_some()) * 2..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `YYYY-MM-DDTHH:MM`, then optional seconds and fraction, then an
@@ -5338,6 +5633,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_comment_body_holding_a_date_keeps_its_author() {
+        // The date is the last parenthesised group of the attribution, not
+        // of the comment's body: `(D2)` in the text names no one.
+        assert_eq!(
+            named("Ana (2026-01-01T00:00:00Z): moved to (2026-02-01T00:00:00Z)"),
+            Some((
+                Some("Ana".to_string()),
+                "2026-01-01T00:00:00Z",
+                ": moved to (2026-02-01T00:00:00Z)"
+            ))
+        );
+        assert_eq!(
+            named("Ana (Legal) (2026-01-01T00:00:00Z): see (2026-02-01T00:00:00Z)"),
+            Some((
+                Some("Ana (Legal)".to_string()),
+                "2026-01-01T00:00:00Z",
+                ": see (2026-02-01T00:00:00Z)"
+            ))
+        );
+    }
+
+    #[test]
     fn even_backslash_runs_move_off_the_pipes_they_shield() {
         // GFM reads an even backslash run before a table row's pipe as
         // escaped backslashes and then the cell separator, but
@@ -5449,12 +5766,22 @@ mod tests {
         for text in [
             "Ana(2026-01-02T03:04Z)",
             " (2026-01-02T03:04Z)",
-            "A (b) (2026-01-02T03:04Z)",
+            "Ad)a (2026-01-02T03:04Z)",
             "Ana (soon)",
             "Ana 2026-01-02T03:04Z",
         ] {
             assert_eq!(named(text), None, "{text}");
         }
+        // The date is the last parenthesised group: an author may hold
+        // parentheses of its own, spelled percent-wise in a fold note.
+        assert_eq!(
+            named("A (b) (2026-01-02T03:04Z)"),
+            Some((Some("A (b)".to_string()), "2026-01-02T03:04Z", ""))
+        );
+        assert_eq!(
+            named("A %28b%29 (2026-01-02T03:04Z)"),
+            Some((Some("A (b)".to_string()), "2026-01-02T03:04Z", ""))
+        );
         assert_eq!(
             attribution("Bo (2026-01-02T03:04:05Z)"),
             Some((Some("Bo".to_string()), "2026-01-02T03:04:05Z"))

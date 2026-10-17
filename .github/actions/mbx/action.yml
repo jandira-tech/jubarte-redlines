@@ -20,18 +20,22 @@ runs:
         version: "1.24.1"
         remote-url: http://mbx-cache:7543
         namespace: jandira-tech/jubarte-redlines
+        # Linked test binaries are the largest outputs by far: with
+        # them cached, one test job left an 84 GiB store and a 79 GiB target
+        # on 2026-10-17, and uploads drained at 1 MB/s. Cache compilations only.
+        cache-links: "false"
     # Every job on a runner builds in the same checkout, so mbx always counts
     # that checkout's managed target as the most recently used and never
     # collects it: on 2026-10-17 three of them reached 69-220 GiB in a few
     # hours and filled the disk the four runners share. Each job now starts
     # from an empty target, restored from the store and the cache server,
-    # and the store keeps to a fixed share of the disk.
+    # and each runner's store keeps to a fixed share of the disk.
     - name: bound mbx's disk use
       shell: bash
       run: |
-        echo "MBX_GC_MAX_TOTAL_SIZE=40GiB" >> "$GITHUB_ENV"
+        echo "MBX_GC_MAX_TOTAL_SIZE=20GiB" >> "$GITHUB_ENV"
         mbx clean --under "$GITHUB_WORKSPACE"
-        MBX_GC_MAX_TOTAL_SIZE=40GiB mbx gc
+        MBX_GC_MAX_TOTAL_SIZE=20GiB mbx gc
     # The Cargo shim puts every `cargo` behind mbx, including the ones
     # scripts, maturin and cargo-llvm-cov start, so steps keep plain `cargo`.
     - name: route cargo through mbx
