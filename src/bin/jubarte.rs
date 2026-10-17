@@ -973,6 +973,8 @@ struct EditJob<'a> {
     target: &'a EditTarget,
     mode: Mode,
     dry_run: bool,
+    /// `--require-change`: refuse when the primary has no document effect.
+    require_change: bool,
     force: bool,
     pdf: bool,
     png: bool,
@@ -1023,13 +1025,23 @@ fn run_edit(
     notes: &[String],
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
+    // Dry run and apply share one preparation path (V2-08): the dry run
+    // prepares and checks the same serialized candidate and stops before
+    // publication.
+    let options = jubarte::edit::PrepareOptions {
+        require_change: job.require_change,
+        ..jubarte::edit::PrepareOptions::default()
+    };
     if job.dry_run {
-        let report = jubarte::edit::preview_plan(source, plan).map_err(|e| refused(&e))?;
+        let report =
+            jubarte::edit::preview_plan_with(source, plan, &options).map_err(|e| refused(&e))?;
         return write_stdout(report.to_jsonl()).map_err(fail);
     }
     // The plan first: a refused plan prints its whole report, whatever the
     // outputs (D15).
-    let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
+    let result = jubarte::edit::prepare(source, plan, &options)
+        .map_err(|e| refused(&e))?
+        .result;
     let dir = match job.target {
         EditTarget::Single(path) => return write_edited(job, path, &result, notes, source, plan),
         EditTarget::Bundle(dir) => dir,
@@ -1859,6 +1871,8 @@ struct EditFlags<'a> {
     operations: &'a [FlagOp],
     options: &'a EditOptions,
     dry_run: bool,
+    /// `--require-change` (`edit` only; `add` passes false).
+    require_change: bool,
     pdf: bool,
     png: bool,
     dpi: f32,
@@ -1917,6 +1931,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
             Mode::Suggesting
         },
         dry_run: flags.dry_run,
+        require_change: flags.require_change,
         force: flags.options.force,
         pdf: flags.pdf,
         png: flags.png,
@@ -3182,6 +3197,7 @@ fn cli_main() -> ExitCode {
             consume,
             options,
             dry_run,
+            require_change,
             pdf,
             png,
             dpi,
@@ -3203,6 +3219,7 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run,
+                require_change,
                 pdf,
                 png,
                 dpi,
@@ -3229,6 +3246,7 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run: false,
+                require_change: false,
                 pdf: false,
                 png: false,
                 dpi: 96.0,
