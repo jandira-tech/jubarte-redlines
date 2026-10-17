@@ -674,29 +674,57 @@ pub fn main_part_is_strict(bytes: &[u8]) -> bool {
     let Ok(mut part) = archive.by_name("word/document.xml") else {
         return false;
     };
-    // The root element's opening tag opens the part, so a bounded prefix is
-    // enough to read the dialect without inflating a huge part.
-    let mut head = Vec::new();
-    if (&mut part).take(64 * 1024).read_to_end(&mut head).is_err() {
-        return false;
+    // The root element's opening tag follows whatever preamble the part
+    // carries — a comment, a DOCTYPE — however long: read until it
+    // appears, bounded by the part's own size, not by a window a long
+    // preamble can push the root past (#561). Only the tail since the
+    // last `<` can still hold the tag, so the head stays small.
+    let mut head: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; 16 * 1024];
+    loop {
+        let Ok(read) = part.read(&mut chunk) else {
+            return false;
+        };
+        if read == 0 {
+            break;
+        }
+        head.extend_from_slice(&chunk[..read]);
+        let window = String::from_utf8_lossy(&head);
+        if let Some((start, _)) = root_open(&window)
+            && window[start..].contains('>')
+        {
+            break;
+        }
+        match head.iter().rposition(|&b| b == b'<') {
+            Some(lt) => {
+                head.drain(..lt);
+            }
+            None => head.clear(),
+        }
     }
     let head = String::from_utf8_lossy(&head);
-    let root_open = head.char_indices().find(|&(i, c)| {
-        c == '<'
-            && head
-                .get(i.saturating_add(1)..)
-                .is_some_and(|rest| rest.starts_with(char::is_alphabetic))
-    });
-    let Some((start, _)) = root_open else {
+    let Some((start, _)) = root_open(&head) else {
         return false;
     };
     let decl = head.split_at(start).1;
     let decl = match decl.find('>') {
         Some(end) => decl.split_at(end).0,
-        // Truncated by the prefix: the declarations it holds still decide.
+        // Truncated by the end of the part: the declarations it holds
+        // still decide.
         None => decl,
     };
     decl.contains(STRICT_MAIN)
+}
+
+/// Where `head` opens its root element: the first `<` an element name
+/// follows (a comment, PI or DOCTYPE `<!`/`<?` opens none).
+fn root_open(head: &str) -> Option<(usize, char)> {
+    head.char_indices().find(|&(i, c)| {
+        c == '<'
+            && head
+                .get(i.saturating_add(1)..)
+                .is_some_and(|rest| rest.starts_with(char::is_alphabetic))
+    })
 }
 
 /// Normalize an ISO/IEC 29500 **Strict** `.docx` to **Transitional**.
@@ -1067,6 +1095,31 @@ mod tests {
             out, strict_pkg,
             "within the default budget the Strict package is rewritten"
         );
+    }
+
+    /// A preamble longer than the old 64 KiB window no longer hides the
+    /// Strict root: the dialect is read from the root's own opening tag,
+    /// wherever in the part it lies (#561 review defect 2).
+    #[test]
+    fn a_long_preamble_does_not_hide_a_strict_root() {
+        let comment = format!("<!--{}-->", "x".repeat(100 * 1024));
+        let package = |uri: &str| {
+            let doc = format!(
+                "<?xml version=\"1.0\"?>\n{comment}<w:document xmlns:w=\"{uri}\"><w:body/></w:document>",
+            );
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            writer.start_file("word/document.xml", options).unwrap();
+            writer.write_all(doc.as_bytes()).unwrap();
+            writer.finish().unwrap().into_inner()
+        };
+        assert!(main_part_is_strict(&package(
+            "http://purl.oclc.org/ooxml/wordprocessingml/main"
+        )));
+        assert!(!main_part_is_strict(&package(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        )));
     }
 
     /// A Transitional package is returned byte-for-byte unchanged (zero-churn).
