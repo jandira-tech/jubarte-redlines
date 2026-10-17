@@ -8,7 +8,7 @@
 mod common;
 
 use common::docx::{docx, para};
-use jubarte::edit::{EditPlan, apply_plan};
+use jubarte::edit::{EditPlan, apply_plan, v2_candidates, v2_select, v2_select_all};
 use jubarte::inspect::paragraphs;
 
 fn source() -> Vec<u8> {
@@ -136,4 +136,56 @@ fn occurrence_without_an_anchor_is_an_invalid_edit() {
         assert_eq!(e.code, "INVALID_EDIT", "{op}");
         assert!(e.message.contains("occurrence"), "{op}: {}", e.message);
     }
+}
+
+/// The v2 rules for a literal anchor with several, overlapping candidates
+/// (jubarte-edit-implementation-plan.md §5). v1 plan matching keeps its
+/// own versioned behavior; the v2 functions are exact-text only.
+#[test]
+fn overlapping_literal_candidates_are_counted_and_batch_refused() {
+    // Every exact start position counts, overlapping ones included.
+    assert_eq!(v2_candidates("aaa", "aa"), [(0, 2), (1, 3)]);
+
+    // Unqualified: refused with the candidate count, no range chosen.
+    let e = v2_select("aaa", "aa", None).unwrap_err();
+    assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
+    assert!(
+        e.message.contains("occurs 2 times") && e.message.contains("set \"occurrence\" to 1..=2"),
+        "{}",
+        e.message
+    );
+
+    // An occurrence selects the corresponding range; replacing it with "X"
+    // in the paragraph text gives the planned result.
+    let replaced = |occurrence: usize| {
+        let (start, end) = v2_select("aaa", "aa", Some(occurrence)).unwrap();
+        format!("{}X{}", &"aaa"[..start], &"aaa"[end..])
+    };
+    assert_eq!(replaced(1), "Xa");
+    assert_eq!(replaced(2), "aX");
+
+    // all-matches at the complete count still refuses: the two ranges
+    // overlap, and no disjoint subset is applied.
+    let e = v2_select_all("aaa", "aa", 2).unwrap_err();
+    assert_eq!(e.code, "OVERLAPPING_EDITS");
+    assert!(e.message.contains("occurs 2 times"), "{}", e.message);
+
+    // Non-overlapping candidates at the complete count all match.
+    assert_eq!(
+        v2_select_all("a-a-a", "a", 3).unwrap(),
+        [(0, 1), (2, 3), (4, 5)]
+    );
+    // A wrong expected count refuses with the real candidate count.
+    let e = v2_select_all("a-a-a", "a", 2).unwrap_err();
+    assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
+    assert!(e.message.contains("occurs 3 times"), "{}", e.message);
+
+    // v1 plan matching is unchanged: it counts overlapping candidates the
+    // same way and an occurrence still picks one under its own rules.
+    let plan = plan(
+        r#"[{"kind":"replace","paragraph":"p0","find":"aa","occurrence":2,"replacement":"X"}]"#,
+    );
+    let out = apply_plan(&docx(&para("aaa")), &plan).unwrap();
+    assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "aX");
+    assert_eq!(out.report.operations[0].matches, 2);
 }
