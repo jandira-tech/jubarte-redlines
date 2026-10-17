@@ -389,6 +389,33 @@ type Cover = ((usize, usize), usize, usize);
 /// after it, its earliest covering start, its latest covering end.
 type Run = (usize, usize, usize);
 
+// Closer-search steps counted on this thread, for the tests: every
+// iteration of a loop below that walks the source text or a closer index
+// (the per-pass builders in `Closers::new`, `field_ends` and
+// `destination_ends`, and every closer lookup) counts its steps, so the
+// linear-time tests bound the work by a count instead of the clock. Per
+// thread, so tests running side by side do not disturb each other's
+// count. A scan that reintroduced the rest of the text per opener would
+// count that text and fail the bound.
+#[cfg(test)]
+thread_local! {
+    static CLOSER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count `steps` closer-search steps. Test-only; an empty inline function
+/// in production builds, so the runtime cost is zero.
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[inline]
+fn count_closer_steps(steps: usize) {
+    CLOSER_STEPS.with(|count| count.set(count.get() + steps));
+}
+
+#[cfg(not(test))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[inline]
+fn count_closer_steps(_steps: usize) {}
+
 /// Where every unescaped closer and separator sits in the source, found once
 /// so that an opener without its closer does not scan the rest of the text,
 /// and the parts Markdown reads literally.
@@ -428,7 +455,10 @@ impl<'a> Closers<'a> {
         let positions: [Vec<usize>; 6] = patterns.map(|pattern| {
             source
                 .match_indices(pattern)
-                .map(|(at, _)| at)
+                .map(|(at, _)| {
+                    count_closer_steps(1);
+                    at
+                })
                 // A closer behind an odd run of backslashes is Markdown's
                 // escape, but never one inside a code fence: there the
                 // reader breaks every literal delimiter itself, so a bare
@@ -448,7 +478,10 @@ impl<'a> Closers<'a> {
         let openers = |open: &str| -> Vec<usize> {
             source
                 .match_indices(open)
-                .map(|(at, _)| at)
+                .map(|(at, _)| {
+                    count_closer_steps(1);
+                    at
+                })
                 .filter(|&at| !escaped(source, at) && literal.verbatim_end(at).is_none())
                 .collect()
         };
@@ -479,6 +512,7 @@ impl<'a> Closers<'a> {
                 std::collections::VecDeque::new();
             let mut s = 0;
             for &pos in positions {
+                count_closer_steps(1);
                 while s < nested.len() && nested[s].0 <= pos {
                     open.push_back(nested[s]);
                     s += 1;
@@ -500,12 +534,14 @@ impl<'a> Closers<'a> {
             let mut run = vec![None; positions.len()];
             let mut i = 0;
             while i < positions.len() {
+                count_closer_steps(1);
                 let Some((_, mut first, mut last)) = covered[i] else {
                     i += 1;
                     continue;
                 };
                 let mut j = i + 1;
                 while j < positions.len() {
+                    count_closer_steps(1);
                     let Some((_, f, l)) = covered[j] else { break };
                     first = first.min(f);
                     last = last.max(l);
@@ -522,10 +558,16 @@ impl<'a> Closers<'a> {
 
         let bytes = source.as_bytes();
         let marks = (0..bytes.len())
-            .filter(|&at| bytes[at..].starts_with(b"==") && mark_closes(source, &literal, at))
+            .filter(|&at| {
+                count_closer_steps(1);
+                bytes[at..].starts_with(b"==") && mark_closes(source, &literal, at)
+            })
             .collect();
         let blanks = (0..bytes.len())
-            .filter(|&at| bytes[at..].starts_with(b"\n\n"))
+            .filter(|&at| {
+                count_closer_steps(1);
+                bytes[at..].starts_with(b"\n\n")
+            })
             .collect();
         let fields = field_ends(source, &literal);
         Self {
@@ -585,6 +627,7 @@ impl<'a> Closers<'a> {
             }
             at = at.max(closers.partition_point(|&c| c <= opener));
             let close_at = loop {
+                count_closer_steps(1);
                 let Some(&c) = closers.get(at) else {
                     break None;
                 };
@@ -611,6 +654,7 @@ impl<'a> Closers<'a> {
 
     /// The first `pattern` that lies whole in `from..until`.
     fn find(&self, pattern: &str, from: usize, until: usize) -> Option<usize> {
+        count_closer_steps(1);
         let slot = self.patterns.iter().position(|p| *p == pattern)?;
         let positions = &self.positions[slot];
         let at = *positions.get(positions.partition_point(|&at| at < from))?;
@@ -628,6 +672,7 @@ impl<'a> Closers<'a> {
         let positions = &self.positions[slot];
         let mut at = positions.partition_point(|&pos| pos < from);
         loop {
+            count_closer_steps(1);
             let pos = *positions.get(at)?;
             if pos + pattern.len() > until {
                 return None;
@@ -656,6 +701,7 @@ impl<'a> Closers<'a> {
     /// Where the paragraph `from` lies in ends: at its blank line, or at
     /// `until` if that comes first.
     fn paragraph_end(&self, from: usize, until: usize) -> usize {
+        count_closer_steps(1);
         self.blanks
             .get(self.blanks.partition_point(|&at| at < from))
             .filter(|&&at| at + 2 <= until)
@@ -899,6 +945,7 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
         // before, and whether `](` did.
         let (mut bracket, mut opened) = (false, false);
         for (i, c) in line.char_indices() {
+            count_closer_steps(1);
             let at = line_start + i;
             if opened {
                 starts.push(at);
@@ -920,6 +967,7 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
         let mut nearest = std::collections::HashMap::new();
         let mut starts = starts.iter().rev().peekable();
         for &(at, before, after) in levels.iter().rev() {
+            count_closer_steps(1);
             nearest.insert(after, at);
             if starts.next_if(|&&s| s == at).is_some()
                 && let Some(&end) = nearest.get(&(before - 1))
@@ -1429,6 +1477,7 @@ fn field_at(
     until: usize,
 ) -> Option<(std::ops::Range<usize>, usize)> {
     let code = field_code(source, at, until)?;
+    count_closer_steps(1);
     let end = *closers.fields.get(&at)?;
     (end + FIELD_END.len() <= until).then_some((code, end))
 }
@@ -1446,6 +1495,7 @@ fn field_ends(source: &str, literal: &Literal) -> std::collections::HashMap<usiz
     let mut open: Vec<usize> = Vec::new();
     let mut i = 0;
     while i < source.len() {
+        count_closer_steps(1);
         if let Some(skip) = literal.verbatim_end(i) {
             i = skip;
         } else if literal.in_fence(i) {
@@ -1519,6 +1569,7 @@ fn mark_close(source: &str, closers: &Closers<'_>, at: usize, until: usize) -> O
     let end = closers.paragraph_end(at + 2, until);
     let from = at + 2 + source[at + 2..].chars().next().map_or(1, char::len_utf8);
     let marks = &closers.marks;
+    count_closer_steps(1);
     let close = *marks.get(marks.partition_point(|&close| close < from))?;
     (close + 2 <= end).then_some(close)
 }
@@ -2105,14 +2156,31 @@ mod tests {
         );
     }
 
+    /// [`encode`] with the closer-search steps it took: the builders in
+    /// [`Closers::new`] walk the source once each and every lookup is a
+    /// step, so a linear encode stays within a small constant times the
+    /// input, while a search that rescans the rest of the text per
+    /// opener counts that text and crosses any such bound.
+    fn encode_counted(source: &str) -> (String, usize) {
+        CLOSER_STEPS.with(|steps| steps.set(0));
+        let out = encode(source);
+        (out, CLOSER_STEPS.with(|steps| steps.get()))
+    }
+
     #[test]
     fn unclosed_openers_encode_in_linear_time() {
         // Every opener once scanned the rest of the text for its closer.
+        // #1083: a loaded runner crossed the 2 s wall-clock bound this
+        // test once asserted with no regression in sight, so the bound
+        // is a count of closer-search steps, not a time.
         let source = "{++ {-- {~~ {== {>> ~> ".repeat(40_000);
-        let started = std::time::Instant::now();
-        assert_eq!(encode(&source), source);
-        let elapsed = started.elapsed();
-        assert!(elapsed.as_secs() < 2, "took {elapsed:?}");
+        let (out, steps) = encode_counted(&source);
+        assert_eq!(out, source);
+        assert!(
+            steps <= 16 * source.len(),
+            "{steps} closer-search steps for {} bytes: an opener rescans the text",
+            source.len()
+        );
     }
 
     #[test]
@@ -2125,10 +2193,12 @@ mod tests {
             format!("{}{{/}}", "{PAGE}a ".repeat(6_000)),
             "==a ".repeat(6_000),
         ] {
-            let started = std::time::Instant::now();
-            encode(&source);
-            let elapsed = started.elapsed();
-            assert!(elapsed.as_secs() < 2, "{source:.12}: took {elapsed:?}");
+            let (_, steps) = encode_counted(&source);
+            assert!(
+                steps <= 16 * source.len(),
+                "{source:.12}: {steps} closer-search steps for {} bytes: a search rescans its line or paragraph",
+                source.len()
+            );
         }
     }
 
