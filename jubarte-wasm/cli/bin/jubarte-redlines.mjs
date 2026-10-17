@@ -442,6 +442,11 @@ function runEdit(verb, file, o) {
   if (o.consume && !o.dry_run) {
     try {
       planFd = fs.openSync(o.plan, (fs.constants.O_NOFOLLOW ?? 0) | fs.constants.O_RDONLY);
+      // Windows has no O_NOFOLLOW: there the open follows a link, so the
+      // name is checked after it, and the refusal is the one ELOOP gives.
+      if (fs.constants.O_NOFOLLOW === undefined && fs.lstatSync(o.plan).isSymbolicLink()) {
+        throw Object.assign(new Error("symbolic link"), { code: "ELOOP" });
+      }
       consumed = fs.readFileSync(planFd);
     } catch (e) {
       if (planFd !== undefined) try { fs.closeSync(planFd); } catch {}
