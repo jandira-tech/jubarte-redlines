@@ -2342,7 +2342,29 @@ mod generator {
         assert_eq!(run(&s, &q).unwrap_err().code, "WORKING_BASE_CHANGED");
     }
 
-    fn regenerate_stale_rows(s: &[u8], q: &Value, ids: &str, expected: &[&str]) {
+    fn arguments<'a>(argv: &[&'a str], flag: &str) -> Vec<&'a str> {
+        let mut args = argv.iter().copied();
+        let mut values = Vec::new();
+        while let Some(arg) = args.next() {
+            let (key, value) = arg
+                .split_once('=')
+                .unwrap_or_else(|| (arg, args.next().expect("flag must have a value")));
+            if key == flag {
+                values.push(value);
+            }
+        }
+        values
+    }
+
+    #[test]
+    fn arguments_keeps_equals_values_separate_from_following_flags() {
+        let argv = ["--author=John=Doe", "--expect-sha256", "digest"];
+        assert_eq!(arguments(&argv, "--author"), ["John=Doe"]);
+        assert_eq!(arguments(&argv, "--expect-sha256"), ["digest"]);
+        assert!(arguments(&argv, "--track").is_empty());
+    }
+
+    fn regenerate_stale_rows(s: &[u8], q: &Value, ids: &str, expected: &[&str]) -> Value {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("source ' $(literal).docx");
         let plan_path = dir.path().join("edits ; draft.json");
@@ -2380,12 +2402,6 @@ mod generator {
             .unwrap_or_default();
         assert_eq!(actions.len(), 1, "{error}");
         let action = &actions[0];
-        assert!(
-            action
-                .get("prerequisites")
-                .is_none_or(|p| p.as_array().unwrap().is_empty())
-        );
-        assert!(action["purpose"].as_str().unwrap().contains("only"));
         let argv: Vec<_> = action["argv"]
             .as_array()
             .unwrap()
@@ -2397,14 +2413,7 @@ mod generator {
             Path::new(argv[3]).canonicalize().unwrap(),
             input.canonicalize().unwrap()
         );
-        let flags: Vec<_> = argv[4..].windows(2).collect();
-        let arguments = |flag| {
-            flags
-                .iter()
-                .filter(|pair| pair[0] == flag)
-                .map(|pair| pair[1])
-                .collect::<Vec<_>>()
-        };
+        let arguments = |flag| arguments(&argv[4..], flag);
         assert_eq!(arguments("--select"), [ids]);
         for (key, flag) in [("accept", "--accept-change"), ("reject", "--reject-change")] {
             let decisions: Vec<_> = q["resolve_revisions"][key]
@@ -2418,6 +2427,30 @@ mod generator {
         assert_eq!(
             arguments("--existing-revisions"),
             [q["policy"]["existing_revisions"].as_str().unwrap()]
+        );
+        let policy_index = argv
+            .iter()
+            .position(|arg| *arg == "--existing-revisions")
+            .unwrap();
+        let author = format!("--author={}", q["author"].as_str().unwrap());
+        assert_eq!(
+            &argv[policy_index..argv.len() - 2],
+            [
+                "--existing-revisions",
+                q["policy"]["existing_revisions"].as_str().unwrap(),
+                "--track",
+                q["policy"]["track"].as_str().unwrap(),
+                &author,
+                "--datetime",
+                q["date"].as_str().unwrap(),
+                "--expect-sha256",
+                q["source"]["sha256"].as_str().unwrap(),
+            ]
+        );
+        assert_eq!(arguments("--author"), [q["author"].as_str().unwrap()]);
+        assert_eq!(
+            arguments("--expect-sha256"),
+            [q["source"]["sha256"].as_str().unwrap()]
         );
         assert!(
             !argv
@@ -2462,6 +2495,7 @@ mod generator {
             "previous recovery"
         );
         assert!(!output.exists());
+        action.clone()
     }
 
     #[test]
@@ -2473,13 +2507,18 @@ mod generator {
             para("Last.")
         ));
         let mut q = generate(&s, &["--author=-Reviewer"]);
+        q["operations"][0]["text"] = json!("Authored payment terms");
         q["resolve_revisions"]["reject"] = json!([
             {"short_id":"r6","long_id":"document.w:del.w:id.6"}, r(7)
         ]);
         q["resolve_revisions"]["accept"] = json!([r(8)]);
         for policy in ["keep", "accept", "refuse"] {
             q["policy"]["existing_revisions"] = json!(policy);
-            regenerate_stale_rows(&s, &q, "p0", &["Payment is due within 30 days."]);
+            let action = regenerate_stale_rows(&s, &q, "p0", &["Payment is due within 30 days."]);
+            assert_eq!(
+                action["purpose"],
+                "regenerate a new plan containing only the stale rows with their current working text; the original plan file is not changed; merge those rows into the original plan by hand"
+            );
         }
     }
 
@@ -2503,7 +2542,46 @@ mod generator {
         q["policy"]["existing_revisions"] = json!("reject");
         let duplicate = q["operations"][0].clone();
         q["operations"].as_array_mut().unwrap().push(duplicate);
-        regenerate_stale_rows(&s, &q, "p2,p3", &["", ""]);
+        let action = regenerate_stale_rows(&s, &q, "p2,p3", &["", ""]);
+        assert_eq!(
+            action["prerequisites"],
+            json!([format!(
+                "the source file must still have the plan's recorded sha256 {} (--expect-sha256)",
+                q["source"]["sha256"].as_str().unwrap()
+            )])
+        );
+    }
+
+    #[test]
+    fn working_base_changed_regenerates_story_qualified_header_rows() {
+        use common::docx::{Part, docx_with_sect};
+        let header = format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}<w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p></w:hdr>"#,
+            para("Header"),
+            insertion(7, "First"),
+            insertion(8, "Second"),
+            insertion(9, "Third")
+        );
+        let s = docx_with_sect(
+            &para("Body"),
+            &[Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            }],
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+        );
+        let mut q = generate(&s, &["--story", "header1", "--author=John=Doe"]);
+        q["resolve_revisions"]["reject"] = json!(
+            (7..=9)
+                .map(|n| json!({
+                    "short_id": format!("header1.r{n}"),
+                    "long_id": format!("header1.w:ins.w:id.{n}")
+                }))
+                .collect::<Vec<_>>()
+        );
+        regenerate_stale_rows(&s, &q, "header1.p1,header1.p2,header1.p3", &["", "", ""]);
     }
     #[test]
     fn unrepresentable_and_removed_rows_are_inventory_not_rewrites() {

@@ -166,9 +166,16 @@ fn regeneration_action(
         "-o".into(),
         absolute(&output),
     ]);
-    Some(NextAction::new(argv).with_purpose(
-        "regenerate replacements for only the stale rows; deliberately incorporate them into the original plan without overwriting authored desired text",
-    ))
+    Some(
+        NextAction::new(argv)
+            .with_prerequisites(vec![format!(
+                "the source file must still have the plan's recorded sha256 {} (--expect-sha256)",
+                plan.source.sha256
+            )])
+            .with_purpose(
+                "regenerate a new plan containing only the stale rows with their current working text; the original plan file is not changed; merge those rows into the original plan by hand",
+            ),
+    )
 }
 
 /// Read, bind and evaluate the optional expectation contract on the
