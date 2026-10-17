@@ -8,7 +8,9 @@
 //! as they were: Demo.docx's thin black grid, 25f1d6ecc3's in automatic
 //! colour, 5331b981b7's 0.25pt table with 1pt grey cells. Only a table that
 //! names nothing, a plain Markdown table, takes Word's thin grid (Table
-//! Grid, as Insert Table makes it).
+//! Grid, as Insert Table makes it), and a plain Markdown table reads as
+//! the table it is: cells that hold only backslashes are table cells, not
+//! a hard break that turns the table into a paragraph.
 
 mod common;
 
@@ -154,6 +156,80 @@ fn a_markdown_table_takes_words_thin_grid() {
     assert_eq!(table_styles(&document), [Some("TableGrid".to_string())]);
     assert_eq!(table_borders(&document), [None]);
     assert!(thin_grid(&part(&written, "word/styles.xml")));
+}
+
+/// A pipe table whose cells hold only backslashes reads as the table it
+/// is (#548's defect 3, still open in #588): pulldown-cmark takes a run
+/// of an odd number of backslashes at a row's end for a hard break
+/// before it looks for the delimiter row, so `| \` over `|---|` came
+/// back a paragraph that opens `\|`. The run moves off the row's end by
+/// a space, which is not a cell's text, so the cells hold their
+/// backslashes and the view is a fixed point, as the rows the reader
+/// writes (`|\\|`) always were.
+#[test]
+fn a_table_whose_cells_hold_only_backslashes_stays_a_table() {
+    let single = write("| \\\n|---|\n| a |\n");
+    let document = part(&single, "word/document.xml");
+    assert_eq!(document.matches("<w:tbl>").count(), 1, "{document}");
+    assert!(
+        document.contains("<w:t xml:space=\"preserve\">\\</w:t>"),
+        "{document}"
+    );
+    let first = view(&single);
+    assert!(first.contains("|\\\\|\n|-|\n"), "{first}");
+    assert_eq!(view(&write(&first)), first);
+
+    let pair = write("| \\\\| \\\n|---|---|\n| a | b |\n");
+    let document = part(&pair, "word/document.xml");
+    assert_eq!(document.matches("<w:tbl>").count(), 1, "{document}");
+    assert_eq!(
+        document
+            .matches("<w:t xml:space=\"preserve\">\\</w:t>")
+            .count(),
+        2,
+        "{document}"
+    );
+    let first = view(&pair);
+    assert!(first.contains("|\\\\|\\\\|\n|-|-|\n"), "{first}");
+    assert_eq!(view(&write(&first)), first);
+}
+
+#[test]
+fn backslash_table_headers_preserve_cell_text_and_reach_a_fixed_point() {
+    for run in 1usize..=6 {
+        for indent in ["", " ", "  ", "   "] {
+            for newline in ["\n", "\r\n"] {
+                // The first cell ends at a separator; the last has no
+                // closing pipe and ends at the line ending instead.
+                let header = format!("|{}| {}", "\\".repeat(2 * run), "\\".repeat(run));
+                let source =
+                    format!("{indent}{header}{newline}{indent}|---|---|{newline}{indent}|a|b|");
+                let written = write(&source);
+                let document = part(&written, "word/document.xml");
+                assert_eq!(
+                    document.matches("<w:tbl>").count(),
+                    1,
+                    "{source:?}: {document}"
+                );
+                let first = view(&written);
+                let expected = format!(
+                    "|{}|{}|\n|-|-|\n|a|b|",
+                    "\\".repeat(2 * run),
+                    "\\".repeat(2 * run.div_ceil(2))
+                );
+                assert!(first.contains(&expected), "{source:?}: {first}");
+                assert_eq!(view(&write(&first)), first, "{source:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn backslash_cells_under_plain_headers_keep_their_text() {
+    let source = "|a|b|\n|-|-|\n|\\\\|\\\\\\\\|\n";
+    let first = view(&write(source));
+    assert!(first.contains(source.trim_end()), "{first}");
+    assert_eq!(view(&write(&first)), first);
 }
 
 #[test]
