@@ -2700,7 +2700,7 @@ impl Writer<'_> {
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
             } else if code_block {
                 list.reset();
-                blocks.push_paragraph("", &fenced(&inline.render(false)), false, edges);
+                blocks.push_paragraph("", &fenced(&inline.render_code()), false, edges);
             } else {
                 list.reset();
                 let text = self.block_text(&inline.render(true));
