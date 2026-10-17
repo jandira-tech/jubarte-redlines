@@ -229,8 +229,8 @@ pub struct Context {
     pub matched: String,
     /// Text after the matched span (bounded).
     pub after: String,
-    /// `true` when `before` or `after` was bounded; the actual context
-    /// continues past the shown window.
+    /// `true` when `before`, `matched` or `after` was bounded; the actual
+    /// context continues past the shown window.
     pub truncated: bool,
 }
 
