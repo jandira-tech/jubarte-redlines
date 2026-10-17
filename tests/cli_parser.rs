@@ -2517,6 +2517,21 @@ fn action_names_remain_legacy_filenames_with_v1_flags() {
 }
 
 #[test]
+fn replace_help_explains_all_matches_overlap_refusal() {
+    let error = Cli::try_parse_from(["jubarte", "edit", "replace", "--help"]).unwrap_err();
+    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+    let help = error.to_string();
+    let text = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        text.contains(
+            "--all-matches Replace every candidate; refuses when any two candidates overlap. Requires --expect-count"
+        ),
+        "{help}"
+    );
+    assert!(!help.contains("nonoverlapping"), "{help}");
+}
+
+#[test]
 fn typed_edit_help_and_facade_use_the_public_route() {
     let help = Cli::try_parse_from(["jubarte", "edit", "replace", "--help"])
         .unwrap_err()

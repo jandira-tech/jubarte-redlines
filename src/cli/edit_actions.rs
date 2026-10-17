@@ -42,7 +42,7 @@ pub enum EditAction {
         /// 1-based exact match, including overlapping candidate starts.
         #[arg(long, value_parser = positive, conflicts_with = "all_matches")]
         occurrence: Option<usize>,
-        /// Replace every nonoverlapping candidate; requires --expect-count.
+        /// Replace every candidate; refuses when any two candidates overlap. Requires --expect-count.
         #[arg(long, requires = "expect_count")]
         all_matches: bool,
         /// Required complete candidate count for --all-matches.
