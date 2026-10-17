@@ -26,6 +26,7 @@ categories = ["text-processing", "parser-implementations", "command-line-utiliti
 # jubarte-app/…/node_modules etc.
 include = [
   "/src/**",
+  "/schemas/**",
   "/assets/fonts/**",
   "/benches/**",
   "/Cargo.toml",
@@ -154,6 +155,8 @@ name = "cli_flags"
 required-features = ["cli"]
 
 [dev-dependencies]
+# Independent Draft 2020-12 conformance checks; no remote retrieval in tests.
+jsonschema = { version = "0.59", default-features = false }
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
