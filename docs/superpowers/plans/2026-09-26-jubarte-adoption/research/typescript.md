@@ -6,19 +6,6 @@
 > edit/diff WASM exports shipped (bf1e0b21); there is still no JS facade
 > or worker. See CHANGELOG [0.10.1]/[Unreleased]. The recommendations
 > below stand as written.
->
-> **ID contract (2026-10-17, `aba48bd5`):** the settled identity grammar
-> is
-> [`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`](../../../specs/2026-10-17-short-and-long-id-contract.md)
-> (v3, `jubarte.ids/2`, schema 2), merged with its review and
-> implementation plan in `4612a155` (PR #570) and **not yet implemented**.
-> The `getRevisions` record quoted below (`type`, `part`, `moveGroupId`,
-> `isMoveSource`, `formatChange`) is still the live legacy wire shape.
-> Under the contract every new structured result carries a
-> `short_id`/`long_id` pair per document reference, and bindings pass
-> Rust's pair through rather than constructing IDs (contract §8); the
-> schema-1 records (`id`/`ref`/`at` fields, `schema_version: 1` plans and
-> snapshots) are retired in one cutover, not aliased.
 
 Prepared 2026-09-26; source inspected, no Cargo commands or source edits performed. Recommendations describe new APIs, not exports already available. The root checkout has unrelated uncommitted comparer/test changes, which must be preserved. Memory lookup had no relevant results.
 
@@ -37,7 +24,7 @@ pdfPageCount(pdf: Uint8Array): number;
 initPanicHook(): void;
 ```
 
-Node is CommonJS and initializes immediately; browser ESM requires `await init()`. `pdfPageCount` returns 0 for unreadable input and does not perform strict validation. `getRevisions` returns JSON with `type`, `author`, `date`, `part`, `moveGroupId`, `isMoveSource`, `formatChange`, and `text`; enum values are `Inserted`, `Deleted`, `Moved`, `FormatChanged`. Author/date/text use empty strings for absent fields. `formatChange` is null or `{ changedProperties: string[] }`. Preserve these legacy contracts. It is also the schema-1 record shape: the contract's schema-2 change record uses `kind`, a paired `short_id`/`long_id` per reference and named move fields (the implementation plan's task 7 spells `move_name`/`move_side` and removes `id`/`ref`), so a typed revision surface changes with the cutover rather than beside it.
+Node is CommonJS and initializes immediately; browser ESM requires `await init()`. `pdfPageCount` returns 0 for unreadable input and does not perform strict validation. `getRevisions` returns JSON with `type`, `author`, `date`, `part`, `moveGroupId`, `isMoveSource`, `formatChange`, and `text`; enum values are `Inserted`, `Deleted`, `Moved`, `FormatChanged`. Author/date/text use empty strings for absent fields. `formatChange` is null or `{ changedProperties: string[] }`. Preserve these legacy contracts.
 
 `docxToPdf` actually already accepts revision style and palette although the npm README's API table still lists only a single argument. `src/convert/mod.rs` also has `docx_to_pdf_report -> ConvertedPdf { pdf, font_report }`; bindings do not expose this report yet. This is a small, valuable extension, not a reason to rebuild the renderer.
 
@@ -55,7 +42,7 @@ Scores are planning judgment, not measured probabilities. Feasibility assumes th
 |---|---:|---:|---|
 | Add typed options-object facade and typed revisions over existing WASM | 0.98 | 0.98 | First; old imports/signatures remain unchanged; generated definitions pass consumer type tests |
 | Add worker-backed asynchronous Node/browser clients with bounded queues | 0.91 | 0.96 | Next; CPU work stays off event loop, lifecycle/abort/queue behavior tested |
-| Add canonical inspect/edit protocol shared with Python and CLI | 0.84 | 0.98 | After core edit semantics; JS does not reimplement XML transformations; the protocol is the schema-2 paired-ID wire of the 2026-10-17 contract, not yet implemented |
+| Add canonical inspect/edit protocol shared with Python and CLI | 0.84 | 0.98 | After core edit semantics; JS does not reimplement XML transformations |
 | Expose typed conversion report, font substitutions, engine/capability metadata | 0.96 | 0.94 | Small extension; makes fidelity limitations visible and reproducible |
 | Add structured error codes at the Rust service boundary | 0.91 | 0.95 | Before stable agent-facing API; preserve legacy string throws in old exports |
 | Publish/test packed npm artifacts with trusted publishing | 0.94 | 0.98 | Before launch; tests consume actual `.tgz`, not workspace paths |
@@ -99,8 +86,6 @@ export interface FullApi extends RedlineApi {
   pageCount(pdf: Uint8Array): number;
 }
 ```
-
-`Revision` deliberately mirrors the schema-1 `getRevisions` record this facade wraps. At the schema-2 cutover the typed record switches to the paired-reference DTO — `short_id`/`long_id` per document reference, `kind`, `move_name`/`move_side` in place of `moveGroupId`/`isMoveSource` — as part of the same versioned API change, not as a second field set.
 
 Defaults deliberately match Rust/legacy exports: PDF compression false and conventional revision coloring. The quickstart can explicitly opt into compression and Word coloring. Do not silently use wall-clock timestamps: existing comparer default is the epoch and `compare_documents_with_options` already supports caller-specified dates. A new shared `CompareOptions` revision should add an explicit RFC3339 date and named `word`/`powertools` preset after those options are wired through the Rust boundary. Do not expose internal tuning fields such as `in_stamp_residual`.
 
@@ -244,7 +229,7 @@ Stage 2 worker client:
 Stage 3 shared boundary enrichment:
 
 - Modify `jubarte-wasm/src/lib.rs`: additive typed service/options/error/report exports; leave original exports intact.
-- Create `jubarte-wasm/src/service.rs`: Rust-only adapter DTO conversion to shared core service; avoid serializing internal DOMs. Under the contract these DTOs are the paired `short_id`/`long_id` records; the JS side passes them through and never constructs a long ID (contract §8).
+- Create `jubarte-wasm/src/service.rs`: Rust-only adapter DTO conversion to shared core service; avoid serializing internal DOMs.
 - Modify `jubarte-wasm/Cargo.toml`: serde/serde-wasm-bindgen only if chosen service representation requires them; no JS-only editing logic.
 - Modify new TS public types/facade/error modules with compare date/presets, inspection/edit protocol and font report after Rust tests pass.
 

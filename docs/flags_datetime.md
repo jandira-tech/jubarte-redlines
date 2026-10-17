@@ -34,14 +34,13 @@ Read, edit, compare and render Word documents
 | `--revision-palette` |  | <SPEC> |  |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
 | `--move-comments` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
-| `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
 | `--track-changes` |  | <CHOICE> |  | all, accept, reject | hidden; under "Read options"; conflicts --json --tables | Tracked changes inline (all, the default), or the text with every change accepted or rejected; the id lines then list what changed |
 | `--comments` |  | <MODE> | inline | inline, none | hidden; under "Read options"; conflicts --json --tables | Comments inline (default) or hidden, with their ids on the id line of the paragraph that holds them |
 | `--dates` |  |  | false |  | hidden; under "Read options"; conflicts --json --tables | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
 | `--no-page-markers` |  |  | false |  | hidden; under "Read options"; conflicts --json --tables | Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of M -->` lines |
-| `-p, --paragraphs` |  | <SPEC> |  |  | hidden; under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`) |
+| `-p, --paragraphs` |  | <SPEC> |  |  | hidden; under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
 | `--head` |  | <N> |  |  | hidden; under "Read options"; conflicts --changed --paragraphs --tables --tail | Only the first N blocks (a table is one block) |
 | `--tail` |  | <N> |  |  | hidden; under "Read options"; conflicts --changed --head --paragraphs --tables | Only the last N blocks |
 | `--changed` |  |  | false |  | hidden; under "Read options"; conflicts --head --paragraphs --tables --tail | Only the blocks with a tracked change or a comment |
@@ -74,14 +73,13 @@ Compare documents: print the redline as the agent view, or write it with -o
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
-| `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
 | `--track-changes` |  | <CHOICE> |  | all, accept, reject | under "Read options"; conflicts --json --tables | Tracked changes inline (all, the default), or the text with every change accepted or rejected; the id lines then list what changed |
 | `--comments` |  | <MODE> | inline | inline, none | under "Read options"; conflicts --json --tables | Comments inline (default) or hidden, with their ids on the id line of the paragraph that holds them |
 | `--dates` |  |  | false |  | under "Read options"; conflicts --json --tables | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
 | `--no-page-markers` |  |  | false |  | under "Read options"; conflicts --json --tables | Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of M -->` lines |
-| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`) |
+| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
 | `--head` |  | <N> |  |  | under "Read options"; conflicts --changed --paragraphs --tables --tail | Only the first N blocks (a table is one block) |
 | `--tail` |  | <N> |  |  | under "Read options"; conflicts --changed --head --paragraphs --tables | Only the last N blocks |
 | `--changed` |  |  | false |  | under "Read options"; conflicts --head --paragraphs --tables --tail | Only the blocks with a tracked change or a comment |
@@ -116,7 +114,6 @@ Accept all tracked changes, or select by ID, author or kind
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
-| `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
@@ -137,7 +134,6 @@ Reject all tracked changes, or select by ID, author or kind
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
-| `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
@@ -168,12 +164,10 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `--tracking` |  | <SWITCH> |  | on, off |  | Markdown to Word: turn Word's Track Changes on or off in the .docx written, whatever the Markdown's `track_changes:` key says [default: the key; without one, the --reference-doc's setting, else off] |
 | `--scholar` |  |  | false |  |  | Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern Roman 10pt on 12pt lines, justified, bold headings) and number its pages from page 2, centered in the footer. The front matter's own `styles:` entries, headers and footers win |
 | `--no-page-markers` |  |  | false |  |  | Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them |
-| `--commonmark` |  |  | false |  |  | Word to Markdown: write plain CommonMark with CriticMarkup for readers outside jubarte's dialect, instead of the agent view (`jubarte read`'s YAML header and id lines). Fields print as their text, and underline, highlight and strike are left out |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
-| `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
 | `--fail-on-substitution` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Exit 4 when a requested font was substituted (listed on stderr and in --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a requested font was substituted |
@@ -215,7 +209,7 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 | `--comments` |  | <MODE> | inline | inline, none | under "Read options"; conflicts --json --tables | Comments inline (default) or hidden, with their ids on the id line of the paragraph that holds them |
 | `--dates` |  |  | false |  | under "Read options"; conflicts --json --tables | Timestamps on the notes of an author whose changes do not all share one (the header shows an author's single timestamp) |
 | `--no-page-markers` |  |  | false |  | under "Read options"; conflicts --json --tables | Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of M -->` lines |
-| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`) |
+| `-p, --paragraphs` |  | <SPEC> |  |  | under "Read options"; conflicts --changed --head --tables --tail | Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated |
 | `--head` |  | <N> |  |  | under "Read options"; conflicts --changed --paragraphs --tables --tail | Only the first N blocks (a table is one block) |
 | `--tail` |  | <N> |  |  | under "Read options"; conflicts --changed --head --paragraphs --tables | Only the last N blocks |
 | `--changed` |  |  | false |  | under "Read options"; conflicts --head --paragraphs --tables --tail | Only the blocks with a tracked change or a comment |
@@ -226,7 +220,7 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 
 ## jubarte edit
 
-Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (refusal: exit 3)
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
@@ -239,8 +233,8 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--delete` |  |  |  |  | append | Delete the anchor, or the whole paragraph (or comment) without one |
 | `--resolve` |  |  |  |  | append | Resolve comment c5 (with -p c5) |
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5), as `add -p c5 --content` |
-| `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
-| `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
+| `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several) |
+| `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
 | `-a, --author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
@@ -376,7 +370,6 @@ Join documents in order, preserving images, styles, lists and notes
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
-| `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
@@ -414,7 +407,6 @@ Remove authors, editing IDs, metadata and comments before sharing
 | `--revision-palette` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark |
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering (-o FILE.pdf or FILE.png)" | PNG resolution in dots per inch (1-1200) |
 | `--move-comments` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width |
-| `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
@@ -439,9 +431,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--check` | self-update, debug | **differs**: `default=false values=` on self-update; `-c <CHECKS> default= values=orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, styledefs, numbering, render` on debug |
 | `--columns` | diff | `<N> default=72 values=` |
 | `--comment` | add | `default= values=` |
-| `--comment-notes` | (shorthand), compare, accept, reject, convert, append, scrub | `default=false values=` |
 | `--comments` | (shorthand), compare, read, scrub | **differs**: `default=false values=` on scrub; `<MODE> default=inline values=inline, none` on (shorthand), compare, read |
-| `--commonmark` | convert | `default=false values=` |
 | `--compress` | convert | `default=false values=` |
 | `--consume` | edit, add | `default=false values=` |
 | `--content` | edit, add | `<TEXT> default= values=` |

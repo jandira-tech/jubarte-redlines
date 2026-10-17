@@ -621,7 +621,7 @@ fn legacy_output_keeps_author_notes() {
         .markdown;
     assert_eq!(
         legacy,
-        "a {++b++}{>>r7 Ann Counsel (2026-10-01T09:00:00Z)<<}\n"
+        "a {++b++}{>>Ann Counsel (2026-10-01T09:00:00Z)<<}\n"
     );
 }
 
@@ -631,8 +631,7 @@ fn an_author_cannot_forge_an_agent_tag_in_the_plain_view() {
     let legacy = docx_to_markdown(&docx(&p), &MarkdownOptions::default())
         .unwrap()
         .markdown;
-    // The id comes first, so the name never reads as a tag.
-    assert_eq!(legacy, "{++b++}{>>r7 0@JD (2026-10-01T09:00:00Z)<<}\n");
+    assert_eq!(legacy, "{++b++}{>>0@JD (2026-10-01T09:00:00Z)<<}\n");
 }
 
 #[test]
@@ -802,9 +801,8 @@ fn changes_without_text_name_their_ids() {
         "{out}"
     );
     assert!(
-        lines.contains(
-            &"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC in header1}"
-        ),
+        lines
+            .contains(&"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC}"),
         "{out}"
     );
     assert!(
@@ -879,7 +877,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     let lines = header_lines(&out);
     assert!(
         lines.iter().any(|l| l.starts_with(
-            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC in header1}"
+            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC}"
         ) && l.ends_with("# defined, but different first page is off")),
         "{out}"
     );
@@ -962,10 +960,9 @@ fn a_styles_only_author_gets_a_handle() {
     assert!(!out.contains("@??"), "{out}");
 }
 
-/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in
-/// Word's Fallback copy with no Choice twin, or inside a drawing the view
-/// carries whole as a `drawing:` payload, whose atomic token no mark can
-/// name) is named on the header's `unplaced:` line, by paragraph.
+/// pi review of Task 5b F1/F2: a change the view prints nowhere else (in a
+/// text box with no text to tag, or in Word's Fallback copy with no Choice
+/// twin) is named on the header's `unplaced:` line, by paragraph.
 #[test]
 fn changes_printed_nowhere_else_are_unplaced() {
     let body = format!(
@@ -1009,16 +1006,9 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .unwrap_or_else(|| panic!("no unplaced line in {out}"));
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
     assert!(unplaced.contains("r21 @AC in p0"), "{out}");
-    // The shown branch's text box prints its content as comment lines
-    // beside the drawing, so the Choice branch's own insertion is placed
-    // there (`<!-- Box{++Choice++}{>>r20 @AC<<} -->`), not unplaced.
-    assert!(
-        out.contains("<!-- Box{++Choice++}{>>r20 @AC<<} -->"),
-        "{out}"
-    );
     assert!(!unplaced.contains("r20"), "{out}");
     // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
-    assert!(unplaced.contains(r#""del r22 @?? in p0""#), "{out}");
+    assert!(unplaced.contains(r#""r22 @?? in p0""#), "{out}");
     let yaml = header_yaml(&out);
     assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(3), "{out}");
     for view in [TrackChanges::Accept, TrackChanges::Reject] {
@@ -1036,24 +1026,22 @@ fn changes_printed_nowhere_else_are_unplaced() {
 /// A textless change inside a printed container is not shown by the
 /// container's tag: accepting the inserted row keeps the row and leaves
 /// the deleted drawing tracked, so the drawing's own id must be printed.
-/// Since 54621454 carries the deleted `w:drawing` whole, that id prints
-/// inside the cell, in the drawing's own `{--![][d1]--}` mark where
-/// Word's markup places the deletion — not on the `unplaced:` line the
-/// view used when it could not carry a drawing at all.
 #[test]
-fn a_textless_change_in_a_printed_row_prints_its_own_tag() {
-    let body_xml = format!(
+fn a_textless_change_in_a_printed_row_is_unplaced() {
+    let body = format!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
         ins(3, "Ann Counsel", "Cell")
     );
-    let out = agent(&docx(&body_xml));
-    // The deleted drawing is carried whole, so its own mark and tag sit in
-    // the cell: not the row's tag, not the cell text's.
-    assert!(body(&out).contains("{--![][d1]--}{>>r2 @AC<<}"), "{out}");
-    assert!(out.contains("rev r1 @AC in t0.row0"), "{out}");
-    assert!(body(&out).contains("{++Cell++}{>>r3 @AC<<}"), "{out}");
-    // Every change prints, so none lands on the `unplaced:` line.
-    assert!(!out.contains("unplaced:"), "{out}");
+    let out = agent(&docx(&body));
+    let lines = header_lines(&out);
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
+    assert!(unplaced.contains("r2 @AC"), "{out}");
+    // The row's own tag and the cell text's print, so neither is unplaced.
+    assert!(!unplaced.contains("r1 "), "{out}");
+    assert!(!unplaced.contains("r3 "), "{out}");
 }
 
 /// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
@@ -1562,7 +1550,7 @@ fn highlight_and_strike_render_in_the_agent_view() {
     let view = body(&full);
     assert_eq!(
         view,
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\npay **<mark class=\"hl-cyan\">now</mark>**, ~~later~~, a\\=\\=b \\~\\~c\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\npay **<mark>now</mark>**, ~~later~~, a\\=\\=b \\~\\~c\n"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()
@@ -1599,8 +1587,7 @@ fn link_entity_and_heading_syntax_in_text_reads_back_as_text() {
 fn code_reads_as_code_spans_and_fences() {
     // `VerbatimChar` runs print as code spans and a `SourceCode` paragraph
     // as a fence: their text stays as written, unescaped and with its
-    // spaces, so it reads back the same. A fence's content is literal, so
-    // a marked run's marks print nowhere inside it.
+    // spaces, so it reads back the same.
     let code = |t: &str| {
         format!(
             r#"<w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t xml:space="preserve">{t}</w:t></w:r>"#
@@ -1612,305 +1599,19 @@ fn code_reads_as_code_spans_and_fences() {
             code("a*b  c"),
             code("x`y")
         ),
-        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t>fn main() {</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">    println!("*hi*");</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>}</w:t></w:r><w:r><w:br/></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>underlined</w:t></w:r></w:p>"#.to_string(),
+        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t>fn main() {</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">    println!("*hi*");</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>}</w:t></w:r></w:p>"#.to_string(),
     ]
     .concat();
     let full = agent(&docx(&p));
     let view = body(&full);
     assert_eq!(
         view,
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nRun `a*b  c` or ``x`y``.\n\n<!-- p1 SourceCode -->\n```\nfn main() {\n    println!(\"*hi*\");\n}\nunderlined\n```\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nRun `a*b  c` or ``x`y``.\n\n<!-- p1 SourceCode -->\n```\nfn main() {\n    println!(\"*hi*\");\n}\n```\n"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
         .unwrap()
         .docx;
     assert_eq!(body(&agent(&back)), view);
-}
-
-/// Literal CriticMarkup delimiters in a code block are text, not changes
-/// (#518): the reader breaks them inside the fence, where Markdown reads
-/// no backslash escape, and the writer unbreaks them there. Code that
-/// already holds a backslash beside a delimiter comes back as written.
-#[test]
-fn literal_critic_delimiters_in_a_code_block_stay_text() {
-    let code = |t: &str| {
-        format!(
-            r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
-            common::docx::esc(t)
-        )
-    };
-    let texts = [
-        "fenced {++x++} code",
-        r"brace {\++x++} tail",
-        r"double {\\++x++} tail",
-        r"sub a~>b and a\~>b end",
-        r"path C:\path\x regex \d+ latex a\\b end",
-    ];
-    let bytes = docx(&texts.iter().map(|t| code(t)).collect::<String>());
-    let full = agent(&bytes);
-    let view = body(&full).to_string();
-    assert!(view.contains("fenced {\\++x++\\} code\n"), "{view}");
-    assert!(view.contains("brace {\\\\\\++x++\\} tail\n"), "{view}");
-    assert!(view.contains("double {\\\\\\\\\\++x++\\} tail\n"), "{view}");
-    assert!(view.contains("sub a~\\>b and a\\~\\>b end\n"), "{view}");
-    assert!(
-        view.contains("path C:\\path\\x regex \\d+ latex a\\\\b end\n"),
-        "{view}"
-    );
-    let back = markdown_to_docx(&full, &DocxOptions::default())
-        .unwrap()
-        .docx;
-    assert!(
-        jubarte::changes::list_changes(&back).unwrap().is_empty(),
-        "literal delimiters invented no change"
-    );
-    assert_eq!(
-        body(&agent(&back)),
-        body(&full),
-        "the view is a fixed point"
-    );
-    // The plain conversion prints the same fences, without the id lines.
-    let plain = docx_to_markdown(&bytes, &MarkdownOptions::default())
-        .unwrap()
-        .markdown;
-    assert!(plain.contains("fenced {\\++x++\\} code\n"), "{plain}");
-    let plain_back = markdown_to_docx(&plain, &DocxOptions::default())
-        .unwrap()
-        .docx;
-    assert!(
-        jubarte::changes::list_changes(&plain_back)
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(
-        docx_to_markdown(&plain_back, &MarkdownOptions::default())
-            .unwrap()
-            .markdown,
-        plain,
-        "the plain view is a fixed point"
-    );
-}
-
-/// Hand-written Markdown's backslashes inside a code fence are not the
-/// reader's escape (#518, second round): `C:\\path`, a regex `\\d+`, LaTeX
-/// `\\` and `a\\b` a human wrote reach Word byte-identical, and no even
-/// backslash run before a delimiter opens a change.
-#[test]
-fn hand_written_backslashes_in_a_fence_reach_word_as_written() {
-    for hand in [
-        "C:\\\\path\\\\x",
-        "\\\\d+",
-        "a\\\\b",
-        "\\\\\\\\",
-        "even {\\\\++ and ++\\\\} and ~\\\\>",
-    ] {
-        let markdown = format!("```\n{hand}\n```\n");
-        let docx = markdown_to_docx(&markdown, &DocxOptions::default())
-            .unwrap()
-            .docx;
-        assert!(
-            jubarte::changes::list_changes(&docx).unwrap().is_empty(),
-            "{hand}"
-        );
-        let paragraphs = jubarte::inspect::paragraphs(&docx).unwrap();
-        assert_eq!(paragraphs.len(), 1, "{hand}");
-        assert_eq!(paragraphs[0].text, hand, "{hand}");
-        assert_eq!(paragraphs[0].style.as_deref(), Some("SourceCode"));
-        // And that document reads back as a fence that names it from then
-        // on: its own view is a fixed point. (The hand-written fence is
-        // not: an even run before a delimiter becomes the reader's odd
-        // one, which names the same text.)
-        let view = docx_to_markdown(&docx, &MarkdownOptions::default())
-            .unwrap()
-            .markdown;
-        let docx = markdown_to_docx(&view, &DocxOptions::default())
-            .unwrap()
-            .docx;
-        assert_eq!(jubarte::inspect::paragraphs(&docx).unwrap()[0].text, hand);
-        assert_eq!(
-            docx_to_markdown(&docx, &MarkdownOptions::default())
-                .unwrap()
-                .markdown,
-            view,
-            "{hand}"
-        );
-    }
-}
-
-/// The fence rule stays: a tracked change inside a code block is written
-/// as CriticMarkup there and read back as the same change (#518).
-#[test]
-fn tracked_changes_inside_a_code_block_still_round_trip() {
-    let ins = r#"<w:ins w:id="7" w:author="Ana" w:date="2026-03-02T10:00:00Z"><w:r><w:t>new {++x++}</w:t></w:r></w:ins>"#;
-    let bytes = docx(&format!(
-        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t xml:space="preserve">keep </w:t></w:r>{ins}<w:r><w:t xml:space="preserve"> old</w:t></w:r></w:p>"#
-    ));
-    let full = agent(&bytes);
-    let view = body(&full);
-    assert!(
-        view.contains("keep {++new {\\++x++\\}++}{>>r7 @A<<} old"),
-        "{view}"
-    );
-    let back = markdown_to_docx(&full, &DocxOptions::default())
-        .unwrap()
-        .docx;
-    let listed = jubarte::changes::list_changes(&back).unwrap();
-    assert_eq!(listed.len(), 1, "{listed:?}");
-    assert_eq!(listed[0].text, "new {++x++}");
-    assert_eq!(body(&agent(&back)), view);
-}
-
-/// CommonMark reads a line indented four or more spaces as indented code,
-/// not a fence and not prose (#518): its text is verbatim, so the fence
-/// unwind must not eat a backslash there and CriticMarkup opens nothing.
-#[test]
-fn indented_code_keeps_its_text_verbatim() {
-    for (hand, text) in [
-        ("    ```\n    a{\\++b\n    ```\n", "```\na{\\++b\n```"),
-        ("     ```\n     x++\\}y\n     ```\n", " ```\n x++\\}y\n ```"),
-        ("    a{++b++}c\n", "a{++b++}c"),
-    ] {
-        let docx = markdown_to_docx(hand, &DocxOptions::default())
-            .unwrap()
-            .docx;
-        assert!(
-            jubarte::changes::list_changes(&docx).unwrap().is_empty(),
-            "{hand}"
-        );
-        let paragraphs = jubarte::inspect::paragraphs(&docx).unwrap();
-        assert_eq!(paragraphs.len(), 1, "{hand}");
-        assert_eq!(paragraphs[0].text, text, "{hand}");
-        assert_eq!(paragraphs[0].style.as_deref(), Some("SourceCode"), "{hand}");
-        // The document reads back as the fence that names it, a fixed point.
-        let view = docx_to_markdown(&docx, &MarkdownOptions::default())
-            .unwrap()
-            .markdown;
-        let back = markdown_to_docx(&view, &DocxOptions::default())
-            .unwrap()
-            .docx;
-        assert_eq!(jubarte::inspect::paragraphs(&back).unwrap()[0].text, text);
-        assert_eq!(
-            docx_to_markdown(&back, &MarkdownOptions::default())
-                .unwrap()
-                .markdown,
-            view,
-            "{hand}"
-        );
-    }
-}
-
-/// A comment anchored in a code block prints its note inside the fence,
-/// where only the fence's escape is unwound (#518): the note keeps its
-/// backslashes and markup characters across round trips instead of
-/// doubling them, so the view and the comment are fixed points.
-#[test]
-fn a_note_anchored_in_a_code_block_round_trips_its_text() {
-    let body_xml = format!(
-        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t xml:space="preserve">code </w:t></w:r><w:commentRangeStart w:id="1"/><w:r><w:t xml:space="preserve">line one</w:t></w:r><w:commentRangeEnd w:id="1"/>{}<w:r><w:t xml:space="preserve"> more</w:t></w:r></w:p>"#,
-        reference(1)
-    );
-    let comments = format!(
-        r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
-        comment(
-            1,
-            "Ann Counsel",
-            "AC",
-            "2026-10-01T09:00:00Z",
-            "0A0A0A0A",
-            r"note with {++x++} and \ and ++}"
-        )
-    );
-    let bytes = common::docx::docx_with(
-        &body_xml,
-        &[Part {
-            name: "word/comments.xml",
-            content_type: COMMENTS_CT,
-            rel_type: COMMENTS_REL,
-            xml: &comments,
-        }],
-    );
-    let note_texts = |docx: &[u8]| {
-        common::docx::part_string(docx, "word/comments.xml")
-            .unwrap()
-            .split("<w:t")
-            .skip(1)
-            .filter_map(|t| {
-                t.split_once("</")
-                    .and_then(|(head, _)| head.split_once('>'))
-            })
-            .map(|(_, text)| text.to_string())
-            .collect::<Vec<_>>()
-    };
-    let mut markdown = docx_to_markdown(&bytes, &MarkdownOptions::default())
-        .unwrap()
-        .markdown;
-    assert!(markdown.contains("code {==line one==}{>>"), "{markdown}");
-    for generation in 0..3 {
-        let docx = markdown_to_docx(&markdown, &DocxOptions::default())
-            .unwrap()
-            .docx;
-        assert_eq!(
-            note_texts(&docx),
-            [r"note with {++x++} and \ and ++}"],
-            "generation {generation}"
-        );
-        let next = docx_to_markdown(&docx, &MarkdownOptions::default())
-            .unwrap()
-            .markdown;
-        assert_eq!(next, markdown, "generation {generation}");
-        markdown = next;
-    }
-}
-
-/// `--commonmark` escapes CriticMarkup and Markdown syntax as the agent
-/// view does (#519): Word text that reads like markup round-trips through
-/// both views as itself, with no change invented.
-#[test]
-fn commonmark_escapes_critic_and_markdown_syntax() {
-    let texts = [
-        "{++a++}",
-        r"{\++a++}",
-        "- not a list",
-        "1. not a list",
-        "# not a heading",
-        "> not a quote",
-        "*not em*",
-        "`not code`",
-        "[not](link)",
-        "<b>not html</b>",
-    ];
-    let bytes = docx(&texts.iter().map(|t| para(t)).collect::<String>());
-    let escaped = [
-        "{\\++a++\\}",
-        "{\\\\++a++\\}",
-        "\\- not a list",
-        "1\\. not a list",
-        "\\# not a heading",
-        "\\> not a quote",
-        "\\*not em\\*",
-        "\\`not code\\`",
-        "[not\\](link)",
-        "\\<b>not html\\</b>",
-    ];
-    for options in [&MarkdownOptions::default(), &agent_defaults()] {
-        let markdown = docx_to_markdown(&bytes, options).unwrap().markdown;
-        for want in escaped {
-            assert!(markdown.contains(&format!("{want}\n")), "{{markdown}}");
-        }
-        let back = markdown_to_docx(&markdown, &DocxOptions::default())
-            .unwrap()
-            .docx;
-        assert!(
-            jubarte::changes::list_changes(&back).unwrap().is_empty(),
-            "no change from literal markup"
-        );
-        // The header names the file's bytes, so the bodies are compared.
-        assert_eq!(
-            body(&docx_to_markdown(&back, options).unwrap().markdown),
-            body(&markdown),
-            "the view is a fixed point"
-        );
-    }
 }
 
 #[test]
@@ -2203,7 +1904,7 @@ styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   \"#\": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next
 headers:
-  first: {id: header2, text: [DRAFT, \"\"], style: Normal}  # page 1 only (different first page)
+  first: {id: header2, text: DRAFT, style: Normal}  # page 1 only (different first page)
   default: {id: header1, text: SIGNATURE PAGE, right, style: Normal}
 footers:
   first: none                      # page 1 shows no page number
@@ -3047,10 +2748,9 @@ fn underline_from_a_character_style_shows() {
     assert!(out.contains("<u>styled</u> plain"), "{out}");
 }
 
-/// Task 18: literal Markdown marks in document text read back as text,
-/// in the agent view and in the plain conversion alike (#519).
+/// Task 18: literal Markdown marks in document text read back as text.
 #[test]
-fn literal_markdown_marks_are_escaped_in_both_views() {
+fn literal_markdown_marks_are_escaped_in_the_agent_view_only() {
     let bytes = docx(&format!(
         "{}{}{}{}{}{}{}",
         para("# Not a heading"),
@@ -3089,8 +2789,8 @@ fn literal_markdown_marks_are_escaped_in_both_views() {
         .unwrap()
         .markdown;
     assert!(
-        legacy.contains("\\# Not a heading\n") && legacy.contains("\\*\\*stars\\*\\* and a_b"),
-        "escaped as the agent view: {legacy}"
+        legacy.contains("# Not a heading\n") && legacy.contains("**stars** and a_b"),
+        "unchanged: {legacy}"
     );
 }
 
@@ -3121,22 +2821,13 @@ fn escaped_text_reads_back_as_the_characters() {
     )
     .unwrap()
     .docx;
-    // The plain conversion escapes too (#519), so its escapes name the
-    // literal characters the document holds.
     let text = docx_to_markdown(&written, &MarkdownOptions::default())
         .unwrap()
         .markdown;
-    assert!(text.contains("\\# Not a heading"), "{text}");
-    assert!(
-        text.contains("\\*\\*stars\\*\\* and \\`tick\\` \\~\\~gone\\~\\~"),
-        "{text}"
-    );
+    assert!(text.contains("# Not a heading"), "{text}");
+    assert!(text.contains("**stars** and `tick` ~~gone~~"), "{text}");
     let xml = common::docx::part_string(&written, "word/document.xml").unwrap();
     assert!(!xml.contains("Heading"), "no heading style: {xml}");
-    assert!(
-        xml.contains("# Not a heading"),
-        "the text as written: {xml}"
-    );
 }
 
 #[test]
@@ -4151,10 +3842,7 @@ fn the_golden_headers_parse_as_yaml() {
 }
 
 /// pi review av2 F2: a revision in a text box counts once in the header, as
-/// Word shows it once: the same `w:id` in the `mc:Choice` shape and its VML
-/// fallback copy is one revision. The body carries the whole
-/// `mc:AlternateContent` as one payload (54621454), so the revision prints
-/// in no mark and is named once on `unplaced:`.
+/// the body shows it once: the `mc:Choice` shape, not its VML fallback copy.
 #[test]
 fn header_counts_a_text_box_revision_once() {
     let story = ins(7, "Ann Counsel", "boxed");
@@ -4162,19 +3850,8 @@ fn header_counts_a_text_box_revision_once() {
         r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p>{story}</w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{story}</w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#
     );
     let view = agent(&docx(&boxed));
-    // One shape, not one per branch: the whole AlternateContent is a
-    // single payload token, and the revision it holds is named once.
-    assert_eq!(view.matches("![][d1]").count(), 1, "{view}");
-    // The shown branch's box prints once, as comment lines beside the
-    // drawing, never the Fallback copy: its revision is placed there.
     assert_eq!(view.matches("{++boxed++}").count(), 1, "{view}");
     let lines = header_lines(&view);
-    assert!(
-        !lines
-            .iter()
-            .any(|l| l.starts_with("unplaced: ") && l.contains("r7")),
-        "{view}"
-    );
     assert!(
         lines.iter().any(|l| l.starts_with("revisions: 1 ")),
         "{lines:?}"
@@ -5555,13 +5232,8 @@ fn pr392_yaml_source_round_trips_reserved_scalars_and_control_characters() {
     }
 }
 
-/// PR #392, restated for the drawing payload (54621454): Word renders one
-/// branch of an `mc:AlternateContent`; the view carries the element whole
-/// as one atomic payload, so no branch's text prints, while every listed
-/// change — the Choice's and the Fallback's alike — keeps its author a
-/// handle and is named, by paragraph, on `unplaced:`.
 #[test]
-fn pr392_alternate_content_carries_one_payload_and_names_every_listed_author() {
+fn pr392_alternate_content_renders_one_branch_and_names_every_listed_author() {
     let choice = format!(
         r#"<mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:drawing></mc:Choice>"#,
         ins(1, "Ann Counsel", "Chosen")
@@ -5570,48 +5242,32 @@ fn pr392_alternate_content_carries_one_payload_and_names_every_listed_author() {
         r#"<mc:Fallback><w:pict><w:txbxContent><w:p>{}</w:p></w:txbxContent></w:pict></mc:Fallback>"#,
         ins(2, "Bob Day", "Fallback")
     );
-    for (branches, kept, absent, handle, author, unplaced) in [
+    for (branches, kept, absent, handle, author) in [
         (
             format!("{choice}{fallback}"),
             "Chosen",
             "Fallback",
             "AC",
             "Ann Counsel",
-            vec!["r2 @BD in p0"],
         ),
-        (fallback, "Fallback", "Chosen", "BD", "Bob Day", vec![]),
+        (fallback, "Fallback", "Chosen", "BD", "Bob Day"),
     ] {
         let bytes = docx(&format!(
             r#"<w:p>{}<w:r><mc:AlternateContent>{branches}</mc:AlternateContent></w:r></w:p>"#,
             run("Host")
         ));
         let view = agent(&bytes);
-        // One payload for the whole element, not one token per branch; the
-        // branch Word shows prints its box once, as comment lines beside
-        // the drawing, and the other branch's text never prints.
-        assert_eq!(body(&view).matches("![][d1]").count(), 1, "{view}");
         assert_eq!(
             body(&view).matches(&format!("{{++{kept}++}}")).count(),
             1,
             "{view}"
         );
         assert!(!body(&view).contains(absent), "{view}");
-        // The hidden branch's change prints nowhere: it is named on
-        // `unplaced:`; the shown branch's is placed in its box.
-        let lines = header_lines(&view);
-        let unplaced_line = lines
-            .iter()
-            .find(|l| l.starts_with("unplaced: "))
-            .map_or("", |l| &**l);
-        for entry in &unplaced {
-            assert!(unplaced_line.contains(entry), "{entry}: {view}");
-        }
-        assert!(!unplaced_line.contains(&format!("@{handle}")), "{view}");
         let yaml = header_yaml(&view);
         assert_eq!(yaml["authors"][handle].as_str(), Some(author), "{view}");
         // A Fallback change that is no twin of the Choice's (another text)
-        // is still a change of the file: listed and counted (D8), carried
-        // in the payload and named on `unplaced:`.
+        // is still a change of the file: listed and counted (D8), though
+        // the view shows the Choice only.
         let changes = jubarte::changes::list_changes(&bytes).unwrap();
         let listed = changes.len();
         // Handles name the authors of the listed changes: a Fallback

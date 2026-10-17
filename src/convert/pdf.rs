@@ -420,14 +420,9 @@ pub(crate) fn emit<P: std::borrow::Borrow<Page>>(
                 face, glyphs, text, ..
             } = op
             {
-                // A glyph shaped from several characters, or a glyph the
-                // caller chose (a MATH variant), is painted by its id.
-                // WinAnsi would paint the cmap character instead.
-                let cmap_match = text
-                    .chars()
-                    .zip(glyphs.iter())
-                    .all(|(ch, &gid)| fonts.get(*face).glyph(ch) == gid);
-                if text.chars().count() == glyphs.len() && cmap_match {
+                // A glyph shaped from several characters is painted by its
+                // id; WinAnsi would paint each character instead.
+                if text.chars().count() == glyphs.len() {
                     enc = winansi_bytes(text);
                 }
                 if enc.is_some() {
@@ -1028,13 +1023,12 @@ pub(crate) fn emit<P: std::borrow::Borrow<Page>>(
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
-        // A viewer paints a note as an icon over the text, and the balloon
-        // already shows the comment (Word's Save as PDF writes none): a
-        // note is written only when asked.
-        let sticky: &[PdfComment] = if options.comment_notes {
-            &page.comments
-        } else {
+        // Word's Save as PDF writes no annotation for a comment: its
+        // balloon is the print. The other styles keep the sticky note.
+        let sticky: &[PdfComment] = if options.revisions == super::RevisionStyle::Word {
             &[]
+        } else {
+            &page.comments
         };
         for note in sticky {
             let id = objs.len() + 1;
@@ -2320,12 +2314,7 @@ mod tests {
             color: [0.0; 3],
             resolved: false,
         });
-        // Notes are opt-in (f8932ae1); this test is about where one lands.
-        let options = crate::convert::PdfOptions {
-            comment_notes: true,
-            ..crate::convert::PdfOptions::default()
-        };
-        let pdf = super::emit(&fonts, &[page], options);
+        let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
         let hay = String::from_utf8_lossy(&pdf);
         // X = y, Y = width − x: [700, 595.2 − 120] to [714, 595.2 − 100].
         assert!(

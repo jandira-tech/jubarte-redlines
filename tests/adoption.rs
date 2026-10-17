@@ -700,7 +700,7 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
     }
 }
 
-/// Plain Markdown read from Word names its pages: as many as the PDF has.
+/// Markdown read from Word names its pages: as many as the PDF has.
 #[test]
 fn markdown_page_markers_count_the_pdf_pages() {
     let dir = tempfile::tempdir().unwrap();
@@ -709,10 +709,7 @@ fn markdown_page_markers_count_the_pdf_pages() {
     ok(&["convert", "long.docx", "-o", "long.pdf"], dir.path());
     let pages = pdf_pages(&std::fs::read(dir.path().join("long.pdf")).unwrap());
     assert!(pages >= 3, "{pages}");
-    let markdown = ok(
-        &["convert", "long.docx", "-t", "md", "--commonmark"],
-        dir.path(),
-    );
+    let markdown = ok(&["convert", "long.docx", "-t", "md"], dir.path());
     assert!(
         markdown.starts_with(&format!("<!-- page 1 of {pages} -->\n\n")),
         "{markdown}"

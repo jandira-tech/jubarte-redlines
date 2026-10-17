@@ -6,16 +6,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # What jubarte takes from anymd: plan (2026-10-14)
 
-> **Status (reconciled 2026-10-17, `main` `aba48bd5`): all six items still open.**
-> Item 1: `parse_pages` (`src/bin/jubarte.rs:632`) still expands ranges
-> unbounded. Item 2: the PDF writes `/Annots` only for opt-in comment note
-> icons (`pdf.rs:1064`, `/Subtype /Text`); no `/Link`, `/Outlines`, or
-> `/PageLabels`. Item 3: `extract_media` is still `None` at every call site
-> (`bin/jubarte.rs:2143`); pictures without alt text still drop from the view.
-> Item 4: no `c:chart` handling in the view. Item 5: no `read --outline`.
-> Item 6: no token budgets, `--max-tokens`, or cursor paging. No id-contract
-> impact.
-
 ## Where this list comes from
 
 Arthur asked for a scout of [arthrod/anymd](https://github.com/arthrod/anymd) at

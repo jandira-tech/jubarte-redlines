@@ -17,12 +17,12 @@ styles:
   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
-  first: {id: header2, text: [DRAFT, ""]}  # page 1 only (different first page)
+  first: {id: header2, text: DRAFT}  # page 1 only (different first page)
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default: {id: footer2, text: ["{PAGE}1{/}", ""]}
-  even: {id: footer1, text: ["{PAGE}", ""], inactive}  # defined, but even/odd headers are off
+  default: {id: footer2, text: "{PAGE}1{/}"}
+  even: {id: footer1, text: "{PAGE}", inactive}  # defined, but even/odd headers are off
 ---
 
 <!-- page 1 of 2 -->

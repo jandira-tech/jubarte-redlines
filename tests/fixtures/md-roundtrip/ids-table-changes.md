@@ -15,9 +15,9 @@ styles:
   table: TableNormal
 notes: {fmt: footnotes.r0 @AS; footnotes.r1 @AS; endnotes.r2 @AS; endnotes.r3 @AS, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
-  default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r437 @AS<<}", style: Normal, fmt: header1.r436 @AS in header1}
+  default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r437 @AS<<}", style: Normal, fmt: header1.r436 @AS}
 footers:
-  default: {id: footer1, text: "{--Page       {PAGE \\* MERGEFORMAT}1       {/}of       {NUMPAGES \\* MERGEFORMAT}1       {/}·       {HYPERLINK \\h}eigenpal.com         {/}--}{>>footer1.r439 @AS<<}", style: ListParagraph, fmt: footer1.r438 @AS in footer1}
+  default: {id: footer1, text: "{--Page       {PAGE \\* MERGEFORMAT}1       {/}of       {NUMPAGES \\* MERGEFORMAT}1       {/}·       {HYPERLINK \\h}eigenpal.com         {/}--}{>>footer1.r439 @AS<<}", style: ListParagraph, fmt: footer1.r438 @AS}
 ---
 
 <!-- p0 fmt r4 @AS; r5 @AS; r6 @AS; r9 @AS -->
@@ -58,7 +58,7 @@ footers:
 |{=={--`import { DocxEditor } from '@eigenpal/docx-js-editor'`               --}{>>r37 @AS<<}==}<br>{=={--`import '@eigenpal/docx-js-editor/styles.css'`               --}{>>r39 @AS<<}==}<br><br>{=={--`function App({ file }: { file: ArrayBuffer }) {`               --}{>>r42 @AS<<}==}<br>{=={--`return (`               --}{>>r44 @AS<<}==}<br>{=={--`<DocxEditor`               --}{>>r46 @AS<<}==}<br>{=={--`documentBuffer={file}`               --}{>>r48 @AS<<}==}<br>{=={--`onSave={(buffer) => uploadToServer(buffer)}`               --}{>>r50 @AS<<}==}<br>{=={--`/>`               --}{>>r52 @AS<<}==}<br>{=={--`)`               --}{>>r54 @AS<<}==}<br>{=={--`}`               --}{>>r56 @AS<<}==}|
 |-|
 
-<!-- p24 break-del r57 @AS, rev-del r58 @AS -->
+<!-- p24 break-del r57 @AS, rev r58 @AS -->
 {>>c16 @AS: Horrible.<<}{>>c17 @AS re c16: Terrible.<<}
 
 <!-- p25 break-del r59 @AS -->
@@ -124,7 +124,7 @@ footers:
 
 <!-- p76 empty, break-del r163 @AS -->
 
-<!-- p77 page-break-del r165 @AS, break-del r164 @AS -->
+<!-- p77 page-break, break-del r164 @AS, rev r165 @AS -->
 
 <!-- p78 break-del r166 @AS -->
 {--**Ref methods**         --}{>>r167 @AS<<}
@@ -196,7 +196,7 @@ footers:
 |{=={--`import { DocxEditor } from '@eigenpal/docx-js-editor'`               --}{>>r228 @AS<<}==}<br>{=={--`import '@eigenpal/docx-js-editor/styles.css'`               --}{>>r230 @AS<<}==}<br><br>{=={--`function App({ file }: { file: ArrayBuffer }) {`               --}{>>r233 @AS<<}==}<br>{=={--`return (`               --}{>>r235 @AS<<}==}<br>{=={--`<DocxEditor`               --}{>>r237 @AS<<}==}<br>{=={--`documentBuffer={file}`               --}{>>r239 @AS<<}==}<br>{=={--`onSave={(buffer) => uploadToServer(buffer)}`               --}{>>r241 @AS<<}==}<br>{=={--`/>`               --}{>>r243 @AS<<}==}<br>{=={--`)`               --}{>>r245 @AS<<}==}<br>{=={--`}`               --}{>>r247 @AS<<}==}|
 |-|
 
-<!-- p120 break-del r248 @AS, rev-del r249 @AS -->
+<!-- p120 break-del r248 @AS, rev r249 @AS -->
 {>>c207 @AS: Horrible.<<}{>>c208 @AS re c207: Terrible.<<}
 
 <!-- p121 break-del r250 @AS -->
@@ -262,7 +262,7 @@ footers:
 
 <!-- p172 empty, break-del r354 @AS -->
 
-<!-- p173 page-break-del r356 @AS, break-del r355 @AS -->
+<!-- p173 page-break, break-del r355 @AS, rev r356 @AS -->
 
 <!-- p174 break-del r357 @AS -->
 {--**Ref methods**         --}{>>r358 @AS<<}

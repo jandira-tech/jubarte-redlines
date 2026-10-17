@@ -15,9 +15,9 @@ touch `word/document.xml`.
 | Task | Command |
 |---|---|
 | Read | `jubarte read file.docx`: header + Markdown with `<!-- pN -->` ids; ids are `p12`, `header1`, `footer2.p1`, `t0.row1.cell2`, `c5`, `r12`. `jubarte read file.docx --json` gives the same document as data |
-| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; writes `file_modified.docx` and prints the changed paragraphs, or the resolved lines for a pure `--accept`/`--reject`), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
+| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; writes `file_modified.docx` and prints the changed paragraphs), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
 | Add a paragraph, comment or reply | `jubarte add file.docx -p p12 --content "New clause."` (`--before`), `-p p5 --anchor "fee" --content "Cap?"` (a comment), `-p c5 --reply "Agreed."` (a reply) |
-| Resolve one change | `jubarte edit file.docx -p r12 --accept` (or `--reject`; `-p` repeats; prints `accepted r12 in p3: "from" > "to"`) |
+| Resolve one change | `jubarte edit file.docx -p r12 --accept` (or `--reject`; `-p` repeats) |
 | Look at pages | `jubarte convert file.docx -o pages.png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx -o pages.png --report pages.json` |
 | Compare two versions | `jubarte a.docx b.docx` prints the redline as the agent view; `-o redline.docx --author "Name"` writes it (`-o redline.pdf` renders it). `jubarte compare a.docx b.docx` is the same |

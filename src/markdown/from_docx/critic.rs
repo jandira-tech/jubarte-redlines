@@ -64,56 +64,8 @@ pub(crate) type Change = (Mark, Option<String>);
 /// never written to the output.
 pub(crate) const TAG: &str = "\u{E000}";
 
-/// Plain-view attribution: the change's ids and its `Author (date)` note
-/// as an internal tag (`agent::plain_tag_of`) behind this sentinel, so that
-/// neighbours join their ids as the agent view's do. Printed through
-/// `agent::format_plain_tag`: `r1+2 Ana Lima (2026-09-29T14:05:00Z)`.
-pub(crate) const PLAIN: &str = "\u{E001}";
-
-/// The internal tag of an attribution, agent or plain.
 fn tag(by: Option<&str>) -> Option<&str> {
-    let by = bare(by?);
-    by.strip_prefix(TAG)
-        .or_else(|| by.strip_prefix(PLAIN))
-        // A note that names the change it sits inside (`3@BO` on `1@AL`)
-        // carries that one after [`ON`]: the tag is the change's own.
-        .map(|tagged| tagged.split_once(ON).map_or(tagged, |(own, _)| own))
-}
-
-/// The change a nested note names after [`ON`], as its tag reads (no
-/// sentinel): the change the note's own sits inside.
-fn outer_of(by: Option<&str>) -> Option<&str> {
-    let by = bare(by?);
-    by.strip_prefix(TAG)
-        .or_else(|| by.strip_prefix(PLAIN))?
-        .split_once(ON)
-        .map(|(_, outer)| outer)
-}
-
-/// The changes a note names sit behind this sentinel after the change's
-/// own tag (`\u{E000}3@BO\u{E002}1@AL`), with each tag's optional
-/// timestamp before it, exactly as [`display`] prints them: `r3 @BO on
-/// r1 @AL`.
-const ON: &str = "\u{E002}";
-
-/// Marks an attribution the container carries (a row's or cell's own
-/// mark, opened around each paragraph it covers) rather than a change on
-/// the content: a sole change under one is not folded into a note, for
-/// the writer rebuilds container marks itself, not as a wrap.
-pub(crate) const CARRIED: &str = "\u{E003}";
-
-/// An attribution without [`CARRIED`].
-fn bare(by: &str) -> &str {
-    by.strip_suffix(CARRIED).unwrap_or(by)
-}
-
-/// The sentinel an attribution's tag sits behind.
-fn sentinel(by: &str) -> &'static str {
-    if bare(by).starts_with(PLAIN) {
-        PLAIN
-    } else {
-        TAG
-    }
+    by?.strip_prefix(TAG)
 }
 
 /// The tag proper and its optional inline timestamp.
@@ -124,62 +76,20 @@ fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// A note's text: the formatted tag, or the plain attribution. A note
-/// that names the changes it sits inside prints ` on ` between them,
-/// one part per level, its own change first. Each plain part's author
-/// spells its parentheses percent-wise (`Ana %28consultant%29`), so its
-/// date's are the only bare ones and the writer's parser can split the
-/// note.
+/// A note's text: the formatted tag, or the plain attribution.
 fn display(by: &str) -> String {
-    let by = bare(by);
-    let Some(tagged) = by.strip_prefix(PLAIN).or_else(|| by.strip_prefix(TAG)) else {
-        return by.to_string();
-    };
-    let fold = tagged.contains(ON);
-    let one = |part: &str| {
-        if by.starts_with(PLAIN) {
-            let printed = super::agent::format_plain_tag(part);
-            return if fold {
-                escaped_author(&printed)
-            } else {
-                printed
-            };
+    match by.strip_prefix(TAG) {
+        Some(tagged) => {
+            let (t, date) = tag_parts(tagged);
+            let mut out = super::agent::format_tag(t);
+            if let Some(date) = date {
+                out.push(' ');
+                out.push_str(date);
+            }
+            out
         }
-        let (t, date) = tag_parts(part);
-        let mut out = super::agent::format_tag(t);
-        if let Some(date) = date {
-            out.push(' ');
-            out.push_str(date);
-        }
-        out
-    };
-    tagged.split(ON).map(one).collect::<Vec<_>>().join(" on ")
-}
-
-/// A printed plain part (`r1+2 Name (date)`) with the name's parentheses,
-/// backslashes and `%` percent-spelled (`%28` and its kin, `%` itself
-/// `%25`, the spelling the internal tags use): only the date's stay bare.
-fn escaped_author(part: &str) -> String {
-    let Some((ids, rest)) = part.split_once(' ') else {
-        return part.to_string();
-    };
-    let author_end = super::super::view_notes::trailing_bare_group(rest)
-        .filter(|&at| super::super::write::is_date(&rest[at + 1..rest.len() - 1]))
-        .unwrap_or(rest.len());
-    let mut out = String::with_capacity(part.len());
-    out.push_str(ids);
-    out.push(' ');
-    for c in rest[..author_end].chars() {
-        match c {
-            '%' => out.push_str("%25"),
-            '(' => out.push_str("%28"),
-            ')' => out.push_str("%29"),
-            '\\' => out.push_str("%5C"),
-            c => out.push(c),
-        }
+        None => by.to_string(),
     }
-    out.push_str(&rest[author_end..]);
-    out
 }
 
 /// Two attributions join as neighbours: equal notes, or two tags of one
@@ -187,27 +97,21 @@ fn escaped_author(part: &str) -> String {
 fn same_author(a: Option<&str>, b: Option<&str>) -> bool {
     use super::agent::{handle_of, split_tag};
     match (tag(a), tag(b)) {
-        (Some(ta), Some(tb)) if a.map(sentinel) == b.map(sentinel) => {
-            let (own_a, own_b) = (tag_parts(ta).0, tag_parts(tb).0);
-            handle_of(own_a) == handle_of(own_b)
-                && split_tag(own_a).0 == split_tag(own_b).0
-                // A change named as the one another sits inside joins only
-                // with one that names the same change.
-                && outer_of(a) == outer_of(b)
+        (Some(a), Some(b)) => {
+            let (a, b) = (tag_parts(a).0, tag_parts(b).0);
+            handle_of(a) == handle_of(b) && split_tag(a).0 == split_tag(b).0
         }
         _ => a == b,
     }
 }
 
-/// The tags of two neighbours or of a substitution's two sides (whole
-/// attributions, sentinel and all), joined, keeping the first inline
-/// timestamp.
+/// The tags of two neighbours or of a substitution's two sides, joined,
+/// keeping the first inline timestamp.
 fn join_tagged(a: &str, b: &str) -> String {
-    let kind = sentinel(a);
-    let (ta, da) = tag_parts(tag(Some(a)).unwrap_or(a));
-    let (tb, db) = tag_parts(tag(Some(b)).unwrap_or(b));
+    let (ta, da) = tag_parts(a);
+    let (tb, db) = tag_parts(b);
     let mut out = format!(
-        "{kind}{}",
+        "{TAG}{}",
         super::agent::join_tags(&[ta.to_string(), tb.to_string()])
     );
     if let Some(date) = da.or(db) {
@@ -227,30 +131,8 @@ enum Leaf {
     },
     /// Markdown built by the converter (images, math, note references).
     Raw(String),
-    /// The inside of a `{>>…<<}` comment, in each of the forms its
-    /// contexts print.
-    Comment(Note),
-}
-
-/// A comment's note, as each of its contexts prints it: the prose around
-/// its anchor, and the code block it is anchored in, whose fence unwinds
-/// only the escape that form's text uses (#518).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Note {
-    pub(crate) prose: String,
-    pub(crate) code: String,
-}
-
-impl Note {
-    /// A note whose text no context changes: it holds nothing either
-    /// escape touches.
-    #[cfg(test)]
-    pub(crate) fn same(text: &str) -> Self {
-        Self {
-            prose: text.to_string(),
-            code: text.to_string(),
-        }
-    }
+    /// The inside of a `{>>…<<}` comment, already escaped.
+    Comment(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -264,12 +146,6 @@ enum Token {
 enum Node {
     Leaf(Leaf),
     Span(Mark, Option<String>, Vec<Node>),
-    /// A change's pieces around the changes it held, with the outer
-    /// change's mark and attribution: each piece keeps the attribution
-    /// too. CriticMarkup cannot nest a change in a change, so an insertion
-    /// holding a deletion prints `{++a++}…{++b++}`, and the pieces never
-    /// pair as a substitution.
-    Split(Mark, Option<String>, Vec<Node>),
 }
 
 impl Node {
@@ -277,9 +153,7 @@ impl Node {
         match self {
             Self::Leaf(Leaf::Comment(_)) => false,
             Self::Leaf(_) => true,
-            Self::Span(_, _, children) | Self::Split(.., children) => {
-                children.iter().any(Self::has_content)
-            }
+            Self::Span(_, _, children) => children.iter().any(Self::has_content),
         }
     }
 }
@@ -288,25 +162,38 @@ impl Node {
 #[derive(Debug, Default)]
 pub(crate) struct Critic {
     tokens: Vec<Token>,
+    /// Text written as is, for a document with no tracked change or comment:
+    /// nothing can open a span there, so nothing needs escaping.
+    plain: bool,
     /// The paragraph is joined to more text on the same line (a flattened
     /// table's cells): see [`space_into_last_change`].
     inline_end: bool,
-    /// Agent view: runs of spaces stay as the file holds them.
+    /// Agent view: runs of spaces stay as the file holds them, and Markdown
+    /// syntax in the text is escaped once neighbouring runs are joined.
     agent: bool,
-    /// A code block's paragraph: its text goes in a fence, its runs of
-    /// spaces kept and its CriticMarkup delimiters escaped for the writer
-    /// to unwind there.
+    /// A code block's paragraph: its text is written as is, spaces and all.
     code_block: bool,
 }
 
 impl Critic {
-    /// Agent view: keeps runs of spaces as the file holds them.
+    /// A paragraph of a document with no tracked change or comment: its text
+    /// is written unescaped.
+    pub(crate) fn plain() -> Self {
+        Self {
+            plain: true,
+            ..Self::default()
+        }
+    }
+
+    /// Agent view: keeps runs of spaces as the file holds them and escapes
+    /// Markdown syntax in the text. Word splits runs anywhere, so `==` or
+    /// `~~` can straddle two runs: the escaping waits for the joined text.
     pub(crate) fn set_agent(&mut self) {
         self.agent = true;
     }
 
     /// A code block's paragraph (`SourceCode`): its text goes in a fence
-    /// with its runs of spaces, its CriticMarkup delimiters escaped.
+    /// unescaped, with its runs of spaces.
     pub(crate) fn set_code_block(&mut self) {
         self.code_block = true;
     }
@@ -385,8 +272,9 @@ impl Critic {
         self.tokens.truncate(len);
     }
 
-    pub(crate) fn comment(&mut self, note: &Note) {
-        self.tokens.push(Token::Leaf(Leaf::Comment(note.clone())));
+    pub(crate) fn comment(&mut self, note: &str) {
+        self.tokens
+            .push(Token::Leaf(Leaf::Comment(note.to_string())));
     }
 
     /// Opens a span; `by` is the attribution of an insertion or deletion.
@@ -410,42 +298,23 @@ impl Critic {
         self
     }
 
-    /// True when there is no visible text and no comment. Text inside an
-    /// insertion or deletion counts even when it is only a space: Word shows
-    /// it (`{++ ++}`), and dropping it would lose the change's run. So do
-    /// spaces carrying underline, highlight or strike, which show on a
-    /// space: a signature line of underlined spaces is not a blank
-    /// paragraph. Other whitespace (a tab) renders to nothing the marks
-    /// could hold, so it stays blank.
+    /// True when there is no visible text and no comment.
     pub(crate) fn is_blank(&self) -> bool {
-        let mut changed = 0usize;
         self.tokens.iter().all(|token| match token {
-            Token::Leaf(Leaf::Text { text, marks, .. }) => {
-                let marked = marks.underline || marks.highlight.is_some() || marks.strike;
-                let spaces = !text.is_empty() && text.chars().all(|c| c == ' ');
-                let visible = !text.trim().is_empty() || (spaces && marked);
-                changed == 0 && !visible
-            }
-            Token::Leaf(Leaf::Raw(text)) => changed == 0 && text.trim().is_empty(),
+            Token::Leaf(Leaf::Text { text, .. } | Leaf::Raw(text)) => text.trim().is_empty(),
             Token::Leaf(Leaf::Comment(_)) => false,
-            Token::Open(Mark::Insertion | Mark::Deletion, _) => {
-                changed += 1;
-                true
-            }
-            Token::Close(Mark::Insertion | Mark::Deletion) => {
-                changed = changed.saturating_sub(1);
-                true
-            }
             Token::Open(..) | Token::Close(_) => true,
         })
     }
 
     pub(crate) fn into_inline(self) -> Inline {
-        let mut nodes = tidy(unnest(tree(self.tokens)));
+        let mut nodes = tidy(tree(self.tokens));
         if self.inline_end {
             space_into_last_change(&mut nodes);
         }
         let escaping = Escaping {
+            plain: self.plain,
+            agent: self.agent,
             code_block: self.code_block,
         };
         let mut pieces = Vec::new();
@@ -478,20 +347,7 @@ fn tree(tokens: Vec<Token>) -> Vec<Node> {
     for token in tokens {
         match token {
             Token::Leaf(leaf) => children(&mut root, &mut open).push(Node::Leaf(leaf)),
-            Token::Open(mark, _)
-                if open
-                    .iter()
-                    .rposition(|(m, ..)| *m == mark)
-                    .is_some_and(|at| {
-                        // A span of a kind already open merges into it when only a
-                        // comment's scope lies between: a change of the other kind
-                        // between them makes a nest the reader must keep (`w:ins >
-                        // w:del > w:ins`), not a span to absorb.
-                        open[at + 1..]
-                            .iter()
-                            .all(|(m, ..)| matches!(m, Mark::Scope))
-                    }) =>
-            {
+            Token::Open(mark, _) if open.iter().any(|(m, ..)| *m == mark) => {
                 merged[mark.index()] += 1;
             }
             Token::Open(mark, by) => open.push((mark, by, Vec::new())),
@@ -533,168 +389,16 @@ fn close_from(root: &mut Vec<Node>, open: &mut Vec<Open>, at: usize) {
     children(root, open).extend(outermost);
 }
 
-/// Splits a change around every change inside it: CriticMarkup cannot nest
-/// one, so `w:ins` holding `w:del` prints `{++a++}…{--x--}…{++b++}` and the
-/// writer puts the marks back one inside the other. Each piece keeps the
-/// outer change's attribution. A change is a span's direct child; inside a
-/// highlight or a comment it may stay.
-/// A node is a change, holds one (a comment's scope), or is the pieces
-/// one split into: anything the outer change must break around.
-fn is_change(node: &Node) -> bool {
-    match node {
-        Node::Split(..) => true,
-        Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
-        Node::Span(..) => true,
-        _ => false,
-    }
-}
-
-/// A piece of a split `mark` made is one of the changes it held, not a
-/// piece of the change itself: the writer nests it back inside, so the
-/// outer may fold into its note. Same-kind changes merge in [`tree`],
-/// so a held change never shares the outer's mark — save a level a
-/// deeper fold already dissolved into its sole change, whose note then
-/// names the change it sits inside.
-fn held_change(piece: &Node, outer: Mark) -> bool {
-    match piece {
-        Node::Split(..) => true,
-        Node::Span(Mark::Scope, _, children) => children.iter().any(is_change),
-        Node::Span(mark, by, _) => outer_of(by.as_deref()).is_some() || *mark != outer,
-        _ => false,
-    }
-}
-
-/// Splits a change around every change inside it: CriticMarkup cannot nest
-/// one, so `w:ins` holding `w:del` prints `{++a++}…{--x--}…{++b++}` and the
-/// writer puts the marks back one inside the other. Each piece keeps the
-/// outer change's attribution. A change is a span's direct child; inside a
-/// highlight or a comment it may stay.
-fn unnest(nodes: Vec<Node>) -> Vec<Node> {
-    let mut out = Vec::new();
-    for node in nodes {
-        let Node::Span(mark, by, children) = node else {
-            out.push(node);
-            continue;
-        };
-        let children = unnest(children);
-        if matches!(mark, Mark::Insertion | Mark::Deletion) && children.iter().any(is_change) {
-            let outer = by.clone();
-            let mut pieces: Vec<Node> = Vec::new();
-            let mut piece: Vec<Node> = Vec::new();
-            for child in children {
-                if is_change(&child) {
-                    if !piece.is_empty() {
-                        pieces.push(Node::Span(mark, by.clone(), piece));
-                        piece = Vec::new();
-                    }
-                    pieces.push(child);
-                } else {
-                    piece.push(child);
-                }
-            }
-            if !piece.is_empty() {
-                pieces.push(Node::Span(mark, by, piece));
-            }
-            out.push(Node::Split(mark, outer, pieces));
-        } else {
-            out.push(Node::Span(mark, by, children));
-        }
-    }
-    out
-}
-
-/// Names `outer` in the note of the change `node` is, when the split left
-/// that change as the outer's only content: `A` inserted what `B` deleted,
-/// and the note reads `r3 @B on r1 @A`, so the writer nests them again.
-/// Both must be tagged attributions of one view, and the sole change a
-/// change itself, or there is nothing to name.
-fn fold_on(node: &mut Node, outer: Option<&str>) {
-    /// The change `node` holds, when it is the sole one it names.
-    fn held(node: &mut Node) -> Option<&mut Option<String>> {
-        match node {
-            Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-            _ => None,
-        }
-    }
-    let Some(outer) = outer else {
-        return;
-    };
-    // A row's or cell's own mark wraps the content the container covers;
-    // the writer rebuilds it there, not as a wrap around the sole change.
-    if outer.ends_with(CARRIED) {
-        return;
-    }
-    let Some(tagged) = outer
-        .strip_prefix(TAG)
-        .or_else(|| outer.strip_prefix(PLAIN))
-    else {
-        return;
-    };
-    // The change may sit in a comment's scope, the only content left, or
-    // be one a change it held split around: the change the note follows.
-    let by = match node {
-        Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-        Node::Span(Mark::Scope, _, children) => children.iter_mut().find_map(held),
-        Node::Split(_, _, pieces) => pieces.iter_mut().find_map(held),
-        _ => None,
-    };
-    if let Some(by) = by
-        && let Some(own) = by.clone()
-        && sentinel(&own) == sentinel(outer)
-    {
-        *by = Some(format!("{own}{ON}{tagged}"));
-    }
-}
-
 /// Drops empty spans, joins neighbours of the same kind and attribution, and
 /// moves comments out of highlights, at every level.
 fn tidy(nodes: Vec<Node>) -> Vec<Node> {
     let mut out: Vec<Node> = Vec::new();
     for node in nodes {
-        let mut comments = Vec::new();
-        let node = if let Node::Split(mark, outer, pieces) = node {
-            // The pieces tidy as one list: what emptied out of a child change
-            // leaves its neighbours adjacent, and they join again. A piece
-            // with nothing in it can only hold comments: they move out and
-            // the piece goes, so where the outer's changes stand decides
-            // its fate, not where a comment chanced to sit.
-            let mut pieces = tidy(pieces);
-            pieces.retain(|piece| {
-                if piece.has_content() {
-                    true
-                } else {
-                    lift_comments(std::slice::from_ref(piece).to_vec(), &mut comments);
-                    false
-                }
-            });
-            if pieces.is_empty() {
-                out.extend(comments);
-                continue;
-            }
-            // Every piece a change: the outer holds them and no text of its
-            // own, so it folds into each piece's note — the one the sole
-            // case names, and each of the several it may hold — and the
-            // writer nests them back inside it.
-            if pieces.iter().all(|piece| held_change(piece, mark)) {
-                for piece in &mut pieces {
-                    fold_on(piece, outer.as_deref());
-                }
-            }
-            if pieces.len() == 1 {
-                pieces.remove(0)
-            } else {
-                out.push(Node::Split(mark, outer, pieces));
-                out.extend(comments);
-                continue;
-            }
-        } else {
-            node
-        };
         let Node::Span(mark, by, nodes) = node else {
             out.push(node);
-            out.extend(comments);
             continue;
         };
+        let mut comments = Vec::new();
         let nodes = if mark == Mark::Scope {
             lift_comments(nodes, &mut comments)
         } else {
@@ -705,10 +409,7 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
         } else if let Some(Node::Span(_, before_by, before)) = out.last_mut().filter(|last| {
             matches!(last, Node::Span(m, b, _) if *m == mark && same_author(b.as_deref(), by.as_deref()))
         }) {
-            if let (Some(a), Some(b)) = (before_by.as_deref(), by.as_deref())
-                && tag(Some(a)).is_some()
-                && tag(Some(b)).is_some()
-            {
+            if let (Some(a), Some(b)) = (tag(before_by.as_deref()), tag(by.as_deref())) {
                 *before_by = Some(join_tagged(a, b));
             }
             before.extend(nodes);
@@ -764,7 +465,7 @@ fn space_into_last_change(nodes: &mut [Node]) {
         return;
     };
     // A tagged change (agent view) keeps its text exactly as the file holds it.
-    if by.as_deref().is_some_and(|by| by.starts_with(TAG)) {
+    if tag(by.as_deref()).is_some() {
         return;
     }
     // Only into text the change starts with, so the space keeps a format.
@@ -788,9 +489,6 @@ fn lift_comments(nodes: Vec<Node>, comments: &mut Vec<Node>) -> Vec<Node> {
             Node::Span(mark, by, nodes) => {
                 kept.push(Node::Span(mark, by, lift_comments(nodes, comments)));
             }
-            Node::Split(mark, outer, pieces) => {
-                kept.push(Node::Split(mark, outer, lift_comments(pieces, comments)));
-            }
             leaf => kept.push(leaf),
         }
     }
@@ -811,24 +509,26 @@ struct Piece {
 /// How [`render`] escapes document text.
 #[derive(Clone, Copy)]
 struct Escaping {
-    /// A code block: its delimiters are broken the way its fence unwinds
-    /// ([`escape_code`]), and nothing else is, since a fence holds the rest
-    /// of the text as written.
+    /// No tracked change or comment: nothing can open a CriticMarkup span.
+    plain: bool,
+    /// Agent view: Markdown syntax is escaped too.
+    agent: bool,
+    /// A code block: nothing is escaped.
     code_block: bool,
 }
 
 impl Escaping {
-    /// `text` escaped: Markdown's marks and CriticMarkup's delimiters both,
-    /// so nothing reads back as what it is not. A code span's text is
-    /// written as is, since a backslash shows there, and a code block's
-    /// delimiters are broken the way its fence unwinds.
+    /// `text` escaped; a code span's or a code block's text is written as
+    /// is, since a backslash shows there.
     fn text(self, text: &str, marks: Marks) -> String {
-        if self.code_block {
-            escape_code(text)
-        } else if marks.code {
-            text.to_string()
-        } else {
-            escape(&super::agent::escape_markdown(text))
+        if self.code_block || marks.code {
+            return text.to_string();
+        }
+        match (self.agent, self.plain) {
+            (true, true) => super::agent::escape_markdown(text),
+            (true, false) => escape(&super::agent::escape_markdown(text)),
+            (false, true) => text.to_string(),
+            (false, false) => escape(text),
         }
     }
 }
@@ -840,12 +540,11 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
             // The new text, then the old it replaces: Word's Compare
             // writes a substitution so, and so the writer puts
             // `{~~old~>new~~}` back. A deletion before an insertion stays
-            // two changes, in their order. A change that names the one it
-            // sits inside never pairs: the pair would lose the nest.
+            // two changes, in their order.
             (
                 Node::Span(Mark::Insertion, new_by, new),
                 Some(Node::Span(Mark::Deletion, old_by, old)),
-            ) if outer_of(new_by.as_deref()).is_none() && outer_of(old_by.as_deref()).is_none() => {
+            ) => {
                 *ids += 1;
                 let id = *ids;
                 marker(out, "{~~", id);
@@ -853,11 +552,8 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 marker(out, "~>", id);
                 render(new, out, escaping, ids);
                 marker(out, "~~}", id);
-                match (old_by.as_deref(), new_by.as_deref()) {
-                    (Some(a), Some(b))
-                        if tag(Some(a)).is_some()
-                            && same_author(old_by.as_deref(), new_by.as_deref()) =>
-                    {
+                match (tag(old_by.as_deref()), tag(new_by.as_deref())) {
+                    (Some(a), Some(b)) if same_author(old_by.as_deref(), new_by.as_deref()) => {
                         let joined = join_tagged(a, b);
                         attribution(out, Some(&joined), id);
                     }
@@ -880,13 +576,6 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 marker(out, close, id);
                 attribution(out, by.as_deref(), id);
             }
-            // The pieces of a split change render side by side, never
-            // paired as a substitution: their order is the document's.
-            (Node::Split(.., pieces), _) => {
-                for piece in pieces {
-                    render(std::slice::from_ref(piece), out, escaping, ids);
-                }
-            }
             (Node::Leaf(Leaf::Text { text, marks, link }), _) => {
                 out.push(Piece {
                     text: escaping.text(text, *marks),
@@ -896,8 +585,8 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 });
             }
             (Node::Leaf(Leaf::Raw(markdown)), _) => out.push(Piece {
-                text: math_changes(&if escaping.code_block {
-                    escape_code(markdown)
+                text: math_changes(&if escaping.plain {
+                    markdown.clone()
                 } else {
                     defuse(markdown)
                 }),
@@ -905,13 +594,8 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 link: None,
                 marker: None,
             }),
-            (Node::Leaf(Leaf::Comment(comment)), _) => {
+            (Node::Leaf(Leaf::Comment(inner)), _) => {
                 *ids += 1;
-                let inner = if escaping.code_block {
-                    &comment.code
-                } else {
-                    &comment.prose
-                };
                 marker(out, &note(inner), *ids);
             }
         }
@@ -1028,62 +712,6 @@ pub(crate) fn escape(text: &str) -> String {
         .fold(text.to_string(), |text, (from, to)| text.replace(from, to))
 }
 
-/// The text of a code block, as its fence holds it: a delimiter of
-/// [`escape`] with a run of backslashes at its break point (`{` + the
-/// run + `++`, `++` + the run + `}`, `~` + the run + `>`) gains enough of
-/// them that the run is odd, and every other backslash is left alone. A
-/// fence reads no Markdown escape, so the writer unwinds exactly those
-/// odd runs there (see `crate::markdown::critic`), and hand-written code
-/// (`C:\path`, a regex `\\d+`) passes through as written.
-pub(crate) fn escape_code(text: &str) -> String {
-    /// What can follow the backslash run an opener holds (`{` + run).
-    const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="];
-    /// What can hold the run a closer escapes (`++` + run + `}`).
-    const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="];
-    let bytes = text.as_bytes();
-    // The delimiter shape at `at`, if one sits there: its head, the
-    // backslash run at its break point, and its tail.
-    let shape = |at: usize| -> Option<(usize, usize, usize)> {
-        let shape = |head: usize, tails: &[&str]| {
-            let mut run = at + head;
-            while bytes.get(run) == Some(&b'\\') {
-                run += 1;
-            }
-            let tail = tails
-                .iter()
-                .find(|tail| text[run..].starts_with(*tail))?
-                .len();
-            Some((head, run - (at + head), tail))
-        };
-        if bytes.get(at) == Some(&b'{') {
-            shape(1, &OPENER)
-        } else if CLOSER.iter().any(|head| text[at..].starts_with(head)) {
-            shape(2, &["}"])
-        } else if bytes.get(at) == Some(&b'~') {
-            shape(1, &[">"])
-        } else {
-            None
-        }
-    };
-    let mut out = String::with_capacity(text.len());
-    let mut at = 0;
-    while at < text.len() {
-        if let Some((head, run, tail)) = shape(at) {
-            out.push_str(&text[at..at + head]);
-            for _ in 0..run * 2 + 1 {
-                out.push('\\');
-            }
-            out.push_str(&text[at + head + run..at + head + run + tail]);
-            at += head + run + tail;
-        } else {
-            let c = text[at..].chars().next().unwrap_or_default();
-            out.push(c);
-            at += c.len_utf8();
-        }
-    }
-    out
-}
-
 /// Breaks every CriticMarkup delimiter in Markdown the converter built
 /// (equations, image descriptions). Outside an equation a space does it, and
 /// an image description reads the same. Inside one, a space would be part of
@@ -1195,35 +823,11 @@ pub(crate) fn splice(
         return;
     };
     let (open, close) = mark.delimiters();
-    let shown = by.as_deref().map(display);
-    let by = shown.as_deref().map(note).unwrap_or_default();
+    let by = by.as_deref().map(|b| note(&display(b))).unwrap_or_default();
     let end = format!("{close}{by}");
-    // A plain note names its change's ids: the same author and date with
-    // other ids still continue the span.
-    let rest = shown.as_deref().and_then(plain_note_rest);
-    // The ids each piece's plain note names, in document order: the span
-    // before the break, the break, the span after it.
-    let mut pieces: Vec<String> = Vec::new();
-    let ends_alike = |text: &str| -> Option<(usize, Option<String>)> {
-        if let Some(kept) = text.strip_suffix(end.as_str()) {
-            return Some((kept.len(), None));
-        }
-        let inner = text.strip_suffix("<<}")?;
-        let at = inner.rfind("{>>")?;
-        let kept = inner[..at].strip_suffix(close)?;
-        let note = &inner[at + 3..];
-        (rest.is_some() && plain_note_rest(note) == rest)
-            .then(|| (kept.len(), Some(plain_note_ids(note).to_string())))
-    };
-    match ends_alike(out) {
-        Some((kept, ids)) => {
-            out.truncate(kept);
-            pieces.extend(ids);
-        }
+    match out.strip_suffix(end.as_str()) {
+        Some(kept) => out.truncate(kept.len()),
         None => out.push_str(open),
-    }
-    if let Some(shown) = shown.as_deref().filter(|_| rest.is_some()) {
-        pieces.push(plain_note_ids(shown).to_string());
     }
     out.push_str(separator);
     out.push_str(prefix);
@@ -1232,98 +836,20 @@ pub(crate) fn splice(
     // converter-built Markdown is defused, so neither contains the closer, and a
     // span never nests one of its own kind: the first closer after the opener
     // is that span's own.
-    let continues = body.strip_prefix(open).filter(|rest_of| {
-        rest_of.find(close).is_some_and(|at| {
-            let after = &rest_of[at + close.len()..];
-            after.starts_with(by.as_str())
-                || after
-                    .strip_prefix("{>>")
-                    .and_then(|inner| inner.find("<<}").map(|end| &inner[..end]))
-                    .is_some_and(|inner| rest.is_some() && plain_note_rest(inner) == rest)
-        })
+    let continues = body.strip_prefix(open).filter(|rest| {
+        rest.find(close)
+            .is_some_and(|at| rest[at + close.len()..].starts_with(by.as_str()))
     });
     match continues {
-        Some(rest_of) => {
-            let at = rest_of.find(close).map_or(0, |at| at + close.len());
-            let found = rest_of[at..]
-                .strip_prefix("{>>")
-                .and_then(|inner| inner.find("<<}").map(|end| &inner[..end]))
-                .filter(|inner| rest.is_some() && plain_note_rest(inner) == rest);
-            match found.and_then(|found| {
-                pieces.push(plain_note_ids(found).to_string());
-                merged_plain_note(&pieces, rest?)
-            }) {
-                Some(merged) => {
-                    let after = at + "{>>".len() + found.map_or(0, str::len) + "<<}".len();
-                    out.push_str(&rest_of[..at]);
-                    out.push_str(&note(&merged));
-                    out.push_str(&rest_of[after..]);
-                }
-                None => out.push_str(rest_of),
-            }
-        }
+        Some(rest) => out.push_str(rest),
         None => {
-            match rest.and_then(|rest| merged_plain_note(&pieces, rest)) {
-                Some(merged) => out.push_str(&format!("{close}{}", note(&merged))),
-                None => out.push_str(&end),
-            }
+            out.push_str(&end);
             if space {
                 out.push(' ');
             }
             out.push_str(body);
         }
     }
-}
-
-/// A plain-view note's ids: `r5+6` of `r5+6 Ana (2026-…)`.
-fn plain_note_ids(inner: &str) -> &str {
-    inner.split_once(' ').map_or(inner, |(ids, _)| ids)
-}
-
-/// One plain note naming every piece's ids (`r8`, `r9`, `r10` →
-/// `r8+9+10 Ana`), or `None` when the pieces name ids of different
-/// stories or forms the short `rN+M` cannot join.
-fn merged_plain_note(pieces: &[String], rest: &str) -> Option<String> {
-    if pieces.len() < 2 {
-        return None;
-    }
-    let split = |ids: &str| -> Option<(String, String)> {
-        let numbers = ids.trim_start_matches(|c: char| !c.is_ascii_digit());
-        let head = &ids[..ids.len() - numbers.len()];
-        (head.ends_with('r')
-            && !numbers.is_empty()
-            && numbers.split('+').all(|n| n.parse::<u32>().is_ok()))
-        .then(|| (head.to_string(), numbers.to_string()))
-    };
-    let parts: Vec<(String, String)> = pieces.iter().map(|p| split(p)).collect::<Option<_>>()?;
-    let head = &parts[0].0;
-    if parts.iter().any(|(h, _)| h != head) {
-        return None;
-    }
-    let mut numbers: Vec<&str> = Vec::new();
-    for n in parts.iter().flat_map(|(_, n)| n.split('+')) {
-        if !numbers.contains(&n) {
-            numbers.push(n);
-        }
-    }
-    let ids = format!("{head}{}", numbers.join("+"));
-    Some(if rest.is_empty() {
-        ids
-    } else {
-        format!("{ids} {rest}")
-    })
-}
-
-/// A plain-view note's `Author (date)` after its ids: `r5 Ana (2026-…)` is
-/// `Ana (2026-…)`, `r7` is empty. `None` for any other note, an agent tag
-/// (`r5 @AC`) among them.
-fn plain_note_rest(inner: &str) -> Option<&str> {
-    let (ids, rest) = inner.split_once(' ').unwrap_or((inner, ""));
-    let ids_ok = ids == "noid"
-        || ids.ends_with(".noid")
-        || (!ids.starts_with(|c: char| c.is_ascii_digit())
-            && crate::ids::parse_change_ids(ids).is_ok());
-    (ids_ok && !rest.starts_with('@')).then_some(rest)
 }
 
 /// The change a rendered part is wholly inside, with its attribution:
@@ -1442,7 +968,7 @@ mod tests {
                 // `by+Ana (d)`: an insertion or deletion made by Ana at d.
                 op if op.starts_with("by") => critic.open(kind(&op[2..]), Some(value)),
                 "close" => critic.close(kind(value)),
-                "note" => critic.comment(&Note::same(value)),
+                "note" => critic.comment(value),
                 "raw" => critic.raw(value),
                 _ => text(&mut critic, value),
             }
@@ -1550,10 +1076,8 @@ mod tests {
     }
 
     #[test]
-    fn different_kinds_cannot_nest() {
-        // CriticMarkup cannot nest a change in a change: an insertion that
-        // is only the deletion splits away entirely, each piece keeping its
-        // attribution.
+    fn different_kinds_may_nest() {
+        // Inserted by one author, deleted by another: gone either way.
         let nested = [
             ("open", "+"),
             ("open", "-"),
@@ -1561,140 +1085,7 @@ mod tests {
             ("close", "-"),
             ("close", "+"),
         ];
-        assert_eq!(script(&nested), "{--x--}");
-    }
-
-    #[test]
-    fn a_change_inside_a_change_splits_the_outer_one() {
-        let nested = [
-            ("by+", "Ana"),
-            ("t", "one "),
-            ("by-", "Ben"),
-            ("t", "two"),
-            ("close", "-"),
-            ("t", " three"),
-            ("close", "+"),
-        ];
-        assert_eq!(
-            script(&nested),
-            "{++one ++}{>>Ana<<}{--two--}{>>Ben<<}{++ three++}{>>Ana<<}"
-        );
-    }
-
-    #[test]
-    fn a_change_that_is_another_s_only_content_names_it_in_the_note() {
-        // `A` inserted what `B` deleted: nothing of the insertion is left
-        // to split around the deletion, so the note names it after ` on `.
-        let nested = [
-            ("by+", "\u{E000}1@AL"),
-            ("by-", "\u{E000}3@BO"),
-            ("t", "x"),
-            ("close", "-"),
-            ("close", "+"),
-        ];
-        assert_eq!(script(&nested), "{--x--}{>>r3 @BO on r1 @AL<<}");
-        // Each tag keeps its own timestamp, as notes print them.
-        let dated = [
-            ("by+", "\u{E000}1@AL 2026-01-01T09:00:00Z"),
-            ("by-", "\u{E000}3@BO 2026-01-02T10:00:00Z"),
-            ("t", "x"),
-            ("close", "-"),
-            ("close", "+"),
-        ];
-        assert_eq!(
-            script(&dated),
-            "{--x--}{>>r3 @BO 2026-01-02T10:00:00Z on r1 @AL 2026-01-01T09:00:00Z<<}"
-        );
-        // The plain view names the same change by its author and date.
-        let plain = [
-            ("by+", "\u{E001}1@Ana%20Lima%20(2026-01-01T09:00:00Z)"),
-            ("by-", "\u{E001}3@Ben%20Ode%20(2026-01-02T10:00:00Z)"),
-            ("t", "x"),
-            ("close", "-"),
-            ("close", "+"),
-        ];
-        assert_eq!(
-            script(&plain),
-            "{--x--}{>>r3 Ben Ode (2026-01-02T10:00:00Z) \
-             on r1 Ana Lima (2026-01-01T09:00:00Z)<<}"
-        );
-    }
-
-    #[test]
-    fn a_note_that_names_no_change_keeps_the_sole_one() {
-        // Untagged changes have no note to name the outer one in, so the
-        // outer stays gone, as joined crossings always were.
-        let nested = [
-            ("by+", "Ana"),
-            ("by-", "Ben"),
-            ("t", "x"),
-            ("close", "-"),
-            ("close", "+"),
-        ];
-        assert_eq!(script(&nested), "{--x--}{>>Ben<<}");
-    }
-
-    #[test]
-    fn an_insertion_inside_a_deletion_splits_it_too() {
-        let nested = [
-            ("by-", "Ben"),
-            ("t", "one "),
-            ("by+", "Ana"),
-            ("t", "two"),
-            ("close", "+"),
-            ("t", " three"),
-            ("close", "-"),
-        ];
-        assert_eq!(
-            script(&nested),
-            "{--one --}{>>Ben<<}{++two++}{>>Ana<<}{-- three--}{>>Ben<<}"
-        );
-    }
-
-    #[test]
-    fn split_pieces_do_not_pair_as_a_substitution() {
-        // `one` was inserted before `two`, not instead of it: the pieces
-        // the nested change split keep their order.
-        let nested = [
-            ("by+", "Ana"),
-            ("t", "one "),
-            ("by-", "Ben"),
-            ("t", "two"),
-            ("close", "-"),
-            ("t", " three"),
-            ("close", "+"),
-            ("by-", "Ben"),
-            ("t", "four"),
-            ("close", "-"),
-        ];
-        assert_eq!(
-            script(&nested),
-            "{++one ++}{>>Ana<<}{--two--}{>>Ben<<}{++ three++}{>>Ana<<}\
-             {--four--}{>>Ben<<}"
-        );
-    }
-
-    #[test]
-    fn a_nest_inside_a_nest_splits_at_every_level() {
-        // Two changes inside one: the outer change splits around each.
-        let nested = [
-            ("by+", "Ana"),
-            ("t", "a"),
-            ("by-", "Ben"),
-            ("t", "x"),
-            ("close", "-"),
-            ("t", "y"),
-            ("by-", "Cid"),
-            ("t", "z"),
-            ("close", "-"),
-            ("t", "b"),
-            ("close", "+"),
-        ];
-        assert_eq!(
-            script(&nested),
-            "{++a++}{>>Ana<<}{--x--}{>>Ben<<}{++y++}{>>Ana<<}{--z--}\
-             {>>Cid<<}{++b++}{>>Ana<<}"
-        );
+        assert_eq!(script(&nested), "{++{--x--}++}");
     }
 
     #[test]
@@ -1722,8 +1113,7 @@ mod tests {
             ("close", "+"),
         ];
         assert_eq!(script(&split), "{++ab++}");
-        // Joining exposes inner neighbours, which join too. The deletions
-        // around them split away: a change cannot hold a change.
+        // Joining exposes inner neighbours, which join too.
         let deep = [
             ("open", "-"),
             ("open", "+"),
@@ -1736,7 +1126,7 @@ mod tests {
             ("close", "+"),
             ("close", "-"),
         ];
-        assert_eq!(script(&deep), "{++ab++}");
+        assert_eq!(script(&deep), "{--{++ab++}--}");
     }
 
     #[test]
@@ -1885,22 +1275,15 @@ mod tests {
     }
 
     #[test]
-    fn blankness_counts_changed_text_but_ignores_markers() {
-        // An inserted or deleted space is text Word shows (`{++ ++}`), so it
-        // keeps the paragraph's line; a space only highlighted does not.
+    fn blankness_ignores_markers_but_not_comments() {
         let mut critic = Critic::default();
         critic.open(Ins, None);
         text(&mut critic, "  ");
         critic.raw(" ");
         critic.close(Ins);
+        assert!(critic.is_blank());
+        critic.comment("note");
         assert!(!critic.is_blank());
-        let mut scope = Critic::default();
-        scope.open(Mark::Scope, None);
-        text(&mut scope, "  ");
-        scope.close(Mark::Scope);
-        assert!(scope.is_blank());
-        scope.comment(&Note::same("note"));
-        assert!(!scope.is_blank());
         let mut raw = Critic::default();
         raw.raw("![x](y)");
         assert!(!raw.is_blank());
@@ -1949,37 +1332,6 @@ mod tests {
         let mut heading = "A".to_string();
         splice(&mut heading, "\n\n", "## ", "B", Some(&(Ins, None)), false);
         assert_eq!(heading, "A{++\n\n## ++}B");
-    }
-
-    #[test]
-    fn a_plain_span_across_paragraphs_names_every_piece_s_id() {
-        let mark = |id: &str| Some(format!("{PLAIN}{id}@Bo%20Chen"));
-        let join = |out: &str, body: &str, id: &str| {
-            let mut out = out.to_string();
-            splice(&mut out, "\n\n", "", body, Some(&(Del, mark(id))), false);
-            out
-        };
-        // The deleted text before the break, the break, the text after it.
-        assert_eq!(
-            join(
-                "a{--A--}{>>r8 Bo Chen<<}",
-                "{--B--}{>>r10 Bo Chen<<} b",
-                "9"
-            ),
-            "a{--A\n\nB--}{>>r8+9+10 Bo Chen<<} b"
-        );
-        assert_eq!(
-            join("{--A--}{>>r8 Bo Chen<<}", "B", "9"),
-            "{--A\n\n--}{>>r8+9 Bo Chen<<}B"
-        );
-        assert_eq!(
-            join("A", "{--B--}{>>r10 Bo Chen<<}", "9"),
-            "A{--\n\nB--}{>>r9+10 Bo Chen<<}"
-        );
-        let notes = |id: &str| Some(format!("{PLAIN}footnotes#{id}@Bo"));
-        let mut out = "{--A--}{>>footnotes.r2 Bo<<}".to_string();
-        splice(&mut out, "\n\n", "", "B", Some(&(Del, notes("3"))), false);
-        assert_eq!(out, "{--A\n\n--}{>>footnotes.r2+3 Bo<<}B");
     }
 
     #[test]
@@ -2291,7 +1643,7 @@ mod tests {
         critic.push("varied ", false, false, None);
         critic.push("Emphasis lives here. ", true, true, None);
         critic.close(Sc);
-        critic.comment(&Note::same("c2 @AS: Testing."));
+        critic.comment("c2 @AS: Testing.");
         critic.push("See note.", true, true, None);
         assert_eq!(
             md(critic),
@@ -2300,7 +1652,7 @@ mod tests {
         // A note alone between two bold runs still joins them.
         let mut critic = Critic::default();
         critic.push("bold ", true, false, None);
-        critic.comment(&Note::same("c0 @AS: Here."));
+        critic.comment("c0 @AS: Here.");
         critic.push("text", true, false, None);
         assert_eq!(md(critic), "**bold {>>c0 @AS: Here.<<}text**");
     }
@@ -2351,175 +1703,5 @@ mod tests {
             ]),
             "{--x {\\++ y--}"
         );
-    }
-
-    #[test]
-    fn a_note_prints_the_form_its_context_escapes() {
-        // A note anchored in a code block is written inside its fence, where
-        // the writer unwinds only the fence's escape (#518): the prose form
-        // would double its backslashes on every round trip.
-        let note = Note {
-            prose: r"prose \ and \* form".to_string(),
-            code: r"code \ and * form".to_string(),
-        };
-        let mut prose = Critic::default();
-        prose.comment(&note);
-        assert_eq!(md(prose), r"{>>prose \ and \* form<<}");
-        let mut code = Critic::default();
-        code.set_code_block();
-        code.comment(&note);
-        assert_eq!(md(code), r"{>>code \ and * form<<}");
-    }
-
-    #[test]
-    fn a_code_block_breaks_only_the_delimiter_shapes_it_holds() {
-        // Inside a fence Markdown reads no backslash escape, so the pair
-        // has to say itself what is text: a delimiter shape with a run of
-        // backslashes at its break point gains enough of them that the run
-        // is odd, and every other backslash the document holds is left
-        // alone. The writer unwinds exactly those runs there, so code a
-        // human wrote (`C:\path`, a regex `\\d+`) is not touched either.
-        let code = |t: &str| {
-            let mut critic = Critic::default();
-            critic.set_code_block();
-            text(&mut critic, t);
-            md(critic)
-        };
-        assert_eq!(code("fenced {++x++} code"), "fenced {\\++x++\\} code");
-        for (document, markdown) in [
-            (r"{\++x++}", r"{\\\++x++\}"),
-            (r"{\\++x++}", r"{\\\\\++x++\}"),
-            (r"\{++", r"\{\++"),
-            ("a~>b", r"a~\>b"),
-            (r"a\~>b", r"a\~\>b"),
-            (r"back\slash", r"back\slash"),
-            (r"C:\path\x", r"C:\path\x"),
-            (r"\\d+", r"\\d+"),
-            (r"a\\b", r"a\\b"),
-        ] {
-            assert_eq!(code(document), markdown, "{document}");
-        }
-        // A tracked change keeps its delimiters: the fence still reads
-        // CriticMarkup, so only the text inside is escaped, even where
-        // that text ends in a backslash right at a delimiter.
-        let mut critic = Critic::default();
-        critic.set_code_block();
-        critic.open(Ins, None);
-        text(&mut critic, "new {++x++}");
-        critic.close(Ins);
-        assert_eq!(md(critic), "{++new {\\++x++\\}++}");
-        let mut critic = Critic::default();
-        critic.set_code_block();
-        text(&mut critic, "old\\");
-        critic.open(Ins, None);
-        text(&mut critic, "new");
-        critic.close(Ins);
-        assert_eq!(md(critic), "old\\{++new++}");
-        let mut critic = Critic::default();
-        critic.set_code_block();
-        critic.open(Ins, None);
-        text(&mut critic, "new\\");
-        critic.close(Ins);
-        assert_eq!(md(critic), "{++new\\++}");
-        let mut critic = Critic::default();
-        critic.set_code_block();
-        critic.open(Ins, None);
-        text(&mut critic, "n");
-        critic.close(Ins);
-        critic.open(Del, None);
-        text(&mut critic, "old\\");
-        critic.close(Del);
-        assert_eq!(md(critic), "{~~old\\~>n~~}");
-        // Converter-built Markdown (an equation, an image) is fence text
-        // too, and comes back the same way.
-        let mut critic = Critic::default();
-        critic.set_code_block();
-        critic.raw("$x_{--}$ and ![a {++b++}](u\\v)");
-        assert_eq!(md(critic), "$x_{\\--}$ and ![a {\\++b++\\}](u\\v)");
-    }
-
-    #[test]
-    fn the_writer_unwinds_the_code_escape_inside_a_fence() {
-        // `encode` reads a fence's escaped text back as the document held
-        // it, and still opens the changes the reader wrote there.
-        let fence = |code: &str| format!("```\n{code}\n```\n");
-        for document in [
-            "fenced {++x++} code",
-            "{\\++x++}",
-            "{\\\\++x++}",
-            "\\{++",
-            "a~>b",
-            "a\\~>b",
-            "back\\slash",
-            "C:\\path\\x",
-            "\\\\d+",
-            "a\\\\b",
-        ] {
-            let source = fence(&escape_code(document));
-            assert_eq!(
-                crate::markdown::critic::encode(&source),
-                fence(document),
-                "{document}"
-            );
-        }
-        let mut critic = Critic::default();
-        critic.set_code_block();
-        critic.open(Ins, None);
-        text(&mut critic, "new");
-        critic.close(Ins);
-        assert_eq!(md(critic), "{++new++}");
-    }
-
-    #[test]
-    fn the_fence_escape_pair_is_exact() {
-        // Over every mix of backslash runs and delimiter shapes:
-        // unwind(escape_code(t)) == t, and escape_code(unwind(s)) == s for
-        // every s escape_code can produce, so no code text can reach Word
-        // changed or name another document's fence.
-        let fence = |code: &str| format!("```\n{code}\n```\n");
-        let unwind = |escaped: &str| {
-            let whole = crate::markdown::critic::encode(&fence(escaped));
-            whole["```\n".len()..whole.len() - "\n```\n".len()].to_string()
-        };
-        let shapes = [
-            ("{", "++"),
-            ("{", "--"),
-            ("{", "~~"),
-            ("{", ">>"),
-            ("{", "=="),
-            ("++", "}"),
-            ("--", "}"),
-            ("~~", "}"),
-            ("<<", "}"),
-            ("==", "}"),
-            ("~", ">"),
-        ];
-        let mut texts: Vec<String> = Vec::new();
-        for run in 0..5 {
-            let backslashes = "\\".repeat(run);
-            for (head, tail) in shapes {
-                texts.push(format!("a{head}{backslashes}{tail}b"));
-                texts.push(format!("{head}{backslashes}{tail}"));
-                texts.push(format!("x{backslashes} {head}{backslashes}{tail}"));
-            }
-            texts.push(format!("u{backslashes}v"));
-        }
-        texts.extend([
-            "{++x++}".to_string(),
-            "{\\\\}".to_string(),
-            "~~}".to_string(),
-            "{~~a~>b~~}".to_string(),
-            "C:\\path\\x".to_string(),
-            "\\\\d+".to_string(),
-        ]);
-        for text in &texts {
-            let escaped = escape_code(text);
-            assert_eq!(unwind(&escaped), *text, "unwind(escape_code({text:?}))");
-            assert_eq!(
-                escape_code(&unwind(&escaped)),
-                escaped,
-                "escape_code(unwind({escaped:?}))"
-            );
-        }
     }
 }

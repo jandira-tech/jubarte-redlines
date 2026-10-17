@@ -7,14 +7,6 @@
 > `jubarte-redlines` (a CLI over `jubarte-wasm`; a6d5e8ae). No JS facade
 > or worker exists — re-evaluate JS1/JS2 against those raw exports before
 > building either.
->
-> **ID contract (2026-10-17, `aba48bd5`):** the wire shape the decoder
-> below validates is the schema-1 `getRevisions` record. The v3 contract
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**)
-> makes new structured results carry `short_id`/`long_id` pairs that the
-> binding passes through unmodified (contract §8); the decoder changes with
-> the schema-2 cutover rather than beside it.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -83,7 +75,7 @@ In this planning pass: 27 reference wrapper tests passed, 100% lines/branches in
 
 `JubarteApiError` has `code: "ENGINE_FAILURE" | "REVISION_SCHEMA"` and `cause`. The first code wraps legacy string/Error throws; it deliberately does not claim to distinguish invalid DOCX, missing fonts, unsupported operation and internal bugs without a Rust error DTO. New edit/report exports will use stable explicit Rust codes, not string matching.
 
-The revision decoder validates `type`, string metadata, nullable move fields and formatting properties, maps `type` to `kind`, and freezes nested arrays. The original raw `getRevisions` still returns its JSON string. Unknown current-version kinds/schema fail loudly; versioned future records can add an explicit unknown-kind policy when the contract requires it. (The future record is the contract's schema-2 pair: `short_id`/`long_id`, `kind`, `move_name`/`move_side`; the `id`/`ref` field names are removed, not aliased.)
+The revision decoder validates `type`, string metadata, nullable move fields and formatting properties, maps `type` to `kind`, and freezes nested arrays. The original raw `getRevisions` still returns its JSON string. Unknown current-version kinds/schema fail loudly; versioned future records can add an explicit unknown-kind policy when the contract requires it.
 
 Inputs are Uint8Array (Node Buffer qualifies). SharedArrayBuffer is refused by the reference facade until copied by the caller; bytes must be owned at any asynchronous/native boundary. Returned generated WASM bytes retain their existing ownership behavior. Never claim zero-copy across WASM linear memory or N-API without measurement and lifetime proof.
 

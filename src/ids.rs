@@ -12,21 +12,17 @@
 //! Arthur, 2026-10-13: "We should strictly have the settled short IDs or long
 //! IDs. Everything else should be expired." Bare numbers (`12`), 0.12's
 //! `#12`, `#c27` and `t0.r1.c2` are refused, naming the settled spelling.
-//! Arthur, 2026-10-15: only those two types, and an error otherwise. The
-//! colon long ids (`body:rev:12`, `body:p:12`) are refused, naming the short
-//! id, whenever one exists. Until the contract's long ids land — the
-//! four-field `PART.ELEMENT.ATTRIBUTE.VALUE` family of
-//! `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md` §3 —
-//! jubarte prints a colon id only for what has no short spelling (a part
-//! outside the settled stories, `Header_1.xml`; a `w:id` such as `007`),
-//! and exactly that id still parses: jubarte never prints an id it refuses.
-//! Those colon ids are transitional: the contract retires the whole family
-//! at the schema-2 cutover.
+//! Arthur, 2026-10-15: only those two types, and an error otherwise. The old
+//! long ids (`body:rev:12`, `body:p:12`) are refused, naming the short id,
+//! whenever one exists. Until the settled long ids (spec §4) land, jubarte
+//! prints an old long id only for what has no short spelling (a part outside
+//! the settled stories, `Header_1.xml`; a `w:id` such as `007`), and exactly
+//! that id still parses: jubarte never prints an id it refuses.
 //!
 //! This module reads syntax only. Whether a story, paragraph, change or
 //! comment exists is decided against a document by `edit` (`-p`) and
 //! [`crate::changes`] (`--id`). Every number has one spelling: ASCII digits
-//! without leading zeros. A colon long change id carries the `w:id` as the
+//! without leading zeros. A long change id carries the `w:id` as the
 //! document spells it, so a change whose `w:id` the short form cannot spell
 //! (`007`) is still named. Every short id is safe unquoted in bash, csh and
 //! zsh.
@@ -60,9 +56,7 @@ pub const CHANGE_SPELLINGS: &[&str] = &["r12", "r1+2", "header1.r1", "footnotes.
 pub const COMMENT_SPELLINGS: &[&str] = &["c27"];
 /// The spellings of the text a comment covers the manifest advertises.
 pub const COMMENT_TEXT_SPELLINGS: &[&str] = &["c27.text"];
-/// The paragraph spellings the manifest advertises. `t0.row1.cell2.p1` is
-/// the pre-contract nested spelling; the 17 October 2026 contract spells a
-/// cell's own paragraphs `t0.row1.cell2.ps1`.
+/// The paragraph spellings the manifest advertises.
 pub const PARAGRAPH_SPELLINGS: &[&str] = &[
     "p12",
     "header1",
@@ -121,9 +115,8 @@ impl fmt::Display for IdError {
 impl std::error::Error for IdError {}
 
 /// One tracked change, addressed by story and the change's `w:id` value.
-/// The grammar of `short` and of the transitional colon `long` is safe
-/// unquoted in bash, csh and zsh and never collides with another change when
-/// its `w:id` is canonical.
+/// The grammar of `short` / `long` is safe unquoted in bash, csh and
+/// zsh and never collides with another change when its `w:id` is canonical.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ChangeId {
     /// The owning story: `body` for body changes, otherwise the part's file
@@ -147,11 +140,9 @@ impl ChangeId {
     }
 
     /// The id jubarte prints for the change, everywhere: `r12` in the
-    /// body, `header1.r1` elsewhere; the transitional colon id
-    /// `{story}:rev:{wid}` only when the story or the `w:id` has no short
-    /// spelling ([`ShortId`] decides: what is printed parses). The 17
-    /// October 2026 contract allocates a label instead (§4); that is staged,
-    /// not landed.
+    /// body, `header1.r1` elsewhere; `{story}:rev:{wid}` only when the
+    /// story or the `w:id` has no short spelling ([`ShortId`] decides: what
+    /// is printed parses).
     pub fn short(&self) -> String {
         let short = if self.story == "body" {
             format!("r{}", self.wid)
@@ -170,11 +161,11 @@ impl ChangeId {
         }
     }
 
-    /// The change a transitional colon long id names; `None` when `long` is
-    /// not one. Everything after the story's `:rev:` is the `w:id` as the
-    /// document spells it (`body:rev:007` names a `w:id="007"`, not `r7`;
-    /// `body:rev:1+2` one `w:id="1+2"`), so every id [`ChangeId::short`]
-    /// prints reads back. The short forms keep one spelling per number.
+    /// The change a long id names; `None` when `long` is not one. Everything
+    /// after the story's `:rev:` is the `w:id` as the document spells it
+    /// (`body:rev:007` names a `w:id="007"`, not `r7`; `body:rev:1+2` one
+    /// `w:id="1+2"`), so every id [`ChangeId::short`] prints reads back. The
+    /// short forms keep one spelling per number.
     pub fn from_long(long: &str) -> Option<Self> {
         let (story, wid) = long.split_once(":rev:")?;
         (!story.is_empty() && !story.contains(':')).then(|| Self::new(story, wid))
@@ -182,8 +173,8 @@ impl ChangeId {
 }
 
 /// The one change a printed change id names (`r12`, `header1.r1`, or the
-/// transitional colon id of a change with no short spelling); `None` for any
-/// other token, a pair `r1+2` among them.
+/// long id of a change with no short spelling); `None` for any other token,
+/// a pair `r1+2` among them.
 pub fn change_id(id: &str) -> Option<ChangeId> {
     match parse_change_ids(id) {
         Ok(ids) if ids.len() == 1 => ids.into_iter().next(),
@@ -195,8 +186,7 @@ pub fn change_id(id: &str) -> Option<ChangeId> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
     /// A paragraph, in a form `edit` resolves (`p12`, `header1.p2`,
-    /// `t0.row1.cell2`; the transitional colon id of a part with no short
-    /// spelling).
+    /// `t0.row1.cell2`; the long id of a part with no short spelling).
     Paragraph(String),
     /// A comment, addressed by its `w:id`.
     Comment(u32),
@@ -227,14 +217,13 @@ fn word_number(text: &str, prefix: &str) -> Option<usize> {
 }
 
 /// The changes a change id names: `r12`, `r1+2`, `header1.r1`, and the
-/// transitional colon id of a change with no short spelling (module doc).
-/// A story is checked only syntactically.
+/// long id of a change with no short spelling (module doc). A story is
+/// checked only syntactically.
 pub fn parse_change_ids(token: &str) -> Result<Vec<ChangeId>, IdError> {
     if token.contains(":rev:") {
         return match ChangeId::from_long(token) {
             // Only the id jubarte prints for a change without a short
-            // spelling; any other colon long id names its short one (module
-            // doc).
+            // spelling; any other long id names its short one (module doc).
             Some(id) if id.short() == token => Ok(vec![id]),
             Some(id) => Err(IdError {
                 hint: Some(id.short()),
@@ -323,8 +312,8 @@ pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, 
 /// What a `-p` value names (see the module doc).
 pub fn parse_location(token: &str) -> Result<Location, IdError> {
     let refuse = |why| Err(IdError::new(token, why));
-    // A colon long id parses only when it is what jubarte prints: an id
-    // with no short spelling (module doc).
+    // A long id parses only when it is what jubarte prints: an id with no
+    // short spelling (module doc).
     if token.contains(":rev:") {
         return parse_change_ids(token).map(Location::Changes);
     }
@@ -403,8 +392,8 @@ pub fn part_story(part: &str) -> String {
 
 /// The id jubarte prints for paragraph `index` of `story` (`body`,
 /// `header1`, `footnotes`, …): `p12`, `header1` for a story's first
-/// paragraph, `header1.p2`; the transitional colon id `{story}:p:{index}`
-/// only when the story has no short spelling ([`short_paragraph`]).
+/// paragraph, `header1.p2`; `{story}:p:{index}` only when the story has no
+/// short spelling ([`short_paragraph`]).
 pub fn paragraph_id(story: &str, index: usize) -> String {
     short_paragraph(&format!("{story}:p:{index}"))
 }
@@ -425,7 +414,7 @@ pub fn paragraph_place(id: &str) -> Option<(String, usize)> {
     (paragraph_id(story, n) == id).then(|| (story.to_string(), n))
 }
 
-/// The short form of a transitional colon paragraph id (`body:p:N` → `pN`,
+/// The short form of a long paragraph id (`body:p:N` → `pN`,
 /// `header1:p:0` → `header1`, `header1:p:N` → `header1.pN`); the input is
 /// returned verbatim when it does not have one `:p:` separator, when the
 /// story does not fit the short grammar, or when the digit run cannot be

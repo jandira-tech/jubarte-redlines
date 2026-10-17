@@ -6,16 +6,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # What the Markdown round trip still loses: plan (2026-10-14)
 
-> **Status (reconciled 2026-10-17, local `aba48bd5`; later audit in
-> `docs/superpowers/handoffs/2026-10-16-md-roundtrip-handoff.md`).** The
-> round-trip stack #515/#535–#540/#550 merged (`0460e47a`, `7c407dea`,
-> `75de15c4`, `cc1baf35`, `2b68338e`, `4dc724cc`, `662ba929`, `3a81ce55`);
-> #557 revision metadata (`4f6a82c7`) landed on `origin/main` after this
-> checkout. Per-row state below. The gate `md_fixed_point` is still red in
-> places (14 md-side / 5 docx-side fixtures at the handoff's audit). Rows that
-> name the old id grammar (`body:p:N`, `.pN` cell paragraphs, `{>>r25 @S<<}`
-> read as a comment) are annotated where they collide with contract v3.
-
 ## Where these numbers come from
 
 They come from the strict test `md_fixed_point markdown_and_docx_round_trip_exactly`,
@@ -32,10 +22,7 @@ run on the #476 branch (nested lists by indentation).
 
 ## 1. Notes parts that hold only separators (18 files lose endnotes.xml, 16 footnotes.xml)
 
-Status: **landed** — `separators_only()` (`src/markdown/package.rs:457-463`)
-writes separator-only parts and the `notes:` header clause carries them;
-separator-part revision clauses ride the `fmt` machinery
-(`package.rs:236-262`). Shipped inside the #515 round-trip stack (`0460e47a`).
+Status: next.
 - **Cause.** The writer makes a notes part only when the body holds a note
   (`footnotes`, `src/markdown/package.rs:894`). A Word document that once had
   notes, or came from a template that has them, keeps `footnotes.xml` and
@@ -98,9 +85,7 @@ has no way to say "Word's own, under this id".
   unanchored comments are dropped on write (`super_editor…769ed131`); a
   thread list in Google Docs order comes back in body order
   (`gdocs_comments_export`); revision-tag notes (`{>>r25 @S<<}`) become
-  extra comments on write (`file_176` 6 → 9, `file_146` 4 → 7) — note
-  `{>>r25 @S<<}` is a current spelling; the 0.12 `{>>#25 @S<<}` is the same
-  bug in old notation. A
+  extra comments on write (`file_176` 6 → 9, `file_146` 4 → 7). A
   comment's paragraphs print joined on one line (`{>>c0 @A: first para
   second para<<}`), so a multi-paragraph comment comes back as one
   paragraph; per-paragraph comment styles wait on that.
@@ -117,17 +102,14 @@ has no way to say "Word's own, under this id".
 
 ## 3. Page count (10 files)
 
-Status: partially resolved downstream — rows 2, 7 and 9 each landed in part;
-files that still differ get the `debug --check render` diagnosis. Still a
-known residual (e.g. `pages 11->13` on ids-tables per the handoff's audit).
+Status: measure after 2, 7 and 9. A page count that differs after the round trip
+is a symptom: styles (2), sections (7) and floating objects (9) all move text. A
+file that still differs after those gets its own diagnosis with
+`jubarte debug A.docx B.docx --check render`.
 
 ## 4. Change counts in the `revisions:` line (9 files; authors' counts 6 files)
 
-Status: partially landed — grouping fixes shipped through the stack
-(`6b35bed5` one revision across paragraphs, `a67e93cd` two-author
-substitutions, `db6b912c` nested-change naming, row-promotion and
-space-only-insertion fixes inside #557 on `origin/main`). O1. Residual
-mismatches remain per the handoff's gate audit.
+Status: open. O1.
 - **What happens.** The round trip groups marks into changes differently: for
   example 1549 changes become 1497, with 52 fewer insertions; and 52 insertions
   become 47 insertions plus 5 table rows.
@@ -142,10 +124,7 @@ mismatches remain per the handoff's gate audit.
 
 ## 5. Highlights lost or added (7 files lost, 6 new)
 
-Status: **landed** — all 16 colours and their extents round-trip
-(`f6bfe596`, merged as #550 `3a81ce55`); the view prints non-yellow
-highlights with a colour class and the gate reported zero highlight
-verdicts.
+Status: open.
 - **Examples:** `Cyan highlight` and `Green highlight` lost; `yellow-highlighted`
   ×10 and ×12 lost; `highlighted text` ×4 new.
 - **Likely cause.** A highlight colour other than the one the view prints (`==`
@@ -158,9 +137,7 @@ verdicts.
 
 ## 6. Header lines lost (5 files `notes`, 4 `style_changes`, 5 `styles.*`, 1 each `unplaced`, `bibliography`, `tags`, `layout`)
 
-Status: partially landed — `notes: {fmt: …}` separator changes and style
-`rPrChange`/`pPrChange` ride the writer now (inside #515/#557); `unplaced`,
-Pandoc's `bibliography`/`tags`/`layout` still unhandled. O6.
+Status: open. O6.
 - **What happens.** The view prints these YAML lines, and the writer reads them
   back only partly.
 - **Lines to cover:**
@@ -174,10 +151,7 @@ Pandoc's `bibliography`/`tags`/`layout` still unhandled. O6.
 
 ## 7. Section properties (≈10 files)
 
-Status: largely landed — the `sections:` line carries `w:type`
-(`nextPage`/`continuous`/`evenPage`/`oddPage`/`nextColumn`,
-`header.rs:646-652`) and `w:titlePg` (`header.rs:1149`, `066e01be`); both
-shipped in #539 (`4dc724cc`). O12.
+Status: open. O12.
 - **What is lost:**
   - the order of header and footer references inside `w:sectPr`;
   - `w:titlePg`;
@@ -193,8 +167,7 @@ shipped in #539 (`4dc724cc`). O12.
 
 ## 8. Table styles renamed `TableGrid` → `TableGrid0` (4 files, 24 tables)
 
-Status: **landed** — `171615d7` "a table style keeps the name the document
-gives it" (+ `5f802772`, `b89cdcf0` for source Table Grid handling). O7.
+Status: open. O7.
 - **Cause.** The writer adds its own `TableGrid` definition when the source's is
   not in the view, then de-duplicates the name.
 - **Fix:** reuse the style the view names when its definition comes from the
@@ -204,11 +177,7 @@ gives it" (+ `5f802772`, `b89cdcf0` for source Table Grid handling). O7.
 
 ## 9. Floating objects (≈6 files)
 
-Status: largely landed — VML `pict`, anchored DrawingML and
-`mc:AlternateContent` survive as hidden payloads (#535 `7c407dea`;
-`3bda9773` "floating drawings, VML and AlternateContent survive the round
-trip"). Header/footer `framePr` frames did **not** land (`fix/md-fp-526-frames`
-never PR'd; no `src/markdown/frame.rs`). O4 and O8.
+Status: open. O4 and O8.
 - **What is lost:**
   - anchored pictures (`wrapNone`/`wrapSquare`/`wrapTight`, behind text) in the
     body and headers;
@@ -224,11 +193,7 @@ never PR'd; no `src/markdown/frame.rs`). O4 and O8.
 
 ## 10. Paragraph and table text (120 paragraphs, 11 tables in 4 files)
 
-Status: largely landed — Strict OOXML reads on the round-trip path (#536
-`75de15c4`; `c12233f8`, `c314d80e`, `473a3928`, `b76bd0e7` for Strict
-measures/borders); Strict01 went 158→157 correct md-side per the handoff
-audit, its residual losses being drawings and page count. ac6cd8d92f
-improved through the same stack; verify per-file.
+Status: open.
 - **Where.** Mostly `Strict01.docx` (81 wrong: Strict OOXML namespaces) and
   `ac6cd8d92f.docx` (49).
 - **Fix:** diagnose each file. Read the first wrong id's `want`/`got`, then the
@@ -239,10 +204,7 @@ improved through the same stack; verify per-file.
 
 ## 11. Revision order (1 file)
 
-Status: partially landed — the writer's substitution ordering and boundary
-rules were reworked in the stack (`a67e93cd`, `8fa685eb` split substitutions,
-`1d20a18a` nested spans); the ins-then-del pairing rule below still holds
-(`d7b87793`). O2; confirm the named file.
+Status: open. O2.
 - **What happens.** An insertion-then-deletion pair comes back as
   deletion-then-insertion in the body and the endnotes.
 - **Rule.** The view pairs only insertion then deletion
@@ -252,9 +214,7 @@ rules were reworked in the stack (`a67e93cd`, `8fa685eb` split substitutions,
 
 ## 12. Pandoc manuscripts (4 files, 483 new ids)
 
-Status: decided and landed — `8b655a74` registers the four Pandoc
-manuscripts as hand-written round-trip fixtures (the looser comparison
-path). The per-block source-map idea from the handoff (#532) is still open.
+Status: decision D2, Arthur's.
 - **What happens.** `dolphins.md`, `eLife.00047.md`, `git_manuscript.md` and
   `list_of_figures.md` are plain Pandoc Markdown without id lines or a view
   header. The round trip prints a full view, so every id is new.

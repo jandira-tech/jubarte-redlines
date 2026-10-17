@@ -110,8 +110,4 @@ test compares our changes with Word's.
   sparse 19 and 20 (`m35_comments` W1 fails on this), addition_redline ×
   removal_v_addition comes out dense (0 1 3 4 10 11, which we match), and
   addition_removal × addition_redline gives 64 and 65, which neither model
-  explains. Ids are invisible and valid either way; left as is. These are
-  the `w:id` source keys inside the DOCX, not the agent-facing `cN`/`rN`
-  labels; how a source key becomes a label is governed by the id contract
-  (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`), which
-  leaves this renumbering question untouched.
+  explains. Ids are invisible and valid either way; left as is.

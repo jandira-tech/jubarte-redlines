@@ -44,7 +44,6 @@ mod images;
 mod notes;
 mod origin;
 pub mod record;
-pub mod resolution;
 mod rewrite;
 mod runs;
 mod sections;
@@ -6354,7 +6353,7 @@ fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
 }
 
 /// `ST_HighlightColor`.
-pub(crate) const HIGHLIGHTS: &[&str] = &[
+const HIGHLIGHTS: &[&str] = &[
     "black",
     "blue",
     "cyan",

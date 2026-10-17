@@ -15911,13 +15911,13 @@ mod deep_lcs_source_conservation_tests {
                 let b_labels = ["blue first", "blue second", "blue third"];
                 let left = vec![table(&mut dom, &[&a_labels[..a_cells]])];
                 let right = vec![table(&mut dom, &[&b_labels[..b_cells]])];
-                // Task 22 (`3d4318d7e9`): Word pairs single rows across
-                // different horizontal partitions whenever they share a word
-                // (here every row carries `first`), so every shape pairs and
-                // descends; mismatched cells still render as split rows, so
-                // provenance below is unchanged. Equal partitions still
-                // descend H5.
-                let expected = vec![Unknown];
+                // Different horizontal partitions keep complete source rows
+                // under separate lifetimes; equal partitions still descend H5.
+                let expected = if a_cells == b_cells {
+                    vec![Unknown]
+                } else {
+                    vec![Inserted, Deleted]
+                };
                 let out = h(&mut dom, &left, &right, &expected);
                 assert!(
                     out.iter()

@@ -27,13 +27,8 @@ first):
    and first line of stderr.
 
 On top, "Deprecated ids still in use": every place the CLI prints or accepts
-the retired colon long-id family (`body:p:12`, `header1:rev:3`) or a retired
-0.12 spelling (`#12`, `t0.r1.c2`). Under the 17 October 2026 short-and-long-ID
-contract (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`)
-none of those may be emitted or accepted after the schema-2 cutover: the only
-long ids are the four-field `PART.ELEMENT.ATTRIBUTE.VALUE` family, always
-paired with a `short_id`. Every run prints the rows on stderr until none is
-left; `--strict` exits 1.
+a long id (`body:p:12`) or a retired 0.12 spelling (`#12`, `t0.r1.c2`).
+Every run prints them on stderr until none is left; `--strict` exits 1.
 
 The output depends only on the source and the fixtures (no date, no
 commit, no temporary paths), so a change shows up as a diff:
@@ -76,9 +71,7 @@ FIXTURES = [
 ]
 
 # Spellings probed besides the printed ones: the advertised forms, the
-# retired ones, the 17 October contract's own spellings (`psN`, the
-# four-field long id) — refused until the contract lands — and the ones a
-# user would plausibly try.
+# retired ones, and the ones a user would plausibly try.
 CANDIDATES = [
     "0",
     "5",
@@ -104,13 +97,10 @@ CANDIDATES = [
     "endnotes.p0-p2",
     "comments.p0",
     "textbox1.p0",
-    "p14.box0.ps0",
-    "document.w:p.j:short.p0",
     "t0",
     "t0.row1",
     "t0.row1.cell1",
     "t0.row1.cell1.p0",
-    "t0.row1.cell1.ps0",
     "t0.r1.c1",
     "header1.t0.row0.cell0",
     "t0.row0.cell0.t0.row0.cell0",
@@ -135,11 +125,9 @@ CANDIDATE_FIXTURES = FIXTURES[:2]
 
 PROBE_TEXT = "PROBE"
 
-# The retired colon long-id family (`body:p:12`, `header1:rev:3`) and 0.12's
-# retired spellings (`#12`, `#c5`, `t0.r1.c2`): each place the CLI still
-# prints or accepts one is listed under "Deprecated ids", and every run warns
-# until none is left. The contract's only long ids are the four-field
-# `PART.ELEMENT.ATTRIBUTE.VALUE` family (`document.w:p.j:short.p0`).
+# Long ids (`body:p:12`, `header1:rev:3`) and 0.12's retired spellings
+# (`#12`, `#c5`, `t0.r1.c2`): each place the CLI still prints or accepts one
+# is listed under "Deprecated ids", and every run warns until none is left.
 LONG_ID = re.compile(r"(?<![\w.#])[A-Za-z][\w]*:(?:p|rev|sdt):\d+")
 RETIRED_ID = re.compile(r"(?<![\w&])#c?\d+(?:\+\d+)*|\bt\d+\.r\d+\.c\d+\b")
 
@@ -256,7 +244,7 @@ def harvest(binary: Path, fixture: str, seen: Seen) -> None:
     if code != 0:
         return
     data = json.loads(snapshot)
-    DEPRECATED.scan("printed in JSON", "read --json", snapshot)
+    DEPRECATED.scan("printed in JSON (kept by D7)", "read --json", snapshot)
     for para in data.get("paragraphs", []):
         kind = "body table cell paragraph" if para.get("in_table") else "body paragraph"
         seen.add(para["id"], "read --json paragraphs[].id", name, kind)
@@ -447,14 +435,10 @@ def render(binary: Path) -> str:
     section = [
         "## Deprecated ids still in use",
         "",
-        "The retired colon long-id family (`body:p:12`, `header1:rev:3`) and 0.12's retired "
-        "spellings (`#12`, `#c5`, `t0.r1.c2`) that the CLI still prints or accepts. Every run "
-        "of this script warns while this table has rows; `--strict` fails. The 17 October 2026 "
-        "contract (docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md) retires the "
-        "whole family: after the schema-2 cutover the only long ids are the four-field "
-        "`PART.ELEMENT.ATTRIBUTE.VALUE` family, always paired with a `short_id` — colon ids "
-        "stay neither in JSON nor in machine hints and error payloads, so these rows go only "
-        "when the cutover removes the last one.",
+        "Long ids (`body:p:12`, `header1:rev:3`) and 0.12's retired spellings (`#12`, `#c5`, "
+        "`t0.r1.c2`) that the CLI still prints or accepts. Every run of this script warns "
+        "while this table has rows; `--strict` fails. Plan D7 keeps long ids in JSON, machine "
+        "hints and error payloads, so those rows stay until D7 changes.",
         "",
         "| Bucket | Where | Examples |",
         "|-|-|-|",

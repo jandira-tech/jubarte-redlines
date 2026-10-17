@@ -160,7 +160,6 @@ pub(super) fn assemble(
         let styles = with_styles(&styles, &wanted);
         let styles = with_named_styles(&styles, &named);
         let styles = super::view_styles::apply(&styles, &document.style_specs);
-        let styles = super::view_styles::with_style_changes(&styles, &document.style_changes);
         let theme = related(&package, &main, "/theme")
             .and_then(|part| package.part_string(&part))
             .unwrap_or_else(|| crate::word_default_theme::WORD_DEFAULT_THEME.to_string());
@@ -177,7 +176,6 @@ pub(super) fn assemble(
         .values()
         .flatten()
         .chain(&document.reserved_ids)
-        .chain(document.note_formats.iter().flat_map(|(_, tag)| &tag.ids))
         .max()
         .map_or(1, |max| max.saturating_add(1));
     let people = super::view_stories::People {
@@ -185,8 +183,6 @@ pub(super) fn assemble(
         author: options.author.clone(),
         date: options.date.clone(),
         range_ends: document.story_range_ends.clone(),
-        drawing_defs: document.drawing_defs.clone(),
-        drawing_backings: document.drawing_backings.clone(),
         ..super::view_stories::People::default()
     };
     // A header's fresh ids sit far above the body's.
@@ -216,7 +212,6 @@ pub(super) fn assemble(
         next_revision,
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
-        pending_marks: Vec::new(),
         num_ids,
         label_nums,
         note_ids: Vec::new(),
@@ -230,38 +225,8 @@ pub(super) fn assemble(
     };
     let mut media = Media::default();
 
-    if !document.notes.is_empty()
-        || !document.empty_notes.is_empty()
-        || !document.note_formats.is_empty()
-    {
-        // The separators' formatting changes; a tag that numbers no id
-        // takes one far above the body's and the headers'.
-        let separator_changes: HashMap<&str, Vec<String>> = ["footnote", "endnote"]
-            .into_iter()
-            .map(|kind| {
-                let tags: Vec<_> = document
-                    .note_formats
-                    .iter()
-                    .filter(|(k, _)| *k == kind)
-                    .map(|(_, tag)| tag)
-                    .collect();
-                let changes = super::view_stories::format_changes(
-                    &people,
-                    &tags,
-                    next_revision
-                        .saturating_add(2_000_000)
-                        .min(super::view_notes::MOST_ID / 2 + 1_000_000),
-                );
-                (kind, changes)
-            })
-            .collect();
-        footnotes(
-            &mut package,
-            &main,
-            &mut context,
-            &mut media,
-            &separator_changes,
-        );
+    if !document.notes.is_empty() || !document.empty_notes.is_empty() {
+        footnotes(&mut package, &main, &mut context, &mut media);
     }
     let body = {
         let mut relate = PartRelate {
@@ -501,58 +466,19 @@ fn separators_only(xml: &str) -> String {
     }
 }
 
-/// The table style `xml` with its `w:name` replaced by `name`: a
-/// built-in template keeps Word's definition, the name is the
-/// document's own.
-fn renamed(xml: &str, name: &str) -> String {
-    const OPEN: &str = "<w:name w:val=\"";
-    let Some(at) = xml.find(OPEN) else {
-        return xml.to_string();
-    };
-    let value = at + OPEN.len();
-    let Some(end) = xml[value..].find('"').map(|e| value + e) else {
-        return xml.to_string();
-    };
-    format!(
-        "{}{}{}",
-        &xml[..value],
-        escape(&word_name(name)),
-        &xml[end..]
-    )
-}
-
-/// The `w:name` value for `name`: no comma, which `w:name` forbids
-/// (`[^,]*`; Word reads one as the start of an alias list), so every
-/// docx the writer makes is Word-valid. The comma becomes a space, as
-/// the paragraph styles' names do.
-fn word_name(name: &str) -> String {
-    name.replace(',', " ")
-}
-
 /// `styles` with a definition for each table style the view names that it
 /// lacks: one of Word's built-in Grid and List Tables as Word defines it,
-/// its colours from `theme`; else the name is the view's (`named …`),
-/// Word's own for an id Word names, else the id, on Word's Normal Table,
-/// with the legend's border all round when it gives one.
-fn with_table_styles(
-    styles: &str,
-    wanted: &BTreeMap<String, (Option<u32>, Option<String>)>,
-    theme: &str,
-) -> String {
+/// its colours from `theme`; else the name is the id, on Word's Normal
+/// Table, with the legend's border all round when it gives one.
+fn with_table_styles(styles: &str, wanted: &BTreeMap<String, Option<u32>>, theme: &str) -> String {
     let missing: String = wanted
         .iter()
         .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
-        .map(|(id, (border, name))| {
+        .map(|(id, border)| {
             if let Some(style) = built_in_table_style(id, theme) {
-                // The legend's `named` renames even Word's own template:
-                // the document renamed the built-in, and the name is its
-                // (#549).
-                if let Some(name) = name {
-                    return renamed(&style, name);
-                }
                 return style;
             }
-            let borders = (*border).map_or_else(String::new, |sz| {
+            let borders = border.map_or_else(String::new, |sz| {
                 let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
                     .iter()
                     .map(|side| {
@@ -561,15 +487,10 @@ fn with_table_styles(
                     .collect();
                 format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
             });
-            let name = name
-                .clone()
-                .or_else(|| word_table_style_name(id))
-                .unwrap_or_else(|| id.clone());
             format!(
-                "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
+                "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{id}\"/>\
                  <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
-                id = escape(id),
-                name = escape(&word_name(&name))
+                id = escape(id)
             )
         })
         .collect();
@@ -591,18 +512,6 @@ const WORD_TABLE_STYLES: &str = include_str!("word_table_styles.tsv");
 /// Tables (`GridTable4-Accent1`, `ListTable6Colorful`), named as Word names
 /// it (`Grid Table 4 Accent 1`), its colours from `theme`.
 fn built_in_table_style(id: &str, theme: &str) -> Option<String> {
-    let (name, body) = built_in(id)?;
-    Some(format!(
-        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
-        escape(id),
-        escape(&name),
-        with_theme_colours(&body, theme)
-    ))
-}
-
-/// `id` as Word names it and its unstyled body, when it is one of the
-/// built-in Grid or List Tables.
-fn built_in(id: &str) -> Option<(String, String)> {
     let (family, accent) = match id.split_once("-Accent") {
         Some((family, n)) if matches!(n, "1" | "2" | "3" | "4" | "5" | "6") => (family, Some(n)),
         Some(_) => return None,
@@ -639,69 +548,18 @@ fn built_in(id: &str) -> Option<(String, String)> {
         name.push_str(" Accent ");
         name.push_str(n);
     }
-    Some((name, body))
+    Some(format!(
+        "<w:style w:type=\"table\" w:styleId=\"{}\"><w:name w:val=\"{}\"/>{}</w:style>",
+        escape(id),
+        escape(&name),
+        with_theme_colours(&body, theme)
+    ))
 }
 
 /// Whether `id` is one of Word's built-in Grid or List Tables, which the
 /// writer defines as Word does.
 pub(super) fn is_built_in_table_style(id: &str) -> bool {
     built_in_table_style(id, "").is_some()
-}
-
-/// The table-style families Word named before its Grid and List Tables
-/// (`LightShading-Accent1`, `MediumList2`), each with the accents 1 to 6.
-const OLD_TABLE_FAMILIES: [&str; 15] = [
-    "TableGrid",
-    "LightShading",
-    "LightList",
-    "LightGrid",
-    "MediumShading1",
-    "MediumShading2",
-    "MediumList1",
-    "MediumList2",
-    "MediumGrid1",
-    "MediumGrid2",
-    "MediumGrid3",
-    "DarkList",
-    "ColorfulShading",
-    "ColorfulList",
-    "ColorfulGrid",
-];
-
-/// Word's name for a built-in table style `id`: the Grid and List Tables
-/// from their definitions, the older families and the two defaults by
-/// the id itself (`TableGrid` → `Table Grid`, `LightShading-Accent1` →
-/// `Light Shading Accent 1`). `None` for an id Word does not name, whose
-/// name is the id until the view says another (#528).
-pub(super) fn word_table_style_name(id: &str) -> Option<String> {
-    if let Some(style) = built_in_table_style(id, "") {
-        let open = "<w:name w:val=\"";
-        let at = style.find(open)? + open.len();
-        let end = style[at..].find('"')?;
-        return Some(style[at..at + end].to_string());
-    }
-    let (family, accent) = match id.split_once("-Accent") {
-        Some((family, n)) if matches!(n, "1" | "2" | "3" | "4" | "5" | "6") => {
-            (family, format!(" Accent {n}"))
-        }
-        _ => (id, String::new()),
-    };
-    if family == "TableNormal" {
-        return Some("Normal Table".to_string());
-    }
-    OLD_TABLE_FAMILIES.contains(&family).then(|| {
-        let mut name = String::new();
-        for c in family.chars() {
-            if c.is_uppercase() && !name.is_empty() {
-                name.push(' ');
-            }
-            if c.is_ascii_digit() && name.chars().last().is_some_and(|last| last.is_alphabetic()) {
-                name.push(' ');
-            }
-            name.push(c);
-        }
-        format!("{name}{accent}")
-    })
 }
 
 /// `xml` with each `@` colour resolved from `theme` as Word resolves a
@@ -1022,35 +880,24 @@ pub(crate) fn append_numbering(
 /// continuation separator notes, its relationship and its content type when
 /// absent.
 pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String {
-    ensure_notes_part(package, main, "footnote", None)
+    ensure_notes_part(package, main, "footnote")
 }
 
 /// The notes part of `kind` (`footnote`, `endnote`) `main` relates to,
-/// made as [`ensure_footnotes_part`] makes one. `changes` are the
-/// `w:pPrChange` start tags of its separators, the separator's first and
-/// the continuation separator's second.
-fn ensure_notes_part(
-    package: &mut PartFs,
-    main: &str,
-    kind: &str,
-    changes: Option<&[String]>,
-) -> String {
+/// made as [`ensure_footnotes_part`] makes one.
+fn ensure_notes_part(package: &mut PartFs, main: &str, kind: &str) -> String {
     let separators = || {
-        let changes = changes.unwrap_or_default();
-        let separator = |id: i32, name: &str, change: Option<&String>| {
-            let spacing = "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
-            let change = change.map_or_else(String::new, |change| {
-                format!("<{change}><w:pPr>{spacing}</w:pPr></w:pPrChange>")
-            });
+        let separator = |id: i32, name: &str| {
             format!(
-                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>{spacing}{change}</w:pPr>\
+                "<w:{kind} w:type=\"{name}\" w:id=\"{id}\"><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
                  <w:r><w:{name}/></w:r></w:p></w:{kind}>"
             )
         };
         format!(
             "{}{}",
-            separator(-1, "separator", changes.first()),
-            separator(0, "continuationSeparator", changes.get(1))
+            separator(-1, "separator"),
+            separator(0, "continuationSeparator")
         )
     };
     if let Some(part) = related(package, main, &format!("/{kind}s")) {
@@ -1070,11 +917,6 @@ fn ensure_notes_part(
                 },
             };
             package.set_part(&part, filled.into_bytes());
-        }
-        if let Some(changes) = changes
-            && let Some(xml) = package.part_string(&part)
-        {
-            package.set_part(&part, separator_formats(&xml, kind, changes).into_bytes());
         }
         return part;
     }
@@ -1102,67 +944,20 @@ fn ensure_notes_part(
     }
 }
 
-/// Reusing a reference keeps its separator layout, while its revision
-/// metadata follows the current view (including removal of a fmt clause).
-fn separator_formats(xml: &str, kind: &str, changes: &[String]) -> String {
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(xml);
-    let Some(root) = dom.root(doc) else {
-        return xml.to_string();
-    };
-    for (at, ty) in ["separator", "continuationSeparator"]
-        .into_iter()
-        .enumerate()
-    {
-        let note = dom
-            .elements(root, Some(&W::name(kind)))
-            .into_iter()
-            .find(|&note| dom.attribute(note, &W::name("type")) == Some(ty));
-        let Some(note) = note else { continue };
-        let Some(paragraph) = dom.element(note, &W::p()) else {
-            continue;
-        };
-        let properties = dom.element(paragraph, &W::p_pr()).unwrap_or_else(|| {
-            let properties = dom.new_element(W::p_pr());
-            dom.add_first(paragraph, properties);
-            properties
-        });
-        for old in dom.elements(properties, Some(&W::name("pPrChange"))) {
-            dom.remove(old);
-        }
-        if let Some(change) = changes.get(at) {
-            let doc = dom.parse_xdocument(&format!("<{change} xmlns:w=\"{W_NS}\"/>"));
-            if let Some(change) = dom.root(doc) {
-                let previous = dom.clone_subtree(properties);
-                dom.add(change, previous);
-                dom.add(properties, change);
-            }
-        }
-    }
-    serialize_element(&dom, root)
-}
-
 /// Writes the footnotes and the endnotes into their notes parts, making
 /// each part a kind of note needs.
-fn footnotes(
-    package: &mut PartFs,
-    main: &str,
-    context: &mut Context<'_>,
-    media: &mut Media,
-    separator_changes: &HashMap<&str, Vec<String>>,
-) {
+fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
     let document = context.document;
     context.note_ids = vec![0; document.notes.len()];
     for (kind, endnote) in [("footnote", false), ("endnote", true)] {
-        let changes = separator_changes.get(kind).map_or(&[][..], Vec::as_slice);
         if !document.notes.iter().any(|note| note.endnote == endnote) {
             // A part the view names empty holds Word's separators only.
-            if document.empty_notes.contains(&kind) || !changes.is_empty() {
-                ensure_notes_part(package, main, kind, Some(changes));
+            if document.empty_notes.contains(&kind) {
+                ensure_notes_part(package, main, kind);
             }
             continue;
         }
-        let part = ensure_notes_part(package, main, kind, Some(changes));
+        let part = ensure_notes_part(package, main, kind);
         let Some(existing) = package.part_string(&part) else {
             continue;
         };
@@ -1179,18 +974,11 @@ fn footnotes(
         let mut notes = String::new();
         // Revision ids are unique within a part, not across them: a note's
         // mark keeps the id its reference's has in the body.
-        let in_part: HashSet<u32> = [
-            "w:ins",
-            "w:del",
-            "w:moveFrom",
-            "w:moveTo",
-            "w:pPrChange",
-            "w:rPrChange",
-        ]
-        .iter()
-        .flat_map(|element| attribute_values(&existing, element, "w:id"))
-        .filter_map(|id| u32::try_from(id).ok())
-        .collect();
+        let in_part: HashSet<u32> = ["w:ins", "w:del", "w:moveFrom", "w:moveTo"]
+            .iter()
+            .flat_map(|element| attribute_values(&existing, element, "w:id"))
+            .filter_map(|id| u32::try_from(id).ok())
+            .collect();
         let outside = std::mem::replace(&mut context.used_revisions, in_part);
         {
             let mut relate = PartRelate {
@@ -1524,30 +1312,10 @@ impl Relate for PartRelate<'_, '_, '_> {
                 part
             }
         };
-        // A picture used twice is one part and one relationship to it.
-        let rel_target = relative_rel_target(&self.part, &target);
-        if let Some(rels) = self.package.read_rels_for(&self.part)
-            && let Some(rel) = rels
-                .items
-                .iter()
-                .find(|r| r.rel_type == format!("{RELS}/image") && r.target == rel_target)
-        {
-            return rel.id.clone();
-        }
-        self.package
-            .add_document_relationship(&self.part, &format!("{RELS}/image"), &rel_target)
-    }
-
-    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {
-        let drawing = self.document.drawings.get(index)?;
-        let existing: HashSet<String> = self.package.parts().into_iter().collect();
-        super::from_docx::drawing::materialize(
-            drawing,
-            self.package,
+        self.package.add_document_relationship(
             &self.part,
-            &existing,
-            &mut self.media.used,
-            next_doc_pr,
+            &format!("{RELS}/image"),
+            &relative_rel_target(&self.part, &target),
         )
     }
 }

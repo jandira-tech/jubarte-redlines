@@ -6,23 +6,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # jubarte's Markdown dialect on one page
 
-> **Identity note (re-checked 2026-10-19, `aba48bd5`):** every id form this
-> page lists — `pN`, `tN`, `tN.rowR.cellC`, `headerN`/`footerN`,
-> `part.pN`, `rN`, `story.rN`, `r1+2`, `cN`, `cN.text`, closed `pN-pM`
-> ranges — is the current short grammar and survives into the 17 October
-> 2026 short-and-long-ID contract v3
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> documentation-only in `4612a155`, **not implemented**). Today's
-> divergences from that contract live outside this page's examples: `noid`
-> for an unnumbered change, `r43+43` for carriers sharing one `w:id`, a
-> story's paragraph 0 printed as the bare story alias (`header1`, not
-> `header1.p0`), the colon fallback (`body:rev:007`) for values with no
-> short spelling, nested `.pN` inside cells and text boxes
-> (`t0.row1.cell2.p1` — the contract's `psN`), open ranges `p17-`/`-p3`
-> (`read -p` still parses them transitionally), and schema-1 JSON (`id`,
-> `ref`, `at`, numeric comment ids) where the contract wants paired
-> `short_id`/`long_id` under `schema_version: 2`.
-
 CommonMark + GitHub tables, strikethrough, task lists and footnotes, then
 CriticMarkup for changes, then the agent view's YAML header and id lines.
 [MARKDOWN.md](MARKDOWN.md) has the details.
@@ -32,20 +15,16 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | Write | Word | Notes |
 | --- | --- | --- |
 | `**b**` `*i*` `~~s~~` `` `c` `` | bold, italic, strike, `VerbatimChar` | `__b__` is bold too (CommonMark); a `VerbatimChar` run reads back as `` `c` ``, a `SourceCode` paragraph as a fence |
-| `==h==` | highlight (yellow) | the agent view prints a highlight as `<mark>h</mark>`, naming any colour but yellow on the tag (`<mark class="hl-green">h</mark>`; `{==…==}` is a comment's scope), strike as `~~s~~` and underline as `<u>u</u>` |
+| `==h==` | highlight (yellow) | the agent view prints a highlight of any colour as `<mark>h</mark>` (`{==…==}` is a comment's scope), strike as `~~s~~` and underline as `<u>u</u>` |
 | `{DATE \@ "MMMM d, yyyy"}March 1, 2026{/}` | field: its code, then its result | ECMA-376 field names only, closed by `{/}` in the paragraph, or in a later one when the code begins its paragraph's text (a table of contents: the paragraphs between are its result); `{Client Name}` stays text, `\{PAGE}` and `\{/}` are literal. The agent view prints body fields this way, except hyperlinks (links) and fields with a field in their code, which show their result |
 | `<u>u</u>` `<sup>2</sup>` `<sub>2</sub>` `<br>` | underline, superscript, subscript, line break | what the reader prints |
-| `<b>` `<i>` `<s>` `<code>` `<mark class="hl-<colour>">` (and `<strong>` `<em>` `<del>`), `<a href>` | bold, italic, strike, code, highlight (yellow by default, the colour the class names), link | read only; other tags warn, and an HTML block keeps only its text |
+| `<b>` `<i>` `<s>` `<code>` `<mark>` (and `<strong>` `<em>` `<del>`), `<a href>` | bold, italic, strike, code, highlight, link | read only; other tags warn, and an HTML block keeps only its text |
 | `x ^2^`, `x ~2~` | superscript, subscript | word edges only: `H~2~O` stays text |
 | `$x$`, `$$x$$` | equation (`m:oMath`, `m:oMathPara`) | LaTeX both ways; `{++…++}` inside marks a change in the math; see MARKDOWN.md, Equations |
 | `#`–`######` | `Heading1`–`Heading6` | or the `styles:` legend's heading style |
 | `- a` `* a` `+ a` / `1. a` `1) a` / `- [ ] a` | bullets / numbers (start kept) / task | `ListParagraph` |
-| `> q`, fenced or indented code | `Quote`, `SourceCode` | |
+| `> q`, fenced code | `Quote`, `SourceCode` | |
 | `[t](url)` `[t](#a)` `![alt](f.png)` `[^n]` | link, picture, footnote | `#a` is a heading's GitHub slug |
-| `![alt][dN]` | shape, text box, connector, VML, `mc:AlternateContent` | the reference definition `[dN]: drawing:…` at the end (after `<!-- drawings -->`) holds a verbatim payload of the element's XML, its relationships and the parts they reach; spliced back whole |
-| `![alt][imageN]` | raster picture (PNG, JPEG, GIF, BMP, TIFF), inline or anchored | `[imageN]: <data:mime;base64,…>` holds the bytes, `<!-- imageN drawing:… -->` the anchor's payload; without the comment the `data:` bytes are a plain picture |
-| ` ```svg dN ` fence | an `asvg:svgBlip` alone in its paragraph | the fence holds the SVG source; `<!-- dN drawing:… -->` keeps the payload, PNG fallback inside; an edited source writes the new SVG into the part |
-| ` ```mermaid dN ` fence | a chart (`c:chartSpace` pie, bar or line) alone in its paragraph | the fence holds `pie`/`xychart-beta`; `<!-- dN drawing:… -->` keeps the payload and a hash of the printed text — unchanged writes the part back verbatim, edited rewrites its categories, values and title |
 | `---`, GFM table | bordered paragraph, `TableGrid` table | header row repeats |
 
 **Changes and comments (CriticMarkup, read before the Markdown)**
@@ -75,8 +54,7 @@ inserted or deleted row.
 **Id lines**: `<!-- pN[ Style][, clause…] -->` above every body paragraph
 
 `left|center|right|justify` · `first-line|hanging|left|right Xin` ·
-`num "1)"` | `bullet` · `level N` · `page-break` |
-`page-break-ins|page-break-del TAG` · `section-break` ·
+`num "1)"` | `bullet` · `level N` · `page-break` · `section-break` ·
 `break-ins|break-del TAGS` · `fmt TAGS` · `rev TAGS` · `comments cN` ·
 `in cN` · `empty` (`<!-- p4-p7 empty -->`)
 

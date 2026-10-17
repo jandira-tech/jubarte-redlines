@@ -20,7 +20,7 @@ jubarte diff a.docx b.docx --format side-by-side
 | `context` | Old/new range blocks, `!`/`+`/`-` prefixes | Preserved |
 | `side-by-side` | Old/new columns, `\|`/`<`/`>` separator | Preserved |
 | `critic` | Current document content represented with tracked marks | Existing representation API |
-| `patch` | Existing paragraph patch, each hunk at its paragraph's short id (`p3`, `footnotes.p1`) | Existing paragraph comparison API |
+| `patch` | Existing paragraph patch with edit IDs | Existing paragraph comparison API |
 
 `--accept-changes` accepts every input revision for line-based views too.
 Accepting changes keeps insertions and removes deletions. This can make a
@@ -106,11 +106,7 @@ const review = wasm.diffDocumentsView(beforeBytes, afterBytes, JSON.stringify({
 Inputs are DOCX `Uint8Array` or UTF-8 Markdown bytes. Explicit input formats
 prevent damaged DOCX bytes from being mistaken for Markdown. Full and slim
 builds expose this API. `diffDocumentsUnified` remains the complete unified
-patch API; `diffDocuments` retains paragraph-patch JSON. Its `at` field is
-a short-id string today (`"p3"`, `"footnotes.p1"`); the id contract's
-schema-2 cutover replaces it with a paired `{"short_id","long_id"}`
-reference — `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`
-(v3, not yet implemented).
+patch API; `diffDocuments` retains paragraph-patch JSON.
 
 Rust exposes `TextOptions`, `TextFormat`, `diff_text_view` and
 `diff_documents_view` alongside the complete snapshot/unified APIs. All three

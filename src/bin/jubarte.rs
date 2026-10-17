@@ -238,8 +238,7 @@ impl<'a> Output<'a> {
             quiet,
             input,
             view: &VIEW,
-            // An identifier agents read back: `/` on every OS (#568).
-            source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
+            source: format!("{} (not written)", path.with_extension("docx").display()),
             render,
         }
     }
@@ -958,7 +957,7 @@ fn run_edit(
     // outputs (D15).
     let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
     let dir = match job.target {
-        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source, plan),
+        EditTarget::Single(path) => return write_edited(job, path, &result, notes),
         EditTarget::Bundle(dir) => dir,
     };
     if dir.exists() && !job.force {
@@ -1066,34 +1065,13 @@ fn run_edit(
             .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
         saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
     }
-    let save_line = serde_json::json!({"ev": "save", "dir": slash_path(out_dir), "outputs": saved});
+    let save_line =
+        serde_json::json!({"ev": "save", "dir": out_dir.display().to_string(), "outputs": saved});
     insert_before_summary(&mut jsonl, &save_line.to_string());
     std::fs::write(out_dir.join("report.jsonl"), &jsonl)
         .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
     if job.quiet {
         return Ok(());
-    }
-    // A pure accept/reject prints the resolved lines on stdout, nothing
-    // else; the bundle's report.jsonl still holds the summary.
-    if is_pure_resolution(plan, &result)
-        && let Ok(text) =
-            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
-    {
-        let names: Vec<&str> = outputs
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .chain(["report.jsonl"])
-            .collect();
-        eprintln!(
-            "wrote {} ({} files: {})",
-            out_dir.display(),
-            names.len(),
-            names.join(", ")
-        );
-        for note in edit_notes(notes, &result) {
-            eprintln!("{note}");
-        }
-        return write_stdout(&text).map_err(fail);
     }
     let summary = jsonl.lines().last().unwrap_or("").to_string();
     outln!("{summary}");
@@ -1124,8 +1102,7 @@ fn run_edit(
         &result.redline,
         &result.report.author,
         job.mode == Mode::Editing,
-        // An identifier agents read back: `/` on every OS (#568).
-        Some(&slash_path(&out_dir.join(shown))),
+        Some(&out_dir.join(shown).display().to_string()),
     ) {
         Ok(view) => write_stdout(&view).map_err(fail),
         Err(e) => {
@@ -1166,47 +1143,15 @@ fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<Strin
     lines
 }
 
-/// Whether `plan` resolved only revisions and `result` resolved some: an
-/// `edit -p rN --accept/--reject` with no content operation prints the
-/// resolved lines, not the view. Ordinary edits keep the view.
-fn is_pure_resolution(plan: &jubarte::edit::EditPlan, result: &jubarte::edit::EditResult) -> bool {
-    plan.operations.is_empty()
-        && plan.resolve_revisions.is_some()
-        && !result.report.resolved_revisions.is_empty()
-}
-
-/// The resolved lines for a pure accept/reject, or the changed view
-/// otherwise. A view that cannot be read back is a warning, not a failed
-/// edit; lines that cannot be built fall back to the view the same way.
-fn resolved_or_view(
-    source: &[u8],
-    plan: &jubarte::edit::EditPlan,
-    result: &jubarte::edit::EditResult,
-    author: &str,
-    accepted: bool,
-    shown: Option<&str>,
-) -> Result<String, String> {
-    if is_pure_resolution(plan, result)
-        && let Ok(text) =
-            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
-    {
-        return Ok(text);
-    }
-    jubarte::markdown::changed_view(&result.redline, author, accepted, shown)
-        .map_err(|e| format!("the changed blocks cannot be shown: {e}"))
-}
-
 /// `edit` and `add` without --out-dir: the redline (in editing mode, the
 /// result) as one .docx at `path`, its PDF and PNG pages beside it, the
 /// `wrote` lines and notes on stderr, and the changed blocks' view of that
-/// file on stdout (a pure accept/reject prints the resolved lines).
+/// file on stdout.
 fn write_edited(
     job: &EditJob<'_>,
     path: &Path,
     result: &jubarte::edit::EditResult,
     notes: &[String],
-    source: &[u8],
-    plan: &jubarte::edit::EditPlan,
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
     let document = match job.mode {
@@ -1293,19 +1238,16 @@ fn write_edited(
         eprintln!("{note}");
     }
     // The file is written: a view that cannot be read back is a warning,
-    // not a failed edit. A pure accept/reject prints the resolved lines.
-    match resolved_or_view(
-        source,
-        plan,
-        result,
+    // not a failed edit.
+    match jubarte::markdown::changed_view(
+        &result.redline,
         &result.report.author,
         job.mode == Mode::Editing,
-        // An identifier agents read back: `/` on every OS (#568).
-        Some(&slash_path(path)),
+        Some(&path.display().to_string()),
     ) {
-        Ok(text) => write_stdout(&text).map_err(fail),
+        Ok(view) => write_stdout(&view).map_err(fail),
         Err(e) => {
-            eprintln!("warning: {e}");
+            eprintln!("warning: the changed blocks cannot be shown: {e}");
             Ok(())
         }
     }
@@ -1623,8 +1565,7 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
     let kind = output_format(Task::Compare, job.output.as_deref(), None)?;
     let source = format!(
         "{} (not written; -o keeps it)",
-        // An identifier agents read back: `/` on every OS (#568).
-        slash_path(&default_output(&job.original, &job.modified))
+        default_output(&job.original, &job.modified).display()
     );
     let out = job.output.as_deref().map(|path| Output {
         kind: kind.unwrap_or(Format::Docx),
@@ -2048,7 +1989,6 @@ fn run_convert_any(
                 job.options.comments == jubarte::convert::CommentPlacement::End,
                 "--move-comments",
             ),
-            (job.options.comment_notes, "--comment-notes"),
             (job.options.changed_only, "--changed-pages"),
             (job.pages.is_some(), "--pages"),
         ] {
@@ -2110,34 +2050,6 @@ fn run_convert_any(
                 pdf_job(Some(&resolved), to)
             }
         },
-        (Format::Docx, Format::Md) if !markdown.commonmark => {
-            // The agent view, as `jubarte read` prints it: the dialect that
-            // comes back whole through `convert` to Word.
-            let view = jubarte::markdown::read(
-                &bytes,
-                &jubarte::markdown::ReadOptions {
-                    track_changes: markdown.track_changes.into(),
-                    comments: true,
-                    dates: false,
-                    page_markers: !markdown.no_page_markers,
-                    select: None,
-                    source: job
-                        .file
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned()),
-                },
-            )
-            .map_err(|e| format!("convert failed: {e}"))?;
-            if !job.quiet {
-                for warning in &view.warnings {
-                    eprintln!("warning: {warning}");
-                }
-            }
-            match job.output {
-                Some(path) => at(Format::Md, path, Some(Produced::Text(&view.markdown))),
-                None => write_stdout(&view.markdown).map_err(ConvertFailure::from),
-            }
-        }
         (Format::Docx, Format::Md) => {
             let read = jubarte::markdown::docx_to_markdown(
                 &bytes,
@@ -2429,12 +2341,7 @@ fn cli_main() -> ExitCode {
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    let cli = Cli::try_parse_from(
-        // The help and usage lines name `jubarte` on every OS, not the
-        // binary's own file name (`jubarte.exe` on Windows, #568).
-        std::iter::once(std::ffi::OsString::from("jubarte")).chain(std::env::args_os().skip(1)),
-    )
-    .unwrap_or_else(|error| {
+    let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| {
         // A removed flag names what replaced it; clap's tip may name a
         // lookalike.
         if let Some((old, now)) =

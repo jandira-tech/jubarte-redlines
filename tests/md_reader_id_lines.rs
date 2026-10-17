@@ -111,11 +111,10 @@ fn revisions_keep_the_numbers_their_tags_name() {
 }
 
 #[test]
-fn a_revision_number_is_written_as_often_as_the_view_names_it() {
-    // Two separately named changes keep the number both name (`r5` twice,
-    // as Word's own files repeat an id). A change written as several marks
-    // (two runs) keeps its number on the first; the rest take fresh ones,
-    // so a number the view names once is on no two marks.
+fn a_revision_number_is_written_once() {
+    // A change written as several marks (two runs, or a view that names one
+    // number for two changes) keeps its number on the first mark; the rest
+    // take fresh ones, so no two marks share a `w:id`.
     let body = "<!-- p0 -->\n{++**Bold** plain++}{>>r4 @AC<<} and {++one++}{>>r5 @AC<<} \
                 {++two++}{>>r5 @AC<<}.\n";
     let docx = markdown_to_docx(
@@ -124,28 +123,14 @@ fn a_revision_number_is_written_as_often_as_the_view_names_it() {
     )
     .expect("the view reads")
     .docx;
-    // The one duplicate is the twice-named `r5`, as in Word's own files;
-    // nothing else may be invalid.
-    let report = common::validity::check_word_valid_package(&docx);
-    let repeated: Vec<&jubarte::validate::Finding> = report
-        .findings
-        .iter()
-        .filter(|finding| finding.code == "DUPLICATE_REVISION_ID")
-        .collect();
-    assert_eq!(report.findings.len(), repeated.len(), "{report:#?}");
-    assert!(
-        repeated.len() == 1 && repeated[0].message.contains("'5'"),
-        "{report:#?}"
-    );
+    assert_word_valid_package(&docx);
     let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
-    assert!(
-        document.matches("w:ins w:id=\"5\"").count() == 2,
-        "r5 on both changes: {document}"
-    );
-    assert!(
-        document.matches("w:ins w:id=\"4\"").count() == 1,
-        "r4 on the first mark only: {document}"
-    );
+    for id in ["4", "5"] {
+        assert!(
+            document.contains(&format!("w:ins w:id=\"{id}\"")),
+            "w:id {id} kept: {document}"
+        );
+    }
 }
 
 #[test]
@@ -155,108 +140,6 @@ fn a_paragraph_mark_change_comes_back_with_its_number() {
                 <!-- p2 empty, break-del r6 @AC -->\n\n\
                 <!-- p3 BodyText center, break-ins r8 @AC -->\nStyled.\n\n<!-- p4 -->\nLast.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
-}
-
-#[test]
-fn a_text_box_stays_in_its_anchor_paragraph() {
-    // The view prints a text box's content as blocks with no id lines,
-    // after the paragraph whose `rev` clause names the anchor's change,
-    // and the header's `unplaced:` names the box's own carriers. Written
-    // back, the box is anchored in that paragraph — no paragraph of its
-    // own, so no stamp shifts — and its carriers read back as `unplaced:`
-    // again.
-    let body = "<!-- p0 -->\nKept text.\n\n\
-                <!-- p1 break-del r2 @AC, rev r3 @AC -->\n{--Gone. --}{>>r4 @AC<<}\n\n\
-                {++Boxed.++}{>>r3 @AC<<}\n\n\
-                <!-- p2 -->\nAfter.\n";
-    let header = "---\nauthors:\n  AC: Ann Counsel                  # 2026-10-01T09:00:00Z\n\
-unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]\n---\n\n";
-    let docx = markdown_to_docx(
-        &as_view(&format!("{header}{body}")),
-        &DocxOptions::default(),
-    )
-    .expect("the view reads")
-    .docx;
-    assert_word_valid_package(&docx);
-    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
-    let anchor = document
-        .find("<w:drawing>")
-        .and_then(|at| {
-            document[at..]
-                .find("</w:drawing>")
-                .and_then(|end| document[..at + end].rfind("<w:ins "))
-        })
-        .unwrap_or(0);
-    let text = document.find("Gone.").unwrap_or(0);
-    assert!(anchor < text, "the drawing before the text: {document}");
-    let box_at = document.find("<w:txbxContent>").unwrap_or(0);
-    let boxed = &document[box_at..document.find("</w:txbxContent>").unwrap_or(0)];
-    assert!(boxed.contains("Boxed."), "the text in the box: {document}");
-    assert!(
-        document.contains("w:ins w:id=\"5\""),
-        "the box's mark: {document}"
-    );
-    assert!(
-        document.contains("w:ins w:id=\"6\""),
-        "the box's text: {document}"
-    );
-    let view = read(
-        &docx,
-        &ReadOptions {
-            page_markers: false,
-            ..ReadOptions::default()
-        },
-    )
-    .expect("the docx reads")
-    .markdown;
-    assert!(
-        view.contains("unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]"),
-        "{view}"
-    );
-    assert!(
-        view.contains("<!-- p2 -->\nAfter."),
-        "no stamp shift: {view}"
-    );
-}
-
-#[test]
-fn an_unshown_deletion_holds_the_comment_marks_it_wraps() {
-    // A paragraph whose text prints only comment marks, inside a deletion
-    // its id line names (`rev-del`): the deletion wraps the marks, as in
-    // Word, and so counts as a change when read back — an empty `w:del`
-    // is hollow, and the `revisions:` header would lose it.
-    let body = "<!-- p0 -->\nText.\n\n\
-                <!-- p1 break-del r2 @AC, rev-del r3 @AC -->\n{>>c0 @AC: Note.<<}\n";
-    let docx = markdown_to_docx(
-        &as_view(&format!("{AUTHORS}{body}")),
-        &DocxOptions::default(),
-    )
-    .expect("the view reads")
-    .docx;
-    assert_word_valid_package(&docx);
-    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
-    let del = document
-        .find("<w:del ")
-        .and_then(|at| {
-            document[at..]
-                .find("</w:del>")
-                .map(|end| &document[at..at + end])
-        })
-        .unwrap_or_default();
-    assert!(del.contains("w:commentReference"), "{document}");
-    let view = read(
-        &docx,
-        &ReadOptions {
-            page_markers: false,
-            ..ReadOptions::default()
-        },
-    )
-    .expect("the docx reads")
-    .markdown;
-    assert!(
-        view.lines().any(|line| line.contains("1 deletion")),
-        "{view}"
-    );
 }
 
 #[test]
@@ -823,7 +706,7 @@ fn a_note_inserted_or_deleted_with_its_reference_keeps_words_shape() {
                 <!-- footnotes.p0 -->\n\
                 {++[^1]: An inserted note.++}{>>r10 @AC<<} <!-- rev footnotes.r11 @AC; footnotes.r12 @AC -->\n\
                 <!-- footnotes.p1 -->\n\
-                {--[^2]: A deleted note.--}{>>r20 @AC<<} <!-- rev-del footnotes.r21 @AC; footnotes.r22 @AC -->";
+                {--[^2]: A deleted note.--}{>>r20 @AC<<} <!-- rev footnotes.r21 @AC; footnotes.r22 @AC -->";
     let docx = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}\n")),
         &DocxOptions::default(),
@@ -878,7 +761,7 @@ fn a_tracked_note_reads_with_one_space_after_its_label() {
     .markdown;
     for line in [
         "{++[^1]: An inserted note.++}{>>r10 @AL<<} <!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->",
-        "{--[^2]: A deleted note.--}{>>r20 @AL<<} <!-- rev-del footnotes.r21 @AL; footnotes.r22 @AL -->",
+        "{--[^2]: A deleted note.--}{>>r20 @AL<<} <!-- rev footnotes.r21 @AL; footnotes.r22 @AL -->",
     ] {
         assert!(view.contains(line), "{line} in {view}");
     }
@@ -1243,13 +1126,13 @@ fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
     let view = "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n  \
                 BC: Bo Chen                      # 2026-03-02T10:00:00Z\n\
                 headers:\n  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}\n\
-                footers:\n  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
+                footers:\n  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
                 rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
                 break-del footer1.r40 @BC in footer1.p1}\n---\n\n<!-- p0 -->\nBody.\n";
     let (again, docx) = full_trip(view);
     for line in [
         "  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}",
-        "  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
+        "  default: {id: footer1, text: \"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \
          rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
          break-del footer1.r40 @BC in footer1.p1}",
     ] {
@@ -2047,36 +1930,25 @@ fn idless_chain(markdown: &str) -> (String, Vec<u8>, Vec<u8>) {
     (c, b, d)
 }
 
-/// `$x_{--}$` is text that looks like an equation: the escapes the view
-/// writes keep it text through the chain, with no math built from it.
+/// `$x_{--}$` is the text `--`. Spacing the brace so it is not a
+/// CriticMarkup delimiter puts that space into the equation.
 #[test]
 fn literal_math_delimiters_keep_their_page_text() {
     let markdown = include_str!("fixtures/from-docx/critic/synthetic/hard-delimiters.accept.md");
     let (c, b, d) = idless_chain(markdown);
     assert!(
         c.lines()
-            .any(|line| line == r"Math-like text $x\_{\--\}$ and $y\^{\++\}$ stays."),
+            .any(|line| line == "Math-like text $x_{{}--{}}$ and $y^{{}++{}}$ stays."),
         "{c}"
     );
-    // The paragraph's text, whatever runs carry it: the delimiters are
-    // page text, `--` and `++` included.
     for (name, docx) in [("B", &b), ("D", &d)] {
         let xml = document_xml(docx);
-        let paragraph = xml
-            .split("<w:p>")
-            .find(|p| p.contains("Math-like"))
-            .unwrap_or_else(|| panic!("{name} lost the paragraph: {xml}"));
-        let text: String = paragraph
-            .split("<w:t")
-            .skip(1)
-            .filter_map(|t| t.split_once('>').and_then(|(_, t)| t.split_once("</w:t>")))
-            .map(|(t, _)| t)
-            .collect();
-        assert_eq!(
-            text, "Math-like text $x_{--}$ and $y^{++}$ stays.",
-            "{name}: {xml}"
+        assert!(xml.contains("<m:t>--</m:t>"), "{name} lost `--`: {xml}");
+        assert!(xml.contains("<m:t>++</m:t>"), "{name} lost `++`: {xml}");
+        assert!(
+            !xml.contains("> -- <") && !xml.contains("> ++ <"),
+            "{name} drew a space around the delimiter text"
         );
-        assert!(!xml.contains("<m:oMath"), "{name} built math from text");
     }
 }
 
@@ -2226,363 +2098,4 @@ fn a_nested_tables_paragraph_style_comes_back() {
         2,
         "{view}\n{document}"
     );
-}
-
-/// `A` written, read as a view (`C`), written again (`D`) and read again.
-/// The two views, without `sha256:` (the packages differ), then `B` and `D`.
-fn idless_views(markdown: &str) -> (String, String, Vec<u8>, Vec<u8>) {
-    let options = ReadOptions {
-        page_markers: false,
-        ..ReadOptions::default()
-    };
-    let b = markdown_to_docx(markdown, &DocxOptions::default())
-        .expect("A reads")
-        .docx;
-    assert_word_valid_package(&b);
-    let c = read(&b, &options).expect("B reads").markdown;
-    let d = markdown_to_docx(&c, &DocxOptions::default())
-        .expect("C reads")
-        .docx;
-    assert_word_valid_package(&d);
-    let again = read(&d, &options).expect("D reads").markdown;
-    (without_sha(&c), without_sha(&again), b, d)
-}
-
-fn xml_decode(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-}
-
-fn tag_attr(tag: &str, name: &str) -> Option<String> {
-    let key = format!("{name}=\"");
-    let start = tag.find(&key)? + key.len();
-    let end = tag[start..].find('"')? + start;
-    Some(xml_decode(&tag[start..end]))
-}
-
-/// Visible text of every `w:t` in `xml`. `<w:tab` is not one.
-fn run_texts(xml: &str) -> String {
-    let mut out = String::new();
-    let mut rest = xml;
-    while let Some(start) = rest.find("<w:t") {
-        let from = &rest[start..];
-        let boundary = from.as_bytes().get(4).copied();
-        if !matches!(boundary, Some(b'>' | b' ' | b'/')) {
-            rest = &from[4..];
-            continue;
-        }
-        let Some(open_end) = from.find('>') else {
-            break;
-        };
-        if from.as_bytes().get(open_end.wrapping_sub(1)) == Some(&b'/') {
-            rest = &from[open_end + 1..];
-            continue;
-        }
-        let after = &from[open_end + 1..];
-        let Some(close) = after.find("</w:t>") else {
-            break;
-        };
-        out.push_str(&xml_decode(&after[..close]));
-        rest = &after[close + "</w:t>".len()..];
-    }
-    out
-}
-
-/// `(visible text, relationship target)` of each external hyperlink.
-fn hyperlinks(docx: &[u8]) -> Vec<(String, String)> {
-    let document = common::docx::part_string(docx, "word/document.xml").expect("document.xml");
-    let rels =
-        common::docx::part_string(docx, "word/_rels/document.xml.rels").expect("document.xml.rels");
-    let mut targets = Vec::new();
-    let mut rel_rest = rels.as_str();
-    while let Some(start) = rel_rest.find("<Relationship ") {
-        let from = &rel_rest[start..];
-        let end = from.find("/>").unwrap_or(from.len());
-        let tag = &from[..end];
-        if tag_attr(tag, "Type").is_some_and(|ty| ty.ends_with("/hyperlink"))
-            && let (Some(id), Some(target)) = (tag_attr(tag, "Id"), tag_attr(tag, "Target"))
-        {
-            targets.push((id, target));
-        }
-        rel_rest = &from[end..];
-    }
-    let mut out = Vec::new();
-    let mut rest = document.as_str();
-    while let Some(start) = rest.find("<w:hyperlink ") {
-        let from = &rest[start..];
-        let open_end = from.find('>').expect("hyperlink opens");
-        let open = &from[..=open_end];
-        let after = &from[open_end + 1..];
-        let close = after.find("</w:hyperlink>").expect("hyperlink closes");
-        if let Some(id) = tag_attr(open, "r:id") {
-            let target = targets
-                .iter()
-                .find(|(rel, _)| rel == &id)
-                .map(|(_, target)| target.clone())
-                .unwrap_or_default();
-            out.push((run_texts(&after[..close]), target));
-        }
-        rest = &after[close + "</w:hyperlink>".len()..];
-    }
-    out
-}
-
-/// Text of each `VerbatimChar` run, in document order.
-fn verbatim_runs(docx: &[u8]) -> Vec<String> {
-    let document = common::docx::part_string(docx, "word/document.xml").expect("document.xml");
-    let mut out = Vec::new();
-    let mut rest = document.as_str();
-    while let Some(start) = rest.find("<w:r>") {
-        let from = &rest[start + "<w:r>".len()..];
-        let Some(close) = from.find("</w:r>") else {
-            break;
-        };
-        let run = &from[..close];
-        if run.contains("w:val=\"VerbatimChar\"") {
-            out.push(run_texts(run));
-        }
-        rest = &from[close + "</w:r>".len()..];
-    }
-    out
-}
-
-/// A link whose URL holds parentheses comes back as that link.
-/// `S1074-7613(00)80619-6`: a bare destination treats the final `)` as the
-/// link's closer, and percent-encoding only `)` leaves `(` unmatched, so
-/// the link comes back as literal text.
-#[test]
-fn a_link_whose_url_holds_parentheses_comes_back_as_that_link() {
-    const URL: &str = concat!(
-        "http://elife.elifesciences.org/lookup/external-ref",
-        "?access_num=10.1016/S1074-7613(00)80619-6&link_type=DOI"
-    );
-    let (c, again, b, d) = idless_views(&format!("See [CrossRef]({URL}) now.\n"));
-    let expected = vec![("CrossRef".to_string(), URL.to_string())];
-    assert_eq!(hyperlinks(&b), expected, "{c}");
-    assert_eq!(hyperlinks(&d), expected, "{again}");
-    assert!(c.contains(&format!("[CrossRef](<{URL}>)")), "{c}");
-    assert_eq!(again, c);
-}
-
-/// An email autolink keeps the address as its text. `<addr>` reads back as
-/// the address; `<mailto:addr>` reads back with `mailto:` in the text.
-#[test]
-fn an_email_autolink_keeps_the_address_as_its_text() {
-    let (c, again, b, d) =
-        idless_views("[karthik.ram@berkeley.edu](mailto:karthik.ram@berkeley.edu)\n");
-    let expected = vec![(
-        "karthik.ram@berkeley.edu".to_string(),
-        "mailto:karthik.ram@berkeley.edu".to_string(),
-    )];
-    assert_eq!(hyperlinks(&b), expected, "{c}");
-    assert_eq!(hyperlinks(&d), expected, "{again}");
-    assert!(c.contains("<karthik.ram@berkeley.edu>"), "{c}");
-    assert!(!c.contains("<mailto:"), "{c}");
-    assert_eq!(again, c);
-}
-
-/// A plain space between two code spans keeps both spans. Folding the
-/// space into the mark makes one `VerbatimChar` run of both.
-#[test]
-fn a_plain_space_between_code_spans_keeps_both_spans() {
-    let (c, again, b, d) = idless_views(include_str!("fixtures/math/SOURCES.md"));
-    let left = verbatim_runs(&b);
-    let right = verbatim_runs(&d);
-    assert_eq!(left.len(), 31, "{left:?}");
-    assert_eq!(right, left);
-    assert!(
-        left.windows(2)
-            .any(|pair| pair[0] == "docProps/app.xml" && pair[1] == "Application"),
-        "{left:?}"
-    );
-    assert!(c.contains("`docProps/app.xml` `Application`"), "{c}");
-    assert!(!c.contains("`docProps/app.xml Application`"), "{c}");
-    assert_eq!(again, c, "{c}");
-}
-
-/// A styles part with `Normal` as the default paragraph style.
-fn default_normal_styles() -> common::docx::Part<'static> {
-    let styles = format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:basedOn w:val="Normal"/></w:style></w:styles>"#,
-        W_NS = common::docx::W_NS
-    );
-    common::docx::Part {
-        name: "word/styles.xml",
-        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
-        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
-        xml: Box::leak(styles.into_boxed_str()),
-    }
-}
-
-/// A paragraph that states the default style in its own `w:pPr` keeps the
-/// statement: the view names `Normal` only where the document says it
-/// (ids-authors, ids-comments, #528).
-#[test]
-fn an_explicit_default_style_is_named_and_comes_back() {
-    let stated =
-        r#"<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr><w:r><w:t>Stated.</w:t></w:r></w:p>"#;
-    let unstated = r#"<w:p><w:r><w:t>Unstated.</w:t></w:r></w:p>"#;
-    let cell = r#"<w:tbl><w:tr><w:tc><w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr></w:p></w:tc></w:tr></w:tbl>"#;
-    let end = r#"<w:p><w:r><w:t>End.</w:t></w:r></w:p>"#;
-    let body = format!("{stated}{unstated}{cell}{end}");
-    let parts = [default_normal_styles()];
-    let docx = common::docx::docx_with(&body, &parts);
-    let (view, again, once) = docx_round_trip(&docx);
-    assert!(view.contains("<!-- p0 Normal -->"), "{view}");
-    assert!(view.contains("<!-- p1 -->"), "{view}");
-    assert!(view.contains("p2 Normal"), "{view}");
-    let document = part_string(&again, "word/document.xml").unwrap();
-    assert_eq!(
-        document.matches(r#"<w:pStyle w:val="Normal"/>"#).count(),
-        2,
-        "{document}"
-    );
-    assert_eq!(view, once);
-}
-
-/// An empty paragraph keeps the style it states: a bare `<!-- p9 empty -->`
-/// stands only for paragraphs with no `w:pStyle`, and a heading style is
-/// named too, with no `#` to imply it (ids-paragraphs, ids-font-sizes,
-/// #528).
-#[test]
-fn an_empty_paragraph_keeps_its_style() {
-    let stated = r#"<w:p><w:pPr><w:pStyle w:val="TitlePage"/></w:pPr></w:p>"#;
-    let heading = r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:p>"#;
-    let bare = r"<w:p/>";
-    let body = format!("{stated}{stated}{bare}{heading}<w:p><w:r><w:t>Text.</w:t></w:r></w:p>");
-    let parts = [default_normal_styles()];
-    let docx = common::docx::docx_with(&body, &parts);
-    let (view, again, once) = docx_round_trip(&docx);
-    assert!(view.contains("<!-- p0 TitlePage empty -->"), "{view}");
-    assert!(view.contains("<!-- p1 TitlePage empty -->"), "{view}");
-    assert!(view.contains("<!-- p2 empty -->"), "{view}");
-    assert!(view.contains("<!-- p3 Heading2 empty -->"), "{view}");
-    let document = part_string(&again, "word/document.xml").unwrap();
-    assert_eq!(
-        document.matches(r#"<w:pStyle w:val="TitlePage"/>"#).count(),
-        2,
-        "{document}"
-    );
-    assert_eq!(
-        document.matches(r#"<w:pStyle w:val="Heading2"/>"#).count(),
-        1
-    );
-    assert_eq!(view, once);
-}
-
-/// A range of styled empty paragraphs (`<!-- p0-p1 TitlePage empty -->`)
-/// stands for every paragraph it numbers, not only the first.
-#[test]
-fn a_range_of_styled_empty_paragraphs_stands_for_all_of_them() {
-    let md = "<!-- p0-p1 TitlePage empty -->\n\n<!-- p2 -->\nText.\n";
-    let docx = markdown_to_docx(&as_view(md), &DocxOptions::default())
-        .expect("the view reads")
-        .docx;
-    assert_word_valid_package(&docx);
-    let document = part_string(&docx, "word/document.xml").unwrap();
-    assert_eq!(
-        document.matches(r#"<w:pStyle w:val="TitlePage"/>"#).count(),
-        2,
-        "{document}"
-    );
-}
-
-/// A heading that states its own outline level, with no style, keeps the
-/// statement: `# Text` alone means the writer's Heading1, so the id line
-/// says the level is the paragraph's own (`outline 2`, ids-font-sizes,
-/// #528).
-#[test]
-fn a_heading_that_states_its_outline_writes_no_style() {
-    let outlined =
-        r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Own level.</w:t></w:r></w:p>"#;
-    let body = format!("{outlined}<w:p><w:r><w:t>Body.</w:t></w:r></w:p>");
-    let parts = [default_normal_styles()];
-    let docx = common::docx::docx_with(&body, &parts);
-    let (view, again, once) = docx_round_trip(&docx);
-    assert!(view.contains("## Own level."), "{view}");
-    assert!(view.contains("outline 2"), "{view}");
-    let document = part_string(&again, "word/document.xml").unwrap();
-    assert!(
-        document.contains(r#"<w:outlineLvl w:val="1"/>"#),
-        "{document}"
-    );
-    assert!(!document.contains("w:pStyle"), "{document}");
-    assert_eq!(view, once);
-}
-
-/// Every outline level 0-8 survives the round trip: the `#` count stops
-/// at the writer's heading styles, so a level past them (7-9) is body
-/// text whose id line alone carries it (`outline 7` to `outline 9`),
-/// and the writer writes the `w:outlineLvl` it says (#549).
-#[test]
-fn outline_levels_past_the_heading_styles_survive() {
-    let mut body = String::new();
-    for level in 0..=8 {
-        body.push_str(&format!(
-            r#"<w:p><w:pPr><w:outlineLvl w:val="{level}"/></w:pPr><w:r><w:t>L{level}.</w:t></w:r></w:p>"#
-        ));
-    }
-    let parts = [default_normal_styles()];
-    let docx = common::docx::docx_with(&body, &parts);
-    let (view, again, once) = docx_round_trip(&docx);
-    for level in 0..=5 {
-        assert!(
-            view.contains(&format!("{} L{level}.", "#".repeat(level + 1))),
-            "{view}"
-        );
-    }
-    // Past the heading styles there is no `#` to print: the clause alone
-    // says the level, and the text stays a plain paragraph.
-    for level in 6..=8 {
-        assert!(
-            view.contains(&format!("outline {} -->\nL{level}.", level + 1)),
-            "{view}"
-        );
-    }
-    assert!(!view.contains("###### L6."), "{view}");
-    assert!(!view.contains("###### L7."), "{view}");
-    assert!(!view.contains("###### L8."), "{view}");
-    let document = part_string(&again, "word/document.xml").unwrap();
-    assert_eq!(document.matches("<w:outlineLvl").count(), 9, "{document}");
-    for level in 0..=8 {
-        assert!(
-            document.contains(&format!(r#"<w:outlineLvl w:val="{level}"/>"#)),
-            "{document}"
-        );
-    }
-    assert!(!document.contains("w:pStyle"), "{document}");
-    assert_eq!(view, once);
-}
-
-/// An empty paragraph that states its own outline level keeps it: the
-/// pooling `<!-- p1-p2 empty -->` is for paragraphs with nothing to say,
-/// and a `w:outlineLvl` is something to say (#549).
-#[test]
-fn an_empty_paragraph_keeps_its_own_outline_level() {
-    let one = r#"<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:p>"#;
-    let two = r#"<w:p><w:pPr><w:outlineLvl w:val="2"/></w:pPr></w:p>"#;
-    let body =
-        format!("<w:p><w:r><w:t>S.</w:t></w:r></w:p>{one}{two}<w:p><w:r><w:t>E.</w:t></w:r></w:p>");
-    let parts = [default_normal_styles()];
-    let docx = common::docx::docx_with(&body, &parts);
-    let (view, again, once) = docx_round_trip(&docx);
-    assert!(view.contains("<!-- p1 outline 2, empty -->"), "{view}");
-    assert!(view.contains("<!-- p2 outline 3, empty -->"), "{view}");
-    assert!(!view.contains("p1-p2"), "{view}");
-    let document = part_string(&again, "word/document.xml").unwrap();
-    assert_eq!(
-        document.matches(r#"<w:outlineLvl w:val="1"/>"#).count(),
-        1,
-        "{document}"
-    );
-    assert_eq!(
-        document.matches(r#"<w:outlineLvl w:val="2"/>"#).count(),
-        1,
-        "{document}"
-    );
-    assert_eq!(view, once);
 }

@@ -15,45 +15,6 @@ Engine defects and unresolved design conflicts.
 
 ## Open
 
-### 12. Strict `lineRule="auto"` values carry units no rule defines — **OPEN, spec gap**
-
-**Seen:** `tests/fixtures/strict/Strict01.docx` (#531), checked 2026-10-16.
-ISO/IEC 29500 defines an auto `w:line` in 240ths of a line and stays silent
-on unit-suffixed values; Word's own Strict writer emits `12pt` for single
-spacing and `12.95pt` for 1.08.
-
-**Done so far (#531):** the Markdown reader and the render diagnostic decode
-a unit-bearing auto value like twips (`×20`): `12pt` → 240 and `12.95pt` →
-259, the integers the Transitional twin carries. This reproduces the only
-observed producer (Word) and needs no baseline assumption, but it is a
-producer convention, not a normative rule. The renderer keeps its own
-11pt-per-line heuristic (`src/convert/mod.rs`), as before.
-
-**Open:** the maintained Word workflow has not confirmed the values on a
-layout-level comparison.
-
-### 11. Word splits and pairs mismatched tables that jubarte keeps whole — **OPEN, Word parity**
-
-**Seen:** Task 22, corpus pair `aeb0ace263` vs `1000537d17` (Word redline
-`3d4318d7e9`), checked on the #497 branch, 2026-10-16. The two sources share
-no identical table row. Word still pairs rows by shared words, splits the
-deleted runs into their own tables and inserts the 47-row table whole: 8
-tables, four `tblPrChange` and four `tblGridChange`. jubarte writes 3.
-
-**Done so far (#497):** `src/comparer/lcs_table.rs` pairs single rows across
-different horizontal partitions when they share a word, and row words split
-at cell, paragraph and tab boundaries.
-
-**Open:** the table split, and pairing the old header row (`Rhythmia`) with
-the new one (`Group`).
-
-**Tests:** `our_compare_matches_word_table_shape` and
-`our_compare_pairs_unmatched_rows_into_merged_rows` in
-`tests/m_table_alignment_3d4318d7e9.rs` assert Word's shape and are
-`#[ignore]`d with this item's number; `word_redline_has_expected_table_shape`
-pins Word's own redline and runs. Run the targets with `cargo test --test
-m_table_alignment_3d4318d7e9 -- --ignored`.
-
 ### 10. A square-wrapped float does not wrap the lines above its anchor — **OPEN, PDF layout**
 
 **Seen:** the 0.12.0 docx→PDF mini-bench (2026-10-10). The redline

@@ -36,53 +36,12 @@ Docxodus/Open-Xml-PowerTools behavior and existing fixtures before inventing
 new semantics.
 
 - Run commands from this repository root.
-- Run Cargo commands sequentially within a checkout: never start a second
-  Cargo process in a checkout or worktree while one is running there, and
-  never set `CARGO_TARGET_DIR`. Separate worktrees may build at the same
-  time, because under mbx each one has its own target. Keep the number of
-  concurrent builds small (three at most on one machine): each build uses
-  every core, and test runs that compete for CPU time out or hide flaky
-  failures.
-- Cargo runs through mbx, the build cache shared by every checkout and
-  worktree. `mbx setup` once per machine puts its Cargo shim
-  (`~/Library/Application Support/mbx/bin/cargo` on macOS) first on `PATH`;
-  then use plain `cargo`. A shell that does not read `~/.zshrc` calls the shim
-  by its full path, or prefixes the command with `mbx`. mbx keeps each
-  checkout's `target/` under its own cache root and prunes it to a size
-  budget. Leave that placement alone: `mbx doctor` checks the setup, and
-  `mbx gc --dry-run` shows what a collection would free. Do not add a second
-  compiler cache (`RUSTC_WRAPPER`, sccache, kache) beside it.
-- Under mbx, `target` is a symbolic link into the cache
-  (`~/Library/Caches/mbx/targets/v1/<hash>`), not a directory. Paths through
-  it (`target/debug/jubarte`) work as before, and git ignores it. Keep the
-  link in mind:
-  - Free space with `mbx clean` or `mbx gc`, never `rm -rf target` or
-    `cargo clean`. Those remove only the link, or empty a directory mbx
-    still accounts for.
-  - `find` and `du` do not follow a link given as their starting path. Use
-    `find -H target …` or `du -sh target/`.
-  - Copying a checkout (`cp -R`, rsync) copies the link, so both copies
-    then build into one target: two Cargo processes in one directory. Copy
-    without `target`, and let mbx give the copy its own.
-  - A tool that resolves real paths (`realpath`, `canonicalize`, a panic
-    backtrace) prints the cache path, not `./target`.
+- Run Cargo commands sequentially in the default `target/`; never set
+  `CARGO_TARGET_DIR` or start a second Cargo process while one is running.
 - Do not suppress clippy warnings with `#[allow(...)]`; fix the cause.
 - Keep tests beside the behavior they protect and prefer deterministic tests.
 - After source changes, run formatting, clippy with `-D warnings`, the relevant
   tests with coverage, and a CLI `--help` smoke test.
-- Run tests with cargo-nextest (`cargo install --locked cargo-nextest`).
-  Day to day, run only the tests the change touches: `cargo nextest run
-  --test NAME` or `cargo nextest run -E 'test(PATTERN)'`.
-- Run the full suite rarely: before a release, or when a change reaches
-  across the crate. The full run is `cargo miri nextest run` (nightly with
-  the `miri` component; `.config/nextest.toml` holds its `default-miri`
-  profile). Know its cost before starting it:
-  - Under nextest, Miri compiles the test crate again for every test.
-  - Miri cannot spawn processes, and this repository runs it with its
-    default isolation (no `-Zmiri-disable-isolation` in `MIRIFLAGS`),
-    which refuses the host's file system. The tests that run the
-    `jubarte` binary (`CARGO_BIN_EXE_jubarte`) or read fixtures from disk
-    fail under it for that reason, not because of a bug in jubarte.
 - Rebuild native and WASM benchmark consumers from this checkout. Never patch a
   copied binary or generated WASM artifact as a substitute for a source fix.
 - Fidelity gates precede speed claims: native/WASM `script_redlines` scores must
@@ -137,14 +96,6 @@ comments are drawn: `conventional` (the default: red, blue and green marks),
   into it.
 - Word mode can be worse than our convention. Say so whenever it is, record
   the case in `docs/WORD_DIFFERENCES.md`, and offer the user both behaviours.
-- NEVER add a comment icon inline. No default, no revision style and no new
-  feature may put a note icon (a PDF `/Text` annotation, or any picture of
-  a note) in the text: a viewer draws it on top of the words and hides
-  them. The balloon, or the `--move-comments` listing with its `[JR1]` text
-  marker, is how a comment shows. An icon is always the exception: it stays
-  behind an explicit opt-in (`PdfOptions::comment_notes`, the hidden
-  `--comment-notes`), off by default, and only the tests of that opt-in
-  turn it on.
 
 ## Diagnosing a low score against Word
 

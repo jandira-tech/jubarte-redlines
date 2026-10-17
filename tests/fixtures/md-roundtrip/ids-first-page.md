@@ -12,7 +12,7 @@ styles:
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
   first: {id: header2, text: My first page header}  # page 1 only (different first page)
-  default: {id: header1, text: [My header, ""]}
+  default: {id: header1, text: My header}
 footers:
   first: none                      # page 1 shows no page number
   default: none

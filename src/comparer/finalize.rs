@@ -11483,22 +11483,10 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
 /// attributes (`w:sz`, …) are never touched (LO mis-paginates the
 /// `strict01` pairs).
 pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
-    normalize_measures(dom, root, true);
-}
-
-/// [`normalize_universal_measures`] without the fractional-plain-value
-/// rounding: only unit-bearing spellings ("612pt") are rewritten. The
-/// render diagnostic reports a plain value (gdocs-style `1440.4`) as the
-/// file spells it — a diagnostic does not repair what it describes.
-pub fn normalize_unit_measures(dom: &mut Dom, root: NodeId) {
-    normalize_measures(dom, root, false);
-}
-
-fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool) {
     // Cell-margin children (w:tcMar / w:tblCellMar) carry @w:w in twips; the
     // like-named border elements carry @w:sz (eighth-points) and never @w:w,
     // so keying on (element local, attr) stays safe.
-    const TWIPS_ATTRS: [(&str, &[&str]); 22] = [
+    const TWIPS_ATTRS: [(&str, &[&str]); 18] = [
         ("pgSz", &["w", "h"]),
         ("gridCol", &["w"]),
         (
@@ -11511,7 +11499,7 @@ fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool)
             "ind",
             &["left", "right", "hanging", "firstLine", "start", "end"],
         ),
-        ("spacing", &["before", "after", "line", "val"]),
+        ("spacing", &["before", "after", "line"]),
         ("tab", &["pos"]),
         ("defaultTabStop", &["val"]),
         ("tblW", &["w"]),
@@ -11519,20 +11507,6 @@ fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool)
         ("tblInd", &["w"]),
         ("tblCellSpacing", &["w"]),
         ("trHeight", &["val"]),
-        ("cols", &["space"]),
-        ("col", &["w", "space"]),
-        (
-            "tblpPr",
-            &[
-                "leftFromText",
-                "rightFromText",
-                "topFromText",
-                "bottomFromText",
-                "tblpX",
-                "tblpY",
-            ],
-        ),
-        ("framePr", &["w", "h", "x", "y"]),
         ("top", &["w"]),
         ("bottom", &["w"]),
         ("left", &["w"]),
@@ -11540,17 +11514,26 @@ fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool)
         ("start", &["w"]),
         ("end", &["w"]),
     ];
-    fn to_twips(v: &str, round_plain_fractional: bool) -> Option<i64> {
-        if let Some(tw) = crate::util::universal_measure_twips(v) {
-            return Some(tw.round() as i64);
+    fn to_twips(v: &str) -> Option<i64> {
+        let t = v.trim();
+        for (suf, factor) in [
+            ("pt", 20.0),
+            ("in", 1440.0),
+            ("cm", 1440.0 / 2.54),
+            ("mm", 1440.0 / 25.4), // 1in = 25.4mm → ~56.693 twips per mm
+            ("pc", 240.0),
+            ("pi", 240.0),
+        ] {
+            if let Some(n) = t.strip_suffix(suf) {
+                return n
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(|f| (f * factor).round() as i64);
+            }
         }
         // fractional plain values ("100.0") on integer-typed attributes →
-        // rounded (gdocs-exported styles carry them; validator: Int16 fail).
-        // Output-side repair only: the render diagnostic keeps the literal.
-        if !round_plain_fractional {
-            return None;
-        }
-        let t = v.trim();
+        // rounded (gdocs-exported styles carry them; validator: Int16 fail)
         if t.contains('.') {
             return t.parse::<f64>().ok().map(|f| f.round() as i64);
         }
@@ -11572,10 +11555,7 @@ fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool)
             let an = W::name(a);
             // and_then keeps this allocation-free for the common untouched
             // case — the i64 releases the dom borrow before the mutation
-            if let Some(tw) = dom
-                .attribute(el, &an)
-                .and_then(|v| to_twips(v, round_plain_fractional))
-            {
+            if let Some(tw) = dom.attribute(el, &an).and_then(to_twips) {
                 dom.set_attribute_value(el, &an, Some(&tw.to_string()));
             }
         }
