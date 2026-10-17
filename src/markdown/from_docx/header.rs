@@ -890,6 +890,16 @@ fn named(styles: Option<&Element>, id: &str, expected: &str) -> String {
         .unwrap_or_default()
 }
 
+/// A legend `named` value: quoted (a JSON string) when it holds a comma
+/// or a quote, so the clause's `, ` separator cannot split it (#549).
+fn quoted_name(name: &str) -> String {
+    if name.contains(',') || name.contains('"') {
+        serde_json::to_string(name).unwrap_or_else(|_| format!("\"{name}\""))
+    } else {
+        name.to_string()
+    }
+}
+
 fn table_style_line(styles: Option<&Element>, id: &str) -> String {
     // The style's name, when it is not the one the writer would give the
     // id (`9` is named `Normal Table`, `TableGrid0` `TableGrid`, #528).
@@ -902,7 +912,7 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
                 != super::super::package::word_table_style_name(id)
                     .unwrap_or_else(|| id.to_string())
         })
-        .map(|name| format!(", named {name}"))
+        .map(|name| format!(", named {}", quoted_name(name)))
         .unwrap_or_default();
     let borders = styles
         .and_then(|s| style_by_id(s, id))
