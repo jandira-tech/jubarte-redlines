@@ -11,17 +11,20 @@
 //! callers (`--json`, `--jsonl`) consume and that the implementations of the
 //! new v2 commands will eventually produce.
 //!
-//! Phase, effect and predicted effect are coupled by [`ResultData::validate`]:
-//! a `generated` or `validated` phase is only representable with a
-//! `not_applied` effect, and `predicted_effect` only appears with a
-//! `validated` phase. [`Envelope::ok`] returns a typed [`ResultDataError`]
-//! for invalid combinations so the build can fail loudly during preparation,
-//! instead of producing a JSON shape that contradicts its own rules.
+//! Success requires a phase. Failures carry the last completed phase or
+//! JSON null, with `not_applied` before publication. Post-commit reporting
+//! failures retain the committed phase, actual effect and counts through
+//! [`Envelope::with_failure_data`]. [`ResultData::validate`] checks effects
+//! and predictions; [`Envelope::ok`] also rejects a missing phase. Error
+//! builders never authorize retry when [`CommitState`] is unknown.
 //!
-//! Exit status mapping follows proposal §12 verbatim. JSONL streams carry
-//! zero or more progress lines followed by exactly one terminal
-//! [`Result`]; a stream without its terminal line is incomplete, and a
-//! stream with two is malformed.
+//! JSONL starts with a typed [`StreamHeader`] (`"record": "header"`), then
+//! zero or more typed progress records and exactly one terminal [`Envelope`].
+//! The header carries schema version, command, engine version and source
+//! SHA-256. Readers reject a missing/malformed header and multiple terminals;
+//! a header-bearing stream without its terminal is incomplete. Progress uses
+//! its own `ev` discriminator, so an operation's `status` is not terminal.
+//! Exit status mapping follows proposal §12.
 
 use std::collections::BTreeMap;
 
@@ -38,8 +41,7 @@ pub const ENVELOPE_SCHEMA_VERSION: u32 = 1;
 /// The on-the-wire shape is a plain string (`"ok"`, `"refused"`, `"error"`)
 /// so callers can pattern-match on it without descending into a nested
 /// object. The typed error itself lives in the envelope's [`Envelope::error`]
-/// field; the two are mutually exclusive with `data` (an `Ok` envelope
-/// carries `data`, a `Refused` or `Error` envelope carries `error`).
+/// field. All outcomes carry `data`; failures additionally carry `error`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -124,6 +126,18 @@ pub mod codes {
     pub const CHECK_THRESHOLD_EXCEEDED: &str = "CHECK_THRESHOLD_EXCEEDED";
     /// Comparison differences when `--exit-code` was requested.
     pub const COMPARISON_DIFFERENCE: &str = "COMPARISON_DIFFERENCE";
+}
+
+/// Publication state known when an error was reported.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitState {
+    /// Primary publication completed.
+    Committed,
+    /// Primary publication did not occur.
+    NotCommitted,
+    /// Primary publication cannot be determined.
+    Unknown,
 }
 
 /// The role of an artifact: which contract slot it fills.
@@ -314,10 +328,26 @@ pub struct Error {
     /// is unknown. Implementations are free to omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retryable: Option<bool>,
+    /// Known primary publication state; unknown never authorizes retry.
+    pub commit_state: CommitState,
 }
 
 impl Error {
-    /// Build a new error with `code` and an empty message.
+    /// Set the known publication state.
+    #[must_use]
+    pub fn with_commit_state(mut self, state: CommitState) -> Self {
+        self.commit_state = state;
+        self.normalize_retryable();
+        self
+    }
+
+    fn normalize_retryable(&mut self) {
+        if self.commit_state == CommitState::Unknown && self.retryable == Some(true) {
+            self.retryable = Some(false);
+        }
+    }
+
+    /// Build an error with unknown publication state and no retry hint.
     pub fn new(code: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -329,6 +359,7 @@ impl Error {
             message: String::new(),
             next_actions: Vec::new(),
             retryable: None,
+            commit_state: CommitState::Unknown,
         }
     }
 
@@ -392,10 +423,11 @@ impl Error {
         self.next_actions.push(action);
     }
 
-    /// Set the retryable hint.
+    /// Set the retryable hint. Unknown publication coerces `true` to `false`.
     #[must_use]
     pub fn with_retryable(mut self, retryable: bool) -> Self {
         self.retryable = Some(retryable);
+        self.normalize_retryable();
         self
     }
 }
@@ -552,12 +584,12 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
-/// The body of a successful envelope: phase, effect, optional predicted
-/// effect, counts, verification.
+/// Result data for success or failure: phase (null before any completed
+/// stage), effect, optional predicted effect, counts and verification.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ResultData {
-    /// The stage this result reports.
-    pub phase: Phase,
+    /// Last completed stage; null when no stage completed. Success requires it.
+    pub phase: Option<Phase>,
     /// The primary document effect.
     pub effect: Effect,
     /// Predicted effect for dry runs; only valid with [`Phase::Validated`].
@@ -572,8 +604,11 @@ pub struct ResultData {
 /// Invalid combinations of (phase, effect, predicted_effect).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResultDataError {
-    /// A `generated` or `validated` phase was paired with a `changed` or
-    /// `unchanged` effect.
+    /// Success or an actual/predicted effect requires a completed phase.
+    MissingPhase,
+    /// Failure data can only be attached to a failure envelope.
+    FailureRequired,
+    /// A pre-commit phase was paired with a `changed` or `unchanged` effect.
     NotAppliedRequired {
         /// The phase that requires `not_applied`.
         phase: Phase,
@@ -590,6 +625,8 @@ pub enum ResultDataError {
 impl std::fmt::Display for ResultDataError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MissingPhase => write!(f, "a completed phase is required"),
+            Self::FailureRequired => write!(f, "failure data requires a refused or error status"),
             Self::NotAppliedRequired { phase, effect } => write!(
                 f,
                 "phase {phase:?} requires effect NotApplied, got {effect:?}"
@@ -605,14 +642,25 @@ impl std::fmt::Display for ResultDataError {
 impl std::error::Error for ResultDataError {}
 
 impl ResultData {
-    /// Build a result data block. `generated` and `validated` phases
-    /// require `not_applied`; the `predicted_effect` is set with
+    /// Build pre-commit failure data with the last completed phase.
+    pub fn failure(phase: Option<Phase>) -> Self {
+        Self {
+            phase,
+            effect: Effect::NotApplied,
+            predicted_effect: None,
+            counts: Counts::default(),
+            verification: Verification::default(),
+        }
+    }
+
+    /// Build a result data block. Pre-commit phases require `not_applied`;
+    /// the `predicted_effect` is set with
     /// [`ResultData::set_predicted`] and only allowed for `validated`.
     /// [`Envelope::ok`] enforces both rules through
     /// [`ResultData::validate`].
     pub fn new(phase: Phase, effect: Effect) -> Self {
         Self {
-            phase,
+            phase: Some(phase),
             effect,
             predicted_effect: None,
             counts: Counts::default(),
@@ -630,18 +678,21 @@ impl ResultData {
     /// `Ok(())` for a legal combination, `Err(ResultDataError)` otherwise.
     pub fn validate(&self) -> Result<(), ResultDataError> {
         match self.phase {
-            Phase::Generated | Phase::Validated => {
-                if self.effect != Effect::NotApplied {
+            Some(phase) => {
+                if phase != Phase::Committed && self.effect != Effect::NotApplied {
                     return Err(ResultDataError::NotAppliedRequired {
-                        phase: self.phase,
+                        phase,
                         effect: self.effect,
                     });
                 }
+                if self.predicted_effect.is_some() && phase != Phase::Validated {
+                    return Err(ResultDataError::PredictedWithoutValidation { phase });
+                }
             }
-            Phase::Inspected | Phase::Committed => {}
-        }
-        if self.predicted_effect.is_some() && self.phase != Phase::Validated {
-            return Err(ResultDataError::PredictedWithoutValidation { phase: self.phase });
+            None if self.effect != Effect::NotApplied || self.predicted_effect.is_some() => {
+                return Err(ResultDataError::MissingPhase);
+            }
+            None => {}
         }
         Ok(())
     }
@@ -652,12 +703,9 @@ impl ResultData {
 ///
 /// - `ok`: `data` carries the phase/effect/counts/verification; `error` is
 ///   absent; `artifacts` lists committed (and any uncommitted) outputs.
-/// - `refused`: `error` carries the typed refusal; `data` is absent.
-/// - `error`: `error` carries the typed failure; `data` is absent.
-///
-/// `status`, `error` and `data` are mutually exclusive in shape: an `ok`
-/// envelope has a `data` block and no `error`; `refused` and `error`
-/// envelopes carry the `error` block and no `data`.
+/// - `refused`: `error` carries the refusal; `data` records pre-commit state.
+/// - `error`: `error` carries the failure; `data` retains the last completed
+///   phase, including committed publication state after a reporting failure.
 ///
 /// The Rust identifier is `Envelope` to avoid shadowing
 /// `std::result::Result` in function signatures.
@@ -675,7 +723,8 @@ pub struct Envelope {
     pub status: Status,
     /// Source the request bound to.
     pub source: Source,
-    /// Successful result data; absent on refusal or failure.
+    /// Result data, including the last completed phase on failures.
+    /// Only the scaffold constructor leaves it absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<ResultData>,
     /// Committed and uncommitted artifacts.
@@ -697,6 +746,28 @@ pub struct Envelope {
 }
 
 impl Envelope {
+    /// Attach validated phase/effect/counts to a failure envelope. A committed
+    /// phase records known publication; earlier phases preserve the error's
+    /// commit state, including unknown. Refusals cannot report publication.
+    pub fn with_failure_data(mut self, data: ResultData) -> Result<Self, ResultDataError> {
+        if self.status == Status::Ok {
+            return Err(ResultDataError::FailureRequired);
+        }
+        data.validate()?;
+        // Refusals never publish a primary document.
+        if self.status == Status::Refused && data.phase == Some(Phase::Committed) {
+            return Err(ResultDataError::FailureRequired);
+        }
+        if let Some(error) = &mut self.error {
+            if data.phase == Some(Phase::Committed) {
+                error.commit_state = CommitState::Committed;
+            }
+            error.normalize_retryable();
+        }
+        self.data = Some(data);
+        Ok(self)
+    }
+
     /// Build a placeholder envelope with `status: ok` and no data; used by
     /// tests and scaffold code. Production callers should use
     /// [`Envelope::ok`] (with data) or [`Envelope::refused`] /
@@ -731,6 +802,9 @@ impl Envelope {
         runtime: Runtime,
     ) -> Result<Self, ResultDataError> {
         data.validate()?;
+        if data.phase.is_none() {
+            return Err(ResultDataError::MissingPhase);
+        }
         Ok(Self {
             schema_version: ENVELOPE_SCHEMA_VERSION,
             command: command.into(),
@@ -748,8 +822,10 @@ impl Envelope {
     }
 
     /// Build a terminal envelope with `status: refused` and a typed
-    /// refusal.
+    /// refusal. No stage is assumed complete; use [`Self::with_failure_data`]
+    /// to report a known last completed phase. Refusals are not committed.
     pub fn refused(command: impl Into<String>, source: Source, error: Error) -> Self {
+        let error = error.with_commit_state(CommitState::NotCommitted);
         Self {
             schema_version: ENVELOPE_SCHEMA_VERSION,
             command: command.into(),
@@ -757,7 +833,7 @@ impl Envelope {
             runtime: Runtime::native(),
             status: Status::Refused,
             source,
-            data: None,
+            data: Some(ResultData::failure(None)),
             artifacts: Vec::new(),
             warnings: Vec::new(),
             error: Some(error),
@@ -767,8 +843,10 @@ impl Envelope {
     }
 
     /// Build a terminal envelope with `status: error` and a typed
-    /// failure.
-    pub fn new_error(command: impl Into<String>, source: Source, error: Error) -> Self {
+    /// failure. No stage is assumed complete; use [`Self::with_failure_data`]
+    /// to retain completed phases, including publication after reporting errors.
+    pub fn new_error(command: impl Into<String>, source: Source, mut error: Error) -> Self {
+        error.normalize_retryable();
         Self {
             schema_version: ENVELOPE_SCHEMA_VERSION,
             command: command.into(),
@@ -776,7 +854,7 @@ impl Envelope {
             runtime: Runtime::native(),
             status: Status::Error,
             source,
-            data: None,
+            data: Some(ResultData::failure(None)),
             artifacts: Vec::new(),
             warnings: Vec::new(),
             error: Some(error),
@@ -798,6 +876,32 @@ impl Envelope {
     /// Set an effective option.
     pub fn set_effective_option(&mut self, key: impl Into<String>, value: serde_json::Value) {
         self.effective_options.insert(key.into(), value);
+    }
+}
+
+/// First JSONL record. The stable discriminator is `"record": "header"`;
+/// the source block contains the bound source's SHA-256.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "record", rename = "header")]
+pub struct StreamHeader {
+    /// Envelope schema version.
+    pub schema_version: u32,
+    /// Command identifier.
+    pub command: String,
+    /// Engine crate version.
+    pub engine_version: String,
+    /// Bound source identity.
+    pub source: Source,
+}
+
+impl From<&Envelope> for StreamHeader {
+    fn from(envelope: &Envelope) -> Self {
+        Self {
+            schema_version: envelope.schema_version,
+            command: envelope.command.clone(),
+            engine_version: envelope.engine_version.clone(),
+            source: envelope.source.clone(),
+        }
     }
 }
 
@@ -840,11 +944,12 @@ pub fn jsonl_terminal_line(terminal: &Envelope) -> String {
     serde_json::to_string(terminal).expect("Envelope serializes")
 }
 
-/// Serialize `events` followed by `terminal` as a JSONL stream. Each
-/// event and the terminal record are written on their own line; the stream
-/// always ends with the terminal record.
+/// Serialize a typed header, `events`, then exactly one terminal result.
+/// Each record occupies its own line; the terminal is always last.
 pub fn write_jsonl_stream(events: &[ProgressEvent], terminal: &Envelope) -> String {
-    let mut out = String::new();
+    let mut out =
+        serde_json::to_string(&StreamHeader::from(terminal)).expect("StreamHeader serializes");
+    out.push('\n');
     for event in events {
         out.push_str(&serde_json::to_string(event.value()).expect("progress serializes"));
         out.push('\n');
@@ -857,6 +962,8 @@ pub fn write_jsonl_stream(events: &[ProgressEvent], terminal: &Envelope) -> Stri
 /// A parsed JSONL stream: the progress events and the terminal record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParsedStream {
+    /// Required first record with schema, engine and source identity.
+    pub header: StreamHeader,
     /// Progress events in order.
     pub events: Vec<ProgressEvent>,
     /// The terminal record.
@@ -866,8 +973,16 @@ pub struct ParsedStream {
 /// Why a JSONL stream is malformed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StreamError {
-    /// A line that is neither a progress event nor a recognized terminal
-    /// record (no `status` field).
+    /// The stream did not start with a typed header.
+    MissingHeader,
+    /// The header discriminator was present but its fields were malformed.
+    HeaderParse {
+        /// 1-based line number.
+        line: usize,
+        /// Parse error.
+        message: String,
+    },
+    /// Invalid JSON, a duplicate header, or a record after termination.
     InvalidLine {
         /// 1-based line number.
         line: usize,
@@ -890,6 +1005,10 @@ pub enum StreamError {
 impl std::fmt::Display for StreamError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MissingHeader => write!(f, "stream has no initial header record"),
+            Self::HeaderParse { line, message } => {
+                write!(f, "line {line}: header record parse error: {message}")
+            }
             Self::InvalidLine { line, content } => {
                 write!(f, "line {line}: invalid JSONL line: {content}")
             }
@@ -904,10 +1023,13 @@ impl std::fmt::Display for StreamError {
 
 impl std::error::Error for StreamError {}
 
-/// Read and validate a JSONL stream. A line is recognized as the terminal
-/// record when it parses as an [`Envelope`] (i.e. it has a `status`
-/// field). Every other line is treated as a progress event.
+/// Require a typed header first and exactly one terminal result last.
+/// Progress uses `ev`; its per-operation `status` is not a terminal marker.
+/// Empty lines are ignored. Missing termination is incomplete; missing or
+/// malformed headers, duplicate terminals and records after termination are
+/// malformed.
 pub fn read_jsonl_stream(input: &str) -> std::result::Result<ParsedStream, StreamError> {
+    let mut header: Option<StreamHeader> = None;
     let mut events: Vec<ProgressEvent> = Vec::new();
     let mut terminal: Option<Envelope> = None;
     for (index, raw) in input.lines().enumerate() {
@@ -921,7 +1043,25 @@ pub fn read_jsonl_stream(input: &str) -> std::result::Result<ParsedStream, Strea
                 line,
                 content: trimmed.to_string(),
             })?;
-        if value.get("status").is_some() {
+        if header.is_none() {
+            if value.get("record").and_then(serde_json::Value::as_str) != Some("header") {
+                return Err(StreamError::MissingHeader);
+            }
+            header = Some(
+                serde_json::from_value(value).map_err(|e| StreamError::HeaderParse {
+                    line,
+                    message: e.to_string(),
+                })?,
+            );
+            continue;
+        }
+        if value.get("record").and_then(serde_json::Value::as_str) == Some("header") {
+            return Err(StreamError::InvalidLine {
+                line,
+                content: trimmed.to_string(),
+            });
+        }
+        if value.get("status").is_some() && value.get("ev").is_none() {
             let record: Envelope =
                 serde_json::from_value(value).map_err(|e| StreamError::TerminalParse {
                     line,
@@ -932,11 +1072,22 @@ pub fn read_jsonl_stream(input: &str) -> std::result::Result<ParsedStream, Strea
             }
             terminal = Some(record);
         } else {
+            if terminal.is_some() {
+                return Err(StreamError::InvalidLine {
+                    line,
+                    content: trimmed.to_string(),
+                });
+            }
             events.push(ProgressEvent::new(value));
         }
     }
+    let header = header.ok_or(StreamError::MissingHeader)?;
     terminal
-        .map(|terminal| ParsedStream { events, terminal })
+        .map(|terminal| ParsedStream {
+            header,
+            events,
+            terminal,
+        })
         .ok_or(StreamError::MissingTerminal)
 }
 
@@ -1109,7 +1260,7 @@ mod tests {
         let parsed = read_jsonl_stream(&stream).expect("round-trip parses");
         assert!(matches!(
             parsed.terminal.data.unwrap().phase,
-            Phase::Validated
+            Some(Phase::Validated)
         ));
         assert_eq!(parsed.events.len(), 0);
     }
