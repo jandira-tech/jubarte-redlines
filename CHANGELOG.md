@@ -361,6 +361,15 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **The view keeps a Word highlight's colour.** A highlight that is not
+  yellow prints as `<mark class="hl-green">…</mark>` (the 16 names Word
+  gives `w:highlight`), and the writer reads the class back, so green,
+  cyan and the rest round-trip instead of collapsing into yellow. A
+  stretch the view escapes (`<mark>file\_</mark>`) comes back as one
+  highlighted run, and `debug --check render` no longer counts a
+  highlight on a run that paints no glyph (a deleted page break) or
+  misses a Strict package's direct highlights.
+
 - **Literal CriticMarkup delimiters in a code block stay text.** A
   `SourceCode` paragraph whose text holds `{++x++}` printed it into its
   fence as is, and the next convert read it as a tracked change. The views
