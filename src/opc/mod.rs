@@ -12,8 +12,8 @@
 
 //! OPC (Open Packaging Conventions) layer — M1.5.
 //!
-//! SPIKE FINDINGS (rdocx-opc 0.1, verified 2026-06-27):
-//! `rdocx_opc::OpcPackage` already provides everything `opc-partfs.ts` needs, at
+//! OPC surface (oxml-opc 0.14.2, migrated for #524):
+//! `oxml_opc::OpcPackage` already provides everything `opc-partfs.ts` needs, at
 //! the BYTE level — so the plan's Step-5 fallback (porting opc-partfs over `zip`)
 //! is NOT required:
 //!   - `from_reader` / `write_to`   → open from bytes / write the zip back
@@ -26,7 +26,7 @@
 //!     → read / mutate `[Content_Types].xml`
 //!   - `main_document_part`         → the package → main-document rel
 //!
-//! rdocx-opc keys parts/rels with a LEADING SLASH (`/word/document.xml`). This
+//! oxml-opc keys parts/rels with a LEADING SLASH (`/word/document.xml`). This
 //! adapter accepts the docxodus / opc-partfs style (no leading slash,
 //! `word/document.xml`) and normalizes internally, so the rest of the crate is
 //! oblivious to the difference.
@@ -35,8 +35,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
-use rdocx_opc::{ContentTypes, OpcPackage};
-pub use rdocx_opc::{OpcError, Relationship, Relationships};
+use oxml_opc::{ContentTypes, OpcPackage};
+pub use oxml_opc::{OpcError, Relationship, Relationships};
 
 /// Input the engine refuses before or while reading it, as an `Err` the
 /// caller can handle rather than a panic, which would abort a WASM instance
@@ -108,93 +108,131 @@ pub fn relative_rel_target(source_part: &str, target_part: &str) -> String {
     }
 }
 
-/// rdocx-opc 0.1.0 parses relationship attributes without decoding entities
-/// but escapes them when writing, so each open/write cycle added one `&amp;`
-/// to a target like `image11.jpg&ehk=…` until it named no part. Decode once on
-/// the way in; the writer's escape is then the only one.
-fn unescape_relationships(rels: &mut Relationships) {
-    let decode = |v: &mut String| {
-        if v.contains('&') {
-            *v = crate::xmllinq::parse::unescape_xml_text(v);
-        }
-    };
-    for r in &mut rels.items {
-        decode(&mut r.id);
-        decode(&mut r.rel_type);
-        decode(&mut r.target);
-        if let Some(m) = r.target_mode.as_mut() {
-            decode(m);
+/// Select the same unprefixed metadata records as the legacy adapter, folding
+/// explicit closes, then let upstream decode and validate each record. Parsing
+/// records separately preserves identical-duplicate repair and last-wins content
+/// types before the newer whole-document parsers reject those producer shapes.
+fn metadata_records(
+    xml: &[u8],
+    root: &str,
+    namespace: &str,
+    tags: &[&str],
+) -> Result<Vec<Vec<u8>>, OpcError> {
+    use quick_xml::events::{BytesEnd, BytesStart, Event};
+    let folded = fold_explicit_closes(xml, tags);
+    let mut reader = quick_xml::Reader::from_reader(folded.as_deref().unwrap_or(xml));
+    let mut records = Vec::new();
+    loop {
+        match reader.read_event().map_err(refused)? {
+            Event::Empty(tag) if tags.iter().any(|name| tag.name().as_ref() == *name) => {
+                let mut writer = quick_xml::Writer::new(Vec::new());
+                let mut start = BytesStart::new(root);
+                start.push_attribute(("xmlns", namespace));
+                writer.write_event(Event::Start(start)).map_err(refused)?;
+                writer
+                    .write_event(Event::Empty(tag.into_owned()))
+                    .map_err(refused)?;
+                writer
+                    .write_event(Event::End(BytesEnd::new(root)))
+                    .map_err(refused)?;
+                records.push(writer.into_inner());
+            }
+            Event::Eof => return Ok(records),
+            _ => {}
         }
     }
 }
 
-/// The same decode for `[Content_Types].xml`, which rdocx-opc parses the same
-/// way: a `Default Extension="jpg&amp;ehk=…"` otherwise grew one `&amp;` per
-/// cycle and stopped typing its part.
-fn unescape_content_types(map: &mut std::collections::HashMap<String, String>) {
-    if map.iter().any(|(k, v)| k.contains('&') || v.contains('&')) {
-        *map = map
-            .drain()
-            .map(|(k, v)| {
-                (
-                    crate::xmllinq::parse::unescape_xml_text(&k),
-                    crate::xmllinq::parse::unescape_xml_text(&v),
-                )
-            })
-            .collect();
+fn read_relationships(xml: &[u8]) -> Result<Relationships, OpcError> {
+    let mut rels = Relationships::new();
+    let mut items = Vec::new();
+    for record in metadata_records(
+        xml,
+        "Relationships",
+        "http://schemas.openxmlformats.org/package/2006/relationships",
+        &["Relationship"],
+    )? {
+        for item in Relationships::from_xml(&record)?.items {
+            items.push(item);
+        }
     }
+    // Seed the private counter once: add_with_id removes existing IDs, so
+    // calling it for every record would turn a linear read into a quadratic one.
+    // A fresh collection also has no retained source XML: to_xml stays canonical.
+    if let Some((_, item)) = items
+        .iter()
+        .filter_map(|item| {
+            item.id
+                .strip_prefix("rId")
+                .and_then(|id| id.parse::<u32>().ok())
+                .map(|id| (id, item))
+        })
+        .max_by_key(|(id, _)| *id)
+    {
+        rels.add_with_id(&item.id, &item.rel_type, &item.target);
+    }
+    rels.items = items;
+    Ok(rels)
+}
+
+fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
+    let mut types = ContentTypes {
+        defaults: HashMap::new(),
+        overrides: HashMap::new(),
+    };
+    for record in metadata_records(
+        xml,
+        "Types",
+        "http://schemas.openxmlformats.org/package/2006/content-types",
+        &["Default", "Override"],
+    )? {
+        let parsed = ContentTypes::from_xml(&record)?;
+        types.defaults.extend(parsed.defaults);
+        types.overrides.extend(parsed.overrides);
+    }
+    Ok(types)
+}
+
+/// Populate upstream public types without invoking its newer whole-package
+/// normalization and duplicate-refusal policies ahead of the adapter's repairs.
+fn read_package(bytes: &[u8]) -> Result<OpcPackage, OpcError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let mut parts = HashMap::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name()?.into_owned();
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data)?;
+        parts.insert(name, data);
+    }
+    let mut package = OpcPackage::new();
+    package.content_types = read_content_types(
+        &parts
+            .remove("[Content_Types].xml")
+            .ok_or_else(|| OpcError::PartNotFound("[Content_Types].xml".to_string()))?,
+    )?;
+    if let Some(xml) = parts.remove("_rels/.rels") {
+        package.package_rels = read_relationships(&xml)?;
+    }
+    for (name, data) in parts {
+        if name.ends_with(".rels") {
+            let owner = rels_path_to_part_name(&name)
+                .unwrap_or_else(|| name.strip_suffix(".rels").unwrap_or(&name).to_string());
+            package
+                .part_rels
+                .insert(norm(&owner), read_relationships(&data)?);
+        } else {
+            package.parts.insert(norm(&name), data);
+        }
+    }
+    Ok(package)
 }
 
 fn denorm(name: &str) -> String {
     name.trim_start_matches('/').to_string()
-}
-
-/// Convert a part name (leading-slash form, e.g. `/word/document.xml`) to its
-/// rdocx-opc's parsers read empty elements only (`Event::Empty`), so a
-/// `<Relationship …></Relationship>` written with an explicit close is
-/// skipped, and with it the part it names: corpus 37c6c62345 lost its
-/// header and footer that way. `[Content_Types].xml`'s `Default` and
-/// `Override` have the same parser. Re-read those files from the zip with
-/// each explicit close folded into an empty element.
-fn reparse_explicitly_closed(pkg: &mut OpcPackage, bytes: &[u8]) {
-    let Ok(mut zip) = ZipArchive::new(Cursor::new(bytes)) else {
-        return;
-    };
-    for i in 0..zip.len() {
-        let Ok(mut file) = zip.by_index(i) else {
-            continue;
-        };
-        let name = file.name().to_string();
-        let is_rels = name.ends_with(".rels");
-        if !is_rels && name != "[Content_Types].xml" {
-            continue;
-        }
-        let mut data = Vec::new();
-        if file.read_to_end(&mut data).is_err() {
-            continue;
-        }
-        let tags: &[&str] = if is_rels {
-            &["Relationship"]
-        } else {
-            &["Default", "Override"]
-        };
-        let Some(folded) = fold_explicit_closes(&data, tags) else {
-            continue;
-        };
-        if is_rels {
-            if let Some(owner) = rels_path_to_part_name(&name)
-                && let Ok(rels) = Relationships::from_xml(&folded)
-            {
-                if owner.is_empty() {
-                    pkg.package_rels = rels;
-                } else {
-                    pkg.part_rels.insert(norm(&owner), rels);
-                }
-            }
-        } else if let Ok(types) = ContentTypes::from_xml(&folded) {
-            pkg.content_types = types;
-        }
-    }
 }
 
 /// `xml` with every `<tag …></tag>` folded into `<tag …/>`, or None when
@@ -213,7 +251,7 @@ fn fold_explicit_closes(xml: &[u8], tags: &[&str]) -> Option<Vec<u8>> {
 }
 
 /// `.rels` file path (e.g. `word/_rels/document.xml.rels`). Mirrors the
-/// private `rdocx_opc::package::part_name_to_rels_path`.
+/// private `oxml_opc::package::part_name_to_rels_path`.
 fn part_name_to_rels_path(part_name: &str) -> String {
     let name = part_name.strip_prefix('/').unwrap_or(part_name);
     if let Some((dir, file)) = name.rsplit_once('/') {
@@ -250,7 +288,7 @@ enum ZipEntry<'a> {
 
 // Retain the OPC metadata budget independently of the parser upgrade that
 // fixed RUSTSEC-2026-0194/0195. Direct Relationships::from_xml callers use
-// patched quick-xml through rdocx-opc 0.2; package admission also bounds the
+// patched quick-xml through oxml-opc 0.14.2; package admission also bounds the
 // attribute count. 256 matches quick-xml's default namespace declaration limit.
 fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
     let mut reader = quick_xml::Reader::from_reader(xml);
@@ -277,7 +315,8 @@ fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        if entry.name() != "[Content_Types].xml" && !entry.name().ends_with(".rels") {
+        let name = entry.name()?;
+        if name != "[Content_Types].xml" && !name.ends_with(".rels") {
             continue;
         }
         let mut xml = Vec::new();
@@ -293,7 +332,7 @@ fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
     Ok(())
 }
 
-/// Thin adapter over `rdocx_opc::OpcPackage`. Port-equivalent of `PartFS`.
+/// Thin adapter over `oxml_opc::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
     pkg: OpcPackage,
     /// Each source zip entry's position, so `to_zip` writes the package back
@@ -339,12 +378,7 @@ impl PartFs {
             bytes,
             crate::admission::InputLimits::compare().max_part_bytes,
         )?;
-        let mut pkg = OpcPackage::from_reader(Cursor::new(bytes.to_vec()))?;
-        reparse_explicitly_closed(&mut pkg, bytes);
-        unescape_relationships(&mut pkg.package_rels);
-        pkg.part_rels.values_mut().for_each(unescape_relationships);
-        unescape_content_types(&mut pkg.content_types.defaults);
-        unescape_content_types(&mut pkg.content_types.overrides);
+        let mut pkg = read_package(bytes)?;
         let mut repaired_duplicate_ids: Vec<(String, String)> =
             drop_repeated_relationships(&mut pkg.package_rels)?
                 .into_iter()
@@ -363,13 +397,14 @@ impl PartFs {
                 );
             }
         }
-        let source_order = ZipArchive::new(Cursor::new(bytes))
-            .map(|zip| {
-                (0..zip.len())
-                    .filter_map(|i| zip.name_for_index(i).map(|n| (n.to_string(), i)))
-                    .collect()
+        let archive = ZipArchive::new(Cursor::new(bytes))?;
+        let source_order = (0..archive.len())
+            .filter_map(|i| {
+                archive
+                    .name_for_index(i)
+                    .map(|name| name.map(|name| (name.into_owned(), i)))
             })
-            .unwrap_or_default();
+            .collect::<Result<_, _>>()?;
         Ok(PartFs {
             pkg,
             source_order,
@@ -406,9 +441,8 @@ impl PartFs {
     pub fn set_part(&mut self, name: &str, data: Vec<u8>) {
         if let Some(owner) = rels_path_to_part_name(name)
             && check_opc_attributes(&data).is_ok()
-            && let Ok(mut rels) = Relationships::from_xml(&data)
+            && let Ok(rels) = read_relationships(&data)
         {
-            unescape_relationships(&mut rels);
             if owner.is_empty() {
                 self.pkg.package_rels = rels;
             } else {
@@ -865,7 +899,8 @@ mod tests {
         let names: Vec<String> = ZipArchive::new(Cursor::new(&zip))
             .unwrap()
             .file_names()
-            .map(str::to_string)
+            .map(|name| name.expect("decode ZIP fixture name"))
+            .map(|name| name.into_owned())
             .collect();
         assert_eq!(
             names,
@@ -895,7 +930,7 @@ mod tests {
                 entry.last_modified(),
                 Some(zip::DateTime::default()),
                 "{}",
-                entry.name()
+                entry.name().expect("decode ZIP fixture name")
             );
         }
     }
@@ -969,6 +1004,42 @@ mod tests {
             .filter(|(e, _)| e.eq_ignore_ascii_case("png"))
             .count();
         assert_eq!(pngs, 1);
+    }
+
+    #[test]
+    fn migration_keeps_canonical_metadata_and_decodes_literal_entities_once() {
+        let bytes = package_with_document_rels(
+            r#"<Relationship Id="rId7" Type="image" Target="media/a&amp;amp;b.png"/>"#,
+        );
+        let mut fs = PartFs::open(&bytes).unwrap();
+        for _ in 0..3 {
+            assert_eq!(
+                fs.read_rels_for("word/document.xml").unwrap().items[0].target,
+                "media/a&amp;b.png"
+            );
+            let bytes = fs.to_zip().unwrap();
+            let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+            let mut xml = String::new();
+            archive
+                .by_name("word/_rels/document.xml.rels")
+                .unwrap()
+                .read_to_string(&mut xml)
+                .unwrap();
+            assert_eq!(
+                xml,
+                concat!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n",
+                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n",
+                    "  <Relationship Id=\"rId7\" Type=\"image\" Target=\"media/a&amp;amp;b.png\"/>\n",
+                    "</Relationships>"
+                )
+            );
+            fs = PartFs::open(&bytes).unwrap();
+        }
+        assert_eq!(
+            fs.add_document_relationship("word/document.xml", "image", "next.png"),
+            "rId8"
+        );
     }
 
     #[test]
@@ -1178,5 +1249,47 @@ mod tests {
         assert!(has("word/header2.xml"));
         assert!(fs.read_rels_for("word/header1.xml").is_none());
         PartFs::open(&fs.to_zip().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn migration_skips_zip_directories_and_keeps_a_missing_package_relationship_scope_empty() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        writer.add_directory("word/", options).unwrap();
+        writer.start_file("[Content_Types].xml", options).unwrap();
+        writer.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>"#).unwrap();
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(b"<document/>").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let package = PartFs::open(&bytes).unwrap();
+        assert_eq!(package.parts(), ["word/document.xml"]);
+        assert!(package.package_relationships().items.is_empty());
+        assert_eq!(package.main_document_part(), None);
+        let reopened = PartFs::open(&package.to_zip().unwrap()).unwrap();
+        assert_eq!(reopened.parts(), package.parts());
+        assert!(reopened.package_relationships().items.is_empty());
+        assert_eq!(
+            reopened.part_bytes("word/document.xml"),
+            Some(b"<document/>".as_slice())
+        );
+    }
+
+    #[test]
+    fn migration_refuses_missing_required_metadata_attributes_in_package_loading() {
+        let bytes = package_with_document_rels("<Relationship Id='rId1'/>");
+        assert!(matches!(
+            PartFs::open(&bytes),
+            Err(OpcError::InvalidRelationship)
+        ));
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("[Content_Types].xml", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml"/></Types>"#).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        assert!(matches!(
+            PartFs::open(&bytes),
+            Err(OpcError::InvalidContentTypes)
+        ));
     }
 }

@@ -347,8 +347,10 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         let entry = archive
             .by_index_raw(i)
             .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
-        let name = entry.name();
-        check_part_name(name)?;
+        let name = entry
+            .name()
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
+        check_part_name(&name)?;
         if !canonical.insert(name.to_ascii_lowercase()) {
             return Err(AdmissionError::new(
                 K::DuplicatePart,
@@ -394,7 +396,10 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?
+            .into_owned();
         let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let lower = name.to_ascii_lowercase();

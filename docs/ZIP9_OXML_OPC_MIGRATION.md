@@ -57,11 +57,11 @@ The XML/attribute error payloads still use quick-xml 0.41. Existing
 | --- | --- |
 | imports and `PartFs.pkg: OpcPackage` | Import upstream oxml_opc types; preserve leading-slash map keys. |
 | `OpcPackage::from_reader` in `PartFs::open` | The new whole-package reader rejects duplicate relationship IDs before our repair, normalizes part identities and preserves source XML. Load ZIP entries into an upstream `OpcPackage::new()` through the compatibility adapter, parsing metadata through upstream types, so existing repair/refusal policies remain reachable. |
-| `reparse_explicitly_closed`, `fold_explicit_closes` | Retain explicit-close folding in the compatibility metadata reader; upstream also understands closes, but the adapter's record selection must retain the baseline behavior. |
-| `Relationships::from_xml` / `unescape_relationships` | Upstream decodes entities and normalizes attributes. Do not decode again: a literal `&amp;` in a target would be decoded twice. Parse selected legacy records individually through upstream, retain record order and duplicates until `drop_repeated_relationships`, and seed allocation with `add_with_id`. |
+| `reparse_explicitly_closed`, `fold_explicit_closes` | Retain fold_explicit_closes in the compatibility metadata reader; remove the redundant second archive pass in reparse_explicitly_closed. Upstream also understands closes, but the adapter's record selection must retain baseline behavior. |
+| `Relationships::from_xml` / `unescape_relationships` | Upstream decodes entities and normalizes attributes. Do not decode again: a literal `&amp;` in a target would be decoded twice. Parse selected legacy records individually through upstream, retain record order and duplicates until `drop_repeated_relationships`, and seed allocation once from the largest numeric ID with `add_with_id`. |
 | `drop_repeated_relationships`, repaired IDs | Keep identical-ID repair and conflicting-ID refusal, before upstream serialization validates unique IDs. |
 | `ContentTypes::from_xml` / `unescape_content_types` | Upstream decodes attributes, checks namespaces and rejects repeated case-insensitive identities. Parse the adapter-selected Default/Override records individually and merge their maps, preserving baseline duplicate overwrite behavior; remove the second unescape. |
-| package/part relationships `to_xml` in `PartFs::to_zip` | Upstream returns original XML if unchanged. Serialize a fresh upstream Relationships holding the same items, producing baseline canonical indentation, attribute order and declaration. Do not use upstream whole-package `write_to`, whose graph validation/output policy differs. |
+| package/part relationships `to_xml` in `PartFs::to_zip` | Upstream returns original XML if unchanged. Build fresh upstream Relationships during metadata loading (and set_part), producing baseline canonical indentation, attribute order and declaration without retained source XML. Do not use upstream whole-package `write_to`, whose graph validation/output policy differs. |
 | `content_types.to_xml` | Same sorted canonical writer; new identity validation may refuse case-colliding mappings. Report such behavior; never silently discard a mapping. |
 | `part_name_to_rels_path` | Still a private fn in upstream's private package module. Keep the local copy. |
 | `get_part`, `set_part`, map access, `get_part_rels`, `get_or_create_part_rels` | Same items available. Upstream lookups now match OPC names case-insensitively; existing map edits preserve the stored spelling. |
@@ -76,6 +76,25 @@ identities at serialization, case-insensitive upstream lookups and collision-saf
 relationship allocation are upstream semantic changes. They are distinct from
 ZIP byte determinism and must be reported if they affect measurements. No golden
 or existing assertion may be changed to conceal them.
+
+### Observed public-parser compatibility boundary
+
+`tests/opc_relationships.rs::public_parser_refuses_duplicate_required_attributes`
+also asserts that an **unnamespaced** `<Relationship Id='rId1'/>` is refused
+for missing Type/Target. The upstream 0.14.2 parser scopes records to the OPC
+namespace and returns an empty collection for that input instead of
+`InvalidRelationship`. Its earlier duplicate-attribute assertion (on correctly
+namespaced input) still passes. The full after-run exposes this as a new
+failure; the test is deliberately unchanged.
+
+PartFs's compatibility reader wraps each legacy-selected record in the OPC
+namespace, so its missing-attribute refusal and duplicate repairs remain
+active. Direct callers of the publicly re-exported upstream inherent
+`Relationships::from_xml` do not pass through that adapter. Preserving that
+legacy error contract would require an upstream change or replacing the
+public upstream type with a compatibility facade; neither is silently added
+here. This remains a reported public API compatibility limitation, separate
+from valid-document output identity.
 
 ## ZIP reader healing changes
 
