@@ -1,0 +1,32 @@
+{
+  "status": "design_expectation_not_executed",
+  "source_sha256": "54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e",
+  "requested_changes": 3,
+  "text_edits": 2,
+  "paragraph_insertions": 1,
+  "paragraph_deletions": 0,
+  "unchanged_source_targets": [
+    {
+      "short_id": "p2",
+      "long_id": "document.w:p.j:short.p2"
+    },
+    {
+      "short_id": "p3",
+      "long_id": "document.w:p.j:short.p3"
+    }
+  ],
+  "expected_final_paragraph_texts": [
+    "Payment is due within 45 days.",
+    "Invoices must state the payment due date.",
+    "The fee is due; the charge is payable.",
+    "One  space.",
+    "Notice is due within 30 days."
+  ],
+  "required_preservation": [
+    "Source file bytes remain unchanged.",
+    "Existing source p2 and p3 retain exact characters, including doubled spaces and U+00A0.",
+    "New text changes have tracked representation and author Jubarte.",
+    "No paragraph, relationship, or unrelated formatting is removed."
+  ],
+  "limits": "The fixture text oracle checks text only; it does not establish DOCX tracking, formatting, relationship preservation, or rendering."
+}
