@@ -116,6 +116,8 @@ pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
 pub mod edit;
+/// V2-13 (issue #845): the checker core for `--expect` evaluations.
+pub mod expect;
 pub mod fields;
 /// The one grammar of change, comment and paragraph ids (`r12`, `c5`, `p12`).
 pub mod ids;
