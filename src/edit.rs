@@ -30,7 +30,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::changes::{Change, ChangeError, ChangeFilter, ChangeKind};
 
-use crate::comparer::WmlComparerSettings;
 use crate::inspect::{
     BODY_STORY, Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256,
 };
@@ -44,6 +43,9 @@ pub mod flags;
 mod images;
 mod notes;
 mod origin;
+/// One preparation path for dry run and apply: the chosen primary bytes
+/// and the checks the serialized candidate passes (V2-08).
+pub mod prepared;
 pub mod record;
 pub mod resolution;
 mod rewrite;
@@ -67,6 +69,10 @@ pub use anchor::{v2_candidates, v2_select, v2_select_all};
 pub use anchor_error::{AnchorRefusal, Working, v2_resolve, v2_resolve_all};
 /// Which content control a `fill_control` operation fills.
 pub use controls::ControlSelector;
+/// The shared preparation path [`apply_plan`] and [`preview_plan`] run.
+pub use prepared::{
+    CandidateChecks, PrepareOptions, PreparedEdit, PrimaryBytes, introduced_findings, prepare,
+};
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
 /// `section` values.
 pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
@@ -1610,93 +1616,7 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
 /// compared, `PACKAGE_WRITE` when it cannot be packaged, and
 /// `REDACTION_LEAK` when redacted text still occurs in an output.
 pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {
-    check_update_fields(plan)?;
-    let mut tx = Transaction::start(source, plan)?;
-    tx.resolve()?;
-    tracked::check(&tx)?;
-    let emit = tx.emits_directly()?;
-    tx.apply()?;
-    let (mut clean, mut marked) = tx.finish()?;
-    if plan.existing_revisions == ExistingRevisions::Keep
-        || (emit && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
-    {
-        let result = tracked::result(&tx, clean)?;
-        tx.check_redactions(&[&result.clean, &result.redline])?;
-        return Ok(result);
-    }
-    let mut fields = Vec::new();
-    if plan.update_fields {
-        let refresh = |bytes: &[u8]| {
-            crate::fields::update_fields(bytes)
-                .map_err(|e| err("FIELDS_FAILED", None, e.to_string()))
-        };
-        let updated = refresh(&clean)?;
-        clean = updated.docx;
-        fields = updated.fields;
-        if let Some(bytes) = &marked {
-            marked = Some(refresh(bytes)?.docx);
-        }
-    }
-    let settings = WmlComparerSettings {
-        author_for_revisions: plan.author.clone(),
-        date_time_for_revisions: tx.date.clone(),
-        ..WmlComparerSettings::default()
-    };
-    let revised = marked.as_deref().unwrap_or(&clean);
-    let base = tx.commented_base()?;
-    let mut redline =
-        crate::document_comparer::compare_documents_with_settings(&base, revised, &settings)
-            .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
-    if tx
-        .resolved
-        .iter()
-        .any(|(_, r)| matches!(r, Resolved::PageSetup { .. }))
-    {
-        redline = sections::record_mid_changes(&redline, &base, &plan.author, &tx.date)?;
-    }
-    if marked.is_some() {
-        let (rewritten, fallbacks) = whole::rewrite(
-            &redline,
-            (&base, revised),
-            &tx.whole_marks,
-            &plan.author,
-            &tx.date,
-        )?;
-        redline = rewritten;
-        for (op, reason) in fallbacks {
-            tx.outcomes[op].message = Some(format!("shown as a word-level diff: {reason}"));
-        }
-    }
-    if let Some(&(_, op)) = tx
-        .deletion_comments
-        .iter()
-        .find(|&&(id, _)| comment_holds_kept_text(&redline, id))
-    {
-        let mut error = tx.conflict(
-            op,
-            "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph",
-        );
-        error.code = "UNSUPPORTED_STRUCTURE".into();
-        error.outcomes[op].code = Some(error.code.clone());
-        return Err(error);
-    }
-    // Settings are not revisions: the redline takes them as they are.
-    if let Some(request) = &tx.settings {
-        redline = crate::settings::apply_settings_to_docx(&redline, request)
-            .map_err(|m| err("PACKAGE_WRITE", None, m))?;
-    }
-    tx.check_redactions(&[&clean, &redline])?;
-    let mut report = tx.report(true);
-    report.paragraphs.to = crate::inspect::paragraphs(&clean)
-        .map(|p| p.len())
-        .unwrap_or(report.paragraphs.from);
-    report.revisions = revision_counts(&redline);
-    report.fields = fields;
-    Ok(EditResult {
-        clean,
-        redline,
-        report,
-    })
+    prepared::prepare(source, plan, &PrepareOptions::default()).map(|p| p.result)
 }
 
 /// `update_fields` refreshes the clean copy the comparer reads. Under
@@ -1731,11 +1651,22 @@ fn resolved<'a>(source: &'a [u8], plan: &'a EditPlan) -> Result<Transaction<'a>,
 
 /// Resolve every operation without producing documents.
 pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+    preview_plan_with(source, plan, &PrepareOptions::default())
+}
+
+/// [`preview_plan`] with the shared preparation's options: the dry run
+/// prepares and checks the same serialized candidate as an apply and stops
+/// before publication.
+pub fn preview_plan_with(
+    source: &[u8],
+    plan: &EditPlan,
+    options: &PrepareOptions,
+) -> Result<EditReport, EditError> {
     let tx = resolved(source, plan)?;
     let mut report = tx.report(true);
     // The summary is what applying reports: apply in memory and keep its
     // counts, so a dry run never prints `0` revisions for an edit it makes.
-    let applied = apply_plan(source, plan)?.report;
+    let applied = prepared::prepare(source, plan, options)?.result.report;
     report.paragraphs = applied.paragraphs;
     report.revisions = applied.revisions;
     report.comments_added = applied.comments_added;

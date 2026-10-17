@@ -1082,6 +1082,11 @@ pub enum Command {
         /// Resolve and report only; write nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Refuse when the edit would change nothing in the document
+        /// (NO_CHANGES_REQUESTED); reports, renders and bundles do not
+        /// count as a change.
+        #[arg(long)]
+        require_change: bool,
         /// Also write the PDF beside the document (the bundle: redline.pdf
         /// and clean.pdf).
         #[arg(long)]
