@@ -28,6 +28,11 @@ fn source(end: &str) -> Vec<u8> {
         "paragraph_end" => format!("<w:p>{START}{head}{END}</w:p><w:p>{tail}</w:p>"),
         "next_text" => format!("<w:p>{START}{head}</w:p><w:p>{tail}{END}</w:p>"),
         "start_at_end" => format!("<w:p>{head}{START}</w:p><w:p>{tail}{END}</w:p>"),
+        "start_in_text" => {
+            let before = run("The bookmarked ", false, false, None);
+            let after = run("clause.", false, false, None);
+            format!("<w:p>{before}{START}{after}</w:p><w:p>{tail}{END}</w:p>")
+        }
         _ => unreachable!(),
     };
     docx(&(body + &para("An unrelated final paragraph.")))
@@ -165,6 +170,14 @@ fn kept_revisions_insert_after_bookmarked_paragraph_preserves_endpoints() {
 #[test]
 fn insert_after_bookmark_start_at_paragraph_end_preserves_endpoints() {
     check_insert("start_at_end", true, "refuse");
+}
+
+#[test]
+fn insert_after_bookmark_start_inside_paragraph_text_preserves_endpoints() {
+    // Text on both sides of the start: neither the leading nor the trailing
+    // boundary rule applies, so the start stays between the two runs.
+    check_insert("start_in_text", true, "refuse");
+    check_insert("start_in_text", false, "refuse");
 }
 
 #[test]
