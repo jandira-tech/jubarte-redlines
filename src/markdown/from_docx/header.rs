@@ -692,6 +692,7 @@ fn page_setup(sect: &Element) -> String {
 /// chain and the document defaults.
 #[derive(Default)]
 struct Resolved {
+    character: bool,
     font: Option<String>,
     size_half_points: Option<f64>,
     bold: bool,
@@ -797,8 +798,13 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
 }
 
 fn resolve(styles: Option<&Element>, theme: Option<&Element>, id: &str) -> Resolved {
-    let mut r = Resolved::default();
-    let Some(styles) = styles else { return r };
+    let Some(styles) = styles else {
+        return Resolved::default();
+    };
+    let mut r = Resolved {
+        character: style_by_id(styles, id).is_some_and(|s| s.attr("type") == Some("character")),
+        ..Resolved::default()
+    };
     let mut current = Some(id.to_string());
     let mut hops = 0;
     while let Some(sid) = current.take() {
@@ -864,6 +870,11 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
         "{font} {}pt",
         size.trim_end_matches('0').trim_end_matches('.')
     ));
+    // Character styles carry run properties only. Paragraph defaults
+    // (including the writer template's spacing) do not describe them.
+    if r.character {
+        return format!("character, {}", parts.join(", "));
+    }
     if differs(|x| format!("{:?}", x.before))
         && let Some(b) = r.before.filter(|&b| b > 0.0)
     {
