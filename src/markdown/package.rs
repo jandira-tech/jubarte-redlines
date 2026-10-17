@@ -513,7 +513,20 @@ fn renamed(xml: &str, name: &str) -> String {
     let Some(end) = xml[value..].find('"').map(|e| value + e) else {
         return xml.to_string();
     };
-    format!("{}{}{}", &xml[..value], escape(name), &xml[end..])
+    format!(
+        "{}{}{}",
+        &xml[..value],
+        escape(&word_name(name)),
+        &xml[end..]
+    )
+}
+
+/// The `w:name` value for `name`: no comma, which `w:name` forbids
+/// (`[^,]*`; Word reads one as the start of an alias list), so every
+/// docx the writer makes is Word-valid. The comma becomes a space, as
+/// the paragraph styles' names do.
+fn word_name(name: &str) -> String {
+    name.replace(',', " ")
 }
 
 /// `styles` with a definition for each table style the view names that it
@@ -556,7 +569,7 @@ fn with_table_styles(
                 "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
                  <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
                 id = escape(id),
-                name = escape(&name)
+                name = escape(&word_name(&name))
             )
         })
         .collect();

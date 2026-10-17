@@ -446,6 +446,11 @@ writer knows as Word's own (Table Grid, the Grid and List Tables, the
 older Light Shading and Medium List families) needs no `named`, and is
 written as Word defines it, shading bands and all — but its `named`,
 when the view gives one, renames it: the document renamed the built-in.
+A table style's name that holds a comma or a quote quotes in the legend
+(`named "Foo, named Bar"`, a JSON string), so the clause's grammar
+stays unambiguous — and the writer writes no comma into a style's
+`w:name` (Word forbids one, reading it as an alias list): the comma
+becomes a space, and the conversion says so in a warning.
 When the tables differ the legend is plural, one entry per style in
 first-use order (`tables: TableNormal, Ledger, borders vary`), each
 entry saying what the singular `table:` line says (the borders clause,

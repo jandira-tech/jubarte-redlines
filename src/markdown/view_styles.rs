@@ -396,12 +396,12 @@ fn legend_line(yaml: &str, key: &str) -> Option<String> {
 type TableStyleEntry = (String, Option<u32>, Option<String>);
 
 fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
-    let (id, mut rest) = value.split_once(", ").unwrap_or((value, ""));
+    let (id, mut rest) = take_clause(value);
     let id = unquote(id.trim()).filter(|id| !id.is_empty())?;
     let mut border = None;
     let mut name = None;
     while !rest.is_empty() {
-        let (clause, next) = rest.split_once(", ").unwrap_or((rest, ""));
+        let (clause, next) = take_clause(rest);
         if border.is_none()
             && let Some(pt) = clause
                 .strip_prefix("all borders ")
@@ -411,15 +411,36 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
         {
             border = Some((pt * 8.0).round() as u32);
         } else if name.is_none()
-            && let Some(named) = clause.strip_prefix("named ")
+            && let Some(named) = clause
+                .strip_prefix("named ")
+                .and_then(|named| unquote(named.trim()))
         {
-            name = Some(named.to_string());
+            name = Some(named);
         } else if clause != "borders vary" {
             return Some(((id, border, name), rest));
         }
         rest = next;
     }
     Some(((id, border, name), ""))
+}
+
+/// The value's first `, `-separated clause, a quoted one whole (a `"`
+/// opens a JSON string, whose `, ` is the name's own), and what follows
+/// the separator.
+fn take_clause(value: &str) -> (String, &str) {
+    let (mut quoted, mut escaped) = (false, false);
+    for (i, c) in value.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ',' if !quoted && value[i + 1..].starts_with(' ') => {
+                return (value[..i].to_string(), &value[i + 2..]);
+            }
+            _ => {}
+        }
+    }
+    (value.to_string(), "")
 }
 
 pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {

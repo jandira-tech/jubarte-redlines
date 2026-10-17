@@ -3893,6 +3893,28 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         self.document.table_style = view_styles::table_style(text);
         self.document.table_legend = view_styles::table_legend(text);
+        // A legend name that holds a comma cannot be a `w:name` (Word
+        // reads one as the start of an alias list), so the writer replaces
+        // it with a space and says so (#549).
+        for (id, name) in self
+            .document
+            .table_style
+            .iter()
+            .filter_map(|(id, _, name)| name.as_ref().map(|name| (id, name)))
+            .chain(
+                self.document
+                    .table_legend
+                    .iter()
+                    .filter_map(|(id, (_, name))| name.as_ref().map(|name| (id, name))),
+            )
+            .filter(|(_, name)| name.contains(','))
+        {
+            self.document.warnings.push(format!(
+                "table: {id}, named {name}: a style's w:name holds no comma, \
+                 so it is written '{}'",
+                name.replace(',', " ")
+            ));
+        }
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
         if let Some((id, None, _)) = &self.document.table_style
