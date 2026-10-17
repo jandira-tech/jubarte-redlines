@@ -204,6 +204,22 @@ pub fn v2_resolve_all(
     }
 }
 
+/// Validate a declared story using the same missing-target refusal as anchors.
+pub(super) fn require_story(source: &[u8], story: &str) -> Result<(), Box<Error>> {
+    let refusal = AnchorRefusal::new(story, "").with_operation("/operations/0");
+    let snap = open(source, &refusal)?;
+    if story == "body" || snap.stories.iter().any(|s| s.id == story) {
+        return Ok(());
+    }
+    let mut error = missing_target(&snap, &refusal);
+    let available = std::iter::once("body")
+        .chain(snap.stories.iter().map(|s| s.id.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    error.message = format!("unknown story {story:?}; the source has stories: {available}");
+    Err(Box::new(error))
+}
+
 /// The one open every path through the resolver shares, as [`snapshot`]
 /// serves every field: the source's paragraphs, stories, tables, changes and
 /// comments, or the structured refusal that says it could not be read. A

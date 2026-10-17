@@ -30,6 +30,9 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
+#[path = "jubarte/edit_typed.rs"]
+mod edit_typed;
+
 /// `println!` for the listings: a reader that stops early (`jubarte read
 /// FILE | head`) ends the process quietly, as `write_stdout` ends a view.
 macro_rules! outln {
@@ -1430,14 +1433,29 @@ fn publication_test_hook(_phase: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What a publication rechecks after staging and before each commit
+/// (V2-05): an output that became unsafe, or a source that changed since it
+/// was read, publishes nothing new. `edit` builds it from its job, the typed
+/// edit routes from their own inputs.
+struct Recheck<'a> {
+    /// `--force`: replace an existing destination instead of refusing it.
+    force: bool,
+    /// Refuse an output that now resolves to one of the command's inputs.
+    alias: &'a dyn Fn(&Path) -> Refused,
+    /// Refuse when the source changed since it was read.
+    source: &'a dyn Fn() -> Refused,
+}
+
+/// A publication check: `Err` carries the exit status and the message.
+type Refused = Result<(), (u8, String)>;
+
 /// Stage every output before committing any of them. Without --force,
 /// hard-link the staged inode into its destination atomically: even an
 /// entry appearing after the recheck cannot be clobbered. A mid-publication
 /// failure names the artifacts already committed, without rolling them back.
 fn publish_files(
     outputs: &[(PathBuf, &[u8])],
-    job: &EditJob<'_>,
-    source: &[u8],
+    recheck: &Recheck<'_>,
 ) -> Result<Vec<PathBuf>, (u8, String)> {
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut committed: Vec<PathBuf> = Vec::new();
@@ -1450,7 +1468,7 @@ fn publish_files(
         // Recheck all destinations before the first primary commits, so a
         // newly unsafe derivative cannot leave a primary behind.
         for (path, _) in outputs {
-            refuse_edit_output_alias(job, path)?;
+            (recheck.alias)(path)?;
         }
         refuse_output_collisions(
             &outputs
@@ -1458,7 +1476,7 @@ fn publish_files(
                 .map(|(path, _)| path.clone())
                 .collect::<Vec<_>>(),
         )?;
-        if !job.force
+        if !recheck.force
             && let Some((path, _)) = outputs
                 .iter()
                 .find(|(path, _)| path.symlink_metadata().is_ok())
@@ -1466,12 +1484,12 @@ fn publish_files(
             return Err(taken_output(path));
         }
         for (tmp, path) in staged.iter() {
-            refuse_edit_output_alias(job, path)?;
+            (recheck.alias)(path)?;
             if committed.is_empty() {
-                recheck_edit_source(job.file, source)?;
+                (recheck.source)()?;
             }
             publication_test_hook("checked").map_err(|e| (1, e))?;
-            let linked = if job.force {
+            let linked = if recheck.force {
                 std::fs::rename(tmp, path)
                     .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
                 false
@@ -1484,12 +1502,12 @@ fn publish_files(
                     // Some filesystems cannot create hard links. Only on
                     // those, fall back to a fresh check followed by rename.
                     Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
-                        refuse_edit_output_alias(job, path)?;
+                        (recheck.alias)(path)?;
                         if path.symlink_metadata().is_ok() {
                             return Err(taken_output(path));
                         }
                         if committed.is_empty() {
-                            recheck_edit_source(job.file, source)?;
+                            (recheck.source)()?;
                         }
                         std::fs::rename(tmp, path)
                             .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
@@ -1805,7 +1823,14 @@ fn write_edited(
     }
     // Stage beside each destination, then commit without clobbering unless
     // --force was requested; a precommit failure leaves nothing behind.
-    let committed = publish_files(&outputs, job, source)?;
+    let committed = publish_files(
+        &outputs,
+        &Recheck {
+            force: job.force,
+            alias: &|path| refuse_edit_output_alias(job, path),
+            source: &|| recheck_edit_source(job.file, source),
+        },
+    )?;
     if job.quiet {
         return Ok(());
     }
@@ -1882,7 +1907,12 @@ struct EditFlags<'a> {
 }
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
-    let source = read_word(flags.file).map_err(|m| (1u8, m))?;
+    let source = read_word(flags.file).map_err(|mut message| {
+        if !flags.file.exists() && flags.plan.is_some() && matches!(flags.file.to_str(), Some("apply" | "replace" | "rewrite" | "insert" | "delete")) {
+            message.push_str("; this is legacy edit FILE --plan PLAN; for typed apply use: jubarte edit apply FILE --plan PLAN");
+        }
+        (1u8, message)
+    })?;
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
@@ -3004,6 +3034,9 @@ fn cli_main() -> ExitCode {
             eprintln!("error: {message}");
             std::process::exit(i32::from(code));
         }
+        if edit_typed::usage(&argv, &error) {
+            std::process::exit(64);
+        }
         // A removed flag names what replaced it; clap's tip may name a
         // lookalike.
         if let Some((old, now)) =
@@ -3024,6 +3057,7 @@ fn cli_main() -> ExitCode {
     }
     let quiet = cli.quiet;
     match cli.command {
+        Some(Command::TypedEdit(typed)) => return edit_typed::run(&typed, quiet),
         Some(Command::Compare(compare)) => {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }

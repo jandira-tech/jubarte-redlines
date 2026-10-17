@@ -2343,3 +2343,227 @@ fn a_task_the_host_lacks_is_one_usage_error_whatever_follows() {
     let result = parse(&["validate", "a.docx"], &[]);
     assert_eq!(result["command"], "validate", "{result}");
 }
+
+#[test]
+fn typed_edit_actions_have_one_order_independent_grammar() {
+    for args in [
+        vec!["replace", "f.docx", "--find", "old", "--text", "new"],
+        vec![
+            "replace",
+            "--text",
+            "new",
+            "--occurrence",
+            "2",
+            "f.docx",
+            "--find",
+            "old",
+            "--at",
+            "p0",
+        ],
+        vec!["rewrite", "f.docx", "--at", "p0", "--text", ""],
+        vec![
+            "insert",
+            "f.docx",
+            "--kind",
+            "text",
+            "--at",
+            "p0",
+            "--edge",
+            "end",
+            "--text-file",
+            "exact.txt",
+        ],
+        vec![
+            "insert",
+            "f.docx",
+            "--kind",
+            "paragraph",
+            "--at",
+            "p0",
+            "--position",
+            "after",
+            "--text",
+            "",
+        ],
+        vec!["delete", "f.docx", "--at", "p0", "--find", "old"],
+        vec!["delete", "f.docx", "--at", "p0", "--whole-block"],
+        vec!["apply", "f.docx", "--plan", "p.json"],
+    ] {
+        let argv = [vec!["jubarte", "edit"], args, vec!["--dry-run"]].concat();
+        assert!(Cli::try_parse_from(&argv).is_ok(), "{argv:?}");
+    }
+}
+
+#[test]
+fn typed_edit_scope_and_plan_ownership_are_explicit() {
+    for args in [
+        vec!["replace", "f", "--text", "new"],
+        vec![
+            "replace",
+            "f",
+            "--find",
+            "old",
+            "--text",
+            "new",
+            "--text-file",
+            "t",
+        ],
+        vec!["rewrite", "f", "--text", "new"],
+        vec![
+            "rewrite",
+            "f",
+            "--at",
+            "p0",
+            "--text",
+            "new",
+            "--occurrence",
+            "1",
+        ],
+        vec!["delete", "f", "--at", "p0"],
+        vec!["delete", "f", "--at", "p0", "--find", "x", "--whole-block"],
+        vec![
+            "delete",
+            "f",
+            "--at",
+            "p0",
+            "--whole-block",
+            "--occurrence",
+            "1",
+        ],
+        vec!["insert", "f", "--at", "p0", "--text", "x", "--edge", "end"],
+        vec!["insert", "f", "--kind", "text", "--at", "p0", "--text", "x"],
+        vec![
+            "replace",
+            "f",
+            "--find",
+            "x",
+            "--text",
+            "y",
+            "--occurrence",
+            "0",
+        ],
+        vec!["apply", "f", "--plan", "p", "--consume"],
+        vec!["apply", "f", "--plan", "p", "--author", "override"],
+        vec![
+            "apply",
+            "f",
+            "--plan",
+            "p",
+            "--datetime",
+            "2026-10-17T00:00:00Z",
+        ],
+        vec!["apply", "f", "--plan", "p", "--track", "off"],
+        vec![
+            "apply",
+            "f",
+            "--plan",
+            "p",
+            "--existing-revisions",
+            "accept",
+        ],
+        vec!["apply", "f", "--plan", "p", "--accept-change", "r0"],
+        vec!["apply", "f", "--plan", "p", "--reject-change", "r0"],
+        vec!["apply", "f", "--plan", "p", "--save-plan", "q"],
+    ] {
+        assert!(
+            Cli::try_parse_from(
+                [vec!["jubarte", "edit"], args.clone(), vec!["--dry-run"]].concat()
+            )
+            .is_err(),
+            "{args:?}"
+        );
+    }
+    for extra in [
+        vec!["-o", "out"],
+        vec!["--out-dir", "out"],
+        vec!["--report", "r"],
+        vec!["--emit", "document"],
+        vec!["--expect", "e"],
+        vec!["--dry-run"],
+    ] {
+        let args = [
+            vec![
+                "jubarte",
+                "edit",
+                "rewrite",
+                "f",
+                "--at",
+                "p0",
+                "--text",
+                "x",
+                "--save-plan",
+                "p",
+            ],
+            extra,
+        ]
+        .concat();
+        assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn action_names_remain_legacy_filenames_with_v1_flags() {
+    for name in ["replace", "rewrite", "insert", "delete", "apply"] {
+        let cli =
+            Cli::try_parse_from(["jubarte", "edit", name, "-p", "p0", "--content", "new"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Edit { file, .. }) if file == Path::new(name)));
+        let result = parse(&["edit", name, "-p", "p0", "--content", "new"], &["edit"]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+    }
+    let help = Cli::try_parse_from(["jubarte", "edit", "--help"])
+        .unwrap_err()
+        .to_string();
+    assert!(help.contains("./replace"), "{help}");
+}
+
+#[test]
+fn typed_edit_help_and_facade_use_the_public_route() {
+    let help = Cli::try_parse_from(["jubarte", "edit", "replace", "--help"])
+        .unwrap_err()
+        .to_string();
+    assert!(help.contains("jubarte edit replace"), "{help}");
+    assert!(!help.contains("__edit-v2"), "{help}");
+    let value = parse(
+        &[
+            "edit",
+            "replace",
+            "f.docx",
+            "--find",
+            "x",
+            "--text",
+            "y",
+            "--dry-run",
+        ],
+        &["edit"],
+    );
+    assert_eq!(value["exit_code"], 0, "{value}");
+    assert_eq!(value["command"], "edit");
+    assert_eq!(value["args"]["action"], "replace");
+    assert!(
+        Cli::try_parse_from([
+            "jubarte",
+            "-qq",
+            "edit",
+            "replace",
+            "f.docx",
+            "--find",
+            "x",
+            "--text",
+            "y",
+            "--dry-run"
+        ])
+        .is_ok()
+    );
+}
+
+#[test]
+fn review_09_no_file_action_plan_spelling_keeps_valid_legacy_grammar() {
+    for action in ["apply", "replace"] {
+        let cli = Cli::try_parse_from(["jubarte", "edit", action, "--plan", "p.json"]).unwrap();
+        let Some(Command::Edit { file, plan, .. }) = cli.command else {
+            panic!("valid legacy grammar wins");
+        };
+        assert_eq!(file, Path::new(action));
+        assert_eq!(plan.as_deref(), Some(Path::new("p.json")));
+    }
+}

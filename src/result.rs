@@ -506,6 +506,15 @@ pub struct Verification {
     pub expectations: String,
     /// `assessed`, `not_assessed`, `unresolved` (natural-language task semantics).
     pub task_semantics: String,
+    /// Input findings, separately from candidate findings; absent when unassessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_findings: Option<Vec<crate::validate::Finding>>,
+    /// Findings newly introduced by the edit, including nonblocking leads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub introduced_findings: Option<Vec<crate::validate::Finding>>,
+    /// Findings still present in the checked candidates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved_findings: Option<Vec<crate::validate::Finding>>,
 }
 
 impl Default for Verification {
@@ -515,6 +524,9 @@ impl Default for Verification {
             integrity: "skipped".to_string(),
             expectations: "not_requested".to_string(),
             task_semantics: "not_assessed".to_string(),
+            baseline_findings: None,
+            introduced_findings: None,
+            unresolved_findings: None,
         }
     }
 }
