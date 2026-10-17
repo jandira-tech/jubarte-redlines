@@ -252,6 +252,10 @@ with the facts an editor needs, then the document as Markdown and
 CriticMarkup, with an id line before every paragraph and an id on every
 tracked change and comment. The ids are the ones `edit`, `add`,
 `accept --id` and `reject --id` take, and `changes` and `comments` print.
+The `source:` line names the document with `/` between the path's parts
+on every OS — it is an identifier an agent reads back, as are the paths
+in `--json` output and the bundle's `report.jsonl`; the status lines on
+stderr (`wrote …`) keep the OS's own spelling.
 
 ```text
 ---

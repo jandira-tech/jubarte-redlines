@@ -113,8 +113,27 @@ pub(super) struct Paragraph {
     /// The formatting changes its id line names (`fmt r10 @AL`).
     pub formats: Vec<FormatMark>,
     /// The marks its id line names that its text shows nothing of (`rev
-    /// r9 @AL`).
-    pub unshown: Vec<FormatMark>,
+    /// r9 @AL`, `rev-del r10 @AL`): `true` for an insertion.
+    pub unshown: Vec<(bool, FormatMark)>,
+    /// The paragraph's number as its id line names it (`p1`), when it has
+    /// one: the header's `unplaced:` names paragraphs by it.
+    pub number: Option<usize>,
+    /// The text box the paragraph anchors, whose blocks the view prints
+    /// after its text with no id line of their own.
+    pub text_box: Option<TextBox>,
+}
+
+/// A minimal anchored text box: the change its anchor run carries, as the
+/// paragraph's `rev` clause names it, and the box's content, its runs
+/// carrying the changes the header's `unplaced:` names for the paragraph.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct TextBox {
+    /// Whether the anchor's change inserts (`rev`) or deletes (`rev-del`).
+    pub inserted: bool,
+    /// The anchor run's mark: its id, author and date.
+    pub mark: FormatMark,
+    /// The box's content: paragraphs, runs, ends.
+    pub items: Vec<Item>,
 }
 
 /// A formatting change, or a mark whose text the view does not show, as
@@ -271,6 +290,9 @@ pub(super) struct Document {
     /// The formatting changes on each notes part's separators, in order:
     /// the header's `notes: {fmt: footnotes.r0 @AS; …}`.
     pub note_formats: Vec<(&'static str, super::view_notes::Tag)>,
+    /// The tracked style changes the header's `style_changes:` names, by
+    /// holder (`Normal`, `docDefaults`): their ids, authors and dates.
+    pub style_changes: Vec<(String, Vec<FormatMark>)>,
     /// The style of every comment's paragraphs, when not CommentText: the
     /// header's `comments: …, style Normal`.
     pub comment_style: Option<String>,
@@ -445,9 +467,9 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
-    /// Every revision `w:id` written so far: none is written twice, not
-    /// even one the view names twice (`r43+43`), which Word's own files
-    /// never repeat (see `validate::ring1`).
+    /// Every revision `w:id` written so far: none is written twice by the
+    /// fresh counter, though one the view names twice (`r43+43`) is, as
+    /// Word's own files repeat it (a mark split around a `w:hyperlink`).
     pub used_revisions: HashSet<u32>,
     /// Each open paragraph's mark whose numbered change its runs share:
     /// its kind, its change and where in the output its `w:rPr` takes it.
@@ -490,9 +512,8 @@ impl Context<'_> {
             let at = self.cursors.entry(serial).or_insert(0);
             if let Some(&id) = ids.get(*at) {
                 *at += 1;
-                if self.used_revisions.insert(id) {
-                    return id;
-                }
+                self.used_revisions.insert(id);
+                return id;
             }
         }
         // Fresh ids stay within the `int` Word reads, past the view's own.
@@ -579,7 +600,7 @@ pub(super) fn story(
     // The bookmark the open paragraph ends.
     let mut bookmark: Option<u32> = None;
     // The marks the open paragraph's text shows nothing of.
-    let mut unshown: Vec<FormatMark> = Vec::new();
+    let mut unshown: Vec<(bool, FormatMark)> = Vec::new();
     // Its formatting changes past the mark's and its own: its runs'.
     let mut run_formats: Vec<FormatMark> = Vec::new();
     // The open tables' formatting changes, and the row and cell each is in.
@@ -623,7 +644,7 @@ pub(super) fn story(
         // side, its deleted side next, ends inside the insertion, as Word
         // writes it: between the two it would part them.
         let field = match item {
-            Item::LinkStart(..) => field_link(&items[at + 1..]),
+            Item::LinkStart(..) => field_link(&items[at + 1..], context.document),
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
@@ -669,6 +690,15 @@ pub(super) fn story(
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
                 paragraph_properties(context, paragraph, &mut out);
+                // The text box the paragraph anchors leads its content,
+                // its change the first the reader pairs: `rev r12` before
+                // the deletion after it, as Word writes it.
+                if let Some(boxed) = &paragraph.text_box {
+                    let name = if boxed.inserted { "w:ins" } else { "w:del" };
+                    let wrap = context.format_mark(name, &boxed.mark);
+                    let drawing = text_box_xml(context, boxed, relate);
+                    let _ = write!(out, "<{wrap}><w:r>{drawing}</w:r></{name}>");
+                }
                 unshown.clone_from(&paragraph.unshown);
                 run_formats = paragraph.formats.get(2..).unwrap_or_default().to_vec();
                 if let Some(name) = &paragraph.bookmark {
@@ -744,9 +774,11 @@ pub(super) fn story(
                         "<w:r><w:rPr><{change}><w:rPr/></w:rPrChange></w:rPr></w:r>"
                     );
                 }
-                // An empty insertion: Word keeps the mark, and shows no text.
-                for mark in std::mem::take(&mut unshown) {
-                    let mark = context.format_mark("w:ins", &mark);
+                // An empty mark: Word keeps it, and shows no text. Its kind is
+                // the clause's (`rev-del` is a deletion).
+                for (inserted, mark) in std::mem::take(&mut unshown) {
+                    let name = if inserted { "w:ins" } else { "w:del" };
+                    let mark = context.format_mark(name, &mark);
                     let _ = write!(out, "<{mark}/>");
                 }
                 if let Some((kind, by, at)) = context.pending_marks.pop().flatten() {
@@ -1189,14 +1221,27 @@ pub(super) fn story(
 
 /// Whether the next run after a comment's marks continues the open change.
 /// The change every run of the link `rest` starts with carries, when they
-/// all carry one: the link is then a HYPERLINK field inside that change's
-/// mark, as Word writes a link it tracks (a `w:hyperlink` would part the
-/// mark in two, and the change read back with two ids).
-fn field_link(rest: &[Item]) -> Option<Change> {
+/// all carry one and the view names it one id: the link is then a
+/// HYPERLINK field inside that change's mark. With two ids named, Word
+/// parts the mark around the link instead (`w:hyperlink` holding the
+/// second mark), which a field cannot do.
+fn field_link(rest: &[Item], document: &Document) -> Option<Change> {
     let mut change = None;
     for item in rest {
         match item {
-            Item::LinkEnd => return change,
+            Item::LinkEnd => {
+                // A link whose change names one id each carrier — `r213`,
+                // `r213+361` — is a field inside the change's mark, as Word
+                // writes it. One that names the same id twice (`r43+43`) is
+                // Word's other shape: the mark split around a
+                // `w:hyperlink`, each part its own carrier.
+                return change.filter(|(_, by)| {
+                    document
+                        .revision_ids
+                        .get(by)
+                        .is_none_or(|ids| ids.len() == HashSet::<&u32>::from_iter(ids).len())
+                });
+            }
             Item::Run(Run {
                 content: Content::Math { .. },
                 ..
@@ -1418,7 +1463,7 @@ fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
         match item {
             Item::Bookmark(_) => {}
             Item::LinkStart(..) => {
-                let field = field_link(&items[at + 1..]);
+                let field = field_link(&items[at + 1..], document);
                 fields.push(field);
                 match field {
                     Some(change) => {
@@ -1790,6 +1835,75 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
         }
     }
     out.push_str("</w:r>");
+}
+
+/// The `w:drawing` of a minimal anchored text box `boxed`: a rectangle the
+/// box's content fills. The reader reads the Choice branch only, so none
+/// is written; the caller wraps the run it returns in the change the
+/// paragraph's `rev` clause names.
+fn text_box_xml(context: &mut Context<'_>, boxed: &TextBox, relate: &mut dyn Relate) -> String {
+    let id = context.next_drawing;
+    context.next_drawing += 1;
+    let mut content = String::new();
+    box_xml(context, &boxed.items, relate, &mut content);
+    let mut out = String::new();
+    let anchor = r#"<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id=""#;
+    let graphic = r#"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>"#;
+    let body = r#"</w:txbxContent></wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"><a:spAutoFit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
+    out.push_str("<w:drawing>");
+    let _ = write!(out, "{anchor}{id}\" name=\"Text Box {id}\"{graphic}");
+    out.push_str(&content);
+    out.push_str(body);
+    out
+}
+
+/// A text box's content: paragraphs and runs, each change its own mark.
+/// The view prints the box as blocks with no id lines, so no paragraph of
+/// it is stamped and its changes read back as the header's `unplaced:`.
+fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, out: &mut String) {
+    let mut open: Option<Change> = None;
+    for item in items {
+        match item {
+            Item::Paragraph(paragraph) => {
+                out.push_str("<w:p>");
+                paragraph_properties(context, paragraph, out);
+            }
+            Item::Run(run) => {
+                if open != run.change {
+                    if let Some((kind, _)) = open.take() {
+                        out.push_str(close_tag(kind));
+                    }
+                    if let Some(change @ (kind, _)) = run.change {
+                        let wrap = context.revision(kind, Some(change.1));
+                        let _ = write!(out, "<{wrap}>");
+                        open = Some(change);
+                    }
+                }
+                write_run(context, run, relate, out);
+            }
+            Item::ParagraphEnd => {
+                // The mark `paragraph_properties` deferred until the
+                // paragraph's runs had theirs, at the place it kept.
+                if let Some((kind, by, at)) = context.pending_marks.pop().flatten() {
+                    let mark = context.revision(kind, by);
+                    out.insert_str(at, &format!("<{mark}/>"));
+                }
+                if let Some((kind, _)) = open.take() {
+                    out.push_str(close_tag(kind));
+                }
+                out.push_str("</w:p>");
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The closing tag of a mark of `kind`.
+fn close_tag(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Insert => "</w:ins>",
+        Kind::Delete => "</w:del>",
+    }
 }
 
 /// A `w:drawing` holding `picture` inline, embedded through `rel`, with

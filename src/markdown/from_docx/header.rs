@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The YAML header of the agent view.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::agent::{Handles, RevTag};
 use super::ooxml::Element;
+use crate::markdown::view_notes::WORD_PAGE_SIZES;
 
 /// Where the owner's name came from.
 pub(crate) enum Owner {
@@ -230,17 +231,42 @@ fn revisions_comment(f: &Facts) -> String {
             c.kind == ChangeKind::Formatting && matches!(story(c).as_str(), "body" | "styles")
         })
         .count();
-    let mut others: Vec<(String, usize)> = Vec::new();
+    // A part's group prints where its block does — headers then footers,
+    // first, default, even, section by section — not where its relationship
+    // happens to sit, which a writer cannot keep.
+    let mut counts: HashMap<String, usize> = HashMap::new();
     for c in &f.changes {
         let s = story(c);
         if matches!(s.as_str(), "body" | "styles") {
             continue;
         }
-        match others.iter_mut().find(|(name, _)| *name == s) {
-            Some((_, n)) => *n += 1,
-            None => others.push((s, 1)),
+        *counts.entry(s).or_default() += 1;
+    }
+    let mut order: Vec<String> = Vec::new();
+    for section in &f.sections {
+        for kind in ["header", "footer"] {
+            for ty in ["first", "default", "even"] {
+                if let Some(s) = section
+                    .stories
+                    .iter()
+                    .find(|s| s.kind == kind && s.ty == ty && counts.contains_key(&s.part))
+                    && !order.contains(&s.part)
+                {
+                    order.push(s.part.clone());
+                }
+            }
         }
     }
+    for c in &f.changes {
+        let s = story(c);
+        if counts.contains_key(&s) && !order.contains(&s) {
+            order.push(s);
+        }
+    }
+    let others: Vec<(String, usize)> = order
+        .into_iter()
+        .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
+        .collect();
     let mut parts = Vec::new();
     if marks > 0 {
         let mut kinds = Vec::new();
@@ -550,11 +576,16 @@ fn page_setup(sect: &Element) -> String {
     let landscape = size.and_then(|s| s.attr("orient")) == Some("landscape") || w > h;
     let (short, long) = if w < h { (w, h) } else { (h, w) };
     // Named sizes match on the rounded twip: 210mm is the 11906 an A4
-    // spells, not the 11905 a truncating cast reads (#531).
-    let name = match (short.round() as i64, long.round() as i64) {
-        (12240, 15840) => "Letter".to_string(),
-        (12240, 20160) => "Legal".to_string(),
-        (11906, 16838) => "A4".to_string(),
+    // spells, not the 11905 a truncating cast reads (#531). The names are
+    // Word's own paper list, and the writer writes the same twips back
+    // for each (#561); a twip off a named size is not that size.
+    let name = match WORD_PAGE_SIZES.iter().find(|&&(_, w, h)| {
+        (short.round() as i64, long.round() as i64) == (i64::from(w), i64::from(h))
+    }) {
+        // Word's paper list names the Tabloid sheet Ledger lying
+        // landscape.
+        Some(&(name, _, _)) if landscape && name == "Tabloid" => "Ledger".to_string(),
+        Some(&(name, _, _)) => name.to_string(),
         _ => format!(
             "{}x{}",
             super::agent::inches(w).trim_end_matches("in"),
@@ -1246,6 +1277,18 @@ fn part_two(out: &mut String, f: &Facts) {
     out.push_str("styles:\n");
     let default = f.default_style.unwrap_or("Normal");
     let base = resolve(f.styles, f.theme, default);
+    // A style a tracked change names but no paragraph uses still gets a
+    // legend line after the used ones, so the view's own docx defines it
+    // and the change has a holder there. The changed list's order is the
+    // styles part's; the writer keeps it, so the next view names the same
+    // order.
+    let changes = if f.resolved.is_none() {
+        f.styles
+            .map(|styles| style_changes(styles, f.handles))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     kv(
         out,
         &format!(
@@ -1303,6 +1346,31 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         );
     }
+    for (style, _) in &changes {
+        if style.as_str() == "docDefaults"
+            || style == default
+            || f.heading_styles.iter().any(|(_, h)| h == style)
+            || f.other_styles.iter().any(|o| o == style)
+        {
+            continue;
+        }
+        kv(
+            out,
+            &format!(
+                "  {}: {}",
+                scalar(style, false),
+                scalar(
+                    &format!(
+                        "{}{}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, style)
+                    ),
+                    false
+                )
+            ),
+            Some("tracked changes to it"),
+        );
+    }
     match f.table_styles.as_slice() {
         [] => {}
         [one] if !f.tables_differ => kv(
@@ -1319,21 +1387,44 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         ),
     }
-    if f.resolved.is_none()
-        && let Some(styles) = f.styles
-    {
-        let changes = style_changes(styles, f.handles);
-        if !changes.is_empty() {
-            let list: Vec<String> = changes
+    if !changes.is_empty() {
+        // Legend order: the default style first, then the styles the body
+        // uses, then the ones only a change names; `docDefaults` leads.
+        let order = |id: &str| {
+            if id == "docDefaults" {
+                return usize::MIN;
+            }
+            if id == default {
+                return 0;
+            }
+            f.heading_styles
                 .iter()
-                .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
-                .collect();
-            kv(
-                out,
-                &format!("style_changes: {{{}}}", list.join(", ")),
-                Some("tracked changes to the styles"),
-            );
-        }
+                .position(|(_, h)| h == id)
+                .map(|i| i + 1)
+                .or_else(|| {
+                    f.other_styles
+                        .iter()
+                        .position(|o| o == id)
+                        .map(|i| i + 1 + f.heading_styles.len())
+                })
+                .unwrap_or_else(|| {
+                    changes
+                        .iter()
+                        .position(|(holder, _)| holder == id)
+                        .map_or(usize::MAX, |i| i + usize::MAX / 2)
+                })
+        };
+        let mut ordered = changes.clone();
+        ordered.sort_by_key(|(holder, _)| order(holder));
+        let list: Vec<String> = ordered
+            .iter()
+            .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
+            .collect();
+        kv(
+            out,
+            &format!("style_changes: {{{}}}", list.join(", ")),
+            Some("tracked changes to the styles"),
+        );
     }
     let (rev, fmt) = &f.note_changes;
     let mut clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]
@@ -1886,6 +1977,46 @@ mod tests {
         .unwrap();
         assert_eq!(page_setup(&mm), "A4 portrait");
         assert_eq!(page_setup(&mm), page_setup(&twin));
+    }
+
+    /// Word's paper list: every size Word names and the writer writes
+    /// back exactly is named by the rounded twips Word spells it in — the
+    /// short side first, whatever way the sheet lies (#561 review defect
+    /// 4). Tabloid is the sheet Word's list names Ledger lying landscape.
+    #[test]
+    fn word_s_paper_list_names_its_sizes() {
+        let cases = [
+            (12_240, 15_840, "", "Letter portrait"),
+            (12_240, 20_160, "", "Legal portrait"),
+            (10_440, 15_120, "", "Executive portrait"),
+            (15_840, 24_480, "", "Tabloid portrait"),
+            (
+                24_480,
+                15_840,
+                r#" w:orient="landscape""#,
+                "Ledger landscape",
+            ),
+            (16_838, 23_811, "", "A3 portrait"),
+            (11_906, 16_838, "", "A4 portrait"),
+            (8_391, 11_906, "", "A5 portrait"),
+            (14_570, 20_636, "", "B4 (JIS) portrait"),
+            (10_318, 14_570, "", "B5 (JIS) portrait"),
+        ];
+        for (w, h, orient, expected) in cases {
+            let sect = parse_xml(
+                format!(r#"<w:sectPr {W}><w:pgSz w:w="{w}" w:h="{h}"{orient}/></w:sectPr>"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(page_setup(&sect), expected, "{w}x{h}");
+        }
+        // A twip off the named size is not the named size: the rounded
+        // match is exact, so an unnamed sheet keeps its inches.
+        let off = parse_xml(
+            format!(r#"<w:sectPr {W}><w:pgSz w:w="8392" w:h="11906"/></w:sectPr>"#).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(page_setup(&off), "5.828x8.268in portrait");
     }
 
     /// A strict table style names its side borders `start`/`end`: the

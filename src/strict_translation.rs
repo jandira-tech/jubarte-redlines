@@ -518,27 +518,37 @@ static RELATIONSHIP_SORTED: LazyLock<Vec<(&'static str, &'static str)>> = LazyLo
 /// verbatim (#531).
 #[derive(Clone, Copy)]
 enum UriSite {
-    /// `xmlns="…"` / `xmlns:p="…"` attribute values of an `.xml` part.
+    /// `xmlns="…"` / `xmlns:p="…"` attribute values of an `.xml` part, and
+    /// every other attribute whose whole value is a Strict namespace URI
+    /// (`a:graphicData/@uri`).
     NamespaceDeclaration,
     /// `Type="…"` attribute values of a `.rels` part.
     RelationshipType,
 }
 
 impl UriSite {
-    /// Whether an attribute named `attr` carries URIs of this site.
-    fn carries(self, attr: &str) -> bool {
+    /// Whether an attribute named `attr` carrying `value` is a URI of this
+    /// site. Beside the declarations, any attribute whose value is wholly
+    /// a Strict namespace URI carries one: `a:graphicData/@uri` names the
+    /// grammar of the graphic it wraps.
+    fn carries(self, attr: &str, value: &str, table: &[(&str, &str)]) -> bool {
         match self {
-            UriSite::NamespaceDeclaration => attr == "xmlns" || attr.starts_with("xmlns:"),
+            UriSite::NamespaceDeclaration => {
+                attr == "xmlns"
+                    || attr.starts_with("xmlns:")
+                    || table.iter().any(|&(from, _)| value == from)
+            }
             UriSite::RelationshipType => attr == "Type",
         }
     }
 }
 
 /// Apply a (strict → transitional) table to the URI-bearing attribute
-/// values of `text`, leaving every other byte — element and attribute
-/// names, text content, comments — as the file spells them. `text` is
-/// assumed to already contain `STRICT_MARKER` (callers gate on that for
-/// the fast path).
+/// values of `text` — namespace declarations, a `.rels` part's `Type`, and
+/// attributes whose whole value is a Strict namespace URI — leaving every
+/// other byte: element and attribute names, text content, comments, as
+/// the file spells them. `text` is assumed to already contain
+/// `STRICT_MARKER` (callers gate on that for the fast path).
 fn translate(text: &str, table: &[(&str, &str)], site: UriSite) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -616,7 +626,7 @@ fn rewrite_tag(tag: &str, table: &[(&str, &str)], site: UriSite, out: &mut Strin
         let (value, from_close) = after_open.split_at(rel);
         out.push_str(before);
         out.push(quote);
-        if site.carries(attr_name(before)) {
+        if site.carries(attr_name(before), value, table) {
             out.push_str(&replace_all(value, table));
         } else {
             out.push_str(value);
@@ -664,29 +674,57 @@ pub fn main_part_is_strict(bytes: &[u8]) -> bool {
     let Ok(mut part) = archive.by_name("word/document.xml") else {
         return false;
     };
-    // The root element's opening tag opens the part, so a bounded prefix is
-    // enough to read the dialect without inflating a huge part.
-    let mut head = Vec::new();
-    if (&mut part).take(64 * 1024).read_to_end(&mut head).is_err() {
-        return false;
+    // The root element's opening tag follows whatever preamble the part
+    // carries — a comment, a DOCTYPE — however long: read until it
+    // appears, bounded by the part's own size, not by a window a long
+    // preamble can push the root past (#561). Only the tail since the
+    // last `<` can still hold the tag, so the head stays small.
+    let mut head: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; 16 * 1024];
+    loop {
+        let Ok(read) = part.read(&mut chunk) else {
+            return false;
+        };
+        if read == 0 {
+            break;
+        }
+        head.extend(chunk.iter().copied().take(read));
+        let window = String::from_utf8_lossy(&head);
+        if let Some((start, _)) = root_open(&window)
+            && window.split_at(start).1.contains('>')
+        {
+            break;
+        }
+        match head.iter().rposition(|&b| b == b'<') {
+            Some(lt) => {
+                head.drain(..lt);
+            }
+            None => head.clear(),
+        }
     }
     let head = String::from_utf8_lossy(&head);
-    let root_open = head.char_indices().find(|&(i, c)| {
-        c == '<'
-            && head
-                .get(i.saturating_add(1)..)
-                .is_some_and(|rest| rest.starts_with(char::is_alphabetic))
-    });
-    let Some((start, _)) = root_open else {
+    let Some((start, _)) = root_open(&head) else {
         return false;
     };
     let decl = head.split_at(start).1;
     let decl = match decl.find('>') {
         Some(end) => decl.split_at(end).0,
-        // Truncated by the prefix: the declarations it holds still decide.
+        // Truncated by the end of the part: the declarations it holds
+        // still decide.
         None => decl,
     };
     decl.contains(STRICT_MAIN)
+}
+
+/// Where `head` opens its root element: the first `<` an element name
+/// follows (a comment, PI or DOCTYPE `<!`/`<?` opens none).
+fn root_open(head: &str) -> Option<(usize, char)> {
+    head.char_indices().find(|&(i, c)| {
+        c == '<'
+            && head
+                .get(i.saturating_add(1)..)
+                .is_some_and(|rest| rest.starts_with(char::is_alphabetic))
+    })
 }
 
 /// Normalize an ISO/IEC 29500 **Strict** `.docx` to **Transitional**.
@@ -945,6 +983,46 @@ mod tests {
         assert!(!out.contains(STRICT_MARKER), "strict marker leaked: {out}");
     }
 
+    /// A Strict `a:graphicData/@uri` — an attribute whose whole value is a
+    /// namespace URI, not a declaration — is translated with the
+    /// namespaces, while `mc:Ignorable`, which names prefixes rather than
+    /// URIs, stays as the file spells it (#561 review defect 1).
+    #[test]
+    fn graphic_data_uri_attributes_are_translated() {
+        let strict = concat!(
+            r#"<?xml version="1.0"?>"#,
+            r#"<w:document "#,
+            r#"xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main" "#,
+            r#"xmlns:a="http://purl.oclc.org/ooxml/drawingml/main" "#,
+            r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
+            r#"mc:Ignorable="w14">"#,
+            r#"<w:r><w:drawing><a:graphic>"#,
+            r#"<a:graphicData uri="http://purl.oclc.org/ooxml/drawingml/chart"/>"#,
+            r#"<a:graphicData uri="http://purl.oclc.org/ooxml/drawingml/picture"/>"#,
+            r#"<a:graphicData uri="http://purl.oclc.org/ooxml/drawingml/diagram"/>"#,
+            r#"</a:graphic></w:drawing></w:r>"#,
+            r#"</w:document>"#,
+        );
+        let out = translate(strict, &NAMESPACE_SORTED, UriSite::NamespaceDeclaration);
+        assert!(
+            out.contains(r#"uri="http://schemas.openxmlformats.org/drawingml/2006/chart""#),
+            "the chart uri is translated: {out}"
+        );
+        assert!(
+            out.contains(r#"uri="http://schemas.openxmlformats.org/drawingml/2006/picture""#),
+            "the picture uri is translated: {out}"
+        );
+        assert!(
+            out.contains(r#"uri="http://schemas.openxmlformats.org/drawingml/2006/diagram""#),
+            "the diagram uri is translated: {out}"
+        );
+        assert!(
+            out.contains(r#"mc:Ignorable="w14""#),
+            "Ignorable names prefixes, not URIs: {out}"
+        );
+        assert!(!out.contains(STRICT_MARKER), "strict marker leaked: {out}");
+    }
+
     /// A Strict `.rels` snippet: the IRREGULAR `extendedProperties` rel becomes
     /// `extended-properties` (longest-key-first beats the `customProperty`/
     /// `extendedProperty` prefixes), and a regular `styles` rel becomes the
@@ -1017,6 +1095,31 @@ mod tests {
             out, strict_pkg,
             "within the default budget the Strict package is rewritten"
         );
+    }
+
+    /// A preamble longer than the old 64 KiB window no longer hides the
+    /// Strict root: the dialect is read from the root's own opening tag,
+    /// wherever in the part it lies (#561 review defect 2).
+    #[test]
+    fn a_long_preamble_does_not_hide_a_strict_root() {
+        let comment = format!("<!--{}-->", "x".repeat(100 * 1024));
+        let package = |uri: &str| {
+            let doc = format!(
+                "<?xml version=\"1.0\"?>\n{comment}<w:document xmlns:w=\"{uri}\"><w:body/></w:document>",
+            );
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            writer.start_file("word/document.xml", options).unwrap();
+            writer.write_all(doc.as_bytes()).unwrap();
+            writer.finish().unwrap().into_inner()
+        };
+        assert!(main_part_is_strict(&package(
+            "http://purl.oclc.org/ooxml/wordprocessingml/main"
+        )));
+        assert!(!main_part_is_strict(&package(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        )));
     }
 
     /// A Transitional package is returned byte-for-byte unchanged (zero-churn).

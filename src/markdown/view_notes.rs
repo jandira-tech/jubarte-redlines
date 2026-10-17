@@ -584,10 +584,11 @@ pub(crate) enum CellMark {
     Merge,
 }
 
-/// The header's `unplaced: [r40 @AL in p1, …]`: each change no other line
-/// shows, and the paragraph it is in. One without a paragraph, or not a
+/// The header's `unplaced: [ins r40 @AL in p1, …]`: each change no other
+/// line shows, the paragraph it is in and its kind (`ins`, `del`, `fmt`;
+/// a kindless one is an insertion). One without a paragraph, or not a
 /// change's tag, is left out.
-pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
+pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
     let (list, _) = value.split_once(" #").unwrap_or((value, ""));
     let Some(list) = list
         .trim()
@@ -600,7 +601,13 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
         .filter_map(|entry| {
             let (entry, _) = scalar_and_comment(entry.trim());
             let (tag, at) = entry.rsplit_once(" in ")?;
-            Some((crate::ids::short_number(at, 'p')?, first_tag(tag)?))
+            let (kind, tag) = match tag.split_once(' ') {
+                Some(("del", tag)) => ("del", tag),
+                Some(("fmt", tag)) => ("fmt", tag),
+                Some(("ins", tag)) => ("ins", tag),
+                _ => ("ins", tag),
+            };
+            Some((crate::ids::short_number(at, 'p')?, kind, first_tag(tag)?))
         })
         .collect()
 }
@@ -1211,6 +1218,8 @@ fn split_clauses(text: &str) -> Vec<&str> {
 /// twips.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct IdLine {
+    /// The paragraph's number, as its line names it (`p5`).
+    pub number: usize,
     pub style: Option<String>,
     /// The paragraph's own outline level (`outline 2`, `#`'s count), when
     /// no style carries it.
@@ -1237,8 +1246,12 @@ pub(super) struct IdLine {
     pub break_del: Option<Tag>,
     /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
     pub fmt: Vec<Tag>,
-    /// The marks its text shows nothing of (`rev r9 @AL`).
+    /// The marks its text shows nothing of (`rev r9 @AL`, `rev-del r10
+    /// @AL`); a `rev-del` tag is in `rev_del` too.
     pub rev: Vec<Tag>,
+    /// The `rev` tags a `rev-del` clause named: deletions, while `rev`
+    /// alone names insertions.
+    pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
 }
@@ -1253,8 +1266,11 @@ pub(super) fn id_line(line: &str) -> Option<IdLine> {
         .trim();
     let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
     let one = id.split_once('-').map_or(id, |(first, _)| first);
-    crate::ids::short_number(one, 'p')?;
-    let mut parsed = IdLine::default();
+    let number = crate::ids::short_number(one, 'p')?;
+    let mut parsed = IdLine {
+        number,
+        ..IdLine::default()
+    };
     // The style is the head's second word, quoted when it is no plain
     // word: `p5 TitlePage[ clause]`, `p5 "My Style"[ clause]`.
     let rest = match take_style(rest) {
@@ -1318,6 +1334,11 @@ impl IdLine {
             }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
+            Some(("rev-del", v)) => {
+                let tags: Vec<Tag> = revision_tags(v).into_iter().flatten().collect();
+                self.rev.extend(tags.iter().cloned());
+                self.rev_del.extend(tags);
+            }
             Some(_) => {}
         }
     }
@@ -1785,6 +1806,36 @@ mod tests {
         }
     }
 
+    /// The sizes Word's paper list names parse back to the twips the
+    /// reader names them by: each name writes the sheet Word writes for
+    /// it, so md -> docx -> md keeps both the name and the twips
+    /// (#561 review defect 4).
+    #[test]
+    fn word_s_paper_list_parses_to_its_twips() {
+        for (text, w, h) in [
+            ("Letter portrait", 12_240, 15_840),
+            ("Legal portrait", 12_240, 20_160),
+            ("Executive portrait", 10_440, 15_120),
+            ("Tabloid portrait", 15_840, 24_480),
+            ("Ledger landscape", 24_480, 15_840),
+            ("A3 portrait", 16_838, 23_811),
+            ("A4 portrait", 11_906, 16_838),
+            ("A5 landscape", 11_906, 8_391),
+            ("B4 (JIS) portrait", 14_570, 20_636),
+            ("B5 (JIS) portrait", 10_318, 14_570),
+        ] {
+            let page = page_setup(text).expect(text);
+            assert_eq!(
+                (page.width, page.height, page.landscape),
+                (w, h, text.ends_with("landscape")),
+                "{text}"
+            );
+        }
+        // A size the list does not name stays the inches it spells.
+        let custom = page_setup("8.5x14in portrait").unwrap();
+        assert_eq!((custom.width, custom.height), (12_240, 20_160));
+    }
+
     #[test]
     fn comment_heads_carry_author_date_thread_and_state() {
         let (head, text) = comment_head("c5 @AC: Is one percent the cap?").unwrap();
@@ -1831,6 +1882,25 @@ mod tests {
         assert!(comment_head("c5 @AC re c4: x").is_some());
     }
 }
+
+/// The sheet sizes Word's own paper list names, in the twips Word writes
+/// them, short side first. `Tabloid` and `Ledger` are the one sheet both
+/// ways round — the portrait one is Tabloid, the landscape one Ledger —
+/// and A4 small shares A4's twips, so the list names A4 only. The reader
+/// (`from_docx::header`) matches a `w:pgSz` to a name by rounded twips,
+/// and [`page_setup`] writes the same twips back for a name (#561).
+pub(super) const WORD_PAGE_SIZES: &[(&str, u32, u32)] = &[
+    ("Letter", 12_240, 15_840),
+    ("Legal", 12_240, 20_160),
+    ("Executive", 10_440, 15_120),
+    ("Tabloid", 15_840, 24_480),
+    ("Ledger", 15_840, 24_480),
+    ("A3", 16_838, 23_811),
+    ("A4", 11_906, 16_838),
+    ("A5", 8_391, 11_906),
+    ("B4 (JIS)", 14_570, 20_636),
+    ("B5 (JIS)", 10_318, 14_570),
+];
 
 /// A section's page as the view's YAML header prints it (`page: A4
 /// landscape, margins 0.5in, header/footer 0.49in`), in twips.
@@ -1924,13 +1994,14 @@ fn page_twips(value: &str) -> Option<u32> {
     (twips.is_finite() && (0.0..=f64::from(MOST_PAGE)).contains(&twips)).then_some(twips as u32)
 }
 
-/// The page `text` names: `Letter portrait`, `A4 landscape`, `8.5x14in
-/// portrait`, then `margins 1in` (or `margins top 1in, right 1.25in,
-/// bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header 0.5in,
-/// footer 0.6in`), `gutter 0.2in`, `columns 2`, `column gap 0.25in`,
-/// `column line`, and a grid (`line grid 15.6pt`, `line and char grid
-/// 18pt`, `char grid 18pt`, then `char space 4096`). A `; fmt …` tail is
-/// left out.
+/// The page `text` names: a size of Word's paper list (`Letter portrait`,
+/// `B5 (JIS) portrait`, `Ledger landscape`) or the sheet as it lies
+/// (`8.5x14in portrait`), then `margins 1in` (or `margins top 1in, right
+/// 1.25in, bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header
+/// 0.5in, footer 0.6in`), `gutter 0.2in`, `columns 2`, `column gap
+/// 0.25in`, `column line`, and a grid (`line grid 15.6pt`, `line and char
+/// grid 18pt`, `char grid 18pt`, then `char space 4096`). A `; fmt …` tail
+/// is left out.
 pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
     let text = text.split(';').next()?.trim();
     let mut clauses = text.split(", ");
@@ -1940,17 +2011,15 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
         "portrait" => false,
         _ => return None,
     };
-    let (width, height) = match size {
-        "Letter" => (12_240, 15_840),
-        "Legal" => (12_240, 20_160),
-        "A4" => (11_906, 16_838),
-        // `8.5x14in`: the sheet as it lies, not its short side first.
-        custom => {
-            let (w, h) = custom.split_once('x')?;
+    let (width, height) =
+        if let Some(&(_, w, h)) = WORD_PAGE_SIZES.iter().find(|&&(name, _, _)| name == size) {
+            (w, h)
+        } else {
+            // `8.5x14in`: the sheet as it lies, not its short side first.
+            let (w, h) = size.split_once('x')?;
             let (w, h) = (page_twips(&format!("{w}in"))?, page_twips(h)?);
             (w.min(h), w.max(h))
-        }
-    };
+        };
     let (width, height) = if landscape {
         (height, width)
     } else {

@@ -238,7 +238,8 @@ impl<'a> Output<'a> {
             quiet,
             input,
             view: &VIEW,
-            source: format!("{} (not written)", path.with_extension("docx").display()),
+            // An identifier agents read back: `/` on every OS (#568).
+            source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
             render,
         }
     }
@@ -1065,8 +1066,7 @@ fn run_edit(
             .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
         saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
     }
-    let save_line =
-        serde_json::json!({"ev": "save", "dir": out_dir.display().to_string(), "outputs": saved});
+    let save_line = serde_json::json!({"ev": "save", "dir": slash_path(out_dir), "outputs": saved});
     insert_before_summary(&mut jsonl, &save_line.to_string());
     std::fs::write(out_dir.join("report.jsonl"), &jsonl)
         .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
@@ -1124,7 +1124,8 @@ fn run_edit(
         &result.redline,
         &result.report.author,
         job.mode == Mode::Editing,
-        Some(&out_dir.join(shown).display().to_string()),
+        // An identifier agents read back: `/` on every OS (#568).
+        Some(&slash_path(&out_dir.join(shown))),
     ) {
         Ok(view) => write_stdout(&view).map_err(fail),
         Err(e) => {
@@ -1299,7 +1300,8 @@ fn write_edited(
         result,
         &result.report.author,
         job.mode == Mode::Editing,
-        Some(&path.display().to_string()),
+        // An identifier agents read back: `/` on every OS (#568).
+        Some(&slash_path(path)),
     ) {
         Ok(text) => write_stdout(&text).map_err(fail),
         Err(e) => {
@@ -1621,7 +1623,8 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
     let kind = output_format(Task::Compare, job.output.as_deref(), None)?;
     let source = format!(
         "{} (not written; -o keeps it)",
-        default_output(&job.original, &job.modified).display()
+        // An identifier agents read back: `/` on every OS (#568).
+        slash_path(&default_output(&job.original, &job.modified))
     );
     let out = job.output.as_deref().map(|path| Output {
         kind: kind.unwrap_or(Format::Docx),
@@ -2426,7 +2429,12 @@ fn cli_main() -> ExitCode {
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    let cli = Cli::try_parse_from(std::env::args_os()).unwrap_or_else(|error| {
+    let cli = Cli::try_parse_from(
+        // The help and usage lines name `jubarte` on every OS, not the
+        // binary's own file name (`jubarte.exe` on Windows, #568).
+        std::iter::once(std::ffi::OsString::from("jubarte")).chain(std::env::args_os().skip(1)),
+    )
+    .unwrap_or_else(|error| {
         // A removed flag names what replaced it; clap's tip may name a
         // lookalike.
         if let Some((old, now)) =
