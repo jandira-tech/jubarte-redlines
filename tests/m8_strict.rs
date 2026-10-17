@@ -218,3 +218,88 @@ fn f4_strict_and_transitional_geometry_twins_compare_with_zero_revisions() {
         }
     }
 }
+
+/// #561 review defect 1: translating Strict01 must clear every
+/// `purl.oclc.org` URI the package carries in a namespace site — the
+/// `xmlns:*` declarations and the `a:graphicData/@uri` attributes (six of
+/// them in this fixture) — while the bytes that are the file's own words
+/// keep their Strict spelling: element text, a relationship `Target`, and
+/// comments.
+#[test]
+fn strict01_translation_clears_every_namespace_site() {
+    let bytes = std::fs::read("tests/fixtures/strict/Strict01.docx").expect("strict fixture");
+    let out = jubarte::strict_translation::strict_to_transitional_docx(&bytes);
+    for (name, data) in all_zip_entries(&out) {
+        if !(name.ends_with(".xml") || name.ends_with(".rels")) {
+            continue;
+        }
+        let part = String::from_utf8_lossy(&data);
+        let leaks = strict_uri_leaks(&part);
+        assert!(
+            leaks.is_empty(),
+            "{name}: Strict URIs left in {}",
+            leaks.join(", ")
+        );
+    }
+}
+
+/// The tags of `part` that carry a Strict URI in an attribute other than
+/// `Target`: the namespace sites the translation owes a rewrite. Element
+/// text (between tags), hyperlink targets and comments are the file's own
+/// words and never count.
+fn strict_uri_leaks(part: &str) -> Vec<&str> {
+    let mut leaks = Vec::new();
+    let mut rest = part;
+    while let Some(lt) = rest.find('<') {
+        let after = &rest[lt..];
+        // A comment is the file's own words, `<!--` to `-->`.
+        if let Some(body) = after.strip_prefix("<!--")
+            && let Some(end) = body.find("-->")
+        {
+            rest = &body[end + 3..];
+            continue;
+        }
+        // A tag runs to the first `>` outside its quoted values.
+        let mut quote: Option<char> = None;
+        let Some(end) = after.char_indices().skip(1).find_map(|(i, c)| match quote {
+            Some(q) if c == q => {
+                quote = None;
+                None
+            }
+            Some(_) => None,
+            None => match c {
+                '"' | '\'' => {
+                    quote = Some(c);
+                    None
+                }
+                '>' => Some(i),
+                _ => None,
+            },
+        }) else {
+            break;
+        };
+        let (tag, next) = after.split_at(end + 1);
+        let mut attrs = tag;
+        while let Some(open) = attrs.find(['"', '\'']) {
+            let (before, from_open) = attrs.split_at(open);
+            let quote = from_open.chars().next().expect("find hit a quote");
+            let Some(rel) = from_open[1..].find(quote) else {
+                break;
+            };
+            let (value, tail) = from_open[1..].split_at(rel);
+            let name = before
+                .trim_end()
+                .trim_end_matches('=')
+                .trim_end()
+                .rsplit(char::is_whitespace)
+                .next()
+                .unwrap_or("");
+            if name != "Target" && value.contains("purl.oclc.org/ooxml") {
+                leaks.push(tag.trim());
+            }
+            attrs = &tail[1..];
+        }
+        rest = next;
+    }
+    leaks
+}
