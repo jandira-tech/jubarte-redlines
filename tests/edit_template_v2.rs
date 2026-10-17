@@ -492,13 +492,19 @@ fn attached_comments_use_nonempty_result_anchors() {
 #[test]
 fn source_binding_and_native_paragraph_identity_are_checked() {
     let s = docx(
-        r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="ABCD1234"><w:r><w:t>Native</w:t></w:r></w:p>"#,
+        r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="1234ABCD"><w:r><w:t>Native</w:t></w:r></w:p>"#,
     );
     let mut q = plan(&s, json!([replace(0, "Native", "Changed")]));
-    q["operations"][0]["target"]["long_id"] = json!("document.w:p.w14:paraId.ABCD1234");
+    q["operations"][0]["target"]["long_id"] = json!("document.w:p.w14:paraId.1234ABCD");
     assert_eq!(texts(&run(&s, &q).unwrap().clean), ["Changed"]);
     q["source"]["sha256"] = json!("0".repeat(64));
     assert_eq!(run(&s, &q).unwrap_err().code, "STALE_SOURCE");
+    // An out-of-range paraId is not a native key: [MS-DOCX] keeps paraIds
+    // below 0x80000000, which is exactly the shared key policy, so only the
+    // `j:short` pairing identifies such a paragraph on both sides.
+    q["source"]["sha256"] = json!(source_sha256(&s));
+    q["operations"][0]["target"]["long_id"] = json!("document.w:p.w14:paraId.ABCD1234");
+    assert_eq!(run(&s, &q).unwrap_err().code, "TARGET_ID_MISMATCH");
 }
 
 fn comment_source() -> Vec<u8> {
@@ -1809,9 +1815,10 @@ fn direct_edits_after_global_accept_or_reject_resolve_only_old_history() {
 #[test]
 fn source_identity_inventory_keeps_story_and_duplicate_distinctions() {
     use common::docx::{Part, docx_with_sect};
+    // In `1..=0x7FFFFFFF` ([MS-DOCX]): a native key under the shared policy.
     let native = |text: &str| {
         format!(
-            r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="ABCD1234">{text}</w:p>"#
+            r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="1234ABCD">{text}</w:p>"#
         )
     };
     let header = format!(
@@ -1831,7 +1838,7 @@ fn source_identity_inventory_keeps_story_and_duplicate_distinctions() {
     let mut q = plan(&s, json!([replace(1, "Duplicate", "Changed")]));
     q["resolve_revisions"]["accept"] =
         json!([r(7), {"short_id":"header1.r7","long_id":"header1.w:ins.w:id.7"}]);
-    q["source_context"] = json!([{"kind":"paragraph","target":{"short_id":"header1","long_id":"header1.w:p.w14:paraId.ABCD1234"},"text":"Header","reason_codes":["CONTEXT"]}]);
+    q["source_context"] = json!([{"kind":"paragraph","target":{"short_id":"header1","long_id":"header1.w:p.w14:paraId.1234ABCD"},"text":"Header","reason_codes":["CONTEXT"]}]);
     let out = run(&s, &q).unwrap();
     assert_eq!(texts(&out.clean), ["Body", "Changed native ID"]);
     assert!(
@@ -1842,7 +1849,7 @@ fn source_identity_inventory_keeps_story_and_duplicate_distinctions() {
     );
     // Duplicate native IDs in the body use the short-path fallback. A header's
     // equal native ID remains unique within its own story.
-    q["operations"][0]["target"]["long_id"] = json!("document.w:p.w14:paraId.ABCD1234");
+    q["operations"][0]["target"]["long_id"] = json!("document.w:p.w14:paraId.1234ABCD");
     assert_eq!(run(&s, &q).unwrap_err().code, "TARGET_ID_MISMATCH");
 
     let s = docx(&format!(
@@ -2269,11 +2276,14 @@ mod generator {
         let mut q: Value = serde_json::from_slice(&std::fs::read(plan_path).unwrap()).unwrap();
         assert_eq!(q["operations"][0]["text"], "Pay 45 days, Delaware law.");
         q["operations"][0]["text"] = json!("Pay 60 days, Delaware law.");
+        let untampered = run(&s, &q).unwrap_err().code;
         q["coverage"]["conditional_paragraphs"] = json!(0);
-        assert!(
-            run(&s, &q).is_err(),
+        let refusal = run(&s, &q).unwrap_err();
+        assert_eq!(
+            refusal.code, untampered,
             "coverage never frees a revision-blocked span"
         );
+        assert_eq!(refusal.code, "UNSUPPORTED_STRUCTURE");
         let q = generate(&s, &["--select", "p0", "--accept-change", "r7"]);
         assert_eq!(q["resolve_revisions"]["accept"], json!([r(7)]));
         let mut q = q;
@@ -2820,5 +2830,342 @@ mod generator {
                 .is_none_or(|b| b.as_array().unwrap().len() <= 8)
         }));
         assert_eq!(facts["readiness_complete"], false);
+    }
+
+    /// A source whose paragraphs carry the given `w14:paraId` values (plus
+    /// one plain paragraph), for the shared native-key policy.
+    fn paraid_source(ids: &[&str]) -> Vec<u8> {
+        let body: String = ids
+            .iter()
+            .map(|id| {
+                format!(
+                    r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="{id}"><w:r><w:t>Paragraph {id}</w:t></w:r></w:p>"#
+                )
+            })
+            .chain(std::iter::once(para("Plain")))
+            .collect();
+        docx(&body)
+    }
+
+    #[test]
+    fn native_paraid_templates_apply_untouched_under_the_shared_key_policy() {
+        // In range (1..=0x7FFFFFFF, the [MS-DOCX] rule): the native paraId
+        // stays the long key on both sides, and the untouched plan applies
+        // as a byte-identical copy.
+        let in_range = paraid_source(&["1234ABCD"]);
+        let q = generate(&in_range, &[]);
+        assert_eq!(
+            q["operations"][0]["target"]["long_id"],
+            "document.w:p.w14:paraId.1234ABCD"
+        );
+        let out =
+            run(&in_range, &q).unwrap_or_else(|e| panic!("an untouched template must apply: {e}"));
+        assert_eq!(out.redline, in_range);
+        assert_eq!(out.clean, in_range);
+
+        // Out of range: the generator must fall back to `j:short`, and that
+        // untouched plan must still apply as a byte-identical copy.
+        let out_of_range = paraid_source(&["ABCD1234"]);
+        let q = generate(&out_of_range, &[]);
+        assert_eq!(
+            q["operations"][0]["target"]["long_id"], "document.w:p.j:short.p0",
+            "a paraId beyond 0x7FFFFFFF is not a native key"
+        );
+        let out = run(&out_of_range, &q)
+            .unwrap_or_else(|e| panic!("an untouched template must apply: {e}"));
+        assert_eq!(out.redline, out_of_range);
+        assert_eq!(out.clean, out_of_range);
+
+        // Case-colliding values are one key counted twice, so both fall
+        // back to `j:short`; that untouched plan must apply too.
+        let colliding = paraid_source(&["1234ABCD", "1234abcd"]);
+        let q = generate(&colliding, &[]);
+        assert_eq!(
+            q["operations"][0]["target"]["long_id"],
+            "document.w:p.j:short.p0"
+        );
+        assert_eq!(
+            q["operations"][1]["target"]["long_id"],
+            "document.w:p.j:short.p1"
+        );
+        let out =
+            run(&colliding, &q).unwrap_or_else(|e| panic!("an untouched template must apply: {e}"));
+        assert_eq!(out.redline, colliding);
+        assert_eq!(out.clean, colliding);
+    }
+
+    #[test]
+    fn revision_wid_beyond_i32_round_trips_the_shared_policy() {
+        let s = docx(&format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:ins w:id="5000000000" {STAMP}><w:r><w:t>45</w:t></w:r></w:ins><w:r><w:t> days.</w:t></w:r></w:p>"#
+        ));
+        let q = generate(&s, &["--accept-change", "body:rev:5000000000"]);
+        assert_eq!(
+            q["resolve_revisions"]["accept"][0],
+            json!({"short_id": "body:rev:5000000000",
+                    "long_id": "document.w:ins.j:short.body:rev:5000000000"})
+        );
+        let result = run(&s, &q);
+        assert!(
+            result.is_ok(),
+            "the applier must accept the pair its generator froze: {:?}",
+            result.err()
+        );
+        assert_eq!(texts(&result.unwrap().clean), ["Pay 45 days."]);
+    }
+
+    #[test]
+    fn template_select_keeps_closed_ranges_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--select",
+            "p1-",
+            "--dry-run",
+            "--json",
+        ]);
+        assert_eq!(
+            value(&out)["error"]["code"],
+            "USAGE",
+            "proposal §2 allows only closed ranges for --select"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_selector_is_usage_not_a_missing_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        for spec in ["p99", "p0-p99"] {
+            let out = cli(&[
+                "edit",
+                "template",
+                path(&input),
+                "--select",
+                spec,
+                "--dry-run",
+                "--json",
+            ]);
+            let error = value(&out);
+            assert_eq!(error["error"]["code"], "USAGE", "{spec}");
+            assert!(
+                error["error"]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("past the last paragraph")),
+                "{spec}: {}",
+                error["error"]["message"]
+            );
+        }
+    }
+
+    #[test]
+    fn dry_run_receipt_reports_scope_count_and_digest_without_the_scaffold() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        let receipt = ok(&cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--select",
+            "p0-p1",
+            "--dry-run",
+            "--json",
+        ]));
+        let scope = &receipt["effective_options"]["scope"];
+        assert_eq!(scope["kind"], "selected");
+        assert_eq!(
+            scope["targets"],
+            json!(2),
+            "the receipt carries a count, not the target list"
+        );
+        let plan = generate(EXAMPLE, &["--select", "p0-p1"]);
+        let digest = source_sha256(serde_json::to_string(&plan["scope"]).unwrap().as_bytes());
+        assert_eq!(scope["sha256"], json!(digest));
+        let all = ok(&cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--dry-run",
+            "--json",
+        ]));
+        let scope = &all["effective_options"]["scope"];
+        assert_eq!(scope["kind"], "all");
+        assert!(scope.get("targets").is_none());
+        let every = generate(EXAMPLE, &[]);
+        assert_eq!(
+            scope["sha256"],
+            json!(source_sha256(
+                serde_json::to_string(&every["scope"]).unwrap().as_bytes()
+            ))
+        );
+    }
+
+    #[test]
+    fn identical_inputs_generate_byte_identical_plans() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        let first = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            "-",
+            "--datetime",
+            DATE,
+            "--select",
+            "p0-p1",
+        ]);
+        let second = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            "-",
+            "--datetime",
+            DATE,
+            "--select",
+            "p0-p1",
+        ]);
+        assert!(first.status.success() && second.status.success());
+        assert_eq!(
+            first.stdout, second.stdout,
+            "the same timestamp and source require byte-identical plans"
+        );
+        let a = dir.path().join("a.json");
+        let b = dir.path().join("b.json");
+        let first_saved = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&a),
+            "--datetime",
+            DATE,
+        ]);
+        let second_saved = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "-o",
+            path(&b),
+            "--datetime",
+            DATE,
+        ]);
+        assert!(first_saved.status.success() && second_saved.status.success());
+        assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+    }
+
+    #[test]
+    fn dry_run_writes_neither_plan_nor_report_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        let plan = dir.path().join("plan.json");
+        let report = dir.path().join("receipt.json");
+        std::fs::write(&input, EXAMPLE).unwrap();
+        std::fs::write(&plan, b"stale plan").unwrap();
+        std::fs::write(&report, b"stale report").unwrap();
+        let out = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--dry-run",
+            "-o",
+            path(&plan),
+            "--report",
+            path(&report),
+            "--json",
+        ]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(std::fs::read(&plan).unwrap(), b"stale plan");
+        assert_eq!(std::fs::read(&report).unwrap(), b"stale report");
+        let absent = dir.path().join("absent.json");
+        ok(&cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--dry-run",
+            "--report",
+            path(&absent),
+            "--json",
+        ]));
+        assert!(!absent.exists(), "a dry-run writes no report file");
+    }
+
+    #[test]
+    fn readiness_examples_stop_at_sixteen_rows_but_the_plan_keeps_every_one() {
+        let s = docx(
+            &(0..17)
+                .map(|n| para(&format!("Row {n}")))
+                .collect::<String>(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let (_, plan_path, receipt) = saved(dir.path(), &s);
+        let facts = &receipt["data"]["generation"];
+        assert_eq!(facts["working_readiness"].as_array().unwrap().len(), 16);
+        assert_eq!(facts["readiness_complete"], false);
+        assert_eq!(facts["coverage"]["eligible_paragraphs"], 17);
+        let plan: Value = serde_json::from_slice(&std::fs::read(plan_path).unwrap()).unwrap();
+        assert_eq!(
+            plan["operations"].as_array().unwrap().len(),
+            17,
+            "presentation limits never truncate the plan"
+        );
+    }
+
+    #[test]
+    fn template_usage_branches_refuse_with_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.docx");
+        std::fs::write(&input, source()).unwrap();
+        let code = |args: &[&str]| value(&cli(args))["error"]["code"].clone();
+        assert_eq!(
+            code(&[
+                "edit",
+                "template",
+                path(&input),
+                "--story",
+                "xyz",
+                "--dry-run",
+                "--json",
+            ]),
+            json!("USAGE")
+        );
+        for id in ["c5", "s0", "r7"] {
+            assert_eq!(
+                code(&[
+                    "edit",
+                    "template",
+                    path(&input),
+                    "--select",
+                    id,
+                    "--dry-run",
+                    "--json",
+                ]),
+                json!("USAGE"),
+                "--select of {id}"
+            );
+        }
+        let both = cli(&[
+            "edit",
+            "template",
+            path(&input),
+            "--find",
+            "x",
+            "--regex",
+            "y",
+            "--dry-run",
+            "--json",
+        ]);
+        assert!(!both.status.success(), "--find with --regex must refuse");
     }
 }

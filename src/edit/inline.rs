@@ -55,10 +55,9 @@ pub fn compile(
         "reject" => ExistingRevisions::Reject,
         _ => ExistingRevisions::Refuse,
     };
-    let accept =
-        super::source_refs::decisions(source, &inline.accept_change).map_err(edit_error)?;
-    let reject =
-        super::source_refs::decisions(source, &inline.reject_change).map_err(edit_error)?;
+    let (accept, reject) =
+        super::source_refs::decisions(source, &inline.accept_change, &inline.reject_change)
+            .map_err(edit_error)?;
     // Select all original identities, then match anchors in their working text.
     let view = for_edit(
         source,
