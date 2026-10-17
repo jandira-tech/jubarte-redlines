@@ -129,7 +129,11 @@ fn opaque_units(text: &str) -> Vec<&str> {
     let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_MATH;
     for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
         let opaque = match event {
-            Event::Code(_) | Event::InlineMath(_) | Event::DisplayMath(_) => true,
+            Event::Code(_) => true,
+            // Two amounts in a paragraph (`$250,000 … $5,000,000`) pair as
+            // one equation to the parser; the amounts are text, so the
+            // lines between them stay separate.
+            Event::InlineMath(_) | Event::DisplayMath(_) => !opens_amount(text, range.start),
             Event::Html(_) | Event::InlineHtml(_) => true,
             Event::Start(Tag::Image { .. }) => true,
             Event::Start(Tag::Link { link_type, .. }) => {
@@ -977,11 +981,27 @@ struct Atom {
 /// span, image or equation. The reader treats those three as literal, so a
 /// mark inside one would not accept or reject.
 fn atoms(text: &str) -> Vec<Atom> {
-    let mut out = numbers(text);
+    scan_atoms(text, 0, true)
+        .into_iter()
+        .chain(numbers(text))
+        .collect()
+}
+
+/// The parser's spans of `text`, a slice of a line at `offset`, with
+/// equations read (`math`) or not. A pair of amounts the parser reads as
+/// one equation (`$250,000 … **$5,000,000**`) is prose: its inside is
+/// scanned again without math, so the formatting spans it hid still widen
+/// changes ([`numbers`] already holds each amount whole).
+fn scan_atoms(text: &str, offset: usize, math: bool) -> Vec<Atom> {
+    let shift = |(start, end): (usize, usize)| (offset + start, offset + end);
+    let mut out = Vec::new();
     // (start, inner range so far, whole-range trigger): the last for an
     // image or an autolink, whose text is as verbatim as its syntax.
     let mut open: Vec<OpenSpan> = Vec::new();
-    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_MATH;
+    let mut options = Options::ENABLE_STRIKETHROUGH;
+    if math {
+        options |= Options::ENABLE_MATH;
+    }
     for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
         match event {
             Event::Start(tag) => match tag {
@@ -1021,30 +1041,49 @@ fn atoms(text: &str) -> Vec<Atom> {
                     // link's text stays editable; only its syntax widens.
                     // An autolink has no editable text at all.
                     let triggers = if whole {
-                        vec![(start, range.end)]
+                        vec![shift((start, range.end))]
                     } else {
-                        vec![(start, inner_start), (inner_end, range.end)]
+                        vec![shift((start, inner_start)), shift((inner_end, range.end))]
                     };
                     out.push(Atom {
-                        range: (start, range.end),
+                        range: shift((start, range.end)),
                         triggers,
                     });
                     extend(&mut open, (start, range.end));
                 }
             }
-            Event::Code(_) | Event::InlineMath(_) | Event::DisplayMath(_) => {
+            Event::Code(_) => {
                 out.push(Atom {
-                    range: (range.start, range.end),
-                    triggers: vec![(range.start, range.end)],
+                    range: shift((range.start, range.end)),
+                    triggers: vec![shift((range.start, range.end))],
                 });
+                extend(&mut open, (range.start, range.end));
+            }
+            Event::DisplayMath(_) if math => {
+                out.push(Atom {
+                    range: shift((range.start, range.end)),
+                    triggers: vec![shift((range.start, range.end))],
+                });
+                extend(&mut open, (range.start, range.end));
+            }
+            Event::InlineMath(_) if math && !opens_amount(text, range.start) => {
+                out.push(Atom {
+                    range: shift((range.start, range.end)),
+                    triggers: vec![shift((range.start, range.end))],
+                });
+                extend(&mut open, (range.start, range.end));
+            }
+            Event::InlineMath(_) if math => {
+                let inside = &text[range.start + 1..range.end - 1];
+                out.extend(scan_atoms(inside, offset + range.start + 1, false));
                 extend(&mut open, (range.start, range.end));
             }
             // An HTML comment: the reader drops it whole, so any change
             // touching it wraps it.
             Event::Html(_) | Event::InlineHtml(_) => {
                 out.push(Atom {
-                    range: (range.start, range.end),
-                    triggers: vec![(range.start, range.end)],
+                    range: shift((range.start, range.end)),
+                    triggers: vec![shift((range.start, range.end))],
                 });
                 extend(&mut open, (range.start, range.end));
             }
@@ -1070,6 +1109,15 @@ fn extend(open: &mut [OpenSpan], range: (usize, usize)) {
             None => range,
         });
     }
+}
+
+/// Whether `at` is the `$` of a currency amount, with a digit right after
+/// it: [`numbers`] reads the sign as part of the amount, so this `$` opens
+/// no equation — even where the parser pairs it with a later `$` as math
+/// (`$250,000 … exceeds **$5,000,000**`).
+fn opens_amount(text: &str, at: usize) -> bool {
+    text.as_bytes().get(at) == Some(&b'$')
+        && text.as_bytes().get(at + 1).is_some_and(u8::is_ascii_digit)
 }
 
 /// Runs of digits joined by `,` `.` `/` `:` `-` between digits, with a
