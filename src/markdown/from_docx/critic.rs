@@ -603,11 +603,9 @@ fn unnest(nodes: Vec<Node>) -> Vec<Node> {
     out
 }
 
-/// Names `outer` in the note of the change `node` is, when the split left
-/// that change as the outer's only content: `A` inserted what `B` deleted,
-/// and the note reads `r3 @B on r1 @A`, so the writer nests them again.
-/// Both must be tagged attributions of one view, and the sole change a
-/// change itself, or there is nothing to name.
+/// Names `outer` in the note of the change `node` is: `A` inserted what
+/// `B` deleted, and the note reads `r3 @B on r1 @A`, so the writer nests
+/// them again. Both must be tagged attributions of one view.
 fn fold_on(node: &mut Node, outer: Option<&str>) {
     /// The change `node` holds, when it is the sole one it names.
     fn held(node: &mut Node) -> Option<&mut Option<String>> {
@@ -671,12 +669,10 @@ fn tidy(nodes: Vec<Node>) -> Vec<Node> {
                 out.extend(comments);
                 continue;
             }
-            // Every piece a change: the outer holds them and no text of its
-            // own, so it folds into each piece's note — the one the sole
-            // case names, and each of the several it may hold — and the
-            // writer nests them back inside it.
-            if pieces.iter().all(|piece| held_change(piece, mark)) {
-                for piece in &mut pieces {
+            // Each held change names its outer, even when live pieces of
+            // that outer remain beside it.
+            for piece in &mut pieces {
+                if held_change(piece, mark) {
                     fold_on(piece, outer.as_deref());
                 }
             }

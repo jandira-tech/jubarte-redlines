@@ -390,12 +390,14 @@ fn a_deletion_inside_an_insertion_splits_the_insertion() {
     assert_eq!(
         plain(&del_in_ins()),
         "{++one ++}{>>r1 Ana Lima (2026-09-29T14:05:00Z)<<}\
-         {--two--}{>>r3 Ben Ode (2026-09-30T09:00:00Z)<<}\
+         {--two--}{>>r3 Ben Ode (2026-09-30T09:00:00Z) on r1 Ana Lima (2026-09-29T14:05:00Z)<<}\
          {++ three++}{>>r1 Ana Lima (2026-09-29T14:05:00Z)<<}\n"
     );
     let view = agent(&del_in_ins());
     assert!(
-        view.contains("{++one ++}{>>r1 @AL<<}{--two--}{>>r3 @BO<<}{++ three++}{>>r1 @AL<<}"),
+        view.contains(
+            "{++one ++}{>>r1 @AL<<}{--two--}{>>r3 @BO on r1 @AL<<}{++ three++}{>>r1 @AL<<}"
+        ),
         "{view}"
     );
 }
@@ -405,7 +407,7 @@ fn an_insertion_inside_a_deletion_splits_the_deletion() {
     assert_eq!(
         plain(&ins_in_del()),
         "{--one --}{>>r3 Ben Ode (2026-09-30T09:00:00Z)<<}\
-         {++two++}{>>r1 Ana Lima (2026-09-29T14:05:00Z)<<}\
+         {++two++}{>>r1 Ana Lima (2026-09-29T14:05:00Z) on r3 Ben Ode (2026-09-30T09:00:00Z)<<}\
          {-- three--}{>>r3 Ben Ode (2026-09-30T09:00:00Z)<<}\n"
     );
 }
@@ -895,4 +897,107 @@ fn a_three_level_nest_keeps_the_innermost_text_live() {
     let round = written(&markdown);
     let second = plain(&round);
     assert_eq!(plain(&written(&second)), second, "{second}");
+}
+
+/// Live text beside deletions inside one insertion (issue #1111).
+fn live_insertion_with_deletions(shape: &str) -> Vec<u8> {
+    let live = r#"<w:r><w:t xml:space="preserve"> and the bank</w:t></w:r>"#;
+    let deletion = r#"<w:del w:id="4" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z"><w:r><w:delText xml:space="preserve"> and the broker</w:delText></w:r></w:del>"#;
+    let second = r#"<w:del w:id="5" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z"><w:r><w:delText xml:space="preserve"> and the seller</w:delText></w:r></w:del>"#;
+    let children = match shape {
+        "tail" => format!("{live}{deletion}"),
+        "head" => format!("{deletion}{live}"),
+        "middle" => format!("{live}{deletion}{live}"),
+        "two" => format!("{live}{deletion}{live}{second}{live}"),
+        _ => panic!("unknown shape: {shape}"),
+    };
+    docx(&format!(
+        r#"<w:p><w:r><w:t>Notify the buyer</w:t></w:r><w:ins w:id="3" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">{children}</w:ins><w:r><w:t>.</w:t></w:r></w:p>"#
+    ))
+}
+
+fn live_insertion_keeps_nested_deletions(shape: &str) {
+    let source = live_insertion_with_deletions(shape);
+    let view = agent(&source);
+    let count = if shape == "two" { 2 } else { 1 };
+    for id in 4..4 + count {
+        assert!(
+            view.contains(&format!("{{>>r{id} @BO on r3 @AL<<}}")),
+            "{shape}: {view}"
+        );
+    }
+    assert!(view.contains("{++ and the bank++}{>>r3 @AL<<}"), "{view}");
+    for markdown in [view, plain(&source)] {
+        let round = written(&markdown);
+        assert_eq!(
+            body(&agent(&round)),
+            body(&agent(&source)),
+            "{shape}: {markdown}"
+        );
+        assert_eq!(plain(&round), plain(&source), "{shape}: {markdown}");
+        let document = part_string(&round, "word/document.xml").unwrap();
+        assert_eq!(document.matches("<w:ins ").count(), 1, "{document}");
+        let insertion = document.split("<w:ins ").nth(1).unwrap();
+        let insertion = insertion.split("</w:ins>").next().unwrap();
+        assert_eq!(document.matches("<w:del ").count(), count, "{document}");
+        assert_eq!(insertion.matches("<w:del ").count(), count, "{document}");
+        assert!(check_word_valid_package(&round).ok(), "{document}");
+        let rejected =
+            jubarte::changes::reject_changes(&round, &jubarte::changes::ChangeFilter::ids(["r4"]))
+                .unwrap();
+        let document = part_string(&rejected, "word/document.xml").unwrap();
+        let insertion = document.split("<w:ins ").nth(1).unwrap();
+        let insertion = insertion.split("</w:ins>").next().unwrap();
+        assert!(insertion.contains(" and the broker</w:t>"), "{document}");
+        let original_rejected =
+            jubarte::changes::reject_changes(&source, &jubarte::changes::ChangeFilter::ids(["r4"]))
+                .unwrap();
+        assert_eq!(
+            body(&agent(&rejected)),
+            body(&agent(&original_rejected)),
+            "{shape}"
+        );
+    }
+}
+
+#[test]
+fn a_nested_deletion_after_live_text_names_its_insertion() {
+    live_insertion_keeps_nested_deletions("tail");
+}
+
+#[test]
+fn a_nested_deletion_before_live_text_names_its_insertion() {
+    live_insertion_keeps_nested_deletions("head");
+}
+
+#[test]
+fn a_nested_deletion_between_live_runs_names_its_insertion() {
+    live_insertion_keeps_nested_deletions("middle");
+}
+
+#[test]
+fn two_nested_deletions_among_live_runs_name_their_insertion() {
+    live_insertion_keeps_nested_deletions("two");
+}
+
+#[test]
+fn a_note_on_a_live_insertion_rebuilds_the_nested_deletion() {
+    for shape in ["tail", "head", "middle", "two"] {
+        let source = live_insertion_with_deletions(shape);
+        let view = agent(&source)
+            .replace("{>>r4 @BO<<}", "{>>r4 @BO on r3 @AL<<}")
+            .replace("{>>r5 @BO<<}", "{>>r5 @BO on r3 @AL<<}");
+        let document = part_string(&written(&view), "word/document.xml").unwrap();
+        assert_eq!(
+            document.matches("<w:ins ").count(),
+            1,
+            "{shape}: {document}"
+        );
+        let insertion = document.split("<w:ins ").nth(1).unwrap();
+        let insertion = insertion.split("</w:ins>").next().unwrap();
+        assert!(
+            insertion.contains(r#"<w:del w:id="4""#),
+            "{shape}: {document}"
+        );
+    }
 }

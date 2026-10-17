@@ -898,11 +898,16 @@ pub(super) fn story(
                         }
                         continue;
                     }
-                    // A change of the other kind the open mark resumes after
-                    // sits inside it; the open one stays open around it.
+                    // A change whose note names the open mark, or whose
+                    // outer resumes after it, sits inside that open mark.
                     if let (Some(outer), Some(change)) = (open, run.change)
                         && change.0 != outer.0
-                        && resumes_after(context.document, &items[at + 1..], change, outer)
+                        && (context
+                            .document
+                            .wraps
+                            .get(&change.1)
+                            .is_some_and(|&wrap| continues_change(context.document, wrap, outer))
+                            || resumes_after(context.document, &items[at + 1..], change, outer))
                     {
                         marks.push(outer);
                         spend(&mut natural, change.1);
@@ -1354,14 +1359,16 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
             .into_iter()
             .chain(marks.iter().copied())
             .any(|outer| continues_change(document, change, outer))
-        // Or it names, after ` on `, a change whose mark sits suspended:
-        // it opens inside that one, as a piece of it does.
-        || marks.iter().any(|outer| {
-            document
-                .wraps
-                .get(&change.1)
-                .is_some_and(|&wrap| continues_change(document, wrap, *outer))
-        })
+        // Or its note names the open mark or a suspended one as its parent.
+        || open
+            .into_iter()
+            .chain(marks.iter().copied())
+            .any(|outer| {
+                document
+                    .wraps
+                    .get(&change.1)
+                    .is_some_and(|&wrap| continues_change(document, wrap, outer))
+            })
     {
         return true;
     }

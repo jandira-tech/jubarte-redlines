@@ -3409,8 +3409,8 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some(mut anchor) = self.comment_anchor.take() {
             let whole = comment.paragraphs.join("\n");
             // A note that names another change after ` on `: the change it
-            // follows was that one's only content (`A` inserted what `B`
-            // deleted), so it goes back inside it, outermost last. Deeper
+            // follows sits inside that one (`A` inserted what `B` deleted),
+            // so it goes back inside it, outermost last. Deeper
             // chains name what Word refuses to hold (a revision nested in
             // its own kind), so only the first outer is rebuilt.
             let sole = self.sole_change(&anchor);
