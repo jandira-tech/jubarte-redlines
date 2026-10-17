@@ -20,11 +20,14 @@
 //! style's, which it is based on. Every other paragraph style the body uses
 //! follows, keyed by its id, described like a heading (`TOC2: Arial 12pt,
 //! after 6pt`). A line ends `, named Text Heading 2` when the style's name
-//! is not its id (for a heading `HeadingN`, not `heading N`).
+//! is not its id (for a heading `HeadingN`, not `heading N`). A character
+//! style a story paragraph names leads with `character` (`LineNumber:
+//! character, Calibri 11pt, named line number`), and the writer rebuilds a
+//! `w:type="character"` style for it.
 //!
 //! The writer sets a property only when the legend's value differs from
-//! what the style already inherits: the document defaults for the default
-//! style, and that style for every other.
+//! what the style already inherits: document defaults for the default and
+//! character styles, and the default paragraph style for other paragraph styles.
 
 use super::from_docx::Element;
 use super::xml::{FormatMark, escape};
@@ -176,9 +179,12 @@ pub(super) struct StyleSpec {
     pub id: String,
     /// The style's name, when the legend gives one (`, named …`).
     pub name: Option<String>,
+    /// A character style: the legend's first clause names the kind
+    /// (`LineNumber: character, Calibri 11pt`).
+    pub character: bool,
     /// The `#` count for a heading.
     pub heading: Option<u32>,
-    /// The default paragraph style, which the others are based on.
+    /// The default paragraph style, which other paragraph styles are based on.
     pub default: bool,
     pub font: String,
     pub bold: bool,
@@ -246,11 +252,15 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
         Some((value, name)) => (value, Some(name.to_string())),
         None => (value, None),
     };
-    let mut clauses = value.split(", ");
+    let mut clauses = value.split(", ").peekable();
+    // A character style leads with its kind, before the look. The default
+    // style is a paragraph one: for it, `character` is no clause we know.
+    let character = !default && clauses.next_if(|c| *c == "character").is_some();
     let (font, bold, italic, size) = font_clause(clauses.next()?)?;
     let mut spec = StyleSpec {
         id: id.to_string(),
         name,
+        character,
         heading,
         default,
         font,
@@ -497,12 +507,16 @@ pub(super) fn apply(styles: &str, specs: &[StyleSpec]) -> String {
     }
     for spec in specs {
         out = without_style(&out, &spec.id);
-        let inherited = if spec.default {
+        let inherited = if spec.default || spec.character {
             &defaults
         } else {
             from_base.as_ref().unwrap_or(&defaults)
         };
-        let definition = definition(spec, base.map(|b| b.id.as_str()), inherited);
+        // Word ignores a basedOn that names a different kind of style
+        // (ISO/IEC 29500, basedOn). Character styles therefore use
+        // docDefaults and write their run properties against those.
+        let parent = base.filter(|_| !spec.character).map(|b| b.id.as_str());
+        let definition = definition(spec, parent, inherited);
         if let Some(at) = out.rfind("</w:styles>") {
             out.insert_str(at, &definition);
         }
@@ -731,8 +745,14 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
             "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/><w:qFormat/>"
         )
     } else {
-        let mut out =
-            format!("<w:style w:type=\"paragraph\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>");
+        let mut out = format!(
+            "<w:style w:type=\"{}\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>",
+            if spec.character {
+                "character"
+            } else {
+                "paragraph"
+            }
+        );
         if let Some(base) = base.filter(|b| *b != spec.id) {
             out.push_str(&format!("<w:basedOn w:val=\"{}\"/>", escape(base)));
             if spec.heading.is_some() {
@@ -961,6 +981,47 @@ mod tests {
             "{styles}"
         );
         assert_eq!(styles.matches("w:default=\"1\"").count(), 1, "{styles}");
+    }
+
+    #[test]
+    fn a_character_style_comes_back_as_one() {
+        let specs = legend(
+            "styles:\n  Normal: Calibri 11pt, left\n  \
+             LineNumber: character, Calibri 11pt, named line number\n",
+        );
+        assert_eq!(specs.len(), 2, "the character style must be read");
+        let styles = apply("<w:styles></w:styles>", &specs);
+        assert!(
+            styles.contains(r#"<w:style w:type="character" w:styleId="LineNumber"><w:name w:val="line number"/>"#),
+            "{styles}"
+        );
+        assert_eq!(legend("styles:\n  Normal: character, Calibri 11pt\n"), []);
+    }
+
+    #[test]
+    fn a_character_style_keeps_its_font_without_a_paragraph_base() {
+        // A basedOn of another kind is ignored by Word. Even when the
+        // fonts match Normal, they must be written against docDefaults.
+        let specs = legend(
+            "styles:\n  Normal: Calibri bold italic 11pt, after 8pt, left\n  \
+             LineNumber: character, Calibri bold italic 11pt, named line number\n",
+        );
+        let styles = apply("<w:styles></w:styles>", &specs);
+        let character = styles
+            .split(r#"<w:style w:type="character""#)
+            .nth(1)
+            .expect("a character style is written")
+            .split("</w:style>")
+            .next()
+            .unwrap();
+        assert!(!character.contains("<w:basedOn"), "{character}");
+        assert!(!character.contains("<w:pPr"), "{character}");
+        assert!(character.contains(r#"w:ascii="Calibri""#), "{character}");
+        assert!(character.contains(r#"<w:sz w:val="22"/>"#), "{character}");
+        assert!(
+            character.contains("<w:b/>") && character.contains("<w:i/>"),
+            "{character}"
+        );
     }
 
     #[test]

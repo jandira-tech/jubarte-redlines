@@ -366,10 +366,10 @@ fn a_style_only_a_header_uses_keeps_its_look() {
 }
 
 #[test]
-fn a_character_style_a_header_paragraph_names_stays_out_of_the_legend() {
+fn a_character_style_a_header_paragraph_names_comes_back_as_one() {
     // `LineNumber` is a character style a header paragraph names (a real
-    // corpus shape): the legend describes paragraph styles only, so the
-    // view writes no paragraph style named Word's `line number`.
+    // corpus shape): the legend names the kind, so the writer rebuilds
+    // a character style, never a paragraph one.
     let styles = styles_xml("Header", "Footer").replace(
         "</w:styles>",
         r#"<w:style w:type="character" w:styleId="LineNumber"><w:name w:val="line number"/></w:style></w:styles>"#,
@@ -379,9 +379,61 @@ fn a_character_style_a_header_paragraph_names_stays_out_of_the_legend() {
         &styled(Some("Footer"), "Page"),
         &styles,
     );
-    let (view, again, _) = round_trip(&docx);
+    let (view, again, view_again) = round_trip(&docx);
     assert_eq!(part_styles(&again, "word/header"), ["LineNumber"]);
-    assert!(!view.contains("  LineNumber:"), "{view}");
+    assert!(
+        view.contains("  LineNumber: character, Times New Roman 10pt, named line number"),
+        "{view}"
+    );
+    let styles = styles_of(&again);
+    let definition = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"LineNumber\""))
+        .unwrap_or_else(|| panic!("no LineNumber: {styles}"));
+    assert!(
+        definition.starts_with("w:type=\"character\""),
+        "the writer rebuilds a character style: {definition}"
+    );
+    assert_eq!(view_again, view);
+}
+
+#[test]
+fn a_character_style_a_footer_paragraph_names_keeps_its_own_look() {
+    // The character style has the same font as Normal, but no paragraph
+    // parent. Giving it a paragraph basedOn loses the font in Word.
+    let styles = styles_xml("Header", "Footer").replace(
+        r#"<w:name w:val="Normal"/>"#,
+        r#"<w:name w:val="Normal"/><w:pPr><w:spacing w:after="160"/></w:pPr><w:rPr><w:rFonts w:ascii="Courier New"/><w:sz w:val="26"/></w:rPr>"#,
+    ).replace(
+        "</w:styles>",
+        r#"<w:style w:type="character" w:styleId="LineNumber"><w:name w:val="line number"/><w:rPr><w:rFonts w:ascii="Courier New"/><w:sz w:val="26"/></w:rPr></w:style></w:styles>"#,
+    );
+    let docx = docx(
+        &styled(Some("Header"), "Draft"),
+        &styled(Some("LineNumber"), "Page"),
+        &styles,
+    );
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(
+        view.contains("  LineNumber: character, Courier New 13pt, named line number"),
+        "{view}"
+    );
+    assert_eq!(part_styles(&again, "word/footer"), ["LineNumber"]);
+    let styles = styles_of(&again);
+    let character = styles
+        .split(r#"<w:style w:type="character" w:styleId="LineNumber""#)
+        .nth(1)
+        .expect("a character style is written")
+        .split("</w:style>")
+        .next()
+        .unwrap();
+    assert!(!character.contains("<w:basedOn"), "{character}");
+    assert!(
+        character.contains(r#"w:ascii="Courier New""#),
+        "{character}"
+    );
+    assert!(character.contains(r#"<w:sz w:val="26"/>"#), "{character}");
+    assert_eq!(view_again, view);
 }
 
 #[test]
