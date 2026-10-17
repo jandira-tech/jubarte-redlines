@@ -38,6 +38,10 @@ const HAND_WRITTEN: &[&str] = &[
     "eLife.00047.md",
     "git_manuscript.md",
     "list_of_figures.md",
+    // A Google Docs export (2026-10-16). Arthur: "we will use its syntax for
+    // rendering images": `![][image4]` in the text, `[image4]: <data:image/
+    // png;base64,…>` defined at the end, a definition shared by every use.
+    "docx-libraries-comparison.md",
 ];
 
 fn jubarte(dir: &Path, args: &[&str]) -> Result<String, String> {

@@ -2096,6 +2096,11 @@ pub struct RenderArgs {
     /// and the pages keep their own width.
     #[arg(long)]
     pub move_comments: bool,
+    /// Also attach each comment as a PDF note at its anchor. Viewers paint
+    /// a note as an icon over the text, so none is written by default and
+    /// the flag stays out of --help: it is for the exceptional case.
+    #[arg(long, hide = true)]
+    pub comment_notes: bool,
     /// Keep only the pages a change touches: a body or note revision, a
     /// comment anchor, or the first page on which a revised header or
     /// footer paints (the first page when none does). Page numbers stay the
@@ -2116,6 +2121,7 @@ impl Default for RenderArgs {
             revision_palette: None,
             dpi: 96.0,
             move_comments: false,
+            comment_notes: false,
             changed_pages: false,
             pages: None,
         }
@@ -2131,6 +2137,7 @@ impl RenderArgs {
             } else {
                 crate::convert::CommentPlacement::Margin
             },
+            comment_notes: self.comment_notes,
             changed_only: self.changed_pages,
             ..options
         }
@@ -2869,8 +2876,9 @@ const COMPARE_ONLY: [&str; 9] = [
 ];
 
 /// The [`RenderArgs`] ids: options of a PDF or PNG output only.
-const RENDER_ONLY: [&str; 6] = [
+const RENDER_ONLY: [&str; 7] = [
     "move_comments",
+    "comment_notes",
     "changed_pages",
     "pages",
     "dpi",
