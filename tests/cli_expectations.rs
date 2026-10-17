@@ -474,6 +474,232 @@ fn check_requires_expect_and_names_it() {
 }
 
 #[test]
+fn unreadable_expectations_file_is_an_io_failure_not_a_refusal() {
+    // Proposal §12: exit 1 is "Input, operational or I/O failure"; an
+    // unreadable --expect file is not a refusal. Both `check` and
+    // `edit apply` must agree (#1084 review F1).
+    let dir = tempfile::tempdir().unwrap();
+    satisfying_fixture(dir.path());
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "check",
+            "satisfied.docx",
+            "--expect",
+            "no-such.expect.json",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 1, "check: exit {code}: {out} {err}");
+    let envelope = json_envelope(&out);
+    assert_eq!(field(&envelope, "/status"), "error", "check: {out}");
+    assert_eq!(field(&envelope, "/error/code"), "IO_ERROR", "check: {out}");
+
+    let dir = tempfile::tempdir().unwrap();
+    stage(dir.path());
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "apply",
+            "example-source.docx",
+            "--plan",
+            "template.edited.json",
+            "--expect",
+            "no-such.expect.json",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 1, "apply: exit {code}: {out} {err}");
+    let envelope = json_envelope(&out);
+    assert_eq!(field(&envelope, "/status"), "error", "apply: {out}");
+    assert_eq!(field(&envelope, "/error/code"), "IO_ERROR", "apply: {out}");
+    assert!(
+        !dir.path().join("out.docx").exists(),
+        "apply: nothing is published"
+    );
+}
+
+#[test]
+fn v1_plan_with_expect_refuses_with_unresolved_verification() {
+    // A v1 plan plus --expect refuses UNSUPPORTED_EXPECTATION, but the
+    // caller did supply expectations: the receipt must say so instead of
+    // claiming they were never requested (#1084 review F4).
+    let dir = tempfile::tempdir().unwrap();
+    satisfying_fixture(dir.path());
+    let digest = source_sha256(&std::fs::read(dir.path().join("satisfied.docx")).unwrap());
+    std::fs::write(
+        dir.path().join("legacy.json"),
+        format!(r#"{{"schema_version": 1, "author": "Recorded", "source_sha256": "{digest}", "operations": []}}"#),
+    )
+    .unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "apply",
+            "satisfied.docx",
+            "--plan",
+            "legacy.json",
+            "--expect",
+            "satisfied.expect.json",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 3, "exit {code}: {out} {err}");
+    let envelope = json_envelope(&out);
+    assert_eq!(field(&envelope, "/status"), "refused");
+    assert_eq!(field(&envelope, "/error/code"), "UNSUPPORTED_EXPECTATION");
+    assert_eq!(
+        field(&envelope, "/data/verification/expectations"),
+        "unresolved",
+        "the receipt records the refused expectation contract: {out}"
+    );
+    assert!(
+        !dir.path().join("out.docx").exists(),
+        "the refusal publishes nothing"
+    );
+}
+
+#[test]
+fn error_envelopes_name_the_file_the_caller_supplied() {
+    // Proposal §11: the envelope's `source` keeps the path. An error the
+    // user cannot re-associate with a file is undiagnosable (#1084 review
+    // F5): read failures and recognized-mode usage failures carry the
+    // user-named path even when the bytes were never read (no digest
+    // then).
+    let dir = tempfile::tempdir().unwrap();
+    satisfying_fixture(dir.path());
+    // check: the inspected FILE cannot be read.
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "check",
+            "missing.docx",
+            "--expect",
+            "satisfied.expect.json",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 1, "check read: exit {code}: {out} {err}");
+    let envelope = json_envelope(&out);
+    assert_eq!(field(&envelope, "/error/code"), "IO_ERROR");
+    let path = field(&envelope, "/source/path").as_str().expect("path");
+    assert!(
+        std::path::Path::new(path).is_absolute() && path.ends_with("missing.docx"),
+        "check read failure names the file: {path}"
+    );
+    assert_eq!(
+        field(&envelope, "/source/sha256"),
+        "",
+        "the bytes were never read; no digest is invented"
+    );
+    // check: usage failure (no --expect) still names the inspected file.
+    let (code, out, err) = run(dir.path(), &["check", "missing.docx", "--json"]);
+    assert_eq!(code, 64, "check usage: exit {code}: {out} {err}");
+    assert_eq!(field(&json_envelope(&out), "/error/code"), "USAGE");
+    assert!(
+        field(&json_envelope(&out), "/source/path")
+            .as_str()
+            .is_some_and(|p| p.ends_with("missing.docx")),
+        "check usage failure names the file"
+    );
+    // edit apply: the source read fails.
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "apply",
+            "missing.docx",
+            "--plan",
+            "legacy.json",
+            "-o",
+            "out.docx",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 1, "apply read: exit {code}: {out} {err}");
+    assert!(
+        field(&json_envelope(&out), "/source/path")
+            .as_str()
+            .is_some_and(|p| p.ends_with("missing.docx")),
+        "apply read failure names the file"
+    );
+    // edit replace / edit template: recognized machine mode on a malformed
+    // command line still names the file operand the tokens carried.
+    for (code, out, err) in [
+        run(
+            dir.path(),
+            &[
+                "edit",
+                "replace",
+                "missing.docx",
+                "--no-such-flag",
+                "--json",
+            ],
+        ),
+        run(
+            dir.path(),
+            &[
+                "edit",
+                "template",
+                "missing.docx",
+                "--no-such-flag",
+                "--json",
+            ],
+        ),
+    ] {
+        assert_eq!(code, 64, "usage: exit {code}: {out} {err}");
+        assert!(
+            field(&json_envelope(&out), "/source/path")
+                .as_str()
+                .is_some_and(|p| p.ends_with("missing.docx")),
+            "usage failure names the file operand: {out}"
+        );
+    }
+}
+
+/// A passing `check` names its file the way its failures do: one absolute
+/// path, whichever way the command ends (proposal §11, evidence review:
+/// receipts carry actual absolute paths).
+#[test]
+fn check_names_its_file_by_one_absolute_path_on_success_and_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    satisfying_fixture(dir.path());
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "check",
+            "satisfied.docx",
+            "--expect",
+            "satisfied.expect.json",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "exit {code}: {out} {err}");
+    let passed = field(&json_envelope(&out), "/source/path").clone();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "check",
+            "satisfied.docx",
+            "--expect",
+            "absent.json",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 1, "exit {code}: {out} {err}");
+    let failed = field(&json_envelope(&out), "/source/path").clone();
+    let path = passed.as_str().expect("path");
+    assert!(std::path::Path::new(path).is_absolute(), "{path}");
+    assert_eq!(passed, failed);
+}
+
+#[test]
 fn check_pass_line_states_scope() {
     let dir = tempfile::tempdir().unwrap();
     satisfying_fixture(dir.path());
@@ -702,10 +928,30 @@ fn apply_receipt_exposes_output_bound_expectations() {
         serde_json::to_string_pretty(&rebound).unwrap(),
     )
     .unwrap();
-    // ...that standalone check accepts on the published output.
+    // ...that keeps the unassessed natural-language requirement as
+    // unassessed, with its empty checks list (#1084 review F6): dropping
+    // it would make a downstream pass look cleaner than it was.
+    let commercial = rebound["requirements"]
+        .as_array()
+        .expect("requirements array")
+        .iter()
+        .find(|r| r["key"] == "commercial-review")
+        .expect("the unassessed requirement survives the rebind");
+    assert_eq!(
+        commercial["checks"].as_array().map(Vec::len),
+        Some(0),
+        "the unassessed requirement keeps its empty checks list"
+    );
+    // ...that standalone check accepts on the published output, still
+    // reporting the requirement as not assessed.
     let (code, out, err) = run(
         dir.path(),
         &["check", "out.docx", "--expect", "rebound.json"],
     );
     assert_eq!(code, 0, "exit {code}: {out} {err}");
+    assert_eq!(
+        out.trim_end(),
+        "Expectation checks passed: 3 run; 1 requirement not assessed.",
+        "the rebound copy still reports the unassessed requirement"
+    );
 }

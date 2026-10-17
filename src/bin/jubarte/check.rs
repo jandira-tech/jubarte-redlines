@@ -108,6 +108,12 @@ fn io_error(message: String) -> Error {
     Error::new("IO_ERROR").with_message(message)
 }
 
+/// The inspected file's own `Source` for failures that never read its
+/// bytes: the user-named path, no invented digest (#1084 review F5).
+fn path_only(file: &Path) -> Source {
+    Source::from_digest("").with_path(absolute(file))
+}
+
 /// One named failing or refused check, for the error message.
 fn first_of(report: &ExpectationReport, outcome: Outcome) -> Option<&CheckOutcome> {
     report.checks.iter().find(|c| c.outcome == outcome)
@@ -120,7 +126,7 @@ pub(super) fn run(file: &Path, expect: Option<&Path>, json: bool, quiet: bool) -
     let Some(expect_path) = expect else {
         return finish(
             usage(
-                Source::from_digest(""),
+                path_only(file),
                 "check requires --expect FILE in this build; the integrity, quality and layout \
                  profiles are not implemented yet (#961)"
                     .to_string(),
@@ -135,19 +141,26 @@ pub(super) fn run(file: &Path, expect: Option<&Path>, json: bool, quiet: bool) -
         Err(e) => {
             let error = io_error(format!("reading {}: {e}", file.display()));
             return finish(
-                Ok(Envelope::new_error(COMMAND, Source::from_digest(""), error)),
+                Ok(Envelope::new_error(COMMAND, path_only(file), error)),
                 None,
                 json,
                 quiet,
             );
         }
     };
-    let source = Source::new(&bytes).with_path(file.display().to_string());
+    let source = Source::new(&bytes).with_path(absolute(file));
     let contract = match std::fs::read(expect_path) {
         Ok(contract) => contract,
         Err(e) => {
+            // An unreadable --expect file is an input/I/O failure (§12:
+            // exit 1), the same class `edit apply --expect` reports.
             let error = io_error(format!("reading {}: {e}", expect_path.display()));
-            return finish(refused(source.clone(), error), None, json, quiet);
+            return finish(
+                Ok(Envelope::new_error(COMMAND, source.clone(), error)),
+                None,
+                json,
+                quiet,
+            );
         }
     };
     let parse_or_usage = |message: String| usage(source.clone(), message);

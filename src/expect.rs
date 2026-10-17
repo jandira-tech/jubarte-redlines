@@ -921,10 +921,17 @@ fn is_paragraph_target(short_id: &str) -> bool {
 /// rechecking"). Each typed check's target is rebound through the
 /// correspondence to the output paragraph it was evaluated against, and
 /// `source.sha256` becomes the primary's own digest, so standalone
-/// `check OUTPUT --expect` accepts the copy. Requirements whose checks
-/// did not survive one-to-one are left out; the caller's input file is
-/// never rewritten. `None` when the output cannot be opened for the
-/// identity walk or a target cannot be spelled in the output's own ids.
+/// `check OUTPUT --expect` accepts the copy.
+///
+/// The copy is complete or absent: `None` when the output cannot be
+/// opened for the identity walk, or any requirement's check cannot be
+/// spelled in the output's own ids. It is all-or-nothing on purpose
+/// (#1084 review F3): this runs only after every blocking check passed,
+/// so the lookups it repeats already succeeded during evaluation and a
+/// failure here is an internal inconsistency — while a partial copy
+/// would silently drop the affected checks and let a later
+/// `check OUTPUT --expect copy` pass vacuously. The caller's input file
+/// is never rewritten.
 pub fn rebind_to_output(
     spec: &ExpectationsV1,
     correspondence: &SourceToOutputCorrespondence,
