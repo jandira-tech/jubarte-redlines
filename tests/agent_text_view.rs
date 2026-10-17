@@ -1748,6 +1748,45 @@ fn tracked_changes_inside_a_code_block_still_round_trip() {
     assert_eq!(body(&agent(&back)), view);
 }
 
+/// CommonMark reads a line indented four or more spaces as indented code,
+/// not a fence and not prose (#518): its text is verbatim, so the fence
+/// unwind must not eat a backslash there and CriticMarkup opens nothing.
+#[test]
+fn indented_code_keeps_its_text_verbatim() {
+    for (hand, text) in [
+        ("    ```\n    a{\\++b\n    ```\n", "```\na{\\++b\n```"),
+        ("     ```\n     x++\\}y\n     ```\n", " ```\n x++\\}y\n ```"),
+        ("    a{++b++}c\n", "a{++b++}c"),
+    ] {
+        let docx = markdown_to_docx(hand, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        assert!(
+            jubarte::changes::list_changes(&docx).unwrap().is_empty(),
+            "{hand}"
+        );
+        let paragraphs = jubarte::inspect::paragraphs(&docx).unwrap();
+        assert_eq!(paragraphs.len(), 1, "{hand}");
+        assert_eq!(paragraphs[0].text, text, "{hand}");
+        assert_eq!(paragraphs[0].style.as_deref(), Some("SourceCode"), "{hand}");
+        // The document reads back as the fence that names it, a fixed point.
+        let view = docx_to_markdown(&docx, &MarkdownOptions::default())
+            .unwrap()
+            .markdown;
+        let back = markdown_to_docx(&view, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        assert_eq!(jubarte::inspect::paragraphs(&back).unwrap()[0].text, text);
+        assert_eq!(
+            docx_to_markdown(&back, &MarkdownOptions::default())
+                .unwrap()
+                .markdown,
+            view,
+            "{hand}"
+        );
+    }
+}
+
 /// `--commonmark` escapes CriticMarkup and Markdown syntax as the agent
 /// view does (#519): Word text that reads like markup round-trips through
 /// both views as itself, with no change invented.

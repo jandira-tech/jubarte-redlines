@@ -315,7 +315,10 @@ impl Literal {
                 let run = |b: u8| line.bytes().skip(indent).take_while(|&c| c == b).count();
                 match fence {
                     Some((b, width, start)) => {
-                        if run(b) >= width && line[indent + run(b)..].trim().is_empty() {
+                        if indent < 4
+                            && run(b) >= width
+                            && line[indent + run(b)..].trim().is_empty()
+                        {
                             literal.fences.push(start..line_end);
                             fence = None;
                         }
@@ -328,7 +331,9 @@ impl Literal {
                         for b in *b"`~" {
                             let width = run(b);
                             let info = &line[indent + width..];
-                            if width >= 3 && !(b == b'`' && info.contains('`')) {
+                            // Four spaces of indent make indented code, not
+                            // a fence: Markdown reads its text verbatim.
+                            if indent < 4 && width >= 3 && !(b == b'`' && info.contains('`')) {
                                 fence = Some((b, width, at));
                             }
                         }
@@ -375,6 +380,11 @@ impl Literal {
         if let Some((.., start)) = fence {
             literal.fences.push(start..bytes.len());
         }
+        // CommonMark's indented code blocks hold their text verbatim,
+        // like a code span: nothing opens in them, and the reader never
+        // writes them, so no fence escape is unwound there either.
+        literal.verbatim.extend(indented_code(source));
+        literal.verbatim.sort_by_key(|range| range.start);
         literal
     }
 
@@ -399,6 +409,29 @@ impl Literal {
     fn in_code_fence(&self, at: usize) -> bool {
         self.in_fence(at) && at >= self.front_matter
     }
+}
+
+/// The byte ranges of CommonMark's indented code blocks: a line indented
+/// four or more spaces that nothing contains is one, and pulldown-cmark
+/// finds it, a list item's own indent included. Its text is verbatim, like
+/// a code span's.
+fn indented_code(source: &str) -> Vec<std::ops::Range<usize>> {
+    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
+
+    // Nothing indented: no such block to find, and a long document is not
+    // parsed for one it cannot hold.
+    if !source
+        .lines()
+        .any(|line| line.starts_with("    ") || line.starts_with('\t'))
+    {
+        return Vec::new();
+    }
+    Parser::new_ext(source, super::write::parser_options())
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(event, Event::Start(Tag::CodeBlock(CodeBlockKind::Indented))).then_some(range)
+        })
+        .collect()
 }
 
 /// The end of the code span a backtick run at `at` opens: after the next
@@ -1320,6 +1353,22 @@ mod tests {
         );
         assert_eq!(resolve(r"{++a \++} b++}", true), r"a \++} b");
         assert_eq!(resolve(r"{++a \++} b++}", false), "");
+    }
+
+    #[test]
+    fn indented_code_is_verbatim_not_a_fence() {
+        // CommonMark reads a line indented four or more spaces as indented
+        // code, so its text is verbatim (#518): a ``` line there is text,
+        // no fence opens, and CriticMarkup and its escapes open nothing.
+        // The reader never writes indented fences, so nothing is lost.
+        for hand in [
+            "    ```\n    a{\\++b\n    ```\n",
+            "     ```\n     x++\\}y\n     ```\n",
+            "    a{++b++}c\n",
+            "\tcode {++x++} too\n",
+        ] {
+            assert_eq!(encode(hand), hand, "{hand:?}");
+        }
     }
 
     #[test]
