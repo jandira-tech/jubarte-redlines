@@ -194,11 +194,18 @@ fn three_levels() -> Vec<u8> {
 
 /// A docx with Zoe Stone's comment 7 ("Check.") beside `body`.
 fn with_comment(body: &str) -> Vec<u8> {
+    with_comments(body, &[7])
+}
+
+fn with_comments(body: &str, ids: &[u32]) -> Vec<u8> {
     use common::docx::{R_NS, W_NS};
+    let entries = ids.iter().map(|id| format!(
+        r#"<w:comment w:id="{id}" w:author="Zoe Stone" w:date="2026-10-01T10:00:00Z" w:initials="ZS"><w:p><w:r><w:t>Check.</w:t></w:r></w:p></w:comment>"#
+    )).collect::<String>();
     const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     let comments = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:comments xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:comment w:id="7" w:author="Zoe Stone" w:date="2026-10-01T10:00:00Z" w:initials="ZS"><w:p><w:r><w:t>Check.</w:t></w:r></w:p></w:comment></w:comments>"#
+<w:comments xmlns:w="{W_NS}" xmlns:r="{R_NS}">{entries}</w:comments>"#
     );
     let parts = [common::docx::Part {
         name: "word/comments.xml",
@@ -993,11 +1000,261 @@ fn a_note_on_a_live_insertion_rebuilds_the_nested_deletion() {
             1,
             "{shape}: {document}"
         );
-        let insertion = document.split("<w:ins ").nth(1).unwrap();
-        let insertion = insertion.split("</w:ins>").next().unwrap();
-        assert!(
-            insertion.contains(r#"<w:del w:id="4""#),
-            "{shape}: {document}"
-        );
+        let mut expected = vec![("w:ins", "3", None), ("w:del", "4", Some("3"))];
+        if shape == "two" {
+            expected.push(("w:del", "5", Some("3")));
+        }
+        assert_revision_tree(&document, &expected);
+    }
+}
+
+#[test]
+fn review_1111_paragraph_wrapping_insertion_keeps_text() {
+    let source = docx(
+        r#"<w:ins w:id="3" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
+     <w:p><w:r><w:t>Notify the buyer</w:t></w:r>
+       <w:del w:id="4" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+         <w:r><w:delText> and the broker</w:delText></w:r></w:del></w:p>
+   </w:ins>"#,
+    );
+    for view in [agent(&source), plain(&source)] {
+        assert!(view.contains("Notify the buyer"), "{view}");
+        assert!(view.contains(" and the broker"), "{view}");
+        let round = written(&view);
+        assert!(plain(&round).contains("Notify the buyer"));
+        assert!(plain(&round).contains(" and the broker"));
+    }
+}
+
+fn assert_revision_tree(xml: &str, expected: &[(&str, &str, Option<&str>)]) {
+    use quick_xml::{Reader, events::Event};
+    let mut reader = Reader::from_str(xml);
+    let mut stack = Vec::new();
+    let mut found = Vec::new();
+    loop {
+        match reader.read_event().unwrap() {
+            Event::Start(element) => {
+                let name = element.name().as_ref().to_string();
+                if matches!(name.as_str(), "w:ins" | "w:del") {
+                    let id = element
+                        .attributes()
+                        .map(Result::unwrap)
+                        .find(|attr| attr.key.as_ref() == "w:id")
+                        .unwrap();
+                    let id = id.value.into_owned();
+                    let parent = stack
+                        .iter()
+                        .rev()
+                        .find_map(|entry: &Option<String>| entry.clone());
+                    found.push((name, id.clone(), parent));
+                    stack.push(Some(id));
+                } else {
+                    stack.push(None);
+                }
+            }
+            Event::End(_) => {
+                stack.pop().unwrap();
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    let expected = expected
+        .iter()
+        .map(|(name, id, parent)| (name.to_string(), id.to_string(), parent.map(str::to_string)))
+        .collect::<Vec<_>>();
+    assert_eq!(found, expected, "{xml}");
+    let ids = found
+        .iter()
+        .map(|(_, id, _)| id)
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(ids.len(), found.len(), "duplicate revision id: {xml}");
+}
+
+fn assert_nested_round_trip(
+    source: &[u8],
+    notes: &[&str],
+    expected: &[(&str, &str, Option<&str>)],
+) {
+    let view = agent(source);
+    for note in notes {
+        assert!(view.contains(note), "missing {note}: {view}");
+    }
+    for markdown in [view, plain(source)] {
+        let round = written(&markdown);
+        let document = part_string(&round, "word/document.xml").unwrap();
+        assert_revision_tree(&document, expected);
+        assert_eq!(body(&agent(&round)), body(&agent(source)), "{markdown}");
+        assert_eq!(plain(&round), plain(source), "{markdown}");
+    }
+}
+
+#[test]
+fn review_1111_comment_scope_names_both_deletions() {
+    let source = with_comment(
+        r#"<w:p><w:r><w:t>base </w:t></w:r>
+     <w:ins w:id="3" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
+       <w:r><w:t>live1 </w:t></w:r><w:commentRangeStart w:id="7"/>
+       <w:del w:id="4" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+         <w:r><w:delText>d1</w:delText></w:r></w:del>
+       <w:r><w:t>live2 </w:t></w:r>
+       <w:del w:id="5" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+         <w:r><w:delText>d2</w:delText></w:r></w:del>
+       <w:commentRangeEnd w:id="7"/><w:r><w:commentReference w:id="7"/></w:r>
+     </w:ins></w:p>"#,
+    );
+    assert_nested_round_trip(
+        &source,
+        &["{>>r4 @BO on r3 @AL<<}", "{>>r5 @BO on r3 @AL<<}"],
+        &[
+            ("w:ins", "3", None),
+            ("w:del", "4", Some("3")),
+            ("w:del", "5", Some("3")),
+        ],
+    );
+}
+
+#[test]
+fn review_1111_nested_comment_scopes_name_the_deletion() {
+    let source = with_comments(
+        r#"<w:p><w:r><w:t>base </w:t></w:r>
+     <w:ins w:id="3" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
+       <w:r><w:t>live1 </w:t></w:r><w:commentRangeStart w:id="7"/><w:commentRangeStart w:id="8"/>
+       <w:del w:id="4" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+         <w:r><w:delText>d1</w:delText></w:r></w:del>
+       <w:commentRangeEnd w:id="8"/><w:commentRangeEnd w:id="7"/>
+       <w:r><w:commentReference w:id="8"/></w:r><w:r><w:commentReference w:id="7"/></w:r>
+     </w:ins></w:p>"#,
+        &[7, 8],
+    );
+    assert_nested_round_trip(
+        &source,
+        &["{>>r4 @BO on r3 @AL<<}"],
+        &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+    );
+}
+
+#[test]
+fn review_1111_split_names_every_full_parent_chain() {
+    let source = docx(
+        r#"<w:p><w:ins w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
+     <w:r><w:t>liveA </w:t></w:r>
+     <w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+       <w:ins w:id="5" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z"><w:r><w:t>x</w:t></w:r></w:ins>
+       <w:r><w:delText> mid </w:delText></w:r>
+       <w:ins w:id="7" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z"><w:r><w:t>y</w:t></w:r></w:ins>
+     </w:del>
+     <w:r><w:t>tail</w:t></w:r></w:ins></w:p>"#,
+    );
+    assert_nested_round_trip(
+        &source,
+        &[
+            "{>>r5 @CD on r3 @BO on r1 @AL<<}",
+            "{>>r3 @BO on r1 @AL<<}",
+            "{>>r7 @CD on r3 @BO on r1 @AL<<}",
+        ],
+        &[
+            ("w:ins", "1", None),
+            ("w:del", "3", Some("1")),
+            ("w:ins", "5", Some("3")),
+            ("w:ins", "7", Some("3")),
+        ],
+    );
+}
+
+#[test]
+fn live_insertion_keeps_a_same_author_deletion() {
+    let source = live_insertion_with_deletions("tail");
+    let document = part_string(&source, "word/document.xml")
+        .unwrap()
+        .replace("Ben Ode", "Ana Lima")
+        .replace("2026-09-30T09:00:00Z", "2026-09-29T14:05:00Z");
+    let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
+    assert_nested_round_trip(
+        &source,
+        &["{>>r4 @AL on r3 @AL<<}"],
+        &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+    );
+}
+
+#[test]
+fn live_insertion_keeps_a_move_from() {
+    let source = live_insertion_with_deletions("tail");
+    let document = part_string(&source, "word/document.xml")
+        .unwrap()
+        .replace("<w:del ", "<w:moveFrom ")
+        .replace("</w:del>", "</w:moveFrom>")
+        .replace(
+            "<w:p>",
+            r#"<w:p><w:moveFromRangeStart w:id="7" w:name="move"/>"#,
+        )
+        .replace("</w:p>", r#"<w:moveFromRangeEnd w:id="7"/></w:p>"#);
+    let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
+    assert_nested_round_trip(
+        &source,
+        &["{>>r4 @BO on r3 @AL<<}"],
+        &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+    );
+}
+
+#[test]
+fn whitespace_between_nested_deletions_keeps_their_parent() {
+    let source = live_insertion_with_deletions("two");
+    let document = part_string(&source, "word/document.xml")
+        .unwrap()
+        .replace(" and the bank", " ");
+    let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
+    assert!(agent(&source).contains("{++ ++}{>>r3 @AL<<}"));
+    assert_nested_round_trip(
+        &source,
+        &["{>>r4 @BO on r3 @AL<<}", "{>>r5 @BO on r3 @AL<<}"],
+        &[
+            ("w:ins", "3", None),
+            ("w:del", "4", Some("3")),
+            ("w:del", "5", Some("3")),
+        ],
+    );
+}
+
+#[test]
+fn a_footnote_live_insertion_keeps_its_nested_deletion() {
+    let source = live_insertion_with_deletions("tail");
+    let document = part_string(&source, "word/document.xml").unwrap();
+    let paragraph = document
+        .split("<w:body>")
+        .nth(1)
+        .unwrap()
+        .split("<w:sectPr>")
+        .next()
+        .unwrap();
+    let paragraph = paragraph.replace(
+        "<w:p>",
+        r#"<w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr>"#,
+    );
+    let notes = format!(
+        r#"<w:footnotes xmlns:w="{}"><w:footnote w:id="1">{paragraph}</w:footnote></w:footnotes>"#,
+        common::docx::W_NS
+    );
+    let parts = [common::docx::Part {
+        name: "word/footnotes.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+        xml: &notes,
+    }];
+    let source = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &parts,
+    );
+    let view = agent(&source);
+    let note = "{>>footnotes.r4 @BO on footnotes.r3 @AL<<}";
+    assert!(view.contains(note), "{view}");
+    for markdown in [view, plain(&source)] {
+        let round = written(&markdown);
+        let notes = part_string(&round, "word/footnotes.xml").unwrap();
+        assert_revision_tree(&notes, &[("w:ins", "3", None), ("w:del", "4", Some("3"))]);
+        let second = agent(&round);
+        assert!(second.contains(note), "{second}");
+        assert_eq!(body(&second), body(&agent(&source)), "{markdown}");
+        assert_eq!(plain(&round), plain(&source), "{markdown}");
     }
 }

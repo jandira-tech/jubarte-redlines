@@ -872,6 +872,10 @@ pub(super) fn story(
                 if carried {
                     close_mark(context, &natural, &mut out, &mut open);
                 } else if open != run.change {
+                    let chain = run
+                        .change
+                        .map(|change| wrapping_chain(context.document, change))
+                        .unwrap_or_default();
                     if let Some(change) = run.change
                         && let Some(depth) = marks
                             .iter()
@@ -893,6 +897,7 @@ pub(super) fn story(
                         // stays open around that one as around this piece.
                         if open.is_none_or(|outer| {
                             !resumes_later(context.document, &items[at + 1..], outer)
+                                && !continues(context.document, &items[at + 1..], open, &marks)
                         }) {
                             close_mark(context, &natural, &mut out, &mut open);
                         }
@@ -901,15 +906,24 @@ pub(super) fn story(
                     // A change whose note names the open mark, or whose
                     // outer resumes after it, sits inside that open mark.
                     if let (Some(outer), Some(change)) = (open, run.change)
-                        && change.0 != outer.0
-                        && (context
-                            .document
-                            .wraps
-                            .get(&change.1)
-                            .is_some_and(|&wrap| continues_change(context.document, wrap, outer))
-                            || resumes_after(context.document, &items[at + 1..], change, outer))
+                        && (chain.iter().any(|wrap| {
+                            *wrap == outer || continues_change(context.document, *wrap, outer)
+                        }) || (change.0 != outer.0
+                            && resumes_after(context.document, &items[at + 1..], change, outer)))
                     {
+                        let depth = chain
+                            .iter()
+                            .position(|wrap| {
+                                *wrap == outer || continues_change(context.document, *wrap, outer)
+                            })
+                            .unwrap_or(0);
                         marks.push(outer);
+                        for wrap in chain[..depth].iter().rev() {
+                            spend(&mut natural, wrap.1);
+                            let revision = context.revision(wrap.0, Some(wrap.1));
+                            let _ = write!(out, "<{revision}>");
+                            marks.push(*wrap);
+                        }
                         spend(&mut natural, change.1);
                         let wrap = context.revision(change.0, Some(change.1));
                         let _ = write!(out, "<{wrap}>");
@@ -938,13 +952,8 @@ pub(super) fn story(
                         // mark wraps the inner one, with nothing else in
                         // it. Deeper notes chain (`r5 @CD on r3 @BO on
                         // r1 @AL`), outermost last.
-                        if let Some((_, by)) = run.change {
-                            let mut chain = Vec::new();
-                            let mut at = by;
-                            while let Some(&outer) = context.document.wraps.get(&at) {
-                                chain.push(outer);
-                                at = outer.1;
-                            }
+                        if let Some(change) = run.change {
+                            let chain = wrapping_chain(context.document, change);
                             for outer in chain.iter().rev() {
                                 spend(&mut natural, outer.1);
                                 let wrap = context.revision(outer.0, Some(outer.1));
@@ -1364,10 +1373,8 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
             .into_iter()
             .chain(marks.iter().copied())
             .any(|outer| {
-                document
-                    .wraps
-                    .get(&change.1)
-                    .is_some_and(|&wrap| continues_change(document, wrap, outer))
+                wrapping_chain(document, change).iter()
+                    .any(|wrap| *wrap == outer || continues_change(document, *wrap, outer))
             })
     {
         return true;
@@ -1375,6 +1382,32 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
     open.is_some_and(|outer| {
         change.0 != outer.0 && resumes_after(document, &rest[at + 1..], change, outer)
     })
+}
+
+/// The named parents, including those another piece of the same revision names.
+fn wrapping_chain(document: &Document, change: Change) -> Vec<Change> {
+    let mut chain = Vec::new();
+    let mut serial = change.1;
+    loop {
+        let outer = document.wraps.get(&serial).or_else(|| {
+            let ids = document
+                .revision_ids
+                .get(&serial)
+                .filter(|ids| !ids.is_empty())?;
+            document.wraps.iter().find_map(|(inner, outer)| {
+                (document.revision_ids.get(inner) == Some(ids)).then_some(outer)
+            })
+        });
+        let Some(&outer) = outer else {
+            break;
+        };
+        if outer == change || chain.contains(&outer) {
+            break;
+        }
+        chain.push(outer);
+        serial = outer.1;
+    }
+    chain
 }
 
 /// Whether `inner` is another piece of `outer`'s change: the view names

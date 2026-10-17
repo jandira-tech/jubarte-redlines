@@ -497,7 +497,7 @@ fn tree(tokens: Vec<Token>) -> Vec<Node> {
             Token::Open(mark, by) => open.push((mark, by, Vec::new())),
             Token::Close(mark) if merged[mark.index()] > 0 => merged[mark.index()] -= 1,
             Token::Close(mark) => {
-                let Some(at) = open.iter().position(|(m, ..)| *m == mark) else {
+                let Some(at) = open.iter().rposition(|(m, ..)| *m == mark) else {
                     continue;
                 };
                 let reopen: Vec<(Mark, Option<String>)> = open[at + 1..]
@@ -570,50 +570,49 @@ fn held_change(piece: &Node, outer: Mark) -> bool {
 /// outer change's attribution. A change is a span's direct child; inside a
 /// highlight or a comment it may stay.
 fn unnest(nodes: Vec<Node>) -> Vec<Node> {
-    let mut out = Vec::new();
-    for node in nodes {
-        let Node::Span(mark, by, children) = node else {
-            out.push(node);
-            continue;
-        };
-        let children = unnest(children);
-        if matches!(mark, Mark::Insertion | Mark::Deletion) && children.iter().any(is_change) {
-            let outer = by.clone();
-            let mut pieces: Vec<Node> = Vec::new();
-            let mut piece: Vec<Node> = Vec::new();
-            for child in children {
-                if is_change(&child) {
-                    if !piece.is_empty() {
-                        pieces.push(Node::Span(mark, by.clone(), piece));
-                        piece = Vec::new();
-                    }
-                    pieces.push(child);
-                } else {
-                    piece.push(child);
+    fn pieces(mark: Mark, by: &Option<String>, children: Vec<Node>) -> Vec<Node> {
+        let mut out = Vec::new();
+        let mut live = Vec::new();
+        for child in children {
+            if is_change(&child) {
+                if !live.is_empty() {
+                    out.push(Node::Span(mark, by.clone(), std::mem::take(&mut live)));
                 }
+                out.push(match child {
+                    Node::Span(Mark::Scope, note, children) => {
+                        Node::Span(Mark::Scope, note, pieces(mark, by, children))
+                    }
+                    child => child,
+                });
+            } else {
+                live.push(child);
             }
-            if !piece.is_empty() {
-                pieces.push(Node::Span(mark, by, piece));
-            }
-            out.push(Node::Split(mark, outer, pieces));
-        } else {
-            out.push(Node::Span(mark, by, children));
         }
+        if !live.is_empty() {
+            out.push(Node::Span(mark, by.clone(), live));
+        }
+        out
     }
-    out
+    nodes
+        .into_iter()
+        .map(|node| {
+            let Node::Span(mark, by, children) = node else {
+                return node;
+            };
+            let children = unnest(children);
+            if matches!(mark, Mark::Insertion | Mark::Deletion) && children.iter().any(is_change) {
+                Node::Split(mark, by.clone(), pieces(mark, &by, children))
+            } else {
+                Node::Span(mark, by, children)
+            }
+        })
+        .collect()
 }
 
 /// Names `outer` in the note of the change `node` is: `A` inserted what
 /// `B` deleted, and the note reads `r3 @B on r1 @A`, so the writer nests
 /// them again. Both must be tagged attributions of one view.
 fn fold_on(node: &mut Node, outer: Option<&str>) {
-    /// The change `node` holds, when it is the sole one it names.
-    fn held(node: &mut Node) -> Option<&mut Option<String>> {
-        match node {
-            Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-            _ => None,
-        }
-    }
     let Some(outer) = outer else {
         return;
     };
@@ -628,19 +627,21 @@ fn fold_on(node: &mut Node, outer: Option<&str>) {
     else {
         return;
     };
-    // The change may sit in a comment's scope, the only content left, or
-    // be one a change it held split around: the change the note follows.
-    let by = match node {
-        Node::Span(Mark::Insertion | Mark::Deletion, by, _) => Some(by),
-        Node::Span(Mark::Scope, _, children) => children.iter_mut().find_map(held),
-        Node::Split(_, _, pieces) => pieces.iter_mut().find_map(held),
-        _ => None,
-    };
-    if let Some(by) = by
-        && let Some(own) = by.clone()
-        && sentinel(&own) == sentinel(outer)
-    {
-        *by = Some(format!("{own}{ON}{tagged}"));
+    match node {
+        Node::Span(Mark::Insertion | Mark::Deletion, by, _) => {
+            if let Some(own) = by.as_ref()
+                && sentinel(own) == sentinel(outer)
+                && tag(Some(own)) != tag(Some(outer))
+            {
+                *by = Some(format!("{own}{ON}{tagged}"));
+            }
+        }
+        Node::Span(Mark::Scope, _, children) | Node::Split(_, _, children) => {
+            for child in children {
+                fold_on(child, Some(outer));
+            }
+        }
+        _ => {}
     }
 }
 
