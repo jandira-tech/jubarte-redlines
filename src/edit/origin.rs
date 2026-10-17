@@ -235,6 +235,8 @@ pub(super) struct Origin {
     paragraph_nodes: Vec<NodeId>,
     paragraph_story: Vec<(usize, usize)>,
     fates: Vec<Fate>,
+    /// Strict tag correspondence, without the legacy text-based merge inference.
+    exact: Vec<Option<usize>>,
     /// The source's body content controls, by id (`p3.cc0`, `cc1`).
     control_ids: Vec<String>,
     /// Where each became, by its index in the settled body's controls;
@@ -331,6 +333,14 @@ impl Origin {
                 (g < paragraph_nodes.len()).then_some(g)
             })
             .collect();
+        let mut exact = vec![None; paragraph_nodes.len()];
+        let mut seen = vec![false; paragraph_nodes.len()];
+        for (post, tag) in tags.iter().enumerate() {
+            if let Some(g) = *tag {
+                exact[g] = if seen[g] { None } else { Some(post) };
+                seen[g] = true;
+            }
+        }
         let control_ids: Vec<String> = crate::inspect::collect_controls(&opened.dom, opened.body)
             .into_iter()
             .map(|c| c.id)
@@ -368,6 +378,7 @@ impl Origin {
             paragraph_nodes,
             paragraph_story,
             fates,
+            exact,
             control_ids,
             control_fates,
         })
@@ -402,6 +413,21 @@ impl Origin {
             paragraph_nodes: &self.paragraph_nodes,
             paragraph_story: &self.paragraph_story,
         }
+    }
+
+    /// Follow only a unique surviving paragraph tag. A text-inferred fate is
+    /// insufficient for v2: merges and splits need a separate range adapter.
+    pub(super) fn exact(&self, source: usize) -> Result<usize, Miss> {
+        self.exact[source].ok_or_else(|| {
+            (
+                "UNSUPPORTED_CORRESPONDENCE".into(),
+                format!(
+                    "{} has no exact one-to-one working paragraph after settlement",
+                    self.ids().id(source)
+                ),
+                0,
+            )
+        })
     }
 
     /// The settled paragraph source paragraph `source` became. A merged
