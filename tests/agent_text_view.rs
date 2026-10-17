@@ -3849,7 +3849,10 @@ fn the_golden_headers_parse_as_yaml() {
 }
 
 /// pi review av2 F2: a revision in a text box counts once in the header, as
-/// the body shows it once: the `mc:Choice` shape, not its VML fallback copy.
+/// Word shows it once: the same `w:id` in the `mc:Choice` shape and its VML
+/// fallback copy is one revision. The body carries the whole
+/// `mc:AlternateContent` as one payload (54621454), so the revision prints
+/// in no mark and is named once on `unplaced:`.
 #[test]
 fn header_counts_a_text_box_revision_once() {
     let story = ins(7, "Ann Counsel", "boxed");
@@ -3857,8 +3860,15 @@ fn header_counts_a_text_box_revision_once() {
         r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent><w:p>{story}</w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{story}</w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>Host</w:t></w:r></w:p>"#
     );
     let view = agent(&docx(&boxed));
-    assert_eq!(view.matches("{++boxed++}").count(), 1, "{view}");
+    // One shape, not one per branch: the whole AlternateContent is a
+    // single payload token, and the revision it holds is named once.
+    assert_eq!(view.matches("![][d1]").count(), 1, "{view}");
     let lines = header_lines(&view);
+    let unplaced = lines
+        .iter()
+        .find(|l| l.starts_with("unplaced: "))
+        .unwrap_or_else(|| panic!("no unplaced line in {view}"));
+    assert_eq!(unplaced.matches("r7 @AC").count(), 1, "{view}");
     assert!(
         lines.iter().any(|l| l.starts_with("revisions: 1 ")),
         "{lines:?}"
