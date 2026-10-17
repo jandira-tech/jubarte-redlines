@@ -30,6 +30,9 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
+#[path = "jubarte/edit_typed.rs"]
+mod edit_typed;
+
 /// `println!` for the listings: a reader that stops early (`jubarte read
 /// FILE | head`) ends the process quietly, as `write_stdout` ends a view.
 macro_rules! outln {
@@ -2782,6 +2785,9 @@ fn cli_main() -> ExitCode {
         std::iter::once(std::ffi::OsString::from("jubarte")).chain(std::env::args_os().skip(1)),
     )
     .unwrap_or_else(|error| {
+        if edit_typed::usage(&argv, &error) {
+            std::process::exit(64);
+        }
         // A removed flag names what replaced it; clap's tip may name a
         // lookalike.
         if let Some((old, now)) =
@@ -2802,6 +2808,7 @@ fn cli_main() -> ExitCode {
     }
     let quiet = cli.quiet;
     match cli.command {
+        Some(Command::TypedEdit(typed)) => return edit_typed::run(&typed, quiet),
         Some(Command::Compare(compare)) => {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }

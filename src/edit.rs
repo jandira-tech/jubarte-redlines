@@ -56,6 +56,9 @@ mod tracked;
 mod watermark;
 mod whole;
 
+#[cfg(feature = "cli")]
+/// Compile typed inline CLI actions into the same source-bound PlanV2 contract.
+pub mod inline;
 /// Source-bound PlanV2 text-and-review requests and exact logical text codec.
 pub mod v2;
 pub mod v2_apply;
@@ -72,6 +75,7 @@ pub use controls::ControlSelector;
 /// The shared preparation path [`apply_plan`] and [`preview_plan`] run.
 pub use prepared::{
     CandidateChecks, PrepareOptions, PreparedEdit, PrimaryBytes, introduced_findings, prepare,
+    prepare_v2,
 };
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
 /// `section` values.

@@ -5,6 +5,8 @@
 //! Shared, platform-neutral command declarations and parsing. No runtime I/O.
 
 pub use crate::edit::flags::FlagOp;
+/// Typed edit action grammar, independent of legacy flag grouping.
+pub mod edit_actions;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -764,6 +766,10 @@ impl std::ops::Deref for Cli {
 #[derive(clap::Subcommand, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "command", content = "args")]
 pub enum Command {
+    /// Internal dispatch for the typed `edit ACTION` grammar.
+    #[command(name = "__edit-v2", hide = true, bin_name = "jubarte edit")]
+    #[serde(rename = "edit")]
+    TypedEdit(edit_actions::TypedEdit),
     /// Compare documents: print the redline as the agent view, or write it with -o.
     #[command(
         visible_alias = "redline",
@@ -1021,7 +1027,7 @@ pub enum Command {
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
         t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12\n\
-        (a revision).")]
+        (a revision).\n\nTyped actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
@@ -2816,6 +2822,9 @@ fn validate_matches(
             "compare needs <MODIFIED> (or -m FILE)",
         ));
     }
+    if name == "__edit-v2" {
+        return edit_actions::validate(args, command);
+    }
     let mut task = command.find_subcommand(name).expect("parsed task").clone();
     task.set_bin_name(format!("{} {name}", command.get_name()));
     let error =
@@ -3048,6 +3057,7 @@ impl Cli {
         let mut command = top_level_command();
         let arguments: Vec<std::ffi::OsString> = arguments.into_iter().map(Into::into).collect();
         let arguments = hoist_quiet(&command, &arguments);
+        let arguments = edit_actions::route(&arguments, &command);
         let matches = command
             .try_get_matches_from_mut(arguments.clone())
             .map_err(|e| {
@@ -3196,7 +3206,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         .subcommands(
             model
                 .get_subcommands()
-                .filter(|s| accepts(s.get_name()))
+                .filter(|s| accepts(s.get_name()) || s.get_name() == "__edit-v2" && accepts("edit"))
                 .cloned(),
         );
     if accepts("compare") {
@@ -3242,6 +3252,16 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             return Err(missing_task(&mut command, program, &name));
         }
         let tokens: Vec<String> = hoist_quiet(&command, &argv.collect::<Vec<_>>());
+        let tokens: Vec<String> = edit_actions::route(
+            &tokens
+                .iter()
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>(),
+            &command,
+        )
+        .into_iter()
+        .map(|s| s.to_string_lossy().into_owned())
+        .collect();
         let matches = command
             .try_get_matches_from_mut(tokens.clone())
             .map_err(|e| swallowed_file_error(&command, &tokens, e))?;
