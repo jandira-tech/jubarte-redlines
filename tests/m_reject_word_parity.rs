@@ -12,7 +12,7 @@ use common::docx::{Part, docx, docx_with, docx_with_sect, part_string};
 use common::validity::assert_word_valid_package;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::namespaces::W;
-use jubarte::xmllinq::Dom;
+use jubarte::xmllinq::{Dom, NodeId};
 
 const REV: &str = r#"w:author="a" w:date="2026-01-01T00:00:00Z""#;
 
@@ -153,6 +153,83 @@ fn reject_rejoins_adjacent_tables_word_split() {
     assert_eq!(paragraphs(&rejected), ["One", "Two", "Three", ""]);
     assert!(!xml.contains("tblStyle"), "{xml}");
     assert_eq!(xml.matches("<w:tblPrEx><w:tblBorders>").count(), 2, "{xml}");
+}
+
+fn accept_table_merge_row(row: &str) -> (Dom, NodeId) {
+    let second = table(BORDERS, "", &["D"], false);
+    let body = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tblPrEx><w:tblW w:type="dxa" w:w="3000"/></w:tblPrEx><w:trPr><w:cantSplit/></w:trPr>{row}</w:tr></w:tbl>
+<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr></w:p>{second}<w:p/>"#
+    );
+    let accepted = accept_revisions(&docx(&body)).unwrap();
+    assert_word_valid_package(&accepted);
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let tables = dom.descendants(root, Some(&W::tbl()));
+    assert_eq!(tables.len(), 1, "{xml}");
+    let rows = dom.elements(tables[0], Some(&W::tr()));
+    assert_eq!(rows.len(), 2, "{xml}");
+    (dom, rows[0])
+}
+
+fn merge_cell(text: &str) -> String {
+    format!(
+        r#"<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="1000"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+    )
+}
+
+#[test]
+fn accept_table_merge_keeps_wrapped_cells_in_order() {
+    for middle in [
+        format!(
+            "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
+            merge_cell("B")
+        ),
+        format!(
+            r#"<w:customXml w:element="cell" w:uri="urn:test">{}</w:customXml>"#,
+            merge_cell("B")
+        ),
+    ] {
+        let (dom, row) =
+            accept_table_merge_row(&format!("{}{middle}{}", merge_cell("A"), merge_cell("C")));
+        let cells: Vec<_> = dom
+            .descendants(row, Some(&W::tc()))
+            .into_iter()
+            .map(|tc| dom.value(tc))
+            .collect();
+        assert_eq!(cells, ["A", "B", "C"]);
+        let children = dom.elements(row, None);
+        assert_eq!(dom.name(children[0]), Some(W::name("tblPrEx")));
+        assert_eq!(dom.name(children[1]), Some(W::tr_pr()));
+    }
+}
+
+#[test]
+fn accept_table_merge_keeps_row_bookmarks_between_cells() {
+    let (dom, row) = accept_table_merge_row(&format!(
+        r#"{}<w:bookmarkStart w:id="0" w:name="between"/>{}<w:bookmarkEnd w:id="0"/>{}"#,
+        merge_cell("A"),
+        merge_cell("B"),
+        merge_cell("C")
+    ));
+    let children: Vec<_> = dom
+        .elements(row, None)
+        .into_iter()
+        .map(|e| (dom.name(e).unwrap().local_name().to_string(), dom.value(e)))
+        .collect();
+    let expected = [
+        ("tblPrEx", ""),
+        ("trPr", ""),
+        ("tc", "A"),
+        ("bookmarkStart", ""),
+        ("tc", "B"),
+        ("bookmarkEnd", ""),
+        ("tc", "C"),
+    ]
+    .map(|(name, text)| (name.to_string(), text.to_string()));
+    assert_eq!(children, expected);
 }
 
 /// R8's boundary: tables of different styles stay two tables (Word's own

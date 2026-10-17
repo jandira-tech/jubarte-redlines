@@ -3061,19 +3061,25 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                     let ex = row_tbl_pr_ex(dom, tr, &own_ex);
                     dom.add(new_row, ex);
                 }
-                let non_cells: Vec<NodeId> = dom
-                    .elements(tr, None)
-                    .into_iter()
-                    .filter(|&e| {
-                        dom.name(e) != Some(W::tc())
-                            && (own_ex.is_empty() || dom.name(e) != Some(W::name("tblPrEx")))
-                    })
-                    .collect();
-                for e in non_cells {
-                    let c = dom.clone_subtree(e);
-                    dom.add(new_row, c);
+                for property in [W::name("tblPrEx"), W::tr_pr()] {
+                    if !own_ex.is_empty() && property == W::name("tblPrEx") {
+                        continue;
+                    }
+                    for e in dom.elements(tr, Some(&property)) {
+                        let c = dom.clone_subtree(e);
+                        dom.add(new_row, c);
+                    }
                 }
-                for tc in dom.elements(tr, Some(&W::tc())) {
+                for tc in dom.elements(tr, None) {
+                    if dom.name(tc) == Some(W::name("tblPrEx")) || dom.name(tc) == Some(W::tr_pr())
+                    {
+                        continue;
+                    }
+                    if dom.name(tc) != Some(W::tc()) {
+                        let c = dom.clone_subtree(tc);
+                        dom.add(new_row, c);
+                        continue;
+                    }
                     let w: Option<i64> = dom
                         .element(tc, &W::tc_pr())
                         .and_then(|p| dom.element(p, &W::name("tcW")))
