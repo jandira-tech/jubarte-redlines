@@ -1081,6 +1081,30 @@ const COMMENT_FAMILY: [(&str, &str, &str); 4] = [
 
 const COMMENTS_PART: &str = "word/comments.xml";
 
+/// The comments part as Word finds it: the part the main part relates to
+/// with the comments relationship type (`word/comments.xml` is only the
+/// conventional name — Word follows the relationship, so a differently
+/// named part is the comments part), else the conventional name when it
+/// exists unlinked.
+fn comments_part(pkg: &PartFs, main: &str) -> Option<String> {
+    if let Some(name) = pkg
+        .read_rels_for(main)
+        .into_iter()
+        .flat_map(|relationships| &relationships.items)
+        .find(|r| r.rel_type == COMMENT_FAMILY[0].2 && r.target_mode.as_deref() != Some("External"))
+        .map(|r| {
+            pkg.resolve_rel_target(main, &r.target)
+                .trim_start_matches('/')
+                .to_string()
+        })
+        .filter(|name| pkg.part_bytes(name).is_some())
+    {
+        return Some(name);
+    }
+    pkg.part_bytes(COMMENTS_PART)
+        .map(|_| COMMENTS_PART.to_string())
+}
+
 fn main_part(pkg: &PartFs) -> Option<String> {
     pkg.main_document_part().or_else(|| {
         pkg.part_bytes("word/document.xml")
@@ -1104,7 +1128,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
     let ends = comment_id_counts(&main_dom, main_root, "commentRangeEnd");
     let references = comment_id_counts(&main_dom, main_root, "commentReference");
 
-    let Some((comments_dom, comments_root)) = parse_part(pkg, COMMENTS_PART) else {
+    let Some(comments_name) = comments_part(pkg, &main) else {
         for (kind, counts) in [
             ("commentRangeStart", &starts),
             ("commentRangeEnd", &ends),
@@ -1131,10 +1155,13 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         }
         return;
     };
+    let Some((comments_dom, comments_root)) = parse_part(pkg, &comments_name) else {
+        return;
+    };
 
     let definitions = comment_id_counts(&comments_dom, comments_root, "comment");
     for (kind, counts, part) in [
-        ("comment definition", &definitions, COMMENTS_PART),
+        ("comment definition", &definitions, comments_name.as_str()),
         ("commentRangeStart", &starts, main.as_str()),
         ("commentRangeEnd", &ends, main.as_str()),
         ("commentReference", &references, main.as_str()),
@@ -1168,7 +1195,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         comment_finding(
             out,
             "COMMENT_UNANCHORED",
-            COMMENTS_PART,
+            &comments_name,
             format!(
                 "comment definition id '{id}' has no commentReference in the document: Word opens it and shows no comment"
             ),
@@ -1186,7 +1213,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
                 out,
                 code,
                 &main,
-                format!("{kind} id '{id}' has no entry in word/comments.xml"),
+                format!("{kind} id '{id}' has no entry in {comments_name}"),
             );
         }
     }
@@ -1208,13 +1235,13 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
                 continue;
             };
             let key = para_id.to_ascii_uppercase();
-            check_hex_id("paraId", para_id, true, COMMENTS_PART, out);
+            check_hex_id("paraId", para_id, true, &comments_name, out);
             if !all_para_ids.insert(key.clone()) {
                 comment_finding(
                     out,
                     "COMMENT_METADATA_MISMATCH",
-                    COMMENTS_PART,
-                    format!("duplicate comment paraId '{para_id}' in word/comments.xml"),
+                    &comments_name,
+                    format!("duplicate comment paraId '{para_id}' in {comments_name}"),
                 );
             }
             comment_para_ids.push(key);
@@ -1223,7 +1250,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
             comment_finding(
                 out,
                 "COMMENT_METADATA_MISMATCH",
-                COMMENTS_PART,
+                &comments_name,
                 format!("comment id '{comment_id}' has no w14:paraId for its auxiliary metadata"),
             );
         }
