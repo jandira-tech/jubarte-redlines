@@ -370,15 +370,8 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     }
 
     // w:tbl whose rows are ALL deleted → drop the whole table.
-    if name == W::tbl() {
-        let rows = dom.elements(node, Some(&W::tr()));
-        if !rows.is_empty()
-            && rows
-                .iter()
-                .all(|&tr| has_path(dom, tr, &W::tr_pr(), &W::del()))
-        {
-            return vec![];
-        }
+    if name == W::tbl() && table_rows_all_deleted(dom, node) {
+        return vec![];
     }
 
     // Accept deleted text: drop w:del. Hoist comment range markers that lived
@@ -1744,7 +1737,7 @@ fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
 
 /// Does every row of `tbl` carry `trPr/w:del` (and is there a row)?
 fn table_rows_all_deleted(dom: &Dom, tbl: NodeId) -> bool {
-    let rows = dom.elements(tbl, Some(&W::tr()));
+    let rows = wrapped_children(dom, tbl, &W::tr());
     !rows.is_empty()
         && rows.into_iter().all(|tr| {
             dom.element(tr, &W::tr_pr())
@@ -2777,20 +2770,20 @@ fn row_tbl_pr_ex(dom: &mut Dom, tr: NodeId, own: &[NodeId]) -> NodeId {
     ex
 }
 
-/// Cells in row order, through cell wrappers but not into nested tables.
-fn row_cells(dom: &Dom, row: NodeId) -> Vec<NodeId> {
-    let mut cells = Vec::new();
-    for child in dom.elements(row, None) {
-        if dom.name(child) == Some(W::tc()) {
-            cells.push(child);
+/// Matching children in order, through wrappers but not into nested tables.
+fn wrapped_children(dom: &Dom, parent: NodeId, name: &XName) -> Vec<NodeId> {
+    let mut children = Vec::new();
+    for child in dom.elements(parent, None) {
+        if dom.name_is(child, name) {
+            children.push(child);
         } else if dom.name(child) == Some(W::name("sdt"))
             || dom.name(child) == Some(W::name("sdtContent"))
             || dom.name(child) == Some(W::name("customXml"))
         {
-            cells.extend(row_cells(dom, child));
+            children.extend(wrapped_children(dom, child, name));
         }
     }
-    cells
+    children
 }
 
 /// A.8 — `FixWidths` (:1484): clone the table and rewrite each `w:tcW`'s
@@ -2809,9 +2802,9 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
         })
         .collect();
     let new_tbl = dom.clone_subtree(tbl);
-    for tr in dom.elements(new_tbl, Some(&W::tr())) {
+    for tr in wrapped_children(dom, new_tbl, &W::tr()) {
         let mut last_used: i64 = -1;
-        for tc in row_cells(dom, tr) {
+        for tc in wrapped_children(dom, tr, &W::tc()) {
             // Singular tcPr / tcW / gridSpan — avoid multi-Vec flat_map scans.
             let tc_w = dom
                 .element(tc, &W::tc_pr())
@@ -3068,7 +3061,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                 Vec::new()
             };
             let fixed = fix_widths(dom, tbl);
-            for tr in dom.elements(fixed, Some(&W::tr())) {
+            for tr in wrapped_children(dom, fixed, &W::tr()) {
                 let new_row = dom.new_element(W::tr());
                 for (an, av) in dom.attributes(tr) {
                     dom.set_attribute_value(new_row, &an, Some(&av));
@@ -3096,7 +3089,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                     dom.add(new_row, c);
                 }
                 let mut width_to_left = 0i64;
-                for tc in row_cells(dom, new_row) {
+                for tc in wrapped_children(dom, new_row, &W::tc()) {
                     let w: Option<i64> = dom
                         .element(tc, &W::tc_pr())
                         .and_then(|p| dom.element(p, &W::name("tcW")))
@@ -3149,7 +3142,16 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                     }
                     dom.replace_with(tc, &[new_cell]);
                 }
-                dom.add(new_table, new_row);
+                dom.replace_with(tr, &[new_row]);
+            }
+            for child in dom.elements(fixed, None) {
+                if dom.name(child) == Some(W::tbl_pr())
+                    || dom.name(child) == Some(W::name("tblGrid"))
+                {
+                    continue;
+                }
+                let c = dom.clone_subtree(child);
+                dom.add(new_table, c);
             }
         }
         dom.add(ne, new_table);
