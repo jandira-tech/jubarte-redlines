@@ -1222,7 +1222,8 @@ pub(super) struct IdLine {
     pub number: usize,
     pub style: Option<String>,
     /// The paragraph's own outline level (`outline 2`, `#`'s count), when
-    /// no style carries it.
+    /// no style carries it: 1 to 9, the levels past the heading styles
+    /// (`outline 7`) included, which no `#` count reaches.
     pub outline: Option<u32>,
     pub align: Option<&'static str>,
     pub first_line: Option<i64>,
@@ -1324,7 +1325,7 @@ impl IdLine {
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
-            Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=6).contains(&n)),
+            Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),

@@ -789,7 +789,8 @@ pub(crate) struct LineFacts<'a> {
     pub level: usize,
     /// The paragraph's own `w:outlineLvl`, when no style carries the
     /// level (`outline 2`): the `#` count alone would give the writer's
-    /// `HeadingN`.
+    /// `HeadingN`. Levels 7-9, which no `#` reaches, are carried by the
+    /// clause alone.
     pub outline: Option<usize>,
     pub page_break: bool,
     /// Accept-all or reject-all view: print the `rev` tags.

@@ -1607,7 +1607,7 @@ fn body_headings<'e>(body: &'e Element, styles: &Styles) -> Vec<&'e Element> {
     fn walk<'e>(e: &'e Element, styles: &Styles, out: &mut Vec<&'e Element>) {
         for child in e.elements() {
             match child.local() {
-                "p" if heading_level(styles, child).is_some() => out.push(child),
+                "p" if heading_level(styles, child, true).is_some() => out.push(child),
                 "body" | "sdt" | "sdtContent" | "customXml" | "txbxContent" | "ins" | "moveTo"
                 | "del" | "moveFrom" => walk(child, styles, out),
                 _ => {}
@@ -1635,20 +1635,27 @@ fn is_own_slug(name: &str, own: Option<&str>) -> bool {
 }
 
 /// A paragraph's heading level: its own outline level, else its style's;
-/// `None` for body text.
-fn heading_level(styles: &Styles, p: &Element) -> Option<usize> {
+/// `None` for body text. The plain view counts `#` up to six however
+/// deep the level goes; the agent view (`agent`) stops at the writer's
+/// heading styles instead, where the id line's `outline` clause carries
+/// levels 7-9, for no `#` count reaches them.
+fn heading_level(styles: &Styles, p: &Element, agent: bool) -> Option<usize> {
     let ppr = p.child("pPr");
-    let direct_outline = ppr
+    let from_style = || {
+        ppr.and_then(|pr| pr.child("pStyle"))
+            .and_then(|s| s.attr("val"))
+            .and_then(|s| styles.heading_level(s))
+    };
+    match ppr
         .and_then(|pr| pr.child("outlineLvl"))
         .and_then(|o| o.attr("val"))
         .and_then(|v| v.parse::<usize>().ok())
-        .map(|l| if l < 9 { Some((l + 1).min(6)) } else { None });
-    match direct_outline {
-        Some(level) => level,
-        None => ppr
-            .and_then(|pr| pr.child("pStyle"))
-            .and_then(|s| s.attr("val"))
-            .and_then(|s| styles.heading_level(s)),
+    {
+        // `w:val="9"` clears the level: body text, whatever a style says.
+        Some(9..) => None,
+        Some(l) if agent && l >= 6 => from_style(),
+        Some(l) => Some((l + 1).min(6)),
+        None => from_style(),
     }
 }
 
@@ -2466,7 +2473,7 @@ impl Writer<'_> {
     /// A paragraph's heading level: its own outline level, else its
     /// style's; `None` for body text.
     fn heading_of(&self, p: &Element) -> Option<usize> {
-        heading_level(&self.styles, p)
+        heading_level(&self.styles, p, self.agent)
     }
 
     fn comment_range(&mut self, range: &Element, out: Option<&mut Critic>) {
@@ -2618,6 +2625,21 @@ impl Writer<'_> {
             } else {
                 agent::unshown_tags(p, "", &self.handles)
             };
+            // The level the paragraph states itself (`w:outlineLvl`),
+            // which without a `w:pStyle` is the only place it can come
+            // from: `outline 2`, and past the heading styles (`outline 7`
+            // to `outline 9`) the only place at all, for no `#` count
+            // reaches them.
+            let own_outline = style
+                .is_none()
+                .then(|| {
+                    ppr.and_then(|pr| pr.child("outlineLvl"))
+                        .and_then(|o| o.attr("val"))
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .filter(|l| *l < 9)
+                        .map(|l| l + 1)
+                })
+                .flatten();
             if empty
                 && !numbered
                 && style.is_none()
@@ -2671,7 +2693,7 @@ impl Writer<'_> {
                 // The level the paragraph states itself (`w:outlineLvl`),
                 // which without a `w:pStyle` is the only place a `#` can
                 // come from: `outline 2`.
-                outline: style.is_none().then_some(heading).flatten(),
+                outline: own_outline,
                 marker,
                 level,
                 page_break,
