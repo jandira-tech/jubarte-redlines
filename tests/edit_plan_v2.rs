@@ -6,6 +6,7 @@ use jubarte::edit::v2::{PlanV2, before_sha256, logical_text};
 use jubarte::namespaces::W;
 use jubarte::xmllinq::{Dom, NodeId};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::io::{Cursor, Read};
 use std::sync::LazyLock;
 
@@ -17,12 +18,13 @@ const EXAMPLES: &[&str] = &[
     include_str!("fixtures/edit-v2/template.composed.json"),
     include_str!("fixtures/edit-v2/template.with-comment.json"),
 ];
+static SCHEMA_JSON: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../schemas/edit-plan-v2.schema.json")).unwrap()
+});
 static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
-    let schema: Value =
-        serde_json::from_str(include_str!("../schemas/edit-plan-v2.schema.json")).unwrap();
     jsonschema::draft202012::options()
         .should_validate_formats(true)
-        .build(&schema)
+        .build(&SCHEMA_JSON)
         .unwrap()
 });
 fn base() -> Value {
@@ -408,10 +410,9 @@ fn all_operations() -> Value {
 #[test]
 fn schema_integer_and_timestamp_boundaries_agree() {
     for date in [
-        "0000-01-01T00:00:00Z",
-        "2016-12-31T23:59:60Z",
-        "2017-01-01T00:59:60+01:00",
-        "2016-12-31T22:59:60-01:00",
+        "2024-02-29T23:59:59.123+05:30",
+        "2000-02-29T00:00:00Z",
+        "2026-10-17T07:00:00-04:00",
         "2026-01-01T00:00:00+23:59",
     ] {
         let mut v = base();
@@ -424,6 +425,10 @@ fn schema_integer_and_timestamp_boundaries_agree() {
         "2026-01-01T00:00:00.123",
         "é026-01-01T00:00:00Z",
         "2026-01-01T00:00:00+é0:00",
+        "0000-01-01T00:00:00Z",
+        "2016-12-31T23:59:60Z",
+        "2017-01-01T00:59:60+01:00",
+        "2016-12-31T22:59:60-01:00",
     ] {
         let mut v = base();
         v["date"] = json!(date);
@@ -494,4 +499,466 @@ fn codec_refuses_unrepresented_element_nesting() {
             "UNSUPPORTED_TEXT_CODEC"
         );
     }
+}
+
+// ============================================================================
+// V2-01 adversarial review (commit 76c66221; PR #1054; issue #821).
+// Review: /tmp/v2/reviews/v2-01.md, ledger: /tmp/v2/reviews/v2-01-ledger.md.
+// Each test below pins a single row of the review. Implementation of the
+// matching fix lives in src/edit/v2.rs and schemas/edit-plan-v2.schema.json.
+// ============================================================================
+
+// Row 1: parser and schema must agree on every whitespace character. The
+// engine-independent class is the union of Rust's Unicode White_Space and
+// U+FEFF. Schema pattern and parser predicate both reject a string that
+// contains no character outside that class.
+#[test]
+fn review_v2_01_author_whitespace_uses_one_engine_independent_class() {
+    for (author, valid) in [
+        ("\u{feff}\u{feff}", false), // BOM × 2
+        ("\u{85}", false),           // NEL
+        ("\u{3000}", false),         // ideographic space
+        (" a ", true),               // contains a non-whitespace character
+    ] {
+        let mut v = base();
+        v["author"] = json!(author);
+        agrees(&v, valid);
+    }
+}
+
+// Row 2: raw JSON text (NOT through serde_json::Value, which collapses
+// duplicates). The schema has no duplicate-key constraint so it accepts;
+// serde_derive's deny_unknown_fields rejects with INVALID_PLAN. Pinned
+// parser-stricter divergence.
+#[test]
+fn review_v2_01_duplicate_root_keys_are_parser_stricter() {
+    let raw = r#"{
+        "schema_version": 2,
+        "source": { "sha256": "54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e" },
+        "policy": { "track": "on", "existing_revisions": "keep", "text_view": "final" },
+        "resolve_revisions": { "accept": [], "reject": [] },
+        "author": "Jubarte",
+        "author": "Other",
+        "date": "2026-10-17T07:00:00Z",
+        "scope": { "kind": "all" },
+        "operations": []
+    }"#;
+    let value: Value = serde_json::from_str(raw).unwrap();
+    assert!(
+        SCHEMA.is_valid(&value),
+        "schema should accept (no duplicate-key constraint): {value}"
+    );
+    assert_eq!(
+        PlanV2::from_json(raw).unwrap_err().code,
+        "INVALID_PLAN",
+        "parser should refuse (deny_unknown_fields)"
+    );
+}
+
+// Row 3: walk every (definition, property) pair the schema declares and
+// assert at least one corpus plan uses it AND that plan round-trips
+// through parser and back into a schema-valid document.
+#[test]
+fn review_v2_01_schema_walk_pins_every_declared_property() {
+    let mut corpus: Vec<Value> = EXAMPLES
+        .iter()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    let mut mixed = with_ops(all_operations());
+    let t = mixed["operations"][0]["target"].clone();
+    mixed["scope"] = json!({"kind":"selected","targets":[t]});
+    mixed["resolve_revisions"]["accept"] =
+        json!([{"short_id":"r1","long_id":"document.w:ins.w:id.1"}]);
+    mixed["source_context"] = json!([
+        {"kind":"paragraph","target":t,"text":"old","reason_codes":["CONTEXT_ONLY"]},
+        {"kind":"opaque","target":t,"reason_codes":["FIELD"]}
+    ]);
+    // Ensure every operation's attached_comment property is exercised.
+    if let Some(ops) = mixed["operations"].as_array_mut() {
+        ops.push(json!({
+            "kind":"rewrite",
+            "target":t,
+            "before_sha256":"a".repeat(64),
+            "text":"x",
+            "attached_comment":{"text":"note"}
+        }));
+        // Ensure the optional occurrence and anchor fields are covered.
+        ops.push(json!({"kind":"delete","target":t,"find":"x","occurrence":1}));
+        ops.push(json!({"kind":"insert","target":t,"text":"X","after_text":"x"}));
+        ops.push(json!({"kind":"insert","target":t,"text":"X","edge":"end"}));
+        ops.push(json!({
+            "kind":"insert_paragraph",
+            "target":t,
+            "position":"after",
+            "text":"X",
+            "attached_comment":{"text":"note"}
+        }));
+        ops.push(json!({
+            "kind":"comment",
+            "target":t,
+            "text":"note",
+            "through":t
+        }));
+    }
+    corpus.push(mixed);
+
+    let pairs: &[(&str, &str)] = &[
+        ("", "schema_version"),
+        ("", "source"),
+        ("", "policy"),
+        ("", "resolve_revisions"),
+        ("", "author"),
+        ("", "date"),
+        ("", "scope"),
+        ("", "operations"),
+        ("", "source_context"),
+        ("", "coverage"),
+        ("source", "sha256"),
+        ("policy", "track"),
+        ("policy", "existing_revisions"),
+        ("policy", "text_view"),
+        ("resolve_revisions", "accept"),
+        ("resolve_revisions", "reject"),
+        ("target", "short_id"),
+        ("target", "long_id"),
+        ("attachedComment", "text"),
+        ("rewrite", "kind"),
+        ("rewrite", "target"),
+        ("rewrite", "before_sha256"),
+        ("rewrite", "text"),
+        ("rewrite", "attached_comment"),
+        ("replace", "kind"),
+        ("replace", "target"),
+        ("replace", "find"),
+        ("replace", "text"),
+        ("replace", "occurrence"),
+        ("replace", "attached_comment"),
+        ("delete", "kind"),
+        ("delete", "target"),
+        ("delete", "find"),
+        ("delete", "occurrence"),
+        ("insert", "kind"),
+        ("insert", "target"),
+        ("insert", "text"),
+        ("insert", "before_text"),
+        ("insert", "after_text"),
+        ("insert", "edge"),
+        ("insert", "occurrence"),
+        ("insert", "attached_comment"),
+        ("insertParagraph", "kind"),
+        ("insertParagraph", "target"),
+        ("insertParagraph", "position"),
+        ("insertParagraph", "text"),
+        ("insertParagraph", "attached_comment"),
+        ("deleteParagraph", "kind"),
+        ("deleteParagraph", "target"),
+        ("comment", "kind"),
+        ("comment", "target"),
+        ("comment", "text"),
+        ("comment", "find"),
+        ("comment", "occurrence"),
+        ("comment", "through"),
+        ("replyComment", "kind"),
+        ("replyComment", "target"),
+        ("replyComment", "text"),
+        ("resolveComment", "kind"),
+        ("resolveComment", "target"),
+        ("resolveComment", "done"),
+        ("editComment", "kind"),
+        ("editComment", "target"),
+        ("editComment", "text"),
+        ("deleteComment", "kind"),
+        ("deleteComment", "target"),
+        ("deleteComment", "include_replies"),
+        ("scope", "kind"),
+        ("scope", "targets"),
+        ("sourceContextItem", "kind"),
+        ("sourceContextItem", "target"),
+        ("sourceContextItem", "text"),
+        ("sourceContextItem", "reason_codes"),
+        ("coverage", "traversal_complete"),
+        ("coverage", "text_complete"),
+        ("coverage", "eligible_paragraphs"),
+        ("coverage", "conditional_paragraphs"),
+        ("coverage", "context_paragraphs"),
+        ("coverage", "opaque_regions"),
+    ];
+    // The list above must be exactly what the schema declares, so a property
+    // added to (or dropped from) the schema fails here until the walk covers it.
+    let listed: BTreeSet<(String, String)> = pairs
+        .iter()
+        .map(|(def, prop)| ((*def).to_owned(), (*prop).to_owned()))
+        .collect();
+    assert_eq!(
+        declared_pairs(&SCHEMA_JSON),
+        listed,
+        "the walk's pair list drifted from the schema"
+    );
+    for (def, prop) in pairs {
+        let found = corpus.iter().any(|plan| plan_uses(plan, def, prop));
+        assert!(
+            found,
+            "schema declares {def}/{prop} but no corpus plan uses it"
+        );
+    }
+    // Every corpus plan round-trips and stays schema-valid.
+    for plan in &corpus {
+        let parsed = PlanV2::from_json(&plan.to_string()).unwrap();
+        let round_tripped: Value = serde_json::from_str(&parsed.to_json()).unwrap();
+        assert!(
+            SCHEMA.is_valid(&round_tripped),
+            "round trip schema-invalid: {plan}"
+        );
+    }
+}
+
+// Every (definition, property) pair the schema declares: "" for the root, the
+// root property's name for an inline object (each `oneOf` branch counted), the
+// `<camelCase>Item` name for an inline array item, and the `$defs` name for a
+// definition. Conditional `if`/`then` subschemas only restate declared keys.
+fn declared_pairs(schema: &Value) -> BTreeSet<(String, String)> {
+    fn keys(def: &str, node: &Value, out: &mut BTreeSet<(String, String)>) {
+        for prop in node["properties"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(k, _)| k)
+        {
+            out.insert((def.to_owned(), prop.clone()));
+        }
+        for branch in node["oneOf"].as_array().into_iter().flatten() {
+            keys(def, branch, out);
+        }
+    }
+    let mut out = BTreeSet::new();
+    keys("", schema, &mut out);
+    for (name, node) in schema["properties"].as_object().into_iter().flatten() {
+        keys(name, node, &mut out);
+        let mut item = String::new();
+        for (i, part) in name.split('_').enumerate() {
+            let mut chars = part.chars();
+            if let Some(first) = chars.next() {
+                if i == 0 {
+                    item.push(first);
+                } else {
+                    item.extend(first.to_uppercase());
+                }
+                item.extend(chars);
+            }
+        }
+        item.push_str("Item");
+        keys(&item, &node["items"], &mut out);
+    }
+    for (name, node) in schema["$defs"].as_object().into_iter().flatten() {
+        keys(name, node, &mut out);
+    }
+    out
+}
+
+// Helper for the walk: check whether a corpus plan uses (def, prop) at the
+// right place. def is "" for root, "$defs/X" entries for definitions.
+fn plan_uses(plan: &Value, def: &str, prop: &str) -> bool {
+    if def.is_empty() {
+        return plan.get(prop).is_some();
+    }
+    if def == "target" {
+        fn check(v: &Value, prop: &str) -> bool {
+            if let Some(obj) = v.as_object() {
+                if obj.contains_key("short_id") && obj.contains_key("long_id") {
+                    return obj.contains_key(prop);
+                }
+                for (_, child) in obj {
+                    if check(child, prop) {
+                        return true;
+                    }
+                }
+            } else if let Some(arr) = v.as_array() {
+                for child in arr {
+                    if check(child, prop) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        return check(plan, prop);
+    }
+    if def == "attachedComment" {
+        fn check(v: &Value) -> bool {
+            if let Some(obj) = v.as_object() {
+                if obj.contains_key("attached_comment") {
+                    return true;
+                }
+                for (_, child) in obj {
+                    if check(child) {
+                        return true;
+                    }
+                }
+            } else if let Some(arr) = v.as_array() {
+                for child in arr {
+                    if check(child) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        return check(plan);
+    }
+    if def == "source" || def == "policy" || def == "resolve_revisions" {
+        return plan[def].get(prop).is_some();
+    }
+    if def == "scope" {
+        let scope = &plan["scope"];
+        if !scope.is_object() {
+            return false;
+        }
+        return scope.get(prop).is_some();
+    }
+    if def == "sourceContextItem" {
+        for item in plan["source_context"].as_array().into_iter().flatten() {
+            if item.get(prop).is_some() {
+                return true;
+            }
+        }
+        return false;
+    }
+    if def == "coverage" {
+        return plan["coverage"].get(prop).is_some();
+    }
+    let kind = match def {
+        "rewrite" => Some("rewrite"),
+        "replace" => Some("replace"),
+        "delete" => Some("delete"),
+        "insert" => Some("insert"),
+        "insertParagraph" => Some("insert_paragraph"),
+        "deleteParagraph" => Some("delete_paragraph"),
+        "comment" => Some("comment"),
+        "replyComment" => Some("reply_comment"),
+        "resolveComment" => Some("resolve_comment"),
+        "editComment" => Some("edit_comment"),
+        "deleteComment" => Some("delete_comment"),
+        _ => None,
+    };
+    if let Some(kind) = kind {
+        for op in plan["operations"].as_array().into_iter().flatten() {
+            if op["kind"] == kind {
+                if prop == "kind" {
+                    return true;
+                }
+                if op.get(prop).is_some() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// Row 4: the date becomes revision w:date (ST_DateTime = xsd:dateTime). XSD
+// 1.0 prohibits year 0000 and caps seconds at 59, so the parser and the
+// schema must both refuse those forms. The schema pattern excludes them
+// without lookahead; the parser mirrors the same calendar rule.
+#[test]
+fn review_v2_01_date_excludes_year_0000_and_leap_seconds() {
+    for date in [
+        "0000-01-01T00:00:00Z",
+        "2016-12-31T23:59:60Z",
+        "2017-01-01T00:59:60+01:00",
+        "2016-12-31T22:59:60-01:00",
+    ] {
+        let mut v = base();
+        v["date"] = json!(date);
+        agrees(&v, false);
+    }
+}
+
+// Row 5: a float spelling is accepted only while it is exact (n < 2^53).
+// Above that the f64 representation collapses and the original author
+// intent is lost, so the parser is stricter than the schema and refuses.
+// Plain integer spellings up to u64::MAX are unchanged.
+#[test]
+fn review_v2_01_integer_floats_above_2_53_are_refused() {
+    let raw_too_big = r#"{
+        "schema_version": 2,
+        "source": { "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+        "policy": { "track": "on", "existing_revisions": "keep", "text_view": "final" },
+        "resolve_revisions": { "accept": [], "reject": [] },
+        "author": "Jubarte",
+        "date": "2026-10-17T07:00:00Z",
+        "scope": { "kind": "all" },
+        "operations": [],
+        "coverage": {
+            "traversal_complete": true,
+            "text_complete": true,
+            "eligible_paragraphs": 9007199254740993.0,
+            "context_paragraphs": 0,
+            "opaque_regions": 0
+        }
+    }"#;
+    // Schema has no rule to spot the float collapse; it accepts.
+    let value: Value = serde_json::from_str(raw_too_big).unwrap();
+    assert!(
+        SCHEMA.is_valid(&value),
+        "schema should accept (no float-vs-int distinction)"
+    );
+    // Parser is stricter: above 2^53 a float spelling is silently wrong.
+    assert_eq!(
+        PlanV2::from_json(raw_too_big).unwrap_err().code,
+        "INVALID_PLAN"
+    );
+    // A plain integer spelling of the same value is still accepted.
+    let raw_ok = raw_too_big.replace("9007199254740993.0", "9007199254740993");
+    PlanV2::from_json(&raw_ok).unwrap();
+    // A small exact float stays accepted.
+    let raw_small = raw_too_big.replace("9007199254740993.0", "1.0");
+    PlanV2::from_json(&raw_small).unwrap();
+}
+
+// Row 6: w:cr, w:noBreakHyphen and w:softHyphen are refused opaque
+// constructs. They are mapped deterministically by the projector (cr -> LF,
+// noBreakHyphen -> U+2011, softHyphen -> U+00AD) so a faithful typed
+// mapping is possible, but the codec refuses them rather than silently
+// collapsing them. logical_text also refuses any non-w:p argument.
+#[test]
+fn review_v2_01_codec_refuses_cr_no_break_hyphen_soft_hyphen_and_non_w_p() {
+    for opaque in ["<w:cr/>", "<w:noBreakHyphen/>", "<w:softHyphen/>"] {
+        let (dom, p) = paragraph(&format!(
+            "<w:r><w:t>before</w:t>{opaque}<w:t>after</w:t></w:r>"
+        ));
+        assert_eq!(
+            logical_text(&dom, p).unwrap_err().code,
+            "UNSUPPORTED_TEXT_CODEC",
+            "codec accepted {opaque}"
+        );
+    }
+    // Non-w:p argument to logical_text: pass a w:r child instead.
+    let (dom, p) = paragraph("<w:r><w:t>x</w:t></w:r>");
+    let r = dom
+        .elements(p, None)
+        .into_iter()
+        .find(|&n| dom.name(n) == Some(W::r()))
+        .unwrap();
+    assert_eq!(
+        logical_text(&dom, r).unwrap_err().code,
+        "UNSUPPORTED_TEXT_CODEC"
+    );
+}
+
+// Row 7: before_sha256 hashes the FINAL logical projection of the supplied
+// paragraph in the supplied DOM. Pin the contract with a paragraph that
+// carries tracked revisions: the hash is of the post-revision text.
+#[test]
+fn review_v2_01_before_sha256_hashes_the_final_logical_projection() {
+    let (dom, p) = paragraph(
+        "<w:r><w:t>original</w:t></w:r>\
+         <w:ins><w:r><w:t>inserted</w:t></w:r></w:ins>\
+         <w:del><w:r><w:delText>deleted</w:delText></w:r></w:del>",
+    );
+    let text = logical_text(&dom, p).unwrap();
+    assert_eq!(text, "originalinserted");
+    assert_eq!(
+        before_sha256(&dom, p).unwrap(),
+        jubarte::inspect::source_sha256(text.as_bytes())
+    );
 }

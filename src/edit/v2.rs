@@ -248,7 +248,8 @@ pub enum Operation {
     Rewrite {
         /// Original paragraph; requires verified one-to-one working correspondence.
         target: Target,
-        /// SHA-256 of UTF-8 exact working text, checked before unchanged classification.
+        /// SHA-256 of the effective working paragraph text after selected
+        /// accept/reject decisions, checked before unchanged classification.
         before_sha256: String,
         /// Desired exact characters. Empty retains the structural paragraph mark.
         text: String,
@@ -406,15 +407,23 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Optio
 }
 
 // JSON Schema's integer type includes 1.0 and 1e0, unlike serde's u64.
+// Above 2^53 the f64 representation collapses and the author's intent is
+// lost, so a float spelling is accepted only while it is exact.
 fn integer<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
     let n = serde_json::Number::deserialize(d)?;
     if let Some(n) = n.as_u64() {
         return Ok(n);
     }
-    if let Some(n) = n.as_f64()
-        && (0.0..18_446_744_073_709_551_616.0).contains(&n)
-        && n.fract() == 0.0
-    {
+    if let Some(n) = n.as_f64() {
+        if n < 0.0
+            || n >= 18_446_744_073_709_551_616.0
+            || n.fract() != 0.0
+            || n >= 9_007_199_254_740_992.0
+        {
+            return Err(serde::de::Error::custom(
+                "expected an unsigned 64-bit integer; an integer written with a fraction or exponent must be below 2^53; write it as a plain integer",
+            ));
+        }
         return Ok(n as u64);
     }
     Err(serde::de::Error::custom(
@@ -515,7 +524,7 @@ impl PlanV2 {
             "source.sha256 must be 64 lowercase hexadecimal characters",
         )?;
         require(
-            self.author.chars().any(|c| !c.is_whitespace()),
+            self.author.chars().any(|c| !is_author_whitespace(c)),
             "author must contain a non-whitespace character",
         )?;
         require(
@@ -680,9 +689,18 @@ impl Operation {
     }
 }
 
+// Engine-independent whitespace class for the author field: the union of
+// Rust's `char::is_whitespace` (Unicode White_Space) and U+FEFF. Matches the
+// explicit character class the schema enforces on the same field.
+fn is_author_whitespace(c: char) -> bool {
+    c.is_whitespace() || c == '\u{feff}'
+}
+
 // Calendar/time/offset validation for the schema's uppercase RFC 3339 shape.
 // The legacy Word xsd:dateTime parser also accepts an absent zone and caps
 // offsets at 14:00, so using it here would disagree with this schema.
+// Year 0000 and second 60 are refused to match XSD 1.0 dateTime (which the
+// schema also rejects).
 fn timestamp(value: &str) -> bool {
     let b = value.as_bytes();
     if b.len() < 20
@@ -718,7 +736,7 @@ fn timestamp(value: &str) -> bool {
         1..=12 => 31,
         _ => 0,
     };
-    if !(1..=days).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+    if year == 0 || !(1..=days).contains(&day) || hour > 23 || minute > 59 || second > 59 {
         return false;
     }
     let mut zone = 19;
@@ -732,21 +750,15 @@ fn timestamp(value: &str) -> bool {
             return false;
         }
     }
-    let offset = match &b[zone..] {
-        [b'Z'] => 0,
-        [sign @ (b'+' | b'-'), a, c, b':', d, e]
-            if [a, c, d, e].iter().all(|v| v.is_ascii_digit()) =>
-        {
-            let h = i32::from(a - b'0') * 10 + i32::from(c - b'0');
-            let m = i32::from(d - b'0') * 10 + i32::from(e - b'0');
-            if h > 23 || m > 59 {
-                return false;
-            }
-            (h * 60 + m) * if *sign == b'+' { 1 } else { -1 }
+    match &b[zone..] {
+        [b'Z'] => true,
+        [b'+' | b'-', a, c, b':', d, e] if [a, c, d, e].iter().all(|v| v.is_ascii_digit()) => {
+            let hours = (a - b'0') * 10 + (c - b'0');
+            let minutes = (d - b'0') * 10 + (e - b'0');
+            hours <= 23 && minutes <= 59
         }
-        _ => return false,
-    };
-    second != 60 || (hour * 60 + minute - offset).rem_euclid(24 * 60) == 24 * 60 - 1
+        _ => false,
+    }
 }
 
 /// Exact logical text codec v1 for a supported `w:p` in an admitted DOM.
@@ -757,9 +769,17 @@ fn timestamp(value: &str) -> bool {
 /// normalization forms remain distinct. Plain hyperlinks and supported
 /// insertion/deletion wrappers retain the same final-text projection.
 ///
-/// Returns `UNSUPPORTED_TEXT_CODEC` for an opaque construct rather than
-/// silently omitting it or returning a display placeholder. This only proves
-/// text representation, not rewrite eligibility or range preservation.
+/// Refused opaque constructs (returned as `UNSUPPORTED_TEXT_CODEC` rather
+/// than silently mapped to placeholder characters): `w:cr`, `w:noBreakHyphen`
+/// and `w:softHyphen` (the projector maps them deterministically, but the
+/// codec refuses rather than silently substituting), plus page/column/unknown
+/// `w:br`, `w:sym`, `w:drawing`, `w:fldChar`, `w:instrText`,
+/// `w:footnoteReference`, `w:ptab` and any element outside the `w:` namespace
+/// or with an unsupported local name. The argument must be a `w:p`; any
+/// other element name is rejected.
+///
+/// This only proves text representation, not rewrite eligibility or range
+/// preservation.
 pub fn logical_text(dom: &Dom, paragraph: NodeId) -> Result<String, EditError> {
     if dom.name(paragraph) != Some(W::p()) {
         return Err(codec_error("expected a w:p element"));
@@ -768,8 +788,12 @@ pub fn logical_text(dom: &Dom, paragraph: NodeId) -> Result<String, EditError> {
     Ok(crate::inspect::project_paragraph(dom, paragraph).text)
 }
 
-/// Lowercase hexadecimal SHA-256 of UTF-8 exact logical paragraph text.
-/// This hashes characters, not XML, JSON escapes, Markdown or normalized words.
+/// Lowercase hexadecimal SHA-256 of the final logical projection of
+/// `paragraph` in `dom` (the same string [`logical_text`] returns for that
+/// pair). Hashes characters, not XML, JSON escapes, Markdown or normalized
+/// words. For the plan field `Rewrite.before_sha256`, the caller passes the
+/// effective working document (after selected accept/reject decisions),
+/// because selected decisions can change the projected text.
 pub fn before_sha256(dom: &Dom, paragraph: NodeId) -> Result<String, EditError> {
     Ok(crate::inspect::source_sha256(
         logical_text(dom, paragraph)?.as_bytes(),
