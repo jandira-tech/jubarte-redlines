@@ -180,6 +180,12 @@ pub(super) struct TrackedParagraphs {
     pub(super) base: Vec<NodeId>,
     /// The emitted redline's paragraphs, in projection order.
     pub(super) output: Vec<NodeId>,
+    /// Each `output` paragraph's final-view disposition, computed on the
+    /// replay's own DOM before this call returns and that DOM is dropped.
+    /// The correspondence reads the redline's marks here instead of
+    /// reopening the emitted bytes (#1087); `None` when the caller asked
+    /// for no final-view scan.
+    pub(super) output_states: Option<Vec<super::v2_apply::FinalView>>,
 }
 
 /// As [`result_v2`], also returning the tracked primary's paragraph walks
@@ -188,7 +194,7 @@ pub(super) fn result_v2_with_paragraphs(
     tx: &Transaction<'_>,
     clean: Vec<u8>,
 ) -> Result<(EditResult, TrackedParagraphs), EditError> {
-    let (redline, floor, paragraphs) = redline(tx, true)?;
+    let (redline, floor, paragraphs) = redline(tx, true, true)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -209,7 +215,7 @@ fn result_with_order(
     clean: Vec<u8>,
     array_order: bool,
 ) -> Result<EditResult, EditError> {
-    let (redline, floor, _) = redline(tx, array_order)?;
+    let (redline, floor, _) = redline(tx, array_order, false)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -228,10 +234,14 @@ fn result_with_order(
 /// source revision's id is below it) and the replay's paragraph walks
 /// ([`TrackedParagraphs`]); the walk is taken after the emission and
 /// before `finish`, which serializes stories and only ever removes
-/// bookmarks or comment definitions, never a `w:p`.
+/// bookmarks or comment definitions, never a `w:p`. When `final_views` is
+/// set, each output paragraph's final-view disposition is scanned off the
+/// replay's DOM here, while that DOM still lives — the one place the
+/// emitted redline's marks can be read without reopening its bytes.
 fn redline(
     tx: &Transaction<'_>,
     array_order: bool,
+    final_views: bool,
 ) -> Result<(Vec<u8>, u64, TrackedParagraphs), EditError> {
     let plan = EditPlan {
         source_sha256: None,
@@ -279,8 +289,22 @@ fn redline(
     t.reply_parents = tx.reply_parents.clone();
     let base = t.paragraph_nodes.clone();
     let output = t.paragraph_walk();
+    let output_states = final_views.then(|| {
+        output
+            .iter()
+            .map(|&node| super::v2_apply::paragraph_final_state(&t.opened.dom, node))
+            .collect()
+    });
     let (redline, _) = t.finish()?;
-    Ok((redline, floor, TrackedParagraphs { base, output }))
+    Ok((
+        redline,
+        floor,
+        TrackedParagraphs {
+            base,
+            output,
+            output_states,
+        },
+    ))
 }
 
 /// Counts of the redline's changes stamped with `author` and `date` whose

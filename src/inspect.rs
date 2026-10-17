@@ -512,6 +512,30 @@ fn emphasize(piece: &str, span: &Span) -> String {
     format!("{lead}{open}{core}{close}{trail}")
 }
 
+// Documents this thread has reopened through `Opened::open` since the last
+// `reset_reopened_packages`. Tests that must not pay for a reparse of bytes
+// they already hold reset the counter, run the phase under test, and read
+// it back.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static REOPENED_PACKAGES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Add one to this thread's [`REOPENED_PACKAGES`].
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn bump_reopened_packages() {
+    REOPENED_PACKAGES.with(|count| count.set(count.get() + 1));
+}
+
+/// Zero this thread's [`REOPENED_PACKAGES`].
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub(crate) fn reset_reopened_packages() {
+    REOPENED_PACKAGES.with(|count| count.set(0));
+}
+
 /// A parsed main document part plus its package.
 pub(crate) struct Opened {
     pub(crate) pkg: PartFs,
@@ -523,6 +547,8 @@ pub(crate) struct Opened {
 
 impl Opened {
     pub(crate) fn open(bytes: &[u8]) -> Result<Self, InspectError> {
+        #[cfg(test)]
+        bump_reopened_packages();
         crate::admission::admit(bytes, crate::admission::InputLimits::default())
             .map_err(InspectError::Admission)?;
         let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);

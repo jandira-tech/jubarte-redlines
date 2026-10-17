@@ -167,12 +167,18 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     let (clean, _) = tx.finish()?;
     super::prepared::check_serialized_stories(&tx, &clean)?;
     // The tracked primary is the replay's emission, so its paragraph walk
-    // comes back with it; the direct primary is the serialized transaction
-    // DOM, walked below. Either way the walk is taken from the DOM that
-    // produced the primary bytes, not by re-matching text.
-    let (result, primary_base, primary_output) = if plan.policy.track == Track::On {
+    // comes back with it — the final-view states too, scanned on the
+    // replay's DOM before it is dropped; the direct primary is the serialized
+    // transaction DOM, walked below. Either way the walk is taken from the
+    // DOM that produced the primary bytes, not by re-matching text.
+    let (result, primary_base, primary_output, replay_states) = if plan.policy.track == Track::On {
         let (result, paragraphs) = tracked::result_v2_with_paragraphs(&tx, clean)?;
-        (result, paragraphs.base, paragraphs.output)
+        (
+            result,
+            paragraphs.base,
+            paragraphs.output,
+            paragraphs.output_states,
+        )
     } else {
         let report = tx.report(true);
         let base = tx.paragraph_nodes.clone();
@@ -185,18 +191,34 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
             },
             base,
             output,
+            None,
         )
     };
     let mut report = result.report;
     report.existing_revisions = plan.policy.existing_revisions;
     report.guarded = true;
+    // Tests count the packages the correspondence phase opens from here
+    // on, and pin that count at zero (#1087).
+    #[cfg(test)]
+    crate::inspect::reset_reopened_packages();
     let (clean, redline, correspondence) = if effect {
+        // The primary's final-view dispositions are read off the DOM that
+        // produced those bytes — the replay's own scan for a tracked
+        // primary (its DOM dies with the emission), the transaction's own
+        // for a direct one — so the correspondence never reopens the
+        // emitted zip (#1087).
+        let states: Vec<FinalView> = replay_states.unwrap_or_else(|| {
+            primary_output
+                .iter()
+                .map(|&node| paragraph_final_state(&tx.opened.dom, node))
+                .collect()
+        });
         let correspondence = expectation_correspondence(
             &model,
             &tx,
-            &result.redline,
             &primary_base,
             &primary_output,
+            &states,
             plan.policy.text_view,
         )?;
         (result.clean, result.redline, correspondence)
@@ -240,9 +262,9 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
 fn expectation_correspondence(
     model: &SourceModel,
     tx: &Transaction<'_>,
-    primary: &[u8],
     primary_base: &[NodeId],
     primary_output: &[NodeId],
+    primary_states: &[FinalView],
     view: v2::TextView,
 ) -> Result<crate::expect::SourceToOutputCorrespondence, EditError> {
     let mut position: std::collections::HashMap<NodeId, usize> =
@@ -317,7 +339,7 @@ fn expectation_correspondence(
     // an `original` view lands with that view.
     match view {
         v2::TextView::Final => {
-            refuse_removed_final_paragraphs(primary, primary_output.len(), &mut entries)?;
+            refuse_removed_final_paragraphs(primary_states, &mut entries)?;
         }
     }
     crate::expect::SourceToOutputCorrespondence::from_entries(entries).map_err(|e| {
@@ -332,7 +354,8 @@ fn expectation_correspondence(
 /// One emitted primary paragraph's final-view disposition: whether its
 /// paragraph mark is tracked-deleted, and whether any of its content
 /// survives the final projection.
-struct FinalView {
+#[derive(Clone, Debug)]
+pub(super) struct FinalView {
     deleted_mark: bool,
     survives: bool,
 }
@@ -347,25 +370,13 @@ struct FinalView {
 /// surviving content it merges into the next paragraph without a deleted
 /// mark, and every source sharing that merged paragraph refuses merged
 /// (the settlement merge encoding: one entry per source, the shared index
-/// repeated). Judged structurally off the emitted primary's own XML,
-/// never by matching text.
+/// repeated). Judged structurally on the primary's own DOM — the same walk
+/// and marks the caller holds from producing those bytes — never by
+/// matching text and never by reopening the emitted zip.
 fn refuse_removed_final_paragraphs(
-    primary: &[u8],
-    walk: usize,
+    states: &[FinalView],
     entries: &mut [crate::expect::CorrespondenceEntry],
 ) -> Result<(), EditError> {
-    let states = final_view_states(primary)?;
-    if states.len() != walk {
-        return Err(err(
-            "INTERNAL",
-            None,
-            format!(
-                "the primary's paragraph walk holds {walk} paragraphs but its \
-                 reopened bytes project {}",
-                states.len()
-            ),
-        ));
-    }
     // The first follower without a deleted mark: where a merging
     // paragraph's text lands in the final view.
     let chain_end = |start: usize| -> Option<usize> {
@@ -421,27 +432,9 @@ fn refuse_removed_final_paragraphs(
     Ok(())
 }
 
-/// The primary's paragraphs in the checker's projection order (the body's,
-/// then each story part's, the order [`crate::expect::evaluate`] reopens
-/// bytes in), with each one's final-view disposition.
-fn final_view_states(primary: &[u8]) -> Result<Vec<FinalView>, EditError> {
-    let opened = Opened::open(primary).map_err(open_error)?;
-    let mut states: Vec<FinalView> = crate::inspect::body_paragraph_nodes(&opened.dom, opened.body)
-        .into_iter()
-        .map(|node| paragraph_final_state(&opened.dom, node))
-        .collect();
-    for (_, _, part) in opened.story_parts() {
-        let (dom, _, root) = crate::inspect::parse_part(&opened.pkg, &part).map_err(open_error)?;
-        states.extend(
-            crate::inspect::story_paragraph_nodes(&dom, root)
-                .into_iter()
-                .map(|node| paragraph_final_state(&dom, node)),
-        );
-    }
-    Ok(states)
-}
-
-fn paragraph_final_state(dom: &Dom, paragraph: NodeId) -> FinalView {
+/// One emitted primary paragraph's final-view disposition, read off the DOM
+/// that produced the primary's bytes.
+pub(super) fn paragraph_final_state(dom: &Dom, paragraph: NodeId) -> FinalView {
     FinalView {
         deleted_mark: mark_deleted(dom, paragraph),
         survives: final_run(dom, paragraph),
@@ -2225,6 +2218,49 @@ fn preserve_history(working: &[u8], candidate: &[u8]) -> Result<(), EditError> {
 mod tests {
     use super::*;
     use crate::edit::deeper_boundary_fixture::{docx, para};
+
+    /// An effectful v2 apply builds its expectations correspondence without
+    /// reopening the emitted primary: the final-view dispositions come from
+    /// the DOM that produced the bytes, so no apply pays a second admission,
+    /// unzip and parse of its own output for a correspondence only `--expect`
+    /// reads (#1087).
+    #[test]
+    fn effectful_apply_never_reopens_its_primary_for_the_correspondence() {
+        let source = docx(&format!(
+            "{}{}{}",
+            para("Alpha."),
+            para("Beta."),
+            para("Gamma.")
+        ));
+        let hash = crate::inspect::source_sha256(&source);
+        for track in ["on", "off"] {
+            let plan = PlanV2::from_json(&format!(
+                r#"{{
+  "schema_version": 2,
+  "source": {{"sha256": "{hash}"}},
+  "policy": {{"track": "{track}", "existing_revisions": "keep", "text_view": "final"}},
+  "resolve_revisions": {{"accept": [], "reject": []}},
+  "author": "T",
+  "date": "2026-10-18T00:00:00Z",
+  "scope": {{"kind": "all"}},
+  "operations": [
+    {{"kind": "delete_paragraph", "target": {{"short_id": "p1", "long_id": "document.w:p.j:short.p1"}}}}
+  ]
+}}"#
+            ))
+            .unwrap();
+            let applied = apply_plan(&source, &plan).unwrap();
+            assert_ne!(
+                applied.redline, source,
+                "track {track}: the delete must take effect for the counter window"
+            );
+            assert_eq!(
+                crate::inspect::REOPENED_PACKAGES.with(|count| count.get()),
+                0,
+                "track {track}: the correspondence reopened the emitted primary"
+            );
+        }
+    }
 
     fn many_comment_source() -> Vec<u8> {
         use crate::edit::deeper_boundary_fixture::{Part, docx_with};
