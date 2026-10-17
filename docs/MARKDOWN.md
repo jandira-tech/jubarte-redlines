@@ -230,7 +230,20 @@ accepted or rejected, through the same engine as `jubarte accept` and
 flag works on a `.docx` too: `jubarte convert redline.docx --track-changes
 accept` renders the accepted document to PDF.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
-(`\{++`) or without its partner is text too.
+(`\{++`) or without its partner is text too, and says so in a warning.
+
+A comment or highlight whole inside a change is text to the change's
+own delimiters: `{~~a{>>x ~> y<<} b~>c~~}` substitutes `a b` for `c` and
+keeps the comment's `~>`, `{++a{>>b++}c++}` inserts `ac` around a
+comment that holds `b++}`. A blank line inside `{>>…<<}` is a paragraph
+break in the comment's text, not in the paragraph it sits on.
+
+A raw HTML block keeps only its text, and CriticMarkup written in that
+text is read as anywhere else: `<div>{++x++}</div>` inserts `x`.
+A numeric character reference naming a stand-in character
+(`&#x2E0E;`, `&#xF0000;`) is literal text wherever the parser decodes
+it — paragraph text, a comment's body, an HTML block — because
+references decode only after CriticMarkup was read.
 
 ## Agent view
 

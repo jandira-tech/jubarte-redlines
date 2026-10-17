@@ -364,6 +364,71 @@ fn a_note_inside_a_change_stays_in_its_mark() {
     assert_eq!(document.matches("<w:ins ").count(), 1, "{document}");
 }
 
+/// A change holding a comment whose text contains `~>`, `++}`, `--}`,
+/// `~~}`, or `==}` reaches a fixed point: the change and the comment
+/// survive the first DOCX, and a second md round trip keeps them.
+#[test]
+fn a_comment_with_a_closer_or_separator_inside_a_change_reaches_a_fixed_point() {
+    let payloads = ["~>", "++}", "--}", "~~}", "==}"];
+    let shapes = [
+        ("ins", "{++a{{>>{p}<<}}b++}"),
+        ("del", "{--a{{>>{p}<<}}b--}"),
+        ("sub-old", "{~~a{{>>{p}<<}} b~>c~~}"),
+        ("sub-new", "{~~a~>b{{>>{p}<<}} c~~}"),
+    ];
+    for payload in &payloads {
+        for (name, template) in &shapes {
+            let raw = template.replace("{p}", payload);
+            let (md1, docx1) = round_trip(&format!("<!-- p0 -->\n{raw}\n"));
+            let (md2, _) = round_trip(&format!("<!-- p0 -->\n{md1}"));
+            // The change line (the only non-empty paragraph) survives a
+            // second round trip unchanged. The id-line names may shift
+            // between md1 and md2 because paragraph mark ids depend on
+            // the first read-back, so compare the change lines only.
+            let change_line = |md: &str| -> String {
+                md.lines()
+                    .find(|line| line.contains('{') && line.contains('}'))
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            assert_eq!(
+                change_line(&md1),
+                change_line(&md2),
+                "{name} {payload:?}: not a fixed point\n{md1}\n{md2}",
+            );
+            let document = part(&docx1, "word/document.xml");
+            match *name {
+                "ins" => assert!(
+                    document.matches("<w:ins ").count() >= 1,
+                    "{name} {payload:?}: docx1 has ins in {document}"
+                ),
+                "del" => assert!(
+                    document.matches("<w:del ").count() >= 1,
+                    "{name} {payload:?}: docx1 has del in {document}"
+                ),
+                "sub-old" | "sub-new" => {
+                    assert!(
+                        document.matches("<w:ins ").count() >= 1,
+                        "{name} {payload:?}: docx1 has ins in {document}"
+                    );
+                    assert!(
+                        document.matches("<w:del ").count() >= 1,
+                        "{name} {payload:?}: docx1 has del in {document}"
+                    );
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                part(&docx1, "word/comments.xml")
+                    .matches("<w:comment ")
+                    .count(),
+                1,
+                "{name} {payload:?}: one comment in document",
+            );
+        }
+    }
+}
+
 /// Bold or italic text whose delimiters CommonMark would not read (a
 /// bold `*` right after `0.081`, an italic letter inside a word) prints as
 /// `<b>`/`<i>`, which reads back the same; `**`/`_` stay wherever they
