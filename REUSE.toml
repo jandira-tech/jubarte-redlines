@@ -210,25 +210,3 @@ path = "src/markdown/word_table_styles.tsv"
 precedence = "override"
 SPDX-FileCopyrightText = "Microsoft Corporation"
 SPDX-License-Identifier = "LicenseRef-Word-Table-Styles"
-
-# vendor/ooxmlsdk is the crates.io package ooxmlsdk 0.13.2 (KaiserY, MIT OR
-# Apache-2.0), substituted by [patch.crates-io] so the dev-dependency resolves
-# zip 9 (#1092). The two files ported to zip 9 add Jandira's changes under the
-# repository license; vendor/ooxmlsdk/JUBARTE_PATCH.md records the change.
-[[annotations]]
-path = "vendor/ooxmlsdk/**"
-precedence = "override"
-SPDX-FileCopyrightText = "KaiserY"
-SPDX-License-Identifier = "MIT OR Apache-2.0"
-
-[[annotations]]
-path = ["vendor/ooxmlsdk/Cargo.toml", "vendor/ooxmlsdk/src/common/package.rs"]
-precedence = "override"
-SPDX-FileCopyrightText = ["KaiserY", "2026 Jandira Technologies, LLC"]
-SPDX-License-Identifier = "(MIT OR Apache-2.0) AND AGPL-3.0-only"
-
-[[annotations]]
-path = "vendor/ooxmlsdk/JUBARTE_PATCH.md"
-precedence = "override"
-SPDX-FileCopyrightText = "2026 Jandira Technologies, LLC"
-SPDX-License-Identifier = "AGPL-3.0-only"
