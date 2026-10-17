@@ -5,25 +5,32 @@
 //! Drawings, in the three readable forms the view gives them. Every one
 //! keeps a `drawing:` payload — URL-safe base64 of a JSON envelope holding
 //! the element's XML, its relationships, and every package part they
-//! reach, recursively — under a `<!-- drawings -->` marker at the view's
-//! end, so the body text stays readable past it.
+//! reach, recursively — as a reference definition or a backing comment
+//! at the view's end, so the body text stays readable past it.
 //!
 //! - A drawing the readable forms cannot say — a shape, text box,
 //!   connector, chart, VML picture, AlternateContent — is `![label][dN]`
 //!   where an image would go, `dN` its number in reading order; a
 //!   reference definition holds the payload: `[dN]: drawing:PAYLOAD`.
-//! - A raster (PNG, JPEG, GIF, BMP, TIFF) is `![label][imageK]`: the
-//!   `data:` definition `[imageK]: <data:mime;base64,…>` holds the bytes
-//!   and a backing comment `<!-- imageK drawing:PAYLOAD -->` the payload,
-//!   whose image part the bytes fill on the way back.
+//! - A raster (PNG, JPEG, GIF, BMP, TIFF) is `![alt][imageK]` in the
+//!   Google Docs form: the `data:` definition `[imageK]: <data:mime;
+//!   base64,…>` holds the bytes, `imageK` numbered by first use and one
+//!   definition shared by every use of the same payload. A backing
+//!   comment `<!-- imageK drawing:PAYLOAD -->` rides with it only when
+//!   the payload is not the `wp:inline` the picture writer regenerates
+//!   from bytes, alt text and size alone; then the definition is all the
+//!   round trip needs. A use of a shared payload whose own drawing
+//!   differs from the first keeps its `dN` definition instead.
 //! - An `asvg:svgBlip` a paragraph holds alone is a ` ```svg ` fence with
 //!   its source; `<!-- dN drawing:PAYLOAD -->` backs it, PNG fallback
 //!   inside. Anywhere else an SVG is a `data:` raster like the others.
 //!
-//! `label` is the `wp:docPr` description or name (empty is fine). The
-//! writer splices the payload's XML back and gives each stored part and
-//! relationship the id the new package assigns it, so the whole drawing
-//! is lossless even where the Markdown shows only its readable form.
+//! `label` is the `wp:docPr` description, title or name (empty is fine);
+//! a raster's `alt` stops at `title` — the `name` Word gives a picture
+//! is the selection pane's, not the alt text. The writer splices the
+//! payload's XML back and gives each stored part and relationship the id
+//! the new package assigns it, so the whole drawing is lossless even
+//! where the Markdown shows only its readable form.
 //!
 //! A plain inline raster collected under `--media-dir` still extracts to
 //! a file; everything else the payload needs travels inside the view, so
@@ -236,16 +243,36 @@ fn image(label: &str, name: &str) -> String {
 
 /// The `wp:docPr` description, title or name as the token's label.
 fn label(element: &Element) -> String {
+    let alt = alt(element);
+    if !alt.is_empty() {
+        return alt;
+    }
+    element
+        .find("docPr")
+        .and_then(|doc_pr| doc_pr.attr("name"))
+        .map(alt_text)
+        .unwrap_or_default()
+}
+
+/// A raster's alt text: the `wp:docPr` description or title. The `name`
+/// Word gives a picture (`Picture 1`) is the selection pane's, not alt
+/// text — printing it would invent one.
+fn alt(element: &Element) -> String {
     let Some(doc_pr) = element.find("docPr") else {
         return String::new();
     };
-    doc_pr
-        .attr("descr")
-        .filter(|d| !d.trim().is_empty())
-        .or_else(|| doc_pr.attr("title"))
-        .or_else(|| doc_pr.attr("name"))
-        .unwrap_or("")
-        .split_whitespace()
+    alt_text(
+        doc_pr
+            .attr("descr")
+            .filter(|d| !d.trim().is_empty())
+            .or_else(|| doc_pr.attr("title"))
+            .unwrap_or(""),
+    )
+}
+
+/// `text` as a Markdown alt text: one line, brackets escaped.
+fn alt_text(text: &str) -> String {
+    text.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .replace('[', "\\[")
@@ -662,14 +689,17 @@ pub(crate) fn content_types(package: &mut Package<'_>) -> HashMap<String, String
 }
 
 /// `markdown` with its `![label][dN]` references given their readable
-/// form and their payloads appended under a `<!-- drawings -->` marker. A
-/// raster the layer reads as bytes is `![label][imageK]` backed by a
-/// `data:` definition and a `drawing:` comment; an SVG the paragraph holds
-/// alone is a ` ```svg ` fence backed by a comment; every other drawing
-/// keeps the `dN` reference to a `drawing:` definition. Two pendings that
-/// captured the same payload share one name and one definition. A pending
-/// that failed to capture loses its reference: `![label]()` stays
-/// readable and the writer writes it as alt text.
+/// form and their payloads appended at the view's end. A raster the
+/// layer reads as bytes is `![alt][imageK]` with a `data:` definition
+/// shared by every use of the payload (`alt` the description or title —
+/// Word's picture `name` is not alt text); a drawing that is not the
+/// `wp:inline` the picture writer rebuilds gets a `drawing:` backing
+/// comment, and a use of a shared payload whose drawing differs keeps
+/// its `dN` definition. An SVG the paragraph holds alone is a ` ```svg `
+/// fence backed by a comment; every other drawing keeps the `dN`
+/// reference to a `drawing:` definition. A pending that failed to
+/// capture loses its reference: `![label]()` stays readable and the
+/// writer writes it as alt text.
 pub(crate) fn fill(
     markdown: &str,
     package: &mut Package<'_>,
@@ -698,7 +728,10 @@ pub(crate) fn fill(
     };
     let mut appendix = String::new();
     let mut media = 0usize;
-    let mut names: HashMap<String, String> = HashMap::new();
+    // Media payload (`mime`, base64) → (`imageK` name, first drawing's
+    // canonical form): later uses of the same bytes share the one
+    // definition while their drawing is the same.
+    let mut names: HashMap<(String, String), (String, String)> = HashMap::new();
     for (index, pending) in pendings.iter().enumerate() {
         let d = format!("d{}", index + 1);
         let token = format!("][{d}]");
@@ -760,32 +793,302 @@ pub(crate) fn fill(
             continue;
         }
         // A raster, or an SVG run content cannot leave a fence: its
-        // `data:` definition, with the payload as a backing comment.
-        let key = encode(&drawing);
-        let name = match names.get(&key) {
-            Some(name) => name.clone(),
+        // `data:` definition — unless the media bytes never read, a
+        // `dN` definition like every other payload.
+        if dep.b64.is_empty() {
+            let _ = writeln!(appendix, "[{d}]: drawing:{}", encode(&drawing));
+            continue;
+        }
+        let key = (dep.kind.clone(), dep.b64.clone());
+        let shared = match names.get(&key) {
+            Some((name, seen)) if *seen == canonical(&drawing) => Some(name.clone()),
+            Some(_) => None,
             None => {
                 media += 1;
                 let name = format!("image{media}");
-                names.insert(key.clone(), name.clone());
+                names.insert(key, (name.clone(), canonical(&drawing)));
                 let _ = writeln!(appendix, "[{name}]: <data:{};base64,{}>", dep.kind, dep.b64);
-                let _ = writeln!(
-                    appendix,
-                    "<!-- {name} drawing:{} -->",
-                    encode(&drawing.without_slot_bytes())
-                );
-                name
+                if !regenerable(&drawing) {
+                    let _ = writeln!(
+                        appendix,
+                        "<!-- {name} drawing:{} -->",
+                        encode(&drawing.without_slot_bytes())
+                    );
+                }
+                Some(name)
             }
         };
-        out.replace_range(pos + 2..end - 1, &name);
+        match shared {
+            // A use of a shared payload whose own drawing differs
+            // keeps its `dN` definition: the `imageK` name's one
+            // backing cannot be both drawings.
+            None => {
+                let _ = writeln!(appendix, "[{d}]: drawing:{}", encode(&drawing));
+            }
+            Some(name) => {
+                let shift = relabel(&mut out, pos, &alt(&pending.element));
+                let pos = pos.wrapping_add_signed(shift);
+                out.replace_range(pos + 2..pos + token.len() - 1, &name);
+            }
+        }
     }
     if !appendix.is_empty() {
         if !out.ends_with('\n') {
             out.push('\n');
         }
-        let _ = write!(out, "\n<!-- drawings -->\n\n{appendix}");
+        let _ = write!(out, "\n{appendix}");
     }
     out
+}
+
+/// Rewrite the label of the `![label][dN]` token ending at `pos`: the
+/// printable alt text a `docPr` name would have invented. The byte
+/// shift the token's end moved by.
+fn relabel(out: &mut String, pos: usize, label: &str) -> isize {
+    let Some(start) = out[..pos].rfind("![") else {
+        return 0;
+    };
+    let Some((name, _)) = at(&out[start..]) else {
+        return 0;
+    };
+    if !(name.starts_with('d') || name.starts_with("image")) {
+        return 0;
+    }
+    let old = pos - (start + 2);
+    out.replace_range(start + 2..pos, label);
+    label.len() as isize - old as isize
+}
+
+/// The payload minus what use of it may differ in — `docPr` and
+/// `cNvPr` alt text and generated names, which the readable layer
+/// carries or the writer renumbers — so two drawings of one media
+/// payload share its `imageK` definition only while they splice the
+/// same XML.
+fn canonical(drawing: &Drawing) -> String {
+    let mut share = drawing.clone();
+    let Ok(mut root) = parse_xml(drawing.xml.as_bytes()) else {
+        return drawing.xml.clone();
+    };
+    fn names(element: &mut Element) {
+        if matches!(local(&element.name), "docPr" | "cNvPr") {
+            for (name, value) in &mut element.attrs {
+                let generated = name == "name" && generated_name(value);
+                if matches!(name.as_str(), "descr" | "title") || generated {
+                    value.clear();
+                }
+            }
+        }
+        for child in &mut element.children {
+            if let Node::Element(inner) = child {
+                names(inner);
+            }
+        }
+    }
+    names(&mut root);
+    share.xml = serialize(&root);
+    for (index, dep) in share.deps.iter_mut().enumerate() {
+        if drawing.slot == Some(index) {
+            dep.b64.clear();
+            dep.xml.clear();
+        } else {
+            *dep = Dep::default();
+        }
+    }
+    for rel in &mut share.rels {
+        if rel.part.is_some() && rel.part != drawing.slot {
+            rel.part = Some(usize::MAX);
+        }
+    }
+    encode(&share)
+}
+
+/// A `docPr`/`cNvPr` name the writer gives the picture it numbers
+/// (`Picture 3`): no content to keep.
+fn generated_name(name: &str) -> bool {
+    name.strip_prefix("Picture ")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether the picture writer rebuilds `drawing` from its `data:`
+/// bytes, its alt text and the raster's size alone: a `wp:inline` of
+/// exactly the shape `drawing_xml` writes, at the size `read_picture`
+/// computes. Then the `data:` definition is all the round trip needs
+/// and the view carries no `drawing:` backing comment.
+fn regenerable(drawing: &Drawing) -> bool {
+    let Some(slot) = drawing.slot else {
+        return false;
+    };
+    if !drawing.wrap || drawing.rels.len() != 1 || drawing.rels[0].part != Some(slot) {
+        return false;
+    }
+    let Ok(root) = parse_xml(drawing.xml.as_bytes()) else {
+        return false;
+    };
+    if !root.is("drawing") {
+        return false;
+    }
+    let kids: Vec<&Element> = root.elements().collect();
+    let [inline] = kids.as_slice() else {
+        return false;
+    };
+    if !inline.is("inline")
+        || !attrs_ok(inline, |name, value| {
+            matches!(local(name), "distT" | "distB" | "distL" | "distR") && value == "0"
+        })
+    {
+        return false;
+    }
+    let kids: Vec<&Element> = inline.elements().collect();
+    let [extent, effect, doc_pr, frame, graphic] = kids.as_slice() else {
+        return false;
+    };
+    if !extent.is("extent")
+        || extent.attr("cx").is_none()
+        || extent.attr("cy").is_none()
+        || !attrs_ok(extent, |name, _| matches!(local(name), "cx" | "cy"))
+    {
+        return false;
+    }
+    if !effect.is("effectExtent")
+        || !attrs_ok(effect, |name, value| {
+            matches!(local(name), "l" | "t" | "r" | "b") && value == "0"
+        })
+    {
+        return false;
+    }
+    if !doc_pr.is("docPr")
+        || !attrs_ok(doc_pr, |name, value| {
+            (name == "id" && value == "0")
+                || (name == "name" && generated_name(value))
+                || matches!(name, "descr" | "title")
+        })
+        || doc_pr.elements().next().is_some()
+    {
+        return false;
+    }
+    if !frame.is("cNvGraphicFramePr") {
+        return false;
+    }
+    let Some(locks) = frame.child("graphicFrameLocks") else {
+        return false;
+    };
+    if !attrs_ok(locks, |name, value| {
+        name == "noChangeAspect" && value == "1"
+    }) || locks.elements().next().is_some()
+        || frame.elements().nth(1).is_some()
+    {
+        return false;
+    }
+    let Some(data) = graphic.child("graphicData") else {
+        return false;
+    };
+    if data.attr("uri") != Some("http://schemas.openxmlformats.org/drawingml/2006/picture")
+        || !attrs_ok(data, |name, _| local(name) == "uri")
+    {
+        return false;
+    }
+    let Some(pic) = data.child("pic") else {
+        return false;
+    };
+    let kids: Vec<&Element> = pic.elements().collect();
+    let [nv_pic_pr, blip_fill, sp_pr] = kids.as_slice() else {
+        return false;
+    };
+    if !nv_pic_pr.is("nvPicPr") || !blip_fill.is("blipFill") || !sp_pr.is("spPr") {
+        return false;
+    }
+    let Some(c_nv_pr) = nv_pic_pr.child("cNvPr") else {
+        return false;
+    };
+    if !attrs_ok(c_nv_pr, |name, value| {
+        (name == "id" && value == "0")
+            || (name == "name" && generated_name(value))
+            || matches!(name, "descr" | "title")
+    }) || c_nv_pr.elements().next().is_some()
+    {
+        return false;
+    }
+    if !nv_pic_pr
+        .elements()
+        .nth(1)
+        .is_some_and(|e| e.is("cNvPicPr") && e.elements().next().is_none() && e.attrs.is_empty())
+        || nv_pic_pr.elements().nth(2).is_some()
+    {
+        return false;
+    }
+    let kids: Vec<&Element> = blip_fill.elements().collect();
+    let [blip, stretch] = kids.as_slice() else {
+        return false;
+    };
+    if !blip.is("blip")
+        || blip.elements().next().is_some()
+        || blip.rel_attr("embed").is_none()
+        || !attrs_ok(blip, |name, _| name.contains(':') && local(name) == "embed")
+    {
+        return false;
+    }
+    let kids: Vec<&Element> = stretch.elements().collect();
+    let [fill_rect] = kids.as_slice() else {
+        return false;
+    };
+    if !fill_rect.is("fillRect") || !attrs_ok(stretch, |_, _| false) {
+        return false;
+    }
+    let kids: Vec<&Element> = sp_pr.elements().collect();
+    let [xfrm, prst] = kids.as_slice() else {
+        return false;
+    };
+    if !xfrm.is("xfrm") || !attrs_ok(sp_pr, |_, _| false) {
+        return false;
+    }
+    let kids: Vec<&Element> = xfrm.elements().collect();
+    let [off, ext] = kids.as_slice() else {
+        return false;
+    };
+    if !off.is("off")
+        || off.attr("x") != Some("0")
+        || off.attr("y") != Some("0")
+        || !attrs_ok(off, |name, _| matches!(local(name), "x" | "y"))
+        || !ext.is("ext")
+        || !attrs_ok(ext, |name, _| matches!(local(name), "cx" | "cy"))
+    {
+        return false;
+    }
+    if !prst.is("prstGeom")
+        || prst.attr("prst") != Some("rect")
+        || !attrs_ok(prst, |name, _| local(name) == "prst")
+    {
+        return false;
+    }
+    let Some(av_lst) = prst.child("avLst") else {
+        return false;
+    };
+    if !av_lst.attrs.is_empty()
+        || av_lst.elements().next().is_some()
+        || prst.elements().nth(1).is_some()
+    {
+        return false;
+    }
+    // The sizes the writer puts on a `wp:inline` of these bytes: the
+    // extent and the picture's `a:ext` are the picture's own.
+    let Some(bytes) = base64_decode(&drawing.deps[slot].b64) else {
+        return false;
+    };
+    let Some(picture) = crate::markdown::write::read_picture(bytes, "") else {
+        return false;
+    };
+    extent.attr("cx") == Some(picture.width.to_string().as_str())
+        && extent.attr("cy") == Some(picture.height.to_string().as_str())
+        && ext.attr("cx") == Some(picture.width.to_string().as_str())
+        && ext.attr("cy") == Some(picture.height.to_string().as_str())
+}
+
+/// `element`'s non-`xmlns` attributes all pass `ok`.
+fn attrs_ok(element: &Element, ok: impl Fn(&str, &str) -> bool) -> bool {
+    element
+        .attrs
+        .iter()
+        .all(|(name, value)| name.starts_with("xmlns") || ok(name, value))
 }
 
 /// The span of a `![label][dN]` token that is a whole line: its `![`
@@ -1084,15 +1387,30 @@ pub(crate) fn materialize(
             (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),
             _ => return None,
         };
-        let rid = if external {
-            package.add_document_relationship_external(part, &kind, &target)
-        } else {
-            package.add_document_relationship(part, &kind, &target)
-        };
+        let rid = relate(package, part, &kind, &target, external);
         xml = xml.replace(&format!("\"{}\"", rel.sym), &format!("\"{rid}\""));
     }
     renumber_doc_pr(&mut xml, next_doc_pr);
     Some(xml)
+}
+
+/// A relationship `part` → `target` of `kind`, reusing one already
+/// written when there is one: two drawings that share a media part
+/// share its relationship too.
+fn relate(package: &mut PartFs, part: &str, kind: &str, target: &str, external: bool) -> String {
+    if let Some(rels) = package.read_rels_for(part)
+        && let Some(rel) = rels
+            .items
+            .iter()
+            .find(|r| r.rel_type == kind && r.target == target)
+    {
+        return rel.id.clone();
+    }
+    if external {
+        package.add_document_relationship_external(part, kind, target)
+    } else {
+        package.add_document_relationship(part, kind, target)
+    }
 }
 
 /// Give every `docPr id` in `xml` a fresh number: the stored `0`s collide
@@ -1153,11 +1471,7 @@ fn dep_part(
             (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(&name, raw), false),
             _ => return None,
         };
-        let rid = if external {
-            package.add_document_relationship_external(&name, &kind, &target)
-        } else {
-            package.add_document_relationship(&name, &kind, &target)
-        };
+        let rid = relate(package, &name, &kind, &target, external);
         if !xml.is_empty() {
             xml = xml.replace(&format!("\"d{index}.{}\"", n + 1), &format!("\"{rid}\""));
         }

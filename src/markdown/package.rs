@@ -1490,11 +1490,18 @@ impl Relate for PartRelate<'_, '_, '_> {
                 part
             }
         };
-        self.package.add_document_relationship(
-            &self.part,
-            &format!("{RELS}/image"),
-            &relative_rel_target(&self.part, &target),
-        )
+        // A picture used twice is one part and one relationship to it.
+        let rel_target = relative_rel_target(&self.part, &target);
+        if let Some(rels) = self.package.read_rels_for(&self.part)
+            && let Some(rel) = rels
+                .items
+                .iter()
+                .find(|r| r.rel_type == format!("{RELS}/image") && r.target == rel_target)
+        {
+            return rel.id.clone();
+        }
+        self.package
+            .add_document_relationship(&self.part, &format!("{RELS}/image"), &rel_target)
     }
 
     fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {
