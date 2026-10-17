@@ -1681,6 +1681,65 @@ fn review_10_unbound_v1_publishes_with_disclosed_waiver() {
     assert_eq!(paragraphs[2].text, "cost");
 }
 
+/// #1094: for a changed v1 typed apply, the receipt's document artifact
+/// carries the published bytes' sha256, and the SHA the receipt cites
+/// (in `effective_options.request_sha256` plus the artifact's own field)
+/// agrees with what's actually written to disk. Before the fix the CLI
+/// swapped the chosen primary to redline after `prepare` returned; the
+/// library today owns the choice and names the redline bytes directly.
+#[test]
+fn review_typed_v1_apply_receipt_describes_the_redline_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "fee");
+    let plan = br#"{"schema_version":1,"author":"Legacy","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p2","find":"fee","replacement":"cost"}]}"#;
+    std::fs::write(dir.join("v1.json"), plan).unwrap();
+    let (code, out, err) = run(
+        dir,
+        &[
+            "edit",
+            "apply",
+            "letter.docx",
+            "--plan",
+            "v1.json",
+            "--allow-unbound-plan",
+            "-o",
+            "out.docx",
+            "--emit",
+            "document,report",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let bytes = std::fs::read(dir.join("out.docx")).unwrap();
+    let actual_sha = source_sha256(&bytes);
+    // The receipt's document artifact sha256 is the sha256 of the
+    // bytes actually written: not the source's, not the clean copy's.
+    let documents: Vec<&serde_json::Value> = value["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["media_role"] == "document")
+        .collect();
+    assert_eq!(documents.len(), 1, "{value}");
+    assert_eq!(documents[0]["sha256"], actual_sha, "{value}");
+    assert_eq!(documents[0]["committed"], true, "{value}");
+    // The published bytes are the redline: paragraph 2 reads "cost" in
+    // accepted terms and the package carries a tracked-changes mark.
+    let paragraphs = jubarte::inspect::paragraphs(&bytes).unwrap();
+    assert_eq!(paragraphs[2].text, "cost");
+    let pkg = jubarte::opc::PartFs::open(&bytes).unwrap();
+    let document_xml = pkg
+        .part_bytes("word/document.xml")
+        .expect("word/document.xml in the published package");
+    let document_xml = std::str::from_utf8(document_xml).unwrap();
+    assert!(
+        document_xml.contains("<w:ins ") || document_xml.contains("<w:del "),
+        "v1's published primary must remain a tracked-changes redline; got: {document_xml}"
+    );
+}
+
 #[test]
 fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
     let dir = tempfile::tempdir().unwrap();

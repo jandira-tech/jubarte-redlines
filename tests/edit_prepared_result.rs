@@ -11,7 +11,7 @@ mod common;
 use common::docx::{Part, docx, docx_with_sect, para};
 use common::validity::assert_word_valid_package;
 use jubarte::edit::{
-    EditPlan, PrepareOptions, PrimaryBytes, apply_plan_json, apply_plan_json_with,
+    EditPlan, PrepareOptions, PrimaryBytes, PrimaryRole, apply_plan_json, apply_plan_json_with,
     introduced_findings, prepare, preview_plan_with,
 };
 use jubarte::inspect::{controls, paragraphs, source_sha256, stories};
@@ -21,14 +21,17 @@ use jubarte::validate::Finding;
 const DEFAULT: PrepareOptions = PrepareOptions {
     require_change: false,
     exact_text: false,
+    role: PrimaryRole::Clean,
 };
 const REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
     require_change: true,
     exact_text: false,
+    role: PrimaryRole::Clean,
 };
 const EXACT: PrepareOptions = PrepareOptions {
     require_change: false,
     exact_text: true,
+    role: PrimaryRole::Clean,
 };
 
 fn plan(json: &str) -> EditPlan {
@@ -221,6 +224,7 @@ fn unchanged_copy_and_require_change_are_distinct() {
         &PrepareOptions {
             require_change: true,
             exact_text: true,
+            role: PrimaryRole::Clean,
         },
     )
     .unwrap_err();
@@ -453,4 +457,103 @@ fn header_edits_are_checked_dom_against_serialized() {
         .expect("the header story survived");
     assert_eq!(header.paragraphs[0].text, "Header lines.");
     assert_word_valid_package(&prepared.primary);
+}
+
+const REDLINE: PrepareOptions = PrepareOptions {
+    require_change: false,
+    exact_text: false,
+    role: PrimaryRole::Redline,
+};
+const REDLINE_REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
+    require_change: true,
+    exact_text: false,
+    role: PrimaryRole::Redline,
+};
+
+/// For a changed v1 typed apply, the receipt digest names the bytes that
+/// are actually published: the chosen primary, byte for byte. The
+/// `PreparedEdit` the library hands the CLI carries the same bytes the
+/// CLI then writes — no out-of-band swap after `prepare` returns.
+#[test]
+fn review_typed_v1_primary_digest_describes_the_redline_bytes() {
+    let source = docx(&para("alpha beta"));
+    let plan = plan(
+        r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"alpha","replacement":"ALPHA"}]}"#,
+    );
+    let prepared = prepare(&source, &plan, &REDLINE_REQUIRE_CHANGE).unwrap();
+    assert_eq!(prepared.primary_effect, Effect::Changed);
+    assert_eq!(prepared.primary_bytes, PrimaryBytes::Candidate);
+    // The chosen primary is the redline, not a sanitizing wrapper or a
+    // reserialized clean copy: the library owns the choice, and the
+    // digest the receipt reports is the sha256 of those exact bytes.
+    assert_eq!(prepared.primary, prepared.result.redline);
+    assert_eq!(
+        prepared.primary_sha256,
+        source_sha256(&prepared.result.redline)
+    );
+    assert_eq!(
+        prepared.primary_sha256,
+        source_sha256(&prepared.primary),
+        "the digest describes the primary bytes the CLI publishes"
+    );
+}
+
+/// The serialized-story postcondition reads the bytes the publication
+/// names: a redline-only defect injected through the test hook is
+/// `POSTCONDITION_FAILED`, not a tracked change that ships. Today's
+/// `prepare` checks the clean candidate and only the green v2 path
+/// checked clean + redline together (#1094); the v1 typed route used
+/// to swap clean for redline at the CLI, leaving redline-only text
+/// defects unchecked. The library now asks which primary each request
+/// publishes and reads the postcondition on those bytes.
+#[test]
+fn review_typed_v1_serialized_story_postcondition_reads_the_redline() {
+    let source = docx(&para("alpha beta"));
+    let plan = plan(
+        r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"alpha","replacement":"ALPHA"}]}"#,
+    );
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            jubarte::edit::prepared::redline_hook::reset();
+        }
+    }
+    jubarte::edit::prepared::redline_hook::set(docx(&para("WRONG")));
+    let _reset = Reset;
+    let bad = prepare(&source, &plan, &REDLINE);
+    assert!(
+        bad.is_err(),
+        "a redline-only text defect must be POSTCONDITION_FAILED"
+    );
+    let e = bad.unwrap_err();
+    assert_eq!(e.code, "POSTCONDITION_FAILED");
+    assert!(e.message.contains("paragraph"), "{}", e.message);
+}
+
+/// The untracked (clean) role is unchanged: the same redline-only defect
+/// ships when the chosen primary is the clean candidate, because the
+/// postcondition runs on the chosen primary and a clean publish is not
+/// byte-identical to a redline that mangles text. Today, the clean role
+/// is the helper-callers' default; we keep that contract and ensure
+/// triggering the bug requires opting in to the redline role.
+#[test]
+fn review_typed_v1_clean_role_does_not_see_a_redline_only_defect() {
+    let source = docx(&para("alpha beta"));
+    let plan = plan(
+        r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"alpha","replacement":"ALPHA"}]}"#,
+    );
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            jubarte::edit::prepared::redline_hook::reset();
+        }
+    }
+    jubarte::edit::prepared::redline_hook::set(docx(&para("WRONG")));
+    let _reset = Reset;
+    // The clean role ignores the redline hook: prepare reads clean, so
+    // the wrong-paragraph redline never reaches the postcondition.
+    let prepared = prepare(&source, &plan, &REQUIRE_CHANGE).unwrap();
+    assert_eq!(prepared.primary_effect, Effect::Changed);
+    assert_eq!(prepared.primary_bytes, PrimaryBytes::Candidate);
+    assert_eq!(prepared.primary, prepared.result.clean);
 }
