@@ -14,21 +14,30 @@
 //! - `ExpectationsV1` is the closed `schema_version: 1` document.
 //! - `SourceToOutputCorrespondence` is an input type: V2-08 will construct
 //!   it from the prepared transaction; the standalone `check` case uses
-//!   `identity_correspondence` (the inspected file IS the reopened output).
+//!   `identity_correspondence` (the inspected file IS the reopened
+//!   output). The `output` indices address the projection below;
+//!   duplicate short ids refuse at construction.
 //! - `evaluate` reads the source and the reopened output bytes, projects
-//!   the body paragraphs in the final projection, and judges each typed
-//!   check on its target. A missing, unmapped, merged, split, ambiguous or
-//!   unsupported target refuses (and a vanished paragraph never passes
-//!   `text_absent`).
-//! - Natural-language requirements whose `checks` are empty are reported
-//!   `unassessed`; a passing typed check is one check, not the whole
-//!   requirement.
+//!   the output's paragraphs in the final projection — the body's in
+//!   body order, then the story paragraphs (`header1`, `header1.p1`,
+//!   ...) story by story, the order `inspect::markdown` prints — and
+//!   judges each typed check on its target. Both halves of a target
+//!   must name the same entity through the one ids codec, or the check
+//!   refuses `Ambiguous`. A missing, unmapped, merged, split or
+//!   unsupported target refuses, a correspondence index outside the
+//!   projection refuses `StaleCorrespondence` (never a panic), and a
+//!   vanished paragraph never passes `text_absent`.
+//! - Natural-language requirements whose `checks` are empty are listed
+//!   in `ExpectationReport::unassessed_requirements`, apart from the
+//!   typed checks (no pseudo-check with a fabricated kind); a passing
+//!   typed check is one check, not the whole requirement.
 //! - `ExpectationReport` carries the per-check outcomes and a receipt
-//!   with the path, digest, schema version, run counts, targets, and
-//!   any caller-declared provenance, never an independence or
+//!   with the path, digest (`None` when absent, never a fake empty
+//!   string), schema version, the fixed final projection, separate
+//!   counts of checks that ran, refused, were unsupported and
+//!   requirements left unassessed, the evaluated targets, and any
+//!   caller-declared provenance, never an independence or
 //!   completeness claim.
-
-use crate::ids::Step;
 
 /// The expected schema version, per `jubarte-expectations-v1.schema.json`.
 pub const EXPECTATIONS_SCHEMA_VERSION: u32 = 1;
@@ -150,6 +159,10 @@ pub enum RefusalReason {
     StaleSource,
     /// The output bytes cannot be opened for projection.
     InvalidOutput,
+    /// The correspondence maps the target to an output index outside
+    /// the reopened output's projection: a stale or foreign
+    /// correspondence, not a judgement about the document.
+    StaleCorrespondence,
 }
 
 /// Per-check report.
@@ -170,20 +183,37 @@ pub struct CheckOutcome {
     pub reason: Option<RefusalReason>,
 }
 
-/// The compact, structured receipt (proposal §10 / #1017).
+/// The compact, structured receipt (proposal §10 / #1017, edit plan P5:
+/// "state which checks ran, were unsupported or remained unassessed").
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpectationReceipt {
     /// Schema version of the parsed expectations.
     pub schema_version: u32,
     /// The source digest the expectations name.
     pub source_sha256: String,
-    /// The digest of the expectations bytes themselves.
-    pub expectations_sha256: String,
+    /// The digest of the expectations bytes themselves, when the caller
+    /// supplied one. A missing digest is `None`, never an empty string
+    /// that reads like one (review row 11).
+    pub expectations_sha256: Option<String>,
     /// Path of the expectations file, when supplied.
     pub expectations_path: Option<String>,
-    /// Number of typed checks that ran.
+    /// The fixed final projection the checks evaluated (edit plan P5:
+    /// the receipt records the projection; `final` only in this
+    /// profile).
+    pub text_view: TextView,
+    /// Typed checks that ran (passed or failed). A refused check never
+    /// ran, in any branch (review row 3).
     pub checks_run: usize,
-    /// Targets evaluated, in encounter order.
+    /// Typed checks that refused, for any reason except an unsupported
+    /// target.
+    pub checks_refused: usize,
+    /// Typed checks that refused because their target is not a
+    /// paragraph the initial profile supports.
+    pub checks_unsupported: usize,
+    /// Natural-language requirements that remained unassessed (their
+    /// `checks` list was empty).
+    pub requirements_unassessed: usize,
+    /// Targets evaluated, in encounter order, deduplicated.
     pub targets: Vec<String>,
     /// Caller-declared provenance string, if any; the receipt carries it
     /// verbatim but does not verify it.
@@ -241,16 +271,39 @@ impl CorrespondenceEntry {
 }
 
 /// The S→output correspondence V2-08 will supply, and the standalone
-/// `check` case builds with [`identity_correspondence`].
+/// `check` case builds with [`identity_correspondence`]. The `output`
+/// indices of its entries address the projected output paragraphs in
+/// the checker's projection order: the body's paragraphs in body order,
+/// then the story paragraphs (`header1`, `header1.p1`, ...) story by
+/// story.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SourceToOutputCorrespondence {
     entries: Vec<CorrespondenceEntry>,
+    /// short id → position in `entries`, so [`lookup`] is one hash
+    /// lookup instead of a linear scan per check.
+    index: std::collections::HashMap<String, usize>,
 }
 
 impl SourceToOutputCorrespondence {
     /// Build a correspondence from explicit entries. Order is preserved.
-    pub fn from_entries(entries: Vec<CorrespondenceEntry>) -> Self {
-        Self { entries }
+    ///
+    /// # Errors
+    ///
+    /// A plain string, when two entries share a `short_id`: a
+    /// correspondence names each source paragraph once, and a silent
+    /// first-wins lookup would hide the construction bug until it
+    /// surfaced as the wrong paragraph.
+    pub fn from_entries(entries: Vec<CorrespondenceEntry>) -> Result<Self, String> {
+        let mut index = std::collections::HashMap::with_capacity(entries.len());
+        for (position, entry) in entries.iter().enumerate() {
+            if index.insert(entry.short_id.clone(), position).is_some() {
+                return Err(format!(
+                    "duplicate correspondence short id: {}",
+                    entry.short_id
+                ));
+            }
+        }
+        Ok(Self { entries, index })
     }
 
     /// The correspondence entries.
@@ -260,15 +313,22 @@ impl SourceToOutputCorrespondence {
 
     /// Look up an entry by source short id.
     pub fn lookup(&self, short_id: &str) -> Option<&CorrespondenceEntry> {
-        self.entries.iter().find(|e| e.short_id == short_id)
+        self.index
+            .get(short_id)
+            .map(|&position| &self.entries[position])
     }
 }
 
 /// The full per-check report and the receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpectationReport {
-    /// Per-check outcomes in encounter order.
+    /// Per-check outcomes in encounter order. Only typed checks appear
+    /// here; an unassessed requirement is listed below, never as a
+    /// pseudo-check with a fabricated kind (review row 12).
     pub checks: Vec<CheckOutcome>,
+    /// Requirement keys whose `checks` list was empty: reported
+    /// `unassessed`, apart from the checks, in encounter order.
+    pub unassessed_requirements: Vec<String>,
     /// The compact, structured receipt.
     pub receipt: ExpectationReceipt,
 }
@@ -279,8 +339,19 @@ pub struct ExpectationReport {
 /// parser does not need a runtime JSON Schema validator (the WASM and
 /// Python lockfiles therefore stay free of `jsonschema` and ~40
 /// transitive crates for a closed object with four fields). The tests
-/// run every accepted/rejected document through both this function and
+/// run the accepted/rejected corpus through both this function and
 /// the bundled schema to keep them in lockstep.
+///
+/// The parser is additionally stricter on two document classes the
+/// bundled schema accepts (the safe direction; pinned by
+/// `parser_is_stricter_than_the_bundled_schema_on_two_pinned_divergences`):
+/// - `"schema_version": 1.0` (or `1e0`): JSON Schema `const` compares
+///   numbers by mathematical equality, so the schema's `const: 1`
+///   accepts it, while serde cannot deserialize a float into the
+///   `u32` field.
+/// - a JSON object with a duplicated field: the schema side reads a
+///   last-value-wins `serde_json::Value`, while the derived
+///   `Deserialize` errors on the duplicate field.
 ///
 /// Parsing fails with a plain string for the caller to surface.
 pub fn parse_expectations(json: &str) -> Result<ExpectationsV1, String> {
@@ -401,18 +472,40 @@ pub fn content_sha256(bytes: &[u8]) -> String {
 
 /// Build the identity correspondence: the inspected file IS the reopened
 /// output. Used for the standalone `check` case (#943) and for tests
-/// that bind the expectations to the file the inspector reads.
+/// that bind the expectations to the file the inspector reads. Covers
+/// the story paragraphs too (`header1`, `header1.p1`, ...): the ids
+/// `docx_text`/`jubarte read` print are checkable targets, in the same
+/// projection order [`evaluate`] uses.
+///
+/// # Errors
+///
+/// A plain string when the file cannot be opened for projection.
 pub fn identity_correspondence(
     source_bytes: &[u8],
 ) -> Result<SourceToOutputCorrespondence, String> {
     let paragraphs =
-        crate::inspect::paragraphs(source_bytes).map_err(|e| format!("cannot open source: {e}"))?;
+        projected_paragraphs(source_bytes).map_err(|e| format!("cannot open source: {e}"))?;
     let entries = paragraphs
         .into_iter()
         .enumerate()
         .map(|(index, p)| CorrespondenceEntry::one_to_one(p.id, index))
         .collect();
-    Ok(SourceToOutputCorrespondence::from_entries(entries))
+    Ok(SourceToOutputCorrespondence::from_entries(entries)
+        .expect("the inspector reports each paragraph id once"))
+}
+
+/// The paragraphs a expectations run judges, in the fixed projection
+/// order: the body's paragraphs in body order, then the story
+/// paragraphs (`header1`, `header1.p1`, ...) story by story — the same
+/// order `inspect::markdown` prints.
+fn projected_paragraphs(
+    bytes: &[u8],
+) -> Result<Vec<crate::inspect::Paragraph>, crate::inspect::InspectError> {
+    let mut all = crate::inspect::paragraphs(bytes)?;
+    for story in crate::inspect::stories(bytes)? {
+        all.extend(story.paragraphs);
+    }
+    Ok(all)
 }
 
 /// Evaluate typed checks on the reopened output, given the bytes the
@@ -449,30 +542,27 @@ pub fn evaluate_with_receipt(
     meta: ReceiptMeta,
 ) -> ExpectationReport {
     let mut checks: Vec<CheckOutcome> = Vec::new();
+    let mut unassessed_requirements: Vec<String> = Vec::new();
     let mut targets: Vec<String> = Vec::new();
+    let mut seen_targets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    // Project the body paragraphs of the output in the final projection.
-    let output_paragraphs = match crate::inspect::paragraphs(output) {
+    // Project the output's paragraphs in the final projection: the
+    // body's, then the stories'. Unopenable output bytes refuse every
+    // typed check with its real kind and target (review row 2);
+    // natural-language requirements stay unassessed, listed apart
+    // from the checks.
+    let output_paragraphs = match projected_paragraphs(output) {
         Ok(paragraphs) => paragraphs,
         Err(error) => {
-            // Every typed check refuses with the same InvalidOutput
-            // reason. Natural-language requirements stay Unassessed.
             for requirement in &spec.requirements {
                 if requirement.checks.is_empty() {
-                    checks.push(CheckOutcome {
-                        key: requirement.key.clone(),
-                        target: String::new(),
-                        kind: CheckKind::TextEquals,
-                        outcome: Outcome::Unassessed,
-                        evidence: None,
-                        reason: None,
-                    });
+                    unassessed_requirements.push(requirement.key.clone());
                 } else {
-                    for _ in &requirement.checks {
+                    for check in &requirement.checks {
                         checks.push(CheckOutcome {
                             key: requirement.key.clone(),
-                            target: String::new(),
-                            kind: CheckKind::TextEquals,
+                            target: check.target.short_id.clone(),
+                            kind: check.kind,
                             outcome: Outcome::Refused,
                             evidence: Some(error.to_string()),
                             reason: Some(RefusalReason::InvalidOutput),
@@ -480,20 +570,7 @@ pub fn evaluate_with_receipt(
                     }
                 }
             }
-            return ExpectationReport {
-                checks,
-                receipt: ExpectationReceipt {
-                    schema_version: spec.schema_version,
-                    source_sha256: spec.source.sha256.clone(),
-                    expectations_sha256: meta.digest.clone().unwrap_or_default(),
-                    expectations_path: meta.path.clone(),
-                    checks_run: 0,
-                    targets,
-                    declared_provenance: meta.declared_provenance,
-                    independent: false,
-                    complete_task: false,
-                },
-            };
+            return assemble_report(spec, meta, checks, unassessed_requirements, targets);
         }
     };
     let source_sha = content_sha256(source);
@@ -501,21 +578,13 @@ pub fn evaluate_with_receipt(
 
     for requirement in &spec.requirements {
         if requirement.checks.is_empty() {
-            checks.push(CheckOutcome {
-                key: requirement.key.clone(),
-                target: String::new(),
-                kind: CheckKind::TextEquals,
-                outcome: Outcome::Unassessed,
-                evidence: None,
-                reason: None,
-            });
+            // Unassessed, listed apart from the checks: no pseudo-check
+            // with a fabricated kind (review row 12).
+            unassessed_requirements.push(requirement.key.clone());
             continue;
         }
         for check in &requirement.checks {
             let target_label = check.target.short_id.clone();
-            if !targets.contains(&target_label) {
-                targets.push(target_label.clone());
-            }
 
             if stale_source {
                 checks.push(CheckOutcome {
@@ -528,6 +597,44 @@ pub fn evaluate_with_receipt(
                             .to_string(),
                     ),
                     reason: Some(RefusalReason::StaleSource),
+                });
+                continue;
+            }
+
+            // The initial profile checks paragraphs only: the body's
+            // `pN`, a story's own first paragraph (`header1`) or a
+            // story's `pN`. Targets naming anything else (tables,
+            // ranges, comments, revisions) refuse as unsupported --
+            // before the correspondence lookup, so the reason does not
+            // depend on what the correspondence happens to carry
+            // (review row 5).
+            if !is_paragraph_target(&check.target.short_id) {
+                checks.push(CheckOutcome {
+                    key: requirement.key.clone(),
+                    target: target_label,
+                    kind: check.kind,
+                    outcome: Outcome::Refused,
+                    evidence: Some(
+                        "target is not a paragraph the initial profile supports".to_string(),
+                    ),
+                    reason: Some(RefusalReason::Unsupported),
+                });
+                continue;
+            }
+
+            // Both ids must name the SAME entity (schema `$defs.target`),
+            // judged through the one ids codec: a disagreeing pair
+            // refuses as ambiguous before any lookup (review row 6).
+            if !ids_name_one_entity(&check.target.short_id, &check.target.long_id) {
+                checks.push(CheckOutcome {
+                    key: requirement.key.clone(),
+                    target: target_label,
+                    kind: check.kind,
+                    outcome: Outcome::Refused,
+                    evidence: Some(
+                        "the target's short id and long id do not name the same entity".to_string(),
+                    ),
+                    reason: Some(RefusalReason::Ambiguous),
                 });
                 continue;
             }
@@ -551,22 +658,6 @@ pub fn evaluate_with_receipt(
                     outcome: Outcome::Refused,
                     evidence: Some("target ids disagree".to_string()),
                     reason: Some(RefusalReason::Ambiguous),
-                });
-                continue;
-            }
-            // The initial profile supports paragraphs only. Targets
-            // naming anything else (tables, cells, ranges, comments)
-            // refuse as unsupported.
-            if !is_paragraph_target(&check.target.short_id) {
-                checks.push(CheckOutcome {
-                    key: requirement.key.clone(),
-                    target: target_label,
-                    kind: check.kind,
-                    outcome: Outcome::Refused,
-                    evidence: Some(
-                        "target is not a paragraph the initial profile supports".to_string(),
-                    ),
-                    reason: Some(RefusalReason::Unsupported),
                 });
                 continue;
             }
@@ -595,7 +686,22 @@ pub fn evaluate_with_receipt(
                 });
                 continue;
             }
-            let paragraph = &output_paragraphs[entry.output[0]];
+            let Some(paragraph) = output_paragraphs.get(entry.output[0]) else {
+                checks.push(CheckOutcome {
+                    key: requirement.key.clone(),
+                    target: target_label,
+                    kind: check.kind,
+                    outcome: Outcome::Refused,
+                    evidence: Some(format!(
+                        "correspondence maps the target to output paragraph {}, but the \
+                         reopened output's projection holds {} paragraphs",
+                        entry.output[0],
+                        output_paragraphs.len()
+                    )),
+                    reason: Some(RefusalReason::StaleCorrespondence),
+                });
+                continue;
+            };
             let evidence = paragraph.text.clone();
             let outcome = match check.kind {
                 CheckKind::TextEquals => {
@@ -620,6 +726,11 @@ pub fn evaluate_with_receipt(
                     }
                 }
             };
+            // Only an evaluated check ran, and only an evaluated check
+            // lists its target (review row 3).
+            if seen_targets.insert(target_label.clone()) {
+                targets.push(target_label.clone());
+            }
             checks.push(CheckOutcome {
                 key: requirement.key.clone(),
                 target: target_label,
@@ -631,32 +742,119 @@ pub fn evaluate_with_receipt(
         }
     }
 
+    assemble_report(spec, meta, checks, unassessed_requirements, targets)
+}
+
+/// Assemble the report and its receipt. Both the evaluated path and
+/// the InvalidOutput path end here, so the receipt's counts mean one
+/// thing in every branch (review row 3): `checks_run` counts the
+/// checks that ran (passed or failed), never the refused ones.
+fn assemble_report(
+    spec: &ExpectationsV1,
+    meta: ReceiptMeta,
+    checks: Vec<CheckOutcome>,
+    unassessed_requirements: Vec<String>,
+    targets: Vec<String>,
+) -> ExpectationReport {
     let checks_run = checks
         .iter()
-        .filter(|c| c.outcome != Outcome::Unassessed)
+        .filter(|c| matches!(c.outcome, Outcome::Passed | Outcome::Failed))
         .count();
-    let receipt = ExpectationReceipt {
-        schema_version: spec.schema_version,
-        source_sha256: spec.source.sha256.clone(),
-        expectations_sha256: meta.digest.clone().unwrap_or_default(),
-        expectations_path: meta.path.clone(),
-        checks_run,
-        targets,
-        declared_provenance: meta.declared_provenance,
-        independent: false,
-        complete_task: false,
+    let checks_unsupported = checks
+        .iter()
+        .filter(|c| {
+            matches!(
+                (c.outcome, &c.reason),
+                (Outcome::Refused, Some(RefusalReason::Unsupported))
+            )
+        })
+        .count();
+    let checks_refused = checks
+        .iter()
+        .filter(|c| {
+            c.outcome == Outcome::Refused
+                && !matches!(c.reason.as_ref(), Some(RefusalReason::Unsupported))
+        })
+        .count();
+    let requirements_unassessed = unassessed_requirements.len();
+    ExpectationReport {
+        checks,
+        unassessed_requirements,
+        receipt: ExpectationReceipt {
+            schema_version: spec.schema_version,
+            source_sha256: spec.source.sha256.clone(),
+            expectations_sha256: meta.digest,
+            expectations_path: meta.path,
+            text_view: spec.text_view,
+            checks_run,
+            checks_refused,
+            checks_unsupported,
+            requirements_unassessed,
+            targets,
+            declared_provenance: meta.declared_provenance,
+            independent: false,
+            complete_task: false,
+        },
+    }
+}
+
+/// Whether a target's two ids name the same entity, judged through the
+/// one ids codec (`crate::ids`); there is no second parser. The short
+/// id must parse as the paragraph place this profile checks, the long
+/// id must be the four-field form `PART.ELEMENT.ATTRIBUTE.VALUE`
+/// (short-and-long id contract §5: parse on the first three literal
+/// dots, the remainder is the VALUE), its ELEMENT must be `w:p`, and
+/// its PART must be the part the short id's story lives in
+/// (`document` for the body). When the ATTRIBUTE is the contract's
+/// `j:short`, its VALUE must parse to the very same
+/// [`crate::ids::ShortId`]. A long id of any other shape, or one
+/// naming another entity, makes the pair ambiguous. A native-key long
+/// id (`w14:paraId`) is proven against part and element only; its key
+/// identity is the apply path's resolver's to check (the v2
+/// `TARGET_ID_MISMATCH` refusal).
+fn ids_name_one_entity(short_id: &str, long_id: &str) -> bool {
+    use crate::ids::{ShortId, Story};
+    let Ok(short) = short_id.parse::<ShortId>() else {
+        return false;
     };
-    ExpectationReport { checks, receipt }
+    let ShortId::Block { story, .. } = &short else {
+        return false;
+    };
+    let fields: Vec<&str> = long_id.splitn(4, '.').collect();
+    let [part, element, attribute, value] = fields.as_slice() else {
+        return false;
+    };
+    if *element != "w:p" {
+        return false;
+    }
+    let part_matches = match story {
+        Story::Body => *part == "document",
+        Story::Part(stem) => *part == stem.as_str(),
+    };
+    if !part_matches {
+        return false;
+    }
+    if *attribute == "j:short" {
+        return value.parse::<ShortId>().is_ok_and(|named| named == short);
+    }
+    // A native key: part and element agree; the value names the key.
+    !value.is_empty()
 }
 
 fn is_paragraph_target(short_id: &str) -> bool {
-    // The initial profile supports paragraph short ids (`pN`,
-    // `header1.pN`, `footer1.pN`, ...). Tables, cells, ranges and
-    // comments are unsupported until an explicit alternative
-    // predicate/mapping lands.
-    use crate::ids::ShortId;
+    // The initial profile supports paragraph short ids: the body's `pN`
+    // (a cell's paragraphs carry their flat body `pN` too), a story's
+    // own first paragraph (`header1`) and a story's `header1.pN`,
+    // `footer1.pN`, `footnotes.pN`, ... — the same set
+    // `ids::parse_location` resolves as a paragraph. Tables, ranges,
+    // comments and revisions are unsupported until an explicit
+    // alternative predicate/mapping lands.
+    use crate::ids::{ShortId, Step, Story};
     match short_id.parse::<ShortId>() {
-        Ok(ShortId::Block { path, .. }) => matches!(path.as_slice(), [Step::Paragraph(_)]),
+        Ok(ShortId::Block { story, path }) => matches!(
+            (story, path.as_slice()),
+            (Story::Body, [Step::Paragraph(_)]) | (Story::Part(_), [] | [Step::Paragraph(_)])
+        ),
         Ok(ShortId::Range { .. }) => false,
         Ok(_) => false,
         Err(_) => false,

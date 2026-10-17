@@ -15,9 +15,9 @@
 
 mod common;
 
-use common::docx::docx;
+use common::docx::{Part, W_NS, docx, docx_with_sect};
 use jubarte::expect::{
-    CheckKind, CheckOutcome, ExpectationsV1, Outcome, evaluate, parse_expectations,
+    CheckKind, CheckOutcome, ExpectationsV1, Outcome, RefusalReason, evaluate, parse_expectations,
 };
 use jubarte::inspect::{paragraphs, source_sha256};
 
@@ -96,15 +96,539 @@ fn expectations_bind_source_and_check_reopened_output() {
         report.receipt.source_sha256,
         "54ef59e60b1986dd06131bfab3d6647d2f70b095ef3c09d698b4e221855c383e"
     );
-    assert!(report.receipt.checks_run >= 3);
-    // The commercial-review requirement is unassessed (its checks list is empty).
-    let unassessed = report
+    // Exactly the three typed checks ran (review row 13: the exact
+    // count, not a floor a phantom check could slip under).
+    assert_eq!(report.receipt.checks_run, 3);
+    assert_eq!(report.receipt.checks_refused, 0);
+    assert_eq!(report.receipt.checks_unsupported, 0);
+    // The commercial-review requirement is unassessed (its checks list
+    // is empty): listed apart from the checks, counted once.
+    assert_eq!(
+        report.unassessed_requirements,
+        ["commercial-review".to_string()]
+    );
+    assert_eq!(report.receipt.requirements_unassessed, 1);
+    assert_eq!(
+        report.checks.len(),
+        3,
+        "no pseudo-check for the unassessed requirement"
+    );
+}
+
+#[test]
+fn output_index_outside_the_projection_refuses_instead_of_panicking() {
+    // Review row 1 / edit plan:216: a stale correspondence or a shorter
+    // reopened output must refuse with its own stable code, never panic.
+    // The identity correspondence of a two-paragraph source maps p1 to
+    // output paragraph 1; a valid one-paragraph output leaves that index
+    // outside the projection.
+    let source = two_paragraph_docx();
+    let one_paragraph_output = docx("<w:p><w:r><w:t>Only.</w:t></w:r></w:p><w:sectPr/>");
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p1", "long_id": "document.w:p.j:short.p1" }},
+          "text": "Second paragraph."
+        }}
+      ]
+    }}
+  ]
+}}"#,
+        hash = source_sha256(&source)
+    ))
+    .expect("parse");
+    let report = evaluate(
+        &spec,
+        &source,
+        &one_paragraph_output,
+        &identity_correspondence(&source),
+    );
+    assert_eq!(report.checks[0].outcome, Outcome::Refused);
+    assert_eq!(
+        report.checks[0].reason,
+        Some(RefusalReason::StaleCorrespondence)
+    );
+}
+
+#[test]
+fn from_entries_refuses_duplicate_short_ids() {
+    // Review row 1: `from_entries` accepted duplicate `short_id`s and
+    // `lookup` silently returned the first, hiding the construction bug
+    // until it surfaced as the wrong paragraph or an out-of-bounds
+    // index. A correspondence names each source paragraph once, so a
+    // duplicate refuses at construction.
+    let duplicate = jubarte::expect::SourceToOutputCorrespondence::from_entries(vec![
+        jubarte::expect::CorrespondenceEntry::one_to_one("p0", 0),
+        jubarte::expect::CorrespondenceEntry::one_to_one("p0", 1),
+    ]);
+    assert!(
+        duplicate.is_err(),
+        "duplicate short ids must refuse: {duplicate:?}"
+    );
+    let err = duplicate.unwrap_err();
+    assert!(
+        err.contains("p0") && err.contains("duplicate"),
+        "the refusal names the duplicated id: {err}"
+    );
+    // Distinct ids still build, and lookup stays correct across many
+    // entries (review row 10: indexed lookup, order preserved).
+    let many: Vec<_> = (0..50)
+        .map(|n| jubarte::expect::CorrespondenceEntry::one_to_one(format!("p{n}"), n))
+        .collect();
+    let correspondence = jubarte::expect::SourceToOutputCorrespondence::from_entries(many)
+        .expect("distinct short ids");
+    assert_eq!(correspondence.entries().len(), 50);
+    for n in [0usize, 7, 49] {
+        assert_eq!(
+            correspondence
+                .lookup(&format!("p{n}"))
+                .map(|e| e.output.clone()),
+            Some(vec![n]),
+            "lookup finds p{n}"
+        );
+    }
+    assert!(correspondence.lookup("p50").is_none());
+}
+
+#[test]
+fn invalid_output_bytes_refuse_each_check_with_its_real_kind_and_target() {
+    // Review row 2: the InvalidOutput branch fabricated
+    // `kind: text_equals, target: ""` for every check. A refused check
+    // keeps the kind and target it was declared with, and the receipt
+    // counts it the same way the evaluated path would.
+    let bytes = two_paragraph_docx();
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_contains",
+          "target": {{ "short_id": "p1", "long_id": "document.w:p.j:short.p1" }},
+          "text": "paragraph"
+        }}
+      ]
+    }}
+  ]
+}}"#,
+        hash = source_sha256(&bytes)
+    ))
+    .expect("parse");
+    let report = evaluate(
+        &spec,
+        &bytes,
+        b"not a docx",
+        &identity_correspondence(&bytes),
+    );
+    let check = &report.checks[0];
+    assert_eq!(check.kind, CheckKind::TextContains);
+    assert_eq!(check.target, "p1");
+    assert_eq!(check.outcome, Outcome::Refused);
+    assert_eq!(check.reason, Some(RefusalReason::InvalidOutput));
+    // Same meaning as the evaluated path (review row 3): nothing ran,
+    // the refusal is counted as refused, and no target is listed.
+    assert_eq!(report.receipt.checks_run, 0);
+    assert_eq!(report.receipt.checks_refused, 1);
+    assert!(report.receipt.targets.is_empty());
+}
+
+#[test]
+fn refused_checks_do_not_count_as_run_or_populate_targets() {
+    // Review row 3: `checks_run` counted every outcome that was not
+    // `Unassessed`, so a run where every check refused (here: a stale
+    // source digest) reported `checks_run = N`, and `targets` was
+    // filled before the refusals. Only evaluated checks run; only
+    // evaluated checks list their target.
+    let bytes = two_paragraph_docx();
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{wrong_hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "Hello world."
+        }},
+        {{
+          "kind": "text_contains",
+          "target": {{ "short_id": "p1", "long_id": "document.w:p.j:short.p1" }},
+          "text": "Second"
+        }}
+      ]
+    }}
+  ]
+}}"#,
+        wrong_hash = "0".repeat(64)
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
+    assert_eq!(report.checks.len(), 2);
+    assert!(
+        report
+            .checks
+            .iter()
+            .all(|c| c.outcome == Outcome::Refused && c.reason == Some(RefusalReason::StaleSource))
+    );
+    assert_eq!(report.receipt.checks_run, 0, "refused checks did not run");
+    assert!(
+        report.receipt.targets.is_empty(),
+        "no target was evaluated: {:?}",
+        report.receipt.targets
+    );
+}
+
+const HEADER_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const HEADER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+
+/// A one-paragraph body plus a default header with two paragraphs, the
+/// ids `jubarte read` prints: `p0`, `header1`, `header1.p1`.
+fn docx_with_header() -> Vec<u8> {
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>Header first.</w:t></w:r></w:p><w:p><w:r><w:t>Header second.</w:t></w:r></w:p></w:hdr>"#
+    );
+    docx_with_sect(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CONTENT_TYPE,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    )
+}
+
+#[test]
+fn story_paragraph_targets_resolve_through_the_correspondence() {
+    // Review row 4: `identity_correspondence` built entries from body
+    // paragraphs only, so the story ids the inspector prints (`header1`,
+    // `header1.p1`) were structurally unreachable and the refusal lied
+    // that the target "is not in the correspondence". The identity
+    // correspondence covers story paragraphs too, and the checker
+    // projects them in the same order.
+    let bytes = docx_with_header();
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "header-first",
+      "description": "The header's first paragraph is intact.",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "header1", "long_id": "header1.w:p.j:short.header1" }},
+          "text": "Header first."
+        }},
+        {{
+          "kind": "text_contains",
+          "target": {{ "short_id": "header1.p1", "long_id": "header1.w:p.j:short.header1.p1" }},
+          "text": "second"
+        }}
+      ]
+    }}
+  ]
+}}"#,
+        hash = source_sha256(&bytes)
+    ))
+    .expect("parse");
+    let correspondence = identity_correspondence(&bytes);
+    assert!(
+        correspondence.lookup("header1").is_some(),
+        "the identity correspondence carries the header's first paragraph"
+    );
+    let report = evaluate(&spec, &bytes, &bytes, &correspondence);
+    assert_eq!(report.checks.len(), 2);
+    for check in &report.checks {
+        assert_eq!(check.outcome, Outcome::Passed, "{check:?}");
+    }
+    assert_eq!(report.checks[0].evidence.as_deref(), Some("Header first."));
+    assert_eq!(report.checks[1].evidence.as_deref(), Some("Header second."));
+}
+
+#[test]
+fn disagreeing_id_pair_refuses_ambiguous() {
+    // Review row 6 / schema $defs.target: "Both IDs must identify the
+    // SAME entity". The pair is judged through the one ids codec: a
+    // long id whose `j:short` value names another paragraph, or whose
+    // element names another entity type, refuses `Ambiguous` instead of
+    // evaluating as if the pair were consistent.
+    let bytes = two_paragraph_docx();
+    for (short_id, long_id) in [
+        ("p0", "document.w:p.j:short.p9"),
+        ("p0", "document.w:ins.w:id.12"),
+        ("header1.p1", "header1.w:p.j:short.header1.p2"),
+    ] {
+        let spec = parse_expectations(&format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "{short_id}", "long_id": "{long_id}" }},
+          "text": "Hello world."
+        }}
+      ]
+    }}
+  ]
+}}"#,
+            hash = source_sha256(&bytes)
+        ))
+        .expect("parse");
+        let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
+        assert_eq!(
+            report.checks[0].outcome,
+            Outcome::Refused,
+            "{short_id} + {long_id}"
+        );
+        assert_eq!(
+            report.checks[0].reason,
+            Some(RefusalReason::Ambiguous),
+            "{short_id} + {long_id} name different entities"
+        );
+    }
+}
+
+#[test]
+fn an_entry_marked_identity_not_ok_refuses_ambiguous() {
+    // The correspondence itself can veto a pair (V2-08's resolver will
+    // set `identity_ok` when it finds the halves disagreeing while
+    // building the mapping).
+    let bytes = two_paragraph_docx();
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "Hello world."
+        }}
+      ]
+    }}
+  ]
+}}"#,
+        hash = source_sha256(&bytes)
+    ))
+    .expect("parse");
+    let correspondence = jubarte::expect::SourceToOutputCorrespondence::from_entries(vec![
+        jubarte::expect::CorrespondenceEntry {
+            short_id: "p0".to_string(),
+            output: vec![0],
+            identity_ok: false,
+        },
+    ])
+    .expect("distinct short ids");
+    let report = evaluate(&spec, &bytes, &bytes, &correspondence);
+    assert_eq!(report.checks[0].outcome, Outcome::Refused);
+    assert_eq!(report.checks[0].reason, Some(RefusalReason::Ambiguous));
+}
+
+#[test]
+fn receipt_without_meta_does_not_fake_a_digest() {
+    // Review row 11: the default `evaluate()` entry point filled the
+    // digest-shaped `expectations_sha256` field with "" when the caller
+    // supplied no `ReceiptMeta`, so the receipt looked like it recorded
+    // file identity while recording none. A missing digest must not
+    // masquerade as one.
+    let bytes = two_paragraph_docx();
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "Hello world."
+        }}
+      ]
+    }}
+  ]
+}}"#,
+        hash = source_sha256(&bytes)
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
+    assert_eq!(
+        report.receipt.expectations_sha256, None,
+        "an absent digest is None, never an empty string that reads like one"
+    );
+    // The fixed final projection is recorded (review row 11).
+    assert_eq!(report.receipt.text_view, jubarte::expect::TextView::Final);
+}
+
+#[test]
+fn unassessed_requirements_are_listed_apart_from_checks() {
+    // Review row 12: a natural-language requirement was emitted as a
+    // pseudo-check with a fabricated `kind: text_equals` and an empty
+    // target, so a consumer counting checks by kind overcounted and
+    // could not tell a pseudo-entry from a real one. Unassessed
+    // requirements are listed apart, with no fabricated kind.
+    let bytes = two_paragraph_docx();
+    let spec = parse_expectations(&format!(
+        r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "typed",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "Hello world."
+        }}
+      ]
+    }},
+    {{
+      "key": "natural",
+      "description": "The doc should look polished.",
+      "checks": []
+    }}
+  ]
+}}"#,
+        hash = source_sha256(&bytes)
+    ))
+    .expect("parse");
+    let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
+    assert_eq!(report.checks.len(), 1);
+    assert_eq!(report.checks[0].key, "typed");
+    // The unassessed requirement is listed apart, with no fabricated
+    // kind, and the receipt counts it once (review rows 3 and 12).
+    assert_eq!(report.unassessed_requirements, ["natural".to_string()]);
+    assert_eq!(report.receipt.requirements_unassessed, 1);
+    assert_eq!(report.receipt.checks_run, 1);
+    assert_eq!(report.receipt.checks_refused, 0);
+    assert_eq!(report.receipt.checks_unsupported, 0);
+}
+
+#[test]
+fn readme_edited_outcome_passes_the_example_expectations() {
+    // Review row 7 / issue #845 acceptance: the README's outcomes for
+    // the EDITED plan -- the three typed predicates passing on the
+    // edited five-paragraph output, `commercial-review` unassessed --
+    // were never evaluated (every passing test used source == output).
+    // Here the reopened bytes differ from the source, and the
+    // correspondence is built explicitly for the shift the inserted
+    // paragraph causes: the insert after p0 moves p1->2, p2->3, p3->4
+    // in the output's projection.
+    let plan =
+        jubarte::edit::v2::PlanV2::from_json(include_str!("fixtures/edit-v2/template.edited.json"))
+            .expect("parse the design's edited plan");
+    let out = jubarte::edit::v2_apply::apply_plan(EXAMPLE_SOURCE, &plan)
+        .expect("apply the design's edited plan");
+    // The README's five-paragraph final logical text (examples/README
+    // lines 24-28), computed from the reopened primary bytes.
+    let edited_texts: Vec<String> = paragraphs(&out.redline)
+        .expect("reopen the redline")
+        .into_iter()
+        .map(|p| p.text)
+        .collect();
+    assert_eq!(
+        edited_texts,
+        [
+            "Payment is due within 45 days.",
+            "Invoices must state the payment due date.",
+            "The fee is due; the charge is payable.",
+            "One  space.",
+            "Notice is due within 30\u{00A0}days.",
+        ],
+        "the applied edit produces the README's edited output"
+    );
+
+    let spec = parse_expectations(EXAMPLE_EXPECTATIONS).expect("parse expectations");
+    let correspondence = jubarte::expect::SourceToOutputCorrespondence::from_entries(vec![
+        jubarte::expect::CorrespondenceEntry::one_to_one("p0", 0),
+        jubarte::expect::CorrespondenceEntry::one_to_one("p1", 2),
+        jubarte::expect::CorrespondenceEntry::one_to_one("p2", 3),
+        jubarte::expect::CorrespondenceEntry::one_to_one("p3", 4),
+    ])
+    .expect("distinct short ids");
+    let report = evaluate(&spec, EXAMPLE_SOURCE, &out.redline, &correspondence);
+
+    let payment = report
         .checks
         .iter()
-        .filter(|c| c.key == "commercial-review")
+        .find(|c| c.key == "payment-period")
+        .expect("payment-period check ran");
+    assert_eq!(payment.outcome, Outcome::Passed);
+    assert_eq!(
+        payment.evidence.as_deref(),
+        Some("Payment is due within 45 days.")
+    );
+    let fee = report
+        .checks
+        .iter()
+        .filter(|c| c.key == "fee-wording")
         .collect::<Vec<_>>();
-    assert_eq!(unassessed.len(), 1);
-    assert_eq!(unassessed[0].outcome, Outcome::Unassessed);
+    assert_eq!(fee.len(), 2);
+    assert!(
+        fee.iter()
+            .any(|c| matches!(c.kind, CheckKind::TextContains) && c.outcome == Outcome::Passed),
+        "text_contains passes on the edited output"
+    );
+    assert!(
+        fee.iter()
+            .any(|c| matches!(c.kind, CheckKind::TextAbsent) && c.outcome == Outcome::Passed),
+        "text_absent passes on the edited output"
+    );
+    // Exactly three checks ran against bytes that differ from the
+    // source; the commercial requirement stays unassessed.
+    assert_eq!(report.receipt.checks_run, 3);
+    assert_eq!(report.receipt.checks_refused, 0);
+    assert_eq!(
+        report.unassessed_requirements,
+        ["commercial-review".to_string()]
+    );
+    assert_eq!(report.receipt.requirements_unassessed, 1);
+    assert_eq!(
+        report.receipt.targets,
+        vec!["p0".to_string(), "p1".to_string()]
+    );
 }
 
 #[test]
@@ -396,7 +920,8 @@ fn merged_target_refuses() {
     .expect("parse");
     let correspondence = jubarte::expect::SourceToOutputCorrespondence::from_entries(vec![
         jubarte::expect::CorrespondenceEntry::merged("p0", &[0, 1]),
-    ]);
+    ])
+    .expect("distinct short ids");
     let report = evaluate(&spec, &bytes, &bytes, &correspondence);
     assert_eq!(report.checks[0].outcome, Outcome::Refused);
 }
@@ -430,7 +955,8 @@ fn split_target_refuses() {
     .expect("parse");
     let correspondence = jubarte::expect::SourceToOutputCorrespondence::from_entries(vec![
         jubarte::expect::CorrespondenceEntry::split("p0"),
-    ]);
+    ])
+    .expect("distinct short ids");
     let report = evaluate(&spec, &bytes, &bytes, &correspondence);
     assert_eq!(report.checks[0].outcome, Outcome::Refused);
 }
@@ -486,12 +1012,17 @@ fn natural_language_requirement_is_unassessed() {
     ))
     .expect("parse");
     let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
-    let check = &report.checks[0];
-    assert_eq!(check.outcome, Outcome::Unassessed);
-    // A passing typed check on the same requirement is not a satisfied
-    // requirement, but here there are no typed checks at all; the
-    // requirement IS unassessed.
-    assert_eq!(check.key, "natural");
+    // Unassessed: listed apart from the checks, with no fabricated
+    // kind, and nothing ran.
+    assert!(
+        report.checks.is_empty(),
+        "no pseudo-check: {:?}",
+        report.checks
+    );
+    assert_eq!(report.unassessed_requirements, ["natural".to_string()]);
+    assert_eq!(report.receipt.requirements_unassessed, 1);
+    assert_eq!(report.receipt.checks_run, 0);
+    assert!(report.receipt.targets.is_empty());
 }
 
 #[test]
@@ -786,15 +1317,19 @@ fn receipt_records_path_digest_and_schema_version() {
     let receipt = &report.receipt;
     assert_eq!(receipt.schema_version, 1);
     assert_eq!(
-        receipt.expectations_sha256,
-        jubarte::expect::content_sha256(expectations_json.as_bytes())
+        receipt.expectations_sha256.as_deref(),
+        Some(jubarte::expect::content_sha256(expectations_json.as_bytes()).as_str())
     );
     assert_eq!(
         receipt.expectations_path.as_deref(),
         Some("/tmp/expectations.json")
     );
     assert_eq!(receipt.source_sha256, source_sha256(&bytes));
+    assert_eq!(receipt.text_view, jubarte::expect::TextView::Final);
     assert_eq!(receipt.checks_run, 1);
+    assert_eq!(receipt.checks_refused, 0);
+    assert_eq!(receipt.checks_unsupported, 0);
+    assert_eq!(receipt.requirements_unassessed, 0);
     assert_eq!(receipt.targets, vec!["p0".to_string()]);
     assert!(!receipt.independent);
     assert!(!receipt.complete_task);
@@ -864,9 +1399,11 @@ fn evaluate_with_provenance(
 #[test]
 fn unsupported_target_kind_refuses() {
     // A check whose target names a table, not a paragraph, is unsupported
-    // by the initial profile. The parser accepts the shape (the
-    // closed-object contract); the evaluator refuses because the target
-    // does not resolve to a paragraph in the correspondence.
+    // by the initial profile. Review row 5: the target-kind check must
+    // fire before the correspondence lookup, so a non-paragraph target
+    // refuses `Unsupported` even when no correspondence entry carries it
+    // (before, the lookup missed first and the refusal said
+    // `TargetMissing`, leaving the Unsupported branch dead).
     let bytes = two_paragraph_docx();
     let spec = parse_expectations(&format!(
         r#"{{
@@ -892,15 +1429,22 @@ fn unsupported_target_kind_refuses() {
     .expect("parse");
     let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
     assert_eq!(report.checks[0].outcome, Outcome::Refused);
+    assert_eq!(
+        report.checks[0].reason,
+        Some(RefusalReason::Unsupported),
+        "a non-paragraph target refuses as unsupported, not as missing"
+    );
 }
 
 #[test]
 fn a_passing_typed_check_does_not_mark_its_requirement_satisfied() {
     // #1048 / proposal §10: a typed check passing is one check, not
-    // the whole requirement. The requirement's satisfaction is a
-    // separate judgement, the caller can compute, over its typed checks
-    // and the requirement's natural-language description. The report
-    // carries per-check outcomes; it does not collapse them.
+    // the whole requirement. The report exposes per-check outcomes and
+    // a separate unassessed listing, and nothing else: a requirement
+    // with a passing check leaves the unassessed listing (it was
+    // assessed, by exactly that check), a requirement with no checks
+    // enters it, and no field collapses the checks into a satisfied
+    // requirement (review row 13).
     let bytes = two_paragraph_docx();
     let spec = parse_expectations(&format!(
         r#"{{
@@ -918,6 +1462,11 @@ fn a_passing_typed_check_does_not_mark_its_requirement_satisfied() {
           "text": "Hello world."
         }}
       ]
+    }},
+    {{
+      "key": "natural",
+      "description": "The doc should look polished.",
+      "checks": []
     }}
   ]
 }}"#,
@@ -927,10 +1476,15 @@ fn a_passing_typed_check_does_not_mark_its_requirement_satisfied() {
     let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
     let check = &report.checks[0];
     assert_eq!(check.outcome, Outcome::Passed);
-    // No `requirement_satisfied` is implied; the caller judges.
     assert_eq!(check.key, "ambitious");
-    // Documents the field types the test file relies on.
     let _: &CheckOutcome = check;
+    // Exactly the one typed check ran, and only the check-less
+    // requirement is unassessed: the passing check assessed its
+    // requirement's typed predicate without claiming the requirement
+    // satisfied.
+    assert_eq!(report.receipt.checks_run, 1);
+    assert_eq!(report.unassessed_requirements, ["natural".to_string()]);
+    assert_eq!(report.receipt.requirements_unassessed, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -938,11 +1492,14 @@ fn a_passing_typed_check_does_not_mark_its_requirement_satisfied() {
 //
 // `parse_expectations` enforces every constraint the schema states in plain
 // Rust so the WASM and Python lockfiles do not pull in `jsonschema` at
-// runtime. The bundled schema (mirrored from `docs/design/cli-v2/`) is the
-// contract; the Rust parser must accept what the schema accepts and reject
-// what the schema rejects. This test exercises every positive/negative case
-// used elsewhere in this file (plus the design example) through BOTH the
-// Rust parser and the schema validator, and asserts they agree.
+// runtime. The bundled schema (see `bundled_schema_is_loaded_from_disk_in_tests`
+// for where it comes from) is the contract; the Rust parser must accept
+// what the schema accepts and reject what the schema rejects. The corpus
+// test below runs every shared positive/negative case through BOTH the
+// Rust parser and the schema validator and asserts they agree. Two
+// document classes are parser-only refusals, pinned by their own test:
+// `schema_version` written as a float (`1.0`), and a JSON object with a
+// duplicated field.
 // ---------------------------------------------------------------------------
 
 const BUNDLED_SCHEMA_PATH: &str = "schemas/expectations-v1.schema.json";
@@ -982,7 +1539,7 @@ fn assert_parity(document: &str, expect_accepted: bool, label: &str) {
 }
 
 #[test]
-fn parse_expectations_and_bundled_schema_agree_on_every_document() {
+fn parse_expectations_and_bundled_schema_agree_on_the_corpus() {
     // POSITIVE cases: documents the parser must accept, and the bundled
     // schema must accept. The design example is the canonical one; the
     // others are the typed-check shapes the parser must accept too.
@@ -1552,18 +2109,297 @@ fn parse_expectations_and_bundled_schema_agree_on_every_document() {
         false,
         "missing source",
     );
+
+    // 31-35. Wrong JSON types and null values, so the `type` keyword is
+    //        the deciding keyword for each field (review row 9).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "k", "description": 5, "checks": [] }}
+  ]
+}}"#
+        ),
+        false,
+        "description with a number type",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "k", "description": "d", "checks": "x" }}
+  ]
+}}"#
+        ),
+        false,
+        "checks with a string type",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": 12
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "check text with a number type",
+    );
+
+    assert_parity(
+        r#"{
+  "schema_version": 1,
+  "source": { "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "text_view": "final",
+  "requirements": {}
+}"#,
+        false,
+        "requirements with an object type",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{ "key": "k", "description": null, "checks": [] }}
+  ]
+}}"#
+        ),
+        false,
+        "null description",
+    );
+
+    // 36. Unknown field inside the target object (closed shape at the
+    //     `target` level, exercising `additionalProperties` there).
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0", "extra": 1 }},
+          "text": "x"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "unknown field inside target",
+    );
+
+    // 37-42. Missing `required` fields not covered by cases 28-30
+    //        (review row 9).
+    assert_parity(
+        &format!(
+            r#"{{
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#
+        ),
+        false,
+        "missing schema_version",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "requirements": [{{ "key": "k", "description": "d", "checks": [] }}]
+}}"#
+        ),
+        false,
+        "missing text_view",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [{{ "description": "d", "checks": [] }}]
+}}"#
+        ),
+        false,
+        "missing requirement key",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }},
+          "text": "x"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "missing check kind",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "target": {{ "short_id": "p0", "long_id": "document.w:p.j:short.p0" }}
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "missing check text",
+    );
+
+    assert_parity(
+        &format!(
+            r#"{{
+  "schema_version": 1,
+  "source": {{ "sha256": "{hash}" }},
+  "text_view": "final",
+  "requirements": [
+    {{
+      "key": "k",
+      "description": "d",
+      "checks": [
+        {{
+          "kind": "text_equals",
+          "text": "x"
+        }}
+      ]
+    }}
+  ]
+}}"#
+        ),
+        false,
+        "missing check target",
+    );
+}
+
+#[test]
+fn parser_is_stricter_than_the_bundled_schema_on_two_pinned_divergences() {
+    // Review row 8: two document classes are refused by the parser and
+    // accepted by the bundled schema. The direction is the safe one
+    // (the parser is never laxer), and this test pins both divergences
+    // explicitly instead of letting the corpus test's name overstate
+    // "every document".
+    let validator = schema_validator();
+
+    // (a) `"schema_version": 1.0` -- JSON Schema `const` compares
+    // numbers by mathematical equality (draft 2020-12), so the schema
+    // accepts 1.0 for `const: 1`; serde cannot deserialize a float
+    // into the `u32` field.
+    let float_version = r#"{
+  "schema_version": 1.0,
+  "source": { "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "text_view": "final",
+  "requirements": [ { "key": "k", "description": "d", "checks": [] } ]
+}"#;
+    let value: serde_json::Value = serde_json::from_str(float_version).expect("valid JSON");
+    assert!(
+        validator.is_valid(&value),
+        "the schema's numeric const accepts 1.0"
+    );
+    assert!(
+        parse_expectations(float_version).is_err(),
+        "the parser refuses a float schema_version"
+    );
+
+    // (b) A JSON object with a duplicated field: the schema side reads
+    // `serde_json::Value` (last value wins), the derived Deserialize
+    // errors on the duplicate field.
+    let duplicate_key = r#"{
+  "schema_version": 1,
+  "source": { "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "text_view": "final",
+  "requirements": [ { "key": "k", "key": "k", "description": "d", "checks": [] } ]
+}"#;
+    let value: serde_json::Value = serde_json::from_str(duplicate_key).expect("valid JSON");
+    assert!(
+        validator.is_valid(&value),
+        "last-value-wins Value parsing validates the duplicate field"
+    );
+    assert!(
+        parse_expectations(duplicate_key).is_err(),
+        "the parser refuses a duplicated JSON field"
+    );
 }
 
 #[test]
 fn bundled_schema_is_loaded_from_disk_in_tests() {
-    // The bundled schema file is preserved so this parity test, and any
-    // external validator, can check that `parse_expectations` and the
-    // schema agree. The runtime crate does not.
+    // The bundled schema file ships as the production parsing contract,
+    // following the `$id`/`$comment` convention of
+    // schemas/edit-plan-v2.schema.json, and is derived from the design
+    // artifact docs/design/cli-v2/jubarte-expectations-v1.schema.json;
+    // only the `$id`, title and `$comment` metadata differ, every
+    // constraint is the design's. It is preserved so this parity test, and any external
+    // validator, can check that `parse_expectations` and the schema
+    // agree. The runtime crate does not.
     let schema_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), BUNDLED_SCHEMA_PATH);
     let schema_text = std::fs::read_to_string(&schema_path)
         .expect("bundled schema file exists at schemas/expectations-v1.schema.json");
     assert!(
-        schema_text.contains("\"$id\": \"urn:jubarte:proposal:expectations-v1\""),
-        "bundled schema carries the design's id"
+        schema_text.contains("\"$id\": \"urn:jubarte:expectations-v1:paragraph-text\""),
+        "bundled schema follows the shipped $id convention"
+    );
+    assert!(
+        schema_text.contains("docs/design/cli-v2/jubarte-expectations-v1.schema.json"),
+        "bundled schema cites the design artifact it derives from"
     );
 }
