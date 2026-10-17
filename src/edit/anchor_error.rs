@@ -466,7 +466,7 @@ fn refused(
         // all-matches refusals never take an occurrence: name their own
         // variant before the occurrence guidance below.
         (_, _, _) if edit.code == "OVERLAPPING_EDITS" => format!(
-            "{shown_anchor} occurs {count} times in {} and those ranges overlap; all-matches refuses them all",
+            "{shown_anchor} occurs {count} times in {} and those ranges overlap, so none of them is replaced",
             refusal.target
         ),
         (_, _, Some(wanted)) => format!(
