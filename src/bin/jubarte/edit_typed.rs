@@ -28,6 +28,28 @@ fn edit_error(e: jubarte::edit::EditError) -> Failure {
 fn io_error(message: String) -> Failure {
     failure("IO_ERROR", message)
 }
+/// A publication refusal or failure in this route's vocabulary. The shared
+/// publisher names its refusals by a `CODE: ` prefix; `SOURCE_CHANGED` is
+/// this route's `STALE_SOURCE`. Nothing is published before the primary, so
+/// a failure that committed nothing is `not_committed`; after a commit the
+/// primary's state is not reported back, and stays `unknown`.
+fn publish_failure((_, message): (u8, String)) -> Failure {
+    let code = match message.split_once(": ").map(|(code, _)| code) {
+        Some(code @ ("OUTPUT_EXISTS" | "OUTPUT_ALIAS")) => code,
+        Some("SOURCE_CHANGED") => "STALE_SOURCE",
+        _ => "IO_ERROR",
+    };
+    let state = if message.contains("(already committed: ") {
+        CommitState::Unknown
+    } else {
+        CommitState::NotCommitted
+    };
+    Box::new(
+        Error::new(code)
+            .with_message(message)
+            .with_commit_state(state),
+    )
+}
 fn read(path: &Path) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| io_error(format!("reading {}: {e}", path.display())))
 }
@@ -478,19 +500,28 @@ fn prepare_and_publish(
             let _ = std::fs::remove_dir_all(&stage);
             return Err(io_error(e.to_string()));
         }
-        publish_dir(&stage, dir, false).map_err(io_error)?;
+        publish_dir(&stage, dir, false, || {
+            for (path, _, _) in &outputs {
+                refuse_output_alias(path, &inputs)?;
+            }
+            refuse_bundle_input_containment(dir, &inputs)?;
+            recheck_edit_source(action.file(), source)
+        })
+        .map_err(publish_failure)?;
     } else {
         let files: Vec<_> = outputs
             .iter()
             .map(|(path, bytes, _)| (path.clone(), bytes.as_slice()))
             .collect();
-        publish_files(&files).map_err(|message| {
-            Box::new(
-                Error::new("IO_ERROR")
-                    .with_message(message)
-                    .with_commit_state(CommitState::Unknown),
-            )
-        })?;
+        publish_files(
+            &files,
+            &Recheck {
+                force: delivery.force,
+                alias: &|path| refuse_output_alias(path, &inputs),
+                source: &|| recheck_edit_source(action.file(), source),
+            },
+        )
+        .map_err(publish_failure)?;
     }
     Ok(receipt)
 }

@@ -1433,14 +1433,29 @@ fn publication_test_hook(_phase: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What a publication rechecks after staging and before each commit
+/// (V2-05): an output that became unsafe, or a source that changed since it
+/// was read, publishes nothing new. `edit` builds it from its job, the typed
+/// edit routes from their own inputs.
+struct Recheck<'a> {
+    /// `--force`: replace an existing destination instead of refusing it.
+    force: bool,
+    /// Refuse an output that now resolves to one of the command's inputs.
+    alias: &'a dyn Fn(&Path) -> Refused,
+    /// Refuse when the source changed since it was read.
+    source: &'a dyn Fn() -> Refused,
+}
+
+/// A publication check: `Err` carries the exit status and the message.
+type Refused = Result<(), (u8, String)>;
+
 /// Stage every output before committing any of them. Without --force,
 /// hard-link the staged inode into its destination atomically: even an
 /// entry appearing after the recheck cannot be clobbered. A mid-publication
 /// failure names the artifacts already committed, without rolling them back.
 fn publish_files(
     outputs: &[(PathBuf, &[u8])],
-    job: &EditJob<'_>,
-    source: &[u8],
+    recheck: &Recheck<'_>,
 ) -> Result<Vec<PathBuf>, (u8, String)> {
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut committed: Vec<PathBuf> = Vec::new();
@@ -1453,7 +1468,7 @@ fn publish_files(
         // Recheck all destinations before the first primary commits, so a
         // newly unsafe derivative cannot leave a primary behind.
         for (path, _) in outputs {
-            refuse_edit_output_alias(job, path)?;
+            (recheck.alias)(path)?;
         }
         refuse_output_collisions(
             &outputs
@@ -1461,7 +1476,7 @@ fn publish_files(
                 .map(|(path, _)| path.clone())
                 .collect::<Vec<_>>(),
         )?;
-        if !job.force
+        if !recheck.force
             && let Some((path, _)) = outputs
                 .iter()
                 .find(|(path, _)| path.symlink_metadata().is_ok())
@@ -1469,12 +1484,12 @@ fn publish_files(
             return Err(taken_output(path));
         }
         for (tmp, path) in staged.iter() {
-            refuse_edit_output_alias(job, path)?;
+            (recheck.alias)(path)?;
             if committed.is_empty() {
-                recheck_edit_source(job.file, source)?;
+                (recheck.source)()?;
             }
             publication_test_hook("checked").map_err(|e| (1, e))?;
-            let linked = if job.force {
+            let linked = if recheck.force {
                 std::fs::rename(tmp, path)
                     .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
                 false
@@ -1487,12 +1502,12 @@ fn publish_files(
                     // Some filesystems cannot create hard links. Only on
                     // those, fall back to a fresh check followed by rename.
                     Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
-                        refuse_edit_output_alias(job, path)?;
+                        (recheck.alias)(path)?;
                         if path.symlink_metadata().is_ok() {
                             return Err(taken_output(path));
                         }
                         if committed.is_empty() {
-                            recheck_edit_source(job.file, source)?;
+                            (recheck.source)()?;
                         }
                         std::fs::rename(tmp, path)
                             .map_err(|e| (1, format!("committing {}: {e}", path.display())))?;
@@ -1808,7 +1823,14 @@ fn write_edited(
     }
     // Stage beside each destination, then commit without clobbering unless
     // --force was requested; a precommit failure leaves nothing behind.
-    let committed = publish_files(&outputs, job, source)?;
+    let committed = publish_files(
+        &outputs,
+        &Recheck {
+            force: job.force,
+            alias: &|path| refuse_edit_output_alias(job, path),
+            source: &|| recheck_edit_source(job.file, source),
+        },
+    )?;
     if job.quiet {
         return Ok(());
     }

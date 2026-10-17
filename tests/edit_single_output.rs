@@ -834,6 +834,45 @@ fn a_source_changed_after_preparation_refuses_without_publishing() {
     }
 }
 
+/// C1 holds for the typed edit routes: they publish through the same
+/// recheck, so a source changed after staging publishes nothing, in either
+/// delivery.
+#[cfg(unix)]
+#[test]
+fn a_typed_route_refuses_a_source_changed_after_staging() {
+    for extra in [&["-o", "out.docx"][..], &["--out-dir", "r"][..]] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        letter(dir);
+        let replacement = docx(&para("A different named source."));
+        let mut injected = false;
+        let args: Vec<std::ffi::OsString> = [
+            "edit", "replace", "--find", "thirty", "--text", "forty", "a.docx", "--track", "off",
+            "--json",
+        ]
+        .iter()
+        .chain(extra)
+        .map(std::ffi::OsString::from)
+        .collect();
+        let out = publication_hook(dir, &args, |phase, _| {
+            if phase == "staged" {
+                std::fs::write(dir.join("a.docx"), &replacement).unwrap();
+                injected = true;
+            }
+        });
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(injected, "the source mutation ran: {stdout}");
+        let envelope: serde_json::Value = serde_json::from_str(stdout.trim()).expect("envelope");
+        assert_eq!(envelope["error"]["code"], "STALE_SOURCE", "{stdout}");
+        assert_eq!(
+            envelope["error"]["commit_state"], "not_committed",
+            "{stdout}"
+        );
+        assert_eq!(std::fs::read(dir.join("a.docx")).unwrap(), replacement);
+        assert!(written(dir).is_empty(), "{:?}", written(dir));
+    }
+}
+
 /// C1: an entry created after the last taken check must not be clobbered.
 #[cfg(unix)]
 #[test]
