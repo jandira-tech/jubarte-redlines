@@ -85,24 +85,6 @@ Every Word-package argument and return is `&[u8]`/`Vec<u8>` holding the
 complete package — no temp files, no processes. Markdown text is `&str`/`String`
 instead, e.g. `markdown::diff_markdown(old: &str, new: &str) -> String`.
 
-### Ids today and the 17 October contract
-
-The ids these APIs and the CLI print and take are the settled short ids
-(`p12`, `header1.p2`, `footnotes.p3`, `r12`, `r1+2`, `c5`, `c5.text`,
-`t0.row1.cell2`); `inspect::inspect_json` keeps the schema-1 fields (`id`,
-`ref`, numeric comment ids; `inspect::SCHEMA_VERSION` is `1`), and a few
-transitional spellings survive: `noid` for a change with no `w:id`, a colon
-id (`body:rev:007`) when no short spelling reads back, and nested `.pN`
-inside cells and text boxes (`t0.row1.cell2.p1`, `p14.box0.p0`). The
-short-and-long-ID contract
-([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
-staged in
-[superpowers/plans/2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md))
-is not implemented: it scopes cell and text-box paragraphs as `psN`,
-allocates labels for the fallback cases, moves JSON to paired
-`short_id`/`long_id` references under `schema_version: 2`, and retires the
-colon family, `noid` and open ranges (`p17-`, `-p3`).
-
 ### Selective change resolution
 
 `ChangeFilter` selects by public `ids`, `authors` and `kinds` fields
@@ -172,8 +154,7 @@ Tasks:
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
-                prints the changed paragraphs as the agent view (a pure
-                --accept/--reject prints the resolved changes; refusal: exit 3)
+                prints the changed paragraphs as the agent view (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
                 -p per command). Writes FILE_modified.docx, as edit does, and prints the
                 changed paragraphs as the agent view
@@ -351,9 +332,7 @@ Read options:
           M -->` lines
 
   -p, --paragraphs <SPEC>
-          Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
-          `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
 
       --head <N>
           Only the first N blocks (a table is one block)
@@ -683,12 +662,6 @@ Options:
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
           pass that places them
 
-      --commonmark
-          Word to Markdown: write plain CommonMark with CriticMarkup for readers outside
-          jubarte's dialect, instead of the agent view (`jubarte read`'s YAML header and
-          id lines). Fields print as their text, and underline, highlight and strike are
-          left out
-
   -h, --help
           Print help (see a summary with '-h')
 
@@ -945,9 +918,7 @@ Read options:
           M -->` lines
 
   -p, --paragraphs <SPEC>
-          Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
-          `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
 
       --head <N>
           Only the first N blocks (a table is one block)
@@ -982,7 +953,7 @@ $ jubarte edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject or --style (several -p per command), or a JSON plan. Writes
 FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
-agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
+agent view (refusal: exit 3)
 
 Usage: jubarte edit [OPTIONS] <FILE>
 
@@ -1023,12 +994,10 @@ Options:
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
       --accept
-          Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
-          change (`accepted r1+2 in p3: "from" > "to"`)
+          Accept revision r12 (with -p r12; r1+2 for several)
 
       --reject
-          Reject revision r12 (with -p r12; r1+2 for several); prints the resolved
-          change (`rejected r0 in p3: "from" > "to"`)
+          Reject revision r12 (with -p r12; r1+2 for several)
 
       --style <SPEC>
           Formatting for the anchored text: bold, italic, underline, strike, caps,

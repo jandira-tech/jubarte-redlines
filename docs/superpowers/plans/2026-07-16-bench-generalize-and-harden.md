@@ -37,19 +37,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 > engine items all closed (2 in 0.10.0, 3/4 in 0.9.3, 5 in 0.9.0, 1 settled
 > 2026-07-16). B4 remains this plan's sole open item (C4 memo still
 > deferred).
->
-> 2026-10-17 re-check: B4 remains the sole open item — the C4 memo
-> (`docs/C4_preexisting_revisions_decision.md`) gained a 2026-10-02 note:
-> `existing_revisions: "keep"` shipped on the edit side (PRs #287
-> `2f117685`, #303 `0572518a`) but does not touch the compare contract, so
-> the A/B/C decision is still open. This plan names no document-address
-> ids, so the v3 short/long-ID contract
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> landed in `4612a155`, not yet implemented) changes nothing here: the
-> Ring-1 checks on `w:id` uniqueness (check 3) and `w14:paraId` bounds
-> (check 4) are native-source-key rules the contract keeps — they are
-> exactly the keys long ids quote (`document.w:p.w14:paraId.…`,
-> `document.w:ins.w:id.…`).
 
 ---
 

@@ -318,29 +318,17 @@ fn convert_writes_word_back_as_critic_markup() {
         &["convert", "draft.md", "-d", "1970-01-01T00:00:00Z"],
         dir.path(),
     ));
-    // The substitution's note names its deletion's id, then its
-    // insertion's: Word writes the insertion first.
-    let critic = "Payment is due in {~~30~>45~~}{>>r2+1 Redline (1970-01-01T00:00:00Z)<<} days.\
+    let critic = "Payment is due in {~~30~>45~~}{>>Redline (1970-01-01T00:00:00Z)<<} days.\
                   {>>Redline (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
-    // By default plain Markdown names its pages; the text after the marker
-    // is exactly what --no-page-markers writes.
+    // By default the Markdown names its pages; the text after the marker is
+    // exactly what --no-page-markers writes.
     assert_eq!(
-        ok(&jubarte(
-            &["convert", "draft.docx", "-t", "md", "--commonmark"],
-            dir.path()
-        )),
+        ok(&jubarte(&["convert", "draft.docx", "-t", "md"], dir.path())),
         format!("<!-- page 1 of 1 -->\n\n{critic}")
     );
     assert_eq!(
         ok(&jubarte(
-            &[
-                "convert",
-                "draft.docx",
-                "-t",
-                "md",
-                "--no-page-markers",
-                "--commonmark"
-            ],
+            &["convert", "draft.docx", "-t", "md", "--no-page-markers"],
             dir.path()
         )),
         critic
@@ -354,7 +342,6 @@ fn convert_writes_word_back_as_critic_markup() {
                     "-t",
                     "md",
                     "--no-page-markers",
-                    "--commonmark",
                     "--track-changes",
                     choice
                 ],
@@ -370,7 +357,6 @@ fn convert_writes_word_back_as_critic_markup() {
             "-o",
             "back.md",
             "--no-page-markers",
-            "--commonmark",
         ],
         dir.path(),
     ));
@@ -407,7 +393,7 @@ fn diff_prints_critic_markup_like_pandiff() {
     ));
     assert_eq!(
         stdout,
-        "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery{++\n- Returns++}\n- Warranty\n"
+        "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery\n- {++Returns++}\n- Warranty\n"
     );
     // Written to a file, the view is not printed too.
     let printed = ok(&jubarte(
@@ -444,7 +430,7 @@ fn diff_prints_a_patch_of_the_changed_paragraphs_by_default() {
         ),
         "{stdout}"
     );
-    assert!(stdout.contains("{+\n- Returns+}"), "{stdout}");
+    assert!(stdout.contains("{+Returns+}"), "{stdout}");
     assert!(!stdout.contains("# Terms"), "{stdout}");
     // Nothing changed, nothing printed.
     let same = [&["diff", "old.md", "old.md"][..], &OWNER].concat();
@@ -758,7 +744,7 @@ fn diff_and_compare_take_word_against_markdown() {
     assert!(
         std::fs::read_to_string(dir.path().join("changes.md"))
             .unwrap()
-            .contains("{++\n- Returns++}")
+            .contains("{++Returns++}")
     );
 }
 
@@ -853,14 +839,7 @@ fn inputs_are_told_apart_by_extension_then_by_their_bytes() {
     std::fs::copy(dir.path().join("notes.docx"), dir.path().join("notes.bin")).unwrap();
     assert!(
         ok(&jubarte(
-            &[
-                "convert",
-                "notes.bin",
-                "-t",
-                "md",
-                "--no-page-markers",
-                "--commonmark"
-            ],
+            &["convert", "notes.bin", "-t", "md", "--no-page-markers"],
             dir.path()
         ))
         .starts_with("Notes {++added++}"),

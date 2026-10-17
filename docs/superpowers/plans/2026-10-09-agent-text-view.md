@@ -2,19 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status (reconciled 2026-10-17 against `main` `aba48bd5`): IMPLEMENTED, with the id grammar since revised twice.** The view shipped — `src/markdown/from_docx/agent.rs` (`11c3a1f4 feat(markdown): agent view numbering, tags, handles and timestamps`), `header.rs`, `read` as the default view with `-p/--head/--tail/--changed/--dates`, `edit`/`add` on `-p/--anchor/--content`, and the goldens under `tests/fixtures/agent-view/` — and became the default output in `cab8ab73 feat(md): agent view by default`. Two later settlements changed the id spellings this plan was written with, and the text below has been updated to the current ones:
->
-> - Printed change tags are `r0 @AC`, `r1+2 @AC`, `header1.r1 @JD`, never `#0 @AC`. Comment tags are `c5`, `re c5`, `resolved`, never `#c5`. Landed with the short-id cutover (`1192f6bb`, `321d62e9` and the `fix/ids-*`/`test(ids)` series; `agent::format_tag`/`format_plain_tag`).
-> - Cell ids spell `t0.row1.cell2` (and table lines `in t0.row0.cell1`), never `t0.r1.c2`. A cell's second paragraph is accepted today as `t0.row1.cell2.p1`, but that nested `.pN` is transitional: the 17 October contract v3 (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, landed docs-only in `4612a155`, no code yet) spells it `t0.row1.cell2.ps1` and retires every old nested `.pN`.
-> - `body:p:N`, `body:rev:N`, `headerN:p:M` colon long ids are no longer CLI input (`exit 2` names the settled short spelling); JSON still prints them in `id`/`location` fields beside a `ref` short id, pending the contract's paired `short_id`/`long_id` schema 2.
-> - A bare story alias (`header1`) still names that story's paragraph 0 in current code; the contract requires `header1.p0` and keeps the bare alias for the story itself.
-> - `read -p` still goes through `Select::parse`, which routes each pick through `ShortId` (bare `12` is refused naming `p12`) but still takes comma lists and open ranges (`p17-`, `-p3`); the contract retires open ranges and makes the comma an option-level separator only.
-> - `#cN`/`#N`, `pid:` and `--pids` never shipped or are retired. `noid` still prints for unnumbered revisions (transitional; the contract allocates real `rN` labels instead).
-> - `edit`/`add` defaults also moved on: author `Redline` (handle `@R`), `-d/--datetime` (no `--date`), one output `FILE_modified.docx`, `--plan` valueless, `--out-dir` optional. The `Redline`/`--date`/`<stem>.edit` spellings below are pre-release.
-
 **Goal:** Make `jubarte read FILE` (alias `text`, and plain `jubarte FILE`) print the agent view: a YAML header, then a CriticMarkup body in which every paragraph, table, revision and comment carries the id that `edit`, `accept`, `reject` and the comment operations already take, with selection flags (`-p`, `--head`, `--tail`, `--changed`) for long documents; and let `edit` and `add` take those ids from the command line (`-p WHERE --anchor FIND --content TEXT`) without a plan.
 
-**Architecture:** The view is the existing DOCX to Markdown converter (`src/markdown/from_docx`) behind one new option, `ids`. With `ids` on, paragraphs are numbered before accept/reject resolution so indices match `inspect` and `edit`; an `<!-- pN … -->` line precedes each block; every tracked change is followed by a CriticMarkup attribution note carrying Word's `w:id` and the author's handle (`{++quarterly++}{>>r0 @AC<<}`), the position the spec and `write.rs` already reserve for authorship; comments carry their `w:id`, handle and thread parent; page markers come from the same layout pass `convert -t md` uses; a header module renders document facts as YAML. With `ids` off, output stays byte-identical to today, and the existing suite is the regression test for that.
+**Architecture:** The view is the existing DOCX to Markdown converter (`src/markdown/from_docx`) behind one new option, `ids`. With `ids` on, paragraphs are numbered before accept/reject resolution so indices match `inspect` and `edit`; an `<!-- pN … -->` line precedes each block; every tracked change is followed by a CriticMarkup attribution note carrying Word's `w:id` and the author's handle (`{++quarterly++}{>>#0 @AC<<}`), the position the spec and `write.rs` already reserve for authorship; comments carry their `w:id`, handle and thread parent; page markers come from the same layout pass `convert -t md` uses; a header module renders document facts as YAML. With `ids` off, output stays byte-identical to today, and the existing suite is the regression test for that.
 
 **Tech Stack:** Rust; the crate's own `ooxml::Element` tree, `critic` renderer, `Blocks` joiner and `markdown::paginate`; `convert::render` for page texts; clap CLI; integration tests in `tests/` with `tests/common/docx.rs` builders and the `CARGO_BIN_EXE_jubarte` binary.
 
@@ -22,7 +12,7 @@
 
 ## Scope
 
-In: tracked, no-comments, accept-all and reject-all views; the YAML header (including `sections:`); page markers from the layout pass with a cached-break fallback; `-p`, `--head`, `--tail`, `--changed`, `--dates`, `--no-page-markers`; the command renamed `read` (`text` kept as an alias); `jubarte a.docx` printing the view and `jubarte a.docx b.docx` printing the view of their redline; short ids (`p3`, `header1`, `footer2.p1`, `t0.row1.cell2`, `c5`) accepted by `edit`; `edit` and `add` driven by `-p/--anchor/--content` flags without a plan, printing the changed blocks back; Markdown marks escaped in the view and normalized out of anchors; tests, including edit → read round trips; docs, including the defaults contract the future applier (markdown → docx) must honour.
+In: tracked, no-comments, accept-all and reject-all views; the YAML header (including `sections:`); page markers from the layout pass with a cached-break fallback; `-p`, `--head`, `--tail`, `--changed`, `--dates`, `--no-page-markers`; the command renamed `read` (`text` kept as an alias); `jubarte a.docx` printing the view and `jubarte a.docx b.docx` printing the view of their redline; short ids (`p3`, `header1`, `footer2.p1`, `t0.r1.c2`, `c5`) accepted by `edit`; `edit` and `add` driven by `-p/--anchor/--content` flags without a plan, printing the changed blocks back; Markdown marks escaped in the view and normalized out of anchors; tests, including edit → read round trips; docs, including the defaults contract the future applier (markdown → docx) must honour.
 
 Out (separate plans): the applier itself (`jubarte_style.md` back onto a `.docx`), the JSON view, `--outline`/`--grep`, strike and highlight inline formatting, tracked paragraph marks inside comment bodies.
 
@@ -61,11 +51,11 @@ Id line, one per body paragraph, on the line above it: a head, one space, then c
 
 ```
 head:     p{N}[ {Style}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids}
-examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r1+2 @AC -->
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · page-break · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments #c{ids}
+examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments #c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev #0 @AC; #1+2 @AC -->
 ```
 
-- `N` is the paragraph's index among every `w:p` under `w:body` in document order, table cells included, text boxes (`w:txbxContent`) excluded: the same rule as `inspect::body_paragraph_nodes`, so `pN` is the paragraph's canonical short id. (Transitional JSON still pairs it with the colon long `body:p:N`; the 17 October contract replaces that with the four-field long form, e.g. `document.w:p.w14:paraId.3F2A1B7C`.)
+- `N` is the paragraph's index among every `w:p` under `w:body` in document order, table cells included, text boxes (`w:txbxContent`) excluded: the same rule as `inspect::body_paragraph_nodes`, so `pN` is `body:p:N`.
 - `Style` prints when it is not the default paragraph style and, for a heading, not `Heading{level}`.
 - `align` prints only when the paragraph sets `w:jc` itself: `center`, `right` (`right`, `end`), `justify` (`both`, `distribute`), else `left`.
 - Indents print from the paragraph's own `w:ind`, twips to inches with up to two decimals (`720` is `0.5in`, `1440` is `1in`).
@@ -78,30 +68,30 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - Empty paragraphs: `<!-- p19 empty -->`, consecutive ones `<!-- p19-p23 empty -->`.
 - Page markers: `<!-- page N of M -->` followed by a blank line, before the first block that starts on page N, `<!-- page 1 of M -->` first. They come from the layout pass (`convert::render` page texts through `markdown::paginate`); without one, from `w:lastRenderedPageBreak`.
 
-A **tag** is `r<ids> @<handle>`: `r0 @AC`, `r1+2 @AC` (two marks of one logical change), and in a tag list on an id line, `; ` between tags of different authors (`rev r1 @AC; r2 @JD`). The ids are `w:id` values, so `r1` in the body is what `accept --id`, `reject --id` and `resolve_revisions` take (a story-scoped change prints `header1.r1`, `footnotes.r3`). The handle is always present. Internally (attributes, `critic` attribution strings) a tag is `ids@HH`, several authors joined by `|` (`1@AC|2@JD`); `agent::format_tag` prints it. (A change whose `w:id` the short grammar cannot spell still falls back to `body:rev:raw`-style text and an unnumbered one to `noid`; the contract allocates canonical `rN` labels and removes both fallbacks.)
+A **tag** is `#<ids> @<handle>`: `#0 @AC`, `#1+2 @AC` (two marks of one logical change), and in a tag list on an id line, `; ` between tags of different authors (`rev #1 @AC; #2 @JD`). The ids are `w:id` values, so `#1` in the body is `body:rev:1` for `accept --id`, `reject --id` and `resolve_revisions`. The handle is always present. Internally (attributes, `critic` attribution strings) a tag is `ids@HH`, several authors joined by `|` (`1@AC|2@JD`); `agent::format_tag` prints it.
 
-Table line: head `t{T}[ center|right] {rows}x{cols}`, then clauses `cells p{a}-p{b} by row` (or `cells t{T}.row{i} p{a}[-p{b}] …` when a cell holds other than one paragraph), `header row repeats`, `merged t{T}.row{r}.cell{c} down|across {n}`, `break-ins {tag} in p{N}`, `break-del {tag} in p{N}`, `rev {tag} in p{N}` (resolved views), several of the last three joined by `; `. `T` counts top-level body tables. The pipe table itself keeps the converter's shape (`|a|b|`, `|-|-|`).
+Table line: head `t{T}[ center|right] {rows}x{cols}`, then clauses `cells p{a}-p{b} by row` (or `cells r0 p8-p10 r1 p11-p14 …` when a cell holds other than one paragraph), `header row repeats`, `merged cells`, `break-ins {tag} in p{N}`, `break-del {tag} in p{N}`, `rev {tag} in p{N}` (resolved views), several of the last three joined by `; `. `T` counts top-level body tables. The pipe table itself keeps the converter's shape (`|a|b|`, `|-|-|`).
 
 Revision in the body: the change in plain CriticMarkup, then its attribution note:
 
 ```
-{++quarterly++}{>>r0 @AC<<}
-{--ninety days--}{>>r7 @AC<<}
-{~~weekly~>monthly~~}{>>r1+2 @AC<<}          one author: one note, ids joined
-{~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}        two authors: deleted side first, then inserted side
-{++bold words++}{>>r7+8 @AC<<}                 neighbouring marks of one kind by one author
-{++quarterly++}{>>r0 @AC 2026-10-03T14:05:00Z<<}   with --dates, for an author with several timestamps
+{++quarterly++}{>>#0 @AC<<}
+{--ninety days--}{>>#7 @AC<<}
+{~~weekly~>monthly~~}{>>#1+2 @AC<<}          one author: one note, ids joined
+{~~old~>new~~}{>>#1 @AC<<}{>>#2 @JD<<}        two authors: deleted side first, then inserted side
+{++bold words++}{>>#7+8 @AC<<}                 neighbouring marks of one kind by one author
+{++quarterly++}{>>#0 @AC 2026-10-03T14:05:00Z<<}   with --dates, for an author with several timestamps
 ```
 
 Logical changes: neighbouring marks of one kind by one author join; then a deletion directly followed by an insertion, or the reverse, pairs as a substitution, greedily left to right, with bookmarks, proofing marks and comment markers ignored for adjacency. This is the order `critic::tidy` and `critic::render` apply, so `rev` clauses and notes agree. The text inside the delimiters is exactly the document's text: no tag, no moved space.
 
-Comment: `{==anchored text==}{>>c5 @AC: text<<}`; a reply is its own note naming the thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads `{>>c5 @AC resolved: text<<}`; an empty range gives `{>>c11 @AC: text<<}` with no `{==…==}`. Head grammar shared with revisions: `c<id>[ @<handle>][ <timestamp>][ re c<root>][ resolved]` (revisions: `r<ids>`), then `: text` for comments only.
+Comment: `{==anchored text==}{>>#c5 @AC: text<<}`; a reply is its own note naming the thread root, `{>>#c6 @AS re #c5: Disagree.<<}`; a resolved root reads `{>>#c5 @AC resolved: text<<}`; an empty range gives `{>>#c11 @AC: text<<}` with no `{==…==}`. Head grammar shared with revisions: `#<ids>[ @<handle>][ <timestamp>][ re #c<root>][ resolved]`, then `: text` for comments only.
 
 Handles: the comment's `w:initials` when that author wrote one, else the uppercase initials of the name's words; a collision appends a digit. Timestamps: the header's `authors:` line prints an author's timestamp in full when all of that author's marks and comments share one, else the day range (`2026-10-01..2026-10-03`); with `--dates`, notes of such an author carry their timestamp inline.
 
 Header: see `tests/fixtures/agent-view/received.tracked.md`. A `key: value` line with a comment pads the key/value to 35 columns, then `# comment`; a key/value longer than 33 characters takes two spaces instead. `range:` follows `body:` when a selection is active; `sections:` follows `footers:` when the document has more than one section.
 
-Short ids outside the body: `header2` is the part `header2.xml`, `footer1` likewise, `t{N}` the N-th top-level body table, `t0.row1.cell2` its cell, `c5` the comment with `w:id` 5. Header and footer ids are Word's own part numbers, so `header1` says nothing about the role; the `headers:` block does. (Current code lets the bare alias `header2` name that part's first paragraph; the contract spells it `header2.p0` and keeps `header2` for the story. The colon long form `header2:p:0` is retired input — `header2.p0` is what `edit` takes.)
+Short ids outside the body: `header2` is the part `header2.xml` (its first text paragraph; `header2.p1` its paragraph 1), `footer1` likewise, `t{N}` the N-th top-level body table, `t0.r1.c2` its cell, `c5` the comment with `w:id` 5. Header and footer ids are Word's own part numbers, so `header1` says nothing about the role; the `headers:` block does. `edit` accepts these ids (Task 16) beside the long `header2:p:0` form.
 
 ---
 
@@ -215,20 +205,17 @@ fn options_default_to_the_plain_conversion() {
 #[test]
 fn select_parses_single_paragraphs_ranges_lists_and_tables() {
     use jubarte::markdown::Pick;
-    // As shipped, each pick parses through `ShortId`: a bare `12` is
-    // refused naming `p12`; open ends (`p17-`, `-p1`) still parse —
-    // transitional, retired by the 17 October contract.
     assert_eq!(
-        Select::parse("p2, p5-p7,p17-,-p1,t0").unwrap(),
+        Select::parse("p2, p5-p7,12,p17-,-p1,t0").unwrap(),
         Select::Picks(vec![
             Pick::Paragraphs { from: 2, to: Some(2) },
             Pick::Paragraphs { from: 5, to: Some(7) },
+            Pick::Paragraphs { from: 12, to: Some(12) },
             Pick::Paragraphs { from: 17, to: None },
             Pick::Paragraphs { from: 0, to: Some(1) },
             Pick::Table(0),
         ])
     );
-    assert_eq!(Select::parse("12").unwrap_err(), "12: expected pN, pN-pM or tN; the settled spelling is p12");
     assert_eq!(Select::parse("p7-p5").unwrap_err(), "p7-p5: the range runs backwards");
     assert_eq!(Select::parse("x3").unwrap_err(), "x3: expected pN, pN-pM or tN");
     assert_eq!(Select::parse(" , ").unwrap_err(), "no paragraphs selected");
@@ -293,10 +280,8 @@ pub enum Pick {
 }
 
 impl Select {
-    /// `p2, p5-p7, p17-, -p1, t0`: comma-separated picks. (As shipped,
-    /// each pick parses through `ids::ShortId` — a bare `12` is refused
-    /// naming `p12` — and open ranges remain only until the 17 October
-    /// contract's shared resolver lands.)
+    /// `p2, p5-p7, 12, p17-, -p1, t0`: comma-separated picks; a bare number
+    /// is a paragraph.
     pub fn parse(spec: &str) -> Result<Self, String> {
         fn number(item: &str, text: &str) -> Result<usize, String> {
             let text = text.trim();
@@ -398,7 +383,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::ooxml::{Element, Node};
 
-/// Attribute stamped on every numbered `w:p`: its `pN` index.
+/// Attribute stamped on every numbered `w:p`: its `body:p:N` index.
 pub(crate) const INDEX: &str = "jubarteIndex";
 /// Attribute stamped on every top-level `w:tbl`: its `t{N}` number.
 pub(crate) const TABLE: &str = "jubarteTable";
@@ -475,9 +460,9 @@ mod tests {
         assert_eq!(join_tags(&["1@AC".into(), "2@AC".into()]), "1+2@AC");
         assert_eq!(join_tags(&["1@AC".into(), "2@JD".into()]), "1@AC|2@JD");
         assert_eq!(join_tags(&["1+2@AC".into(), "3@AC".into()]), "1+2+3@AC");
-        assert_eq!(format_tag("0@AC"), "r0 @AC");
-        assert_eq!(format_tag("1+2@AC"), "r1+2 @AC");
-        assert_eq!(format_tag("1@AC|2@JD"), "r1 @AC; r2 @JD");
+        assert_eq!(format_tag("0@AC"), "#0 @AC");
+        assert_eq!(format_tag("1+2@AC"), "#1+2 @AC");
+        assert_eq!(format_tag("1@AC|2@JD"), "#1 @AC; #2 @JD");
         assert_eq!(handle_of("1+2@AC"), Some("AC"));
     }
 
@@ -609,18 +594,18 @@ pub(crate) fn join_tags(parts: &[String]) -> String {
     }
 }
 
-/// `0@AC` → `r0 @AC`; `1+2@AC` → `r1+2 @AC`; `1@AC|2@JD` → `r1 @AC; r2 @JD`.
+/// `0@AC` → `#0 @AC`; `1+2@AC` → `#1+2 @AC`; `1@AC|2@JD` → `#1 @AC; #2 @JD`.
 pub(crate) fn format_tag(tag: &str) -> String {
     tag.split('|')
         .map(|one| match one.rsplit_once('@') {
-            Some((ids, handle)) => format!("r{ids} @{handle}"),
-            None => format!("r{one}"),
+            Some((ids, handle)) => format!("#{ids} @{handle}"),
+            None => format!("#{one}"),
         })
         .collect::<Vec<_>>()
         .join("; ")
 }
 
-/// A list of tags for an id line: `r0 @AC; r1+2 @AC`.
+/// A list of tags for an id line: `#0 @AC; #1+2 @AC`.
 pub(crate) fn format_tags(tags: &[String]) -> String {
     tags.iter().map(|t| format_tag(t)).collect::<Vec<_>>().join("; ")
 }
@@ -1051,7 +1036,7 @@ pub(crate) fn line(head: &str, clauses: &[String]) -> String {
     }
 }
 
-/// `<!-- p3 justify, first-line 0.5in, comments c5 -->` (the plan's grammar).
+/// `<!-- p3 justify, first-line 0.5in, comments #c5 -->` (the plan's grammar).
 pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     let mut head = format!("p{}", f.index);
     if let Some(style) = f.style {
@@ -1120,7 +1105,7 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         }
     }
     if !f.comments.is_empty() {
-        let ids: Vec<String> = f.comments.iter().map(|c| format!("c{c}")).collect();
+        let ids: Vec<String> = f.comments.iter().map(|c| format!("#c{c}")).collect();
         clauses.push(format!("comments {}", ids.join(" ")));
     }
     line(&head, &clauses)
@@ -1410,8 +1395,8 @@ fn id_line_names_tracked_paragraph_marks_and_formatting_changes() {
         r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>Now bold</w:t></w:r></w:p>"#,
     );
     let out = body(&agent(&docx(body_xml))).to_string();
-    assert!(out.contains("<!-- p0 break-ins r4 @AC -->\nSplit here"), "{out}");
-    assert!(out.contains("<!-- p1 fmt r5 @AC -->\n**Now bold**"), "{out}");
+    assert!(out.contains("<!-- p0 break-ins #4 @AC -->\nSplit here"), "{out}");
+    assert!(out.contains("<!-- p1 fmt #5 @AC -->\n**Now bold**"), "{out}");
 }
 ```
 
@@ -1455,10 +1440,7 @@ fn table_line_gives_grid_cells_and_header_row() {
 fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_marks() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:rPr><w:ins w:id="12" w:author="Ann Counsel"/></w:rPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    // Transitional cells clause: flat `pN` / `pN-pM` story indexes. The
-    // contract prints each cell's own `psN` paragraphs
-    // (`cells t0.row1.cell2 ps0-ps1 …`) and gives a nested table its own line.
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged t0.row0.cell0 across 2, break-ins r12 @AC in p1 -->\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells r0 p0 r1 p1-p3, merged cells, break-ins #12 @AC in p1 -->\n"), "{out}");
 }
 ```
 
@@ -1633,14 +1615,14 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days, {++quarterly++}{>>r5 @AC<<} reports{--, nothing else--}{>>r6 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {~~thirty~>forty-five~~}{>>#3+4 @AC<<} days, {++quarterly++}{>>#5 @AC<<} reports{--, nothing else--}{>>#6 @AC<<}\n"
     );
 }
 
 #[test]
 fn neighbouring_marks_by_one_author_share_one_note_and_keep_their_text() {
     let p = format!("<w:p>{}{}{}</w:p>", run("a "), ins(7, "Ann Counsel", "bold"), ins(8, "Ann Counsel", " words"));
-    assert_eq!(body(&agent(&docx(&p))), "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold words++}{>>r7+8 @AC<<}\n");
+    assert_eq!(body(&agent(&docx(&p))), "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold words++}{>>#7+8 @AC<<}\n");
 }
 
 #[test]
@@ -1651,7 +1633,7 @@ fn a_substitution_by_two_authors_gets_two_notes_deleted_side_first() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nx {~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}{++!++}{>>r3 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nx {~~old~>new~~}{>>#1 @AC<<}{>>#2 @JD<<}{++!++}{>>#3 @AC<<}\n"
     );
 }
 
@@ -1662,12 +1644,12 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
         run("a "), ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "b"), run(" c "), ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "d")
     );
     let bytes = docx(&p);
-    assert!(body(&agent(&bytes)).contains("{++b++}{>>r1 @AC<<} c {++d++}{>>r2 @AC<<}"), "{}", agent(&bytes));
+    assert!(body(&agent(&bytes)).contains("{++b++}{>>#1 @AC<<} c {++d++}{>>#2 @AC<<}"), "{}", agent(&bytes));
     let dated = agent_options(&bytes, MarkdownOptions { dates: true, ..agent_defaults() });
-    assert!(body(&dated).contains("{++b++}{>>r1 @AC 2026-10-01T09:00:00Z<<} c {++d++}{>>r2 @AC 2026-10-03T14:05:00Z<<}"), "{dated}");
+    assert!(body(&dated).contains("{++b++}{>>#1 @AC 2026-10-01T09:00:00Z<<} c {++d++}{>>#2 @AC 2026-10-03T14:05:00Z<<}"), "{dated}");
     let single = docx(&format!("<w:p>{}{}</w:p>", run("a "), ins(1, "Ann Counsel", "b")));
     let dated = agent_options(&single, MarkdownOptions { dates: true, ..agent_defaults() });
-    assert!(body(&dated).contains("{++b++}{>>r1 @AC<<}"), "{dated}");
+    assert!(body(&dated).contains("{++b++}{>>#1 @AC<<}"), "{dated}");
 }
 
 #[test]
@@ -1798,7 +1780,7 @@ In `space_into_last_change` (line 348), a tagged change keeps the text exactly a
     }
 ```
 
-`whole_change`, `splice`, `join_marked` and `join_changed` need no change: they read the rendered note text (`r3+4 @AC`), which is the same for the same change.
+`whole_change`, `splice`, `join_marked` and `join_changed` need no change: they read the rendered note text (`#3+4 @AC`), which is the same for the same change.
 
 - [ ] **Step 4: `mod.rs`: tag attributions in agent mode**
 
@@ -1916,7 +1898,7 @@ const THREADED: &str = r#"<w15:commentEx w15:paraId="11A5D0F2" w15:done="0"/><w1
 fn comments_carry_ids_handles_and_thread_parents() {
     assert_eq!(
         body(&agent(&commented_docx(THREADED))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nFee. {==Late amounts accrue interest.==}{>>c5 @AC: Cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}\n\n<!-- p1 -->\nKeep it secret{>>c11 @AC: Add survival?<<}.\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nFee. {==Late amounts accrue interest.==}{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}\n\n<!-- p1 -->\nKeep it secret{>>#c11 @AC: Add survival?<<}.\n"
     );
 }
 
@@ -1924,21 +1906,21 @@ fn comments_carry_ids_handles_and_thread_parents() {
 fn two_independent_comments_on_one_anchor_are_not_a_thread() {
     let independent = THREADED.replace(r#" w15:paraIdParent="11A5D0F2""#, "");
     let out = body(&agent(&commented_docx(&independent))).to_string();
-    assert!(out.contains("{>>c5 @AC: Cap in Delaware?<<}{>>c6 @AS: Disagree.<<}"), "{out}");
+    assert!(out.contains("{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS: Disagree.<<}"), "{out}");
 }
 
 #[test]
 fn a_resolved_thread_says_so_on_its_root() {
     let resolved = THREADED.replacen(r#"w15:paraId="11A5D0F2" w15:done="0""#, r#"w15:paraId="11A5D0F2" w15:done="1""#, 1);
     let out = body(&agent(&commented_docx(&resolved))).to_string();
-    assert!(out.contains("{>>c5 @AC resolved: Cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}"), "{out}");
+    assert!(out.contains("{>>#c5 @AC resolved: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}"), "{out}");
 }
 
 #[test]
 fn hidden_comments_are_listed_on_the_id_line() {
     assert_eq!(
         body(&agent_with(&commented_docx(THREADED), TrackChanges::All, false)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 comments c5 c6 -->\nFee. Late amounts accrue interest.\n\n<!-- p1 comments c11 -->\nKeep it secret.\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 comments #c5 #c6 -->\nFee. Late amounts accrue interest.\n\n<!-- p1 comments #c11 -->\nKeep it secret.\n"
     );
 }
 ```
@@ -1990,7 +1972,7 @@ pub(crate) fn threads(comments: Option<&Element>, extended: Option<&Element>) ->
     t
 }
 
-/// `c5 @AC: `, `c5 @AC resolved: `, `c6 @AS re c5: `, or `c5: ` with
+/// `#c5 @AC: `, `#c5 @AC resolved: `, `#c6 @AS re #c5: `, or `#c5: ` with
 /// no author. `date` is the inline timestamp, when wanted.
 pub(crate) fn comment_head(
     id: &str,
@@ -1999,7 +1981,7 @@ pub(crate) fn comment_head(
     handles: &Handles,
     threads: &Threads,
 ) -> String {
-    let mut head = format!("c{id}");
+    let mut head = format!("#c{id}");
     if let Some(handle) = handles.of(author) {
         head.push_str(&format!(" @{handle}"));
     }
@@ -2008,7 +1990,7 @@ pub(crate) fn comment_head(
         head.push_str(date);
     }
     if let Some(root) = threads.reply_of.get(id) {
-        head.push_str(&format!(" re c{root}"));
+        head.push_str(&format!(" re #c{root}"));
     } else if threads.done.contains(id) {
         head.push_str(" resolved");
     }
@@ -2119,18 +2101,18 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
     let bytes = docx(&format!("{p0}{p1}"));
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Accept, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r3+4 @AC -->\nWithin forty-five\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #0 @AC; #1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev #3+4 @AC -->\nWithin forty-five\n"
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Reject, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r3+4 @AC -->\nWithin thirty\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev #0 @AC; #1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev #3+4 @AC -->\nWithin thirty\n"
     );
 }
 
 #[test]
 fn accept_all_keeps_comments_in_the_agent_view() {
     let out = body(&agent_with(&commented_docx(THREADED), TrackChanges::Accept, true)).to_string();
-    assert!(out.contains("{>>c5 @AC: Cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}"), "{out}");
+    assert!(out.contains("{>>#c5 @AC: Cap in Delaware?<<}{>>#c6 @AS re #c5: Disagree.<<}"), "{out}");
 }
 ```
 
@@ -2772,8 +2754,6 @@ fn later_sections_list_their_range_and_what_differs_from_the_first() {
     );
     let out = agent(&bytes);
     let header = out.splitn(3, "---\n").nth(1).unwrap();
-    // `sections:` still keys 1-based today (`2:` is the second section);
-    // the contract keys them `s0`, `s1`, … .
     assert!(header.ends_with("headers:\n  default: {id: header1, text: MAIN}\nsections:\n  2: {p2-p3, headers: {default: {id: header2, text: SCHEDULE A}}, columns: 2}\n"), "header:\n{header}");
     assert!(body(&out).contains("<!-- p1 section-break -->\nEnd of part one\n"), "{out}");
 }
@@ -3567,7 +3547,7 @@ fn cli_read_prints_the_agent_view_with_flags() {
     let picked = ok(&["read", "received.docx", "-p", "p5,t0"], dir.path());
     assert!(picked.contains("\nrange: p5, t0 of p0-p20\n"), "{picked}");
     let dated = ok(&["read", "received.docx", "--dates"], dir.path());
-    assert!(dated.contains("{>>r0 @AC<<}"), "{dated}");
+    assert!(dated.contains("{>>#0 @AC<<}"), "{dated}");
     let bad = jubarte(&["read", "received.docx", "-p", "p99"], dir.path());
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("p99 is past the last paragraph p20"));
@@ -3590,8 +3570,8 @@ Expected: FAIL, `read` is not a command yet.
 ```rust
     /// Read a document as the agent view: a YAML header, then Markdown with
     /// an `<!-- pN -->` id line before every paragraph, tracked changes as
-    /// CriticMarkup followed by their ids (`{++text++}{>>r12 @AC<<}`) and
-    /// comments with theirs (`{>>c5 @AC: …<<}`). `jubarte FILE` is the same.
+    /// CriticMarkup followed by their ids (`{++text++}{>>#12 @AC<<}`) and
+    /// comments with theirs (`{>>#c5 @AC: …<<}`). `jubarte FILE` is the same.
     #[command(visible_alias = "text")]
     Read {
         /// The document (.docx) to read.
@@ -3628,7 +3608,6 @@ pub struct ReadArgs {
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
     /// Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated.
-    /// (Open ends are transitional; the contract retires `p17-` and `-p3`.)
     #[arg(short = 'p', long = "paragraphs", value_name = "SPEC", conflicts_with_all = ["head", "tail"], help_heading = "Read options")]
     pub paragraphs: Option<String>,
     /// Only the first N blocks (a table is one block).
@@ -3834,28 +3813,26 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
         {"kind":"replace","paragraph":{"index":1},"find":"thirty","replacement":"forty-five"},
         {"kind":"comment","paragraph":{"index":2},"find":"one percent","text":"Is one percent the statutory cap?"}]}"#;
     let text = edited(dir.path(), plan, "review");
-    let ids = captures(&text, r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r(\d+)\+(\d+) @AC<<\} days of receipt\.\n");
+    let ids = captures(&text, r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#(\d+)\+(\d+) @AC<<\} days of receipt\.\n");
     let (del_id, ins_id) = (ids[0], ids[1]);
-    assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
+    assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>#c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
     assert!(text.contains("revisions: 1                       # 1 substitution (2 Word marks)"), "{text}");
     assert!(text.contains("comments: 1 thread open            # 1 comment: c0"), "{text}");
     assert!(text.contains("  AC: Ann Counsel                  # 1 revision, 1 comment, 2026-10-01T09:00:00Z"), "{text}");
 
     let changes = ok(&["changes", "review/redline.docx", "--json"], dir.path());
     let rows: Vec<serde_json::Value> = changes.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-    // Transitional wire: `id` still carries the colon long form beside
-    // `ref` (`r12`); schema 2 replaces both with `short_id`/`long_id`.
     let by_id = |id: &str| rows.iter().find(|r| r["id"] == format!("body:rev:{id}")).unwrap_or_else(|| panic!("no change body:rev:{id} in {changes}"));
     assert_eq!(by_id(del_id)["kind"], "deletion");
     assert_eq!(by_id(del_id)["text"], "thirty");
     assert_eq!(by_id(ins_id)["kind"], "insertion");
     assert_eq!(by_id(ins_id)["text"], "forty-five");
 
-    ok(&["reject", "review/redline.docx", "-o", "rejected.docx", "--id", &format!("r{del_id}"), "--id", &format!("r{ins_id}")], dir.path());
+    ok(&["reject", "review/redline.docx", "-o", "rejected.docx", "--id", &format!("body:rev:{del_id}"), "--id", &format!("body:rev:{ins_id}")], dir.path());
     let rejected = ok(&["read", "rejected.docx", "--no-page-markers"], dir.path());
     assert!(rejected.contains("<!-- p1 -->\nClient shall pay each invoice within thirty days of receipt.\n"), "{rejected}");
     assert!(rejected.contains("\nrevisions: 0\n"), "{rejected}");
-    assert!(rejected.contains("{>>c0 @AC: Is one percent the statutory cap?<<}"), "{rejected}");
+    assert!(rejected.contains("{>>#c0 @AC: Is one percent the statutory cap?<<}"), "{rejected}");
 }
 
 #[test]
@@ -3870,7 +3847,7 @@ fn a_reply_and_a_resolution_by_a_second_author_thread_under_the_root() {
         {"kind":"reply_comment","comment_id":0,"text":"Yes, in Delaware."},
         {"kind":"resolve_comment","comment_id":0,"done":true}]}"#;
     let text = edited(dir.path(), second, "two");
-    assert!(text.contains("{==one percent==}{>>c0 @AC resolved: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware.<<}"), "{text}");
+    assert!(text.contains("{==one percent==}{>>#c0 @AC resolved: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware.<<}"), "{text}");
     assert!(text.contains("comments: 0 threads open, 1 resolved  # 2 comments: c0 (+ reply c1)"), "{text}");
     assert!(text.contains("  BL: Bob Lee                      # 1 comment, 2026-10-02T10:00:00Z"), "{text}");
 }
@@ -3886,7 +3863,7 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
     let second = r#"{"schema_version":1,"author":"John Doe","date":"2026-10-02T10:00:00Z","existing_revisions":"keep","operations":[
         {"kind":"replace","paragraph":{"index":1},"find":"receipt","replacement":"the invoice"}]}"#;
     let text = edited(dir.path(), second, "two");
-    captures(&text, r"\{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.");
+    captures(&text, r"\{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @AC<<\} days of \{~~receipt~>the invoice~~\}\{>>#\d+\+\d+ @JD<<\}\.");
     assert!(text.contains("revisions: 2                       # 2 substitutions (4 Word marks)"), "{text}");
 }
 ```
@@ -3908,15 +3885,15 @@ Expected: PASS. If the substitution in the first test renders as two separate ch
 2. A 15-line excerpt of `tests/fixtures/agent-view/received.tracked.md` (header through `<!-- p3 -->`).
 3. "Reading back" (the contract for the applier plan). Write it as it stands here:
 
-   > An agent view is CriticMarkup plus id lines, so it reads back as follows. A change followed by a tagged note (`{>>r12 @AC<<}`) is the document's revision `r12` (`footnotes.r12` under a footnote id line): kept as it is when unchanged, accepted or rejected when the agent removed its text. A change with no note is new, by the plan author. A tagged comment note is the document's comment; `re cN` names its thread root; `resolved` resolves the thread; a note with no tag is a new comment by the plan author, a reply when it follows a tagged note on the same anchor. `<!-- pN -->` lines are alignment keys and are never text. Defaults when the markdown is incomplete, in order: `source:` names a base document, and everything not stated comes from it by id; a note's own `@handle` and timestamp; the handle's single timestamp from `authors:`; if `authors:` lists exactly one non-owner author, that author; else the author `Redline` (`Modified User` in this plan's draft; the shipped default is `Redline`); a missing date is the header's `date:` line, else the conversion time in UTC, with a warning; `document_owner` missing is `Original User`; with no header at all, Letter portrait, one-inch margins, Normal Calibri 11pt and the writer's other defaults. A header without `source:` is honoured for `page:`, the `styles:` lines it names, and `headers:`/`footers:` text, alignment and `{PAGE}`/`{NUMPAGES}`/`{DATE}` fields.
+   > An agent view is CriticMarkup plus id lines, so it reads back as follows. A change followed by a tagged note (`{>>#12 @AC<<}`) is the document's revision `body:rev:12` (`footnotes:rev:12` under a footnote id line): kept as it is when unchanged, accepted or rejected when the agent removed its text. A change with no note is new, by the plan author. A tagged comment note is the document's comment; `re #cN` names its thread root; `resolved` resolves the thread; a note with no tag is a new comment by the plan author, a reply when it follows a tagged note on the same anchor. `<!-- pN -->` lines are alignment keys and are never text. Defaults when the markdown is incomplete, in order: `source:` names a base document, and everything not stated comes from it by id; a note's own `@handle` and timestamp; the handle's single timestamp from `authors:`; if `authors:` lists exactly one non-owner author, that author; else the author `Modified User`; a missing date is the header's `date:` line, else the conversion time in UTC, with a warning; `document_owner` missing is `Original User`; with no header at all, Letter portrait, one-inch margins, Normal Calibri 11pt and the writer's other defaults. A header without `source:` is honoured for `page:`, the `styles:` lines it names, and `headers:`/`footers:` text, alignment and `{PAGE}`/`{NUMPAGES}`/`{DATE}` fields.
 
 4. "Limits": tracked paragraph marks inside comment bodies are not shown; page markers need the layout pass (`--no-page-markers` skips it, and the count then comes from Word's cached breaks); a table is one block for `-p`, `--head` and `--tail`.
 
-`README.md:380`: `| \`jubarte text\` | Read the agent view: YAML header, \`<!-- pN -->\` id lines, tracked changes and comments with their ids |`. Lines 502-511: replace the pre-view `[body:p:12] …` sample with the golden body from `<!-- p0 center -->` through the `<!-- p3 -->` paragraph. (Done; the README now shows id lines.)
+`README.md:380`: `| \`jubarte text\` | Read the agent view: YAML header, \`<!-- pN -->\` id lines, tracked changes and comments with their ids |`. Lines 502-511: replace the `[body:p:12] …` sample with the golden body from `<!-- p0 center -->` through the `<!-- p3 -->` paragraph.
 
-`skills/jubarte-documents/SKILL.md:17`: `Read | \`jubarte text file.docx\` (header + Markdown with \`<!-- pN -->\` ids; \`pN\` is the paragraph's short id) or \`jubarte inspect file.docx --json\``; lines 34-43: show the id-line form, `-p p12,p40-p48`, and say that `{++…++}{>>r12 @AC<<}` is `r12` for `accept --id`/`reject --id` and `{>>c5 @AC: …<<}` is `comment_id: c5`. (Done as of `44a16e29 docs(skill)`; a numeric `comment_id` is still accepted today, which the contract's schema 2 turns into a typed reference.)
+`skills/jubarte-documents/SKILL.md:17`: `Read | \`jubarte text file.docx\` (header + Markdown with \`<!-- pN -->\` ids; \`pN\` is \`body:p:N\`) or \`jubarte inspect file.docx --json\``; lines 34-43: show the id-line form, `-p p12,p40-p48`, and say that `{++…++}{>>#12 @AC<<}` is `body:rev:12` for `accept --id`/`reject --id` and `{>>#c5 @AC: …<<}` is `comment_id: 5`.
 
-`CHANGELOG.md`, under the unreleased heading, `### Changed`: `jubarte text prints the agent view: a YAML header (authors with handles and timestamps, owner, page setup, styles, headers, footers, sections), an <!-- pN --> id line before every paragraph (same numbering as edit), tracked changes as CriticMarkup followed by a note with their w:id and author handle, comments with their ids and thread parents, page markers from the layout pass, and -p / --head / --tail / --comments none / --dates / --no-page-markers. The previous [body:p:N] projection remains available as inspect::markdown in the library bindings, now printing short [pN] markers.` (As shipped, `inspect::markdown` at `src/inspect.rs:331` prints `[p12 Heading1]` — short ids, no colon forms.)
+`CHANGELOG.md`, under the unreleased heading, `### Changed`: `jubarte text prints the agent view: a YAML header (authors with handles and timestamps, owner, page setup, styles, headers, footers, sections), an <!-- pN --> id line before every paragraph (same numbering as edit), tracked changes as CriticMarkup followed by a note with their w:id and author handle, comments with their ids and thread parents, page markers from the layout pass, and -p / --head / --tail / --comments none / --dates / --no-page-markers. The previous [body:p:N] projection remains available as inspect::markdown in the library bindings.`
 
 - [ ] **Step 6: Whole suite, clippy, commit**
 
@@ -3946,7 +3923,7 @@ These five tasks were added after Tasks 1-15 were written. They depend on Tasks 
 
 ### Task 16: Short ids in `edit` selectors
 
-`edit` plans and the Task 19 flags take the ids the view prints: `p12`, `header1.p0`, `header1.p1`, `footer2`, `t0.row1.cell2`, `t0.row1.cell2.p1`. (Transitional notes: current code still accepts a bare `header1`/`footer2` for that story's paragraph 0 and `.p1` where the contract spells `.ps1`; the report still prints the colon long forms `body:p:12`, `header1:p:0`, `footer2:p:0` until schema 2 pairs every reference as `short_id`/`long_id`.) Header and footer ids are the part stems, Word's own numbering. (`c5`, a comment, is not a paragraph: Task 19 maps it to the comment operations before any selector is built.)
+`edit` plans and the Task 19 flags take the ids the view prints: `p12`, `header1`, `header1.p1`, `footer2`, `t0.r1.c2`, `t0.r1.c2.p1`. They expand to the long ids the report keeps printing (`body:p:12`, `header1:p:0`, `footer2:p:0`), so nothing on the wire changes. Header and footer ids are the part stems, Word's own numbering; a bare stem is the part's first paragraph. (`c5`, a comment, is not a paragraph: Task 19 maps it to the comment operations before any selector is built.)
 
 **Files:**
 - Modify: `src/edit.rs` (`select`, two new methods on `Transaction`)
@@ -3955,7 +3932,7 @@ These five tasks were added after Tasks 1-15 were written. They depend on Tasks 
 - [ ] **Step 1: Write the failing tests**
 
 ```rust
-//! Short paragraph ids (`p3`, `header1.p1`, `t0.row1.cell2`) in edit selectors.
+//! Short paragraph ids (`p3`, `header1.p1`, `t0.r1.c2`) in edit selectors.
 
 mod common;
 
@@ -3997,16 +3974,14 @@ fn short_ids_resolve_to_the_long_ids_the_report_prints() {
         &plan(
             r#"[
         {"kind":"replace","paragraph":"p6","find":"Six","replacement":"Seven"},
-        {"kind":"replace","paragraph":"t0.row1.cell1","find":"Day 10","replacement":"Day 12"},
-        {"kind":"replace","paragraph":"t0.row1.cell1.p1","find":"later","replacement":"earlier"},
-        {"kind":"replace","paragraph":"header1.p0","find":"DRAFT","replacement":"FINAL"},
+        {"kind":"replace","paragraph":"t0.r1.c1","find":"Day 10","replacement":"Day 12"},
+        {"kind":"replace","paragraph":"t0.r1.c1.p1","find":"later","replacement":"earlier"},
+        {"kind":"replace","paragraph":"header1","find":"DRAFT","replacement":"FINAL"},
         {"kind":"replace","paragraph":{"id":"header1.p1"},"find":"Confidential","replacement":"Public"}]"#,
         ),
     )
     .unwrap();
     assert!(out.report.ok, "{:?}", out.report.operations);
-    // Transitional report fields still carry the colon long form;
-    // schema 2 pairs every reference as `short_id`/`long_id`.
     assert_eq!(at(&out, 0), "body:p:6");
     assert_eq!(at(&out, 1), "body:p:4");
     assert_eq!(at(&out, 2), "body:p:5");
@@ -4021,12 +3996,11 @@ fn a_short_id_that_points_nowhere_is_refused_and_named() {
         ("header2", "header2 is not a part of this document (headers and footers: header1)"),
         ("footer1", "footer1 is not a part of this document (headers and footers: header1)"),
         ("header1.p2", "paragraph index 2 does not exist in header1 (2 paragraphs)"),
-        ("t1.row0.cell0", "t1 is not a table of this document (1 table)"),
-        ("t0.row2.cell0", "t0 has 2 rows, no row 2"),
-        ("t0.row0.cell2", "t0.row0 has 2 cells, no cell 2"),
-        // Transitional spelling is `.p1`; `.ps1` is the contract spelling.
-        ("t0.row0.cell0.p1", "t0.row0.cell0 has 1 paragraph, no p1"),
-        ("t0", "t0: a table id needs a row and a cell, as t0.row1.cell2"),
+        ("t1.r0.c0", "t1 is not a table of this document (1 table)"),
+        ("t0.r2.c0", "t0 has 2 rows, no row 2"),
+        ("t0.r0.c2", "t0.r0 has 2 cells, no cell 2"),
+        ("t0.r0.c0.p1", "t0.r0.c0 has 1 paragraph, no p1"),
+        ("t0", "t0: a table id needs a row and a cell, as t0.r1.c2"),
         ("px", "unknown paragraph id px"),
     ] {
         let e = apply_plan(
@@ -4071,13 +4045,10 @@ In `Transaction::select` (`src/edit.rs:3134`), the `Selector::Name(id) | Selecto
 (`story` becomes an owned `String` in this arm; make the other arms produce `String` too, `BODY_STORY.to_string()`, and compare with `s.id == story` as before.) Add the two methods to `impl Transaction`:
 
 ```rust
-    // As shipped this resolution lives in `src/ids.rs` (`ShortId` →
-    // `parse_location`), not as a string rewrite here; the colon long
-    // forms it produced are transitional and retire with schema 2.
     /// The long id of a short one: `p3` → `body:p:3`; `header1` and
     /// `header1.p1` → `header1:p:0` and `header1:p:1` (the part stem, Word's
     /// own numbering, as the agent view prints it); `footer2` likewise;
-    /// `t0.row1.cell2` and `t0.row1.cell2.p1` → the first (or the K-th) paragraph of
+    /// `t0.r1.c2` and `t0.r1.c2.p1` → the first (or the K-th) paragraph of
     /// that cell. `None` when `id` is not a short id.
     fn long_id(&self, id: &str) -> Option<Result<String, String>> {
         fn number(text: &str) -> Option<usize> {
@@ -4150,7 +4121,7 @@ In `Transaction::select` (`src/edit.rs:3134`), the `Selector::Name(id) | Selecto
             _ => (None, None, None),
         };
         let (Some(row), Some(cell), Some(index)) = (row, cell, index) else {
-            return Err(format!("{head}: a table id needs a row and a cell, as t0.row1.cell2"));
+            return Err(format!("{head}: a table id needs a row and a cell, as t0.r1.c2"));
         };
         let rows: Vec<NodeId> = dom.descendants(table, Some(&tr)).into_iter().filter(|&r| nearest(r, &tbl) == Some(table)).collect();
         let Some(&row_node) = rows.get(row) else {
@@ -4174,9 +4145,9 @@ In `Transaction::select` (`src/edit.rs:3134`), the `Selector::Name(id) | Selecto
     }
 ```
 
-`self.opened.body` is the body `NodeId` the transaction already uses as `stories[0].root` (`src/edit.rs:1725`); `W::tc()`, `W::tbl()`, `W::p()`, `W::txbx_content()` and `W::name("tr")` exist in `src/namespaces.rs` (lines 96-124). The nearest-ancestor filtering is what `inspect::tables` does (`src/inspect/tables.rs:60-98`), so `t0.row1.cell1` here is the cell `inspect --json` lists at `tables[0].rows[1][1]` when no table is nested. "paragraph index 7 does not exist in body (7 paragraphs)" is the existing message at `src/edit.rs:3165`, reached through the transitional `body:p:7` path. (Contract note: inspection and edit count a cell's own paragraphs differently today — inspection assigns a paragraph to its nearest cell, the edit scan includes nested-table descendants; the contract's shared own-cell inventory resolves this.)
+`self.opened.body` is the body `NodeId` the transaction already uses as `stories[0].root` (`src/edit.rs:1725`); `W::tc()`, `W::tbl()`, `W::p()`, `W::txbx_content()` and `W::name("tr")` exist in `src/namespaces.rs` (lines 96-124). The nearest-ancestor filtering is what `inspect::tables` does (`src/inspect/tables.rs:60-98`), so `t0.r1.c1` here is the cell `inspect --json` lists at `tables[0].rows[1][1]` when no table is nested. "paragraph index 7 does not exist in body (7 paragraphs)" is the existing message at `src/edit.rs:3165`, reached through `body:p:7`.
 
-Extend the `Selector` doc comment (`src/edit.rs:733-736`): "Ids are the agent view's short forms (`p3`, `header1.p0`, `header1.p1`, `footer2`, `t0.row1.cell2`, `t0.row1.cell2.p1`); the transitional colon forms (`body:p:3`, `header1:p:0`) are refused input and the report prints the long form (the paired `short_id`/`long_id` reference at schema 2)."
+Extend the `Selector` doc comment (`src/edit.rs:733-736`): "Ids name their story (`body:p:3`, `header1:p:0`) or use the agent view's short forms (`p3`, `header1`, `header1.p1`, `footer2`, `t0.r1.c2`, `t0.r1.c2.p1`); the report prints the long form."
 
 - [ ] **Step 4: Run them**
 
@@ -4187,7 +4158,7 @@ Expected: PASS, and the edit unit tests unchanged.
 
 ```bash
 git add src/edit.rs tests/edit_short_ids.rs
-git commit -m "feat(edit): short paragraph ids (p3, header1.p1, t0.row1.cell2) in selectors"
+git commit -m "feat(edit): short paragraph ids (p3, header1.p1, t0.r1.c2) in selectors"
 ```
 
 ---
@@ -4222,11 +4193,11 @@ fn changed_keeps_the_blocks_with_marks_by_anyone_or_by_one_author() {
     assert!(all.contains("\nrange: changed (p1, p3) of p0-p3\n"), "{all}");
     assert_eq!(
         body(&all),
-        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{>>r0 @AC<<} days.\n\n<!-- p3 -->\nFee: {--waived--}{>>r1 @BL<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{>>#0 @AC<<} days.\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n"
     );
     let bob = agent_options(&bytes, MarkdownOptions { select: Some(Select::Changed { by: Some("Bob Lee".into()) }), ..agent_defaults() });
     assert!(bob.contains("\nrange: changed by @BL (p3) of p0-p3\n"), "{bob}");
-    assert_eq!(body(&bob), "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{>>r1 @BL<<}\n");
+    assert_eq!(body(&bob), "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{>>#1 @BL<<}\n");
     let by_handle = agent_options(&bytes, MarkdownOptions { select: Some(Select::Changed { by: Some("BL".into()) }), ..agent_defaults() });
     assert_eq!(body(&by_handle), body(&bob));
     let nobody = agent_options(&bytes, MarkdownOptions { select: Some(Select::Changed { by: Some("Cy Young".into()) }), ..agent_defaults() });
@@ -4243,7 +4214,7 @@ fn cli_read_changed_prints_only_the_changed_blocks() {
     assert!(!changed.contains("<!-- p0 ") && !changed.contains("<!-- p1 "), "{changed}");
     let by = ok(&["read", "received.docx", "--changed", "--by", "AS", "--no-page-markers"], dir.path());
     assert!(by.contains("\nrange: changed by @AS (p5) of p0-p20\n"), "{by}");
-    assert!(by.contains("{>>c6 @AS re c5: Disagree.<<}") && !by.contains("<!-- p3 "), "{by}");
+    assert!(by.contains("{>>#c6 @AS re #c5: Disagree.<<}") && !by.contains("<!-- p3 "), "{by}");
     let bad = jubarte(&["read", "received.docx", "--changed", "-p", "p1"], dir.path());
     assert!(!bad.status.success(), "--changed conflicts with -p");
     let bad = jubarte(&["read", "received.docx", "--by", "AS"], dir.path());
@@ -4277,7 +4248,7 @@ Expected: FAIL to compile (`Select::Changed` does not exist).
                 .iter()
                 .map(|block| {
                     let first = block.text.lines().next().unwrap_or("");
-                    let marked = block.text.contains("{>>")
+                    let marked = block.text.contains("{>>#")
                         || [" rev #", " comments #", " break-ins #", " break-del #", " fmt #"].iter().any(|key| first.contains(key));
                     marked && by.as_deref().is_none_or(|handle| has_handle(&block.text, handle))
                 })
@@ -4459,8 +4430,8 @@ fn marks_are_dropped_when_the_literal_anchor_is_absent_and_the_report_says_so() 
         ("# Chapter 1", "Chapter 1", "Chapter One"),
         ("**secret**", "secret", "confidential"),
         ("<u>secret</u>", "secret", "confidential"),
-        ("{==keep it secret.==}{>>c5 @AC: Cap?<<}", "keep it secret.", "keep it."),
-        ("keep {++it++}{>>r0 @AC<<} secret", "keep it secret", "keep secret"),
+        ("{==keep it secret.==}{>>#c5 @AC: Cap?<<}", "keep it secret.", "keep it."),
+        ("keep {++it++}{>>#0 @AC<<} secret", "keep it secret", "keep secret"),
         ("\\*\\*stars\\*\\*", "**stars**", "asterisks"),
     ] {
         let paragraph = if find.contains("Chapter") { "p0" } else if find.contains("stars") { "p2" } else { "p1" };
@@ -4714,7 +4685,7 @@ jubarte add  FILE -p WHERE --comment --content TEXT            a comment on the 
 jubarte add  FILE -p c5 --content TEXT                         a reply to comment c5
 ```
 
-`-p` is short for `--location`; `WHERE` is any id the view prints (`p12`, `header1.p0`, `footer2.p1`, `t0.row1.cell2`, `c5`, `c5.text`, `r12` with `--accept`/`--reject`) — a colon long id is refused input, exit 2 naming the short spelling. Every `-p` starts an operation and the flags after it belong to it, so one command can carry several (`-p p1 --anchor thirty --content forty-five -p p3 --delete`). Invocation-wide options: `--author NAME` (default `Redline`), `-d/--datetime ISO8601` (default now, UTC; `--date` does not exist), `--suggesting-mode` (default: the edits are tracked changes) or `--editing-mode` (the edits land directly), `--existing-revisions auto|keep|accept|reject|refuse` (default `auto`), `-o FILE.docx`, `--out-dir [DIR]` for the `clean.docx`/`redline.docx`/`patch.diff`/`report.jsonl` bundle (DIR defaults to `<stem>.edit`), `--force`, `-q`. Without `--out-dir`, `edit`/`add` write one `FILE_modified.docx` beside FILE. `--style SPEC` is per operation and repeatable: `bold`, `italic`, `underline`, `strike`, `caps`, `highlight=yellow`, `font=Calibri`, `size=11`, `color=FF0000` format the text the operation writes or anchors; any other value is a paragraph style (`Heading2`) for a new paragraph or for `edit -p pN --style`. `--plan [PLAN.json]` records or applies batches (valueless defaults to `<stem>_plan.json`) and excludes the flags. `--reply TEXT` answers a comment (`-p c5`); `-p r12 --accept`/`--reject` resolves revisions and prints the resolved lines instead of the view. `--content` has its Markdown escapes resolved (`\#` → `#`); emphasis marks in it are written as text, with a note. After applying, both commands print the notes (Task 18), then the redline's changed blocks (`--changed --by <author>`; when that selection is empty, as after resolving someone else's comment, the blocks changed by anyone).
+`-p` is short for `--location`; `WHERE` is any id the view prints (`p12`, `header1`, `footer2.p1`, `t0.r1.c2`, `c5`) or a long id. Every `-p` starts an operation and the flags after it belong to it, so one command can carry several (`-p p1 --anchor thirty --content forty-five -p p3 --delete`). Invocation-wide options: `--author NAME` (default `Modified User`), `--datetime ISO8601` (default now, UTC; `--date` is a hidden alias), `--suggesting-mode` (default: the edits are tracked changes; `redline.docx`, `clean.docx`, `patch.diff` and `report.jsonl` are written and the printed view is the tracked one) or `--editing-mode` (the edits land directly: `clean.docx` and `report.jsonl` only, and the printed view is the accepted text of the changed blocks, with `rev` tags on their id lines), `--existing-revisions auto|keep|accept|reject|refuse` (default `auto`: `keep` when the file already has tracked changes, else the comparer path), `--out-dir DIR` (default `<FILE's directory>/<stem>.edit`, refused when it exists unless `--force`), `--force`, `-q`. `--style SPEC` is per operation and repeatable: `bold`, `italic`, `underline`, `strike`, `caps`, `highlight=yellow`, `font=Calibri`, `size=11`, `color=FF0000` format the text the operation writes or anchors; any other value is a paragraph style (`Heading2`) for a new paragraph or for `edit -p pN --style`. `--plan PLAN.json` stays for batches and the other operation kinds and excludes the flags. `--content` has its Markdown escapes resolved (`\#` → `#`); emphasis marks in it are written as text, with a note. After applying, both commands print the notes (Task 18), then the redline's changed blocks (`--changed --by <author>`; when that selection is empty, as after resolving someone else's comment, the blocks changed by anyone).
 
 **Files:**
 - Modify: `src/cli.rs` (`Edit`, new `Add`, `EditOptions`, `ExistingArg`, `FlagOp`, `flag_operations`, `Cli::try_parse_from`, `parse_json`), `src/bin/jubarte.rs` (`EditJob`, `run_edit`, plan builders, dispatch)
@@ -4739,20 +4710,21 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         ],
         dir.path(),
     );
-    // As shipped: no `--out-dir` writes one `base_modified.docx` beside
-    // base.docx; the `clean.docx`/`redline.docx`/`patch.diff`/`report.jsonl`
-    // bundle is what `--out-dir` (default `<stem>.edit`) writes.
-    assert!(dir.path().join("base_modified.docx").is_file(), "default output");
-    assert!(out.contains("\nsource: base_modified.docx\n"), "{out}");
-    assert!(out.contains("\nrange: changed by @R (p0, p1, p2) of p0-p2\n"), "{out}");
-    assert!(out.contains("R: Redline") && out.contains("# 3 revisions, 2026-10-01T09:00:00Z"), "{out}");
-    captures(&out, r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>r\d+ @R<<\}\n");
-    captures(&out, r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n");
-    captures(&out, r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>r\d+ @R<<\} ?\.\n");
+    for name in ["clean.docx", "redline.docx", "patch.diff", "report.jsonl"] {
+        assert!(dir.path().join("base.edit").join(name).is_file(), "default out dir holds {name}");
+    }
+    assert!(out.contains("\nsource: base.edit/redline.docx\n"), "{out}");
+    assert!(out.contains("\nrange: changed by @MU (p0, p1, p2) of p0-p2\n"), "{out}");
+    assert!(out.contains("MU: Modified User") && out.contains("# 3 revisions, 2026-10-01T09:00:00Z"), "{out}");
+    captures(&out, r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>#\d+ @MU<<\}\n");
+    captures(&out, r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @MU<<\} days of receipt\.\n");
+    captures(&out, r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>#\d+ @MU<<\} ?\.\n");
     assert!(!out.contains("\n@@ "), "the patch is not printed: {out}");
+    let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
+    assert!(report.contains(r#""op":"replace""#) && report.contains(r#""op":"delete""#) && report.contains(r#""op":"rewrite""#), "{report}");
 
     let again = jubarte(&["edit", "base.docx", "-p", "p1", "--anchor", "thirty", "--content", "sixty"], dir.path());
-    assert!(!again.status.success(), "base_modified.docx exists: --force");
+    assert!(!again.status.success(), "base.edit exists: --force or --out-dir");
     for bad in [
         &["edit", "base.docx"][..],
         &["edit", "base.docx", "--plan", "x.json", "-p", "p1", "--delete"][..],
@@ -4775,14 +4747,14 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         &[&["edit", "base.docx", "-p", "p1", "--anchor", "thirty", "--content", "thirty (30)", "-p", "p2", "--anchor", "Late", "--content", "Note: Late", "--out-dir", "one"][..], &keep[..]].concat(),
         dir.path(),
     );
-    captures(&out, r"within thirty\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days");
-    captures(&out, r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>r\d+ @R<<\}Late amounts");
+    captures(&out, r"within thirty\{\+\+ \(30\)\+\+\}\{>>#\d+ @MU<<\} days");
+    captures(&out, r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>#\d+ @MU<<\}Late amounts");
     let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
     assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
 
     let out = ok(&["edit", "one/redline.docx", "-p", "p1", "--anchor", "receipt", "--content", "the invoice", "--author", "John Doe", "--datetime", "2026-10-02T10:00:00Z", "--out-dir", "two"], dir.path());
     assert!(out.contains("\nrange: changed by @JD (p1) of p0-p2\n"), "{out}");
-    captures(&out, r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days of \{~~receipt~>the invoice~~\}\{>>r\d+\+\d+ @JD<<\}\.");
+    captures(&out, r"\{\+\+ \(30\)\+\+\}\{>>#\d+ @MU<<\} days of \{~~receipt~>the invoice~~\}\{>>#\d+\+\d+ @JD<<\}\.");
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(report.contains(r#""existing_revisions":"keep""#), "auto picked keep: {report}");
     let refused = jubarte(&["edit", "one/redline.docx", "-p", "p1", "--anchor", "receipt", "--content", "x", "--existing-revisions", "refuse", "--out-dir", "three"], dir.path());
@@ -4794,17 +4766,17 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
     let out = ok(&["add", "base.docx", "-p", "p2", "--anchor", "one percent", "--content", "Cap?", "--author", "Ann Counsel", "--datetime", "2026-10-01T09:00:00Z", "--out-dir", "one"], dir.path());
-    assert!(out.contains("{==one percent==}{>>c0 @AC: Cap?<<}"), "{out}");
+    assert!(out.contains("{==one percent==}{>>#c0 @AC: Cap?<<}"), "{out}");
     let out = ok(&["add", "one/redline.docx", "-p", "c0", "--content", "Yes, in Delaware.", "--author", "Bob Lee", "--datetime", "2026-10-02T10:00:00Z", "--out-dir", "two"], dir.path());
-    assert!(out.contains("{>>c0 @AC: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware.<<}"), "{out}");
+    assert!(out.contains("{>>#c0 @AC: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware.<<}"), "{out}");
     let out = ok(&["edit", "two/redline.docx", "-p", "c1", "--content", "Yes, in Delaware (6 Del. C. 2301).", "-p", "c0", "--resolve", "--author", "Cy Young", "--out-dir", "three"], dir.path());
     assert!(out.contains("\nrange: changed (p2) of p0-p2\n"), "nothing is by Cy Young, so the view falls back to every changed block: {out}");
-    assert!(out.contains("{>>c0 @AC resolved: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware (6 Del. C. 2301).<<}"), "{out}");
+    assert!(out.contains("{>>#c0 @AC resolved: Cap?<<}{>>#c1 @BL re #c0: Yes, in Delaware (6 Del. C. 2301).<<}"), "{out}");
     let out = ok(&["add", "three/redline.docx", "-p", "p0", "--comment", "--content", "Add a fee schedule.", "--out-dir", "four"], dir.path());
-    assert!(out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"), "{out}");
+    assert!(out.contains("<!-- p0 -->\n{==Fees==}{>>#c2 @MU: Add a fee schedule.<<}\n"), "{out}");
     let out = ok(&["edit", "four/redline.docx", "-p", "c0", "--delete", "--out-dir", "five"], dir.path());
-    assert!(!out.contains("c0") && !out.contains("c1"), "the thread is gone: {out}");
-    assert!(out.contains("\nrange: changed by @R (p0) of p0-p2\n") && out.contains("c2 @R"), "{out}");
+    assert!(!out.contains("#c0") && !out.contains("#c1"), "the thread is gone: {out}");
+    assert!(out.contains("\nrange: changed by @MU (p0) of p0-p2\n") && out.contains("#c2 @MU"), "{out}");
     for bad in [
         &["add", "base.docx", "-p", "p1"][..],
         &["add", "base.docx", "-p", "p1", "--anchor", "x", "--content", "y", "--before"][..],
@@ -4820,22 +4792,22 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
     let after = ok(&["add", "base.docx", "-p", "p1", "--content", "Invoices are due in full.", "--out-dir", "after"], dir.path());
-    assert!(after.contains("range: changed by @R (") && after.contains("p2"), "{after}");
-    captures(&after, r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>r\d+ @R<<\}\n");
+    assert!(after.contains("range: changed by @MU (") && after.contains("p2"), "{after}");
+    captures(&after, r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>#\d+ @MU<<\}\n");
     let before = ok(&["add", "base.docx", "-p", "p1", "--content", "Payment", "--before", "--style", "Heading2", "--style", "bold", "--out-dir", "before"], dir.path());
-    captures(&before, r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>r\d+ @R<<\}\n");
+    captures(&before, r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>#\d+ @MU<<\}\n");
     let xml = common::docx::part_string(&std::fs::read(dir.path().join("before/clean.docx")).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains(r#"<w:pStyle w:val="Heading2"/>"#) && xml.contains("<w:b/>") && xml.contains(">Payment<"), "{xml}");
 
     let out = ok(&["edit", "base.docx", "-p", "p1", "--anchor", "thirty", "--content", "forty-five", "--editing-mode", "--out-dir", "e"], dir.path());
     assert!(dir.path().join("e/clean.docx").is_file() && dir.path().join("e/report.jsonl").is_file());
     assert!(!dir.path().join("e/redline.docx").exists() && !dir.path().join("e/patch.diff").exists(), "editing mode writes no redline");
-    assert!(out.contains("\nrange: changed by @R (p1) of p0-p2\n"), "{out}");
-    captures(&out, r"<!-- p1 rev r\d+\+\d+ @R -->\nClient shall pay each invoice within forty-five days of receipt\.\n");
+    assert!(out.contains("\nrange: changed by @MU (p1) of p0-p2\n"), "{out}");
+    captures(&out, r"<!-- p1 rev #\d+\+\d+ @MU -->\nClient shall pay each invoice within forty-five days of receipt\.\n");
 
     let noted = ok(&["edit", "base.docx", "-p", "p0", "--anchor", "# Fees", "--content", "Fees \\* Costs", "--out-dir", "n"], dir.path());
     assert!(noted.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted}");
-    captures(&noted, r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>r\d+ @R<<\}\n");
+    captures(&noted, r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>#\d+ @MU<<\}\n");
     let marks = ok(&["edit", "base.docx", "-p", "p0", "--content", "**Fees**", "--out-dir", "m"], dir.path());
     assert!(marks.contains("\nnote: op-1: content keeps its Markdown marks as text; use --style for formatting\n"), "{marks}");
 }
@@ -4864,7 +4836,7 @@ Expected: FAIL, unknown arguments.
         jubarte edit a.docx -p p3 --content \"The parties agree as follows.\"       rewrite\n  \
         jubarte edit a.docx -p c5 --content \"Agreed.\" -p c7 --resolve\n  \
         jubarte edit a.docx --plan plan.json --out-dir review\n\n\
-        WHERE is an id from `jubarte read`: p12, header1.p0, footer2.p1, t0.row1.cell2, c5.")]
+        WHERE is an id from `jubarte read`: p12, header1, footer2.p1, t0.r1.c2, c5 (or body:p:12).")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
@@ -4873,7 +4845,7 @@ Expected: FAIL, unknown arguments.
         /// `jubarte capabilities --json`). Excludes the operation flags.
         #[arg(long, value_name = "PLAN.json", required_unless_present = "location", conflicts_with_all = ["location", "anchor", "content", "delete", "resolve", "style"])]
         plan: Option<PathBuf>,
-        /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a comment.
+        /// Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a comment.
         /// Each -p starts an operation; the flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
@@ -4920,7 +4892,7 @@ Expected: FAIL, unknown arguments.
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Where: p12, header1, footer2.p1, t0.row1.cell2, or c5 for a reply.
+        /// Where: p12, header1, footer2.p1, t0.r1.c2, or c5 for a reply.
         /// Each -p starts an operation; the flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append, required = true)]
         location: Vec<String>,
@@ -4959,7 +4931,7 @@ Next to `CompareArgs`:
 #[group(id = "edit_options", multiple = true)]
 pub struct EditOptions {
     /// Author of the changes and comments.
-    #[arg(long, value_name = "NAME", default_value = "Redline")]
+    #[arg(long, value_name = "NAME", default_value = "Modified User")]
     pub author: String,
     /// Their timestamp (ISO 8601) [default: now, UTC].
     #[arg(long, value_name = "ISO8601", alias = "date")]
@@ -4977,9 +4949,7 @@ pub struct EditOptions {
     /// comparer.
     #[arg(long, value_enum, value_name = "MODE", default_value_t = ExistingArg::Auto)]
     pub existing_revisions: ExistingArg,
-    /// Directory to create for the outputs [as shipped: optional; when
-    /// given without a value it defaults to <FILE's directory>/<stem>.edit;
-    /// without it `edit`/`add` write FILE_modified.docx beside FILE].
+    /// Directory to create for the outputs [default: <FILE's directory>/<stem>.edit].
     #[arg(long, value_name = "DIR")]
     pub out_dir: Option<PathBuf>,
     /// Replace an existing output directory's files.
@@ -5110,9 +5080,7 @@ fn fill_flag_operations(command: &mut Option<Command>, matches: &clap::ArgMatche
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Verb { Edit, Add }
 
-/// `<dir>/<stem>.edit` next to the source. (As shipped, used only when
-/// `--out-dir` is given without a value; the default output is otherwise
-/// `<stem>_modified.docx`.)
+/// `<dir>/<stem>.edit` next to the source.
 fn default_out_dir(file: &Path) -> PathBuf {
     let stem = file.file_stem().map_or_else(|| "document".to_string(), |s| s.to_string_lossy().into_owned());
     match file.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -5323,7 +5291,7 @@ The `Add` arm is the same with `Verb::Add`, no `plan`, `dry_run`/`pdf`/`png` fal
 - [ ] **Step 5: Run the tests, the CLI parser tests and the edit tests**
 
 Run: `cargo test --test agent_text_view && cargo test --test cli_parser && cargo test --test adoption && cargo test --test m_cli_agent && cargo test --test cli_failure_paths && cargo test --bin jubarte`
-Expected: PASS. `cli_parser` parses `["edit", "a", "--plan", "p", "--out-dir", "d"]` (line 186-188); if it compares the whole `args` object, add the new fields with their defaults (`location: []`, `operations: []`, `author: "Redline"`, `datetime: null`, `existing_revisions: "auto"`, …). `adoption.rs` and `m_cli_agent.rs` read `patch.diff` from disk, not from stdout, so they pass as they are; if one asserts the patch on stdout, assert it from the file instead (rule 4: no test is deleted).
+Expected: PASS. `cli_parser` parses `["edit", "a", "--plan", "p", "--out-dir", "d"]` (line 186-188); if it compares the whole `args` object, add the new fields with their defaults (`location: []`, `operations: []`, `author: "Modified User"`, `datetime: null`, `existing_revisions: "auto"`, …). `adoption.rs` and `m_cli_agent.rs` read `patch.diff` from disk, not from stdout, so they pass as they are; if one asserts the patch on stdout, assert it from the file instead (rule 4: no test is deleted).
 
 - [ ] **Step 6: Commit**
 
@@ -5364,7 +5332,7 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     std::fs::write(dir.path().join("new.docx"), docx(&BASE.replace("thirty", "forty-five"))).unwrap();
     let out = ok(&["old.docx", "new.docx"], dir.path());
     assert!(out.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"), "{out}");
-    captures(&out, r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n");
+    captures(&out, r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>#\d+\+\d+ @R<<\} days of receipt\.\n");
     assert!(out.contains("R: Redline"), "{out}");
     assert!(!dir.path().join("old_v_new.docx").exists(), "nothing written without -o");
     let written = ok(&["old.docx", "new.docx", "-o", "r.docx"], dir.path());
@@ -5491,13 +5459,13 @@ jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND
 jubarte add  FILE -p c5 --content TEXT                         a reply
 ```
 
-with two paragraphs after it: (1) ids are the ones the view prints (`p12`, `header1`, `footer2.p1`, `t0.row1.cell2`, `c5`) and `edit` plans take them too; several `-p` per command, each with its own flags; `--plan` for batches and the other kinds. (2) The invocation options as the Task 19 summary lists them (`--author`, `--datetime`, `--suggesting-mode` / `--editing-mode`, `--existing-revisions auto`, `--out-dir`, `--force`, `--style` tokens), what is printed back (notes, then `read redline.docx --changed --by <author>`), and the anchor rule (literal first, then without Markdown marks, with a note).
+with two paragraphs after it: (1) ids are the ones the view prints (`p12`, `header1`, `footer2.p1`, `t0.r1.c2`, `c5`) and `edit` plans take them too; several `-p` per command, each with its own flags; `--plan` for batches and the other kinds. (2) The invocation options as the Task 19 summary lists them (`--author`, `--datetime`, `--suggesting-mode` / `--editing-mode`, `--existing-revisions auto`, `--out-dir`, `--force`, `--style` tokens), what is printed back (notes, then `read redline.docx --changed --by <author>`), and the anchor rule (literal first, then without Markdown marks, with a note).
 
 `README.md:380` row: `| \`jubarte read\` (\`jubarte FILE\`) | The agent view: YAML header, \`<!-- pN -->\` id lines, tracked changes and comments with their ids; \`-p\`, \`--head\`, \`--tail\`, \`--changed\` |`; add rows for `jubarte edit FILE -p … --anchor … --content …` and `jubarte add`; in the compare section note that `jubarte A B` without `-o` prints the redline's agent view and `compare A B` writes `<A>_v_<B>.docx`.
 
-`skills/jubarte-documents/SKILL.md`: the Read row becomes `jubarte FILE.docx` (or `read`), the Edit row shows the flag form first and the plan form second, a new Add row, and the id note says `p12`, `header1`, `footer2.p1`, `t0.row1.cell2`, `c5`.
+`skills/jubarte-documents/SKILL.md`: the Read row becomes `jubarte FILE.docx` (or `read`), the Edit row shows the flag form first and the plan form second, a new Add row, and the id note says `p12`, `header1`, `footer2.p1`, `t0.r1.c2`, `c5`.
 
-`CHANGELOG.md`, unreleased, `### Added`: `jubarte FILE prints the agent view; jubarte A B prints the agent view of their redline (write it with -o; compare A B still writes <A>_v_<B>.docx). read --changed [--by AUTHOR]. edit and add take -p WHERE with --anchor/--content/--delete/--resolve/--reply/--accept/--reject/--style/--before/--comment, several per command, without a plan (author Redline, -d/--datetime, -o FILE.docx or --out-dir [<stem>.edit], --existing-revisions auto, --suggesting-mode | --editing-mode); comments by -p c5. Short ids p12, header1.p0, footer2.p1, t0.row1.cell2, c5.text in edit selectors. The agent view escapes literal Markdown marks; anchors that carry marks match their plain text, with a note.` `### Changed`: `edit prints the redline's changed blocks as the agent view instead of the patch, or the resolved lines for -p rN --accept/--reject (patch.diff is still written under --out-dir). jubarte A B no longer writes a file unless -o is given. edit --plan and --out-dir are optional; the default output is FILE_modified.docx.`
+`CHANGELOG.md`, unreleased, `### Added`: `jubarte FILE prints the agent view; jubarte A B prints the agent view of their redline (write it with -o; compare A B still writes <A>_v_<B>.docx). read --changed [--by AUTHOR]. edit and add take -p WHERE with --anchor/--content/--delete/--resolve/--style/--before/--comment, several per command, without a plan (author Modified User, --datetime, --out-dir <stem>.edit, --existing-revisions auto, --suggesting-mode | --editing-mode); comments by -p c5. Short ids p12, header1, footer2.p1, t0.r1.c2 in edit selectors. The agent view escapes literal Markdown marks; anchors that carry marks match their plain text, with a note.` `### Changed`: `edit prints the redline's changed blocks as the agent view instead of the patch (patch.diff is still written). jubarte A B no longer writes a file unless -o is given. edit --plan and --out-dir are optional.`
 
 - [ ] **Step 7: Whole suite, clippy, commit**
 
@@ -5513,6 +5481,6 @@ git commit -m "feat(cli): jubarte FILE reads, jubarte A B prints the redline vie
 
 ## Self-review of Tasks 16-20
 
-Consistency with Tasks 1-15: `Select::Changed` extends the Task 1 enum and the Task 12 matcher without touching `Head`, `Tail` or `Picks`; `ReadArgs` is Task 13's struct, extended in Task 17 and flattened into `Cli` in Task 20; `run_text` keeps its signature `(file, &ReadArgs)` and loses its body to `print_agent_view`, which `run` (compare) also calls; `edit`'s stdout changes in Task 19 and Task 15's round-trip tests ignore it (they re-read with `read`). The header/footer ids are the story names `edit` already uses (the transitional `header1:p:0` maps to story `header1`, paragraph `header1.p0`), so Task 11's header, Task 16's selectors and the goldens agree by construction. Task 18's escaping runs only when `ids` is on and only on run text and block starts; the goldens hold no literal marks. Task 19's `-p` grouping relies on clap behaviour verified on 4.6 (`indices_of` per occurrence for `Append` flags with `num_args = 0`); `ArgAction::Count` does not give that and is not used.
+Consistency with Tasks 1-15: `Select::Changed` extends the Task 1 enum and the Task 12 matcher without touching `Head`, `Tail` or `Picks`; `ReadArgs` is Task 13's struct, extended in Task 17 and flattened into `Cli` in Task 20; `run_text` keeps its signature `(file, &ReadArgs)` and loses its body to `print_agent_view`, which `run` (compare) also calls; `edit`'s stdout changes in Task 19 and Task 15's round-trip tests ignore it (they re-read with `read`). The header/footer ids are the story names `edit` already uses (`header1:p:0` → `header1`), so Task 11's header, Task 16's selectors and the goldens agree by construction. Task 18's escaping runs only when `ids` is on and only on run text and block starts; the goldens hold no literal marks. Task 19's `-p` grouping relies on clap behaviour verified on 4.6 (`indices_of` per occurrence for `Append` flags with `num_args = 0`); `ArgAction::Count` does not give that and is not used.
 
 Risks, most likely first: the comparer's placement of an inserted paragraph mark (the `add` regexes pin only the paragraph's number and text); `##` before `{++Payment++}` for an inserted heading (if the heading prefix lands elsewhere, read the writer's `push_paragraph` call and fix the test's expectation only after confirming the XML has `Heading2` on the new paragraph); `Rewrite` on a one-word paragraph (`Fees` → `Fees and Expenses`) producing `{~~Fees~>Fees and Expenses~~}` instead of an insertion in compare mode (then the engine's word-level diff is the thing to check, not the test); `required_unless_present = "location"` with `conflicts_with_all` on `plan`; `Option::is_none_or` on an older toolchain; `_` escaping across run boundaries (documented, not tested).

@@ -3,11 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The YAML header of the agent view.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::agent::{Handles, RevTag};
 use super::ooxml::Element;
-use crate::markdown::view_notes::WORD_PAGE_SIZES;
 
 /// Where the owner's name came from.
 pub(crate) enum Owner {
@@ -45,9 +44,8 @@ pub(crate) struct StoryFact {
     /// The paragraph `text` is, in the part.
     pub first: usize,
     pub text: String,
-    /// The paragraphs after it, to the part's last (an empty one too, a
-    /// line Word lays out): `text` then prints as a list (`text: [Page 1,
-    /// Draft]`, `text: [DRAFT, ""]`).
+    /// The paragraphs after it, to the last with text: `text` then prints
+    /// as a list (`text: [Page 1, Draft]`).
     pub more: Vec<String>,
     /// `center`, `right`, or `None` for left.
     pub align: Option<&'static str>,
@@ -231,42 +229,17 @@ fn revisions_comment(f: &Facts) -> String {
             c.kind == ChangeKind::Formatting && matches!(story(c).as_str(), "body" | "styles")
         })
         .count();
-    // A part's group prints where its block does — headers then footers,
-    // first, default, even, section by section — not where its relationship
-    // happens to sit, which a writer cannot keep.
-    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut others: Vec<(String, usize)> = Vec::new();
     for c in &f.changes {
         let s = story(c);
         if matches!(s.as_str(), "body" | "styles") {
             continue;
         }
-        *counts.entry(s).or_default() += 1;
-    }
-    let mut order: Vec<String> = Vec::new();
-    for section in &f.sections {
-        for kind in ["header", "footer"] {
-            for ty in ["first", "default", "even"] {
-                if let Some(s) = section
-                    .stories
-                    .iter()
-                    .find(|s| s.kind == kind && s.ty == ty && counts.contains_key(&s.part))
-                    && !order.contains(&s.part)
-                {
-                    order.push(s.part.clone());
-                }
-            }
+        match others.iter_mut().find(|(name, _)| *name == s) {
+            Some((_, n)) => *n += 1,
+            None => others.push((s, 1)),
         }
     }
-    for c in &f.changes {
-        let s = story(c);
-        if counts.contains_key(&s) && !order.contains(&s) {
-            order.push(s);
-        }
-    }
-    let others: Vec<(String, usize)> = order
-        .into_iter()
-        .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
-        .collect();
     let mut parts = Vec::new();
     if marks > 0 {
         let mut kinds = Vec::new();
@@ -556,14 +529,8 @@ pub(crate) fn render(f: &Facts) -> String {
     out
 }
 
-/// A twips-valued attribute; Strict files write the universal measure
-/// (`72pt`, `1in`) where Transitional writes the integer.
 fn twips(e: &Element, attr: &str) -> Option<f64> {
-    e.attr(attr).and_then(|v| {
-        v.parse::<f64>()
-            .ok()
-            .or_else(|| crate::util::universal_measure_twips(v))
-    })
+    e.attr(attr).and_then(|v| v.parse::<f64>().ok())
 }
 
 /// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
@@ -575,17 +542,10 @@ fn page_setup(sect: &Element) -> String {
     );
     let landscape = size.and_then(|s| s.attr("orient")) == Some("landscape") || w > h;
     let (short, long) = if w < h { (w, h) } else { (h, w) };
-    // Named sizes match on the rounded twip: 210mm is the 11906 an A4
-    // spells, not the 11905 a truncating cast reads (#531). The names are
-    // Word's own paper list, and the writer writes the same twips back
-    // for each (#561); a twip off a named size is not that size.
-    let name = match WORD_PAGE_SIZES.iter().find(|&&(_, w, h)| {
-        (short.round() as i64, long.round() as i64) == (i64::from(w), i64::from(h))
-    }) {
-        // Word's paper list names the Tabloid sheet Ledger lying
-        // landscape.
-        Some(&(name, _, _)) if landscape && name == "Tabloid" => "Ledger".to_string(),
-        Some(&(name, _, _)) => name.to_string(),
+    let name = match (short as i64, long as i64) {
+        (12240, 15840) => "Letter".to_string(),
+        (12240, 20160) => "Legal".to_string(),
+        (11906, 16838) => "A4".to_string(),
         _ => format!(
             "{}x{}",
             super::agent::inches(w).trim_end_matches("in"),
@@ -650,21 +610,11 @@ fn page_setup(sect: &Element) -> String {
             Some("snapToChars") => Some("char grid"),
             _ => None,
         }
-        // A character grid needs no line pitch (`snapToChars` sets only
-        // the character spacing); the line grids do.
-        && let Some(pitch) = match twips(grid, "linePitch").filter(|&p| p > 0.0) {
-            Some(pitch) => Some(Some(pitch)),
-            None => (kind == "char grid").then_some(None),
-        }
+        && let Some(pitch) = twips(grid, "linePitch").filter(|&p| p > 0.0)
     {
-        match pitch {
-            Some(pitch) => {
-                let points = format!("{:.2}", pitch / 20.0);
-                let points = points.trim_end_matches('0').trim_end_matches('.');
-                out.push_str(&format!(", {kind} {points}pt"));
-            }
-            None => out.push_str(&format!(", {kind}")),
-        }
+        let points = format!("{:.2}", pitch / 20.0);
+        let points = points.trim_end_matches('0').trim_end_matches('.');
+        out.push_str(&format!(", {kind} {points}pt"));
         if kind != "line grid"
             && let Some(space) = grid
                 .attr("charSpace")
@@ -673,17 +623,6 @@ fn page_setup(sect: &Element) -> String {
         {
             out.push_str(&format!(", char space {space}"));
         }
-    }
-    // How the section starts, when its `w:sectPr` states it: `nextPage`
-    // is Word's default, but a document that says so keeps saying it
-    // (#528). A value outside Word's five says nothing the view can write.
-    if let Some(kind) = sect.child("type").and_then(|t| t.attr("val")).filter(|v| {
-        matches!(
-            *v,
-            "nextPage" | "continuous" | "evenPage" | "oddPage" | "nextColumn"
-        )
-    }) {
-        out.push_str(&format!(", starts {kind}"));
     }
     out
 }
@@ -746,15 +685,7 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             r.font = font_of(rpr, theme);
         }
         if r.size_half_points.is_none() {
-            // `w:sz` is half-points (`ST_HpsMeasure`), not twips: a strict
-            // `"11pt"` is 22, as the plain `"22"` is.
-            r.size_half_points = rpr.child("sz").and_then(|s| {
-                s.attr("val").and_then(|v| {
-                    v.parse::<f64>()
-                        .ok()
-                        .or_else(|| crate::util::universal_measure_half_points(v))
-                })
-            });
+            r.size_half_points = rpr.child("sz").and_then(|s| twips(s, "val"));
         }
         r.bold |= rpr.toggle("b").unwrap_or(false);
         r.italic |= rpr.toggle("i").unwrap_or(false);
@@ -937,49 +868,18 @@ fn named(styles: Option<&Element>, id: &str, expected: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A legend `named` value: quoted (a JSON string) when it holds a comma
-/// or a quote, so the clause's `, ` separator cannot split it (#549).
-fn quoted_name(name: &str) -> String {
-    if name.contains(',') || name.contains('"') {
-        serde_json::to_string(name).unwrap_or_else(|_| format!("\"{name}\""))
-    } else {
-        name.to_string()
-    }
-}
-
 fn table_style_line(styles: Option<&Element>, id: &str) -> String {
-    // The style's name, when it is not the one the writer would give the
-    // id (`9` is named `Normal Table`, `TableGrid0` `TableGrid`, #528).
-    let named = styles
-        .and_then(|s| style_by_id(s, id))
-        .and_then(|s| s.child("name"))
-        .and_then(|n| n.attr("val"))
-        .filter(|name| {
-            *name
-                != super::super::package::word_table_style_name(id)
-                    .unwrap_or_else(|| id.to_string())
-        })
-        .map(|name| format!(", named {}", quoted_name(name)))
-        .unwrap_or_default();
     let borders = styles
         .and_then(|s| style_by_id(s, id))
         .and_then(|s| s.path(&["tblPr", "tblBorders"]));
     let Some(borders) = borders else {
-        return format!("{id}{named}");
+        return id.to_string();
     };
-    // The strict `start`/`end` elements name the `left`/`right` borders.
-    let sides = [
-        &["top"][..],
-        &["left", "start"][..],
-        &["bottom"][..],
-        &["right", "end"][..],
-        &["insideH"][..],
-        &["insideV"][..],
-    ];
+    let sides = ["top", "left", "bottom", "right", "insideH", "insideV"];
     let sizes: Vec<Option<(String, String)>> = sides
         .iter()
-        .map(|names| {
-            names.iter().find_map(|side| borders.child(side)).map(|b| {
+        .map(|side| {
+            borders.child(side).map(|b| {
                 (
                     b.attr("val").unwrap_or("").to_string(),
                     b.attr("sz").unwrap_or("").to_string(),
@@ -997,11 +897,11 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
             let pt = sz.parse::<f64>().map(|s| s / 8.0).unwrap_or(0.5);
             let pt = format!("{pt:.2}");
             format!(
-                "{id}, all borders {}pt{named}",
+                "{id}, all borders {}pt",
                 pt.trim_end_matches('0').trim_end_matches('.')
             )
         }
-        _ => format!("{id}, borders vary{named}"),
+        _ => format!("{id}, borders vary"),
     }
 }
 
@@ -1287,18 +1187,6 @@ fn part_two(out: &mut String, f: &Facts) {
     out.push_str("styles:\n");
     let default = f.default_style.unwrap_or("Normal");
     let base = resolve(f.styles, f.theme, default);
-    // A style a tracked change names but no paragraph uses still gets a
-    // legend line after the used ones, so the view's own docx defines it
-    // and the change has a holder there. The changed list's order is the
-    // styles part's; the writer keeps it, so the next view names the same
-    // order.
-    let changes = if f.resolved.is_none() {
-        f.styles
-            .map(|styles| style_changes(styles, f.handles))
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
     kv(
         out,
         &format!(
@@ -1356,31 +1244,6 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         );
     }
-    for (style, _) in &changes {
-        if style.as_str() == "docDefaults"
-            || style == default
-            || f.heading_styles.iter().any(|(_, h)| h == style)
-            || f.other_styles.iter().any(|o| o == style)
-        {
-            continue;
-        }
-        kv(
-            out,
-            &format!(
-                "  {}: {}",
-                scalar(style, false),
-                scalar(
-                    &format!(
-                        "{}{}",
-                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
-                        named(f.styles, style, style)
-                    ),
-                    false
-                )
-            ),
-            Some("tracked changes to it"),
-        );
-    }
     match f.table_styles.as_slice() {
         [] => {}
         [one] if !f.tables_differ => kv(
@@ -1393,58 +1256,25 @@ fn part_two(out: &mut String, f: &Facts) {
         ),
         many => kv(
             out,
-            &format!(
-                "  tables: {}",
-                scalar(
-                    &many
-                        .iter()
-                        .map(|id| table_style_line(f.styles, id))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    false
-                )
-            ),
+            &format!("  tables: {}", scalar(&many.join(", "), false)),
             None,
         ),
     }
-    if !changes.is_empty() {
-        // Legend order: the default style first, then the styles the body
-        // uses, then the ones only a change names; `docDefaults` leads.
-        let order = |id: &str| {
-            if id == "docDefaults" {
-                return usize::MIN;
-            }
-            if id == default {
-                return 0;
-            }
-            f.heading_styles
+    if f.resolved.is_none()
+        && let Some(styles) = f.styles
+    {
+        let changes = style_changes(styles, f.handles);
+        if !changes.is_empty() {
+            let list: Vec<String> = changes
                 .iter()
-                .position(|(_, h)| h == id)
-                .map(|i| i + 1)
-                .or_else(|| {
-                    f.other_styles
-                        .iter()
-                        .position(|o| o == id)
-                        .map(|i| i + 1 + f.heading_styles.len())
-                })
-                .unwrap_or_else(|| {
-                    changes
-                        .iter()
-                        .position(|(holder, _)| holder == id)
-                        .map_or(usize::MAX, |i| i + usize::MAX / 2)
-                })
-        };
-        let mut ordered = changes.clone();
-        ordered.sort_by_key(|(holder, _)| order(holder));
-        let list: Vec<String> = ordered
-            .iter()
-            .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
-            .collect();
-        kv(
-            out,
-            &format!("style_changes: {{{}}}", list.join(", ")),
-            Some("tracked changes to the styles"),
-        );
+                .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
+                .collect();
+            kv(
+                out,
+                &format!("style_changes: {{{}}}", list.join(", ")),
+                Some("tracked changes to the styles"),
+            );
+        }
     }
     let (rev, fmt) = &f.note_changes;
     let mut clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]
@@ -1534,22 +1364,7 @@ pub(crate) enum StoryView<'a> {
 /// prints its result. Line breaks are newlines. Runs inside hyperlinks,
 /// content controls, smart tags and custom XML count; tracked changes read
 /// as `view` says.
-/// [`story_text_with`] without drawing capture: the tests' view.
-#[cfg(test)]
-fn story_text(p: &Element, view: StoryView) -> String {
-    story_text_with(p, view, &mut |_, _| None)
-}
-
-/// [`story_text`], calling `draw` for each `w:drawing`, `w:pict`, `w:object`
-/// and drawing-holding `mc:AlternateContent` element: its Markdown (`None`
-/// prints nothing). The `bool` says the element is run content, spliced
-/// inside a `w:r` (`true`) or where a `w:r` may sit (`false`, a
-/// paragraph-level AlternateContent).
-pub(crate) fn story_text_with(
-    p: &Element,
-    view: StoryView,
-    draw: &mut dyn FnMut(&Element, bool) -> Option<String>,
-) -> String {
+pub(crate) fn story_text(p: &Element, view: StoryView) -> String {
     struct State<'a> {
         out: String,
         /// Open complex fields, outermost first.
@@ -1624,28 +1439,9 @@ pub(crate) fn story_text_with(
             .to_uppercase();
         format!("{{{name}}}")
     }
-    fn walk(
-        parent: &Element,
-        s: &mut State,
-        draw: &mut dyn FnMut(&Element, bool) -> Option<String>,
-    ) {
+    fn walk(parent: &Element, s: &mut State) {
         for run in parent.elements() {
             match run.local() {
-                "drawing" | "pict" | "object" => {
-                    if let Some(markdown) = draw(run, true) {
-                        s.out.push_str(&markdown);
-                    }
-                }
-                "AlternateContent" if super::drawing::capturable_alternate(run) => {
-                    if let Some(markdown) = draw(run, false) {
-                        s.out.push_str(&markdown);
-                    }
-                }
-                "AlternateContent" => {
-                    if let Some(choice) = run.child("Choice").or_else(|| run.child("Fallback")) {
-                        walk(choice, s, draw);
-                    }
-                }
                 "fldSimple" => {
                     let instr = run.attr("instr").unwrap_or("");
                     match super::printed_code(instr).filter(|_| s.fields.is_empty()) {
@@ -1654,12 +1450,12 @@ pub(crate) fn story_text_with(
                             let at = s.out.len();
                             let nested = s.in_result > 0;
                             s.in_result += 1;
-                            walk(run, s, draw);
+                            walk(run, s);
                             s.in_result -= 1;
                             s.out.push_str(field_end(&s.out, at, instr, nested));
                         }
                         None if s.fields.is_empty() => s.out.push_str(&code(instr)),
-                        None => walk(run, s, draw),
+                        None => walk(run, s),
                     }
                 }
                 local if inserting(local).is_some() => {
@@ -1680,7 +1476,7 @@ pub(crate) fn story_text_with(
                     }
                     let start = s.out.len();
                     let deleting = std::mem::replace(&mut s.deleting, !inserted);
-                    walk(run, s, draw);
+                    walk(run, s);
                     s.deleting = deleting;
                     if let Some((handles, stem)) = tagged {
                         let text = s.out.split_off(start);
@@ -1697,10 +1493,10 @@ pub(crate) fn story_text_with(
                         }
                     }
                 }
-                "hyperlink" | "smartTag" | "customXml" => walk(run, s, draw),
+                "hyperlink" | "smartTag" | "customXml" => walk(run, s),
                 "sdt" => {
                     if let Some(content) = run.child("sdtContent") {
-                        walk(content, s, draw);
+                        walk(content, s);
                     }
                 }
                 "r" => {
@@ -1713,92 +1509,65 @@ pub(crate) fn story_text_with(
                         continue;
                     }
                     for child in run.elements() {
-                        run_content(child, s, draw);
+                        match child.local() {
+                            "fldChar" => match child.attr("fldCharType") {
+                                Some("begin") => {
+                                    if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                        field.nested = true;
+                                    }
+                                    s.fields.push(Open::default());
+                                }
+                                Some("separate") => {
+                                    let outermost = s.fields.len() == 1;
+                                    if let Some(field) = s.fields.last_mut() {
+                                        field.result = true;
+                                        if outermost
+                                            && !field.nested
+                                            && let Some(code) = super::printed_code(&field.instr)
+                                        {
+                                            field.printed = true;
+                                            s.out.push_str(&code);
+                                            field.at = s.out.len();
+                                        }
+                                    }
+                                }
+                                Some("end") => {
+                                    if let Some(field) = s.fields.pop()
+                                        && s.fields.is_empty()
+                                    {
+                                        s.out.push_str(&if field.printed {
+                                            field_end(
+                                                &s.out,
+                                                field.at,
+                                                &field.instr,
+                                                s.in_result > 0,
+                                            )
+                                            .to_string()
+                                        } else {
+                                            code(&field.instr)
+                                        });
+                                    }
+                                }
+                                _ => {}
+                            },
+                            "instrText" | "delInstrText" => {
+                                if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
+                                    field.instr.push_str(&child.text());
+                                }
+                            }
+                            // Only a printed field's result shows, and not
+                            // the code of a field nested in it.
+                            _ if !s.fields.is_empty()
+                                && !(s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
+                            "t" => s.push_text(&child.text()),
+                            "delText" if s.deleting => s.push_text(&child.text()),
+                            "tab" => s.out.push('\t'),
+                            "br" | "cr" => s.out.push('\n'),
+                            _ => {}
+                        }
                     }
                 }
                 _ => {}
-            }
-        }
-    }
-    /// One child of a `w:r` (or of a run-level `mc:Choice`): text, field
-    /// characters, breaks, and drawings `draw` renders.
-    fn run_content(
-        child: &Element,
-        s: &mut State,
-        draw: &mut dyn FnMut(&Element, bool) -> Option<String>,
-    ) {
-        match child.local() {
-            "drawing" | "pict" | "object" => {
-                if let Some(markdown) = draw(child, true) {
-                    s.out.push_str(&markdown);
-                }
-            }
-            "AlternateContent" if super::drawing::holds_drawing(child) => {
-                if let Some(markdown) = draw(child, true) {
-                    s.out.push_str(&markdown);
-                }
-            }
-            "AlternateContent" => {
-                if let Some(choice) = child.child("Choice").or_else(|| child.child("Fallback")) {
-                    for inner in choice.elements() {
-                        run_content(inner, s, draw);
-                    }
-                }
-            }
-            _ => {
-                {
-                    match child.local() {
-                        "fldChar" => match child.attr("fldCharType") {
-                            Some("begin") => {
-                                if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
-                                    field.nested = true;
-                                }
-                                s.fields.push(Open::default());
-                            }
-                            Some("separate") => {
-                                let outermost = s.fields.len() == 1;
-                                if let Some(field) = s.fields.last_mut() {
-                                    field.result = true;
-                                    if outermost
-                                        && !field.nested
-                                        && let Some(code) = super::printed_code(&field.instr)
-                                    {
-                                        field.printed = true;
-                                        s.out.push_str(&code);
-                                        field.at = s.out.len();
-                                    }
-                                }
-                            }
-                            Some("end") => {
-                                if let Some(field) = s.fields.pop()
-                                    && s.fields.is_empty()
-                                {
-                                    s.out.push_str(&if field.printed {
-                                        field_end(&s.out, field.at, &field.instr, s.in_result > 0)
-                                            .to_string()
-                                    } else {
-                                        code(&field.instr)
-                                    });
-                                }
-                            }
-                            _ => {}
-                        },
-                        "instrText" | "delInstrText" => {
-                            if let Some(field) = s.fields.last_mut().filter(|f| !f.result) {
-                                field.instr.push_str(&child.text());
-                            }
-                        }
-                        // Only a printed field's result shows, and not
-                        // the code of a field nested in it.
-                        _ if !(s.fields.is_empty()
-                            || s.fields[0].printed && s.fields.iter().all(|f| f.result)) => {}
-                        "t" => s.push_text(&child.text()),
-                        "delText" if s.deleting => s.push_text(&child.text()),
-                        "tab" => s.out.push('\t'),
-                        "br" | "cr" => s.out.push('\n'),
-                        _ => {}
-                    }
-                }
             }
         }
     }
@@ -1892,7 +1661,7 @@ pub(crate) fn story_text_with(
         last: None,
         in_result: 0,
     };
-    walk(p, &mut s, draw);
+    walk(p, &mut s);
     s.out.trim().to_string()
 }
 
@@ -1954,120 +1723,6 @@ mod tests {
         let edits = crate::inspect::story_paragraph_nodes(&dom, root).len();
         assert_eq!(ours, edits);
         assert_eq!(ours, 6);
-    }
-
-    #[test]
-    fn a_section_s_universal_measures_read_as_twips() {
-        // Strict packages write `595.3pt` where Transitional writes `11906`;
-        // none of these are the fallback defaults, so a lost decode says so.
-        let strict = parse_xml(
-            format!(
-                r#"<w:sectPr {W}><w:pgSz w:w="595.3pt" w:h="841.9pt"/><w:pgMar w:top="54pt" w:right="0.75in" w:bottom="54pt" w:left="0.75in" w:header="54pt" w:footer="54pt"/></w:sectPr>"#
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        let transitional = parse_xml(
-            format!(
-                r#"<w:sectPr {W}><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080" w:header="1080" w:footer="1080"/></w:sectPr>"#
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(
-            page_setup(&strict),
-            "A4 portrait, margins 0.75in, header/footer 0.75in"
-        );
-        assert_eq!(page_setup(&strict), page_setup(&transitional));
-    }
-
-    /// An mm-spelled page is the page its twips twin names: 210mm x 297mm
-    /// is A4 once rounded to the twips it is (11905.5 → 11906), not the
-    /// `8.268x11.693in` a truncating cast reads from any producer whose
-    /// spelling is not Word's own `595.3pt` (#531 review defect 6).
-    #[test]
-    fn an_mm_spelled_page_is_the_page_its_twips_twin_names() {
-        let mm = parse_xml(
-            format!(r#"<w:sectPr {W}><w:pgSz w:w="210mm" w:h="297mm"/></w:sectPr>"#).as_bytes(),
-        )
-        .unwrap();
-        let twin = parse_xml(
-            format!(r#"<w:sectPr {W}><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>"#).as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(page_setup(&mm), "A4 portrait");
-        assert_eq!(page_setup(&mm), page_setup(&twin));
-    }
-
-    /// Word's paper list: every size Word names and the writer writes
-    /// back exactly is named by the rounded twips Word spells it in — the
-    /// short side first, whatever way the sheet lies (#561 review defect
-    /// 4). Tabloid is the sheet Word's list names Ledger lying landscape.
-    #[test]
-    fn word_s_paper_list_names_its_sizes() {
-        let cases = [
-            (12_240, 15_840, "", "Letter portrait"),
-            (12_240, 20_160, "", "Legal portrait"),
-            (10_440, 15_120, "", "Executive portrait"),
-            (15_840, 24_480, "", "Tabloid portrait"),
-            (
-                24_480,
-                15_840,
-                r#" w:orient="landscape""#,
-                "Ledger landscape",
-            ),
-            (16_838, 23_811, "", "A3 portrait"),
-            (11_906, 16_838, "", "A4 portrait"),
-            (8_391, 11_906, "", "A5 portrait"),
-            (14_570, 20_636, "", "B4 (JIS) portrait"),
-            (10_318, 14_570, "", "B5 (JIS) portrait"),
-        ];
-        for (w, h, orient, expected) in cases {
-            let sect = parse_xml(
-                format!(r#"<w:sectPr {W}><w:pgSz w:w="{w}" w:h="{h}"{orient}/></w:sectPr>"#)
-                    .as_bytes(),
-            )
-            .unwrap();
-            assert_eq!(page_setup(&sect), expected, "{w}x{h}");
-        }
-        // A twip off the named size is not the named size: the rounded
-        // match is exact, so an unnamed sheet keeps its inches.
-        let off = parse_xml(
-            format!(r#"<w:sectPr {W}><w:pgSz w:w="8392" w:h="11906"/></w:sectPr>"#).as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(page_setup(&off), "5.828x8.268in portrait");
-    }
-
-    /// A strict table style names its side borders `start`/`end`: the
-    /// legend reads them as the `left`/`right` they name, and one side a
-    /// twip apart still varies.
-    #[test]
-    fn a_table_style_s_start_end_borders_read_as_left_right() {
-        let borders = |sides: &str| {
-            parse_xml(
-                format!(
-                    r#"<w:styles {W}><w:style w:type="table" w:styleId="T"><w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr></w:style></w:styles>"#
-                )
-                .as_bytes(),
-            )
-            .unwrap()
-        };
-        let strict = borders(
-            r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
-        );
-        let transitional = borders(
-            r#"<w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
-        );
-        assert_eq!(table_style_line(Some(&strict), "T"), "T, all borders 0.5pt");
-        assert_eq!(
-            table_style_line(Some(&transitional), "T"),
-            table_style_line(Some(&strict), "T")
-        );
-        let varied = borders(
-            r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
-        );
-        assert_eq!(table_style_line(Some(&varied), "T"), "T, borders vary");
     }
 
     #[test]
@@ -2279,29 +1934,5 @@ mod tests {
             ..Resolved::default()
         };
         assert_eq!(describe(&flat, None), "Calibri 11pt, left");
-    }
-
-    /// A strict style carries its measures as universal measures (`11pt`,
-    /// `1in`) and its font size in half-points either way: the legend reads
-    /// the same as the transitional integers.
-    #[test]
-    fn a_style_s_universal_measures_read_as_their_integers() {
-        let legend = |rpr: &str, ppr: &str| {
-            let xml = format!(
-                r#"<w:styles {W}><w:style w:type="paragraph" w:styleId="S"><w:name w:val="S"/><w:pPr>{ppr}</w:pPr><w:rPr>{rpr}</w:rPr></w:style></w:styles>"#
-            );
-            let styles = parse_xml(xml.as_bytes()).unwrap();
-            describe(&resolve(Some(&styles), None, "S"), None)
-        };
-        assert_eq!(
-            legend(
-                r#"<w:rFonts w:ascii="Calibri"/><w:sz w:val="16pt"/>"#,
-                r#"<w:spacing w:before="10pt" w:after="5pt" w:line="12.95pt" w:lineRule="auto"/><w:ind w:start="0.25in"/>"#
-            ),
-            legend(
-                r#"<w:rFonts w:ascii="Calibri"/><w:sz w:val="32"/>"#,
-                r#"<w:spacing w:before="200" w:after="100" w:line="259" w:lineRule="auto"/><w:ind w:left="360"/>"#
-            )
-        );
     }
 }

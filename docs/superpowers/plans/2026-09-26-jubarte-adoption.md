@@ -8,28 +8,6 @@
 > CLI, and 05, 07 and 08 are mostly unstarted. Per-file statuses sit at the
 > top of each subplan; the open residue is collected in `TODO.md`. Do not
 > apply the reference patches.
->
-> **Status (2026-10-17):** the replanned program (S1–S19 in the four
-> 2026-10-02 provider-adoption plans beside this one) is now substantially
-> on `main` — 0.12.0 is the current release. Two proposals this file
-> deferred shipped anyway: P14's "optional local MCP adapter" exists as
-> `jubarte-mcp` plus the Gemini CLI extension (S16, `97dc1e68`, merged
-> #280), and P17's Markdown creation shipped as `markdown_to_docx` /
-> `from_markdown` / `markdownToDocx` (S7, merged #276 `26994ca4`). P11's
-> Apache-2.0 migration did **not** happen: the project remains
-> AGPL-3.0-only. P15's NAPI-RS backend did not happen either; the
-> `jubarte-redlines` npm CLI is the WASM build (`d7e92121`).
->
-> One correction to the "legacy compatibility" preservation gate below
-> ("old import paths, arguments, defaults, JSON forms and CLI commands
-> continue to pass"): the document-address ids are a deliberate, documented
-> exception. The pre-v3 spellings (`body:p:N`, `body:rev:N`, `body:sdt:N`,
-> `noid`) were already retired on `main` — current spellings are `pN`,
-> `rN`, `ccN`/`pN.ccK`, `story.pN` — and the v3 short/long-ID contract
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> documentation in `4612a155`; **no branch implements it yet**) plans one
-> coordinated schema-2 cutover that drops the remaining old forms with no
-> compatibility mode.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -181,7 +159,7 @@ A six-task agent evaluation measures: compare, render, inspect, resolve an ambig
 
 ## Preservation gates before any speed or popularity claim
 
-- Legacy compatibility: old import paths, arguments, defaults, JSON forms and CLI commands continue to pass (one documented exception: pre-v3 document-address ids, see the 2026-10-17 status note at the top).
+- Legacy compatibility: old import paths, arguments, defaults, JSON forms and CLI commands continue to pass.
 - Correctness: compare native/WASM on the same source commit/corpus; require equal `script_redlines` per-document scores before publishing speed. Keep PDF fonts/settings identical for rendering comparisons.
 - Edit correctness: applying a plan never changes input bytes; accepting its redline yields the intended edited semantic state; rejecting yields the chosen base state; untouched part payloads stay unchanged except documented relationship serialization.
 - Visual fidelity: existing Word benchmark/oracle remains primary. Evaluate page count, boundaries, rendered marks and feature-specific fixtures in addition to an aggregate mean. Record every failure, timeout and exclusion.

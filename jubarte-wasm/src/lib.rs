@@ -267,7 +267,6 @@ pub fn docx_to_pdf(
         } else {
             jubarte::convert::CommentPlacement::Margin
         },
-        comment_notes: false,
         changed_only: changed_only.unwrap_or(false),
     };
     jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
@@ -568,18 +567,6 @@ pub fn changed_view(
     source: Option<String>,
 ) -> Result<String, JsValue> {
     jubarte::markdown::changed_view(docx, author, accepted, source.as_deref()).map_err(js_err)
-}
-
-/// The lines `edit -p rN --accept/--reject` prints for a pure resolution:
-/// one per resolved change from `source` (the bytes before resolution) and
-/// `resolvedJson` (`{"accepted": [...], "rejected": [...]}` short ids).
-///
-/// Mirrors `jubarte::edit::resolution::resolution_text`.
-#[wasm_bindgen(js_name = resolutionText)]
-pub fn resolution_text(docx: &[u8], resolved_json: &str) -> Result<String, JsValue> {
-    let resolved: jubarte::edit::ResolvedRevisions =
-        serde_json::from_str(resolved_json).map_err(js_err)?;
-    jubarte::edit::resolution::resolution_text(docx, &resolved).map_err(js_err)
 }
 
 /// What [`applyEditPlan`](apply_edit_plan) and

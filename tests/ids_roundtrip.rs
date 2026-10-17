@@ -454,8 +454,6 @@ struct Patterns {
     cells_rows: Regex,
     story: Regex,
     definition: Regex,
-    drawing_definition: Regex,
-    backing_comment: Regex,
 }
 
 fn patterns() -> &'static Patterns {
@@ -478,12 +476,6 @@ fn patterns() -> &'static Patterns {
         // A long story id holds colons, so the header quotes it.
         story: Regex::new(r#"\{id: "?([^,}\s"]+)"?"#).unwrap(),
         definition: Regex::new(r"^(?:\{(?:--|\+\+))?\[\^\d+\]: ").unwrap(),
-        // Drawing payloads: `[dN]: drawing:…` definitions and the
-        // Google Docs form's `[imageN]: <data:…>` ones.
-        drawing_definition: Regex::new(r"^\[(?:d|image)\d+\]: ").unwrap(),
-        // A payload that backs a readable form: `<!-- dN drawing:… -->`,
-        // `<!-- imageN drawing:… -->`.
-        backing_comment: Regex::new(r"^ *<!-- \S+ drawing:").unwrap(),
     })
 }
 
@@ -616,13 +608,7 @@ fn printed(view: &str) -> Printed {
         // A note's definition (`[^1]: …`, or wrapped in the change that
         // deleted its reference: `{--[^1]: …--}`) closes the paragraph's text,
         // and so does the definition's own id line (`<!-- footnotes.p0 -->`).
-        // So does the drawings appendix: its `[dN]:`/`[imageN]:` lines and
-        // `<!-- … drawing:… -->` backings are payload, not text.
-        if pat.definition.is_match(line)
-            || is_note_id_line(line)
-            || pat.drawing_definition.is_match(line)
-            || pat.backing_comment.is_match(line)
-        {
+        if pat.definition.is_match(line) || is_note_id_line(line) {
             current = None;
             continue;
         }
@@ -659,8 +645,7 @@ fn letters(text: &str) -> String {
 /// `inspect` does not print: note references `[^1]` and link targets.
 fn view_text(block: &str) -> String {
     let refs = Regex::new(r"\[\^\d+\]").unwrap();
-    // `![alt](…)` and the reference form `![alt][dN]` the drawings use.
-    let images = Regex::new(r"!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])").unwrap();
+    let images = Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
     // `<mailto:a@b>` shows the address the document holds.
     let text = plain_anchor(block).replace("<mailto:", "<");

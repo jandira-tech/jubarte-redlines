@@ -1,17 +1,5 @@
 # Consolidated review: `docs/superpowers/plans/2026-10-09-agent-text-view.md`
 
-> **Status (2026-10-18, corrected 2026-10-19 at `aba48bd5`).** Review
-> evidence — the `body:rev:N`/`body:p:N`/`[body:p:N]` spellings cited below
-> describe the transitional ids as they were on 2026-10-09. They are no
-> longer printed: `inspect` moved to `[pN]`/`[header1.pN]` short ids in
-> `6fc0ab0e`, and `changes --json` holds the short id in both `id` and
-> `ref` (`9872a374`, `52e96ced`) — the colon family survives only as a
-> fallback for values with no short spelling (e.g. `body:rev:007`).
-> `inspect::SCHEMA_VERSION` is still 1; the 17 October contract v3
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> unimplemented) retires these spellings at the schema-2 cutover, which
-> replaces `id`/`ref`/`at` with paired `short_id`/`long_id` references.
-
 Reviewed 2026-10-09 against the working tree of this checkout. The plan was
 split into six chunks and each chunk was reviewed by a separate agent whose
 brief was to check everything upside down — every file path, line anchor,
@@ -528,38 +516,3 @@ second Cargo against the same target/. fmt, clippy and a fresh `--help` smoke
 were skipped for the same reason. The grep evidence above plus the rename
 commits' own updated tests make further integration fallout from the renames
 unlikely, but unproven.
-
----
-
-# Addendum (2026-10-19, `main` @ `aba48bd5`)
-
-Re-check of the items this file last left open, against current code:
-
-- **Compare-only flags with a single file (M10 residual): CLOSED.**
-  `d163706a` (2026-10-12) made `validate_matches` refuse any `COMPARE_ONLY`
-  option on the one-document path (`src/cli.rs:2555`–`2590`); `jubarte
-  FILE --author X` is now a usage error, not a silent ignore.
-- **The `revisions`-rename fallout: resolved.** The `m7_cli` tests now
-  exercise `changes` (no `revisions_subcommand_*` tests remain), and the
-  dangling `jubarte revisions` references in README.md, docs/python.md and
-  docs/javascript.md are gone. `getRevisions` survives as the
-  Docxodus-parity WASM function, unrelated to the retired subcommand.
-- **Heading-numbering divergence: still open.** The agent view prints
-  `## 2. Numbered heading`; `convert -t md` still drops the label, and no
-  doc or test states the divergence.
-- **The three stale rustdoc comments: still open, verbatim.**
-  `MarkdownOptions::track_changes` still says "without comments"
-  (`src/markdown/mod.rs:309`) and `Revisions::Accept`/`Reject` still say
-  "comments are left out" (`src/markdown/from_docx/mod.rs:36-38`) —
-  accurate only for `ids: false`.
-- **The three test gaps: still open.** Nothing pins the loose `\n\n`
-  separator between list items carrying id lines, no test builds a
-  `commentRangeStart` inside a comment body, and no test puts a change
-  marker inside an underlined run.
-
-The review's quoted `body:rev:N`/`body:p:N`/`[body:p:N]` spellings and the
-tag-algebra goldens (`#0`, `#1+2`) are transitional schema-1 forms; the 17
-October contract v3 (unimplemented at `aba48bd5`) retires them at the
-schema-2 cutover. The id claims above are updated where they asserted
-current behavior; the review narrative itself is historical evidence of
-the 2026-10-09 tree and is left as written.

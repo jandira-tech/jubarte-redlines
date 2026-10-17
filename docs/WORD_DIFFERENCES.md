@@ -187,14 +187,7 @@ The other 3 of the 32 are not differences:
   number around them, and bookmarks above them.
 - **Which is better.** Ours. Ids never reach the page, and `edit` reports
   each comment by the id its redline holds. A reading-order pass was built,
-  validator-clean, and taken out for that reason. These are the `w:id`
-  source keys; the agent-facing `cN`/`rN` labels make the same choice under
-  the id contract — a canonical source id stays the label, while a
-  duplicated, missing or noncanonical key gets a deterministically
-  allocated label
-  (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`; the
-  allocation half is not implemented yet — a keyless revision still prints
-  `noid`).
+  validator-clean, and taken out for that reason.
 - **Status.** Not copied.
 
 ### 10. Watermark shape size and colour
@@ -226,13 +219,12 @@ The other 3 of the 32 are not differences:
   The geometry is measured on 466 balloons of 152 corpus documents
   (`neurotic_docx_bench/scripts/word_balloon_spec.py`, 2026-10-03) and
   recorded on `paint_comment_balloons` in `src/convert/mod.rs`.
-- **What we do.** Every style paints the balloon the same way and, as
-  Word does, writes no PDF annotation. `PdfOptions::comment_notes` (the
-  hidden `--comment-notes` flag) adds a `/Text` annotation at each
-  anchor for the exceptional reader who wants one.
-- **Which is better.** Word. The balloon is the print, and a viewer
-  paints a `/Text` annotation as a note icon over the commented words,
-  hiding them. Word's
+- **What we do.** Every style paints the balloon the same way. The
+  default and custom styles also keep a `/Text` annotation (a sticky
+  note a viewer can open, with the author); `RevisionStyle::Word` writes
+  none, as Word does.
+- **Which is better.** The balloon is the print either way; the sticky
+  note is extra value a viewer can use, so the default keeps it. Word's
   author colours cannot be copied: the same author gets up to six
   palette colours across the corpus (Word's reviewer table is per
   session), so jubarte colours authors in order of first appearance.

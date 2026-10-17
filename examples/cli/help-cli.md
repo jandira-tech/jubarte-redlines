@@ -48,8 +48,7 @@ Tasks:
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
-                prints the changed paragraphs as the agent view (a pure
-                --accept/--reject prints the resolved changes; refusal: exit 3)
+                prints the changed paragraphs as the agent view (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
                 -p per command). Writes FILE_modified.docx, as edit does, and prints the
                 changed paragraphs as the agent view
@@ -64,10 +63,8 @@ Tasks:
   self-update   Check or install a release from GitHub
 
 Options:
-  -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
-                 `edit`/`add` changed. Files are still written; a reading task (`read`,
-                 `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-                 what it read, and warnings and errors still print
+  -q, --quiet    Print nothing on success (files are still written; warnings and errors
+                 still print)
   -h, --help     Print help
   -V, --version  Print version
 
@@ -137,10 +134,8 @@ Options:
           [default: word]
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -226,9 +221,7 @@ Read options:
           M -->` lines
 
   -p, --paragraphs <SPEC>
-          Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
-          `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
 
       --head <N>
           Only the first N blocks (a table is one block)
@@ -275,10 +268,8 @@ Arguments:
 
 Options:
       --json   Emit one JSON object per line
-  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
-               `edit`/`add` changed. Files are still written; a reading task (`read`,
-               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-               what it read, and warnings and errors still print
+  -q, --quiet  Print nothing on success (files are still written; warnings and errors
+               still print)
   -h, --help   Print help
 ```
 
@@ -318,10 +309,8 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -402,10 +391,8 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -538,27 +525,13 @@ Options:
           - on:  New edits in Word are tracked
           - off: New edits in Word are not tracked
 
-  -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
-
-      --scholar
-          Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern
-          Roman 10pt on 12pt lines, justified, bold headings) and number its pages from
-          page 2, centered in the footer. The front matter's own `styles:` entries,
-          headers and footers win
-
       --no-page-markers
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
           pass that places them
 
-      --commonmark
-          Word to Markdown: write plain CommonMark with CriticMarkup for readers outside
-          jubarte's dialect, instead of the agent view (`jubarte read`'s YAML header and
-          id lines). Fields print as their text, and underline, highlight and strike are
-          left out
+  -q, --quiet
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -669,10 +642,8 @@ Arguments:
 
 Options:
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -758,9 +729,9 @@ GIT:
 ```text
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
-A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
-tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12 @AC<<}`) and
-comments with theirs (`{>>c5 @AC: …<<}`).
+A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
+is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
+@AC<<}`) and comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte read [OPTIONS] <FILE>
 
@@ -777,10 +748,8 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -814,9 +783,7 @@ Read options:
           M -->` lines
 
   -p, --paragraphs <SPEC>
-          Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
-          `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated
 
       --head <N>
           Only the first N blocks (a table is one block)
@@ -850,7 +817,7 @@ Read options:
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject or --style (several -p per command), or a JSON plan. Writes
 FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
-agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
+agent view (refusal: exit 3)
 
 Usage: jubarte edit [OPTIONS] <FILE>
 
@@ -891,19 +858,17 @@ Options:
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
       --accept
-          Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
-          change (`accepted r1+2 in p3: "from" > "to"`)
+          Accept revision r12 (with -p r12; r1+2 for several)
 
       --reject
-          Reject revision r12 (with -p r12; r1+2 for several); prints the resolved
-          change (`rejected r0 in p3: "from" > "to"`)
+          Reject revision r12 (with -p r12; r1+2 for several)
 
       --style <SPEC>
           Formatting for the anchored text: bold, italic, underline, strike, caps,
           highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a
           paragraph style (Heading2)
 
-  -a, --author <NAME>
+      --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
           
           [default: Redline]
@@ -935,19 +900,16 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
-          too; .md, .json, .pdf and .png name the task that writes them
+          directory>/<stem>_modified.docx`); --pdf and --png write beside it
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
-          `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
+          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1001,8 +963,8 @@ Examples:
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
 WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
-t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
-(a revision).
+t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12
+(a revision), or a long id (body:p:12).
 ```
 
 ## `jubarte add --help`
@@ -1052,7 +1014,7 @@ Options:
           Formatting for the new paragraph's text (bold, italic, underline,
           highlight=yellow) or its paragraph style (Heading2)
 
-  -a, --author <NAME>
+      --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
           
           [default: Redline]
@@ -1084,22 +1046,19 @@ Options:
 
   -o, --output <FILE.docx>
           The edited document, a .docx (default: `<FILE's
-          directory>/<stem>_modified.docx`). Any other extension is written as a .docx
-          too; .md, .json, .pdf and .png name the task that writes them
+          directory>/<stem>_modified.docx`); --pdf and --png write beside it
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
-          `<FILE's directory>/<stem>.edit`)
+          report.jsonl (clean.docx and report.jsonl in editing mode), plus what --pdf
+          and --png ask for, in DIR (default: `<FILE's directory>/<stem>.edit`)
 
       --force
           Replace an existing output (the bundle directory's files)
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1125,10 +1084,8 @@ Usage: jubarte capabilities [OPTIONS]
 
 Options:
       --json   The manifest as JSON instead of the text summary
-  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
-               `edit`/`add` changed. Files are still written; a reading task (`read`,
-               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-               what it read, and warnings and errors still print
+  -q, --quiet  Print nothing on success (files are still written; warnings and errors
+               still print)
   -h, --help   Print help
 ```
 
@@ -1149,11 +1106,8 @@ Options:
       --json           Print diff.json to stdout instead of one line per changed page
       --no-overlay     Skip the diff-page-NN.png overlays
       --force          Overwrite files already in --out-dir
-  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
-                       what `edit`/`add` changed. Files are still written; a reading
-                       task (`read`, `changes`, `compare` without -o, `diff`,
-                       `capabilities`) still prints what it read, and warnings and
-                       errors still print
+  -q, --quiet          Print nothing on success (files are still written; warnings and
+                       errors still print)
   -h, --help           Print help
 
 Rendering:
@@ -1187,11 +1141,8 @@ Options:
       --json           Emit one JSON object per line
       --author <NAME>  Only this author's comments (exact match)
       --latest         One comment per thread: the newest
-  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
-                       what `edit`/`add` changed. Files are still written; a reading
-                       task (`read`, `changes`, `compare` without -o, `diff`,
-                       `capabilities`) still prints what it read, and warnings and
-                       errors still print
+  -q, --quiet          Print nothing on success (files are still written; warnings and
+                       errors still print)
   -h, --help           Print help
 ```
 
@@ -1235,10 +1186,8 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1329,10 +1278,8 @@ Options:
           Replace an existing --repair output
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1387,10 +1334,8 @@ Options:
           Remove every comment
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          Print nothing on success (files are still written; warnings and errors still
+          print)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1452,11 +1397,8 @@ Options:
   -y, --yes                Install without asking (needed without a terminal)
       --version <VERSION>  Install this release instead of the latest, older ones
                            included
-  -q, --quiet              No status on success: no `wrote` lines, and no summary or
-                           view of what `edit`/`add` changed. Files are still written; a
-                           reading task (`read`, `changes`, `compare` without -o,
-                           `diff`, `capabilities`) still prints what it read, and
-                           warnings and errors still print
+  -q, --quiet              Print nothing on success (files are still written; warnings
+                           and errors still print)
   -h, --help               Print help
 
 Examples:

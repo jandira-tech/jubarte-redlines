@@ -3,15 +3,6 @@
 > **Status (2026-10-01, bd262981): drafts only, never executed — by design:
 > launching needs the owner's authorization.** Re-check every claim against
 > 0.10.1 and the per-plan statuses before using any asset.
->
-> **ID contract (2026-10-17, `aba48bd5`):** no draft below quotes a
-> document id, but any asset that shows `inspect`/`edit`/`read` output
-> must quote the live spellings — today's 13 October short ids (`p12`,
-> `header1.p2`, `t0.row1.cell2`, `r12`, `c5`) on schema 1 — and must not
-> claim the v3 contract
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**)
-> until its schema-2 cutover ships.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

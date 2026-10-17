@@ -221,16 +221,6 @@ impl Rels {
             .collect()
     }
 
-    /// How many relationships the part holds.
-    pub(crate) fn len(&self) -> usize {
-        self.order.len()
-    }
-
-    /// Whether the part holds no relationships.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.order.is_empty()
-    }
-
     /// A hyperlink target for a relationship id: external URLs only.
     pub(crate) fn link(&self, id: &str) -> Option<String> {
         self.get(id)
@@ -503,12 +493,8 @@ pub(crate) struct Marks {
     pub italic: bool,
     /// Agent view only, as the two below: `<u>…</u>`.
     pub underline: bool,
-    /// `<mark>…</mark>`: a highlight of any colour. `None` when the
-    /// colour is the default yellow; the view grammar omits the class.
-    /// Word's `w:highlight` lists 16 named colours (`yellow`, `green`,
-    /// `cyan`, `red`, `blue`, `magenta`, `darkYellow`, and their `dark…`,
-    /// `lightGray`, `black`, `white`).
-    pub highlight: Option<&'static str>,
+    /// `==…==`: a highlight of any colour.
+    pub highlight: bool,
     /// `~~…~~`.
     pub strike: bool,
     /// `` `…` ``: a `VerbatimChar` run.
@@ -543,26 +529,6 @@ impl Inline {
     pub(crate) fn verbatim(&mut self) {
         self.keep_spaces = true;
         self.verbatim = true;
-    }
-
-    /// A code block's paragraph: every mark dropped, for a fence's
-    /// content is literal and formatting printed inside it would come
-    /// back as text.
-    pub(crate) fn render_code(&self) -> String {
-        let unmarked = Inline {
-            spans: self
-                .spans
-                .iter()
-                .map(|s| Span {
-                    text: s.text.clone(),
-                    marks: Marks::default(),
-                    link: s.link.clone(),
-                })
-                .collect(),
-            keep_spaces: self.keep_spaces,
-            verbatim: self.verbatim,
-        };
-        unmarked.render(false)
     }
 
     /// Whether the text starts and ends with a space. Rendering trims both,
@@ -604,9 +570,7 @@ impl Inline {
         });
     }
 
-    /// Render to Markdown. `emphasis` false drops bold and italic only
-    /// (headings, whose own style carries them); the other marks are the
-    /// run's and print inside the heading as in a body paragraph.
+    /// Render to Markdown. `emphasis` false drops bold/italic (headings).
     pub(crate) fn render(&self, emphasis: bool) -> String {
         let mut out = String::new();
         let mut index = 0;
@@ -623,22 +587,18 @@ impl Inline {
                     let (lead, core, trail) = split_ws(&inner);
                     let label = core.replace('[', "\\[").replace(']', "\\]");
                     let (url, title) = link.split_once(TITLE).unwrap_or((&link, ""));
-                    let destination = link_destination(url);
+                    let url = url.replace(' ', "%20").replace(')', "%29");
                     if !title.is_empty() {
                         let title = title.replace('\\', "\\\\").replace('"', "\\\"");
-                        out.push_str(&format!(
-                            "{lead}[{label}]({destination} \"{title}\"){trail}"
-                        ));
-                    } else if label == url {
-                        out.push_str(&format!("{lead}<{url}>{trail}"));
-                    } else if url.strip_prefix("mailto:") == Some(label.as_str())
-                        && email_autolink(&label)
+                        out.push_str(&format!("{lead}[{label}]({url} \"{title}\"){trail}"));
+                    } else if label == url
+                        || (label.contains('@')
+                            && label.trim_start_matches("mailto:")
+                                == url.trim_start_matches("mailto:"))
                     {
-                        // `<addr>` comes back as the address. `<mailto:addr>`
-                        // is a URI autolink, so the text gains `mailto:`.
-                        out.push_str(&format!("{lead}<{label}>{trail}"));
+                        out.push_str(&format!("{lead}<{url}>{trail}"));
                     } else {
-                        out.push_str(&format!("{lead}[{label}]({destination}){trail}"));
+                        out.push_str(&format!("{lead}[{label}]({url}){trail}"));
                     }
                 }
                 _ => out.push_str(&render_emphasis(group, emphasis)),
@@ -649,55 +609,6 @@ impl Inline {
     }
 }
 
-/// Spaces become `%20`. A destination that holds `(` or `)` is wrapped in
-/// angle brackets: a bare destination ends at an unmatched `)`, and
-/// percent-encoding `)` leaves `(` with nothing to balance, so the link
-/// comes back as literal text.
-fn link_destination(url: &str) -> String {
-    let url = url.replace(' ', "%20");
-    if url.contains('(') || url.contains(')') {
-        let inner = url
-            .replace('\\', "\\\\")
-            .replace('<', "\\<")
-            .replace('>', "\\>");
-        format!("<{inner}>")
-    } else {
-        url
-    }
-}
-
-/// Whether `address` is the inside of a CommonMark email autolink, the
-/// addresses pulldown-cmark reads (`<local@domain>`). The view prints
-/// `<address>` only then, so the text comes back as the address.
-fn email_autolink(address: &str) -> bool {
-    let bytes = address.as_bytes();
-    let Some(at) = bytes.iter().position(|b| *b == b'@') else {
-        return false;
-    };
-    at > 0 && local_part(&bytes[..at]) && domain(&bytes[at + 1..])
-}
-
-fn local_part(bytes: &[u8]) -> bool {
-    // CommonMark's email local part, besides ASCII alphanumerics.
-    const MARKS: &[u8] = b".!#$%&'*+/=?^_`{|}~-";
-    !bytes.is_empty()
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || MARKS.contains(b))
-}
-
-fn domain(bytes: &[u8]) -> bool {
-    !bytes.is_empty()
-        && bytes.split(|b| *b == b'.').all(|label| {
-            (1..=63).contains(&label.len())
-                && !label.starts_with(b"-")
-                && !label.ends_with(b"-")
-                && label
-                    .iter()
-                    .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
-        })
-}
-
 fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     let mut out = String::new();
     // Merge neighbours with identical marks (links already grouped).
@@ -706,26 +617,16 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         let style = if emphasis {
             span.marks
         } else {
-            // Headings drop bold and italic only: underline, highlight,
-            // strike and code are marks of their own, and they print in
-            // a heading as they do in a body paragraph.
-            Marks {
-                bold: false,
-                italic: false,
-                ..span.marks
-            }
+            Marks::default()
         };
         // Whitespace-only spans inherit the previous bold and italic so
         // markers do not split; underline, highlight and strike show on a
-        // space, so a space keeps its own. A plain space does not become
-        // code either: `a` `b` is two spans, and folding the space in would
-        // make one.
+        // space, so a space keeps its own.
         let marks = if span.text.trim().is_empty() {
             merged.last().map_or(style, |(m, _)| Marks {
                 underline: style.underline,
                 highlight: style.highlight,
                 strike: style.strike,
-                code: style.code,
                 ..*m
             })
         } else {
@@ -771,18 +672,11 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         };
         let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
         // `<mark>`, not `==`: `{==…==}` is a comment's scope, and `==`
-        // beside it or beside a text `=` reads as neither. The default
-        // yellow highlight prints as bare `<mark>`; every other colour
-        // names it in `class="hl-<colour>"` so the round-trip keeps it.
-        let (h_open, h_close): (String, String) = match marks.highlight {
-            None => (String::new(), String::new()),
-            Some("yellow") => ("<mark>".to_string(), "</mark>".to_string()),
-            Some(colour) => (
-                format!("<mark class=\"hl-{colour}\">"),
-                "</mark>".to_string(),
-            ),
-        };
-        let beside = marks.bold || marks.italic || marks.underline || marks.highlight.is_some();
+        // beside it or beside a text `=` reads as neither.
+        let (h_open, h_close) = pair(marks.highlight, "<mark>", "</mark>");
+        // `~~` reads where CommonMark lets it open and close; a mark
+        // beside it is punctuation, else `<s>` says the same.
+        let beside = marks.bold || marks.italic || marks.underline || marks.highlight;
         let (s_open, s_close) = match (
             marks.strike,
             beside || delimiters_read(before, core, after, false),
@@ -853,7 +747,7 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
 /// inside its marks, each `&#32;` so the marks still touch text.
 fn edges(marks: Marks, text: &str) -> (&str, std::borrow::Cow<'_, str>, &str) {
     let (lead, core, trail) = split_ws(text);
-    let spaced = marks.underline || marks.highlight.is_some() || marks.strike;
+    let spaced = marks.underline || marks.highlight || marks.strike;
     let plain = |c: char| c == ' ';
     if spaced && !marks.code && lead.chars().all(plain) && trail.chars().all(plain) {
         let space = |s: &str| "&#32;".repeat(s.len());
@@ -1077,13 +971,6 @@ impl Media {
             extracted: Some(extracted),
             files,
         }
-    }
-
-    /// Markdown only when the picture's raster is extracted to a file;
-    /// `None` when pictures are not extracted or this one is no raster.
-    pub(crate) fn extracted_markdown(&mut self, alt: &str, target: Option<&str>) -> Option<String> {
-        let bytes = target.and_then(|target| self.files.get(target))?;
-        self.extracted.as_mut()?.add(bytes, alt)
     }
 
     /// Markdown for a picture: the extracted file when pictures are
@@ -1490,7 +1377,7 @@ mod ooxml_package_boundary_tests {
             (
                 "ada@example.invalid",
                 "mailto:ada@example.invalid",
-                "<ada@example.invalid>",
+                "<mailto:ada@example.invalid>",
             ),
             (
                 "other@example.invalid",
@@ -1500,13 +1387,8 @@ mod ooxml_package_boundary_tests {
             ("   ", "https://example.invalid", ""),
             (
                 "label",
-                "https://example.invalid/a b",
-                "[label](https://example.invalid/a%20b)",
-            ),
-            (
-                "label",
                 "https://example.invalid/a b)",
-                "[label](<https://example.invalid/a%20b)>)",
+                "[label](https://example.invalid/a%20b%29)",
             ),
         ] {
             let mut inline = Inline::default();
@@ -1542,25 +1424,6 @@ mod ooxml_package_boundary_tests {
         let mut plain = Inline::default();
         plain.push("  but", false, false, None);
         assert_eq!(plain.render(true), "but");
-    }
-
-    #[test]
-    fn a_plain_space_between_code_spans_stays_between_them() {
-        let mut inline = Inline::default();
-        let code = Marks {
-            code: true,
-            ..Marks::default()
-        };
-        inline.push_styled("docProps/app.xml", code, None);
-        inline.push_styled(" ", Marks::default(), None);
-        inline.push_styled("Application", code, None);
-        assert_eq!(inline.render(true), "`docProps/app.xml` `Application`");
-
-        let mut joined = Inline::default();
-        joined.push_styled("hello", code, None);
-        joined.push_styled(" ", code, None);
-        joined.push_styled("world", code, None);
-        assert_eq!(joined.render(true), "`hello world`");
     }
 
     #[test]

@@ -76,7 +76,7 @@ dropped (296, 297) repeat an earlier comment and its reply. 0.10.0 keeps all six
 0.10.0 still writes fewer comments than Word, and fewer than the side they come from,
 on six pairs. In every one, the source repeats identical (author, text) comments:
 
-| pair (first compare `w:id`) | source comments | distinct (author, text) on the larger side | Word | jubarte 0.10.0 |
+| pair (first compare id) | source comments | distinct (author, text) on the larger side | Word | jubarte 0.10.0 |
 |---|---:|---:|---:|---:|
 | `file_190` vs `file_191` (01f3deda92) | 15 (next) | 3 | 15 | 6 |
 | `file_191` vs `file_192` (0cbac1d96f) | 15 + 2 | 3 | 17 | 8 |

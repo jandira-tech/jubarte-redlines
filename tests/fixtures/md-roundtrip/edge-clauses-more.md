@@ -12,7 +12,7 @@ page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
   table: TableNormal
-unplaced: [ins r109 @AL in p20]    # changes no other line shows (text boxes, Word's Fallback copies)
+unplaced: [r109 @AL in p20]        # changes no other line shows (text boxes, Word's Fallback copies)
 ---
 
 <!-- p0 center, fmt r100 @AL; r101 @AL; r102 @AL -->

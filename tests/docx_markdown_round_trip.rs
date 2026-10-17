@@ -52,14 +52,7 @@ fn read(docx: &[u8], track_changes: TrackChanges) -> String {
 /// Where the Markdown read back differs, and why the Word documents still
 /// hold the same changes. Accepting and rejecting agree for all of them
 /// but the formatting change.
-const KNOWN: [(&str, TrackChanges, &str); 6] = [
-    (
-        "hard-notes",
-        TrackChanges::All,
-        "plain Markdown has one kind of note: `[^4]` names no endnote, so the \
-         endnote comes back a footnote, and its change's id says so \
-         (`endnotes.r4` reads back `footnotes.r4`); the agent view keeps it",
-    ),
+const KNOWN: [(&str, TrackChanges, &str); 5] = [
     (
         "tables",
         TrackChanges::All,

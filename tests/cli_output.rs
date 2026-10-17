@@ -34,8 +34,8 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// What a file of each kind starts with. A convert's Markdown of Markdown
-/// is the document's own text, not a view with a header.
+/// What a file of each kind starts with. A convert's Markdown is the
+/// document's own text, not a view with a header.
 fn magic(kind: &str, view: bool) -> &'static [u8] {
     match kind {
         "docx" => b"PK\x03\x04",
@@ -67,7 +67,7 @@ fn every_writing_task_writes_what_its_output_names() {
             "convert-docx",
             &["convert", "t.docx", "--track-changes", "accept"],
             "pdf",
-            true,
+            false,
         ),
         ("convert-md", &["convert", "d.md"], "docx", false),
     ];
@@ -94,10 +94,9 @@ fn every_writing_task_writes_what_its_output_names() {
     // A convert's Markdown of Markdown is its text with the changes kept.
     let md = std::fs::read_to_string(dir.path().join("convert-md.md")).unwrap();
     assert_eq!(md, DRAFT);
-    // A convert's Markdown of a Word document is the agent view: its
-    // header names the document read.
+    // A convert's Markdown of a Word document is its text, with no header.
     let md = std::fs::read_to_string(dir.path().join("convert-docx.md")).unwrap();
-    assert!(md.starts_with("---\nsource: t.docx\n"), "{md}");
+    assert!(!md.starts_with("---\nsource:"), "{md}");
     // The view of a redline names the redline compare did not write.
     let md = std::fs::read_to_string(dir.path().join("compare.md")).unwrap();
     assert!(
@@ -368,7 +367,6 @@ fn the_render_options_go_with_a_pdf_or_png() {
             compress: false,
             revisions: jubarte::convert::RevisionStyle::Conventional,
             comments: jubarte::convert::CommentPlacement::Margin,
-            comment_notes: false,
             changed_only: true,
         },
         jubarte::convert::RenderRequest {

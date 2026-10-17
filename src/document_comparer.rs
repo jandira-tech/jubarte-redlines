@@ -6628,16 +6628,6 @@ fn compare_documents_impl(
     let body2 = merged_body(&mut dom, root2)
         .ok_or_else(|| OpcError::PartNotFound("modified has no w:body".into()))?;
 
-    // #531: canonicalize measure spellings on BOTH inputs before the diff —
-    // here, where Strict is translated. The diff's property signatures
-    // compare raw attribute strings, so "2in" vs "2880" recorded a
-    // formatting revision whose old and new sides serialized identically
-    // (the output sweep alone normalized only what the record showed).
-    // Plain integers — every Transitional spelling — are untouched.
-    for root in [root1, root2] {
-        crate::comparer::finalize::normalize_universal_measures(&mut dom, root);
-    }
-
     // B.4 — reference-driven notes processing: parse both documents' notes
     // parts AND an independent copy of the original's parts (the withRevisions
     // parts — C# gets them from the wmlResult clone of preprocessed source1)
@@ -6659,21 +6649,6 @@ fn compare_documents_impl(
         fn_with_revisions: parse_part_root(&mut dom, &pkg1, &fn1),
         en_with_revisions: parse_part_root(&mut dom, &pkg1, &en1),
     };
-    // Same canonicalization for the notes parts the pipeline diffs: a
-    // spelling-only footnote geometry pair is not a formatting change.
-    for root in [
-        notes_ctx.fn_before,
-        notes_ctx.fn_after,
-        notes_ctx.en_before,
-        notes_ctx.en_after,
-        notes_ctx.fn_with_revisions,
-        notes_ctx.en_with_revisions,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        crate::comparer::finalize::normalize_universal_measures(&mut dom, root);
-    }
 
     // Word mode: each side's unstyled-paragraph line pitch, for the
     // demo-default spacing strip.

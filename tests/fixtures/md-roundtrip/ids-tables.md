@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 1651                    # 1383 marks shown as 1345 changes: 400 insertions, 104 deletions, 38 substitutions, 726 paragraph marks, 77 table rows; 260 formatting; 1 in footer1; 3 in footer2; 2 in endnotes; 2 in footnotes
+revisions: 1651                    # 1383 marks shown as 1345 changes: 400 insertions, 104 deletions, 38 substitutions, 726 paragraph marks, 77 table rows; 260 formatting; 3 in footer2; 1 in footer1; 2 in endnotes; 2 in footnotes
 comments: 0
 authors:
   document_owner: Cuenta Microsoft  # dc:creator
@@ -10,16 +10,15 @@ body: p0-p827, 8 tables, 2 pages   # pages from Word's cached layout
 page: A4 portrait, margins 1in, header/footer 0.492in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  LineNumber: Calibri 11pt, named line number
   table: TableNormal
 style_changes: {Normal: styles.r0 @LW}  # tracked changes to the styles
 notes: {fmt: footnotes.r1 @LW; footnotes.r2 @LW; endnotes.r3 @LW; endnotes.r4 @LW, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
   default: {id: header1, text: ""}
 footers:
-  default: {id: footer1, text: "", style: LineNumber, fmt: footer1.r903 @LW in footer1}
+  default: {id: footer1, text: "", style: LineNumber, fmt: footer1.r903 @LW}
 sections:
-  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.4924in, fmt: r1650 @LW, footers: {default: {id: footer2, p0: {text: "{--{PAGE   \\* MERGEFORMAT}5{/}--}{>>footer2.r1648 @LW<<}", right}, p1: {text: ""}, styles: [Footer, LineNumber], rev: break-del footer2.r1647 @LW in footer2, fmt: footer2.r1649 @LW in footer2.p1}}}
+  2: {p392-p827, page: A4 landscape, margins 1in, header/footer 0.4924in, fmt: r1650 @LW, headers: {first: none}, footers: {first: none, default: {id: footer2, text: "{--{PAGE   \\* MERGEFORMAT}5{/}--}{>>footer2.r1648 @LW<<}", right, rev: break-del footer2.r1647 @LW in footer2, fmt: footer2.r1649 @LW}}}
 ---
 
 <!-- p0 center, break-ins r5 @LW -->

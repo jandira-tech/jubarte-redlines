@@ -1,7 +1,6 @@
 # TODO — jubarte-redlines
 
-> **Living backlog (refreshed 2026-10-01, `bd262981`; §6, §7b and §10
-> re-checked against the id contract 2026-10-17, `aba48bd5`).** This file is the
+> **Living backlog (refreshed 2026-10-01, `bd262981`).** This file is the
 > single live TODO: new work lands here, and every section carries a
 > `Status:` marker checked against the tree. Dated records live in the
 > snapshots indexed in §0; shipped work is recorded in `CHANGELOG.md`.
@@ -224,9 +223,7 @@ Status: SHIPPED except the last item (`comments::list_comments`,
   the anchored text plus the context around it (the enclosing paragraph and
   its neighbours), so a reader can tell what the comment is about. Shipped
   as `anchor_text` with up to 80 characters `before` and `after` it, plus
-  the `paragraph` id (a short-id string such as `"p12"` today; the id
-  contract's schema-2 cutover makes it a paired `short_id`/`long_id`
-  reference — §7b); neighbouring paragraphs are read by that id
+  the `paragraph` id; neighbouring paragraphs are read by that id
   (`jubarte read`), not returned with the comment.
 - [x] **Resolve** comments and sub-comments (`w15:done="1"`), and reopen them.
 - [ ] **Remember which party cares a lot** — keep a per-party (author) record
@@ -267,52 +264,11 @@ X is now Y; X is removed in 0.14` once: the tasks `text`, `inspect`
 (→ `read`), `audit` (→ `validate --rules a11y,style,structure`) and
 `diff-render` (→ `visual-diff`); the flags `--changed-only`
 (→ `--changed-pages`) and `convert --pdf`/`--png` (→ `-o FILE.pdf|.png` or
-`-t`). The expired id spellings are already refused: bare numbers (`12`),
-0.12's `#12`, `#1+2`, `#c27` and the cell id `t0.r1.c2` exit 2 naming the
-settled spelling (`r12`, `c27`, `t0.row1.cell2`), and `--date` exits 2
-naming `--datetime` (the October ids series — `5c784ee8`, `e7a4a776`,
-`3941404b`, `52e96ced` and siblings). The expired `body:rev:12` and
-`body:p:12` are refused on the ordinary paths, naming the short id
-(`r12`, `p12`). Two transitional exceptions stay, though, until the
-schema-2 cutover: `ChangeId::from_long` still parses `story:rev:wid`
-(`body:rev:007` names a `w:id="007"`), and colon forms still *print* for
-a `w:id` or a part name with no short spelling (`body:rev:007`,
-`Header_1:rev:4`, `Header_1:p:0` via `ChangeId::short` / `paragraph_id`)
-— so `body:rev:…` and `…:p:…` still reach JSON output today.
-
-That settled grammar is itself transitional: the governing contract is
-now
-[2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md)
-(v3; "Implementation status: no branch implements this contract yet"),
-sequenced by
-[2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md).
-Beyond the 0.14 list, the schema-2 cutover retires spellings that still
-print or parse today:
-
-- nested paragraph steps spelled `.pN`: `t0.row1.cell2.p1` and
-  `p14.box0.p0` become `…cell2.ps1` and `…box0.ps0` (`pN` stays a
-  story-indexed paragraph; a cell's or box's own first paragraph is
-  `ps0`);
-- a story's first paragraph printed as the bare story name: `header1`
-  today names both the story and its paragraph 0
-  (`paragraph_id("header1", 0)` prints `header1`, `src/ids.rs`); under v3
-  the paragraph is `header1.p0` and the bare name is the story only;
-- open ranges `p17-` and `-p1`, which `Select::parse`
-  (`src/markdown/mod.rs`) still accepts — closed ranges only after
-  cutover;
-- `r43+43` as a *printed* form (`1bf166f7` emits it when two revisions
-  share one `w:id`): it stays valid input — a group selector that
-  deduplicates — but the pair then prints two distinct ids, one keeping
-  `43` and the duplicate taking an allocated id;
-- the transitional colon long ids and `noid` named above: a `w:id` or a
-  part name with no short spelling prints `body:rev:007`,
-  `Header_1:rev:4` or `{story}:p:{index}` today, and a keyless revision
-  prints `noid`; v3 gives the former the four-field
-  `PART.ELEMENT.ATTRIBUTE.VALUE` long id and the latter an allocated
-  short id with a `j:short` long id;
-- the JSON `id`/`ref`/`paragraph`/`at` string fields, in favour of paired
-  `{ "short_id", "long_id" }` references everywhere a document target is
-  named.
+`-t`). The ids are already gone: bare numbers (`12`), 0.12's `#12`,
+`#1+2`, `#c27` and the cell id `t0.r1.c2` exit 2 naming the settled
+spelling (`r12`, `c27`, `t0.row1.cell2`), and `--date` exits 2 naming
+`--datetime`. The expired `body:rev:12` and `body:p:12` are refused,
+naming the short id (`r12`, `p12`); nothing prints them.
 
 - [ ] Remove the aliases, their notes and their tests in 0.14, and say so in
   the CHANGELOG's Removed section.
@@ -530,9 +486,8 @@ repeatable-sweep item below is what makes these numbers reproducible.
 
 ## 10. Content controls follow-ups (S14)
 
-Status: OPEN. `fill_control` and `read`'s `controls` list shipped in
-#298 (2026-10-02; the task was `inspect` then, renamed `read` in 0.13 —
-§7b). Three known gaps, most important first:
+Status: OPEN. `fill_control` and the `inspect` `controls` list shipped in
+#298 (2026-10-02). Three known gaps, most important first:
 
 - [ ] **The redline drops the control around a fill** (KNOWN_ISSUES.md #7).
   The clean copy keeps the `w:sdt`, but the comparer's M390 step

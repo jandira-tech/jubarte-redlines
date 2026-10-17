@@ -134,15 +134,13 @@ fn every_comment_names_its_author_and_word_date() {
 fn every_change_names_its_author_and_date() {
     let markdown = markdown();
     for change in [
-        "{-- to people that--}{>>r0 Bo Chen (2026-09-29T15:12:00Z)<<}",
+        "{-- to people that--}{>>Bo Chen (2026-09-29T15:12:00Z)<<}",
         // Writer writes the replacement deletion first: two changes.
-        "{--fonts--}{>>r1 Ana Lima (2026-09-29T14:05:00Z)<<}{++font-styles++}{>>r2 Ana Lima (2026-09-29T14:05:00Z)<<}",
-        // LibreOffice splits this insertion in two; one author, one note
-        // naming both marks.
-        "{++**any** ++}{>>r3+4 Bo Chen (2026-09-29T15:10:00Z)<<}",
-        // The text and its paragraph mark, each its own mark.
-        "{--This whole paragraph was cut.\n\n--}{>>r5+6 Ana Lima (2026-09-30T09:00:00Z)<<}",
-        "{++\n\n++}{>>r7 Bo Chen (2026-09-30T09:30:00Z)<<}",
+        "{--fonts--}{>>Ana Lima (2026-09-29T14:05:00Z)<<}{++font-styles++}{>>Ana Lima (2026-09-29T14:05:00Z)<<}",
+        // LibreOffice splits this insertion in two; one author, one note.
+        "{++**any** ++}{>>Bo Chen (2026-09-29T15:10:00Z)<<}",
+        "{--This whole paragraph was cut.\n\n--}{>>Ana Lima (2026-09-30T09:00:00Z)<<}",
+        "{++\n\n++}{>>Bo Chen (2026-09-30T09:30:00Z)<<}",
     ] {
         assert!(markdown.contains(change), "{change} not in {markdown}");
     }
@@ -180,10 +178,9 @@ fn a_comment_anchored_across_runs_highlights_its_whole_range() {
 }
 
 #[test]
-fn a_document_without_tracked_changes_escapes_its_literal_markup() {
-    // Under every `revisions` choice the output is the same, with no markup
-    // marked or dropped: text that looks like CriticMarkup is escaped, so a
-    // later convert cannot read it as changes (#519).
+fn a_document_without_tracked_changes_converts_as_before() {
+    // The same output as before tracked changes were rendered, under every
+    // `revisions` choice: nothing is escaped, marked, or dropped.
     for revisions in [
         TrackChanges::All,
         TrackChanges::Accept,

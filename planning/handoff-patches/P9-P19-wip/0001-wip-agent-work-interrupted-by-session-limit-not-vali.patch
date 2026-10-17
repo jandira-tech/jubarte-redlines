@@ -1,0 +1,372 @@
+From 981e66389cc2d06d30ed05f020ef62615af6439e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 07:14:02 +0000
+Subject: [PATCH] wip: agent work interrupted by session limit; not validated
+ (fmt/clippy/tests not confirmed)
+
+---
+ CHANGELOG.md                | 18 +++++++++++
+ LCS_PERF_PLAN.md            |  2 +-
+ src/comparer/atoms.rs       | 21 ++++++-------
+ src/comparer/mod.rs         |  1 +
+ src/comparison_log.rs       |  2 +-
+ src/lib.rs                  | 22 +++++--------
+ src/util/mod.rs             |  8 ++++-
+ src/util/sha1.rs            | 61 +++++++++++++++++++++++++------------
+ tests/perf_sha1_key.rs      | 12 ++++----
+ tests/sha1_key_invariant.rs | 10 +++---
+ 10 files changed, 98 insertions(+), 59 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 16a7df2..499ed36 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -86,6 +86,24 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
+   exit codes of `uvx jubarte-redlines`. On main after 0.10.1; ships with
+   the next release.
+ 
++### Changed
++
++- `util::sha1::sha1_fingerprint` and `sha1_fingerprint128` are renamed
++  `fnv1a_64` and `fnv1a_128`: they compute 64- and 128-bit FNV-1a of the
++  SHA-1 hex string, not SHA-1, and their docs now say so. Output is
++  unchanged. The 128-bit key alone decides comparison-unit equality in the
++  LCS, which the docs state instead of claiming a string check follows.
++  `ComparisonUnit::sha1_key` and `sha1_key128` return the same FNV-1a
++  values and keep their names for now. `jubarte::util::fnv1a_128` is
++  re-exported beside `fnv1a_64`.
++- `ComparisonLog` and `CompareContext` derive `Debug`.
++
++### Deprecated
++
++- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
++  `util::sha1_fingerprint` stay as deprecated aliases of the `fnv1a_*`
++  names for one release and are then removed.
++
+ ### Fixed
+ 
+ - A line ended by a `w:br` keeps its break when the paragraph reflows
+diff --git a/LCS_PERF_PLAN.md b/LCS_PERF_PLAN.md
+index 75554e6..fb0b9f3 100644
+--- a/LCS_PERF_PLAN.md
++++ b/LCS_PERF_PLAN.md
+@@ -2024,7 +2024,7 @@ PR1’s correctness story is incomplete and its performance win is unmeasured.
+ 
+ `ComparisonUnitWord` and `ComparisonUnitGroup` expose both `sha1_hash` and
+ `sha1_key` as independently mutable public fields. The optimization is sound
+-only while `sha1_key == sha1_fingerprint(sha1_hash)`. Testing the pure fingerprint
++only while `sha1_key == fnv1a_64(sha1_hash)`. Testing the pure fingerprint
+ function does not enforce that stored invariant. The current production code has
+ constructors plus one synchronized mutation in `rehash_words_by_text_content`,
+ but external/manual construction can still make equal strings carry unequal
+diff --git a/src/comparer/atoms.rs b/src/comparer/atoms.rs
+index 27f05a5..d35b5a8 100644
+--- a/src/comparer/atoms.rs
++++ b/src/comparer/atoms.rs
+@@ -7,8 +7,7 @@
+ use std::sync::Arc;
+ 
+ use crate::util::sha1::{
+-    hex_decode_20, hex_encode_20, sha1_digest, sha1_fingerprint, sha1_fingerprint128,
+-    sha1_hex_of_digest_hexes,
++    fnv1a_64, fnv1a_128, hex_decode_20, hex_encode_20, sha1_digest, sha1_hex_of_digest_hexes,
+ };
+ use crate::xmllinq::NodeId;
+ 
+@@ -199,8 +198,8 @@ impl Sha1Keyed {
+     /// Wraps `hash`, deriving both keys from it.
+     pub fn new(hash: String) -> Self {
+         Self {
+-            key: sha1_fingerprint(&hash),
+-            key128: sha1_fingerprint128(&hash),
++            key: fnv1a_64(&hash),
++            key128: fnv1a_128(&hash),
+             hash,
+         }
+     }
+@@ -509,14 +508,14 @@ pub struct WmlComparerRevision {
+ #[cfg(test)]
+ mod sha1_keyed_tests {
+     use super::Sha1Keyed;
+-    use crate::util::sha1::{sha1_fingerprint, sha1_fingerprint128};
++    use crate::util::sha1::{fnv1a_64, fnv1a_128};
+ 
+     #[test]
+     fn new_derives_both_keys_from_the_hash() {
+         let k = Sha1Keyed::new("deadbeef".into());
+         assert_eq!(k.hash(), "deadbeef");
+-        assert_eq!(k.key(), sha1_fingerprint("deadbeef"));
+-        assert_eq!(k.key128(), sha1_fingerprint128("deadbeef"));
++        assert_eq!(k.key(), fnv1a_64("deadbeef"));
++        assert_eq!(k.key128(), fnv1a_128("deadbeef"));
+     }
+ 
+     #[test]
+@@ -524,15 +523,15 @@ mod sha1_keyed_tests {
+         let mut k = Sha1Keyed::new("deadbeef".into());
+         k.set_hash("cafebabe".into());
+         assert_eq!(k.hash(), "cafebabe");
+-        assert_eq!(k.key(), sha1_fingerprint("cafebabe"));
+-        assert_eq!(k.key128(), sha1_fingerprint128("cafebabe"));
++        assert_eq!(k.key(), fnv1a_64("cafebabe"));
++        assert_eq!(k.key128(), fnv1a_128("cafebabe"));
+     }
+ 
+     #[test]
+     fn a_colliding_key_changes_only_the_u64_key() {
+-        let wrong = sha1_fingerprint("deadbeef").wrapping_add(1);
++        let wrong = fnv1a_64("deadbeef").wrapping_add(1);
+         let k = Sha1Keyed::with_colliding_key("deadbeef".into(), wrong);
+         assert_eq!(k.key(), wrong);
+-        assert_eq!(k.key128(), sha1_fingerprint128("deadbeef"));
++        assert_eq!(k.key128(), fnv1a_128("deadbeef"));
+     }
+ }
+diff --git a/src/comparer/mod.rs b/src/comparer/mod.rs
+index 17db1ab..43c607f 100644
+--- a/src/comparer/mod.rs
++++ b/src/comparer/mod.rs
+@@ -1369,6 +1369,7 @@ fn word_default_sectpr(dom: &mut Dom, base: NodeId) -> NodeId {
+ }
+ 
+ /// Optional log holder used by the comparison pipeline.
++#[derive(Debug)]
+ pub struct CompareContext {
+     /// `settings`.
+     pub settings: WmlComparerSettings,
+diff --git a/src/comparison_log.rs b/src/comparison_log.rs
+index f285287..5b4df67 100644
+--- a/src/comparison_log.rs
++++ b/src/comparison_log.rs
+@@ -25,7 +25,7 @@ pub struct ComparisonLogEntry {
+ }
+ 
+ /// Accumulates log entries during a comparison run.
+-#[derive(Default)]
++#[derive(Debug, Default)]
+ pub struct ComparisonLog {
+     /// `entries`.
+     pub entries: Vec<ComparisonLogEntry>,
+diff --git a/src/lib.rs b/src/lib.rs
+index 2ba84fb..597482a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -13,12 +13,14 @@
+ //! ## Example
+ //!
+ //! ```no_run
+-//! let original = std::fs::read("original.docx").unwrap();
+-//! let modified = std::fs::read("modified.docx").unwrap();
+-//! let redline =
+-//!     jubarte::document_comparer::compare_documents(&original, &modified, "Reviewer")
+-//!         .expect("compare");
+-//! std::fs::write("original_v_modified.docx", &redline).unwrap();
++//! fn main() -> Result<(), Box<dyn std::error::Error>> {
++//!     let original = std::fs::read("original.docx")?;
++//!     let modified = std::fs::read("modified.docx")?;
++//!     let redline =
++//!         jubarte::document_comparer::compare_documents(&original, &modified, "Reviewer")?;
++//!     std::fs::write("original_v_modified.docx", &redline)?;
++//!     Ok(())
++//! }
+ //! ```
+ //!
+ //! For author/date/detail-threshold control, build a
+@@ -89,11 +91,3 @@ pub mod xmllinq;
+ 
+ /// [`WmlDocument`] re-export for the common library entry point.
+ pub use wml_document::WmlDocument;
+-
+-#[cfg(test)]
+-mod smoke {
+-    #[test]
+-    fn crate_builds() {
+-        assert_eq!(2 + 2, 4);
+-    }
+-}
+diff --git a/src/util/mod.rs b/src/util/mod.rs
+index 2408472..86657ef 100644
+--- a/src/util/mod.rs
++++ b/src/util/mod.rs
+@@ -9,5 +9,11 @@ pub mod sha1;
+ pub mod words;
+ 
+ pub use group_adjacent::group_adjacent;
+-pub use sha1::{sha1_fingerprint, sha1_hex, sha1_hex_bytes, sha1_hex_parts};
++pub use sha1::{fnv1a_64, fnv1a_128, sha1_hex, sha1_hex_bytes, sha1_hex_parts};
+ pub use words::word_tokens;
++
++/// Former name of [`sha1::fnv1a_64`] at this path. It never computed SHA-1.
++#[deprecated(since = "0.10.2", note = "renamed to `fnv1a_64`; this was never SHA-1")]
++pub fn sha1_fingerprint(s: &str) -> u64 {
++    sha1::fnv1a_64(s)
++}
+diff --git a/src/util/sha1.rs b/src/util/sha1.rs
+index 5971fb4..4097ec8 100644
+--- a/src/util/sha1.rs
++++ b/src/util/sha1.rs
+@@ -3,7 +3,8 @@
+ // SPDX-License-Identifier: AGPL-3.0-only
+ 
+ //! Port of `SHA1HashStringForUTF8String` / `SHA1HashStringForByteArray` /
+-//! `HexStringFromBytes` from `PtUtil.ts`.
++//! `HexStringFromBytes` from `PtUtil.ts`, plus the FNV-1a fingerprints
++//! ([`fnv1a_64`], [`fnv1a_128`]) the LCS derives from those SHA-1 hex strings.
+ 
+ use sha1::{Digest, Sha1};
+ 
+@@ -109,17 +110,17 @@ where
+     hex_string_from_bytes(&hasher.finalize())
+ }
+ 
+-/// A fixed-width `u64` fingerprint of a hash string, used as a cheap pre-filter
+-/// for comparison-unit equality in the LCS hot path (`longest_common_run`). It
+-/// is a *pure deterministic function* of the string, so equal strings always
+-/// map to equal keys — the pre-filter never wrongly rejects a real match, and
+-/// the full hash string stays the source of truth (`key_eq && str_eq`). Not
+-/// lossless (u64 can collide), which is why the string confirmation remains.
++/// 64-bit FNV-1a of the string's bytes (offset basis `0xcbf29ce484222325`,
++/// prime `0x100000001b3`). Not SHA-1 and not cryptographic.
+ ///
+-/// Implemented as 64-bit FNV-1a over the string's bytes: deterministic,
+-/// dependency-free, and well-distributed for the (already uniformly random)
+-/// SHA-1 hex inputs it fingerprints.
+-pub fn sha1_fingerprint(s: &str) -> u64 {
++/// Used as the `u64` bucket key of the comparison-unit index in the LCS hot
++/// path (`longest_common_run`): units whose keys differ are never compared,
++/// and units sharing a bucket go on to the 128-bit key, [`fnv1a_128`]. It is a
++/// pure deterministic function of the string, so equal strings always share a
++/// key and the pre-filter never drops a real match; a `u64` collision only
++/// costs an extra probe. The input is already a SHA-1 hex digest of document
++/// content, so a caller cannot choose the FNV input bytes directly.
++pub fn fnv1a_64(s: &str) -> u64 {
+     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+     const PRIME: u64 = 0x0000_0100_0000_01b3;
+     let mut hash = OFFSET_BASIS;
+@@ -130,15 +131,20 @@ pub fn sha1_fingerprint(s: &str) -> u64 {
+     hash
+ }
+ 
+-/// A 128-bit fingerprint of a hash string (128-bit FNV-1a). Used by the LCS
+-/// hot path (`extend_common_run`) to test comparison-unit equality with a
+-/// single integer compare instead of a full 40-byte SHA-1 hex `memcmp`. Equal
+-/// strings always map to equal fingerprints; distinct strings collide with
+-/// probability ~2^-128 (negligible for non-adversarial document content, and
+-/// strictly stronger than the existing 64-bit index key). Deterministic and
+-/// dependency-free, matching [`sha1_fingerprint`]'s FNV construction widened to
+-/// 128 bits.
+-pub fn sha1_fingerprint128(s: &str) -> u128 {
++/// 128-bit FNV-1a of the string's bytes (offset basis
++/// `0x6c62272e07bb014262b821756295c58d`, prime `0x1000000000000000000013b`).
++/// Not SHA-1 and not cryptographic.
++///
++/// In the LCS hot path (`extend_common_run` and the interior-run skip in
++/// `longest_common_run`) this key *alone* decides comparison-unit equality:
++/// two units correlate when their 128-bit keys are equal, with no further
++/// comparison of the 40-byte SHA-1 hex strings. Equal strings always share a
++/// key; distinct strings that collide would wrongly correlate. That is
++/// accepted because the input is already a SHA-1 hex digest of the content,
++/// so an attacker cannot choose the FNV input bytes directly and a generic
++/// collision costs about 2^64 work, far beyond any document pair. Same
++/// construction as [`fnv1a_64`], widened to 128 bits.
++pub fn fnv1a_128(s: &str) -> u128 {
+     const OFFSET_BASIS: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+     const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+     let mut hash = OFFSET_BASIS;
+@@ -148,3 +154,18 @@ pub fn sha1_fingerprint128(s: &str) -> u128 {
+     }
+     hash
+ }
++
++/// Former name of [`fnv1a_64`]. It never computed SHA-1.
++#[deprecated(since = "0.10.2", note = "renamed to `fnv1a_64`; this was never SHA-1")]
++pub fn sha1_fingerprint(s: &str) -> u64 {
++    fnv1a_64(s)
++}
++
++/// Former name of [`fnv1a_128`]. It never computed SHA-1.
++#[deprecated(
++    since = "0.10.2",
++    note = "renamed to `fnv1a_128`; this was never SHA-1"
++)]
++pub fn sha1_fingerprint128(s: &str) -> u128 {
++    fnv1a_128(s)
++}
+diff --git a/tests/perf_sha1_key.rs b/tests/perf_sha1_key.rs
+index 215c949..d606787 100644
+--- a/tests/perf_sha1_key.rs
++++ b/tests/perf_sha1_key.rs
+@@ -17,13 +17,13 @@
+ 
+ use std::collections::HashSet;
+ 
+-use jubarte::util::sha1::{sha1_fingerprint, sha1_hex};
++use jubarte::util::sha1::{fnv1a_64, sha1_hex};
+ 
+ #[test]
+ fn fingerprint_is_deterministic() {
+-    assert_eq!(sha1_fingerprint("deadbeef"), sha1_fingerprint("deadbeef"));
++    assert_eq!(fnv1a_64("deadbeef"), fnv1a_64("deadbeef"));
+     let h = sha1_hex("hello world");
+-    assert_eq!(sha1_fingerprint(&h), sha1_fingerprint(&h));
++    assert_eq!(fnv1a_64(&h), fnv1a_64(&h));
+ }
+ 
+ /// Soundness: equal strings ⇒ equal keys, for a representative spread including
+@@ -33,8 +33,8 @@ fn fingerprint_equal_hash_equal_key() {
+     for s in ["", "a", "not-a-40-char-hash", &sha1_hex("x")] {
+         let owned = s.to_string();
+         assert_eq!(
+-            sha1_fingerprint(s),
+-            sha1_fingerprint(&owned),
++            fnv1a_64(s),
++            fnv1a_64(&owned),
+             "equal strings must fingerprint equal (s = {s:?})"
+         );
+     }
+@@ -46,7 +46,7 @@ fn fingerprint_equal_hash_equal_key() {
+ #[test]
+ fn fingerprint_discriminates_distinct_hashes() {
+     let hashes: Vec<String> = (0..5000).map(|i| sha1_hex(&format!("unit-{i}"))).collect();
+-    let keys: HashSet<u64> = hashes.iter().map(|h| sha1_fingerprint(h)).collect();
++    let keys: HashSet<u64> = hashes.iter().map(|h| fnv1a_64(h)).collect();
+     assert_eq!(
+         keys.len(),
+         hashes.len(),
+diff --git a/tests/sha1_key_invariant.rs b/tests/sha1_key_invariant.rs
+index e71c9c9..0bafb6b 100644
+--- a/tests/sha1_key_invariant.rs
++++ b/tests/sha1_key_invariant.rs
+@@ -10,7 +10,7 @@
+ //! accessors the engine actually uses.
+ 
+ use jubarte::comparer::atoms::{ComparisonUnit, ComparisonUnitAtom, ComparisonUnitWord, Sha1Keyed};
+-use jubarte::util::sha1::{sha1_fingerprint, sha1_fingerprint128};
++use jubarte::util::sha1::{fnv1a_64, fnv1a_128};
+ use jubarte::xmllinq::NodeId;
+ 
+ fn atom(tag: &str) -> ComparisonUnitAtom {
+@@ -33,8 +33,8 @@ fn hashes() -> Vec<String> {
+ 
+ fn assert_keys_follow(k: &Sha1Keyed, h: &str) {
+     assert_eq!(k.hash(), h, "hash must round-trip verbatim");
+-    assert_eq!(k.key(), sha1_fingerprint(h), "u64 key of {h:?}");
+-    assert_eq!(k.key128(), sha1_fingerprint128(h), "128-bit key of {h:?}");
++    assert_eq!(k.key(), fnv1a_64(h), "u64 key of {h:?}");
++    assert_eq!(k.key128(), fnv1a_128(h), "128-bit key of {h:?}");
+ }
+ 
+ #[test]
+@@ -56,7 +56,7 @@ fn words_hand_the_lcs_consistent_keys() {
+         assert_keys_follow(&word.sha1, &hash);
+         let unit = ComparisonUnit::Word(word);
+         assert_eq!(unit.sha1(), hash);
+-        assert_eq!(unit.sha1_key(), sha1_fingerprint(&hash), "{n} atoms");
+-        assert_eq!(unit.sha1_key128(), sha1_fingerprint128(&hash), "{n} atoms");
++        assert_eq!(unit.sha1_key(), fnv1a_64(&hash), "{n} atoms");
++        assert_eq!(unit.sha1_key128(), fnv1a_128(&hash), "{n} atoms");
+     }
+ }
+-- 
+2.43.0
+

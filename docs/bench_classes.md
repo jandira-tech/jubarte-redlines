@@ -21,13 +21,6 @@ Tool: `tools/bench_classes.py` — every fixture with `overall_score < 90` is as
 > statuses are still accurate through 0.10.1 — the C1–C3 and C5 mechanisms
 > landed (tests `m146`–`m151` are all in-tree); **C4 was never decided**
 > (memo: `docs/C4_preexisting_revisions_decision.md`).
->
-> **Re-checked 2026-10-19 (`aba48bd5`, 0.12.0):** unchanged — `m146`–`m151`
-> are all still in-tree, and the C4 memo still records no option pick, so
-> C4 remains the deferred residual. This ledger has no document-identity
-> surface: nothing here names an id the 17 October 2026 contract
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> unimplemented) touches.
 
 ## Classification rules
 
