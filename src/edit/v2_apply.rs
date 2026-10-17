@@ -981,6 +981,18 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
     for (i, (operation, m)) in plan.operations.iter().zip(mapped).enumerate() {
         for &g in &m.paragraphs {
             mapped_paragraph(tx, g).map_err(|mut e| {
+                // Exact correspondence still gates merges/splits. For a
+                // removed comment target, keep Origin's settlement cause.
+                if matches!(operation, v2::Operation::Comment { .. })
+                    && let Some(origin) = &tx.origin
+                    && let Err(cause) = origin.follow(g, true, |p| tx.paragraph_id(p))
+                {
+                    e = miss(cause);
+                    e.message.push_str(&format!(
+                        "; selected accept={:?}, reject={:?}",
+                        tx.resolved_revisions.accepted, tx.resolved_revisions.rejected
+                    ));
+                }
                 e.operation = Some(pointer(i));
                 e
             })?;
@@ -1058,25 +1070,28 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
     }
     check_boundary_ownership(tx)?;
     compose_threads(tx)?;
-    if let Err(mut error) = tx.check_conflicts() {
-        // Keep the engine's real text/thread conflict when one exists. Its
-        // generic comment-mapping conflicts receive the v2 anchor diagnosis.
-        if error.message == "comment range cuts through an edited range"
-            || error.message == "comments on a deleted paragraph"
-        {
-            check_comment_anchors(tx, plan.policy.track == Track::On)?;
-        }
-        if error.code == "OVERLAPPING_EDITS" {
-            error.code = "CONFLICT".into();
-            for outcome in &mut error.outcomes {
-                if outcome.code.as_deref() == Some("OVERLAPPING_EDITS") {
-                    outcome.code = Some("CONFLICT".into());
-                }
-            }
-        }
-        return Err(error);
+    if let Err(error) = tx.check_conflicts_v2() {
+        return Err(diagnose_conflict(tx, error, plan.policy.track == Track::On));
     }
     check_comment_anchors(tx, plan.policy.track == Track::On)
+}
+
+fn diagnose_conflict(tx: &Transaction<'_>, mut error: EditError, tracked: bool) -> EditError {
+    // Keep real text/thread conflicts; specialize only engine anchor conflicts.
+    if error.code == super::COMMENT_ANCHOR_CONFLICT
+        && let Err(anchor) = check_comment_anchors(tx, tracked)
+    {
+        return anchor;
+    }
+    if error.code == "OVERLAPPING_EDITS" {
+        error.code = "CONFLICT".into();
+        for outcome in &mut error.outcomes {
+            if outcome.code.as_deref() == Some("OVERLAPPING_EDITS") {
+                outcome.code = Some("CONFLICT".into());
+            }
+        }
+    }
+    error
 }
 
 /// Same-position inserts share array order only when they agree on the
@@ -1204,6 +1219,8 @@ fn comment_error(tx: &Transaction<'_>, i: usize, code: &str, message: &str) -> E
     error
 }
 
+type AnchorEdits<'a> = BTreeMap<usize, Vec<(usize, &'a Resolved)>>;
+
 /// A supported range keeps its endpoints through composition. An exact
 /// nonempty replacement is a defined correspondence (the replacement is the
 /// anchor); containing/disjoint ranges retain their surviving content. No
@@ -1211,6 +1228,17 @@ fn comment_error(tx: &Transaction<'_>, i: usize, code: &str, message: &str) -> E
 /// for an emptied anchor. An existing anchor may instead retain its original
 /// markers on pure tracked deletion. Check existing and requested anchors.
 fn check_comment_anchors(tx: &Transaction<'_>, tracked: bool) -> Result<(), EditError> {
+    let mut edits = AnchorEdits::new();
+    for (i, r) in &tx.resolved {
+        if let Resolved::Text { para, .. } | Resolved::DeleteParagraph { para } = r {
+            edits.entry(*para).or_default().push((*i, r));
+        }
+    }
+    // Thread-only, comment-only and unchanged plans cannot change an
+    // existing anchor. In particular they need no document mark scan.
+    if edits.is_empty() {
+        return Ok(());
+    }
     let family = tx.family.as_ref().expect("loaded in start");
     let deleted_comments: BTreeSet<_> = tx
         .resolved
@@ -1224,11 +1252,17 @@ fn check_comment_anchors(tx: &Transaction<'_>, tracked: bool) -> Result<(), Edit
         })
         .flatten()
         .collect();
-    for id in family.order() {
+    let ids = family.order();
+    let anchors = if ids.is_empty() {
+        BTreeMap::new()
+    } else {
+        tx.comment_anchors()
+    };
+    for id in ids {
         if !deleted_comments.contains(&id)
-            && let Ok(covered) = tx.comment_text(id)
+            && let Some(&covered) = anchors.get(&id.to_string())
         {
-            check_comment_anchor(tx, covered, None, false, tracked)?;
+            check_comment_anchor(tx, &edits, covered, None, false, tracked)?;
         }
     }
     for (i, r) in &tx.resolved {
@@ -1251,6 +1285,7 @@ fn check_comment_anchors(tx: &Transaction<'_>, tracked: bool) -> Result<(), Edit
         };
         check_comment_anchor(
             tx,
+            &edits,
             covered,
             Some(*i),
             matches!(r, Resolved::CommentSpan { .. }),
@@ -1262,6 +1297,7 @@ fn check_comment_anchors(tx: &Transaction<'_>, tracked: bool) -> Result<(), Edit
 
 fn check_comment_anchor(
     tx: &Transaction<'_>,
+    edits: &AnchorEdits<'_>,
     covered: super::Covered,
     owner: Option<usize>,
     full_paragraphs: bool,
@@ -1284,24 +1320,23 @@ fn check_comment_anchor(
             tx.projections[para].text.len()
         };
         original += end - start;
-        if let Some((i, _)) = tx
-            .resolved
-            .iter()
-            .find(|(_, r)| matches!(r, Resolved::DeleteParagraph { para: p } if *p == para))
+        if let Some((i, _)) = edits
+            .get(&para)
+            .into_iter()
+            .flatten()
+            .find(|(_, r)| matches!(r, Resolved::DeleteParagraph { .. }))
         {
             changed = Some(*i);
-            // An existing containing range keeps both markers when an
-            // interior paragraph disappears. Its endpoints need no remapping.
-            // Newly requested spans still use the engine's conflict gate.
-            if para == covered.first || para == covered.last || owner.is_some() {
+            // Existing and requested containing ranges keep both markers
+            // when only an interior paragraph disappears.
+            if para == covered.first || para == covered.last {
                 removed_paragraph = Some(*i);
             }
             continue;
         }
         let mut length = (end - start) as i128;
-        for (i, r) in &tx.resolved {
+        for &(i, r) in edits.get(&para).into_iter().flatten() {
             let Resolved::Text {
-                para: p,
                 start: s,
                 end: e,
                 replacement,
@@ -1310,9 +1345,6 @@ fn check_comment_anchor(
             else {
                 continue;
             };
-            if *p != para {
-                continue;
-            }
             // Only an existing anchor on pure tracked deletion has this
             // preservation rule. A replacement or insertion touching it
             // needs a correspondence into nonempty resulting content.
@@ -1320,7 +1352,7 @@ fn check_comment_anchor(
                 preserve_deleted = false;
             }
             if *s < end && *e > start {
-                changed = Some(*i);
+                changed = Some(i);
                 length -= (end.min(*e) - start.max(*s)) as i128;
             }
             // Replacement characters have a correspondence only when
@@ -1332,7 +1364,7 @@ fn check_comment_anchor(
                 length += replacement.len() as i128;
             }
             if (*s < start && start < *e) || (*s < end && end < *e) {
-                boundary = Some(*i);
+                boundary = Some(i);
             }
         }
         remaining += length;
@@ -1674,4 +1706,132 @@ fn preserve_history(working: &[u8], candidate: &[u8]) -> Result<(), EditError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::edit::deeper_boundary_fixture::{docx, para};
+
+    fn many_comment_source() -> Vec<u8> {
+        use crate::edit::deeper_boundary_fixture::{Part, docx_with};
+        let mut starts = String::new();
+        let mut ends = String::new();
+        let mut notes = String::new();
+        for id in 0..8 {
+            starts.push_str(&format!(r#"<w:commentRangeStart w:id="{id}"/>"#));
+            ends.push_str(&format!(
+                r#"<w:commentRangeEnd w:id="{id}"/><w:r><w:commentReference w:id="{id}"/></w:r>"#
+            ));
+            notes.push_str(&format!(r#"<w:comment w:id="{id}" w:author="Other"><w:p><w:r><w:t>Note {id}</w:t></w:r></w:p></w:comment>"#));
+        }
+        let comments = format!(r#"<w:comments xmlns:w="{}">{notes}</w:comments>"#, W::URI);
+        docx_with(
+            &format!(
+                "<w:p>{starts}<w:r><w:t>First</w:t></w:r></w:p>{}<w:p><w:r><w:t>Last</w:t></w:r>{ends}</w:p>",
+                para("Middle")
+            ),
+            &[Part {
+                name: "word/comments.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                xml: &comments,
+            }],
+        )
+    }
+
+    #[test]
+    fn thread_only_and_unchanged_plans_do_not_scan_comment_anchors() {
+        let source = many_comment_source();
+        let plan = EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Me","date":"2026-10-17T00:00:00Z","operations":[]}"#,
+        )
+        .unwrap();
+        let mut tx = Transaction::start(&source, &plan).unwrap();
+        for thread_only in [false, true] {
+            if thread_only {
+                tx.resolved.push((
+                    0,
+                    Resolved::Thread {
+                        op: super::super::ThreadOp::Resolve { id: 0, done: true },
+                        stories: vec![0],
+                        anchor: None,
+                    },
+                ));
+            }
+            super::super::COMMENT_MARK_SCANS.with(|scans| scans.set(0));
+            check_comment_anchors(&tx, true).unwrap();
+            assert_eq!(
+                super::super::COMMENT_MARK_SCANS.with(|scans| scans.get()),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn existing_comment_anchors_scan_each_paragraph_once_per_apply() {
+        let source = many_comment_source();
+        let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","date":"2026-10-17T00:00:00Z","operations":[{"kind":"replace","paragraph":"p1","find":"Middle","replacement":"Changed"}]}"#).unwrap();
+        let mut tx = Transaction::start(&source, &plan).unwrap();
+        let (resolved, outcome) = tx
+            .resolve_one("/operations/0", &plan.operations[0].kind)
+            .unwrap();
+        tx.resolved.push((0, resolved));
+        tx.outcomes.push(outcome);
+        super::super::COMMENT_MARK_SCANS.with(|scans| scans.set(0));
+        check_comment_anchors(&tx, true).unwrap();
+        assert_eq!(
+            super::super::COMMENT_MARK_SCANS.with(|scans| scans.get()),
+            3
+        );
+    }
+
+    #[test]
+    fn v2_comment_diagnosis_ignores_engine_message_wording() {
+        let source = docx(&para("Alpha Beta"));
+        let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","date":"2026-10-17T00:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"Alpha","replacement":"A"},{"kind":"comment","paragraph":"p0","find":"pha Be","text":"Boundary"}]}"#).unwrap();
+        let mut tx = Transaction::start(&source, &plan).unwrap();
+        for (i, op) in plan.operations.iter().enumerate() {
+            let (resolved, outcome) = tx.resolve_one(&pointer(i), &op.kind).unwrap();
+            tx.resolved.push((i, resolved));
+            tx.outcomes.push(outcome);
+        }
+        let legacy = tx.check_conflicts().unwrap_err();
+        assert_eq!(legacy.code, "OVERLAPPING_EDITS");
+        let mut engine = tx.check_conflicts_v2().unwrap_err();
+        assert_eq!(engine.code, super::super::COMMENT_ANCHOR_CONFLICT);
+        engine.message = "Reworded engine detail".into();
+        let error = diagnose_conflict(&tx, engine, true);
+        assert_eq!(error.code, "COMMENT_ANCHOR_UNMAPPABLE");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+        assert!(error.message.contains("boundary"));
+    }
+
+    #[test]
+    fn comment_inventory_preserves_first_complete_ranges_and_offsets() {
+        let source = docx(
+            r#"<w:p><w:commentRangeEnd w:id="0"/><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="0"/><w:r><w:t>é</w:t><w:tab/></w:r><w:commentRangeStart w:id="1"/><w:commentRangeStart/></w:p><w:p><w:r><w:t>Beta</w:t></w:r><w:commentRangeEnd w:id="0"/><w:commentRangeEnd w:id="1"/><w:commentRangeStart w:id="2"/><w:commentRangeEnd w:id="3"/></w:p><w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Later</w:t></w:r><w:commentRangeEnd w:id="0"/></w:p>"#,
+        );
+        let plan = EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Me","date":"2026-10-17T00:00:00Z","operations":[]}"#,
+        )
+        .unwrap();
+        let tx = Transaction::start(&source, &plan).unwrap();
+        let anchors = tx.comment_anchors();
+        assert_eq!(anchors.len(), 2);
+        for (id, start) in [(0, 0), (1, 3)] {
+            let range = anchors[&id.to_string()];
+            assert_eq!(
+                (range.first, range.start, range.last, range.end),
+                (0, start, 1, 4)
+            );
+            let legacy = tx.comment_text(id).unwrap();
+            assert_eq!(
+                (range.first, range.start, range.last, range.end),
+                (legacy.first, legacy.start, legacy.last, legacy.end)
+            );
+        }
+        assert!(tx.comment_text(2).is_err());
+        assert!(tx.comment_text(3).is_err());
+    }
 }

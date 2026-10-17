@@ -44,6 +44,18 @@ fn run(
 ) -> Result<jubarte::edit::v2_apply::V2EditResult, jubarte::edit::EditError> {
     apply_plan(bytes, &PlanV2::from_json(&plan.to_string()).unwrap())
 }
+fn refused(bytes: &[u8], plan: &Value) -> jubarte::edit::EditError {
+    let result = run(bytes, plan);
+    assert!(
+        result.as_ref().ok().map(|out| &out.redline).is_none(),
+        "refusal exposed primary bytes"
+    );
+    assert!(
+        result.as_ref().ok().map(|out| &out.clean).is_none(),
+        "refusal exposed candidate bytes"
+    );
+    result.unwrap_err()
+}
 fn texts(bytes: &[u8]) -> Vec<String> {
     paragraphs(bytes)
         .unwrap()
@@ -439,6 +451,7 @@ fn attached_comments_use_nonempty_result_anchors() {
             assert_eq!(comments.len(), 1);
             assert_eq!(comments[0].anchor_text, want);
             assert_eq!(comments[0].author, "Me");
+            assert_eq!(comments[0].initials.as_deref(), Some("M"));
             assert_eq!(comments[0].date.as_deref(), Some("2026-10-17T00:00:00Z"));
             assert_word_valid_package(bytes);
         }
@@ -793,11 +806,17 @@ fn comment_boundary_inside_replacement_refuses_atomically() {
             ops.push(comment);
         }
         // A refused transaction exposes no candidate bytes to publish.
-        let error = run(&source, &plan(&source, json!(ops))).unwrap_err();
+        let error = refused(&source, &plan(&source, json!(ops)));
         assert_eq!(error.code, "COMMENT_ANCHOR_UNMAPPABLE", "{error}");
         assert!(error.message.contains("boundary"), "{error}");
-        assert!(error.operation.is_some(), "{error}");
-        assert_eq!(texts(&source), ["Alpha Beta"]);
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if existing {
+                "/operations/0"
+            } else {
+                "/operations/1"
+            })
+        );
     }
 }
 
@@ -822,7 +841,19 @@ fn whole_comment_anchor_deletion_refuses_without_preservation() {
             q["policy"]["track"] = json!("off");
             let error = run(source, &q).unwrap_err();
             assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
-            assert!(error.operation.is_some(), "{error}");
+            assert_eq!(
+                error.operation.as_deref(),
+                Some(if existing {
+                    "/operations/0"
+                } else {
+                    "/operations/1"
+                })
+            );
+            assert!(
+                error.message.contains("entire comment anchor")
+                    && error.message.contains("no supported preservation rule"),
+                "{error}"
+            );
         }
     }
 }
@@ -878,7 +909,17 @@ fn duplicate_comment_edits_and_thread_state_aliases_conflict() {
         json!([{"kind":"resolve_comment","target":c(0),"done":true},{"kind":"resolve_comment","target":c(1),"done":true}]),
         json!([{"kind":"resolve_comment","target":c(1),"done":false},{"kind":"resolve_comment","target":c(0),"done":true}]),
     ] {
-        assert_eq!(run(&with, &plan(&with, ops)).unwrap_err().code, "CONFLICT");
+        let error = refused(&with, &plan(&with, ops.clone()));
+        assert_eq!(error.code, "CONFLICT");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+        assert!(
+            error.message.contains(if ops[1]["kind"] == "edit_comment" {
+                "edits a comment another operation edits"
+            } else {
+                "only one final state"
+            }),
+            "{error}"
+        );
     }
 }
 
@@ -908,9 +949,21 @@ fn deleting_a_reply_conflicts_with_mutations_on_its_thread() {
                 if reverse {
                     ops.reverse();
                 }
+                let error = refused(&with, &plan(&with, json!(ops)));
+                assert_eq!(error.code, "CONFLICT");
                 assert_eq!(
-                    run(&with, &plan(&with, json!(ops))).unwrap_err().code,
-                    "CONFLICT"
+                    error.operation.as_deref(),
+                    Some(if reverse {
+                        "/operations/0"
+                    } else {
+                        "/operations/1"
+                    })
+                );
+                assert!(
+                    error
+                        .message
+                        .contains("delete_comment conflicts with another mutation of its thread"),
+                    "{error}"
                 );
             }
         }
@@ -993,6 +1046,7 @@ fn comment_attribution_is_preserved_or_taken_from_plan() {
         );
         for comment in comments.iter().filter(|c| c.id != 0) {
             assert_eq!(comment.author, "Me");
+            assert_eq!(comment.initials.as_deref(), Some("M"));
             assert_eq!(comment.date.as_deref(), Some("2026-10-17T00:00:00Z"));
         }
         assert!(comments.iter().any(|c| c.text == "Reply <literal> & text"));
@@ -1017,6 +1071,7 @@ fn unchanged_text_attachments_keep_exact_span_and_plan_attribution() {
             assert_eq!(comments[0].anchor_text, want);
             assert_eq!(comments[0].text, "<literal> & note");
             assert_eq!(comments[0].author, "Me");
+            assert_eq!(comments[0].initials.as_deref(), Some("M"));
             assert_eq!(comments[0].date.as_deref(), Some("2026-10-17T00:00:00Z"));
             assert_eq!(texts(bytes), ["Alpha Beta"]);
         }
@@ -1077,6 +1132,8 @@ fn unchanged_attachment_refuses_when_composition_removes_its_anchor() {
     )
     .unwrap_err();
     assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    assert!(error.message.contains("entire comment anchor"), "{error}");
     let mut op = rewrite(0, "Alpha Beta", "Alpha Beta");
     op["attached_comment"] = json!({"text":"Keep"});
     let error = run(
@@ -1088,6 +1145,8 @@ fn unchanged_attachment_refuses_when_composition_removes_its_anchor() {
     )
     .unwrap_err();
     assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    assert!(error.message.contains("entire comment anchor"), "{error}");
 }
 
 #[test]
@@ -1099,7 +1158,7 @@ fn unknown_comment_targets_refuse_before_any_candidate() {
         json!({"kind":"resolve_comment","target":c(99),"done":true}),
         json!({"kind":"delete_comment","target":c(99),"include_replies":true}),
     ] {
-        let error = run(&s, &plan(&s, json!([replace(0, "Beta", "Gamma"), op]))).unwrap_err();
+        let error = refused(&s, &plan(&s, json!([replace(0, "Beta", "Gamma"), op])));
         assert_eq!(error.code, "TARGET_ID_MISMATCH");
         assert_eq!(error.operation.as_deref(), Some("/operations/1"));
     }
@@ -1181,8 +1240,25 @@ fn comment_mapping_does_not_mask_text_or_thread_conflicts() {
             {"kind":"edit_comment","target":c(0),"text":"Second"}
         ]),
     ] {
-        let error = run(&s, &plan(&s, ops)).unwrap_err();
+        let thread = ops.as_array().unwrap().len() == 3;
+        let error = refused(&s, &plan(&s, ops));
         assert_eq!(error.code, "CONFLICT", "{error}");
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if thread {
+                "/operations/2"
+            } else {
+                "/operations/1"
+            })
+        );
+        assert!(
+            error.message.contains(if thread {
+                "edits a comment another operation edits"
+            } else {
+                "overlaps an earlier edit"
+            }),
+            "{error}"
+        );
     }
 }
 
@@ -1265,6 +1341,8 @@ fn a_new_comment_cannot_anchor_to_text_deleted_in_the_same_plan() {
         )
         .unwrap_err();
         assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+        assert!(error.message.contains("entire comment anchor"), "{error}");
     }
 }
 
@@ -1746,4 +1824,204 @@ fn source_identity_inventory_keeps_story_and_duplicate_distinctions() {
     let mut q = plan(&s, json!([]));
     q["resolve_revisions"]["accept"] = json!([r(7)]);
     assert_eq!(run(&s, &q).unwrap_err().code, "TARGET_ID_MISMATCH");
+}
+
+#[test]
+fn comment_through_settlement_removed_paragraph_reports_selected_cause() {
+    // A removed row really removes its paragraph. Rejecting only inline
+    // insertion text leaves an empty paragraph and cannot exercise Gone.
+    let removed = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:trPr><w:del w:id="7" {STAMP}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:del w:id="8" {STAMP}><w:r><w:delText>Gone</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl>"#
+    );
+    let s = docx(&(removed.clone() + &para("Last")));
+    for (first, last) in [(0, 1), (0, 0)] {
+        let mut q = plan(
+            &s,
+            json!([
+                {"kind":"comment","target":p(first),"through":p(last),"text":"Range"}
+            ]),
+        );
+        q["resolve_revisions"]["accept"] =
+            json!([{"short_id":"r7","long_id":"document.w:del.w:id.7"}]);
+        let error = refused(&s, &q);
+        assert_eq!(error.code, "PARAGRAPH_RESOLVED", "{error}");
+        assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+        assert!(
+            error
+                .message
+                .contains("gone once the plan's revisions are settled"),
+            "{error}"
+        );
+        assert!(
+            error.message.contains("accept") && error.message.contains("r7"),
+            "{error}"
+        );
+    }
+    // The removed paragraph can also be interior to the requested range.
+    let s = docx(&(para("First") + &removed + &para("Last")));
+    let mut q = plan(
+        &s,
+        json!([{"kind":"comment","target":p(0),"through":p(2),"text":"Range"}]),
+    );
+    q["resolve_revisions"]["accept"] = json!([{"short_id":"r7","long_id":"document.w:del.w:id.7"}]);
+    let error = refused(&s, &q);
+    assert_eq!(error.code, "PARAGRAPH_RESOLVED", "{error}");
+    assert!(
+        error.message.contains("gone") && error.message.contains("r7"),
+        "{error}"
+    );
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    // Rejecting a selected inserted row exercises the opposite decision and
+    // the standalone (no through) target through the same removal diagnosis.
+    let inserted = removed
+        .replace("w:delText", "w:t")
+        .replace("w:del", "w:ins");
+    let s = docx(&(inserted + &para("Last")));
+    let mut q = plan(&s, json!([{"kind":"comment","target":p(0),"text":"Range"}]));
+    q["resolve_revisions"]["reject"] = json!([r(7)]);
+    let error = refused(&s, &q);
+    assert_eq!(error.code, "PARAGRAPH_RESOLVED", "{error}");
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    assert!(
+        error.message.contains("gone")
+            && error.message.contains("reject")
+            && error.message.contains("r7"),
+        "{error}"
+    );
+}
+
+#[test]
+fn multi_paragraph_comment_maps_edits_in_other_covered_paragraphs() {
+    let s = docx(&(para("First") + &para("Middle") + &para("Last")));
+    let comment = json!({"kind":"comment","target":p(0),"through":p(2),"text":"All"});
+    let with = run(&s, &plan(&s, json!([comment.clone()]))).unwrap().clean;
+    for existing in [false, true] {
+        let source = if existing { &with } else { &s };
+        let mut ops = vec![replace(0, "First", "Start"), replace(2, "Last", "End")];
+        if !existing {
+            ops.push(comment.clone());
+        }
+        for track in ["on", "off"] {
+            let mut q = plan(source, json!(ops));
+            q["policy"]["track"] = json!(track);
+            let out = run(source, &q).unwrap();
+            for bytes in [&out.clean, &out.redline] {
+                let final_bytes = accept_changes(bytes, &mine()).unwrap();
+                let comments = jubarte::comments::list_comments(&final_bytes).unwrap();
+                assert_eq!(comments.len(), 1);
+                assert_eq!(comments[0].anchor_text, "Start\nMiddle\nEnd");
+                assert_word_valid_package(bytes);
+            }
+        }
+    }
+}
+
+#[test]
+fn comment_end_inside_replacement_refuses_atomically() {
+    let s = docx(&para("Alpha Beta Omega"));
+    let comment = json!({"kind":"comment","target":p(0),"find":"Beta Ome","text":"End boundary"});
+    let with = run(&s, &plan(&s, json!([comment.clone()]))).unwrap().clean;
+    for existing in [false, true] {
+        let source = if existing { &with } else { &s };
+        let mut ops = vec![replace(0, "a Omega", "X")];
+        if !existing {
+            ops.push(comment.clone());
+        }
+        let error = refused(source, &plan(source, json!(ops)));
+        assert_eq!(error.code, "COMMENT_ANCHOR_UNMAPPABLE", "{error}");
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if existing {
+                "/operations/0"
+            } else {
+                "/operations/1"
+            })
+        );
+        assert!(
+            error.message.contains("boundary") && error.message.contains("removed text"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn zero_width_comment_on_deleted_empty_paragraph_refuses() {
+    let s = docx(&(para("") + &para("Last")));
+    for track in ["on", "off"] {
+        let mut q = plan(
+            &s,
+            json!([
+                {"kind":"delete_paragraph","target":p(0)},
+                {"kind":"comment","target":p(0),"text":"Empty anchor"}
+            ]),
+        );
+        q["policy"]["track"] = json!(track);
+        let error = refused(&s, &q);
+        assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+        assert!(error.message.contains("entire comment anchor"), "{error}");
+    }
+}
+
+#[test]
+fn adjacent_replacement_disables_tracked_anchor_deletion_preservation() {
+    let s = docx(&para("Alpha Beta"));
+    let with = run(
+        &s,
+        &plan(
+            &s,
+            json!([{"kind":"comment","target":p(0),"find":"Beta","text":"Keep"}]),
+        ),
+    )
+    .unwrap()
+    .clean;
+    for reverse in [false, true] {
+        let mut ops = vec![
+            replace(0, "Alpha ", "X "),
+            json!({"kind":"delete","target":p(0),"find":"Beta"}),
+        ];
+        if reverse {
+            ops.reverse();
+        }
+        let error = refused(&with, &plan(&with, json!(ops)));
+        assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if reverse {
+                "/operations/0"
+            } else {
+                "/operations/1"
+            })
+        );
+        assert!(
+            error.message.contains("no supported preservation rule"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn requested_containing_comment_survives_interior_paragraph_deletion() {
+    let s = docx(&(para("First") + &para("Middle") + &para("Last")));
+    for track in ["on", "off"] {
+        for reverse in [false, true] {
+            let mut ops = vec![
+                json!({"kind":"delete_paragraph","target":p(1)}),
+                json!({"kind":"comment","target":p(0),"through":p(2),"text":"All"}),
+            ];
+            if reverse {
+                ops.reverse();
+            }
+            let mut q = plan(&s, json!(ops));
+            q["policy"]["track"] = json!(track);
+            let out = run(&s, &q).unwrap();
+            for bytes in [&out.clean, &out.redline] {
+                let final_bytes = accept_changes(bytes, &mine()).unwrap();
+                let comments = jubarte::comments::list_comments(&final_bytes).unwrap();
+                assert_eq!(comments.len(), 1);
+                assert_eq!(comments[0].anchor_text, "First\nLast");
+                assert_word_valid_package(bytes);
+            }
+        }
+    }
 }
