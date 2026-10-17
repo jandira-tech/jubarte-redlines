@@ -9,7 +9,7 @@
 //! jubarte's own layout pass makes of the package: pages and the face each
 //! requested font resolved to.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{
     Package, TEXT_PARTS, attr, clip, decode_xml, local, percent_decode, rels_of, resolve_target,
@@ -458,13 +458,38 @@ fn own_text(dom: &Dom, n: NodeId, para: NodeId) -> String {
     s
 }
 
-/// Counts with the first sample seen, by line key.
+/// Each fact's stretches and the first one's text. A stretch is a run of
+/// runs in one paragraph that share the fact: Word splits runs where
+/// nothing on the page changes (`monospace` and `.`), so a fact counts
+/// once until a run without it comes between.
 #[derive(Default)]
-struct Tally(BTreeMap<String, (usize, String)>);
+struct Tally {
+    facts: BTreeMap<String, (usize, String)>,
+    /// The paragraph of the run being read, and the facts the run before
+    /// it in that paragraph had and the facts it has so far.
+    para: Option<NodeId>,
+    before: BTreeSet<String>,
+    now: BTreeSet<String>,
+}
 
 impl Tally {
+    /// A run of `para` starts: the facts of the run before it carry on.
+    fn next_run(&mut self, para: NodeId) {
+        if self.para == Some(para) {
+            self.before = std::mem::take(&mut self.now);
+        } else {
+            self.para = Some(para);
+            self.before.clear();
+            self.now.clear();
+        }
+    }
+
     fn add(&mut self, key: String, sample: &str) {
-        let e = self.0.entry(key).or_default();
+        self.now.insert(key.clone());
+        if self.before.contains(&key) {
+            return;
+        }
+        let e = self.facts.entry(key).or_default();
         if e.0 == 0 {
             e.1 = clip(sample, SAMPLE);
         }
@@ -472,7 +497,7 @@ impl Tally {
     }
 
     fn lines(self, out: &mut Vec<String>) {
-        for (key, (n, sample)) in self.0 {
+        for (key, (n, sample)) in self.facts {
             if sample.is_empty() {
                 out.push(format!("  {key} ×{n}"));
             } else {
@@ -658,6 +683,7 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
     let Some(para) = nearest(dom, r, "p") else {
         return;
     };
+    tally.next_run(para);
     let text = own_text(dom, r, para);
     let rprs = crate::convert::leading_rprs(dom, r);
     let style_of = |pr: Option<NodeId>, name: &str| {
@@ -1314,13 +1340,36 @@ mod story_diagnostic_contract_tests {
             (
                 vec![
                     "  frame(hAnchor=page,w=2000,x=300) \"firstsecondreset\"".into(),
-                    "  color 112233 via \"Base face\" ×2 \"first\"".into(),
-                    "  highlight yellow via \"Base face\" ×2 \"first\"".into(),
+                    // `first` and `second` are one stretch; the face
+                    // spans all three runs.
+                    "  color 112233 via \"Base face\" ×1 \"first\"".into(),
+                    "  highlight yellow via \"Base face\" ×1 \"first\"".into(),
                     "  pstyle \"Child face\" ×1".into(),
-                    "  rfonts \"Example\" via \"Base face\" ×3".into(),
+                    "  rfonts \"Example\" via \"Base face\" ×1".into(),
                 ],
                 1
             )
+        );
+    }
+
+    #[test]
+    fn a_stretch_split_into_runs_counts_once_and_a_gap_counts_twice() {
+        // file_170's "monospace" and "." are two runs of one highlight; a
+        // round trip that leaves the space between unhighlighted has two.
+        let split = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t xml:space="preserve">yellow, </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>mono</w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>.</w:t></w:r></w:p>"#;
+        let gap = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>yellow,</w:t></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>mono.</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(split, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1 \"yellow,\"".to_string()]
+        );
+        assert_eq!(
+            report(gap, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×2 \"yellow,\"".to_string()]
+        );
+        // Two paragraphs are two stretches.
+        assert_eq!(
+            report(&format!("{split}{split}"), &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×2 \"yellow,\"".to_string()]
         );
     }
 

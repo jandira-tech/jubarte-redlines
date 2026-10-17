@@ -98,7 +98,7 @@ headers:
 TENER EN CUENTA LAS CIRCUNSTANCIAS RELATIVAS AL CESE DE LA ACTIVIDAD PRESENCIAL CON EL ALUMNADO POR EL COVID19.
 
 <!-- p97 hanging 0.662in, left 2.264in, right 1.509in -->
-En a        de             de 2020
+En a<u>&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;</u>de<u>&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;</u>de 2020
 
 <!-- p98 hanging 0.662in, left 2.264in, right 1.509in -->
 &#32;EL DIRECTOR/A  DEL CENTRO

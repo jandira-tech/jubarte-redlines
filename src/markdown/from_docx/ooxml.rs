@@ -672,17 +672,19 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         } else {
             Marks::default()
         };
-        // Whitespace-only spans inherit the previous formatting so markers
-        // do not split. A plain space does not become code: `a` `b` is two
-        // spans, and folding the space in would make one.
+        // Whitespace-only spans inherit the previous bold and italic so
+        // markers do not split; underline, highlight and strike show on a
+        // space, so a space keeps its own. A plain space does not become
+        // code either: `a` `b` is two spans, and folding the space in would
+        // make one.
         let marks = if span.text.trim().is_empty() {
-            match merged.last() {
-                Some((previous, _)) => Marks {
-                    code: style.code,
-                    ..*previous
-                },
-                None => style,
-            }
+            merged.last().map_or(style, |(m, _)| Marks {
+                underline: style.underline,
+                highlight: style.highlight,
+                strike: style.strike,
+                code: style.code,
+                ..*m
+            })
         } else {
             style
         };
@@ -691,21 +693,26 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
             _ => merged.push((marks, span.text.clone())),
         }
     }
-    let firsts: Vec<Option<char>> = merged.iter().map(|(_, text)| text.chars().next()).collect();
+    // What each stretch prints first: a stretch with marks opens with
+    // one (punctuation), unless spaces stay outside it.
+    let firsts: Vec<Option<char>> = merged
+        .iter()
+        .map(|(marks, text)| {
+            let (lead, core, _) = edges(*marks, text);
+            if core.is_empty() || *marks == Marks::default() {
+                text.chars().next()
+            } else {
+                lead.chars().next().or(Some('<'))
+            }
+        })
+        .collect();
     for (k, (marks, text)) in merged.into_iter().enumerate() {
-        let (lead, core, trail) = split_ws(&text);
+        let (lead, core, trail) = edges(marks, &text);
+        let core = core.as_ref();
         if core.is_empty() || marks == Marks::default() {
             out.push_str(&text);
             continue;
         }
-        let pair = |on: bool, open: &'static str, close: &'static str| {
-            if on { (open, close) } else { ("", "") }
-        };
-        let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
-        let (h_open, h_close) = pair(marks.highlight, "==", "==");
-        let (s_open, s_close) = pair(marks.strike, "~~", "~~");
-        // `**`/`_` read only where CommonMark lets them open and close
-        // (`0.081**\***` is text); elsewhere `<b>`/`<i>` say the same.
         let before = if lead.is_empty() {
             out.chars().last()
         } else {
@@ -716,6 +723,24 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         } else {
             Some(' ')
         };
+        let pair = |on: bool, open: &'static str, close: &'static str| {
+            if on { (open, close) } else { ("", "") }
+        };
+        let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
+        let (h_open, h_close) = pair(marks.highlight, "==", "==");
+        // `~~` reads where CommonMark lets it open and close; a mark
+        // beside it is punctuation, else `<s>` says the same.
+        let beside = marks.bold || marks.italic || marks.underline || marks.highlight;
+        let (s_open, s_close) = match (
+            marks.strike,
+            beside || delimiters_read(before, core, after, false),
+        ) {
+            (false, _) => ("", ""),
+            (true, true) => ("~~", "~~"),
+            (true, false) => ("<s>", "</s>"),
+        };
+        // `**`/`_` read only where CommonMark lets them open and close
+        // (`0.081**\***` is text); elsewhere `<b>`/`<i>` say the same.
         let inner = format!("{u_open}{h_open}{s_open}{core}{s_close}{h_close}{u_close}");
         // Line by line, a line's inner edges are its own: only the first
         // opening and the last closing meet the text around.
@@ -768,6 +793,23 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         out.push_str(trail);
     }
     out
+}
+
+/// `text` as a stretch with `marks` prints it: the spaces before, the
+/// text inside the marks, the spaces after. Underline, highlight and
+/// strike show on a space, so the spaces at the stretch's edges stay
+/// inside its marks, each `&#32;` so the marks still touch text.
+fn edges(marks: Marks, text: &str) -> (&str, std::borrow::Cow<'_, str>, &str) {
+    let (lead, core, trail) = split_ws(text);
+    let spaced = marks.underline || marks.highlight || marks.strike;
+    let plain = |c: char| c == ' ';
+    if spaced && !marks.code && lead.chars().all(plain) && trail.chars().all(plain) {
+        let space = |s: &str| "&#32;".repeat(s.len());
+        let inside = format!("{}{core}{}", space(lead), space(trail));
+        ("", std::borrow::Cow::Owned(inside), "")
+    } else {
+        (lead, std::borrow::Cow::Borrowed(core), trail)
+    }
 }
 
 /// `open` (`**`, `_`, `**_`) against the marks `out` already ends with.
@@ -1200,7 +1242,7 @@ mod tests {
         inline.push(") captures.", true, false, None);
         assert_eq!(
             inline.render(true),
-            "<b>Monthly distribution of fishing effort and common dolphin (</b>**_Delphinus delphis_**<b>) captures.</b>"
+            "**Monthly distribution of fishing effort and common dolphin (**<b><i>Delphinus delphis</i></b>**) captures.**"
         );
         // A different mark, or a space, is not emphasis around nothing.
         let mut inline = Inline::default();

@@ -131,13 +131,13 @@ fn blank(c: char) -> bool {
     c.is_whitespace() || c == hide(' ')
 }
 
-/// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>` and
-/// `</u>` always; single `*` and `_` runs only when they pair up (`*x*`,
+/// The text with its emphasis marks dropped: `**`, `~~`, `==`, `<u>`,
+/// `<s>` and their closers always; single `*` and `_` runs only when they pair up (`*x*`,
 /// `_x_`, `__x__`), so `2 * 3`, `snake_case`, `snake__case` and
 /// `foo__bar__` keep theirs.
 fn without_emphasis(text: &str) -> String {
     let mut text = text.to_string();
-    for mark in ["**", "~~", "==", "<u>", "</u>"] {
+    for mark in ["**", "~~", "==", "<u>", "</u>", "<s>", "</s>"] {
         text = text.replace(mark, "");
     }
     // A `*` with spaces on both sides (`2 * 3`) is text; the rest are marks
@@ -229,7 +229,8 @@ fn without_emphasis(text: &str) -> String {
 /// - substitutions become their new side (`{~~old~>new~~}` → `new`);
 /// - a block mark that leads the line (`#`–`######`, `> `, `- `, `+ `,
 ///   `* `, `1. `, `2) `, after any leading spaces) dropped;
-/// - emphasis marks (`**`, `~~`, `==`, `<u>`, paired `*`/`_` runs) dropped;
+/// - emphasis marks (`**`, `~~`, `==`, `<u>`, `<s>`, paired `*`/`_` runs)
+///   dropped;
 /// - backslash escapes (`\*`, `\[`, ...) resolved.
 ///
 /// A mark inside a change mark (`{++1. one++}`) is the change's own
@@ -295,6 +296,7 @@ mod tests {
             ("# Chapter 1", "Chapter 1"),
             ("**secret**", "secret"),
             ("<u>secret</u>", "secret"),
+            ("<s>secret</s>", "secret"),
             ("{==keep it secret.==}{>>c5 @AC: Cap?<<}", "keep it secret."),
             ("keep {++it++}{>>r0 @AC<<} secret", "keep it secret"),
             ("keep {~~that~>it~~}{>>#0 @AC<<} secret", "keep it secret"),
