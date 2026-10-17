@@ -2685,6 +2685,10 @@ impl<'o, 'a> Writer<'o, 'a> {
         // A view's cell or note says its paragraph marks by its `<br>`s,
         // in a change or not: a paragraph changed whole keeps its mark.
         let says_marks = self.view && (self.cell.is_some() || self.target.is_some());
+        // A change that names another after ` on ` (a fold) is not the
+        // paragraph's own mark: the writer nests it back inside the one it
+        // names, and the row or cell it sits in keeps its own.
+        let folded = |serial: u32| self.document.wraps.contains_key(&serial);
         let (mark, whole) = match self.change {
             Some((kind, serial)) => (Some((kind, serial)), false),
             None => match self.span_start {
@@ -2693,6 +2697,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         && span.at_start
                         && span.paragraph == self.paragraph_serial
                         && self.closed == Some(span.serial)
+                        && !folded(span.serial)
                         && !self.run_after_close
                         && self.paragraph_runs > 0
                         && !after_break.is_some_and(|after| after) =>
@@ -2708,7 +2713,9 @@ impl<'o, 'a> Writer<'o, 'a> {
         let covered = self.span_start.and_then(|span| {
             let starts = span.paragraph != self.paragraph_serial || span.at_start;
             let ends = self.change == Some((span.kind, span.serial))
-                || (self.closed == Some(span.serial) && !self.run_after_close);
+                || (self.closed == Some(span.serial)
+                    && !folded(span.serial)
+                    && !self.run_after_close);
             (starts && ends).then_some((span.kind, span.serial))
         });
         let whole_in_cell = if whole { mark } else { covered };
@@ -2738,6 +2745,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             (None, Some(span))
                 if span.paragraph != self.paragraph_serial
                     && self.closed == Some(span.serial)
+                    && !folded(span.serial)
                     && !self.run_after_close
                     && self.paragraph_runs > 0
                     && self.cell.is_none() =>
