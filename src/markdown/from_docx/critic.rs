@@ -126,15 +126,20 @@ fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
 
 /// A note's text: the formatted tag, or the plain attribution. A note
 /// that names the changes it sits inside prints ` on ` between them,
-/// one part per level, its own change first.
+/// one part per level, its own change first. Each plain part's author
+/// spells its parentheses percent-wise (`Ana %28consultant%29`), so its
+/// date's are the only bare ones and the writer's parser can split the
+/// note.
 fn display(by: &str) -> String {
     let by = bare(by);
     let Some(tagged) = by.strip_prefix(PLAIN).or_else(|| by.strip_prefix(TAG)) else {
         return by.to_string();
     };
+    let fold = tagged.contains(ON);
     let one = |part: &str| {
         if by.starts_with(PLAIN) {
-            return super::agent::format_plain_tag(part);
+            let printed = super::agent::format_plain_tag(part);
+            return fold.then(|| escaped_author(&printed)).unwrap_or(printed);
         }
         let (t, date) = tag_parts(part);
         let mut out = super::agent::format_tag(t);
@@ -145,6 +150,32 @@ fn display(by: &str) -> String {
         out
     };
     tagged.split(ON).map(one).collect::<Vec<_>>().join(" on ")
+}
+
+/// A printed plain part (`r1+2 Name (date)`) with the name's parentheses,
+/// backslashes and `%` percent-spelled (`%28` and its kin, `%` itself
+/// `%25`, the spelling the internal tags use): only the date's stay bare.
+fn escaped_author(part: &str) -> String {
+    let Some((ids, rest)) = part.split_once(' ') else {
+        return part.to_string();
+    };
+    let author_end = super::super::view_notes::trailing_bare_group(rest)
+        .filter(|&at| super::super::write::is_date(&rest[at + 1..rest.len() - 1]))
+        .unwrap_or(rest.len());
+    let mut out = String::with_capacity(part.len());
+    out.push_str(ids);
+    out.push(' ');
+    for c in rest[..author_end].chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '(' => out.push_str("%28"),
+            ')' => out.push_str("%29"),
+            '\\' => out.push_str("%5C"),
+            c => out.push(c),
+        }
+    }
+    out.push_str(&rest[author_end..]);
+    out
 }
 
 /// Two attributions join as neighbours: equal notes, or two tags of one

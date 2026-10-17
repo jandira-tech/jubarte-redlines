@@ -5093,22 +5093,73 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 }
 
 /// `Name (date)` or `(date)` at the start of `text`: the name, the date and
-/// the text after them.
+/// the text after them. The date is the last parenthesised group, for an
+/// author may hold parentheses of its own (`Ana (consultant)`); in a fold
+/// note they come percent-spelled (`%28`, `%29`, with `%` itself `%25`)
+/// and are read back off the name.
 pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
-    let open = text.find('(')?;
-    let close = open + text[open..].find(')')?;
-    let date = &text[open + 1..close];
-    if !is_date(date) {
-        return None;
+    let mut from = text.len();
+    while let Some(open) = text[..from].rfind('(') {
+        from = open;
+        let Some(close) = text[open..].find(')').map(|at| open + at) else {
+            continue;
+        };
+        let date = &text[open + 1..close];
+        if !is_date(date) {
+            continue;
+        }
+        let name = &text[..open];
+        let author = match name.trim() {
+            "" if name.is_empty() => None,
+            "" => return None,
+            author if name.ends_with(' ') => Some(unescaped(author).to_string()),
+            _ => continue,
+        };
+        // The name's own parentheses, when it holds any, must balance:
+        // `A (b) (date)` names `A (b)`, `Ad)a (date)` names nothing.
+        let mut depth = 0i64;
+        let mut unbalanced = false;
+        for c in text[..open].chars() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    unbalanced |= depth < 0;
+                }
+                _ => {}
+            }
+        }
+        if unbalanced || depth != 0 {
+            return None;
+        }
+        return Some((author, date, &text[close + 1..]));
     }
-    let name = &text[..open];
-    let author = match name.trim() {
-        "" if name.is_empty() => None,
-        "" => return None,
-        author if name.ends_with(' ') && !author.contains(['(', ')']) => Some(author.to_string()),
-        _ => return None,
-    };
-    Some((author, date, &text[close + 1..]))
+    None
+}
+
+/// A name with its percent-spelled parentheses (`%28`, `%29`), backslash
+/// (`%5C`) and `%` (`%25`) read back off, as a fold note writes them;
+/// anything else a `%` starts stays as it is.
+fn unescaped(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        let spelled = match rest.get(at + 1..at + 3) {
+            Some("25") => Some('%'),
+            Some("28") => Some('('),
+            Some("29") => Some(')'),
+            Some("5C") | Some("5c") => Some('\\'),
+            _ => None,
+        };
+        match spelled {
+            Some(c) => out.push(c),
+            None => out.push('%'),
+        }
+        rest = &rest[at + 1 + usize::from(spelled.is_some()) * 2..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `YYYY-MM-DDTHH:MM`, then optional seconds and fraction, then an
@@ -5422,12 +5473,22 @@ mod tests {
         for text in [
             "Ana(2026-01-02T03:04Z)",
             " (2026-01-02T03:04Z)",
-            "A (b) (2026-01-02T03:04Z)",
+            "Ad)a (2026-01-02T03:04Z)",
             "Ana (soon)",
             "Ana 2026-01-02T03:04Z",
         ] {
             assert_eq!(named(text), None, "{text}");
         }
+        // The date is the last parenthesised group: an author may hold
+        // parentheses of its own, spelled percent-wise in a fold note.
+        assert_eq!(
+            named("A (b) (2026-01-02T03:04Z)"),
+            Some((Some("A (b)".to_string()), "2026-01-02T03:04Z", ""))
+        );
+        assert_eq!(
+            named("A %28b%29 (2026-01-02T03:04Z)"),
+            Some((Some("A (b)".to_string()), "2026-01-02T03:04Z", ""))
+        );
         assert_eq!(
             attribution("Bo (2026-01-02T03:04:05Z)"),
             Some((Some("Bo".to_string()), "2026-01-02T03:04:05Z"))
