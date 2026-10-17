@@ -15,12 +15,18 @@
   "checks": [
     {
       "kind": "comment_present",
-      "text": "Updated: please revise."
+      "text": "Updated: please revise.",
+      "ref": "c4",
+      "paragraph": "p31",
+      "anchor_text": "add a comment anchored to that selection         "
     },
     {
       "kind": "comment_present",
       "text": "Acknowledged, will revise.",
-      "author": "PilotBot"
+      "author": "PilotBot",
+      "parent_ref": "c4",
+      "paragraph": "p31",
+      "anchor_text": "add a comment anchored to that selection         "
     }
   ],
   "rubric": [
@@ -33,10 +39,31 @@
     "expected_claim": "success",
     "steps": [
       {
-        "argv": ["{binary}", "edit", "{input}", "-p", "c4", "--content", "Updated: please revise.", "-p", "c4", "--reply", "Acknowledged, will revise.", "--author", "{author}", "-o", "{output}"],
+        "argv": [
+          "{binary}",
+          "edit",
+          "{input}",
+          "-p",
+          "c4",
+          "--content",
+          "Updated: please revise.",
+          "-p",
+          "c4",
+          "--reply",
+          "Acknowledged, will revise.",
+          "--author",
+          "{author}",
+          "-o",
+          "{output}"
+        ],
         "out": "{output}",
         "expect_rc": 0
       }
     ]
+  },
+  "comment_updates": {
+    "c4": {
+      "text": "Updated: please revise."
+    }
   }
 }

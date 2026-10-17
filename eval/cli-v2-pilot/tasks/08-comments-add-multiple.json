@@ -16,12 +16,16 @@
     {
       "kind": "comment_present",
       "text": "first new note",
-      "author": "PilotBot"
+      "author": "PilotBot",
+      "paragraph": "p6",
+      "anchor_text": "open-source WYSIWYG"
     },
     {
       "kind": "comment_present",
       "text": "verify spec name",
-      "author": "PilotBot"
+      "author": "PilotBot",
+      "paragraph": "p33",
+      "anchor_text": "comments.xml"
     },
     {
       "kind": "comment_present",
@@ -38,7 +42,27 @@
     "expected_claim": "success",
     "steps": [
       {
-        "argv": ["{binary}", "add", "{input}", "-p", "p6", "--anchor", "open-source WYSIWYG", "--content", "first new note", "-p", "p33", "--anchor", "comments.xml", "--content", "verify spec name", "--author", "{author}", "-o", "{output}"],
+        "argv": [
+          "{binary}",
+          "add",
+          "{input}",
+          "-p",
+          "p6",
+          "--anchor",
+          "open-source WYSIWYG",
+          "--content",
+          "first new note",
+          "-p",
+          "p33",
+          "--anchor",
+          "comments.xml",
+          "--content",
+          "verify spec name",
+          "--author",
+          "{author}",
+          "-o",
+          "{output}"
+        ],
         "out": "{output}",
         "expect_rc": 0
       }

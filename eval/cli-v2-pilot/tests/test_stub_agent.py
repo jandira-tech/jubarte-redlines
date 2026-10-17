@@ -22,33 +22,32 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 def _agent_python() -> str:
     return str(Path(sys.executable))
 
 
 @pytest.fixture()
-def smoke_run_dir(tmp_path: Path, repo_root: Path, jubarte_binary: Path
-                  ) -> dict:
+def smoke_run_dir(tmp_path: Path, repo_root: Path, jubarte_binary: Path) -> dict:
     task_id = "02-exact-replace-multibody"
     src = repo_root / "eval/cli-v2-pilot/tasks" / f"{task_id}.json"
     work = tmp_path / "run"
     work.mkdir()
-    shutil.copyfile(src, work / "task.json")
-    shutil.copyfile(repo_root / "tests/fixtures/multibody/multibody.docx",
-                    work / "input.docx")
+    shutil.copyfile(src, tmp_path / "task.json")
+    shutil.copyfile(
+        repo_root / json.loads(src.read_text())["source"]["path"], work / "input.docx"
+    )
     out = work / "out.docx"
-    return {"work": work, "binary": jubarte_binary, "task_id": task_id,
-            "out": out}
+    return {"work": work, "binary": jubarte_binary, "task_id": task_id, "out": out}
 
 
-def test_stub_agent_prints_expected_claim(
-    smoke_run_dir: dict, repo_root: Path
-) -> None:
+def test_stub_agent_prints_expected_claim(smoke_run_dir: dict, repo_root: Path) -> None:
     cmd = [
         _agent_python(),
         str(repo_root / "eval/cli-v2-pilot/stub_agent.py"),
-        str(smoke_run_dir["work"] / "task.json"),
+        str(smoke_run_dir["work"].parent / "task.json"),
         str(smoke_run_dir["binary"]),
         str(smoke_run_dir["work"]),
     ]
@@ -65,13 +64,14 @@ def test_stub_agent_handles_refusal_path(
     src = repo_root / "eval/cli-v2-pilot/tasks" / f"{task_id}.json"
     work = tmp_path / "run"
     work.mkdir()
-    shutil.copyfile(src, work / "task.json")
-    shutil.copyfile(repo_root / "tests/fixtures/multibody/multibody.docx",
-                    work / "input.docx")
+    shutil.copyfile(src, tmp_path / "task.json")
+    shutil.copyfile(
+        repo_root / json.loads(src.read_text())["source"]["path"], work / "input.docx"
+    )
     cmd = [
         _agent_python(),
         str(repo_root / "eval/cli-v2-pilot/stub_agent.py"),
-        str(work / "task.json"),
+        str(tmp_path / "task.json"),
         str(jubarte_binary),
         str(work),
     ]

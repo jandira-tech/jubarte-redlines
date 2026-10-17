@@ -14,13 +14,13 @@ contract is exit code plus a JSONL findings stream.
 
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from harness.snapshot import read_snapshot, validate
+
+pytestmark = pytest.mark.integration
 
 
 def test_read_snapshot_round_trips_paragraphs_changes_comments(

@@ -42,9 +42,7 @@ from harness.tasks import sha256_file
 
 CLAIM_RE = re.compile(r"^JUBARTE_RESULT:\s*(success|unsupported|failed)\s*$", re.M)
 
-HARNESS_FILES = frozenset(
-    {"input.docx", "prompt.md", "task.json", "stdout.txt", "stderr.txt"}
-)
+HARNESS_FILES = frozenset({"input.docx", "prompt.md", "stdout.txt", "stderr.txt"})
 
 
 def utc_now() -> str:
@@ -76,8 +74,12 @@ def render_argv(
     author: str,
     fail_mode: str,
     agent_root: Path,
+    model: str | None = None,
+    provider: str | None = None,
 ) -> list[str]:
     values = {
+        "model": model or "",
+        "provider": provider or "",
         "binary": str(binary),
         "input": str(input_path),
         "output": str(output_path),
@@ -103,24 +105,40 @@ def render_argv(
 def parse_claim(stdout_text: str) -> tuple[ClaimObservation | None, str]:
     """The last JUBARTE_RESULT marker in stdout is the agent's claim."""
 
-    matches = list(CLAIM_RE.finditer(stdout_text))
+    texts = []
+    for line in stdout_text.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            texts.append(line)
+            continue
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item", {})
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            texts.append(item.get("text", ""))
+        message = event.get("message", event)
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            content = message.get("content", [])
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                texts.extend(
+                    c.get("text", "")
+                    for c in content
+                    if isinstance(c, dict) and c.get("type") == "text"
+                )
+    matches = list(CLAIM_RE.finditer("\n".join(texts)))
     if not matches:
         return None, stdout_text
     last = matches[-1]
-    return (
-        ClaimObservation(raw=last.group(0).strip(), value=last.group(1)),
-        stdout_text,
-    )
+    return ClaimObservation(raw=last.group(0).strip(), value=last.group(1)), stdout_text
 
 
 def scan_artifact(declared: Path) -> tuple[bool, str | None, int | None]:
     if declared.is_file():
         return True, sha256_file(declared), declared.stat().st_size
     return False, None, None
-
-
-class Cancelled(Exception):
-    """The pilot was cancelled; runs already recorded stay right-censored."""
 
 
 async def run_one(
@@ -137,38 +155,38 @@ async def run_one(
     pilot_id: str,
     binary: Path,
     agent_root: Path,
+    repo_root: Path | None = None,
 ) -> RunRecord:
     """Execute one (task, arm, repetition) cell and record only observations."""
 
     started_at = utc_now()
     monotonic_start = asyncio.get_running_loop().time()
     run_dir = (
-        runs_root
-        / "runs"
-        / f"{order_index:03d}-{task.id}-{arm.label}-{repetition}"
+        runs_root / "runs" / f"{order_index:03d}-{task.id}-{arm.label}-{repetition}"
     )
     run_dir.mkdir(parents=True, exist_ok=False)
 
     input_path = run_dir / "input.docx"
-    fixture = _fixture_path(task)
+    fixture = (
+        (repo_root / task.source.path) if repo_root is not None else _fixture_path(task)
+    )
     shutil.copyfile(fixture, input_path)
-    input_sha = task.source.sha256
+    input_sha = sha256_file(input_path)
+    if input_sha != task.source.sha256:
+        raise ValueError("copied input sha256 differs from pinned task input")
 
     prompt = format_prompt(task, binary, run_dir)
     prompt_file = run_dir / "prompt.md"
     prompt_file.write_text(prompt, encoding="utf-8")
 
-    task_file = run_dir / "task.json"
-    task_file.write_text(
-        json.dumps(
-            task.model_dump(mode="json", exclude_none=True),
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    # Only the deterministic stub receives the answer key. Real agents get
+    # prompt.md and input.docx; no task data is materialized for them.
+    task_file = runs_root / "stub-data" / f"{task.id}.json"
+    if agent.stub:
+        task_file.parent.mkdir(parents=True, exist_ok=True)
+        task_file.write_text(task.model_dump_json(), encoding="utf-8")
+    elif any("{task_file}" in part for part in agent.argv):
+        raise ValueError("task_file is reserved for the deterministic stub")
 
     declared_output = run_dir / task.output_path
     stdout_path = run_dir / "stdout.txt"
@@ -186,29 +204,46 @@ async def run_one(
         author=task.required_author,
         fail_mode=fail_mode,
         agent_root=agent_root,
+        model=agent.model,
+        provider=agent.provider,
     )
 
+    cancelled = False
     stop_reason = "exit"
     return_code: int | None = None
     with stdout_path.open("wb") as out_handle, stderr_path.open("wb") as err_handle:
-        try:
-            proc = await asyncio.create_subprocess_exec(
+        spawn = asyncio.create_task(
+            asyncio.create_subprocess_exec(
                 *argv,
                 cwd=str(run_dir),
                 stdout=out_handle,
                 stderr=err_handle,
                 start_new_session=True,
             )
-        except FileNotFoundError as exc:
+        )
+        try:
+            try:
+                proc = await asyncio.shield(spawn)
+            except asyncio.CancelledError:
+                # Finish acquiring the process handle before killing/reaping;
+                # otherwise cancellation can orphan a child during creation.
+                cancelled = True
+                stop_reason = "cancelled"
+                proc = await spawn
+        except OSError as exc:
             stderr_path.write_text(
-                f"harness: agent command not found: {argv[0]}\n{exc}\n",
+                f"harness: agent could not start: {argv[0]}\n{exc}\n",
                 encoding="utf-8",
             )
-            stop_reason = "exit"
             return_code = 127
         else:
             try:
-                return_code = await asyncio.wait_for(proc.wait(), timeout_seconds)
+                if cancelled:
+                    _kill_process_group(proc)
+                    await proc.wait()
+                    return_code = proc.returncode
+                else:
+                    return_code = await asyncio.wait_for(proc.wait(), timeout_seconds)
             except asyncio.TimeoutError:
                 _kill_process_group(proc)
                 await proc.wait()
@@ -219,7 +254,7 @@ async def run_one(
                 await proc.wait()
                 stop_reason = "cancelled"
                 return_code = proc.returncode
-                raise
+                cancelled = True
 
     stdout_bytes = stdout_path.stat().st_size
     stderr_bytes = stderr_path.stat().st_size
@@ -277,6 +312,8 @@ async def run_one(
         claim=claim,
     )
     append_jsonl(runs_root / "runs.jsonl", [record])
+    if cancelled:
+        raise asyncio.CancelledError
     return record
 
 
@@ -318,6 +355,8 @@ def build_order(
 ) -> list[OrderEntry]:
     """Every (task, arm, repetition) cell, shuffled by the recorded seed."""
 
+    if repetitions < 1:
+        raise ValueError("repetitions must be at least 1")
     cells = [
         (task_id, arm.label, rep)
         for task_id in sorted(tasks)
@@ -342,6 +381,8 @@ def make_config(
     agent: AgentConfig,
     arms: list[ArmConfig],
     order: list[OrderEntry],
+    margin_unintended: int = 0,
+    margin_preservation: int = 0,
 ) -> RunConfig:
     return RunConfig(
         pilot_id=pilot_id,
@@ -353,4 +394,6 @@ def make_config(
         arms=arms,
         order=order,
         created_at=utc_now(),
+        margin_unintended=margin_unintended,
+        margin_preservation=margin_preservation,
     )

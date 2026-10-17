@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
 from harness.ledger import (
@@ -23,6 +24,8 @@ from harness.ledger import (
     write_json_atomic,
     write_jsonl_atomic,
 )
+
+pytestmark = pytest.mark.integration
 
 
 class Row(BaseModel):
@@ -64,4 +67,5 @@ def test_write_json_atomic_round_trips_payload(tmp_path: Path) -> None:
     payload = {"a": 1, "b": [1, 2, 3], "c": {"nested": True}}
     write_json_atomic(path, payload)
     import json
+
     assert json.loads(path.read_text(encoding="utf-8")) == payload
