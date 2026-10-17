@@ -80,6 +80,7 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
         super::resolve_selected(source, settlement.resolve_revisions.as_ref())?;
     let selected = selected.as_deref().unwrap_or(source);
     let selected_left = changes(selected)?;
+    let selected_left_ids: BTreeSet<_> = selected_left.iter().map(|c| c.id.as_str()).collect();
     selected_report.accepted.retain(|id| !carried.contains(id));
     selected_report.rejected.retain(|id| !carried.contains(id));
     let dependent_revisions = model
@@ -87,15 +88,16 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
         .iter()
         .filter(|c| {
             (!explicit.contains(&c.id) || carried.contains(&c.id))
-                && !selected_left.iter().any(|left| left.id == c.id)
+                && !selected_left_ids.contains(c.id.as_str())
         })
         .map(|c| c.id.clone())
         .collect();
     let comments_left = comments(selected)?;
+    let comments_left_ids: BTreeSet<_> = comments_left.iter().map(|c| c.id).collect();
     let dependent_comments = model
         .comments
         .iter()
-        .filter(|c| !comments_left.iter().any(|left| left.id == c.id))
+        .filter(|c| !comments_left_ids.contains(&c.id))
         .map(|c| c.id)
         .collect();
     let mut remaining_revisions = ResolvedRevisions::default();
@@ -166,7 +168,7 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     }
     let (clean, _) = tx.finish()?;
     let result = if plan.policy.track == Track::On {
-        tracked::result(&tx, clean)?
+        tracked::result_v2(&tx, clean)?
     } else {
         let report = tx.report(true);
         super::EditResult {
@@ -262,6 +264,81 @@ struct SourceModel {
     loaded: Loaded,
     changes: Vec<Change>,
     comments: Vec<crate::comments::CommentRecord>,
+    index: SourceIndex,
+}
+
+/// Immutable identity facts for this apply's original source. Target checks
+/// must not parse a part or walk all of its paragraphs again for each ID.
+#[derive(Default)]
+struct SourceIndex {
+    revision_counts: BTreeMap<String, usize>,
+    revision_carriers: BTreeMap<(String, String), Vec<String>>,
+    paragraph_id_counts: Vec<BTreeMap<String, usize>>,
+}
+impl SourceIndex {
+    fn new(opened: &Opened, loaded: &Loaded, changes: &[Change]) -> Self {
+        let mut index = Self::default();
+        for change in changes {
+            *index.revision_counts.entry(change.id.clone()).or_default() += 1;
+        }
+        for story in &loaded.stories {
+            let mut counts = BTreeMap::new();
+            for p in opened.dom.descendants(story.root, Some(&W::p())) {
+                if let Some(key) = opened.dom.attribute(p, &W14::name("paraId")) {
+                    *counts.entry(key.to_string()).or_default() += 1;
+                }
+            }
+            index.paragraph_id_counts.push(counts);
+        }
+        // A repeated relationship still counts as repeated carrier evidence,
+        // as before, but its XML is parsed only once.
+        let mut parts = BTreeMap::<String, usize>::new();
+        for (part, _) in crate::revision_processor::revision_bearing_parts(&opened.pkg) {
+            *parts.entry(part).or_default() += 1;
+        }
+        for (part, count) in parts {
+            if let Some(story) = loaded.stories.iter().find(|s| s.part == part) {
+                if let Some(root) = opened.dom.root(story.document) {
+                    index.add_revision_part(&opened.dom, root, &part, &opened.main, count);
+                }
+            } else if let Some(xml) = opened.pkg.part_string(&part) {
+                let mut dom = Dom::new();
+                let document = dom.parse_xdocument(&xml);
+                if let Some(root) = dom.root(document) {
+                    index.add_revision_part(&dom, root, &part, &opened.main, count);
+                }
+            }
+        }
+        index
+    }
+
+    fn add_revision_part(&mut self, dom: &Dom, root: NodeId, part: &str, main: &str, count: usize) {
+        let mut stories = vec![crate::ids::part_story(part)];
+        if part == main && stories[0] != "body" {
+            stories.push("body".into());
+        }
+        let known = crate::revision_processor::tracked_revisions_elements();
+        for node in dom.descendants(root, None) {
+            let Some(name) = dom.name(node).filter(|name| known.contains(name)) else {
+                continue;
+            };
+            let Some(wid) = dom.attribute(node, &W::id()) else {
+                continue;
+            };
+            let carrier = format!(
+                "{}.w:{}.w:id.{}",
+                part_token(part),
+                name.local_name(),
+                encode(wid)
+            );
+            for story in &stories {
+                self.revision_carriers
+                    .entry((story.clone(), wid.to_string()))
+                    .or_default()
+                    .extend(std::iter::repeat_n(carrier.clone(), count));
+            }
+        }
+    }
 }
 #[derive(Clone)]
 enum Entity {
@@ -288,11 +365,14 @@ impl SourceModel {
     fn new(bytes: &[u8]) -> Result<Self, EditError> {
         let mut opened = Opened::open(bytes).map_err(open_error)?;
         let loaded = load_stories(&mut opened)?;
+        let changes = changes(bytes)?;
+        let index = SourceIndex::new(&opened, &loaded, &changes);
         Ok(Self {
             opened,
             loaded,
-            changes: changes(bytes)?,
+            changes,
             comments: comments(bytes)?,
+            index,
         })
     }
     fn ids(&self) -> origin::Ids<'_> {
@@ -319,48 +399,18 @@ impl SourceModel {
         match id {
             ShortId::Change { .. } => {
                 let cid = crate::ids::change_id(&target.short_id).ok_or_else(bad)?;
-                let hits = self
-                    .changes
-                    .iter()
-                    .filter(|c| c.id == target.short_id)
-                    .collect::<Vec<_>>();
-                let [change] = hits.as_slice() else {
+                if self.index.revision_counts.get(&target.short_id) != Some(&1) {
                     return Err(bad());
-                };
-                let mut carriers = Vec::new();
-                for (part, _) in crate::revision_processor::revision_bearing_parts(&self.opened.pkg)
-                {
-                    if crate::ids::part_story(&part) != cid.story
-                        && !(part == self.opened.main && cid.story == "body")
-                    {
-                        continue;
-                    }
-                    let Some(xml) = self.opened.pkg.part_string(&part) else {
-                        continue;
-                    };
-                    let mut dom = Dom::new();
-                    let d = dom.parse_xdocument(&xml);
-                    let Some(root) = dom.root(d) else { continue };
-                    for node in dom.descendants(root, None) {
-                        if dom.attribute(node, &W::id()) == Some(&cid.wid)
-                            && dom.name(node).is_some_and(|n| {
-                                crate::revision_processor::tracked_revisions_elements().contains(&n)
-                            })
-                        {
-                            let name = dom.name(node).ok_or_else(bad)?;
-                            carriers.push(format!(
-                                "{}.w:{}.w:id.{}",
-                                part_token(&part),
-                                name.local_name(),
-                                encode(&cid.wid)
-                            ));
-                        }
-                    }
                 }
+                let carriers = self
+                    .index
+                    .revision_carriers
+                    .get(&(cid.story, cid.wid))
+                    .ok_or_else(bad)?;
                 if carriers.len() != 1 || carriers[0] != target.long_id {
                     return Err(bad());
                 }
-                Ok(Entity::Revision(change.id.clone()))
+                Ok(Entity::Revision(target.short_id.clone()))
             }
             ShortId::Comment(n) => {
                 if !self.comments.iter().any(|c| c.id == n) {
@@ -482,13 +532,8 @@ impl SourceModel {
             .name(node)
             .ok_or_else(|| err("TARGET_ID_MISMATCH", None, "missing entity"))?;
         let key = dom.attribute(node, &W14::name("paraId"));
-        let unique = key.is_some_and(|key| {
-            dom.descendants(self.loaded.stories[story].root, Some(&W::p()))
-                .into_iter()
-                .filter(|&p| dom.attribute(p, &W14::name("paraId")) == Some(key))
-                .count()
-                == 1
-        });
+        let unique =
+            key.is_some_and(|key| self.index.paragraph_id_counts[story].get(key) == Some(&1));
         let (attribute, value) = if unique {
             ("w14:paraId", encode(key.unwrap_or_default()))
         } else {
@@ -1030,6 +1075,7 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
             ));
         }
     }
+    check_boundary_ownership(tx)?;
     tx.check_conflicts().map_err(|mut e| {
         if e.code == "OVERLAPPING_EDITS" {
             e.code = "CONFLICT".into();
@@ -1042,6 +1088,45 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
         e
     })
 }
+
+/// Same-position inserts share array order only when they agree on the
+/// source side that owns them. A side removed by another edit cannot lend
+/// its run/formatting to an insertion without an explicit ownership rule.
+fn check_boundary_ownership(tx: &Transaction<'_>) -> Result<(), EditError> {
+    let mut paragraphs = BTreeMap::<usize, Vec<_>>::new();
+    for (i, r) in &tx.resolved {
+        if let Resolved::Text {
+            para,
+            start,
+            end,
+            attach_before,
+            ..
+        } = r
+        {
+            paragraphs
+                .entry(*para)
+                .or_default()
+                .push((*start, *end, *attach_before, *i));
+        }
+    }
+    for ranges in paragraphs.values_mut() {
+        ranges.sort_by_key(|&(start, end, _, i)| (start, end, i));
+        for &[(s0, e0, a0, i0), (s1, e1, a1, i1)] in ranges.array_windows() {
+            let different_sides = s0 == e0 && s1 == e1 && s0 == s1 && a0 != a1;
+            let removed_right = s0 == e0 && s0 == s1 && s1 < e1 && !a0;
+            let removed_left = s0 < e0 && s1 == e1 && e0 == s1 && a1;
+            if i0 != i1 && (different_sides || removed_right || removed_left) {
+                return Err(err(
+                    "CONFLICT",
+                    Some(&pointer(i1)),
+                    "ambiguous insertion boundary ownership; use one explicit text edit",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn resolve_operation(
     tx: &Transaction<'_>,
     operation: &v2::Operation,
@@ -1227,7 +1312,7 @@ fn text_component(
     end: usize,
     text: &str,
     note: Option<String>,
-    mut attach: bool,
+    attach: bool,
 ) -> Result<Resolved, EditError> {
     super::check_run_text(text).map_err(|m| err("INVALID_EDIT", None, m))?;
     if let Some(note) = &note {
@@ -1241,17 +1326,19 @@ fn text_component(
         super::check_comment(note).map_err(|m| err("INVALID_EDIT", None, m))?;
     }
     let projection = &tx.projections[p];
-    let check = if start == end {
+    if start == end {
         tx.check_insert_position(projection, start, attach)
-            .or_else(|first| {
-                tx.check_insert_position(projection, start, !attach)
-                    .map(|()| attach = !attach)
-                    .map_err(|_| first)
-            })
+            .map_err(|m| {
+                err(
+                    "UNSUPPORTED_INSERTION_SIDE",
+                    None,
+                    format!("requested insertion side cannot be preserved: {m}"),
+                )
+            })?;
     } else {
         tx.check_range(projection, start, end)
-    };
-    check.map_err(|m| err("UNSUPPORTED_STRUCTURE", None, m))?;
+            .map_err(|m| err("UNSUPPORTED_STRUCTURE", None, m))?;
+    }
     Ok(Resolved::Text {
         para: p,
         start,

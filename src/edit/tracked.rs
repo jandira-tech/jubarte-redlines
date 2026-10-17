@@ -165,7 +165,21 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
 /// The result under `keep`: the clean copy as `finish` made it, the redline
 /// by emission, and revision counts of the plan's own changes.
 pub(super) fn result(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult, EditError> {
-    let (redline, floor) = redline(tx)?;
+    result_with_order(tx, clean, false)
+}
+
+/// V2 gives simultaneous inserts at one source position array order. Keep
+/// that emission policy separate from the historical v1 replay contract.
+pub(super) fn result_v2(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult, EditError> {
+    result_with_order(tx, clean, true)
+}
+
+fn result_with_order(
+    tx: &Transaction<'_>,
+    clean: Vec<u8>,
+    array_order: bool,
+) -> Result<EditResult, EditError> {
+    let (redline, floor) = redline(tx, array_order)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -182,7 +196,7 @@ pub(super) fn result(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult,
 /// changes. `tx` has been applied, so its outcomes hold the comment ids.
 /// Returns the redline and the first id its own revisions took: every
 /// source revision's id is below it.
-fn redline(tx: &Transaction<'_>) -> Result<(Vec<u8>, u64), EditError> {
+fn redline(tx: &Transaction<'_>, array_order: bool) -> Result<(Vec<u8>, u64), EditError> {
     let plan = EditPlan {
         source_sha256: None,
         date: Some(tx.date.clone()),
@@ -218,7 +232,7 @@ fn redline(tx: &Transaction<'_>) -> Result<(Vec<u8>, u64), EditError> {
         next_id: first_free_id(&t.opened, &comments),
     };
     let floor = stamp.next_id;
-    let tables = emit(&mut t, &comment_ids, &mut stamp);
+    let tables = emit(&mut t, &comment_ids, &mut stamp, array_order);
     thread_markers(&mut t, &comment_ids);
     // 7. A paragraph after each new table, and between it and a table
     // before it: inserted paragraphs here.
@@ -276,6 +290,7 @@ fn emit(
     t: &mut Transaction<'_>,
     comment_ids: &BTreeMap<usize, u32>,
     stamp: &mut Stamp<'_>,
+    array_order: bool,
 ) -> Vec<NodeId> {
     // 0. Run formatting, on source offsets (no text edit overlaps it), each
     // run's old properties in `w:rPrChange`.
@@ -336,7 +351,17 @@ fn emit(
         // In reverse, so earlier source offsets stay valid: a deletion
         // leaves the projection and an insertion joins it, exactly as the
         // plain edit changes the clean copy.
-        for edit in edits.iter().rev() {
+        // Emit a simultaneous V2 insertion group once, using its agreed
+        // original attachment side. Otherwise the first replayed insertion
+        // becomes a non-direct segment and can hide the source insertion
+        // point from the next replay (notably at paragraph start). Keep the
+        // original edits below for each comment's separate resulting range.
+        let emission = if array_order {
+            coalesce_insertions(&edits)
+        } else {
+            edits.clone()
+        };
+        for edit in emission.iter().rev() {
             if matches!(
                 t.plan.operations[edit.op].kind,
                 OperationKind::Redact { .. }
@@ -568,6 +593,24 @@ fn emit(
         }
     }
     tables
+}
+
+fn coalesce_insertions(edits: &[ScheduledEdit]) -> Vec<ScheduledEdit> {
+    let mut emission: Vec<ScheduledEdit> = Vec::new();
+    for edit in edits {
+        if let Some(previous) = emission.last_mut()
+            && previous.start == previous.end
+            && edit.start == edit.end
+            && previous.start == edit.start
+            && previous.attach_before == edit.attach_before
+            && previous.format == edit.format
+        {
+            previous.replacement.push_str(&edit.replacement);
+        } else {
+            emission.push(edit.clone());
+        }
+    }
+    emission
 }
 
 /// Wrap a new paragraph's content in one `w:ins` and mark it inserted.

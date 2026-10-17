@@ -755,3 +755,483 @@ fn source_ids_survive_deleted_tables_without_retargeting() {
     q["operations"] = json!([rewrite(0, "Gone", "Wrong")]);
     assert_eq!(run(&s, &q).unwrap_err().code, "UNSUPPORTED_CORRESPONDENCE");
 }
+
+#[test]
+fn delete_paragraph_maps_source_target_through_settlement() {
+    let s = merged_source();
+    let q = merge_plan(&s, json!([{"kind":"delete_paragraph","target":p(2)}]));
+    let out = run(&s, &q).unwrap();
+    assert_eq!(texts(&out.clean), ["AlphaBeta"]);
+    assert_eq!(
+        texts(&accept_changes(&out.redline, &mine()).unwrap()),
+        ["AlphaBeta"]
+    );
+    assert_eq!(
+        texts(&reject_changes(&out.redline, &mine()).unwrap()),
+        ["AlphaBeta", "Survivor"]
+    );
+    assert_eq!(out.report.operations[0].kind, "delete_paragraph");
+    assert_word_valid_package(&out.clean);
+    assert_word_valid_package(&out.redline);
+    for n in [0, 1] {
+        let q = merge_plan(&s, json!([{"kind":"delete_paragraph","target":p(n)}]));
+        assert_eq!(run(&s, &q).unwrap_err().code, "UNSUPPORTED_CORRESPONDENCE");
+    }
+}
+
+#[test]
+fn delete_paragraph_with_kept_tracked_changes_refuses() {
+    let s = source();
+    let q = plan(&s, json!([{"kind":"delete_paragraph","target":p(0)}]));
+    let e = run(&s, &q).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
+    assert_eq!(e.operation.as_deref(), Some("/operations/0"));
+    assert!(
+        e.message
+            .contains("holds tracked changes cannot be deleted")
+    );
+}
+
+#[test]
+fn delete_paragraph_leaves_valid_containers() {
+    let s = docx(&(para("First") + &para("Last")));
+    let q = plan(
+        &s,
+        json!([
+            {"kind":"delete_paragraph","target":p(0)},
+            {"kind":"delete_paragraph","target":p(1)}
+        ]),
+    );
+    let e = run(&s, &q).unwrap_err();
+    assert_eq!(e.code, "CONFLICT");
+    assert!(e.message.contains("without a paragraph"));
+
+    let s = docx(&format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr/>{}</w:tc></w:tr></w:tbl>{}"#,
+        para("Cell first") + &para("Cell last"),
+        para("Outside")
+    ));
+    let q = plan(
+        &s,
+        json!([
+            {"kind":"delete_paragraph","target":p(0)},
+            {"kind":"delete_paragraph","target":p(1)}
+        ]),
+    );
+    let e = run(&s, &q).unwrap_err();
+    assert_eq!(e.code, "CONFLICT");
+    assert!(e.message.contains("table cell without a closing paragraph"));
+}
+
+#[test]
+fn text_insertions_at_same_source_position_keep_array_order() {
+    let s = docx(&para("a a a"));
+    for track in ["on", "off"] {
+        for anchor in ["after_text", "before_text"] {
+            let mut ops = json!([
+                {"kind":"insert","target":p(0),"occurrence":1,"text":"1"},
+                {"kind":"insert","target":p(0),"occurrence":1,"text":"2"}
+            ]);
+            for op in ops.as_array_mut().unwrap() {
+                op[anchor] = json!("a");
+            }
+            let mut q = plan(&s, ops);
+            q["policy"]["track"] = json!(track);
+            let out = run(&s, &q).unwrap();
+            let want = if anchor == "after_text" {
+                "a12 a a"
+            } else {
+                "12a a a"
+            };
+            assert_eq!(texts(&out.clean), [want]);
+            assert_eq!(
+                texts(&accept_changes(&out.redline, &mine()).unwrap()),
+                [want]
+            );
+            if track == "on" {
+                assert_eq!(
+                    texts(&reject_changes(&out.redline, &mine()).unwrap()),
+                    ["a a a"]
+                );
+            }
+            assert_word_valid_package(&out.redline);
+        }
+    }
+}
+
+#[test]
+fn paragraph_insertions_at_same_edge_keep_array_order() {
+    let s = docx(&para("Anchor"));
+    for side in ["before", "after"] {
+        for track in ["on", "off"] {
+            let mut q = plan(
+                &s,
+                json!([
+                    {"kind":"insert_paragraph","target":p(0),"position":side,"text":"First"},
+                    {"kind":"insert_paragraph","target":p(0),"position":side,"text":"Second"}
+                ]),
+            );
+            q["policy"]["track"] = json!(track);
+            let out = run(&s, &q).unwrap();
+            let want = if side == "after" {
+                ["Anchor", "First", "Second"]
+            } else {
+                ["First", "Second", "Anchor"]
+            };
+            assert_eq!(texts(&out.clean), want);
+            assert_eq!(texts(&accept_changes(&out.redline, &mine()).unwrap()), want);
+            if track == "on" {
+                assert_eq!(
+                    texts(&reject_changes(&out.redline, &mine()).unwrap()),
+                    ["Anchor"]
+                );
+            }
+            assert_word_valid_package(&out.redline);
+        }
+    }
+}
+
+#[test]
+fn insertion_inside_removed_text_refuses_ambiguous_ownership() {
+    let s = docx(&para("Alpha"));
+    let q = plan(
+        &s,
+        json!([
+            replace(0, "lph", "X"),
+            {"kind":"insert","target":p(0),"after_text":"Al","text":"Y"}
+        ]),
+    );
+    let e = run(&s, &q).unwrap_err();
+    assert_eq!(e.code, "CONFLICT");
+    assert_eq!(e.operation.as_deref(), Some("/operations/1"));
+}
+
+#[test]
+fn insertions_with_conflicting_boundary_ownership_refuse() {
+    let s = docx(&para("Alpha Beta"));
+    for operations in [
+        json!([
+            {"kind":"insert","target":p(0),"after_text":"Alpha ","text":"1"},
+            {"kind":"insert","target":p(0),"before_text":"Beta","text":"2"}
+        ]),
+        json!([replace(0,"Beta","Gamma"), {"kind":"insert","target":p(0),"before_text":"Beta","text":"X"}]),
+        json!([replace(0,"Alpha","Gamma"), {"kind":"insert","target":p(0),"after_text":"Alpha","text":"X"}]),
+    ] {
+        let e = run(&s, &plan(&s, operations)).unwrap_err();
+        assert_eq!(e.code, "CONFLICT");
+        assert!(e.message.contains("boundary ownership"));
+    }
+}
+
+#[test]
+fn same_position_insertions_retain_each_attached_comment() {
+    let s = docx(&para("Alpha"));
+    let q = plan(
+        &s,
+        json!([
+            {"kind":"insert","target":p(0),"edge":"start","text":"one ","attached_comment":{"text":"First"}},
+            {"kind":"insert","target":p(0),"edge":"start","text":"two ","attached_comment":{"text":"Second"}}
+        ]),
+    );
+    let out = run(&s, &q).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_word_valid_package(bytes);
+        let comments = jubarte::comments::list_comments(bytes).unwrap();
+        assert_eq!(
+            comments
+                .iter()
+                .map(|c| (c.text.as_str(), c.anchor_text.as_str()))
+                .collect::<Vec<_>>(),
+            [("First", "one "), ("Second", "two ")]
+        );
+    }
+    assert_eq!(
+        texts(&accept_changes(&out.redline, &mine()).unwrap()),
+        ["one two Alpha"]
+    );
+}
+
+#[test]
+fn rewrite_to_empty_text_preserves_paragraph_mark() {
+    let s = docx(&para("Alpha Beta"));
+    for track in ["on", "off"] {
+        let mut q = plan(&s, json!([rewrite(0, "Alpha Beta", "")]));
+        q["policy"]["track"] = json!(track);
+        let out = run(&s, &q).unwrap();
+        assert_eq!(texts(&out.clean), [""]);
+        assert_eq!(texts(&accept_changes(&out.redline, &mine()).unwrap()), [""]);
+        if track == "on" {
+            assert_eq!(
+                texts(&reject_changes(&out.redline, &mine()).unwrap()),
+                ["Alpha Beta"]
+            );
+        }
+        assert!(
+            jubarte::comments::list_comments(&out.redline)
+                .unwrap()
+                .is_empty()
+        );
+        assert_word_valid_package(&out.clean);
+        assert_word_valid_package(&out.redline);
+    }
+}
+
+#[test]
+fn same_revision_accepted_and_rejected_refuses_before_preparation() {
+    let s = source();
+    // A stale rewrite would fail during preparation if decision conflict did not win.
+    let mut q = plan(&s, json!([rewrite(2, "Wrong baseline", "Changed")]));
+    q["resolve_revisions"] = json!({"accept":[r(7)],"reject":[r(7)]});
+    let e = run(&s, &q).unwrap_err();
+    assert_eq!(e.code, "REVISION_CONFLICT");
+    assert_eq!(e.operation, None);
+    assert!(e.message.contains("r7"));
+}
+
+#[test]
+fn comment_direct_scope_does_not_follow_paragraph_scope() {
+    let s = comment_source();
+    for op in [
+        json!({"kind":"reply_comment","target":c(0),"text":"Reply"}),
+        json!({"kind":"edit_comment","target":c(0),"text":"Changed"}),
+        json!({"kind":"resolve_comment","target":c(0),"done":true}),
+        json!({"kind":"delete_comment","target":c(0),"include_replies":true}),
+    ] {
+        let mut q = plan(&s, json!([op]));
+        q["scope"] = json!({"kind":"selected","targets":[p(0)]});
+        let e = run(&s, &q).unwrap_err();
+        assert_eq!(e.code, "OUT_OF_SCOPE");
+        assert_eq!(e.operation.as_deref(), Some("/operations/0"));
+        q["scope"]["targets"] = json!([c(0)]);
+        assert_word_valid_package(&run(&s, &q).unwrap().redline);
+    }
+}
+
+#[test]
+fn comment_source_context_is_checked_against_original_text() {
+    let s = comment_source();
+    let mut q = plan(
+        &s,
+        json!([{"kind":"edit_comment","target":c(0),"text":"New text"}]),
+    );
+    q["source_context"] =
+        json!([{"kind":"comment","target":c(0),"text":"Original","reason_codes":["CONTEXT"]}]);
+    let out = run(&s, &q).unwrap();
+    assert_eq!(
+        jubarte::comments::list_comments(&out.redline).unwrap()[0].text,
+        "New text"
+    );
+    q["source_context"][0]["text"] = json!("Changed observation");
+    assert_eq!(run(&s, &q).unwrap_err().code, "SOURCE_CONTEXT_CHANGED");
+}
+
+#[test]
+fn opaque_source_context_passes_without_text() {
+    let s = comment_source();
+    let mut q = plan(&s, json!([]));
+    q["source_context"] = json!([
+        {"kind":"opaque","target":p(0),"reason_codes":["OPAQUE"]},
+        {"kind":"opaque","target":c(0),"reason_codes":["OPAQUE"]}
+    ]);
+    assert_eq!(run(&s, &q).unwrap().redline, s);
+    q["source_context"][0]["text"] = json!("Unsupported text");
+    assert_eq!(run(&s, &q).unwrap_err().code, "UNSUPPORTED_CONTEXT");
+}
+
+#[test]
+fn source_context_kind_target_mismatch_refuses() {
+    let s = comment_source();
+    for (kind, target) in [("paragraph", c(0)), ("comment", p(0))] {
+        let mut q = plan(&s, json!([]));
+        q["source_context"] =
+            json!([{"kind":kind,"target":target,"text":"Original","reason_codes":["CONTEXT"]}]);
+        assert_eq!(run(&s, &q).unwrap_err().code, "UNSUPPORTED_CONTEXT");
+    }
+}
+
+#[test]
+fn two_changed_rewrites_on_one_paragraph_refuse() {
+    let s = docx(&para("Alpha"));
+    let q = plan(
+        &s,
+        json!([rewrite(0, "Alpha", "Beta"), rewrite(0, "Alpha", "Gamma")]),
+    );
+    let e = run(&s, &q).unwrap_err();
+    assert_eq!(e.code, "CONFLICT");
+    assert_eq!(e.operation.as_deref(), Some("/operations/1"));
+    assert!(e.message.contains("two changed rewrites"));
+}
+
+#[test]
+fn overlapping_literal_edits_refuse_without_primary() {
+    let s = docx(&para("Alpha"));
+    let q = plan(&s, json!([replace(0, "lph", "X"), replace(0, "pha", "Y")]));
+    let e = run(&s, &q).unwrap_err();
+    assert_eq!(e.code, "CONFLICT");
+    assert_eq!(e.operation.as_deref(), Some("/operations/1"));
+    assert!(e.message.contains("overlaps an earlier edit"));
+    assert!(
+        e.outcomes
+            .iter()
+            .all(|o| o.code.as_deref() != Some("OVERLAPPING_EDITS"))
+    );
+}
+
+#[test]
+fn explicit_insert_never_flips_requested_tracked_side() {
+    let s = source();
+    for track in ["on", "off"] {
+        for anchor in ["after_text", "before_text"] {
+            let mut op = json!({"kind":"insert","target":p(0),"text":"X"});
+            // Both requested sides touch Other's insertion; the opposite side is direct.
+            op[anchor] = json!("45");
+            let mut q = plan(&s, json!([op]));
+            q["policy"]["track"] = json!(track);
+            let e = run(&s, &q).unwrap_err();
+            assert_eq!(e.code, "UNSUPPORTED_INSERTION_SIDE");
+            assert_eq!(e.operation.as_deref(), Some("/operations/0"));
+            assert!(e.message.contains("tracked"));
+        }
+    }
+}
+
+#[test]
+fn explicit_insert_keeps_supported_side_beside_tracked_text() {
+    let s = source();
+    for (anchor, literal, want) in [
+        ("after_text", "Pay ", "Pay X45 days, Delaware law."),
+        ("before_text", " days", "Pay 45X days, Delaware law."),
+    ] {
+        let mut op = json!({"kind":"insert","target":p(0),"text":"X"});
+        op[anchor] = json!(literal);
+        let out = run(&s, &plan(&s, json!([op]))).unwrap();
+        assert_eq!(texts(&out.clean)[0], want);
+        assert_eq!(
+            texts(&reject_changes(&out.redline, &mine()).unwrap()),
+            texts(&s)
+        );
+        assert_word_valid_package(&out.redline);
+    }
+}
+
+#[test]
+fn many_revision_decisions_match_global_policy_and_original_scope() {
+    let mut body = String::new();
+    for n in 0..64 {
+        let native = n + 1;
+        body.push_str(&format!(r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="{native:08X}">{}</w:p>"#, insertion(n, &format!("Item {n}"))));
+    }
+    let s = docx(&body);
+    for policy in ["accept", "reject"] {
+        let mut selected = plan(&s, json!([]));
+        selected["resolve_revisions"][policy] = (0..64).map(r).collect();
+        selected["scope"] = json!({"kind":"selected","targets":(0..64).map(|n| {let native = n + 1; json!({"short_id":format!("p{n}"),"long_id":format!("document.w:p.w14:paraId.{native:08X}")})}).collect::<Vec<_>>()});
+        let mut global = plan(&s, json!([]));
+        global["policy"]["existing_revisions"] = json!(policy);
+        let selected_out = run(&s, &selected).unwrap();
+        let global_out = run(&s, &global).unwrap();
+        assert_eq!(texts(&selected_out.redline), texts(&global_out.redline));
+        assert_eq!(
+            part_string(&selected_out.redline, "word/document.xml"),
+            part_string(&global_out.redline, "word/document.xml")
+        );
+        assert_eq!(
+            selected_out.report.resolved_revisions.accepted.len()
+                + selected_out.report.resolved_revisions.rejected.len(),
+            64
+        );
+        assert!(list_changes(&selected_out.redline).unwrap().is_empty());
+        assert_word_valid_package(&selected_out.redline);
+    }
+}
+
+#[test]
+fn direct_edits_after_global_accept_or_reject_resolve_only_old_history() {
+    let s = source();
+    let s = run(
+        &s,
+        &plan(
+            &s,
+            json!([{"kind":"comment","target":p(2),"text":"Keep this thread"}]),
+        ),
+    )
+    .unwrap()
+    .redline;
+    let old_comments = jubarte::comments::list_comments(&s).unwrap();
+    for policy in ["accept", "reject"] {
+        let mut q = plan(&s, json!([replace(0, "Delaware", "New York")]));
+        q["policy"]["track"] = json!("off");
+        q["policy"]["existing_revisions"] = json!(policy);
+        let out = run(&s, &q).unwrap();
+        let want = if policy == "accept" {
+            ["Pay 45 days, New York law.", "Unrelated", "Last."]
+        } else {
+            ["Pay  days, New York law.", "", "Last."]
+        };
+        assert_eq!(texts(&out.redline), want);
+        assert_eq!(out.redline, out.clean);
+        assert!(list_changes(&out.redline).unwrap().is_empty());
+        assert!(out.report.resolved_revisions.is_empty());
+        let resolved = if policy == "accept" {
+            &out.remaining_revisions.accepted
+        } else {
+            &out.remaining_revisions.rejected
+        };
+        assert_eq!(resolved, &["r7", "r8"]);
+        assert!(out.dependent_comments.is_empty());
+        assert_eq!(
+            jubarte::comments::list_comments(&out.redline).unwrap(),
+            old_comments
+        );
+        assert_word_valid_package(&out.redline);
+    }
+}
+
+#[test]
+fn source_identity_inventory_keeps_story_and_duplicate_distinctions() {
+    use common::docx::{Part, docx_with_sect};
+    let native = |text: &str| {
+        format!(
+            r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="ABCD1234">{text}</w:p>"#
+        )
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}</w:hdr>"#,
+        native(&insertion(7, "Header"))
+    );
+    let s = docx_with_sect(
+        &(native(&insertion(7, "Body")) + &native("<w:r><w:t>Duplicate native ID</w:t></w:r>")),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let mut q = plan(&s, json!([replace(1, "Duplicate", "Changed")]));
+    q["resolve_revisions"]["accept"] =
+        json!([r(7), {"short_id":"header1.r7","long_id":"header1.w:ins.w:id.7"}]);
+    q["source_context"] = json!([{"kind":"paragraph","target":{"short_id":"header1","long_id":"header1.w:p.w14:paraId.ABCD1234"},"text":"Header","reason_codes":["CONTEXT"]}]);
+    let out = run(&s, &q).unwrap();
+    assert_eq!(texts(&out.clean), ["Body", "Changed native ID"]);
+    assert!(
+        list_changes(&out.redline)
+            .unwrap()
+            .iter()
+            .all(|c| c.author.as_deref() == Some("Me"))
+    );
+    // Duplicate native IDs in the body use the short-path fallback. A header's
+    // equal native ID remains unique within its own story.
+    q["operations"][0]["target"]["long_id"] = json!("document.w:p.w14:paraId.ABCD1234");
+    assert_eq!(run(&s, &q).unwrap_err().code, "TARGET_ID_MISMATCH");
+
+    let s = docx(&format!(
+        "<w:p>{}{}</w:p>",
+        insertion(7, "First"),
+        insertion(7, "Second")
+    ));
+    let mut q = plan(&s, json!([]));
+    q["resolve_revisions"]["accept"] = json!([r(7)]);
+    assert_eq!(run(&s, &q).unwrap_err().code, "TARGET_ID_MISMATCH");
+}
