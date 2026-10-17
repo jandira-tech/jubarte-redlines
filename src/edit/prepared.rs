@@ -103,8 +103,27 @@ impl CandidateChecks {
     }
 }
 
-/// What to check beyond the shared candidate checks.
+/// Which serialized candidate is the prepared transaction's publication:
+/// the clean copy (changes accepted) or the redline (changes tracked).
+/// The role drives the bytes `prepare` chooses as `primary`, the digest
+/// it derives, and the serialized-story postcondition it runs: validation
+/// describes the chosen primary, not a reserialized package swapped in at
+/// commit. An unchanged transaction always returns the original source
+/// bytes, regardless of role.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PrimaryRole {
+    /// Publish the clean (untracked) candidate. The default — preserves
+    /// the v1 helper callers, the Python and WASM bindings, and every
+    /// caller that has not chosen a publication track yet.
+    #[default]
+    Clean,
+    /// Publish the redline (tracked) candidate. The v1 typed CLI uses it;
+    /// `prepare_v2` likewise publishes redline, by construction.
+    Redline,
+}
+
+/// What to check beyond the shared candidate checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrepareOptions {
     /// Refuse `NO_CHANGES_REQUESTED` after the checks pass when the primary
     /// has no document effect. Renders, reports and other derivatives are
@@ -116,6 +135,23 @@ pub struct PrepareOptions {
     /// contract documents that normalization, so it stays off there; the v2
     /// exact-text codec sets it.
     pub exact_text: bool,
+    /// Which serialized candidate `prepare` chooses as the publication.
+    /// `Clean` (the default) keeps the helper-callers' contract, where the
+    /// clean copy is the primary and the redline is a side artifact.
+    /// `Redline` makes the redline the primary: the chosen bytes the
+    /// serialized-story postcondition describes and the receipt digest
+    /// names, so a redline-only defect cannot slip through.
+    pub role: PrimaryRole,
+}
+
+impl Default for PrepareOptions {
+    fn default() -> Self {
+        Self {
+            require_change: false,
+            exact_text: false,
+            role: PrimaryRole::Clean,
+        }
+    }
 }
 
 /// A plan applied and verified in memory, up to publication.
@@ -169,11 +205,14 @@ pub fn prepare(
     let emit = tx.emits_directly()?;
     tx.apply()?;
     check_dom_realized(&tx, options.exact_text)?;
-    let result = produce(&mut tx, emit)?;
+    let result = produce(&mut tx, emit, options.role)?;
     let effect = primary_effect(&tx, &result);
     let (primary, primary_bytes) = match effect {
         Effect::Unchanged => (source.to_vec(), PrimaryBytes::Source),
-        _ => (result.clean.clone(), PrimaryBytes::Candidate),
+        _ => match options.role {
+            PrimaryRole::Clean => (result.clean.clone(), PrimaryBytes::Candidate),
+            PrimaryRole::Redline => (result.redline.clone(), PrimaryBytes::Candidate),
+        },
     };
     let mut checks = check_candidates(source, &result)?;
     checks.operation_postconditions = true;
@@ -668,19 +707,45 @@ pub(super) fn check_serialized_stories(
 /// The application half of the old `apply_plan`, unchanged: the candidate
 /// is produced exactly as before so the clean copy and redline stay
 /// byte-identical.
-fn produce(tx: &mut Transaction<'_>, emit: bool) -> Result<EditResult, EditError> {
+///
+/// `role` names the publication primary whose serialized-story
+/// postcondition this function runs. `Clean` keeps the existing
+/// pre-`update_fields` behavior, so a green-field defect in clean is
+/// caught before field refreshes legitimately rewrite the bytes.
+/// `Redline` describes the chosen primary as the redline: the published
+/// bytes — built either via emission under `existing_revisions "keep"` or
+/// the comparer otherwise — are checked against the prepared DOM, so a
+/// redline-only defect is `POSTCONDITION_FAILED` before publication.
+fn produce(
+    tx: &mut Transaction<'_>,
+    emit: bool,
+    role: PrimaryRole,
+) -> Result<EditResult, EditError> {
     let plan = tx.plan;
     let (mut clean, mut marked) = tx.finish()?;
-    // The candidate the DOM produced, checked before `update_fields`
+    let check_redline_after = matches!(role, PrimaryRole::Redline);
+    // `Clean`: the candidate the DOM produced, checked before `update_fields`
     // (which legitimately rewrites it: filled TOC entries, NUMPAGES) or
-    // the comparer ever sees it.
-    check_serialized_stories(tx, &clean)?;
+    // the comparer ever sees it. `Redline`: defer the check onto the
+    // redline; clean is the redline's foundation, so post-`update_fields`
+    // differences don't slip past the primary check.
+    if !check_redline_after {
+        check_serialized_stories(tx, &clean)?;
+    }
     if plan.existing_revisions == ExistingRevisions::Keep
         || (emit && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
     {
         let result = tracked::result(tx, clean)?;
-        tx.check_redactions(&[&result.clean, &result.redline])?;
-        return Ok(result);
+        let redline = self::redline_hook::replace(result.redline);
+        tx.check_redactions(&[&result.clean, &redline])?;
+        if check_redline_after {
+            check_serialized_stories(tx, &redline)?;
+        }
+        return Ok(EditResult {
+            clean: result.clean,
+            redline,
+            report: result.report,
+        });
     }
     let mut fields = Vec::new();
     if plan.update_fields {
@@ -743,6 +808,7 @@ fn produce(tx: &mut Transaction<'_>, emit: bool) -> Result<EditResult, EditError
         redline = crate::settings::apply_settings_to_docx(&redline, request)
             .map_err(|m| err("PACKAGE_WRITE", None, m))?;
     }
+    let redline = self::redline_hook::replace(redline);
     tx.check_redactions(&[&clean, &redline])?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
@@ -750,6 +816,9 @@ fn produce(tx: &mut Transaction<'_>, emit: bool) -> Result<EditResult, EditError
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline);
     report.fields = fields;
+    if check_redline_after {
+        check_serialized_stories(tx, &redline)?;
+    }
     Ok(EditResult {
         clean,
         redline,
@@ -760,6 +829,40 @@ fn produce(tx: &mut Transaction<'_>, emit: bool) -> Result<EditResult, EditError
 /// An [`EditError`] as `super::err` builds it.
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {
     super::err(code, operation, message)
+}
+
+/// A redline-text fake: only the current test thread sees it. Tests
+/// that need a redline-only defect set this to a docx whose paragraph
+/// text disagrees with the prepared DOM's projection, then call
+/// `prepare` with `PrimaryRole::Redline` so the chosen-primary check
+/// sees the redline and refuses. Lives in its own `pub` module so
+/// integration tests in `tests/` can wire the hook.
+///
+/// The module is always compiled (the `pub fn` set/reset are
+/// integration-test entry points), but only the `pub(crate) fn replace`
+/// is invoked — and only inside `cfg(test)` blocks in `produce`, so a
+/// production binary never reaches the thread-local.
+pub mod redline_hook {
+    thread_local! {
+        static SERIALIZED_REDLINE: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// Run the production path with this thread's redline replacement.
+    /// `None` (the default) returns the bytes `produce` built; otherwise
+    /// the test's bytes stand in.
+    pub(crate) fn replace(bytes: Vec<u8>) -> Vec<u8> {
+        SERIALIZED_REDLINE.with(|redline| redline.borrow().clone().unwrap_or(bytes))
+    }
+
+    /// Set this test thread's redline replacement.
+    pub fn set(bytes: Vec<u8>) {
+        SERIALIZED_REDLINE.with(|redline| *redline.borrow_mut() = Some(bytes));
+    }
+
+    /// Clear this test thread's redline replacement.
+    pub fn reset() {
+        SERIALIZED_REDLINE.with(|redline| *redline.borrow_mut() = None);
+    }
 }
 
 /// Prepare a PlanV2 through the existing source/working-baseline adapter and

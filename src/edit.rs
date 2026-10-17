@@ -80,8 +80,8 @@ pub use anchor_error::{AnchorRefusal, Working, v2_resolve, v2_resolve_all};
 pub use controls::ControlSelector;
 /// The shared preparation path [`apply_plan`] and [`preview_plan`] run.
 pub use prepared::{
-    CandidateChecks, PrepareOptions, PreparedEdit, PrimaryBytes, introduced_findings, prepare,
-    prepare_v2,
+    CandidateChecks, PrepareOptions, PreparedEdit, PrimaryBytes, PrimaryRole, introduced_findings,
+    prepare, prepare_v2,
 };
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
 /// `section` values.

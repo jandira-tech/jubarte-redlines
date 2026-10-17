@@ -6,7 +6,7 @@
 
 use super::*;
 use jubarte::cli::edit_actions::{EditAction, TypedEdit};
-use jubarte::edit::{EditPlan, PrepareOptions, PreparedEdit, v2::PlanV2};
+use jubarte::edit::{EditPlan, PrepareOptions, PreparedEdit, PrimaryRole, v2::PlanV2};
 use jubarte::expect::{ExpectationReport, ReceiptMeta, evaluate_with_receipt, parse_expectations};
 use jubarte::result::{
     Artifact, CommitState, Effect, Envelope, Error, MediaRole, Phase, PredictedEffect, ResultData,
@@ -68,19 +68,22 @@ enum Request {
     V2(PlanV2),
 }
 impl Request {
-    fn prepare(&self, source: &[u8], options: &PrepareOptions) -> Result<PreparedEdit, Failure> {
+    fn prepare(&self, source: &[u8], base: &PrepareOptions) -> Result<PreparedEdit, Failure> {
         match self {
-            Self::V2(plan) => jubarte::edit::prepare_v2(source, plan, options).map_err(edit_error),
+            Self::V2(plan) => jubarte::edit::prepare_v2(source, plan, base).map_err(edit_error),
             Self::V1(plan) => {
-                let mut prepared =
-                    jubarte::edit::prepare(source, plan, options).map_err(edit_error)?;
-                // v1's saved request is a tracked edit. Candidate checks covered
-                // both serialized representations; publish its redline as v1 does.
-                if prepared.primary_effect == Effect::Changed {
-                    prepared.primary = prepared.result.redline.clone();
-                    prepared.primary_sha256 = jubarte::inspect::source_sha256(&prepared.primary);
-                }
-                Ok(prepared)
+                // The v1 typed route publishes the redline when the
+                // transaction is tracked: ask `prepare` for the redline
+                // role so its chosen-primary checks (serialized-story
+                // postcondition included) describe the bytes this layer
+                // writes, and the receipt's digest names those same
+                // bytes. The library used to return clean and the CLI
+                // swapped; that left a redline-only defect unchecked.
+                let options = PrepareOptions {
+                    role: PrimaryRole::Redline,
+                    ..*base
+                };
+                jubarte::edit::prepare(source, plan, &options).map_err(edit_error)
             }
         }
     }
@@ -353,6 +356,7 @@ fn prepare_and_publish(
         &PrepareOptions {
             require_change: delivery.require_change,
             exact_text: matches!(request, Request::V2(_)),
+            role: PrimaryRole::Clean,
         },
     )?;
     // Optional expectations (V2-13): evaluate on the prepared transaction's
