@@ -8,7 +8,7 @@
 //! comment's head (`c5 @AC: `, `c6 @AS re c5: `, `c7 @AC resolved: `).
 //! `jubarte read` writes them (`from_docx::agent`, `from_docx::header`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use super::xml::Label;
 
@@ -393,144 +393,6 @@ pub(super) fn revision_tags(text: &str) -> Option<Vec<Tag>> {
         .collect()
 }
 
-/// A plain view's revision note: the change's ids, then who made it and
-/// when, as stored (`r5 Ana Lima (2026-…)`, `r1+2 (2026-…)`, `r7 Di Eng`,
-/// `r7`). An absent author or date stays empty.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct PlainRevision {
-    pub ids: Vec<u32>,
-    pub author: String,
-    pub date: String,
-}
-
-/// The tags of a nested revision note, its own change first: `r3 @BO on
-/// r1 @AL` is Ben's deletion inside Ana's insertion, each tag with its
-/// own date as [`revision_tags`] reads it. `None` for any other comment
-/// text.
-pub(super) fn nested_revision_tags(text: &str) -> Option<Vec<Tag>> {
-    let tags = nested_parts(text, one_tag)?;
-    (tags.len() > 1).then_some(tags)
-}
-
-/// One tag, exactly: a note names one change per ` on ` part.
-fn one_tag(part: &str) -> Option<Tag> {
-    match revision_tags(part)?.as_slice() {
-        [tag] => Some(tag.clone()),
-        _ => None,
-    }
-}
-
-/// The parts of a plain nested revision note, its own change first: `r3
-/// Ben Ode (2026-…) on r1 Ana Lima (2026-…)`. `None` for any other
-/// comment text.
-pub(super) fn nested_plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
-    let parts = nested_parts(text, plain_part)?;
-    (parts.len() > 1).then_some(parts)
-}
-
-/// One part of a fold note: its author holds no bare parenthesis — it
-/// spells its own percent-wise (`Ana %28consultant%29`), so the date is
-/// the only bare group and the split of the note stays sure. A part with
-/// a bare parenthesis is no part of a fold.
-fn plain_part(part: &str) -> Option<PlainRevision> {
-    let rest = part.trim().split_once(' ').map_or("", |(_, rest)| rest);
-    let author_end = trailing_bare_group(rest)
-        .filter(|&at| super::write::is_date(&rest[at + 1..rest.len() - 1]))
-        .unwrap_or(rest.len());
-    let mut escaped = false;
-    for c in rest[..author_end].chars() {
-        if matches!(c, '(' | ')') && !escaped {
-            return None;
-        }
-        escaped = c == '\\' && !escaped;
-    }
-    plain_revision(part)
-}
-
-/// Where the final bare parenthesised group of `text` opens, when one
-/// closes at its very end (`… (date)`): the outermost group that does.
-pub(super) fn trailing_bare_group(text: &str) -> Option<usize> {
-    if !text.ends_with(')') {
-        return None;
-    }
-    let mut escaped = false;
-    let mut depth = 0usize;
-    let mut open = None;
-    for (at, c) in text.char_indices() {
-        match c {
-            '\\' => escaped = !escaped,
-            '(' if !escaped => {
-                if depth == 0 {
-                    open = Some(at);
-                }
-                depth += 1;
-                escaped = false;
-            }
-            ')' if !escaped => {
-                depth = depth.saturating_sub(1);
-                if at + 1 == text.len() && depth == 0 {
-                    return open;
-                }
-                escaped = false;
-            }
-            _ => escaped = false,
-        }
-    }
-    None
-}
-
-/// The parts of a note joined by ` on `, each parsed by `one`: the first
-/// part is the note's own change, and each part after it names the change
-/// the one before sits inside. The last ` on ` that splits the note wins:
-/// the left side must parse as one part — its author may hold ` on ` of
-/// its own (`Bo on r1 Kim`) — and the right side all the way down.
-/// Earlier boundaries are tried only when these fail.
-fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
-    let text = text.trim();
-    let mut from = text.len();
-    while let Some(at) = text[..from].rfind(" on ") {
-        from = at;
-        if let Some(head) = one(text[..at].trim())
-            && let Some(rest) = nested_parts(&text[at + " on ".len()..], one)
-        {
-            return Some([head].into_iter().chain(rest).collect());
-        }
-    }
-    // The last part, or a note that names no other change.
-    one(text).map(|last| vec![last])
-}
-
-/// The plain view's revision note; `None` for any other comment text. The
-/// ids come first, as in [`revision_tags`]; what follows is `Name (date)`,
-/// `(date)`, a name with no colon or bracket, or nothing.
-pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
-    let text = text.trim();
-    let (id, rest) = text.split_once(' ').unwrap_or((text, ""));
-    let id_ok = !id.starts_with(|c: char| c.is_ascii_digit())
-        && !id.starts_with('#')
-        && (id == "noid"
-            || id.strip_suffix(".noid").is_some()
-            || crate::ids::parse_change_ids(id).is_ok());
-    if !id_ok {
-        return None;
-    }
-    let (author, date) = match super::write::named(rest) {
-        Some((author, date, "")) => (author.unwrap_or_default(), date.to_string()),
-        Some(_) => return None,
-        None if rest.contains([':', '(', ')']) || rest.starts_with('@') => return None,
-        None => (rest.trim().to_string(), String::new()),
-    };
-    let ids = crate::ids::parse_change_ids(id)
-        .map(|ids| {
-            ids.iter()
-                .filter_map(|c| c.wid.parse().ok())
-                .filter(|&id| id <= MOST_ID)
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(PlainRevision { ids, author, date })
-}
-
 /// The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a
 /// larger number a view names is left for a fresh one.
 pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
@@ -601,9 +463,6 @@ pub(super) struct TableLine {
     /// Its cells' own borders (`cell-borders bottom single 1pt in t0.row0`),
     /// with the cells each names.
     pub cell_borders: Vec<(CellsAt, super::borders::Sides)>,
-    /// Its rows' own table borders (`row-borders top double 0.5pt in
-    /// t0.row1`, Word's `w:tblPrEx`), by row.
-    pub row_borders: Vec<(usize, super::borders::Sides)>,
     /// A comment's range runs through the table (`in c5`).
     pub in_comment: bool,
     /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
@@ -611,21 +470,17 @@ pub(super) struct TableLine {
     pub fmt: Option<Tag>,
     /// Word's `w:tblGridChange`, which names no author (`r17 @??`).
     pub grid_fmt: Option<u32>,
-    /// These maps are `BTreeMap`s, not `HashMap`s: the writer walks them to
-    /// stamp dates, and an author's first undated mark takes the range's last
-    /// day — a `HashMap`'s random order would pick the winner per process
-    /// (#534).
-    pub row_fmt: BTreeMap<usize, Tag>,
-    pub cell_fmt: BTreeMap<(usize, usize), Tag>,
+    pub row_fmt: HashMap<usize, Tag>,
+    pub cell_fmt: HashMap<(usize, usize), Tag>,
     /// The cell paragraphs' formatting changes (`fmt r9 @AL in p4`), by
     /// paragraph number.
     pub para_fmt: HashMap<usize, Vec<Tag>>,
     /// A row's own insertion or deletion, when it has no text to show it
     /// (`rev r6 @AC in t0.row1`, `rev-del …`): whether it is inserted.
-    pub row_marks: BTreeMap<usize, (bool, Tag)>,
+    pub row_marks: HashMap<usize, (bool, Tag)>,
     /// A cell's own insertion, deletion or merge (`rev r5 @AC in
     /// t0.row1.cell2`, `rev-del …`, `rev-merge …`).
-    pub cell_marks: BTreeMap<(usize, usize), (CellMark, Tag)>,
+    pub cell_marks: HashMap<(usize, usize), (CellMark, Tag)>,
     /// The grid columns each row leaves out before and after its cells
     /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
     pub gaps: HashMap<usize, (usize, usize)>,
@@ -639,11 +494,10 @@ pub(crate) enum CellMark {
     Merge,
 }
 
-/// The header's `unplaced: [ins r40 @AL in p1, …]`: each change no other
-/// line shows, the paragraph it is in and its kind (`ins`, `del`, `fmt`;
-/// a kindless one is an insertion). One without a paragraph, or not a
+/// The header's `unplaced: [r40 @AL in p1, …]`: each change no other line
+/// shows, and the paragraph it is in. One without a paragraph, or not a
 /// change's tag, is left out.
-pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
+pub(super) fn unplaced(value: &str) -> Vec<(usize, Tag)> {
     let (list, _) = value.split_once(" #").unwrap_or((value, ""));
     let Some(list) = list
         .trim()
@@ -656,13 +510,7 @@ pub(super) fn unplaced(value: &str) -> Vec<(usize, &'static str, Tag)> {
         .filter_map(|entry| {
             let (entry, _) = scalar_and_comment(entry.trim());
             let (tag, at) = entry.rsplit_once(" in ")?;
-            let (kind, tag) = match tag.split_once(' ') {
-                Some(("del", tag)) => ("del", tag),
-                Some(("fmt", tag)) => ("fmt", tag),
-                Some(("ins", tag)) => ("ins", tag),
-                _ => ("ins", tag),
-            };
-            Some((crate::ids::short_number(at, 'p')?, kind, first_tag(tag)?))
+            Some((crate::ids::short_number(at, 'p')?, first_tag(tag)?))
         })
         .collect()
 }
@@ -723,26 +571,6 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
     Ok(kinds)
 }
 
-/// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
-/// each formatting change on a notes part's separators, with its part's
-/// kind (`footnote`, `endnote`), in the order the view lists them; none
-/// without the clause. An entry that names no notes part is skipped.
-pub(super) fn note_formats(value: &str) -> Vec<(&'static str, Tag)> {
-    let Some(tags) = super::view_stories::flow_text(value, "fmt") else {
-        return Vec::new();
-    };
-    tags.split("; ")
-        .filter_map(|entry| {
-            let kind = match entry.trim().split_once('.')?.0 {
-                "footnotes" => "footnote",
-                "endnotes" => "endnote",
-                _ => return None,
-            };
-            Some((kind, revision_tags(entry)?.into_iter().next()?))
-        })
-        .collect()
-}
-
 /// The most grid columns a table has, and rows one merged cell reaches: a
 /// bound on what a hand-edited table line can make the reader write (Word
 /// takes 63 columns).
@@ -769,15 +597,14 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         style: None,
         borders: None,
         cell_borders: Vec::new(),
-        row_borders: Vec::new(),
         in_comment: false,
         fmt: None,
         grid_fmt: None,
-        row_fmt: BTreeMap::new(),
-        cell_fmt: BTreeMap::new(),
+        row_fmt: HashMap::new(),
+        cell_fmt: HashMap::new(),
         para_fmt: HashMap::new(),
-        row_marks: BTreeMap::new(),
-        cell_marks: BTreeMap::new(),
+        row_marks: HashMap::new(),
+        cell_marks: HashMap::new(),
         gaps: HashMap::new(),
     };
     for (i, clause) in split_clauses(rest).into_iter().enumerate() {
@@ -898,20 +725,6 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         }
         if let Some(text) = clause.strip_prefix("borders ") {
             parsed.borders = super::borders::parse(text, &super::borders::TABLE_SIDES);
-        }
-        if let Some(groups) = clause.strip_prefix("row-borders ") {
-            // `top double 0.5pt FF0000 in t0.row1 t0.row3; left none in t0.row2`
-            for group in groups.split("; ") {
-                let Some((text, at)) = group.rsplit_once(" in ") else {
-                    continue;
-                };
-                let Some(sides) = super::borders::parse(text, &super::borders::TABLE_SIDES) else {
-                    continue;
-                };
-                for row in at.split(' ').filter_map(row_of) {
-                    parsed.row_borders.push((row, sides.clone()));
-                }
-            }
         }
         if let Some(groups) = clause.strip_prefix("cell-borders ") {
             // `top,bottom single 1pt in all; left none in t0.row1 t0.row2.cell0`
@@ -1134,9 +947,8 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 21] = [
+const CLAUSE_WORDS: [&str; 18] = [
     "empty",
-    "outline",
     "center",
     "right",
     "justify",
@@ -1147,8 +959,6 @@ const CLAUSE_WORDS: [&str; 21] = [
     "num",
     "level",
     "page-break",
-    "page-break-ins",
-    "page-break-del",
     "section-break",
     "break-ins",
     "break-del",
@@ -1158,14 +968,12 @@ const CLAUSE_WORDS: [&str; 21] = [
     "in",
 ];
 
-/// The words that open a id line's clauses (`center`, `left 0.5in`,
-/// `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not
-/// read as.
-const TABLE_WORDS: [&str; 10] = [
+/// The words that open a table line's own clauses (`cells p0-p3 by row`,
+/// `merged …`): beside [`CLAUSE_WORDS`], what a style id must not read as.
+const TABLE_WORDS: [&str; 9] = [
     "cells",
     "borders",
     "cell-borders",
-    "row-borders",
     "merged",
     "gaps",
     "style",
@@ -1273,13 +1081,7 @@ fn split_clauses(text: &str) -> Vec<&str> {
 /// twips.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct IdLine {
-    /// The paragraph's number, as its line names it (`p5`).
-    pub number: usize,
     pub style: Option<String>,
-    /// The paragraph's own outline level (`outline 2`, `#`'s count), when
-    /// no style carries it: 1 to 9, the levels past the heading styles
-    /// (`outline 7`) included, which no `#` count reaches.
-    pub outline: Option<u32>,
     pub align: Option<&'static str>,
     pub first_line: Option<i64>,
     pub hanging: Option<i64>,
@@ -1287,9 +1089,6 @@ pub(super) struct IdLine {
     pub right: Option<i64>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
-    /// The page break's tracked change, `true` for an insertion
-    /// (`page-break-ins r5 @AC`, `page-break-del r5 @AC`).
-    pub page_break_change: Option<(bool, Tag)>,
     /// The paragraph ends a section (`section-break`).
     pub section_break: bool,
     /// The list label (`num "(a)"`, `bullet`).
@@ -1302,18 +1101,14 @@ pub(super) struct IdLine {
     pub break_del: Option<Tag>,
     /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
     pub fmt: Vec<Tag>,
-    /// The marks its text shows nothing of (`rev r9 @AL`, `rev-del r10
-    /// @AL`); a `rev-del` tag is in `rev_del` too.
+    /// The marks its text shows nothing of (`rev r9 @AL`).
     pub rev: Vec<Tag>,
-    /// The `rev` tags a `rev-del` clause named: deletions, while `rev`
-    /// alone names insertions.
-    pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
 }
 
-/// The id line of one paragraph (`pN`, or a range's first `pN-pM`, whose
-/// facts stand for every paragraph it numbers); `None` for any other line.
+/// The id line of one paragraph (`pN`, not a range); `None` for any
+/// other line.
 pub(super) fn id_line(line: &str) -> Option<IdLine> {
     let inner = line
         .trim()
@@ -1321,12 +1116,8 @@ pub(super) fn id_line(line: &str) -> Option<IdLine> {
         .strip_suffix("-->")?
         .trim();
     let (id, rest) = inner.split_once(' ').unwrap_or((inner, ""));
-    let one = id.split_once('-').map_or(id, |(first, _)| first);
-    let number = crate::ids::short_number(one, 'p')?;
-    let mut parsed = IdLine {
-        number,
-        ..IdLine::default()
-    };
+    crate::ids::short_number(id, 'p')?;
+    let mut parsed = IdLine::default();
     // The style is the head's second word, quoted when it is no plain
     // word: `p5 TitlePage[ clause]`, `p5 "My Style"[ clause]`.
     let rest = match take_style(rest) {
@@ -1380,21 +1171,11 @@ impl IdLine {
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
-            Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
             Some(("break-ins", v)) => self.break_ins = first_tag(v),
             Some(("break-del", v)) => self.break_del = first_tag(v),
-            Some((kind @ ("page-break-ins" | "page-break-del"), v)) => {
-                self.page_break = true;
-                self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
-            }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
             Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
-            Some(("rev-del", v)) => {
-                let tags: Vec<Tag> = revision_tags(v).into_iter().flatten().collect();
-                self.rev.extend(tags.iter().cloned());
-                self.rev_del.extend(tags);
-            }
             Some(_) => {}
         }
     }
@@ -1500,37 +1281,6 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn note_formats_reads_each_parts_separator_changes() {
-        let kinds = |value: &str| -> Vec<(&str, Vec<u32>)> {
-            note_formats(value)
-                .into_iter()
-                .map(|(kind, tag)| (kind, tag.ids))
-                .collect()
-        };
-        assert_eq!(
-            kinds(
-                "{fmt: footnotes.r0 @AS; footnotes.r1 @AS; endnotes.r2 @AS, \
-                 empty: [footnotes, endnotes]}  # changes in notes"
-            ),
-            [
-                ("footnote", vec![0]),
-                ("footnote", vec![1]),
-                ("endnote", vec![2])
-            ]
-        );
-        assert_eq!(
-            kinds("{rev: \"footnotes.r4 @AS\", fmt: \"endnotes.r7 @AS 2026-09-26T14:55:00Z\"}"),
-            [("endnote", vec![7])]
-        );
-        assert_eq!(kinds("{rev: \"fmt: footnotes.r1 @AS\"}"), []);
-        assert_eq!(kinds("{rev: 'fmt: footnotes.r1 @AS'}"), []);
-        assert_eq!(kinds("{rev: 'author''s fmt: footnotes.r1 @AS'}"), []);
-        assert_eq!(kinds("{fmt: 'footnotes.r7 @AS'}"), [("footnote", vec![7])]);
-        assert_eq!(kinds("{fmt: header1.r1 @AS}"), []);
-        assert_eq!(kinds("{empty: [footnotes]}"), []);
-    }
-
-    #[test]
     fn empty_notes_reads_the_clause_outside_quotes() {
         use super::empty_notes;
         assert_eq!(
@@ -1619,10 +1369,7 @@ mod tests {
         // Out of Word's range, or not inches: no indent.
         let line = id_line("<!-- p2 left 99in, right 3cm, first-line NaNin -->").unwrap();
         assert_eq!((line.left, line.right, line.first_line), (None, None, None));
-        // A range stands for several paragraphs; its facts are the first's.
-        let line = id_line("<!-- p2-p4 empty -->").unwrap();
-        assert_eq!((line.style, line.outline, line.align), (None, None, None));
-        assert_eq!(id_line("<!-- t0 cells p2-p4 by row -->"), None);
+        assert_eq!(id_line("<!-- p2-p4 empty -->"), None);
     }
 
     #[test]
@@ -1711,106 +1458,6 @@ mod tests {
     }
 
     #[test]
-    fn plain_revision_notes_name_ids_then_author_and_date() {
-        let plain = |ids: &[u32], author: &str, date: &str| {
-            Some(PlainRevision {
-                ids: ids.to_vec(),
-                author: author.into(),
-                date: date.into(),
-            })
-        };
-        let date = "2026-03-02T10:00:00Z";
-        assert_eq!(
-            plain_revision(&format!("r5 Ann Lee ({date})")),
-            plain(&[5], "Ann Lee", date)
-        );
-        assert_eq!(
-            plain_revision(&format!("r2+1 ({date})")),
-            plain(&[2, 1], "", date)
-        );
-        assert_eq!(plain_revision("r75 Di Eng"), plain(&[75], "Di Eng", ""));
-        assert_eq!(plain_revision("r7"), plain(&[7], "", ""));
-        assert_eq!(plain_revision("footnotes.r31 Ann"), plain(&[31], "Ann", ""));
-        assert_eq!(plain_revision("noid Ann"), plain(&[], "Ann", ""));
-        for text in [
-            "why",
-            "Di Eng",
-            "5 Ann",
-            "r5 @AC",
-            "r5 Ann: why",
-            "r5 Ann (soon)",
-            &format!("r5 Ann ({date}): why"),
-            &format!("Ann ({date})"),
-        ] {
-            assert_eq!(plain_revision(text), None, "{text}");
-        }
-    }
-
-    #[test]
-    fn nested_revision_notes_name_the_change_it_sits_inside() {
-        let tag = |handle: &str, date: Option<&str>, ids: &[u32]| Tag {
-            handle: handle.into(),
-            date: date.map(str::to_string),
-            ids: ids.to_vec(),
-        };
-        let plain = |ids: &[u32], author: &str, date: &str| {
-            Some(PlainRevision {
-                ids: ids.to_vec(),
-                author: author.into(),
-                date: date.into(),
-            })
-        };
-        assert_eq!(
-            nested_revision_tags("r3 @BO on r1 @AL"),
-            Some(vec![tag("BO", None, &[3]), tag("AL", None, &[1])])
-        );
-        assert_eq!(
-            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z on r1 @AL"),
-            Some(vec![
-                tag("BO", Some("2026-01-02T10:00:00Z"), &[3]),
-                tag("AL", None, &[1])
-            ])
-        );
-        // Deeper nests chain the same way, innermost first.
-        assert_eq!(
-            nested_revision_tags("r5 @CD on r3 @BO on r1 @AL"),
-            Some(vec![
-                tag("CD", None, &[5]),
-                tag("BO", None, &[3]),
-                tag("AL", None, &[1])
-            ])
-        );
-        assert_eq!(
-            nested_plain_revisions(
-                "r3 Ben Ode (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
-            ),
-            Some(vec![
-                plain(&[3], "Ben Ode", "2026-01-02T10:00:00Z").unwrap(),
-                plain(&[1], "Ana Lima", "2026-01-01T09:00:00Z").unwrap()
-            ])
-        );
-        // An author's own name may hold ` on `: the ids still part the
-        // changes only where both sides parse.
-        assert_eq!(
-            nested_plain_revisions(
-                "r3 Ben Ode on High (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
-            ),
-            Some(vec![
-                plain(&[3], "Ben Ode on High", "2026-01-02T10:00:00Z").unwrap(),
-                plain(&[1], "Ana Lima", "2026-01-01T09:00:00Z").unwrap()
-            ])
-        );
-        // A note with no second change, or a right side that names no
-        // change, is no nested note.
-        assert_eq!(nested_revision_tags("r3 @BO"), None);
-        assert_eq!(nested_revision_tags("r3 @BO on garbage"), None);
-        assert_eq!(
-            nested_plain_revisions("r5 Ana Lima on Verra (2026-…)"),
-            None
-        );
-    }
-
-    #[test]
     fn revision_notes_are_tags_and_nothing_else_is() {
         let tag = |handle: &str, date: Option<&str>, ids: &[u32]| Tag {
             handle: handle.into(),
@@ -1862,36 +1509,6 @@ mod tests {
         }
     }
 
-    /// The sizes Word's paper list names parse back to the twips the
-    /// reader names them by: each name writes the sheet Word writes for
-    /// it, so md -> docx -> md keeps both the name and the twips
-    /// (#561 review defect 4).
-    #[test]
-    fn word_s_paper_list_parses_to_its_twips() {
-        for (text, w, h) in [
-            ("Letter portrait", 12_240, 15_840),
-            ("Legal portrait", 12_240, 20_160),
-            ("Executive portrait", 10_440, 15_120),
-            ("Tabloid portrait", 15_840, 24_480),
-            ("Ledger landscape", 24_480, 15_840),
-            ("A3 portrait", 16_838, 23_811),
-            ("A4 portrait", 11_906, 16_838),
-            ("A5 landscape", 11_906, 8_391),
-            ("B4 (JIS) portrait", 14_570, 20_636),
-            ("B5 (JIS) portrait", 10_318, 14_570),
-        ] {
-            let page = page_setup(text).expect(text);
-            assert_eq!(
-                (page.width, page.height, page.landscape),
-                (w, h, text.ends_with("landscape")),
-                "{text}"
-            );
-        }
-        // A size the list does not name stays the inches it spells.
-        let custom = page_setup("8.5x14in portrait").unwrap();
-        assert_eq!((custom.width, custom.height), (12_240, 20_160));
-    }
-
     #[test]
     fn comment_heads_carry_author_date_thread_and_state() {
         let (head, text) = comment_head("c5 @AC: Is one percent the cap?").unwrap();
@@ -1939,25 +1556,6 @@ mod tests {
     }
 }
 
-/// The sheet sizes Word's own paper list names, in the twips Word writes
-/// them, short side first. `Tabloid` and `Ledger` are the one sheet both
-/// ways round — the portrait one is Tabloid, the landscape one Ledger —
-/// and A4 small shares A4's twips, so the list names A4 only. The reader
-/// (`from_docx::header`) matches a `w:pgSz` to a name by rounded twips,
-/// and [`page_setup`] writes the same twips back for a name (#561).
-pub(super) const WORD_PAGE_SIZES: &[(&str, u32, u32)] = &[
-    ("Letter", 12_240, 15_840),
-    ("Legal", 12_240, 20_160),
-    ("Executive", 10_440, 15_120),
-    ("Tabloid", 15_840, 24_480),
-    ("Ledger", 15_840, 24_480),
-    ("A3", 16_838, 23_811),
-    ("A4", 11_906, 16_838),
-    ("A5", 8_391, 11_906),
-    ("B4 (JIS)", 14_570, 20_636),
-    ("B5 (JIS)", 10_318, 14_570),
-];
-
 /// A section's page as the view's YAML header prints it (`page: A4
 /// landscape, margins 0.5in, header/footer 0.49in`), in twips.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1976,14 +1574,10 @@ pub(super) struct PageSetup {
     /// A line between the columns (`w:cols w:sep`).
     pub column_line: bool,
     /// The grid the lines snap to (`w:docGrid`): Word's type (`lines`,
-    /// `linesAndChars`, `snapToChars`) and line pitch in twips, which a
-    /// character grid may leave out.
-    pub grid: Option<(&'static str, Option<u32>)>,
+    /// `linesAndChars`, `snapToChars`) and line pitch in twips.
+    pub grid: Option<(&'static str, u32)>,
     /// `w:docGrid w:charSpace`, for a grid with characters.
     pub char_space: i32,
-    /// How the section starts (`w:type`), when the view's page names it
-    /// (`starts nextPage`); `None` writes none, Word's default.
-    pub starts: Option<&'static str>,
 }
 
 impl PageSetup {
@@ -2002,25 +1596,17 @@ impl PageSetup {
         };
         let sep = if self.column_line { " w:sep=\"1\"" } else { "" };
         let grid = match self.grid {
-            Some((kind, pitch)) => {
-                let pitch = pitch.map_or_else(String::new, |p| format!(" w:linePitch=\"{p}\""));
-                let space = if kind == "lines" {
-                    String::new()
-                } else {
-                    format!(" w:charSpace=\"{}\"", self.char_space)
-                };
-                format!("<w:docGrid w:type=\"{kind}\"{pitch}{space}/>")
+            Some((kind, pitch)) if kind == "lines" => {
+                format!("<w:docGrid w:type=\"{kind}\" w:linePitch=\"{pitch}\"/>")
             }
+            Some((kind, pitch)) => format!(
+                "<w:docGrid w:type=\"{kind}\" w:linePitch=\"{pitch}\" w:charSpace=\"{}\"/>",
+                self.char_space
+            ),
             None => String::new(),
         };
-        // `w:type` opens the page's own elements, after the references the
-        // stories write into the `w:sectPr` (Word's order: references,
-        // type, size, margins).
-        let starts = self
-            .starts
-            .map_or_else(String::new, |kind| format!("<w:type w:val=\"{kind}\"/>"));
         format!(
-            "<w:sectPr>{starts}<w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
+            "<w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"{orient}/><w:pgMar w:top=\"{top}\" \
              w:right=\"{right}\" w:bottom=\"{bottom}\" w:left=\"{left}\" w:header=\"{}\" \
              w:footer=\"{}\" w:gutter=\"{}\"/><w:cols w:space=\"{}\"{num}{sep}/>{grid}</w:sectPr>",
             self.width, self.height, self.header, self.footer, self.gutter, self.column_gap
@@ -2050,14 +1636,13 @@ fn page_twips(value: &str) -> Option<u32> {
     (twips.is_finite() && (0.0..=f64::from(MOST_PAGE)).contains(&twips)).then_some(twips as u32)
 }
 
-/// The page `text` names: a size of Word's paper list (`Letter portrait`,
-/// `B5 (JIS) portrait`, `Ledger landscape`) or the sheet as it lies
-/// (`8.5x14in portrait`), then `margins 1in` (or `margins top 1in, right
-/// 1.25in, bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header
-/// 0.5in, footer 0.6in`), `gutter 0.2in`, `columns 2`, `column gap
-/// 0.25in`, `column line`, and a grid (`line grid 15.6pt`, `line and char
-/// grid 18pt`, `char grid 18pt`, then `char space 4096`). A `; fmt …` tail
-/// is left out.
+/// The page `text` names: `Letter portrait`, `A4 landscape`, `8.5x14in
+/// portrait`, then `margins 1in` (or `margins top 1in, right 1.25in,
+/// bottom 1in, left 1.25in`), `header/footer 0.5in` (or `header 0.5in,
+/// footer 0.6in`), `gutter 0.2in`, `columns 2`, `column gap 0.25in`,
+/// `column line`, and a grid (`line grid 15.6pt`, `line and char grid
+/// 18pt`, `char grid 18pt`, then `char space 4096`). A `; fmt …` tail is
+/// left out.
 pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
     let text = text.split(';').next()?.trim();
     let mut clauses = text.split(", ");
@@ -2067,15 +1652,17 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
         "portrait" => false,
         _ => return None,
     };
-    let (width, height) =
-        if let Some(&(_, w, h)) = WORD_PAGE_SIZES.iter().find(|&&(name, _, _)| name == size) {
-            (w, h)
-        } else {
-            // `8.5x14in`: the sheet as it lies, not its short side first.
-            let (w, h) = size.split_once('x')?;
+    let (width, height) = match size {
+        "Letter" => (12_240, 15_840),
+        "Legal" => (12_240, 20_160),
+        "A4" => (11_906, 16_838),
+        // `8.5x14in`: the sheet as it lies, not its short side first.
+        custom => {
+            let (w, h) = custom.split_once('x')?;
             let (w, h) = (page_twips(&format!("{w}in"))?, page_twips(h)?);
             (w.min(h), w.max(h))
-        };
+        }
+    };
     let (width, height) = if landscape {
         (height, width)
     } else {
@@ -2094,16 +1681,10 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
         column_line: false,
         grid: None,
         char_space: 0,
-        starts: None,
     };
     for clause in clauses {
         if clause == "column line" {
             page.column_line = true;
-            continue;
-        }
-        if clause == "char grid" {
-            // A character grid with no line pitch.
-            page.grid = Some(("snapToChars", None));
             continue;
         }
         let (name, value) = clause.rsplit_once(' ')?;
@@ -2114,7 +1695,7 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
             _ => None,
         };
         if let Some(kind) = grid {
-            page.grid = Some((kind, Some(grid_pitch(value)?)));
+            page.grid = Some((kind, grid_pitch(value)?));
             continue;
         }
         if name == "char space" {
@@ -2126,18 +1707,6 @@ pub(super) fn page_setup(text: &str) -> Option<PageSetup> {
                 .parse()
                 .ok()
                 .filter(|n| (1..=MOST_COLUMNS).contains(n))?;
-            continue;
-        }
-        if name == "starts" {
-            page.starts = match value {
-                "nextPage" => Some("nextPage"),
-                "continuous" => Some("continuous"),
-                "evenPage" => Some("evenPage"),
-                "oddPage" => Some("oddPage"),
-                "nextColumn" => Some("nextColumn"),
-                // A `w:type` Word does not define: the page does not read.
-                _ => return None,
-            };
             continue;
         }
         let twips = page_twips(value)?;

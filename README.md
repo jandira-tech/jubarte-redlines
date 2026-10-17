@@ -373,7 +373,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte convert` | Convert Word or Markdown to DOCX, PDF, PNG or Markdown |
 | `jubarte diff` | Review differences as GitHub, word, normal, context or side-by-side text |
 | `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids |
-| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3) |
+| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (refusal: exit 3) |
 | `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent view |
 | `jubarte capabilities` | What this binary can do, for agents choosing an operation |
 | `jubarte visual-diff` | Compare rendered pages pixel by pixel (different pages: exit 5) |
@@ -507,8 +507,8 @@ jubarte convert contract.docx --compress --font-report fonts.json
 
 A document with comments gets Word's markup pane: each comment in a
 balloon beside its range, joined to it by a dotted connector, with the
-range tinted and bracketed. As Word does, no style writes a PDF comment
-annotation: a viewer would paint it as a note icon over the text
+range tinted and bracketed. `--revisions word` writes no comment annotation,
+as Word does; the other styles keep a sticky note on the range as well
 ([`docs/WORD_DIFFERENCES.md`](docs/WORD_DIFFERENCES.md)).
 
 A custom palette can be supplied with:

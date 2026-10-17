@@ -10,13 +10,6 @@ This document reports what was actually checked while preparing the plan. It is 
 > been superseded by implemented source (see `patches/implemented/` and the
 > status notes further down). Do not apply the patches below to the current
 > tree; they are kept to show what was planned and checked at the time.
-> Their payloads also carry the retired ID spellings (`body:p:N`,
-> `body:rev:N`, `noid`, `{"index"}` selectors, `schema_version: 1`
-> records): the current wire is the 13 October short-id settlement
-> (`p12`, `header1.p2`, `t0.row1.cell2`, `r12`, `c5`, `s0`, `toc0`), and
-> the settled target grammar is the 17 October contract,
-> `docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md` (v3,
-> `jubarte.ids/2`; merged `4612a155`, PR #570; **not yet implemented**).
 
 ## Patch inventory (historical)
 

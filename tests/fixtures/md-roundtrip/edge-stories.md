@@ -12,7 +12,7 @@ page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
 headers:
-  default: {id: header1, text: "Kept {--gone--}{>>header1.r20 @AL<<}{++added++}{>>header1.r21 @AL<<}", fmt: header1.r22 @AL in header1}
+  default: {id: header1, text: "Kept {--gone--}{>>header1.r20 @AL<<}{++added++}{>>header1.r21 @AL<<}", fmt: header1.r22 @AL}
 footers:
   default:
     id: footer1

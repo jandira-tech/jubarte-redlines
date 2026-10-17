@@ -28,11 +28,8 @@ pub(super) struct RunFormat {
     pub underline: bool,
     pub superscript: bool,
     pub subscript: bool,
-    /// `<mark>`: a highlight of `mark_color` (yellow by default).
+    /// `<mark>`: a yellow highlight of its own.
     pub mark: bool,
-    /// `w:highlight`'s colour: `yellow` when `mark` is true and `mark_color`
-    /// is unset. `None` means "no highlight".
-    pub mark_color: Option<&'static str>,
     pub code: bool,
     pub link: bool,
 }
@@ -49,9 +46,6 @@ pub(super) enum Content {
     NoteReference(u32),
     /// A picture, by its index in [`Document::pictures`].
     Picture(usize),
-    /// A drawing no image syntax carries, by its index in
-    /// [`Document::drawings`]: spliced back verbatim.
-    Drawing(usize),
     /// An equation's LaTeX: display math (`$$…$$`) or inline (`$…$`).
     Math {
         latex: String,
@@ -113,27 +107,8 @@ pub(super) struct Paragraph {
     /// The formatting changes its id line names (`fmt r10 @AL`).
     pub formats: Vec<FormatMark>,
     /// The marks its id line names that its text shows nothing of (`rev
-    /// r9 @AL`, `rev-del r10 @AL`): `true` for an insertion.
-    pub unshown: Vec<(bool, FormatMark)>,
-    /// The paragraph's number as its id line names it (`p1`), when it has
-    /// one: the header's `unplaced:` names paragraphs by it.
-    pub number: Option<usize>,
-    /// The text box the paragraph anchors, whose blocks the view prints
-    /// after its text with no id line of their own.
-    pub text_box: Option<TextBox>,
-}
-
-/// A minimal anchored text box: the change its anchor run carries, as the
-/// paragraph's `rev` clause names it, and the box's content, its runs
-/// carrying the changes the header's `unplaced:` names for the paragraph.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TextBox {
-    /// Whether the anchor's change inserts (`rev`) or deletes (`rev-del`).
-    pub inserted: bool,
-    /// The anchor run's mark: its id, author and date.
-    pub mark: FormatMark,
-    /// The box's content: paragraphs, runs, ends.
-    pub items: Vec<Item>,
+    /// r9 @AL`).
+    pub unshown: Vec<FormatMark>,
 }
 
 /// A formatting change, or a mark whose text the view does not show, as
@@ -164,8 +139,6 @@ pub(super) struct TableFormats {
     /// (`w:tcBorders`), the first group naming a cell giving its own.
     pub borders: Option<super::borders::Sides>,
     pub cell_borders: Vec<(super::view_notes::CellsAt, super::borders::Sides)>,
-    /// A row's own table borders (`w:tblPrEx/w:tblBorders`), by row.
-    pub row_borders: HashMap<usize, super::borders::Sides>,
 }
 
 /// A paragraph's `w:ind`, side by side, in twips.
@@ -287,12 +260,6 @@ pub(super) struct Document {
     /// Notes parts (`footnote`, `endnote`) to make though no note needs
     /// them: the header's `notes: {empty: [footnotes]}`.
     pub empty_notes: Vec<&'static str>,
-    /// The formatting changes on each notes part's separators, in order:
-    /// the header's `notes: {fmt: footnotes.r0 @AS; …}`.
-    pub note_formats: Vec<(&'static str, super::view_notes::Tag)>,
-    /// The tracked style changes the header's `style_changes:` names, by
-    /// holder (`Normal`, `docDefaults`): their ids, authors and dates.
-    pub style_changes: Vec<(String, Vec<FormatMark>)>,
     /// The style of every comment's paragraphs, when not CommentText: the
     /// header's `comments: …, style Normal`.
     pub comment_style: Option<String>,
@@ -311,15 +278,6 @@ pub(super) struct Document {
     /// change's mark (`{++{>>c1 re c0<<}text++}`).
     pub note_changes: HashMap<u32, (Change, bool)>,
     pub pictures: Vec<Picture>,
-    /// `drawing:` payloads to splice back, in the order the runs name them.
-    pub drawings: Vec<super::from_docx::drawing::Drawing>,
-    /// The view's drawing reference definitions, by name: a `dN` maps to
-    /// its `drawing:` destination, an `imageK` to its `data:` one. The
-    /// stories' `![…][dN]` and `![…][imageK]` tokens resolve through them.
-    pub drawing_defs: HashMap<String, String>,
-    /// The view's `<!-- NAME drawing:… -->` backing comments, by name: the
-    /// payload a `data:` definition's bytes fill, or an `svg` fence's.
-    pub drawing_backings: HashMap<String, String>,
     pub lists: Vec<List>,
     pub styles: HashSet<&'static str>,
     /// Styles id lines name (`<!-- p0 TitlePage -->`), by id.
@@ -328,18 +286,11 @@ pub(super) struct Document {
     pub author: Option<String>,
     /// `authors: document_owner:`, the core properties' owner.
     pub owner: Option<super::view_notes::Owner>,
-    /// The legend's `table:` style and its border, eighths of a point,
-    /// with the name the view gives the style when it differs from the
-    /// writer's own (`named …`).
-    pub table_style: Option<(String, Option<u32>, Option<String>)>,
-    /// The `tables:` legend's entries, keyed by style id: a document
-    /// whose tables differ, each with the border and the name its entry
-    /// states.
-    pub table_legend: BTreeMap<String, (Option<u32>, Option<String>)>,
+    /// The legend's `table:` style and its border, eighths of a point.
+    pub table_style: Option<(String, Option<u32>)>,
     /// Table styles Word has no definition of here, each with the border
-    /// the legend gives it and the name the view says, when it does:
-    /// defined by name.
-    pub table_styles: BTreeMap<String, (Option<u32>, Option<String>)>,
+    /// the legend gives it: defined by name.
+    pub table_styles: BTreeMap<String, Option<u32>>,
     /// The `track_changes:` key: Word's Track Changes switch.
     pub tracking: Option<bool>,
     pub warnings: Vec<String>,
@@ -348,10 +299,6 @@ pub(super) struct Document {
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
     /// order (`{>>r5+6 @AB<<}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
-    /// A change that was another change's only content, by the serial of
-    /// the note's own change: the change it sits inside (`{--x--}{>>r3 @BO
-    /// on r1 @AL<<}` is a deletion inside an insertion), innermost first.
-    pub wraps: HashMap<u32, Change>,
     /// The date the last mark of a change takes, when its author's view
     /// dates them with a range (`2026-03-02..2026-03-04`).
     pub range_ends: HashMap<u32, String>,
@@ -456,10 +403,6 @@ pub(super) trait Relate {
     fn hyperlink(&mut self, url: &str) -> String;
     /// The relationship id of a picture from this story's part.
     fn picture(&mut self, index: usize) -> String;
-    /// The XML of drawing `index` written into the package beside this
-    /// story's part: its relationships and dependent parts too. `None`
-    /// when the payload's parts could not be written.
-    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String>;
 }
 
 /// Numbers shared by every story of one document.
@@ -471,16 +414,10 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
-    /// Every revision `w:id` written so far: none is written twice by the
-    /// fresh counter, though one the view names twice (`r43+43`) is, as
-    /// Word's own files repeat it (a mark split around a `w:hyperlink`).
+    /// Every revision `w:id` written so far: none is written twice, not
+    /// even one the view names twice (`r43+43`), which Word's own files
+    /// never repeat (see `validate::ring1`).
     pub used_revisions: HashSet<u32>,
-    /// Each open paragraph's mark whose numbered change its runs share:
-    /// its kind, its change and where in the output its `w:rPr` takes it.
-    /// The mark is written at the paragraph's end, so its id follows the
-    /// runs' as the view reads them (`{--A\n\nB--}{>>r8+9+10<<}`: `A` 8,
-    /// the mark 9, `B` 10), though Word's `w:pPr` comes first.
-    pub pending_marks: Vec<Option<(Kind, Option<u32>, usize)>>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
     /// `w:numId` of each label use, by its index in `Document::label_uses`.
@@ -516,8 +453,9 @@ impl Context<'_> {
             let at = self.cursors.entry(serial).or_insert(0);
             if let Some(&id) = ids.get(*at) {
                 *at += 1;
-                self.used_revisions.insert(id);
-                return id;
+                if self.used_revisions.insert(id) {
+                    return id;
+                }
             }
         }
         // Fresh ids stay within the `int` Word reads, past the view's own.
@@ -594,17 +532,12 @@ pub(super) fn story(
     let mut out = String::new();
     // The open w:ins / w:del and the change it holds.
     let mut open: Option<Change> = None;
-    // The marks a nested change's mark sits inside, outermost first: the
-    // reader splits a change around one it holds (`{++a++}…{--x--}…{++b++}`,
-    // the pieces naming the same `rN`), and the writer nests the marks
-    // again (`<w:ins>a<w:del>x</w:del>b</w:ins>`).
-    let mut marks: Vec<Change> = Vec::new();
     let mut first_paragraph = note.is_some();
     let mut columns: Vec<Option<&'static str>> = Vec::new();
     // The bookmark the open paragraph ends.
     let mut bookmark: Option<u32> = None;
     // The marks the open paragraph's text shows nothing of.
-    let mut unshown: Vec<(bool, FormatMark)> = Vec::new();
+    let mut unshown: Vec<FormatMark> = Vec::new();
     // Its formatting changes past the mark's and its own: its runs'.
     let mut run_formats: Vec<FormatMark> = Vec::new();
     // The open tables' formatting changes, and the row and cell each is in.
@@ -612,7 +545,7 @@ pub(super) fn story(
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
     // (`{--plain _italic_--}{>>r43+44 @AL<<}` is two marks).
-    let mut natural = natural_marks(context.document, items);
+    let mut natural = natural_marks(items, &context.document.note_changes);
     // The open row's own change: its mark carries the text the view tags
     // with the row's id alone.
     let mut row_change: Option<Change> = None;
@@ -648,19 +581,11 @@ pub(super) fn story(
         // side, its deleted side next, ends inside the insertion, as Word
         // writes it: between the two it would part them.
         let field = match item {
-            Item::LinkStart(..) => field_link(&items[at + 1..], context.document),
+            Item::LinkStart(..) => field_link(&items[at + 1..]),
             Item::LinkEnd => fields.last().copied().flatten(),
             _ => None,
         };
         let in_note = note_change(&context.document.note_changes, item);
-        // A range or bookmark with no run left before the paragraph ends
-        // sits inside the mark a suspended change holds, after the inner
-        // ones end: only the open mark closes, the suspended ones wait.
-        let inner_only = matches!(
-            item,
-            Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
-        ) && !marks.is_empty()
-            && !runs_ahead(&items[at + 1..]);
         let inside = match item {
             Item::Run(_) => true,
             _ if in_note.is_some() => true,
@@ -672,41 +597,21 @@ pub(super) fn story(
             | Item::RangeStart(_)
             | Item::RangeEnd(_)
             | Item::CommentReference(_) => {
-                fields.last().copied().flatten().is_some()
-                    || continues(context.document, &items[at + 1..], open, &marks)
-                    || inner_only
+                fields.last().copied().flatten().is_some() || continues(&items[at + 1..], open)
             }
             _ => false,
         };
         if !inside {
-            close_marks(context, &natural, &mut out, &mut open, &mut marks);
-        } else if inner_only {
             close_mark(context, &natural, &mut out, &mut open);
         }
         if let Some(change) = in_note
             && open != Some(change)
         {
-            if let Some(depth) = marks
-                .iter()
-                .rposition(|outer| continues_change(context.document, change, *outer))
-            {
-                // The note sits in a piece of a change a nested one
-                // suspended: the marks above that piece's change close,
-                // and the note's items and the piece's runs go inside its
-                // still-open mark, which the piece's runs then resume.
-                close_mark(context, &natural, &mut out, &mut open);
-                while marks.len() > depth + 1 {
-                    open = marks.pop();
-                    close_mark(context, &natural, &mut out, &mut open);
-                }
-                open = None;
-            } else {
-                close_marks(context, &natural, &mut out, &mut open, &mut marks);
-                spend(&mut natural, change.1);
-                let wrap = context.revision(change.0, Some(change.1));
-                let _ = write!(out, "<{wrap}>");
-                open = Some(change);
-            }
+            close_mark(context, &natural, &mut out, &mut open);
+            spend(&mut natural, change.1);
+            let wrap = context.revision(change.0, Some(change.1));
+            let _ = write!(out, "<{wrap}>");
+            open = Some(change);
         }
         match item {
             Item::Bookmark(name) => {
@@ -721,15 +626,6 @@ pub(super) fn story(
             Item::Paragraph(paragraph) => {
                 out.push_str("<w:p>");
                 paragraph_properties(context, paragraph, &mut out);
-                // The text box the paragraph anchors leads its content,
-                // its change the first the reader pairs: `rev r12` before
-                // the deletion after it, as Word writes it.
-                if let Some(boxed) = &paragraph.text_box {
-                    let name = if boxed.inserted { "w:ins" } else { "w:del" };
-                    let wrap = context.format_mark(name, &boxed.mark);
-                    let drawing = text_box_xml(context, boxed, relate);
-                    let _ = write!(out, "<{wrap}><w:r>{drawing}</w:r></{name}>");
-                }
                 unshown.clone_from(&paragraph.unshown);
                 run_formats = paragraph.formats.get(2..).unwrap_or_default().to_vec();
                 if let Some(name) = &paragraph.bookmark {
@@ -805,16 +701,10 @@ pub(super) fn story(
                         "<w:r><w:rPr><{change}><w:rPr/></w:rPrChange></w:rPr></w:r>"
                     );
                 }
-                // An empty mark: Word keeps it, and shows no text. Its kind is
-                // the clause's (`rev-del` is a deletion).
-                for (inserted, mark) in std::mem::take(&mut unshown) {
-                    let name = if inserted { "w:ins" } else { "w:del" };
-                    let mark = context.format_mark(name, &mark);
+                // An empty insertion: Word keeps the mark, and shows no text.
+                for mark in std::mem::take(&mut unshown) {
+                    let mark = context.format_mark("w:ins", &mark);
                     let _ = write!(out, "<{mark}/>");
-                }
-                if let Some((kind, by, at)) = context.pending_marks.pop().flatten() {
-                    let mark = context.revision(kind, by);
-                    out.insert_str(at, &format!("<{mark}/>"));
                 }
                 out.push_str("</w:p>");
             }
@@ -824,7 +714,7 @@ pub(super) fn story(
                 ..
             }) => {
                 // Word marks a change inside the math, run by run.
-                close_marks(context, &natural, &mut out, &mut open, &mut marks);
+                close_mark(context, &natural, &mut out, &mut open);
                 // A change inside the math has no serial: the document's
                 // author and date.
                 let change = *change;
@@ -872,88 +762,13 @@ pub(super) fn story(
                 if carried {
                     close_mark(context, &natural, &mut out, &mut open);
                 } else if open != run.change {
-                    if let Some(change) = run.change
-                        && let Some(depth) = marks
-                            .iter()
-                            .rposition(|outer| continues_change(context.document, change, *outer))
-                    {
-                        // A piece of a change a nested one suspended resumes
-                        // it: its runs sit in its still-open mark, which ends
-                        // after them. The marks between suspend too.
-                        close_mark(context, &natural, &mut out, &mut open);
-                        while marks.len() > depth + 1 {
-                            open = marks.pop();
-                            close_mark(context, &natural, &mut out, &mut open);
-                        }
-                        open = marks.pop();
-                        write_run(context, run, relate, &mut out);
-                        // The resumed mark ends here unless the change it
-                        // holds another of resumes later: a piece of it is
-                        // still ahead, past the inner change, and its mark
-                        // stays open around that one as around this piece.
-                        if open.is_none_or(|outer| {
-                            !resumes_later(context.document, &items[at + 1..], outer)
-                        }) {
-                            close_mark(context, &natural, &mut out, &mut open);
-                        }
-                        continue;
-                    }
-                    // A change of the other kind the open mark resumes after
-                    // sits inside it; the open one stays open around it.
-                    if let (Some(outer), Some(change)) = (open, run.change)
-                        && change.0 != outer.0
-                        && resumes_after(context.document, &items[at + 1..], change, outer)
-                    {
-                        marks.push(outer);
-                        spend(&mut natural, change.1);
-                        let wrap = context.revision(change.0, Some(change.1));
+                    close_mark(context, &natural, &mut out, &mut open);
+                    if let Some((kind, by)) = run.change {
+                        spend(&mut natural, by);
+                        let wrap = context.revision(kind, Some(by));
                         let _ = write!(out, "<{wrap}>");
-                        open = Some(change);
-                    } else if let Some(change) = run.change
-                        && let Some(&(kind, by)) = context.document.wraps.get(&change.1)
-                        && kind != change.0
-                        && marks
-                            .iter()
-                            .any(|outer| continues_change(context.document, (kind, by), *outer))
-                    {
-                        // A change whose note names, after ` on `, a change
-                        // whose mark sits suspended in `marks` opens inside
-                        // it: the outer holds several changes, and its mark
-                        // stays open around each of them.
-                        close_mark(context, &natural, &mut out, &mut open);
-                        spend(&mut natural, change.1);
-                        let wrap = context.revision(change.0, Some(change.1));
-                        let _ = write!(out, "<{wrap}>");
-                        open = run.change;
-                    } else {
-                        close_marks(context, &natural, &mut out, &mut open, &mut marks);
-                        // A change that was another's only content sits
-                        // inside it again: the note names it after ` on `
-                        // (`{--x--}{>>r3 @BO on r1 @AL<<}`), so the outer
-                        // mark wraps the inner one, with nothing else in
-                        // it. Deeper notes chain (`r5 @CD on r3 @BO on
-                        // r1 @AL`), outermost last.
-                        if let Some((_, by)) = run.change {
-                            let mut chain = Vec::new();
-                            let mut at = by;
-                            while let Some(&outer) = context.document.wraps.get(&at) {
-                                chain.push(outer);
-                                at = outer.1;
-                            }
-                            for outer in chain.iter().rev() {
-                                spend(&mut natural, outer.1);
-                                let wrap = context.revision(outer.0, Some(outer.1));
-                                let _ = write!(out, "<{wrap}>");
-                                marks.push(*outer);
-                            }
-                        }
-                        if let Some((kind, by)) = run.change {
-                            spend(&mut natural, by);
-                            let wrap = context.revision(kind, Some(by));
-                            let _ = write!(out, "<{wrap}>");
-                        }
-                        open = run.change;
                     }
+                    open = run.change;
                 } else if let Some((kind, by)) = run.change
                     && context.ids_left(by) > natural.get(&by).copied().unwrap_or(0)
                     // A field's begin and end stay in one mark.
@@ -1123,13 +938,6 @@ pub(super) fn story(
                 let (format, own) = tables
                     .last_mut()
                     .map(|(formats, row, cell)| {
-                        if let Some(sides) = formats.row_borders.get(row) {
-                            let _ = write!(
-                                out,
-                                "<w:tblPrEx><w:tblBorders>{}</w:tblBorders></w:tblPrEx>",
-                                super::borders::xml(sides)
-                            );
-                        }
                         let found = (
                             formats.rows.get(row).cloned(),
                             formats.row_marks.get(row).cloned(),
@@ -1270,33 +1078,20 @@ pub(super) fn story(
             }
         }
     }
-    close_marks(context, &natural, &mut out, &mut open, &mut marks);
+    close_mark(context, &natural, &mut out, &mut open);
     out
 }
 
 /// Whether the next run after a comment's marks continues the open change.
 /// The change every run of the link `rest` starts with carries, when they
-/// all carry one and the view names it one id: the link is then a
-/// HYPERLINK field inside that change's mark. With two ids named, Word
-/// parts the mark around the link instead (`w:hyperlink` holding the
-/// second mark), which a field cannot do.
-fn field_link(rest: &[Item], document: &Document) -> Option<Change> {
+/// all carry one: the link is then a HYPERLINK field inside that change's
+/// mark, as Word writes a link it tracks (a `w:hyperlink` would part the
+/// mark in two, and the change read back with two ids).
+fn field_link(rest: &[Item]) -> Option<Change> {
     let mut change = None;
     for item in rest {
         match item {
-            Item::LinkEnd => {
-                // A link whose change names one id each carrier — `r213`,
-                // `r213+361` — is a field inside the change's mark, as Word
-                // writes it. One that names the same id twice (`r43+43`) is
-                // Word's other shape: the mark split around a
-                // `w:hyperlink`, each part its own carrier.
-                return change.filter(|(_, by)| {
-                    document
-                        .revision_ids
-                        .get(by)
-                        .is_none_or(|ids| ids.len() == HashSet::<&u32>::from_iter(ids).len())
-                });
-            }
+            Item::LinkEnd => return change,
             Item::Run(Run {
                 content: Content::Math { .. },
                 ..
@@ -1330,121 +1125,20 @@ fn note_change(notes: &HashMap<u32, (Change, bool)>, item: &Item) -> Option<Chan
     }
 }
 
-/// Whether the next real item in `rest` is a run still inside a mark:
-/// `open`'s own, one a nested change suspended (`marks`), whose other
-/// pieces name the same ids, or a change `open` resumes after, which the
-/// open mark then holds.
-fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[Change]) -> bool {
-    let Some(at) = rest.iter().position(|item| {
-        !matches!(
-            item,
-            Item::Bookmark(_) | Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
-        )
-    }) else {
-        return false;
-    };
-    let Some(Item::Run(run)) = rest.get(at) else {
-        return false;
-    };
-    let Some(change) = run.change else {
-        return false;
-    };
-    if Some(change) == open
-        || open
-            .into_iter()
-            .chain(marks.iter().copied())
-            .any(|outer| continues_change(document, change, outer))
-        // Or it names, after ` on `, a change whose mark sits suspended:
-        // it opens inside that one, as a piece of it does.
-        || marks.iter().any(|outer| {
-            document
-                .wraps
-                .get(&change.1)
-                .is_some_and(|&wrap| continues_change(document, wrap, *outer))
-        })
-    {
-        return true;
-    }
-    open.is_some_and(|outer| {
-        change.0 != outer.0 && resumes_after(document, &rest[at + 1..], change, outer)
-    })
-}
-
-/// Whether `inner` is another piece of `outer`'s change: the view names
-/// its `rN` ids (`{++a++}{>>r1 @AL<<}…{++b++}{>>r1 @AL<<}`), which `outer`
-/// shares. Word marks a nested change inside the mark it splits, so the
-/// pieces are the only same-kind changes that can name spent ids.
-fn continues_change(document: &Document, inner: Change, outer: Change) -> bool {
-    inner.0 == outer.0
-        && inner.1 != outer.1
-        && document.revision_ids.get(&inner.1).is_some_and(|inner| {
-            !inner.is_empty()
-                && document
-                    .revision_ids
-                    .get(&outer.1)
-                    .is_some_and(|outer| inner.iter().all(|id| outer.contains(id)))
-        })
-}
-
-/// Whether `outer`'s change has a piece past `inner`'s group: then `inner`
-/// sits inside `outer`'s mark, which stays open around it. Only a split
-/// change's pieces name a suspended mark's ids.
-fn resumes_after(document: &Document, rest: &[Item], inner: Change, outer: Change) -> bool {
-    // The marks open inside `outer`, innermost last: `inner`, then any it
-    // in turn holds.
-    let mut nested = vec![inner];
-    for item in rest {
-        match item {
-            Item::Bookmark(_)
-            | Item::RangeStart(_)
-            | Item::RangeEnd(_)
-            | Item::CommentReference(_)
-            | Item::LinkStart(..)
-            | Item::LinkEnd => {}
-            Item::Run(Run {
-                content: Content::Math { .. },
-                ..
-            }) => return false,
-            Item::Run(run) => match run.change {
-                Some(change) if continues_change(document, change, outer) => return true,
-                Some(change) => {
-                    match nested
-                        .iter()
-                        .rposition(|n| continues_change(document, change, *n))
-                    {
-                        Some(at) => nested.truncate(at + 1),
-                        None => nested.push(change),
-                    }
-                }
-                None => return false,
-            },
-            _ => return false,
-        }
-    }
-    false
-}
-
-/// Whether any run is left in `rest`.
-fn runs_ahead(rest: &[Item]) -> bool {
-    rest.iter().any(|item| matches!(item, Item::Run(..)))
-}
-
-/// Whether `outer`'s change holds another change ahead in `rest`: a run
-/// of a piece of it is still to come, past the nested ones between, so
-/// its mark stays open around them as around the piece it just resumed.
-fn resumes_later(document: &Document, rest: &[Item], outer: Change) -> bool {
-    rest.iter().any(|item| match item {
-        Item::Bookmark(_)
-        | Item::RangeStart(_)
-        | Item::RangeEnd(_)
-        | Item::CommentReference(_)
-        | Item::LinkStart(..)
-        | Item::LinkEnd => false,
-        Item::Run(run) => run
-            .change
-            .is_some_and(|change| continues_change(document, change, outer)),
-        _ => false,
-    })
+fn continues(rest: &[Item], open: Option<Change>) -> bool {
+    open.is_some()
+        && rest
+            .iter()
+            .find(|item| {
+                !matches!(
+                    item,
+                    Item::Bookmark(_)
+                        | Item::RangeStart(_)
+                        | Item::RangeEnd(_)
+                        | Item::CommentReference(_)
+                )
+            })
+            .is_some_and(|item| matches!(item, Item::Run(run) if run.change == open))
 }
 
 /// Ends the open mark. A change the view gives more ids than it has pieces
@@ -1501,55 +1195,24 @@ fn close_mark(
         Kind::Delete => "</w:del>",
     });
     if natural.get(&by).copied().unwrap_or(0) == 0 {
-        // A paragraph mark written at its paragraph's end takes its own.
-        let deferred = context
-            .pending_marks
-            .iter()
-            .flatten()
-            .filter(|(_, mark_by, _)| *mark_by == Some(by))
-            .count();
-        for _ in 0..context.ids_left(by).saturating_sub(deferred) {
+        for _ in 0..context.ids_left(by) {
             let mark = context.revision(kind, Some(by));
             let _ = write!(out, "<{mark}/>");
         }
     }
 }
 
-/// [`close_mark`] for the open mark and every mark a nested change's mark
-/// suspended, innermost first.
-fn close_marks(
-    context: &mut Context<'_>,
-    natural: &HashMap<u32, usize>,
-    out: &mut String,
-    open: &mut Option<Change>,
-    marks: &mut Vec<Change>,
-) {
-    close_mark(context, natural, out, open);
-    while let Some(mark) = marks.pop() {
-        *open = Some(mark);
-        close_mark(context, natural, out, open);
-    }
-}
-
 /// The marks each numbered change opens in `items` when no change splits:
 /// a run that does not continue the open mark, a paragraph mark, a row.
-fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
-    let notes = &document.note_changes;
+fn natural_marks(items: &[Item], notes: &HashMap<u32, (Change, bool)>) -> HashMap<u32, usize> {
     let mut marks = HashMap::new();
     let mut open: Option<Change> = None;
     let mut fields: Vec<Option<Change>> = Vec::new();
     for (at, item) in items.iter().enumerate() {
-        if let Some(change) = note_change(notes, item) {
-            if open != Some(change) {
-                *marks.entry(change.1).or_default() += 1;
-            }
-            open = Some(change);
-            continue;
-        }
         match item {
             Item::Bookmark(_) => {}
             Item::LinkStart(..) => {
-                let field = field_link(&items[at + 1..], document);
+                let field = field_link(&items[at + 1..]);
                 fields.push(field);
                 match field {
                     Some(change) => {
@@ -1566,8 +1229,14 @@ fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
                     open = None;
                 }
             }
+            _ if let Some(change) = note_change(notes, item) => {
+                if open != Some(change) {
+                    *marks.entry(change.1).or_default() += 1;
+                }
+                open = Some(change);
+            }
             Item::RangeStart(_) | Item::RangeEnd(_) | Item::CommentReference(_)
-                if continues(document, &items[at + 1..], open, &[]) => {}
+                if continues(&items[at + 1..], open) => {}
             Item::Run(Run {
                 content: Content::Math { .. },
                 ..
@@ -1756,24 +1425,16 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         [first, second, ..] => (Some(first), Some(second)),
     };
     let mut mark_properties = String::new();
-    let mut deferred = None;
     if let Some(kind) = paragraph.mark {
-        if paragraph.mark_by.is_some_and(|by| context.ids_left(by) > 0) {
-            deferred = Some(kind);
-        } else {
-            let mark = context.revision(kind, paragraph.mark_by);
-            let _ = write!(mark_properties, "<{mark}/>");
-        }
+        let mark = context.revision(kind, paragraph.mark_by);
+        let _ = write!(mark_properties, "<{mark}/>");
     }
     if let Some(format) = mark_format {
         let change = context.format_mark("w:rPrChange", format);
         let _ = write!(mark_properties, "<{change}><w:rPr/></w:rPrChange>");
     }
-    let mut mark_at = None;
-    if !mark_properties.is_empty() || deferred.is_some() {
-        properties.push_str("<w:rPr>");
-        mark_at = deferred.map(|kind| (kind, properties.len()));
-        let _ = write!(properties, "{mark_properties}</w:rPr>");
+    if !mark_properties.is_empty() {
+        let _ = write!(properties, "<w:rPr>{mark_properties}</w:rPr>");
     }
     if paragraph.section_break {
         context.sections_ended += 1;
@@ -1785,13 +1446,9 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         let change = context.format_mark("w:pPrChange", format);
         let _ = write!(properties, "<{change}><w:pPr>{base}</w:pPr></w:pPrChange>");
     }
-    let start = out.len() + "<w:pPr>".len();
     if !properties.is_empty() {
         let _ = write!(out, "<w:pPr>{properties}</w:pPr>");
     }
-    context
-        .pending_marks
-        .push(mark_at.map(|(kind, at)| (kind, paragraph.mark_by, start + at)));
 }
 
 /// Whether the note a reference at `position` (1-based) points to is an
@@ -1833,8 +1490,7 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
         out.push_str("<w:strike/>");
     }
     if format.mark || context.highlighted(run) {
-        let colour = format.mark_color.unwrap_or("yellow");
-        out.push_str(&format!("<w:highlight w:val=\"{colour}\"/>"));
+        out.push_str("<w:highlight w:val=\"yellow\"/>");
     }
     if format.underline {
         out.push_str("<w:u w:val=\"single\"/>");
@@ -1902,94 +1558,8 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
                 drawing_xml(picture, &id, drawing, out);
             }
         }
-        Content::Drawing(index) => {
-            let wraps_run = context
-                .document
-                .drawings
-                .get(*index)
-                .is_some_and(|drawing| drawing.wraps_run());
-            if let Some(drawing) = relate.drawing(*index, &mut context.next_drawing) {
-                if wraps_run {
-                    out.push_str(&drawing);
-                } else {
-                    // Content a run cannot hold sits where a `w:r` may:
-                    // close this run, splice, reopen one with its
-                    // properties (already written, so they are repeated).
-                    let _ = write!(out, "</w:r>{drawing}<w:r>{properties}");
-                }
-            }
-        }
     }
     out.push_str("</w:r>");
-}
-
-/// The `w:drawing` of a minimal anchored text box `boxed`: a rectangle the
-/// box's content fills. The reader reads the Choice branch only, so none
-/// is written; the caller wraps the run it returns in the change the
-/// paragraph's `rev` clause names.
-fn text_box_xml(context: &mut Context<'_>, boxed: &TextBox, relate: &mut dyn Relate) -> String {
-    let id = context.next_drawing;
-    context.next_drawing += 1;
-    let mut content = String::new();
-    box_xml(context, &boxed.items, relate, &mut content);
-    let mut out = String::new();
-    let anchor = r#"<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id=""#;
-    let graphic = r#"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>"#;
-    let body = r#"</w:txbxContent></wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"><a:spAutoFit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
-    out.push_str("<w:drawing>");
-    let _ = write!(out, "{anchor}{id}\" name=\"Text Box {id}\"{graphic}");
-    out.push_str(&content);
-    out.push_str(body);
-    out
-}
-
-/// A text box's content: paragraphs and runs, each change its own mark.
-/// The view prints the box as blocks with no id lines, so no paragraph of
-/// it is stamped and its changes read back as the header's `unplaced:`.
-fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, out: &mut String) {
-    let mut open: Option<Change> = None;
-    for item in items {
-        match item {
-            Item::Paragraph(paragraph) => {
-                out.push_str("<w:p>");
-                paragraph_properties(context, paragraph, out);
-            }
-            Item::Run(run) => {
-                if open != run.change {
-                    if let Some((kind, _)) = open.take() {
-                        out.push_str(close_tag(kind));
-                    }
-                    if let Some(change @ (kind, _)) = run.change {
-                        let wrap = context.revision(kind, Some(change.1));
-                        let _ = write!(out, "<{wrap}>");
-                        open = Some(change);
-                    }
-                }
-                write_run(context, run, relate, out);
-            }
-            Item::ParagraphEnd => {
-                // The mark `paragraph_properties` deferred until the
-                // paragraph's runs had theirs, at the place it kept.
-                if let Some((kind, by, at)) = context.pending_marks.pop().flatten() {
-                    let mark = context.revision(kind, by);
-                    out.insert_str(at, &format!("<{mark}/>"));
-                }
-                if let Some((kind, _)) = open.take() {
-                    out.push_str(close_tag(kind));
-                }
-                out.push_str("</w:p>");
-            }
-            _ => {}
-        }
-    }
-}
-
-/// The closing tag of a mark of `kind`.
-fn close_tag(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Insert => "</w:ins>",
-        Kind::Delete => "</w:del>",
-    }
 }
 
 /// A `w:drawing` holding `picture` inline, embedded through `rel`, with
@@ -2379,14 +1949,6 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
              <w:rPr><w:sz w:val=\"20\"/><w:szCs w:val=\"20\"/></w:rPr>",
         ),
         "VerbatimChar" => character("VerbatimChar", "Verbatim Char", &format!("<w:rPr>{mono}</w:rPr>")),
-        // Word's own line-number style: a character style, named in the
-        // lower case Word writes it (a footer paragraph can carry it,
-        // ids-tables, #528).
-        "LineNumber" => character(
-            "LineNumber",
-            "line number",
-            "<w:uiPriority w:val=\"99\"/><w:semiHidden/><w:unhideWhenUsed/>",
-        ),
         "Hyperlink" => character(
             "Hyperlink",
             "Hyperlink",

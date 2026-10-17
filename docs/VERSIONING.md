@@ -145,13 +145,7 @@ shell needs a store build that embeds the new engine.
    Read the drift as semver: a new field on a public struct that is not
    `#[non_exhaustive]`, or a changed public fn signature, breaks struct
    literals and callers, so it needs a **minor** bump before 1.0 (0.10.1
-   shipped four such fields as a patch). The same holds for the wire
-   surface rustdoc cannot show: the id contract's schema-2 cutover —
-   paired `short_id`/`long_id` references replacing the `id`/`ref`/`at`
-   strings every JSON output emits today
-   (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-   not yet implemented) — breaks every JSON consumer and wants a minor
-   bump with a CHANGELOG Removed section.
+   shipped four such fields as a patch).
 
 ### Release evidence: `release_info/` (step 3 refuses a release without it)
 

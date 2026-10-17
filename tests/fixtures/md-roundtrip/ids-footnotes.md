@@ -320,4 +320,4 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- footnotes.p4 -->
 [^5]: Footnote one: this footnote is attached to the introductory paragraph.
 <!-- footnotes.p5 -->
-{--[^6]: Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r170 @AS<<} <!-- rev-del footnotes.r171 @AS; footnotes.r172 @AS -->
+{--[^6]: Footnote two: cross-reference target for extraction tools that map markers to notes.--}{>>r170 @AS<<} <!-- rev footnotes.r171 @AS; footnotes.r172 @AS -->

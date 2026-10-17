@@ -14,29 +14,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 > ([2026-10-02-provider-adoption-1-s01-s10.md](2026-10-02-provider-adoption-1-s01-s10.md))
 > for the verified facts, the gates and the license position. This plan
 > repeats only what it needs.
->
-> **Status (2026-10-17): all three tasks shipped, S12 and S11 with
-> corrections.** Task 1 (S12) landed through #273 `7a5adfc9`
-> (`c77e50fc`, `b9f1f92c`, `3b682cf8`, `d48d07e5`) as `input_limits`
-> overrides — `WmlComparerSettings.input_limits`, a Python
-> `input_limits` dict, WASM `input_limits_json` — **not** the
-> `Admission` enum, `--lenient` flag or `lenient=True` kwarg the plan
-> wrote (there is no lenient mode; budgets are raised per-key). The
-> every-entry-point test is `tests/input_admission.rs`. Task 2 (S11)
-> landed #290 `610ff9e4` plus #300 `be529171`; the CLI command was later
-> renamed **`visual-diff`** (`909e8f0d`; `diff-render` kept as an alias
-> with a note), and the npm CLI refuses `--pages`/`--dpi` on `convert`
-> and `diff` (`d7e92121`). Task 3 (S13) shipped per its own status note
-> (#285 `d24e2f6`, follow-ups #312 `e65d9da5`).
->
-> **ID spelling note:** the snippets below have been updated to current
-> spellings (`pN`, `rN`, `story.pN`, `ccN`/`pN.ccK`, `<!-- pN -->` agent
-> view); the plan was written against the retired `body`-prefixed
-> grammar. The v3 short/long-ID contract
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> docs in `4612a155`) is **not implemented on any branch**: when it
-> lands, JSON document references become paired `short_id`/`long_id`
-> instead of today's `id`/`ref` fields.
 
 **Goal:** Admit untrusted input on every entry point (S12), give agents a
 visual page diff and page-range rendering (S11), and append documents
@@ -63,7 +40,7 @@ and notes part builders.
 | Anthropic skill: "`find unpacked -type l -delete` # strip symlink entries — docx from external parties is untrusted" | an agent shell step, only on the edit path | `admit` on every entry point: unsafe part names, duplicates, encryption, zip budgets, XML depth, before anything inflates (`src/admission.rs` module docs); an `INPUT_LIMIT`/`UNSUPPORTED_PACKAGE` code instead of a crash or a hang |
 | Older Anthropic skill: `defusedxml` | XML bombs handled by a Python wrapper | `quick-xml` checked admission with a depth budget, in Rust, no DTD |
 | OpenAI Codex issue #38313: `render_docx.py` "cannot render a requested page range ... no `--first-page` / `--last-page`", no timeout | full DOCX to PDF to all-page PNG for one citation | `convert --png --pages 3-5` rasterizes only those pages from one layout pass |
-| ChatGPT container `render_and_diff.py` (reported, not verified) and Z.ai's visual-judge subagent | pixel diff through LibreOffice | `jubarte visual-diff A B`: per-page `changed_ratio`, bounding box, overlay PNG, pages present on one side reported |
+| ChatGPT container `render_and_diff.py` (reported, not verified) and Z.ai's visual-judge subagent | pixel diff through LibreOffice | `jubarte diff-render A B`: per-page `changed_ratio`, bounding box, overlay PNG, pages present on one side reported |
 | ChatGPT container `merge_docx_append.py` (reported, not verified) | python-docx body copy, relationships and numbering by hand | `jubarte append A B -o OUT`: relationships, styles by (type, name), numbering, notes carried; output validated |
 
 **Why S12 is first.** The mapping document scores S12 highest
@@ -91,18 +68,6 @@ refuse no fixture the comparer accepts today.
 
 ### Task 1: S12, input admission on every entry point
 
-> **Status (2026-10-17): shipped with corrections** via #273 `7a5adfc9`
-> (`c77e50fc`, `b9f1f92c`, `3b682cf8`, `d48d07e5`). Admission does sit on
-> every entry point (`admission::admit` on compare, revisions, changes,
-> convert, markdown, inspect/edit; `debug` keeps its bounded, report-only
-> mode), but the opt-out mechanism differs from this design: there is no
-> `Admission` enum, no `--lenient` and no `lenient=True`. Callers override
-> budgets per key through `WmlComparerSettings::input_limits`
-> (`InputLimits::compare()` is the compare default), Python
-> `input_limits={...}`, WASM `input_limits_json`. The test file shipped as
-> `tests/input_admission.rs` plus a corpus sweep. Treat the
-> `Admission`/`Lenient` code below as the as-designed sketch, not the API.
-
 **Files:**
 - Modify: `src/admission.rs` (`InputLimits::unbounded()`, `Admission` policy enum, `pub fn refusal_code(err: &dyn std::error::Error) -> Option<&'static str>` helper for bindings)
 - Modify: `src/comparer/mod.rs:1165` (`WmlComparerSettings.admission: Admission`, `Default` = `Admission::Default`)
@@ -115,7 +80,7 @@ refuse no fixture the comparer accepts today.
 - Modify: `src/bin/jubarte.rs` (global `--lenient` flag: `Admission::Lenient`)
 - Modify: `jubarte-python/src/lib.rs` (`lenient: bool = False` keyword on `compare_documents`, `accept_revisions`, `reject_revisions`, `get_revisions_json`, `list_changes_json`, `accept_changes`, `reject_changes`, `docx_to_pdf`, `docx_to_png`, `render`, `markdown`, `diff_json`), `python/jubarte_redlines/document.py` (`Document.from_bytes(data, *, lenient=False)` stores the policy and passes it to every native call), `_native.pyi`
 - Modify: `jubarte-wasm/src/lib.rs` (optional trailing `limitsJson?: string` on `compareDocuments`, `acceptRevisions`, `rejectRevisions`, `getRevisions`, `listChanges`, `acceptChanges`, `rejectChanges`, `docxToPdf`; `"lenient"` or a JSON `InputLimits`)
-- Test: `tests/input_admission.rs` (shipped name; covers the every-entry-point sweep this plan split into `admission_everywhere.rs` + `admission_corpus_sweep.rs`), `jubarte-python/tests/test_admission.py`, `jubarte-wasm/npm-smoke.mjs`
+- Test: `tests/admission_everywhere.rs`, `tests/admission_corpus_sweep.rs`, `jubarte-python/tests/test_admission.py`, `jubarte-wasm/npm-smoke.mjs`
 - Docs: `README.md` security paragraph, skill "Dependencies", `CHANGELOG.md`, `docs/api/` note
 
 Error mapping, decided up front: `compare_documents` keeps returning
@@ -170,7 +135,7 @@ mode that lets them through.
 - [ ] **Step 1: Write the failing tests**
 
 ```rust
-// tests/input_admission.rs (shipped under this name)
+// tests/admission_everywhere.rs
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
 // SPDX-License-Identifier: AGPL-3.0-only
@@ -256,7 +221,7 @@ fn the_opt_out_lets_an_owned_package_through_but_never_an_encrypted_one() {
 ```
 
 ```rust
-// tests/input_admission.rs (the corpus-sweep half of that file)
+// tests/admission_corpus_sweep.rs
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
 // SPDX-License-Identifier: AGPL-3.0-only
@@ -307,11 +272,10 @@ fn every_fixture_and_corpus_document_is_admitted_by_the_defaults() {
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `cargo test --all-features --test input_admission`
-Expected: fails to compile on `Admission` (the shipped API is
-`input_limits` overrides instead); after the type exists,
-`every_entry_point_refuses_with_input_limit` fails on the first
-message (compare returns `Ok`). The corpus sweep passes or names
+Run: `cargo test --all-features --test admission_everywhere --test admission_corpus_sweep`
+Expected: `admission_everywhere` fails to compile on `Admission`; after the
+type exists, `every_entry_point_refuses_with_input_limit` fails on the first
+message (compare returns `Ok`). `admission_corpus_sweep` passes or names
 the documents that the defaults would refuse; if any, raise the budget in
 `InputLimits::default` (and the manifest test in `capabilities.rs`) rather
 than exempt the entry point, and record the document in the test.
@@ -405,7 +369,7 @@ you own." `docs/api/README.md`: note the additive fields on
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/admission.rs src/comparer/mod.rs src/document_comparer.rs src/changes.rs src/convert/mod.rs src/markdown src/debug.rs src/capabilities.rs src/bin/jubarte.rs tests/input_admission.rs tests/agent_contracts.rs jubarte-python jubarte-wasm README.md skills/jubarte-documents/SKILL.md CHANGELOG.md docs/api/README.md
+git add src/admission.rs src/comparer/mod.rs src/document_comparer.rs src/changes.rs src/convert/mod.rs src/markdown src/debug.rs src/capabilities.rs src/bin/jubarte.rs tests/admission_everywhere.rs tests/admission_corpus_sweep.rs tests/agent_contracts.rs jubarte-python jubarte-wasm README.md skills/jubarte-documents/SKILL.md CHANGELOG.md docs/api/README.md
 git commit -m "feat(admission): admit input on compare, revisions, changes, convert and markdown; typed opt-out, no process global"
 ```
 
@@ -423,21 +387,11 @@ and the honest note that the dependency tree is not audited for `unsafe`).
 
 ### Task 2: S11, visual page diff and page-range rendering
 
-> **Status (2026-10-17): shipped** (#290 `610ff9e4`; page ranges also in
-> #300 `be529171`). `jubarte::convert::diff_render`, `DiffOptions`,
-> `RenderRequest.pages`, `convert --pages`, Python `diff_render(a,b,dpi=)`
-> and `to_png(pages=)` all exist as designed. Two later renames:
-> `909e8f0d` renamed the CLI `diff-render` to **`visual-diff`** (old name
-> still accepted with a note), and `d7e92121` made the npm CLI refuse
-> `--pages`/`--dpi` on `convert`/`diff` while `read changed_pages` was
-> added. `150825cc` added `--pages` for PDF and page-named PNGs in the
-> Python CLI.
-
 **Files:**
 - Create: `src/convert/diff_render.rs`
 - Modify: `src/convert/mod.rs:334-420` (`RenderRequest.pages: Option<Vec<usize>>`, `render` rasterizes only those; `pub use diff_render::{diff_render, DiffOptions, PageDiff, RenderDiff}`)
 - Modify: `src/bin/jubarte.rs:195-246` (`Convert --pages SPEC`), `:136` (`Command::DiffRender`)
-- Modify: `jubarte-python/src/lib.rs` (`render(... pages=None)`, `diff_render_json`), `document.py` (`Document.to_png(pages=)`, `Document.render(pages=)`, `jubarte_redlines.diff_render(a, b, dpi=) -> RenderDiff`), `models.py` (`PageDiff`, `RenderDiff`), `_native.pyi`, `__main__.py` (`visual-diff`, `convert --pages`)
+- Modify: `jubarte-python/src/lib.rs` (`render(... pages=None)`, `diff_render_json`), `document.py` (`Document.to_png(pages=)`, `Document.render(pages=)`, `jubarte_redlines.diff_render(a, b, dpi=) -> RenderDiff`), `models.py` (`PageDiff`, `RenderDiff`), `_native.pyi`, `__main__.py` (`diff-render`, `convert --pages`)
 - Modify: `src/capabilities.rs` (`operations.diff_render`, `operations.page_ranges`)
 - Test: `tests/convert_diff_render.rs`, `tests/convert_page_ranges.rs`, `jubarte-python/tests/test_diff_render.py`
 - Docs: skill §3, CHANGELOG, `TODO.md` §7 cross-reference
@@ -552,9 +506,8 @@ fn an_out_of_range_page_is_an_error_naming_the_count() {
 
 - [ ] **Step 3: Implement** `RenderRequest.pages` (filter in the raster loop
 of `render`; `ConvertError::PageOutOfRange { requested, page_count }`),
-`diff_render` as designed, CLI `jubarte visual-diff A B [--dpi 100]
-[--out-dir D] [--json] [--no-overlay]` (shipped as `diff-render`, renamed
-in `909e8f0d`) writing `a-page-NN.png`,
+`diff_render` as designed, CLI `jubarte diff-render A B [--dpi 100]
+[--out-dir D] [--json] [--no-overlay]` writing `a-page-NN.png`,
 `b-page-NN.png`, `diff-page-NN.png` (only for changed pages) and
 `diff.json`; exit 0 equal, 5 differences (so a CI step can gate on it).
 `convert --pages 1-3,7` (parse with a small `fn parse_pages(spec) ->
@@ -563,7 +516,7 @@ to 0-based). Python and capabilities as listed.
 
 - [ ] **Step 4: Pass.** Also run `cargo test --all-features --test convert_docx_to_png` (unchanged behaviour without `pages`).
 
-- [ ] **Step 5: Docs**: skill §3 adds "`jubarte visual-diff before.docx
+- [ ] **Step 5: Docs**: skill §3 adds "`jubarte diff-render before.docx
 after.docx --out-dir diff` writes only the pages that changed with the
 change boxed, and `diff.json` with each page's `changed_ratio`; `jubarte
 convert file.docx --png --pages 3-5` renders three pages from one layout
@@ -574,7 +527,7 @@ pass." CHANGELOG. `TODO.md` §7: add "builds on `RenderRequest.pages`".
 **Evidence this task hands a provider:** `docs/adoption/render.md`: the
 Codex issue #38313 scenario (a 60-page document, one citation on page 41):
 `render_docx.py` time and files vs `jubarte convert --png --pages 41`;
-and a before/after edit with `visual-diff` output, the three PNGs and
+and a before/after edit with `diff-render` output, the three PNGs and
 `diff.json`, so the "render, inspect, iterate" gate of the ChatGPT skill
 has a one-command form.
 
@@ -716,7 +669,7 @@ fn numbering_from_both_sides_keeps_distinct_ids() {
 #[test]
 fn b_comments_are_dropped_with_a_warning() {
     let a = docx(&para("A."));
-    let b = jubarte::edit::apply_plan(&docx(&para("B.")), &jubarte::edit::EditPlan::from_json(r#"{"schema_version":1,"author":"X","operations":[{"kind":"comment","paragraph":"p0","text":"note"}]}"#).unwrap()).unwrap().clean;
+    let b = jubarte::edit::apply_plan(&docx(&para("B.")), &jubarte::edit::EditPlan::from_json(r#"{"schema_version":1,"author":"X","operations":[{"kind":"comment","paragraph":"body:p:0","text":"note"}]}"#).unwrap()).unwrap().clean;
     let out = append_documents(&a, &b, &AppendOptions::default()).unwrap();
     assert_word_valid_package(&out.docx);
     assert_eq!(out.warnings, vec!["COMMENTS_DROPPED: 1 comment of B was not carried".to_string()]);
@@ -748,8 +701,7 @@ real-looking documents (letter + exhibit with an image and a list), the
 python-docx body-copy recipe's result (dangling `rId`, duplicate `numId`)
 beside `jubarte append`'s, both run through `jubarte validate`.
 
-(2026-10-02: not written yet; still absent on 2026-10-17 — no
-`docs/adoption/append.md`. A provider's reviewer will compare with
+(2026-10-02: not written yet. A provider's reviewer will compare with
 docxcompose, which already maps styles, renumbers lists and copies images
 and footnotes, so the guide adds it as a third recipe; until `jubarte
 validate` is on `main`, the outputs go through `tools/validate-docx` and

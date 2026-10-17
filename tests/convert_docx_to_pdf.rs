@@ -20037,37 +20037,14 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
             if y >= 72.0 || font.is_empty() {
                 continue;
             }
-            if let Some(run) = tj_glyph_operand(op) {
-                out.push(run.to_string());
+            if let (Some(a), Some(b)) = (op.find('<'), op.find("> Tj")) {
+                out.push(op[a + 1..b].to_string());
             }
         }
     }
     out.sort();
     out.dedup();
     out
-}
-
-/// The hex operand of the glyph text `op` shows: the `<…>` of a
-/// `<…> Tj`. A label no face covers is painted as a `.notdef` per
-/// character under an `/ActualText` span,
-/// `/Span <</ActualText <FEFF0623>>> BDC <0000> Tj EMC`, so the operand
-/// is the last `<` before `> Tj`, never the span's own `<FEFF…>` (#568).
-fn tj_glyph_operand(op: &str) -> Option<&str> {
-    let b = op.find("> Tj")?;
-    let a = op[..b].rfind('<')?;
-    Some(&op[a + 1..b])
-}
-
-/// #568: without a face for the label's script (CI's runners have none
-/// for ㈩ or أ), the writer paints a `.notdef` per character under an
-/// `/ActualText` span, so the operand is still one glyph id per
-/// character; the span's own `<FEFF0623>` must not be read as the run.
-#[test]
-fn tj_glyph_operand_reads_the_tj_operand_not_the_actual_text_span() {
-    let boxed = "/Span <</ActualText <FEFF0623>>> BDC <0000> Tj EMC";
-    assert_eq!(tj_glyph_operand(boxed), Some("0000"));
-    assert_eq!(tj_glyph_operand("<0623> Tj"), Some("0623"));
-    assert_eq!(tj_glyph_operand("(11) Tj"), None);
 }
 
 #[test]
@@ -35891,15 +35868,6 @@ fn pdf_objects(pdf: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// The default options with comment notes asked for: no style writes one
-/// unless asked.
-fn with_notes() -> PdfOptions {
-    PdfOptions {
-        comment_notes: true,
-        ..PdfOptions::default()
-    }
-}
-
 fn pdf_notes(pdf: &[u8]) -> Vec<PdfNote> {
     let objs = pdf_objects(pdf);
     let mut notes = Vec::new();
@@ -36000,9 +35968,9 @@ fn shipped_docx_to_pdf_places_comment_on_range_page() {
         "fixture is two pages, got {}",
         pdf_page_count(&pdf)
     );
-    // Notes are written only when asked; Word mode paints balloons.
-    let ours =
-        docx_to_pdf_with(&comments_docx(body, &comments), with_notes()).expect("default mode");
+    // The sticky notes are the default style's; Word mode paints balloons.
+    let ours = docx_to_pdf_with(&comments_docx(body, &comments), PdfOptions::default())
+        .expect("default mode");
     let notes = pdf_notes(&ours);
     assert_eq!(
         notes.len(),
@@ -36067,7 +36035,8 @@ fn a_comment_anchored_inside_an_insertion_becomes_a_pdf_note() {
            </w:ins>\
            <w:r><w:t xml:space=\"preserve\"> seront analyses.</w:t></w:r></w:p><w:sectPr/>";
     let comments = comments_part("4", "Claude", "Added per policy");
-    let pdf = docx_to_pdf_with(&comments_docx(body, &comments), with_notes()).expect("convert");
+    let pdf =
+        docx_to_pdf_with(&comments_docx(body, &comments), PdfOptions::default()).expect("convert");
     let notes = pdf_notes(&pdf);
     assert_eq!(notes.len(), 1, "notes={notes:?}");
     assert!(notes[0].contents.contains("Added per policy"), "{notes:?}");
@@ -36080,9 +36049,10 @@ fn shipped_docx_to_pdf_migrates_word_based_comments() {
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert word_based comments");
     assert!(pdf.starts_with(b"%PDF"));
     assert!(pdf_page_count(&pdf) >= 1);
-    // Notes are written only when asked; Word mode paints balloons.
-    let notes =
-        pdf_notes(&docx_to_pdf_with(&sibling_bytes!(path), with_notes()).expect("default mode"));
+    // The sticky notes are the default style's; Word mode paints balloons.
+    let notes = pdf_notes(
+        &docx_to_pdf_with(&sibling_bytes!(path), PdfOptions::default()).expect("default mode"),
+    );
     assert!(
         notes.iter().any(|n| n.contents.contains("tachyon")),
         "comment body from comments.xml must land in a PDF note; notes={notes:?}"
@@ -46384,7 +46354,7 @@ fn word_draws_no_balloon_for_a_comment_whose_range_ends_between_paragraphs() {
         "a body-level range end brings no pane"
     );
     assert!(pdf_notes(&pdf).is_empty(), "and no balloon");
-    let ours = docx_to_pdf_with(&docx, with_notes()).expect("default mode");
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default mode");
     assert!(
         has_balloon_pane(&ours),
         "the default renderer keeps the comment"
@@ -47993,7 +47963,7 @@ fn a_comment_paints_a_balloon_in_the_markup_pane() {
     );
     // The default renderer keeps its sticky note beside the balloon, and
     // anchors it where the range ends, after "Before Commented words".
-    let ours = docx_to_pdf_with(&docx, with_notes()).expect("default mode");
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default mode");
     let notes = pdf_notes(&ours);
     assert_eq!(notes.len(), 1);
     assert!(
@@ -48013,7 +47983,7 @@ fn a_comment_followed_by_text_in_its_paragraph_keeps_its_note() {
          <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r>\
          <w:r><w:t xml:space=\"preserve\"> after.</w:t></w:r></w:p><w:sectPr/>";
     let docx = comments_docx(body, &comments_part("0", "Ada", "Kept"));
-    let ours = docx_to_pdf_with(&docx, with_notes()).expect("default mode");
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default mode");
     let notes = pdf_notes(&ours);
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contents.contains("Kept"), "{notes:?}");

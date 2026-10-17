@@ -76,9 +76,7 @@ pub struct ReadArgs {
     /// `<!-- page N of M -->` lines.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
-    /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
-    /// `p17-` / `-p3` spellings still parse, transitionally; the 17 October
-    /// 2026 contract retires them — spell the end, `p17-p20`).
+    /// Only these blocks: `p5`, `p4-p7`, `p17-`, `-p3`, `t0`, comma-separated.
     #[arg(
         short = 'p',
         long = "paragraphs",
@@ -358,7 +356,7 @@ fn hoist_quiet<T: AsRef<std::ffi::OsStr> + Clone>(
         help.extend_from_slice(&arguments[1 + flags..]);
         return help;
     }
-    if flags == 0 || task.is_none_or(|name| command.find_subcommand(name).is_none()) {
+    if flags == 0 || !task.is_some_and(|name| command.find_subcommand(name).is_some()) {
         return arguments.to_vec();
     }
     let mut hoisted = Vec::with_capacity(arguments.len());
@@ -384,17 +382,6 @@ fn fill_task_date(task: &mut Command) {
         Command::Diff { datetime: date, .. } => fill_date(date),
         _ => {}
     }
-}
-
-/// A path as the CLI's agent-facing outputs spell it: `/` between the
-/// parts on every OS (#568). The paths `parse_json` resolves and the
-/// view's `source:` line are identifiers an agent reads back, so their
-/// spelling must not change with the OS; human status lines (`wrote …`)
-/// keep the native path. A `\` inside a file name is replaced too: these
-/// outputs name files the CLI itself resolved or wrote, whose names hold
-/// none.
-pub fn slash_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 /// `--plan` without a value (D16) is `<FILE's dir>/<stem>_plan.json`.
@@ -881,8 +868,8 @@ pub enum Command {
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
     /// --resolve, --reply, --accept, --reject or --style (several -p per
     /// command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
-    /// bundle), then prints the changed paragraphs as the agent view (a
-    /// pure --accept/--reject prints the resolved changes; refusal: exit 3).
+    /// bundle), then prints the changed paragraphs as the agent view
+    /// (refusal: exit 3).
     #[command(after_help = "Examples:\n  \
         jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
         jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
@@ -940,12 +927,10 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
-        /// Accept revision r12 (with -p r12; r1+2 for several); prints the
-        /// resolved change (`accepted r1+2 in p3: "from" > "to"`).
+        /// Accept revision r12 (with -p r12; r1+2 for several).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         accept: Vec<bool>,
-        /// Reject revision r12 (with -p r12; r1+2 for several); prints the
-        /// resolved change (`rejected r0 in p3: "from" > "to"`).
+        /// Reject revision r12 (with -p r12; r1+2 for several).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         reject: Vec<bool>,
         /// Formatting for the anchored text: bold, italic, underline, strike,
@@ -2109,11 +2094,6 @@ pub struct RenderArgs {
     /// and the pages keep their own width.
     #[arg(long)]
     pub move_comments: bool,
-    /// Also attach each comment as a PDF note at its anchor. Viewers paint
-    /// a note as an icon over the text, so none is written by default and
-    /// the flag stays out of --help: it is for the exceptional case.
-    #[arg(long, hide = true)]
-    pub comment_notes: bool,
     /// Keep only the pages a change touches: a body or note revision, a
     /// comment anchor, or the first page on which a revised header or
     /// footer paints (the first page when none does). Page numbers stay the
@@ -2134,7 +2114,6 @@ impl Default for RenderArgs {
             revision_palette: None,
             dpi: 96.0,
             move_comments: false,
-            comment_notes: false,
             changed_pages: false,
             pages: None,
         }
@@ -2150,7 +2129,6 @@ impl RenderArgs {
             } else {
                 crate::convert::CommentPlacement::Margin
             },
-            comment_notes: self.comment_notes,
             changed_only: self.changed_pages,
             ..options
         }
@@ -2233,12 +2211,6 @@ pub struct MarkdownArgs {
     /// layout pass that places them.
     #[arg(long)]
     pub no_page_markers: bool,
-    /// Word to Markdown: write plain CommonMark with CriticMarkup for
-    /// readers outside jubarte's dialect, instead of the agent view (`jubarte
-    /// read`'s YAML header and id lines). Fields print as their text, and
-    /// underline, highlight and strike are left out.
-    #[arg(long)]
-    pub commonmark: bool,
 }
 
 /// `--tracking`.
@@ -2889,9 +2861,8 @@ const COMPARE_ONLY: [&str; 9] = [
 ];
 
 /// The [`RenderArgs`] ids: options of a PDF or PNG output only.
-const RENDER_ONLY: [&str; 7] = [
+const RENDER_ONLY: [&str; 6] = [
     "move_comments",
-    "comment_notes",
     "changed_pages",
     "pages",
     "dpi",
@@ -3195,14 +3166,8 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                     EditTarget::Single(path) => (Some(path), None),
                     EditTarget::Bundle(dir) => (None, Some(dir)),
                 };
-                // Resolved paths are identifiers: `/` on every OS (#568).
-                let slashed = |path: Option<&PathBuf>| {
-                    path.map(|p| serde_json::Value::String(slash_path(p)))
-                        .unwrap_or(serde_json::Value::Null)
-                };
-                value["args"]["plan"] = slashed(plan.as_ref());
-                value["args"]["output"] = slashed(output.as_ref());
-                value["args"]["out_dir"] = slashed(out_dir.as_ref());
+                value["args"]["output"] = serde_json::to_value(output).expect("UTF-8 path");
+                value["args"]["out_dir"] = serde_json::to_value(out_dir).expect("UTF-8 path");
             }
             let written = match &task {
                 Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),

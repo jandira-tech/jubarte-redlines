@@ -67,30 +67,6 @@ fonts; redline output is identical. The size saving is now small: in
 Generated from `jubarte-wasm/npm/node/jubarte_wasm.d.ts` — the exact
 signatures and doc comments the package ships.
 
-The identity fields the models carry are the schema-1 wire shape: `id` and
-`ref` both hold the short id (`r12`, `header1.r1`, `c5` — the colon
-fallback `body:rev:007` only when no short spelling reads back; `9872a374`,
-`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 1`.
-The 17 October 2026 short-and-long-ID contract
-([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
-staged in
-[superpowers/plans/2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md))
-replaces them with paired `short_id`/`long_id` references at the schema-2
-cutover and retires the transitional spellings — `noid`, colon ids
-(`body:rev:12`), nested `.pN` inside cells and text boxes
-(`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
-the fields the wire carries today are the ones named above.
-
-> **Stale-artifact note (2026-10-19).** The generated sections below —
-> this API reference and the CLI `--help` block at the end — quote the
-> committed 0.12.x artifacts, which were built before the short-id
-> migration: the `.d.ts`'s `body:rev:1`, `body:p:N` and `[body:p:N]`
-> examples and the `-p` help's `p17-`/`-p3` describe spellings the current
-> engine refuses on input, accepts only transitionally, or no longer
-> advertises (`src/cli.rs`). The source comments the next package build
-> will carry already say `pN`, `[pN]` and "settled spelling"
-> (`jubarte-wasm/src/lib.rs:181-186`, `:304-306`, `:965-966`).
-
 <!-- gen:wasm-api:start -->
 Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the slim entry points drop `docxToPdf` and `pdfPageCount`).
 
@@ -1642,8 +1618,8 @@ GIT:
 $ jubarte-redlines read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
-A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
-tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
+A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph (`pN`
+is `body:p:N`), tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
 @AC<<}`) and comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte-redlines read [OPTIONS] <FILE>
@@ -1882,8 +1858,8 @@ Examples:
   jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it
 
 WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
-t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
-(a revision).
+t0.row1.cell2, c5 (a comment), c5.text (the text it covers), r12
+(a revision), or a long id (body:p:12).
 ```
 
 #### `jubarte-redlines add`

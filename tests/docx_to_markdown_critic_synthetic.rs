@@ -32,7 +32,7 @@
 
 use std::path::{Path, PathBuf};
 
-use jubarte::markdown::{MarkdownOptions, TrackChanges, docx_to_markdown, unescape_markdown};
+use jubarte::markdown::{MarkdownOptions, TrackChanges, docx_to_markdown};
 
 const DOCUMENTS: [&str; 20] = [
     "all",
@@ -137,14 +137,11 @@ fn resolve(markdown: &str, accept: bool) -> String {
     });
     let text = spans(&text, "{++", "++}", |inner| pick(accept, inner));
     let text = spans(&text, "{--", "--}", |inner| pick(!accept, inner));
-    rendered(&text)
-}
-
-/// The text as Markdown renders it: the backslash escapes the converter
-/// writes (CriticMarkup's delimiters, Markdown's marks) dropped, as a
-/// reader takes them.
-fn rendered(markdown: &str) -> String {
-    unescape_markdown(markdown).replace("\\^", "^")
+    // Delimiters in the document's own text are escaped with a backslash,
+    // which Markdown drops when it renders them.
+    [("{\\", "{"), ("\\}", "}"), ("~\\>", "~>")]
+        .iter()
+        .fold(text, |text, (from, to)| text.replace(from, to))
 }
 
 /// Paragraphs as Writer's plain text has them: one per line, no Markdown
@@ -301,14 +298,11 @@ fn every_output_matches_its_source_of_truth() {
         }
     }
     // Without CriticMarkup means without it: a delimiter appears only as often
-    // as in Writer's own text (hard-delimiters has some as plain text). The
-    // converter escapes literal ones, so the count is of the rendered text.
+    // as in Writer's own text (hard-delimiters has some as plain text).
     for name in DOCUMENTS {
         for (kind, result) in [("accept", "accepted"), ("reject", "rejected")] {
-            let ours = lines(&rendered(
-                &std::fs::read_to_string(path(&format!("{name}.{kind}.md"))).unwrap(),
-            ))
-            .join("\n");
+            let ours = lines(&std::fs::read_to_string(path(&format!("{name}.{kind}.md"))).unwrap())
+                .join("\n");
             let writer =
                 lines(&std::fs::read_to_string(path(&format!("{name}.{result}.txt"))).unwrap())
                     .join("\n");
@@ -348,7 +342,7 @@ fn resolving_the_markup_matches_writers_accept_all_and_reject_all() {
             (false, "rejected", TrackChanges::Reject),
         ] {
             let ours = lines(&renumber(&resolve(&markup, accept)));
-            let writer = lines(&renumber(&rendered(&expected(name, result, revisions))));
+            let writer = lines(&renumber(&expected(name, result, revisions)));
             let differ = (0..ours.len().max(writer.len())).find(|&i| ours.get(i) != writer.get(i));
             assert!(
                 differ.is_none(),
@@ -370,9 +364,9 @@ fn writers_plain_text_is_in_the_accepted_and_rejected_markdown() {
             ("rejected", TrackChanges::Reject),
         ] {
             let writer = std::fs::read_to_string(path(&format!("{name}.{result}.txt"))).unwrap();
-            let ours = rendered(&without_citations(&link_text(
+            let ours = without_citations(&link_text(
                 &lines(&markdown(&format!("{name}.docx"), revisions)).join("\n"),
-            )));
+            ));
             let mut from = 0;
             for line in lines(&writer).iter().map(|line| without_citations(line)) {
                 let found = ours[from..].find(line.as_str());
@@ -397,11 +391,10 @@ fn jubartes_reader_resolves_the_markup_as_the_converter_resolves_the_document() 
         for choice in [TrackChanges::Accept, TrackChanges::Reject] {
             // Literal delimiters stay escaped in the resolved markup; the
             // converter writes them bare where there is no markup.
-            let ours = lines(&renumber(&rendered(&resolve_critic(&markup, choice))));
-            let direct = lines(&renumber(&rendered(&markdown(
-                &format!("{name}.docx"),
-                choice,
+            let ours = lines(&renumber(&unescape_delimiters(&resolve_critic(
+                &markup, choice,
             ))));
+            let direct = lines(&renumber(&markdown(&format!("{name}.docx"), choice)));
             let differ = (0..ours.len().max(direct.len())).find(|&i| ours.get(i) != direct.get(i));
             assert!(
                 differ.is_none(),
@@ -411,4 +404,24 @@ fn jubartes_reader_resolves_the_markup_as_the_converter_resolves_the_document() 
             );
         }
     }
+}
+
+/// The text with the backslash escapes the converter puts in CriticMarkup
+/// delimiters (`{\++`, `~\>`...) taken out.
+fn unescape_delimiters(text: &str) -> String {
+    [
+        ("{\\++", "{++"),
+        ("{\\--", "{--"),
+        ("{\\~~", "{~~"),
+        ("{\\>>", "{>>"),
+        ("{\\==", "{=="),
+        ("++\\}", "++}"),
+        ("--\\}", "--}"),
+        ("~~\\}", "~~}"),
+        ("<<\\}", "<<}"),
+        ("==\\}", "==}"),
+        ("~\\>", "~>"),
+    ]
+    .iter()
+    .fold(text.to_string(), |text, (from, to)| text.replace(from, to))
 }

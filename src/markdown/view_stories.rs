@@ -20,7 +20,7 @@
 //! and whether Word shows it (`inactive`: a first-page story without a
 //! title page, an even one without even and odd headers).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use super::package::{related, sibling};
@@ -44,8 +44,7 @@ pub(super) struct Story {
     pub text: String,
     /// The paragraphs after it (`text: [first, second]`).
     pub more: Vec<String>,
-    /// `center`, `right`, a stated `left` or `justify`; `None` when the
-    /// paragraphs name none.
+    /// `center` or `right`; `None` for left.
     pub align: Option<&'static str>,
     /// Each paragraph's own formatting from `paragraph` on, when the view
     /// prints the story paragraph by paragraph (`p0: {text: …, color: …}`);
@@ -66,8 +65,7 @@ pub(super) struct Story {
 /// One header or footer paragraph's own formatting.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct ParaFormat {
-    /// `center`, `right`, a stated `left` or `justify`; `None` when it
-    /// names none.
+    /// `center` or `right`; `None` for left.
     pub align: Option<&'static str>,
     /// Its text runs' colour (`w:color`).
     pub color: Option<String>,
@@ -103,12 +101,15 @@ impl ParaFormat {
     }
 }
 
-/// The alignment the entry names: `center`, `right`, or a stated `left`
-/// or `justify`; `None` when it names none (the style's applies).
+/// `center` or `right` when the entry names it.
 fn align_of(flag: impl Fn(&str) -> bool) -> Option<&'static str> {
-    ["center", "right", "left", "justify"]
-        .into_iter()
-        .find(|&word| flag(word))
+    if flag("center") {
+        Some("center")
+    } else if flag("right") {
+        Some("right")
+    } else {
+        None
+    }
 }
 
 /// Who made a story's changes: each handle's name and date, and the
@@ -123,12 +124,6 @@ pub(super) struct People {
     pub range_ends: HashMap<String, String>,
     /// The handles of `range_ends` whose first mark is written.
     pub started: std::cell::RefCell<std::collections::HashSet<String>>,
-    /// The view's drawing reference definitions, by name: a `dN` maps to
-    /// its `drawing:` destination, an `imageK` to its `data:` one. A
-    /// story's `![…][dN]` and `![…][imageK]` tokens resolve through them.
-    pub drawing_defs: HashMap<String, String>,
-    /// The view's `<!-- NAME drawing:… -->` backing comments, by name.
-    pub drawing_backings: HashMap<String, String>,
 }
 
 /// The marks of one story part being written: their people and the next
@@ -163,14 +158,14 @@ impl Marks<'_> {
             }
         };
         let (author, date) = tag
-            .map(|tag| {
+            .and_then(|tag| {
                 // `??` names no one: the mark's author is empty, as it was.
                 let (name, date) = match self.people.by_handle.get(&tag.handle) {
                     Some(known) => known.clone(),
                     None if tag.handle == super::view_notes::UNNAMED => {
                         (String::new(), self.people.date.clone())
                     }
-                    None => (tag.handle.clone(), self.people.date.clone()),
+                    None => return None,
                 };
                 let date = match self.people.range_ends.get(&tag.handle) {
                     Some(last) if !self.people.started.borrow_mut().insert(tag.handle.clone()) => {
@@ -178,7 +173,7 @@ impl Marks<'_> {
                     }
                     _ => date,
                 };
-                (name, tag.date.clone().unwrap_or(date))
+                Some((name, tag.date.clone().unwrap_or(date)))
             })
             .unwrap_or_else(|| (self.people.author.clone(), self.people.date.clone()));
         let date = if date.is_empty() {
@@ -193,40 +188,6 @@ impl Marks<'_> {
     }
 }
 
-/// The start tags of the `w:pPrChange`s `tags` name, by their people:
-/// one per tag, a tag that numbers no `w:id` taking a fresh one above
-/// `first_id`.
-pub(super) fn format_changes(
-    people: &People,
-    tags: &[&super::view_notes::Tag],
-    first_id: u32,
-) -> Vec<String> {
-    let mut marks = Marks {
-        people,
-        next_id: first_id,
-    };
-    let mut reserved: std::collections::HashSet<u32> =
-        tags.iter().flat_map(|tag| &tag.ids).copied().collect();
-    let mut next = first_id;
-    tags.iter()
-        .map(|tag| {
-            let id = tag.ids.first().copied().unwrap_or_else(|| {
-                loop {
-                    next = if next >= super::view_notes::MOST_ID {
-                        0
-                    } else {
-                        next + 1
-                    };
-                    if reserved.insert(next) {
-                        break next;
-                    }
-                }
-            });
-            marks.mark_id("w:pPrChange", Some(tag), Some(id))
-        })
-        .collect()
-}
-
 /// A value of a YAML flow map as the view prints it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Value {
@@ -236,18 +197,6 @@ enum Value {
     /// `[a, "b"]`: a flow sequence of scalars.
     List(Vec<String>),
     Map(Vec<(String, Value)>),
-}
-
-/// A text clause from the shared flow-map parser, honoring both YAML
-/// quoting forms rather than looking for clause names inside strings.
-pub(super) fn flow_text(text: &str, key: &str) -> Option<String> {
-    flow_map(text, 0)?
-        .0
-        .into_iter()
-        .find_map(|(name, value)| match value {
-            Value::Text(text) if name == key => Some(text),
-            _ => None,
-        })
 }
 
 /// The most nested maps one flow map holds: the view prints three.
@@ -606,10 +555,8 @@ pub(super) fn section(entry: &str) -> Stories {
 /// `{~~old~>new~~}` the insertion then the deletion, as Word's Compare
 /// writes them, each with the author, date and `w:id` its `{>>…<<}` tag
 /// names. Any other `{>>…<<}` is a comment, which Word does not take in a
-/// header or footer. A `![…][dN]` or `![…][imageK]` token (or an older
-/// view's `![…](drawing:…)`) splices its materialized drawing from
-/// `drawings`.
-fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -> String {
+/// header or footer.
+fn runs(text: &str, marks: &mut Marks<'_>) -> String {
     let mut out = String::new();
     let mut plain = String::new();
     let mut rest = text;
@@ -626,14 +573,6 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
             rest = after;
             continue;
         }
-        if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
-            flush(&mut plain, &mut out, false);
-            if let Some(drawing) = drawings.get(dest) {
-                out.push_str(drawing);
-            }
-            rest = &rest[len..];
-            continue;
-        }
         if let Some((change, after)) = change(rest) {
             flush(&mut plain, &mut out, false);
             let (tags, after) = tags_after(after);
@@ -646,7 +585,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     };
                     let tag = tags.first();
                     let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
-                    tracked(&mut out, marks, name, tag, ids, inner, drawings);
+                    tracked(&mut out, marks, name, tag, ids, inner);
                 }
                 Change::Substitute(old, new) => {
                     // One tag names both sides (`r5+6`, old first), or
@@ -656,8 +595,8 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         [old, new, ..] => (Some(old), Some(new), (&old.ids[..], &new.ids[..])),
                         [] => (None, None, (&[][..], &[][..])),
                     };
-                    tracked(&mut out, marks, "w:ins", new_tag, new_ids, new, drawings);
-                    tracked(&mut out, marks, "w:del", old_tag, old_ids, old, drawings);
+                    tracked(&mut out, marks, "w:ins", new_tag, new_ids, new);
+                    tracked(&mut out, marks, "w:del", old_tag, old_ids, old);
                 }
             }
             rest = after;
@@ -669,7 +608,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                 Field::Coded(code, result) => out.push_str(&format!(
                     "<w:fldSimple w:instr=\" {} \">{}</w:fldSimple>",
                     super::xml::escape(code.trim()),
-                    runs(result, marks, drawings)
+                    runs(result, marks)
                 )),
                 // No result: Word computes it (`PAGE` on every page).
                 Field::Bare(name) => {
@@ -818,7 +757,6 @@ fn tracked(
     tag: Option<&super::view_notes::Tag>,
     ids: &[u32],
     inner: &str,
-    drawings: &HashMap<String, String>,
 ) {
     let has_field = inner
         .char_indices()
@@ -826,13 +764,9 @@ fn tracked(
     let mut pieces = vec![inner];
     while !has_field && pieces.len() < ids.len() {
         let Some((at, cut)) = pieces.iter().enumerate().rev().find_map(|(at, piece)| {
-            // Never between an escape and the character it escapes, nor
-            // inside a `drawing:` token.
+            // Never between an escape and the character it escapes.
             super::xml::split_point(piece)
-                .filter(|&cut| {
-                    !piece[..cut].ends_with('\\')
-                        && !super::from_docx::drawing::cuts_token(piece, cut)
-                })
+                .filter(|&cut| !piece[..cut].ends_with('\\'))
                 .map(|cut| (at, cut))
         }) else {
             break;
@@ -841,7 +775,7 @@ fn tracked(
         pieces.splice(at..=at, [head, tail]);
     }
     for (n, piece) in pieces.into_iter().enumerate() {
-        tracked_piece(out, marks, name, tag, ids.get(n).copied(), piece, drawings);
+        tracked_piece(out, marks, name, tag, ids.get(n).copied(), piece);
     }
 }
 
@@ -854,7 +788,6 @@ fn tracked_piece(
     tag: Option<&super::view_notes::Tag>,
     id: Option<u32>,
     inner: &str,
-    drawings: &HashMap<String, String>,
 ) {
     let deleted = name == "w:del";
     let _ = write!(out, "<{}>", marks.mark_id(name, tag, id));
@@ -864,14 +797,6 @@ fn tracked_piece(
         if let Some(after) = rest.strip_prefix("\\{") {
             plain.push('{');
             rest = after;
-            continue;
-        }
-        if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
-            flush(&mut plain, out, deleted);
-            if let Some(drawing) = drawings.get(dest) {
-                out.push_str(drawing);
-            }
-            rest = &rest[len..];
             continue;
         }
         if let Some((field, after)) = field(rest) {
@@ -1044,7 +969,6 @@ pub(super) fn write(
         people,
         next_id: first_id,
     };
-    let mut next_doc_pr = super::package::max_drawing_id(package) + 1;
     let mut even = false;
     for number in 1..=count.max(1) {
         // Word reads w:titlePg per section; the view names it on each
@@ -1061,14 +985,7 @@ pub(super) fn write(
                 let id = match parts.get(&story.part) {
                     Some(id) => id.clone(),
                     None => {
-                        let id = story_part(
-                            package,
-                            main,
-                            story,
-                            default_style,
-                            &mut marks,
-                            &mut next_doc_pr,
-                        );
+                        let id = story_part(package, main, story, default_style, &mut marks);
                         parts.insert(story.part.clone(), id.clone());
                         id
                     }
@@ -1121,7 +1038,6 @@ fn story_part(
     story: &Story,
     default_style: &str,
     marks: &mut Marks<'_>,
-    next_doc_pr: &mut u32,
 ) -> String {
     let root = if story.kind == "header" { "hdr" } else { "ftr" };
     let style = if story.kind == "header" {
@@ -1133,7 +1049,7 @@ fn story_part(
     texts.push(&story.text);
     texts.extend(story.more.iter().map(String::as_str));
     let mut paragraph_marks: HashMap<usize, Vec<(&str, super::view_notes::Tag)>> = HashMap::new();
-    let mut unplaced: Vec<(&str, super::view_notes::Tag)> = Vec::new();
+    let mut unplaced = Vec::new();
     for entry in &story.rev {
         let placed = ["break-ins ", "break-del "].iter().find_map(|word| {
             let (tag, at) = entry.strip_prefix(word)?.rsplit_once(" in ")?;
@@ -1155,96 +1071,22 @@ fn story_part(
             Some((index, mark)) => {
                 paragraph_marks.entry(index).or_default().push(mark);
             }
-            // A bare tag is an insertion; `del ` names a deletion (`del
-            // footer1.r3 @AC`) and `fmt ` a formatting change, which goes
-            // with `fmt:`'s own list.
-            None => match entry.split_once(' ') {
-                Some(("del", tag)) => unplaced.extend(
-                    super::view_notes::revision_tags(tag)
-                        .into_iter()
-                        .flatten()
-                        .map(|tag| ("w:del", tag)),
-                ),
-                Some(("fmt", _)) => {}
-                _ => unplaced.extend(
-                    super::view_notes::revision_tags(entry)
-                        .into_iter()
-                        .flatten()
-                        .map(|tag| ("w:ins", tag)),
-                ),
-            },
+            None => unplaced.extend(
+                super::view_notes::revision_tags(entry)
+                    .into_iter()
+                    .flatten(),
+            ),
         }
     }
     if let Some(&deepest) = paragraph_marks.keys().max() {
         texts.resize(texts.len().max(deepest + 1), "");
     }
-    let part = sibling(main, &format!("{}.xml", story.part));
-    // `drawing:` payloads the texts hold, each materialized to the XML the
-    // story splices in their place.
-    let existing: HashSet<String> = package.parts().into_iter().collect();
-    let mut used: HashSet<String> = HashSet::from([part.clone()]);
-    let mut next = *next_doc_pr;
-    let mut drawings: HashMap<String, String> = HashMap::new();
-    for text in &texts {
-        let mut rest = *text;
-        // Every `![…](drawing:…)` the run writer can reach: anywhere but
-        // inside a `{>>…<<}` tag, which it consumes whole.
-        while let Some(c) = rest.chars().next() {
-            if let Some(after) = rest.strip_prefix("{>>")
-                && let Some(end) = after.find("<<}")
-            {
-                rest = &after[end + 3..];
-                continue;
-            }
-            let Some((dest, len)) = super::from_docx::drawing::at(rest) else {
-                rest = &rest[c.len_utf8()..];
-                continue;
-            };
-            // A `dN` name resolves through the view's reference
-            // definitions, an `imageK` through its backing comment and
-            // `data:` bytes; a `drawing:` destination carries its payload.
-            let drawing = super::from_docx::drawing::lookup(
-                dest,
-                &marks.people.drawing_defs,
-                &marks.people.drawing_backings,
-            );
-            if !drawings.contains_key(dest)
-                && let Some(payload) = drawing
-                && let Some(xml) = super::from_docx::drawing::materialize(
-                    &payload, package, &part, &existing, &mut used, &mut next,
-                )
-            {
-                let xml = if payload.wraps_run() {
-                    format!("<w:r>{xml}</w:r>")
-                } else {
-                    xml
-                };
-                drawings.insert(dest.to_string(), xml);
-            }
-            rest = &rest[len..];
-        }
-    }
-    *next_doc_pr = next;
-    // A `fmt` entry names its paragraph (`r1657 @AB in footer1.p1`); a bare
-    // one is the paragraph at its place in the list, as before.
-    let mut placed: HashMap<usize, Vec<super::view_notes::Tag>> = HashMap::new();
-    let mut positional: Vec<super::view_notes::Tag> = Vec::new();
-    for entry in &story.fmt {
-        let Some((tag, index)) = entry.rsplit_once(" in ").and_then(|(tag, at)| {
-            let (part, index) = story_id(at)?;
-            (part == story.part).then_some((tag, index))
-        }) else {
-            positional.extend(
-                super::view_notes::revision_tags(entry)
-                    .into_iter()
-                    .flatten(),
-            );
-            continue;
-        };
-        if let Some(tags) = super::view_notes::revision_tags(tag) {
-            placed.entry(index).or_default().extend(tags);
-        }
-    }
+    let formats: Vec<super::view_notes::Tag> = story
+        .fmt
+        .iter()
+        .filter_map(|entry| super::view_notes::revision_tags(entry))
+        .flatten()
+        .collect();
     let mut body = String::new();
     let last = texts.len() - 1;
     for (index, text) in texts.iter().enumerate() {
@@ -1273,8 +1115,6 @@ fn story_part(
             None => None,
         };
         if let Some(align) = align.filter(|_| index >= story.paragraph) {
-            // Word's value for justified is `both`.
-            let align = if align == "justify" { "both" } else { align };
             let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
         }
         let mut properties = base.clone();
@@ -1287,19 +1127,17 @@ fn story_part(
             }
             properties.push_str("</w:rPr>");
         }
-        for tag in placed.remove(&index).unwrap_or_default().into_iter().chain(
-            index
-                .checked_sub(story.paragraph)
-                .and_then(|i| positional.get(i))
-                .cloned(),
-        ) {
+        if let Some(tag) = index
+            .checked_sub(story.paragraph)
+            .and_then(|i| formats.get(i))
+        {
             let _ = write!(
                 properties,
                 "<{}><w:pPr>{base}</w:pPr></w:pPrChange>",
-                marks.mark("w:pPrChange", Some(&tag), 0)
+                marks.mark("w:pPrChange", Some(tag), 0)
             );
         }
-        let mut content = runs(text, marks, &drawings);
+        let mut content = runs(text, marks);
         if let Some(color) = own.and_then(|f| f.color.as_deref()) {
             // `w:color` is the only run property the writer gives a story's
             // runs, so it opens each run's `w:rPr`.
@@ -1310,12 +1148,13 @@ fn story_part(
         }
         let _ = write!(body, "<w:p><w:pPr>{properties}</w:pPr>{content}");
         if index == last {
-            for (name, tag) in &unplaced {
-                let _ = write!(body, "<{}/>", marks.mark(name, Some(tag), 0));
+            for tag in &unplaced {
+                let _ = write!(body, "<{}/>", marks.mark("w:ins", Some(tag), 0));
             }
         }
         body.push_str("</w:p>");
     }
+    let part = sibling(main, &format!("{}.xml", story.part));
     package.set_part(
         &part,
         format!(
@@ -1506,7 +1345,6 @@ mod tests {
                 people: &people,
                 next_id: 100,
             },
-            &HashMap::new(),
         )
     }
 

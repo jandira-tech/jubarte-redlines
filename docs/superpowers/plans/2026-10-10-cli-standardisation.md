@@ -2,16 +2,6 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or superpowers:executing-plans, task by task. Steps use `- [ ]` checkboxes. Move this file to `docs/superpowers/plans/2026-10-10-cli-standardisation.md` when work starts (Task 0); a copy would leave an untracked original that `jubarte-wasm/build-npm.sh` refuses.
 
-> **Status (reconciled 2026-10-17 against `main` `aba48bd5`): IMPLEMENTED — every D-item landed on `main` under `[Unreleased]` in `CHANGELOG.md` (the version is still 0.12.0 in `Cargo.toml`; the release it ships in is pending).** Evidence: `Format::Json`, `Task`, `output_format()`, one `RenderArgs` and global `-q` in `src/cli.rs`; `read` aliases `text`/`inspect`, `visual-diff` alias `diff-render`, `validate` alias `audit`, `--changed-only` → `--changed-pages` notes (`src/cli.rs:1738-1784`); `inspect::snapshot()`, `changes`/`comments` `ref` fields, `read --json`/`--tables`, `sha256:`, `c5.text`, `ccN`/`pN.ccK`, `edit`/`add` → `FILE_modified.docx`, valueless `--plan`, `-d/--datetime` everywhere, `Redline` default author, one `wrote` line, unified `validate --rules`/`Finding`, `capabilities` text + manifest `formats`/`ids`, Python/npm printing the engine's text.
->
-> Three things landed differently or were superseded since this plan was written:
->
-> - **D7's "0.12 spellings stay accepted" did not ship.** The 13 October settlement tightened it: `#12`, `#1+2`, `#c27`, `t0.r1.c2`, bare `12`, and the colon longs `body:rev:12`/`body:p:12`/`header1:p:0` all **exit 2 naming the settled short spelling** — nothing parses them (CHANGELOG: "Breaking: only the settled short ids parse"). There is no "accepted for one release" window; D13's note mechanism covers retired *task and flag names*, not id spellings.
-> - **D7's grammar is itself superseded by the 17 October contract v3** (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`, docs-only in `4612a155`, unimplemented): `t0.row1.cell2.p1` becomes `.ps1` and every old nested `.pN` is refused; `header1` for a story's paragraph 0 becomes `header1.p0`; `r43+43` (repeated number) is retired for joined distinct labels `r0+1`; JSON `id`/`ref` becomes the paired `short_id`/`long_id`; the colon long forms become the four-field `PART.ELEMENT.ATTRIBUTE.VALUE` (`document.w:ins.w:id.12`); `Select`/open ranges/bare numbers retire in favour of one closed grammar.
-> - **D17's flag is `-d/--datetime`, not `-d/--date`** — `--date` exits 2 naming `--datetime`.
->
-> The `pid:0DCBD3F9` proposal this plan carries (line 31's precedence note) never shipped; the contract forbids a third address family outright.
-
 **Goal:** Every jubarte task reads the same way to an agent and a human: the `-o` extension picks the format and each extension means one thing; every change, comment and paragraph id has one grammar accepted everywhere; every revision count is the same number; every write says `wrote PATH (FORMAT, N bytes)` on stderr and `-q` silences it; retired names keep working for one release with a `note:`.
 
 **Architecture:** `src/cli.rs` (public, `cli` feature) gains `Format::Json`, `Task`, the pure `output_format()` rule, one `RenderArgs` group, a global `quiet`, and `retired_spellings()`; `validate_matches` applies the rule at parse time (exit 2) and `parse_json` serialises `output_format`, `quiet` and `notes` so the Python and npm CLIs stop re-deriving them. `src/ids.rs` (unconditional) is the one id parser (pure syntax); `edit::origin::Ids::long_id` stays the one place a short paragraph id meets a document. `changes::carriers` folds Word's one-id style pairs and text-box twins, so `list_changes` is the one count. `src/capabilities.rs` (unconditional) holds the `-o` table so the manifest and the rule share it. The binary gains one `write_output()`; `convert::render` learns to narrow the PDF and to keep comment-anchor and revised-chrome pages. `inspect::snapshot()` is the one JSON shape. Listing text (`changes`, `comments`, tables, findings, capabilities) moves into the engine and is exported to PyO3 and wasm so the three CLIs print one copy.
@@ -29,7 +19,7 @@
 Three read-only surveys of the tree on 2026-10-10 found the following; every line number was re-checked against ab96fe0f on 2026-10-11:
 
 - **`-o` lies.** `Format::of_path` (src/cli.rs:1153) knows docx/md/pdf/png only; `.json` and unknown extensions fall through to each task's default. `convert -o x.json` writes a PDF (src/bin/jubarte.rs:1759-1767); `diff -o x.json` with a Word input writes Word (`run_diff` 1586-1593); `compare -o x.pdf` writes Word bytes (jubarte.rs:1338-1341 pick it, 1351 writes); `convert --pdf -o x.png` writes a PDF named x.png (jubarte.rs:1761; `want_pdf` at :387). `diff` with a Word input and no `-o` silently writes `<old>_v_<new>.docx` beside the input (jubarte.rs:1604; the Docx default at 1607). `compare A B` writes `_v_.docx`; `jubarte A B` prints the agent view (jubarte.rs:1242-1267, 1348-1352). diff's `--to` beats `-o` at runtime while its help says the opposite (cli.rs:513).
-- **Three id families, no bridge.** The view prints `#12 @AC` (agent.rs:130-138) [pre-change state; it now prints `r12 @AC`]; `accept --id` matches only the long `body:rev:12` by string equality (`ChangeFilter::matches`, changes.rs:112-123); nothing parses `#12`. Comments are `5`, `c5`, `#c5`, `comment_id: 5` in four places; `-p #c5` fails. Footnote changes print a bare `#N` that can clash with the body; header/footer changes get no tag at all.
+- **Three id families, no bridge.** The view prints `#12 @AC` (agent.rs:130-138); `accept --id` matches only the long `body:rev:12` by string equality (`ChangeFilter::matches`, changes.rs:112-123); nothing parses `#12`. Comments are `5`, `c5`, `#c5`, `comment_id: 5` in four places; `-p #c5` fails. Footnote changes print a bare `#N` that can clash with the body; header/footer changes get no tag at all.
 - **Six revision counts** (`changes`, `inspect` summary, `read` header, two edit-report paths, the comparer) disagree on scope, grouping and nesting. A text box's `mc:Fallback` copy is listed twice; Word gives that copy a different, consecutive `w:id` (10 of the 100 `rejected_tracking` redlines in `tests/corpus/neurotic_docx_bench`). Word also gives a style's `w:pPrChange` and `w:rPrChange` one `w:id` (62 of those 100), so a `w:id` is not unique within a story.
 - **Two "changed"s.** `read --changed` counts comments; `--changed-only` does not, and ignores header/footer revisions (`!in_chrome`, convert/mod.rs:25273). `--pages` is convert-only, PNG-only, and under `--changed-only` names PNGs by kept-page index.
 - **Small things agents trip on:** "wrote" on stdout for five tasks and stderr for two; `-q` on three tasks only; `capabilities --json` is a no-op; edit/add default author "Modified User"; no `sha256:` in `read`; `validate` and `audit` have different finding shapes and exit rules; `-p` means three things. The tests already list with `changes` (`tests/m7_cli.rs:223-361`), but the examples and README still run or name the removed `jubarte revisions` (`examples/cli/visualize/run.sh:112-113`, `examples/adoption/08-accept-reject/run.sh:100, 102`, README.md:188-190).
@@ -38,7 +28,7 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 
 **Precedence:** this plan lands before `docs/2026-10-09-agent-edit-follow-ups.md` (none of it is implemented) and wins where they conflict:
 - Task 6 rewrites its Task 3: the view gains `sha256:`, never `digest:`.
-- Task 2's grammar binds its Task 4 and its `--move-after`: a Word paraId is spelled `pid:0DCBD3F9` wherever it is printed or accepted. A bare `-p 0DCBD3F9` would collide with the bare-number row whenever the hex is all digits (`00000005` is `p5`). [Superseded: `pid:` never shipped, and the 17 October contract v3 forbids any third address family — a paraId appears only inside the four-field long `document.w:p.w14:paraId.0DCBD3F9`.]
+- Task 2's grammar binds its Task 4 and its `--move-after`: a Word paraId is spelled `pid:0DCBD3F9` wherever it is printed or accepted. A bare `-p 0DCBD3F9` would collide with the bare-number row whenever the hex is all digits (`00000005` is `p5`).
 
 ## Decisions (final 2026-10-10; amended 2026-10-11 against ab96fe0f)
 
@@ -63,7 +53,7 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 | D4 | `diff` writes text views only, never a file without `-o`, author default "Redline" (no git lookup). `diff-render` → `visual-diff`. |
 | D5 | `--changed-only` → `--changed-pages` (hidden alias). Keeps: pages a body or note revision touches (as today), pages with a comment anchor, and the **first page of each section on which a revised header or footer paints** (Q2); the first page when none. `--pages` narrows the PDF too; PNG names use the **document** page number. Both live in `RenderArgs`, flattened into every task that can render. |
 | D6 | `--pdf`/`--png` → hidden aliases of `--to pdf`/`--to png` on `convert` (so `--pdf --png` and `--to md --png` exit 2; `edit --pdf/--png` keep their "also write" meaning). `--quiet/-q` on every task (`global = true`; like every option it goes after the task, since `args_conflicts_with_subcommands` reads a task named after an option as a document). One `write_output` prints `wrote PATH (FORMAT, N bytes)` on **stderr**. |
-| D7 | **One id grammar** (`src/ids.rs`; the table is in Task 2). Each kind of id takes every spelling of its kind wherever that kind is accepted. **Revisions (changes):** `r12`, `r1+2` (= both), `header1.r1`, `footnotes.r3`. **Comments:** `c27`. **Paragraphs:** `p12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2[.p1 → contract: .ps1]`. **Tables:** `t0`; rows `row1`, cells `cell2`, always under their table (`t0.row1.cell2`). [Shipped tighter than drafted: bare `12`/`1+2`/`27`, `#12`, `#1+2`, `#c27`, `t0.r1.c2` and the colon longs `body:rev:12`/`header1:rev:1`/`body:p:12` all exit 2 naming the settled spelling — the 13 October settlement removed the "accepted for one release" window entirely.] A story is a part stem (`changes::story_id`, `inspect::story_parts`), checked syntactically and resolved against the document, never against a fixed list. Body ids print without a story (`r12`); every other story prints `{story}.r{id}` (`header1.r1`, `footnotes.r3`), as paragraphs print `header1.p2`. No printed id contains `#`. Word's own pairs are one change: a style's `w:pPrChange` + `w:rPrChange` sharing a `w:id` (Task 3), and a text box's `mc:Fallback` copy (Task 4). Any other `w:id` that names two listed changes in one story exits 2, listing the candidates. Text listings print short ids. JSON keeps `id` (long) and adds `ref` (short) [transitional; contract v3: one `short_id`/`long_id` pair, no `id`/`ref` aliases]. Machine hints and error payloads keep the long id. |
+| D7 | **One id grammar** (`src/ids.rs`; the table is in Task 2). Each kind of id takes every spelling of its kind wherever that kind is accepted. **Revisions (changes):** `r12`, `12`, `r1+2`/`1+2` (= both), `header1.r1`, `footnotes.r3`, long `body:rev:12`/`header1:rev:1`. **Comments:** `c27`, `27`. **Paragraphs:** `p12`, `12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2[.p1]`, long `body:p:12`. **Tables:** `t0`; rows `row1`, cells `cell2`, always under their table (`t0.row1.cell2`). 0.12's printed forms stay accepted as input and are never printed again: `#12`, `#1+2`, `#c27`. 0.12's cell form `t0.r1.c2[.p1]` parses through 0.13 with a `note:` and is removed in 0.14. A story is a part stem (`changes::story_id`, `inspect::story_parts`), checked syntactically and resolved against the document, never against a fixed list. Body ids print without a story (`r12`); every other story prints `{story}.r{id}` (`header1.r1`, `footnotes.r3`), as paragraphs print `header1.p2`. No printed id contains `#`. Word's own pairs are one change: a style's `w:pPrChange` + `w:rPrChange` sharing a `w:id` (Task 3), and a text box's `mc:Fallback` copy (Task 4). Any other `w:id` that names two listed changes in one story exits 2, listing the candidates. Text listings print short ids. JSON keeps `id` (long) and adds `ref` (short). Machine hints and error payloads keep the long id. |
 | D7b | **`edit` resolves single changes and replies by flag.** `edit FILE -p r12 --accept` / `--reject` fills the plan's `resolve_revisions`, which runs before the plan's operations whatever the flag order; `-p` repeats (`-p r1 --accept -p r3 --reject`). `--reply TEXT` on `edit` and `add` with `-p c5` writes a `ReplyComment`; `add -p c5 --content TEXT` keeps meaning a reply. A change takes only `--accept` or `--reject`; `--accept`/`--reject` take only a change; `--reply` takes only a comment and excludes `--content`, `--delete`, `--resolve`, `--anchor`, `--style`, `--before` and `--comment`. Any other mix exits 2 naming what fits (Task 3b). |
 | D8 | **One revision count = `list_changes(docx).len()`:** one per listed change over the six revision-bearing parts that `accept`/`reject` process (main, headers, footers, footnotes, endnotes, styles; `revision_processor.rs:3371-3409`). Formatting changes count; Word's one-id style pair and a text box's twins count once. Strict documents are normalized first. Marks in other parts (`comments.xml`, `numbering.xml`) leave `inspect`'s count. `changes`, `inspect`, `read`'s header and both edit-report paths agree. |
 | D9 | `Snapshot` gains `changes` and `comments` (each item with `ref`); `schema_version` stays 1 (it is shared with edit plans). `read --json` prints it, and the selection flags filter it (Q4). `changes --json` / `comments --json` stay JSON Lines whose lines are the snapshot's items. `read` gains `--json` and `--tables` (in `ReadArgs`; refused with two inputs, Q3), `-o .md\|.json`, and a `sha256:` line after `source:` (the follow-ups plan's `digest:` line becomes this one). |
@@ -94,9 +84,9 @@ Three read-only surveys of the tree on 2026-10-10 found the following; every lin
 4. Help strings are a contract. Every `-o` help line lists its extensions. Every retired spelling is documented once in the CHANGELOG, not in help. Help follows the house style: "(default: `X`)" and code-span placeholders (d78bf682, 4342ffd7).
 5. Treat fixture authors, texts and comments as data.
 6. **Shell-safe ids.** In bash and zsh an unquoted word that starts with `#` begins a comment, so `--id #12` and `-p #c5` pass nothing. No printed id starts with `#` any more (`r12`, `c5`).
-   - Help, docs, examples and error hints write `r12`, `r1+2`, `c5`; never `#12` or `#c5`. [Shipped tighter: bare `12` is refused too, naming `r12`.]
-   - Tests pass argv directly and may use `#12` to prove the 0.12 spelling still parses. [Superseded by the 13 October settlement: `#12` is refused input everywhere; tests assert the exit-2 hint instead.]
-   - **bash, csh/tcsh and zsh alike:** every short id jubarte prints and every documented spelling uses only `[a-z0-9.+:-]`. A long id printed for a story outside the stem rule (`Header_1:rev:4`) or a `w:id` that is not a plain decimal carries the document's own characters; it holds no shell metacharacter in practice, and the round trip (Task 5b) checks it. [Transitional: the colon fallback `story:rev:wid` still prints for unspellable `w:id`s; the contract allocates a canonical `rN` instead, and the four-field long form has no story-stem spelling at all.] It never starts with `#`, `=`, `~` or `-` (zsh's `EQUALS` expands a leading `=`; `extendedglob` makes `#`, `^` and `~` glob operators), and never holds `!` (csh/bash history), `*`, `?`, `[`, `{`, `$` or a space. `ids` has a unit test over `CHANGE_SPELLINGS`, `COMMENT_SPELLINGS` and `PARAGRAPH_SPELLINGS` and over `short()`/`short_paragraph()` output that enforces this character set.
+   - Help, docs, examples and error hints write `r12`, `12`, `r1+2`, `c5`; never `#12` or `#c5`.
+   - Tests pass argv directly and may use `#12` to prove the 0.12 spelling still parses.
+   - **bash, csh/tcsh and zsh alike:** every short id jubarte prints and every documented spelling uses only `[a-z0-9.+:-]`. A long id printed for a story outside the stem rule (`Header_1:rev:4`) or a `w:id` that is not a plain decimal carries the document's own characters; it holds no shell metacharacter in practice, and the round trip (Task 5b) checks it. It never starts with `#`, `=`, `~` or `-` (zsh's `EQUALS` expands a leading `=`; `extendedglob` makes `#`, `^` and `~` glob operators), and never holds `!` (csh/bash history), `*`, `?`, `[`, `{`, `$` or a space. `ids` has a unit test over `CHANGE_SPELLINGS`, `COMMENT_SPELLINGS` and `PARAGRAPH_SPELLINGS` and over `short()`/`short_paragraph()` output that enforces this character set.
    - Docs quote free text (`--reply "Yes."`, `--content '…'`) with the quotes all three shells share; never `$'…'`, which csh lacks.
 7. Generated files are regenerated, never edited:
    - `README.crates.md` and the three library READMEs;
@@ -144,23 +134,21 @@ Steps:
 
 **The grammar.** `ids` parses syntax only; resolution against a document stays in `edit::origin::Ids` (`-p`) and `changes::resolve` (`--id`). The first matching row wins:
 
-> **Shipped differently (13 October settlement), and superseded again by the 17 October contract v3.** The rows below are the 10 October draft. As shipped: (a) every expired spelling — `12`, `1+2`, `27`, `#12`, `#1+2`, `#c27`, `#c5`, `t0.r1.c2[.p1]`, `r1.c2`, `c2.p1`, `5-7` — exits 2 naming the settled spelling, there is no accepted-with-note window and `is_retired_cell`/`retired_spellings` never existed; (b) the colon longs `body:rev:12`/`header1:rev:1`/`body:p:12`/`header1:p:2`/`footnotes:p:3` are refused as input and survive only in JSON `id`/`location` output pending schema 2; (c) `read -p` still accepts `p5-p7`, `p5-`, `-p7` through `Select::parse` — the contract retires the open ends; (d) `t0.row1.cell2.p1` is today's accepted cell-paragraph form but the contract spells `.ps1` and refuses old nested `.pN`; (e) bare `header1`/`footer2` still name the story's paragraph 0 — the contract wants `header1.p0`; (f) the implementation landed as the typed `ShortId`/`Step`/`Story`/`StoryId` in `src/ids/short.rs` plus `parse_location`/`parse_change_ids`/`parse_comment_id` in `src/ids.rs` — not as the `cell_path`/`is_retired_cell`/`short_paragraph`/`paragraph_number` sketch below; (g) `ChangeId::short()` still falls back to `story:rev:wid` for unspellable `w:id`s, which the contract replaces with allocated `rN` labels.
-
 | Token | `-p` → `parse_location` | `--id`, plan `resolve_revisions` → `parse_change_ids` | plan `comment_id` → `parse_comment_id` | `read -p` → `Select::parse` (unchanged, Q11) |
 |---|---|---|---|---|
-| `c27` (`#c27`: refused, settled `c27`) | comment 27 | Err | 27 | Err |
-| `r12`, `r1+2`, `header1.r1`, `footnotes.r3`, `header1.r1+2` (`body:rev:12`, `header1:rev:1`, `#12`, `#1+2`: refused) | those changes (`Location::Changes`; only `--accept`/`--reject` take them) | those changes | Err | Err |
-| `12`, `1+2` | refused, settled `p12` (`1+2`: Err) | refused, settled `r12`, `r1+2` | refused, settled `c12` | refused, settled `p12` |
+| `c27`, `#c27` (whole token) | comment 27 | Err | 27 | Err |
+| `r12`, `r1+2`, `header1.r1`, `footnotes.r3`, `header1.r1+2`, `body:rev:12`, `header1:rev:1`; 0.12's `#12`, `#1+2` | those changes (`Location::Changes`; only `--accept`/`--reject` take them) | those changes | Err | Err |
+| `12`, `1+2` | `p12` (`1+2`: Err) | changes 12, 1+2 | 12 (`1+2`: Err) | `p12` (`1+2`: Err) |
 | `p12` | body paragraph 12 | Err | Err | `p12` |
-| `p5-p7`, `p5-`, `-p7`, `5-7` | Err | Err | Err | that range (`5-7` refused; `p5-`/`-p7` transitional, open ends retire in v3) |
+| `p5-p7`, `p5-`, `-p7`, `5-7` | Err | Err | Err | that range |
 | `t0`, `t0.row1` | Err: a table id needs a row and a cell, as `t0.row1.cell2` | Err | Err | table 0 (`t0.row1`: Err) |
-| `t0.row1.cell2`, `t0.row1.cell2.p1` (transitional; contract: `.ps1`); `t0.r1.c2[.p1]` | the cell's paragraph (`.p0` when bare) — `t0.r1.c2` refused, settled `t0.row1.cell2` | Err | Err | Err |
-| `row1`, `row1.cell2`, `cell2`, `cell2.p1`, `r1.c2`, `c2.p1` | Err: a row or cell needs its table, as `t0.row1.cell2` | Err | Err | Err |
-| `header1`, `header1.p2`, `footer2`, `footnotes.p3`, `endnotes.p0` (story stems) | that story paragraph (`.p0` when bare — transitional; contract: `header1.p0`) | Err | Err | Err |
-| `body:p:12`, `header1:p:2` (colon long) | refused, settled `p12`/`header1.p2` | Err | Err | Err |
-| anything else | Err: `-p takes a paragraph (p12), a story or its paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5), the text a comment covers (c5.text) or a revision` | Err | Err | Err (today's message) |
+| `t0.row1.cell2`, `t0.row1.cell2.p1`; retired `t0.r1.c2[.p1]` | the cell's paragraph (`.p0` when bare) | Err | Err | Err |
+| `row1`, `row1.cell2`, `cell2`, `cell2.p1`, 0.12's `r1.c2`, `c2.p1` | Err: a row or cell needs its table, as `t0.row1.cell2` | Err | Err | Err |
+| `header1`, `header1.p2`, `footer2`, `footnotes.p3`, `endnotes.p0` (story stems) | that story paragraph (`.p0` when bare) | Err | Err | Err |
+| `body:p:12`, `header1:p:2` (long) | that paragraph | Err | Err | Err |
+| anything else | Err: `-p takes a paragraph (p12 or 12), a story paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment (c5) or a revision (r12)` | Err | Err | Err (today's message) |
 
-Every `-p` refusal reads `{given}: {why}`; the `why` is the row's message above. Every `--id` and plan-id refusal reads `{given}: expected a change id such as r12, r1+2 or header1.r1`. Every `comment_id` refusal reads `{given}: expected a comment id such as c27`.
+Every `-p` refusal reads `{given}: {why}`; the `why` is the row's message above. Every `--id` and plan-id refusal reads `{given}: expected a change id such as r12, header1.r1 or body:rev:12`. Every `comment_id` refusal reads `{given}: expected a comment id such as c27 or 27`.
 
 Rules behind the table:
 - **Short story stem:** `[a-z][a-z0-9]*` that is neither a bare `p`, `t`, `c` or `r` nor shaped `p12`, `t0`, `c5`, `r1`, `row1` or `cell1`. That exclusion is itself a fixed list: a part named `t0.xml` or `row1.xml` keeps only its long id.
@@ -168,52 +156,46 @@ Rules behind the table:
   - A stem outside the rule (uppercase, `_`, `-`, `.`) or a `w:id` that is not a plain decimal keeps only its long id. `short()` prints the long form for them, so every printed id parses.
 - **Long ids** (`{story}:rev:{wid}`, `{story}:p:{n}`) accept any story without `:`.
 - **`cN` alone is always a comment, `rN` alone always a revision.** Rows and cells are `rowN` and `cellN`, and only under their table. 0.12's view printed `in r1.c2`; `-p r1.c2` is refused with the row/cell message, never read as revision 1.
-- **The retired cell form** `t0.r1.c2[.p1]` is refused input, exit 2, the message naming `tN.rowR.cellC` (shipped tighter than this draft's accepted-with-note rule; `retired_spellings`/`is_retired_cell` never shipped).
+- **The retired cell form** `t0.r1.c2[.p1]` parses to the same paragraph. The binary prints `note: tN.rR.cC is now tN.rowR.cellC; tN.rR.cC is removed in 0.14` once when a `-p` value has that shape (Task 9's `retired_spellings`); a plan's JSON gets no note (CHANGELOG, Deprecated).
 - **The malformed ids** of `tests/edit_short_ids.rs:266-296` stay refused end to end (ANCHOR_NOT_FOUND, as JSON strings and as `{id}`), and the new cell form gets the same six shapes.
   - 16 are parse errors: `p`, `p-1`, `p+1`, `p１`, `p1.p0`, `p1.`, `P1`, `p18446744073709551616`, `header1.p-1`, `header1.p0.extra`, `t0.r0`, `t0.r-1.c0`, `t0.r0.c+1`, `t0.r0.c0.p`, `t0.r0.c0.p0.extra`, `t0.r0.c18446744073709551616`.
   - New, also parse errors: `t0.row0`, `t0.row-1.cell0`, `t0.row0.cell+1`, `t0.row0.cell0.p`, `t0.row0.cell0.p0.extra`, `t0.row0.cell18446744073709551616`.
   - `header` parses as a story stem and is refused because the document has no story named `header`.
 - **Shell spellings:** every printed id is shell-safe (Rule 6).
-- **One spelling per number:** digits are ASCII, without leading zeros (`p0` yes, `p012` no), up to `usize` for paragraphs, tables, rows and cells [transitional; contract: portable `u32`] and `u32` for comments and `w:id`s; Task 5b proves it. A colon long change id is the exception [transitional output only]: it carries the `w:id` as the document spells it (`body:rev:007` names `w:id="007"`); the contract keeps that in-range value as the long's VALUE (`document.w:ins.w:id.007`) and allocates a canonical `rN` for the short side.
-- **Behaviour change for edit:** `-p 6` is refused exit 2 naming `p6` (the 13 October settlement refused bare numbers rather than aliasing them, as this draft proposed). CHANGELOG.
+- **One spelling per number:** digits are ASCII, without leading zeros (`p0` yes, `p012` no), up to `usize` for paragraphs, tables, rows and cells and `u32` for comments and `w:id`s; Task 5b proves it. A long change id is the exception: it carries the `w:id` as the document spells it (`body:rev:007` names `w:id="007"`), so every printed id reads back.
+- **Behaviour change for edit:** `-p 6` ≡ `-p p6`. Today it is refused with "unknown paragraph id 6". CHANGELOG.
 
-- [ ] **Failing tests** (in-module). As shipped, the suite is `tests/id_types.rs` over the typed `ShortId`/`Step`/`Story`/`StoryId` and `parse_location`/`parse_change_ids`/`parse_comment_id`; every expired form below is now an `Err` assertion naming the settled spelling, and `#12`/`#c27`/`t0.r1.c2`/bare `12`/colon longs appear only as refusal cases:
+- [ ] **Failing tests** (in-module):
   - `parse_change_ids`:
-    - `r12` → `[ChangeId{body,12}]`; `header1.r1` → `ChangeId{header1,1}`; `12`, `#12`, `body:rev:12`, `header1:rev:1` → Err naming `r12`/`header1.r1`.
-    - `ChangeId::new("footnotes","3").short() == "footnotes.r3"`; `r1+2` → 2 ids (`#1+2`, `1+2` refused); `header1.r1+2`[1].long() == `header1:rev:2` (transitional long, retired at schema 2); `ChangeId::new("body","12").short() == "r12"`.
-    - `ChangeId::new("Header_1","4").short() == "Header_1:rev:4"` (outside the stem rule, prints the colon fallback — transitional; contract allocates `rN`); `bogus.r1` → Ok (resolution refuses it).
-    - Err with `{given}: expected a change id such as r12, r1+2 or header1.r1`: `p12`, `#`, `#x`, `r`, `rx`, `header1.r`, `r1+`, `c5`, `header1`, `row1`, `header1#1`, `12`, `body:rev:12`.
-  - `parse_comment_id`: `c27` → 27 (`#c27`, `27` → Err naming `c27`); `p27`, `r27` → Err.
+    - `r12`, `#12`, `12` and `body:rev:12` → `[ChangeId{body,12}]`; `header1.r1` and `header1:rev:1` → `ChangeId{header1,1}`.
+    - `ChangeId::new("footnotes","3").short() == "footnotes.r3"`; `r1+2`, `#1+2` and `1+2` → 2 ids; `header1.r1+2`[1].long() == `header1:rev:2`; `ChangeId::new("body","12").short() == "r12"`.
+    - `ChangeId::new("Header_1","4").short() == "Header_1:rev:4"` (outside the stem rule, prints long); `bogus.r1` → Ok (resolution refuses it).
+    - Err with `{given}: expected a change id such as r12, header1.r1 or body:rev:12`: `p12`, `#`, `#x`, `r`, `rx`, `header1.r`, `r1+`, `c5`, `header1`, `row1`, `header1#1`.
+  - `parse_comment_id`: `c27`, `#c27`, `27` → 27; `p27`, `r27` → Err.
   - `parse_location`:
-    - `c5` → `Comment(5)`; `r12`, `header1.r1`, `r1+2` → `Changes(..)`; `t0.row1.cell2`, `header1`, `footnotes.p3` → `Paragraph`; `#c5`, `#12`, `27`, `t0.r1.c2`, `body:p:3` → Err naming `c5`, `r12`, `p27`, `t0.row1.cell2`, `p3`.
+    - `c5`/`#c5` → `Comment(5)`; `r12`, `#12`, `header1.r1`, `r1+2` → `Changes(..)`; `27` → `Paragraph("p27")`; `t0.row1.cell2`, `t0.r1.c2`, `header1`, `footnotes.p3` and `body:p:3` → `Paragraph`.
     - `t0` and `t0.row1` → the table Err; `row1`, `row1.cell2`, `cell2`, `r1.c2` and `c2.p1` → the row/cell Err.
     - The 22 malformed ids above → Err.
-  - `cell_path("t0.row1.cell2.p1")` and `cell_path("t0.r1.c2.p1")` → `Some((0, 1, 2, Some(1)))`; `is_retired_cell("t0.r1.c2") == true`, `is_retired_cell("t0.row1.cell2") == false`. [Superseded: these helpers never shipped — cell paths are `Step`s inside `ShortId::parse`, `t0.r1.c2.p1` is a refusal, and `.p1` is the transitional cell-paragraph step the contract spells `.ps1`.]
-  - `short_paragraph`: `body:p:12`→`p12`, `header1:p:0`→`header1`, `header1:p:2`→`header1.p2`, `footnotes:p:3`→`footnotes.p3`; `Header_1:p:2` stays long. [Shipped as `ids::short_paragraph` used by `read --tables`/`validate` text output; contract: `header1:p:0` maps to `header1.p0`, not bare `header1`.]
-  - `paragraph_number("p12")` → 12, `"12"`/`"p"` → None; `table_number("t0")` → 0. [Shipped: bare `12` is refused, not read as 12.]
+  - `cell_path("t0.row1.cell2.p1")` and `cell_path("t0.r1.c2.p1")` → `Some((0, 1, 2, Some(1)))`; `is_retired_cell("t0.r1.c2") == true`, `is_retired_cell("t0.row1.cell2") == false`.
+  - `short_paragraph`: `body:p:12`→`p12`, `header1:p:0`→`header1`, `header1:p:2`→`header1.p2`, `footnotes:p:3`→`footnotes.p3`; `Header_1:p:2` stays long.
+  - `paragraph_number("p12"|"12")` → 12, `"p"` → None; `table_number("t0")` → 0.
 - [ ] **Implement:**
 ```rust
-// As shipped: `src/ids/short.rs` holds the typed grammar (ShortId, Step,
-// Story, StoryId); `src/ids.rs` holds ChangeId, parse_location,
-// parse_change_ids, parse_comment_id, hint_where, short_paragraph.
-// The sketches below name the draft's surface; the settled signatures
-// differ and the contract replaces them wholesale (ShortId → p/ps
-// variants, u32 steps, IdRef pair, typed LongId).
 pub struct ChangeId { pub story: String, pub wid: String }
-impl ChangeId { pub fn new(..); pub fn long(&self)->String /*{story}:rev:{wid}, transitional*/; pub fn short(&self)->String /*r12 | header1.r1 | story:rev:wid fallback, transitional*/; pub fn from_long(&str)->Option<Self> }
+impl ChangeId { pub fn new(..); pub fn long(&self)->String /*{story}:rev:{wid}*/; pub fn short(&self)->String /*r12 | header1.r1 | long when not short-safe*/; pub fn from_long(&str)->Option<Self> }
 pub fn parse_change_ids(&str) -> Result<Vec<ChangeId>, IdError>   // `+` expands; stems checked by is_story
 pub fn parse_comment_id(&str) -> Result<u32, IdError>
-pub enum Location { Paragraph(String), Comment(u32), Changes(Vec<ChangeId>) }  // edit::origin::Ids::long_id resolves the paragraph form; bare N refused
+pub enum Location { Paragraph(String), Comment(u32), Changes(Vec<ChangeId>) }  // bare N → pN; edit::origin::Ids::long_id resolves the paragraph form
 pub fn parse_location(&str) -> Result<Location, IdError>
-pub fn cell_path(&str) -> Option<(usize, usize, usize, Option<usize>)>   // never shipped: cell paths are Steps in ShortId
-pub fn is_retired_cell(&str) -> bool                                  // never shipped: retired forms are refusals
-pub fn short_paragraph(long: &str) -> String                          // shipped; colon-long argument is transitional
+pub fn cell_path(&str) -> Option<(usize, usize, usize, Option<usize>)>   // t0.row1.cell2[.p1] and the retired t0.r1.c2[.p1]
+pub fn is_retired_cell(&str) -> bool
+pub fn short_paragraph(long: &str) -> String
 pub fn paragraph_number(&str) -> Option<usize>; pub fn table_number(&str) -> Option<usize>
 pub fn short_number(text: &str, prefix: char) -> Option<usize>       // moved from edit.rs:748-756
 pub fn is_story(&str) -> bool                                        // the short-stem rule above; syntactic
 pub struct IdError { pub given: String, pub expected: &'static str } // Display "{given}: {expected}"
 pub const CHANGE_SPELLINGS / COMMENT_SPELLINGS / PARAGRAPH_SPELLINGS: &[&str]   // the manifest's `ids` (Task 17)
-pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: number or "c27" ("27" still accepted today; contract: typed reference)
+pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: number or "c27"/"#c27"/"27"
 ```
 - [ ] Run `cargo test --lib ids`, clippy. Commit: `feat(ids): one grammar for change, comment and paragraph ids`.
 
@@ -244,35 +226,35 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
   - `changes_text` exact output.
   - Keep `resolving_in_two_halves_ends_where_resolving_all_does` (232-379; `step_by(2)` and `.unwrap()` over the corpus) green. It cannot pass while a style pair is `Ambiguous`.
   - `UnknownChange`'s payload stays long (:130); its Display prints the short form.
-- `tests/agent_text_view.rs:1401-1425`: rows carry `ref`; `reject --id rN` (`--id N`, `--id #N` and the colon long became refusals naming `rN`).
-- `tests/edit_plan.rs:332-358`: `"ids":["r1"]` and `"ids":["#1"]`. [Shipped: `"#1"` is a refusal naming `r1`; version-1 plans get the schema-2 version-boundary error under the contract.]
+- `tests/agent_text_view.rs:1401-1425`: rows carry `ref`; `reject --id rN`, `--id N` and (argv) `--id #N`, mixed with one long id.
+- `tests/edit_plan.rs:332-358`: `"ids":["r1"]` and `"ids":["#1"]`.
 - `tests/edit_short_ids.rs`:
-  - Plan `comment_id:"c0"` applies (`"#c0"` is a refusal naming `c0`).
-  - `-p c0` (argv); `-p 6` is refused naming `p6` (not `≡ -p p6`); `-p footnotes.p0` edits the note.
-  - `the_cli_p_flag_takes_cell_and_story_ids` (222-264) writes `t0.row1.cell1.p1`; the `t0.r1.c1.p1` copy is refused naming `t0.row1.cell1.p1` (transitional `.p1`; contract `.ps1`).
+  - Plan `comment_id:"c0"` and `"#c0"` apply.
+  - `-p #c0` (argv); `-p 6` ≡ `-p p6`; `-p footnotes.p0` edits the note.
+  - `the_cli_p_flag_takes_cell_and_story_ids` (222-264) writes `t0.row1.cell1.p1`; a copy keeps `t0.r1.c1.p1` and expects the same redline.
   - The 17 malformed ids (266-296) stay ANCHOR_NOT_FOUND.
 - `tests/edit_opaque_refusals.rs:57, :71`: the machine hints keep the long id. Unchanged.
-- `tests/m_cli_comments.rs`: rows start `c0\tp0\t…`; the text pin at :89 loses `body:p:0` [shipped: the `paragraph`/`location` JSON fields still carry the colon form pending schema 2]; `reply to c0`; JSON `"ref":"c0"`.
+- `tests/m_cli_comments.rs`: rows start `c0\tp0\t…`; the text pin at :89 loses `body:p:0`; `reply to c0`; JSON `"ref":"c0"`.
 - `tests/m7_cli.rs:309-318`: the row now has 6 tab fields.
 
 - [ ] **Implement:**
   - **`Change`:**
     - Gains `#[serde(rename = "ref")] r#ref: String` after `id`. `Change` derives `Serialize` only, so it needs no default.
-    - Gains `#[serde(skip_serializing_if = "Option::is_none")] paragraph: Option<String>`: the long `body:p:N`/`header1:p:N` of the nearest `w:p` [transitional colon form; the contract pairs every reference as `short_id`/`long_id`], via `inspect::body_paragraph_nodes`/`story_paragraph_nodes`. A row or cell gives its first paragraph; `styles` gives None.
+    - Gains `#[serde(skip_serializing_if = "Option::is_none")] paragraph: Option<String>`: the long `body:p:N`/`header1:p:N` of the nearest `w:p`, via `inspect::body_paragraph_nodes`/`story_paragraph_nodes`. A row or cell gives its first paragraph; `styles` gives None.
   - **Word's one-id style pair** (blocker). In `carriers()`, carriers that share a `w:id` under one `w:style` are one change. The first is listed; the rest get `change: None` and the first's `group`. Without this, `Ambiguous` refuses most Word redlines.
   - **Normalizing ids.**
     - `ChangeFilter::normalized()` expands every `ids` entry to long form through `ids::parse_change_ids` (`ChangeError::InvalidId` on failure).
     - `resolve()` and `edit::resolve_selected` call it; `change_err` maps the new variants.
     - `ChangeError::Ambiguous { id, candidates }` fires when a long id still matches more than one listed change. Its message names `validate --repair` only when every candidate is an `ins`, `del`, `moveFrom` or `moveTo`: those are what `UNIQUE_REVISION_IDS` (validate.rs:570-577) renumbers.
     - The new variants break a public enum (no `#[non_exhaustive]`): CHANGELOG.
-  - **`Ids::long_id`** learns `footnotes`/`endnotes[.pK]`, Task 2's stems and the cell path [shipped through the typed `ShortId`, not `ids::cell_path`; bare `N` refused naming `pN`; `t0.r1.c2[.pK]` refused naming `t0.row1.cell2`; `.pK` is the transitional cell step the contract spells `.psK`], resolved against the document's stories. Today it would refuse `-p footnotes.p3`, which `changes` will print. Its messages (origin.rs:120, 141, 154) spell `t0.row1.cell2`, `{head}.row{row}` and `{head}.row{row}.cell{cell}`; the module doc (7, 39-41, 86) too.
+  - **`Ids::long_id`** learns bare `N`, `footnotes`/`endnotes[.pK]`, Task 2's stems and the cell path through `ids::cell_path` (`t0.row1.cell2[.pK]` and the retired `t0.r1.c2[.pK]`), resolved against the document's stories. Today it would refuse `-p footnotes.p3`, which `changes` will print. Its messages (origin.rs:120, 141, 154) spell `t0.row1.cell2`, `{head}.row{row}` and `{head}.row{row}.cell{cell}`; the module doc (7, 39-41, 86) too.
   - **Text listings:**
     - `pub fn changes_text(&[Change]) -> String`: `{ref}\t{kind}\t{target}\t{author|-}\t{short paragraph|-}\t{text:?60}[\tinside {ref}]`, then `{n} change(s)`.
     - `CommentRecord` gains `#[serde(default, rename = "ref")] r#ref: String` (= `c{id}`).
     - `pub fn comments_text(&[CommentRecord]) -> String`: `c{id}\t{short paragraph|-}\t{author}\t{text:?60}\ton {anchor:?40}[\treply to c{parent}][\tresolved]`, then `{n} comment(s)`.
   - **`comment_id` fields** get `deserialize_with = "crate::ids::comment_id_de"`; the wire format stays numeric.
   - **Long ids stay** in machine hints and error payloads.
-  - **`Selection.ids` doc:** ``Only this change: `r12` (as the view and `changes` print it), `header1.r1`, or `r1+2` (both). Repeatable.`` [shipped: `12` and `body:rev:12` are refused, naming `r12`]
+  - **`Selection.ids` doc:** ``Only this change: `r12` (as the view and `changes` print it), `12`, `header1.r1`, `r1+2` (both), or the long `body:rev:12`. Repeatable.``
 - [ ] Run the **gate**. Commit: `feat(ids): every spelling of a change or comment id is accepted; listings print the short form`.
 
 ### Task 3b: `edit -p r12 --accept|--reject`; `--reply` on edit and add
@@ -290,9 +272,9 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
 - A change group is not an operation: `op-N` notes number the operations only.
 
 **Tests:**
-- `src/edit/flags.rs` unit tests: `each_flag_combination_maps_to_one_kind` (637-742) gains the reply rows; `contradictory_flags_are_usage_errors` (744-833) every refusal above; a new `revisions_go_to_resolve_revisions`: `-p r1 --accept -p p0 --content x -p header1.r2 --reject` → `resolve_revisions {accept: ids [body:rev:1], reject: ids [header1:rev:2]}` (the plan-JSON `ids` list keeps the colon form pending schema 2) and one operation; `r1+2 --accept` → two ids.
+- `src/edit/flags.rs` unit tests: `each_flag_combination_maps_to_one_kind` (637-742) gains the reply rows; `contradictory_flags_are_usage_errors` (744-833) every refusal above; a new `revisions_go_to_resolve_revisions`: `-p r1 --accept -p p0 --content x -p header1.r2 --reject` → `resolve_revisions {accept: ids [body:rev:1], reject: ids [header1:rev:2]}` and one operation; `r1+2 --accept` → two ids.
 - `tests/edit_short_ids.rs`, new:
-  - `edit received.docx -p r0 --accept` → exit 0; the output's `changes` no longer lists the change whose JSON `id` is `body:rev:0` (transitional form), and the other changes stay.
+  - `edit received.docx -p r0 --accept` → exit 0; the output's `changes` no longer lists `body:rev:0`, and the other changes stay.
   - `-p r0 --reject -p p1 --content …` applies both, the rejection first.
   - `edit -p c5 --reply "Yes."` and `add -p c5 --reply "Yes."` write the same reply as `add -p c5 --content "Yes."`.
   - `-p p1 --accept`, `-p r0 --content x`, `-p r0 --accept --reject`, `-p p1 --reply x`, `-p c5 --reply x --content y` → exit 2 with the messages above.
@@ -359,7 +341,7 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
   - `tag_of` 97-101, `handle_of` 104-109, `join_tags` 113-127, `format_tag` 130-138 (doc 129). New `split_tag`.
   - The comment ids: id lines 882, 886 (`comments c5`, `in c9`); the table line 1011, 1069; the comment head 1123 (`c5`) and 1132 (` re c5`).
   - The table line's rows and cells print full paths, so every cell id the line shows is a valid `-p`: 968 (`in t{n}.row{r}`), 976 (`in t{n}.row{r}.cell{c}`), 1036/1038 (`t{n}.row{i} p{a}[-p{b}]`). A row path (`t0.row1`) is a label; `-p t0.row1` is refused with the table message.
-  - `has_handle` (1326-1345) reads comment words through one helper that takes `c5` (`#c5` is refused, naming `c5`); its doc comment shows the new tags.
+  - `has_handle` (1326-1345) reads comment words through one helper that takes `c5` and the old `#c5`; its doc comment shows the new tags.
 - `src/markdown/from_docx/mod.rs`:
   - `Writer.story: Option<String>`, in `Writer` 1013-1087 (stems are runtime strings: `hdr`).
   - `agent_tag` 1984-1996 and its callers, `change_of` 1998-2007 and `revision_marks` 2009-2025.
@@ -367,7 +349,7 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
   - The header/footer `StoryFact` loop 476-541: the literal is at 525-540, and `story_text` is called at 519.
   - The doc comments that quote the view (1044, 1285, 1438, 1453).
 - `src/markdown/mod.rs:481`: the doc test's tag.
-- `src/markdown/anchor.rs`: `plain_anchor` (194) strips any `{>>…<<}`, so it needs no code; its test (226-237) switches to `{>>c5 @AC: Cap?<<}` and `{>>r0 @AC<<}` (anchor matching is id-spelling-agnostic; a pasted 0.12 `{>>#0 @AC<<}` in document text is still stripped as a note shape).
+- `src/markdown/anchor.rs`: `plain_anchor` (194) strips any `{>>…<<}`, so it needs no code; its test (226-237) switches to `{>>c5 @AC: Cap?<<}` and `{>>r0 @AC<<}` and keeps one 0.12 row (`{>>#0 @AC<<}`), since an agent may paste an old view.
 - `src/markdown/from_docx/header.rs`:
   - `story_text` 851-920 gains `agent: Option<(&Handles, &str)>`. Its callers: mod.rs:519 and header.rs tests 987, 988, 997, 1011, 1012.
   - The `headers:`/`footers:` `text:` goes through `scalar(.., true)`.
@@ -394,7 +376,7 @@ pub fn comment_id_de<'de, D>(D) -> Result<u32, D::Error>             // serde: n
 - Guard: `a_selection_keeps_the_definition_of_an_inserted_note` (3557-3596) keeps `{++[^1]: Added note++}{>>r5 @AC<<}`. Its `w:ins` wraps the body's `footnoteReference`, so the change is the body's.
 - `--by` with a header-only author already works (`agent::revised_by` 376-391; test 3598-3630); nothing to add.
 - Unit tests:
-  - `format_tag("0@AC") == "r0 @AC"`; `format_tag("footnotes#1+2@AC") == "footnotes.r1+2 @AC"`. (The `story#ids@handle` spelling is the internal tag encoding, not a public id.)
+  - `format_tag("0@AC") == "r0 @AC"`; `format_tag("footnotes#1+2@AC") == "footnotes.r1+2 @AC"`.
   - `format_tag("1@AC|header1#2@JD") == "r1 @AC; header1.r2 @JD"`.
   - `join_tags` and `join_tagged` join only when story and handle match.
 - [ ] The internal tag becomes `[{story}#]{ids}@{HH}` (internal only; never printed). `format_tag` prints `r{ids} @HH` without a story and `{story}.r{ids} @HH` with one.
@@ -428,7 +410,7 @@ Arthur (2026-10-11): "a neurotic multi-document test to correctly parse from the
 - Widths: `p0` … `p51000`, `p4294967295` (accepted), `p18446744073709551615` (accepted as `usize` where 64-bit), `p18446744073709551616` (refused); `r4294967295` and `c4294967295` accepted, `c4294967296` refused (`u32`).
 - Leading zeros are refused (`p012`, `r007`, `c05`, `t01`, `t0.row01.cell2`): the printed form is the only spelling of a number, so two tokens never name one element. Today `-p p012` is accepted as `p12`: CHANGELOG (Breaking, tiny).
 - Unicode digits (`p１`, `r٣`), whitespace inside (`p 1`, `r1 +2`), empty parts (`r1+`, `+2`, `r1++2`, `t0..row1`), trailing dots, uppercase (`P1`, `R1`, `C5`, `ROW1`), `r-1`, `r+1`: all refused by the parser with the row's message. `rows1`, `cells2`, `row`, `cell` are well-formed story stems and are refused at resolution ("no story named rows1").
-- A deterministic generator (seeded xorshift in the test, no new dependency) draws 200,000 tokens from the grammar's alphabet (`prct.+:-` digits and the stems `body`, `header1`, `footnotes`, `row`, `cell` — `#` dropped: nothing public parses it). For each: if a parser accepts it, printing the result and parsing again gives the same value; no parser panics; the three parsers never accept one token as two different kinds.
+- A deterministic generator (seeded xorshift in the test, no new dependency) draws 200,000 tokens from the grammar's alphabet (`prc#t.+:-` digits and the stems `body`, `header1`, `footnotes`, `row`, `cell`). For each: if a parser accepts it, printing the result and parsing again gives the same value; no parser panics; the three parsers never accept one token as two different kinds except where the table says so (`12`).
 - The printed-set property of Rule 6: every short id printed matches `^[a-z][a-z0-9.+:-]*$` or `^[0-9]+$`; a long id of an out-of-rule story holds no shell metacharacter (`Header_1:rev:1` passes).
 
 **Speed:** the long body's view must stay fast enough to test in debug. If the round trip over 51,200 paragraphs takes more than 60 s under `cargo test`, the test reads the view once and checks ids in one pass (no per-id CLI calls beyond the named ones); it never becomes `#[ignore]`.
@@ -639,7 +621,7 @@ pub struct RenderArgs {   // next_help_heading = "Rendering (-o FILE.pdf or FILE
 - `src/inspect.rs`:
   - `Snapshot` (123-139) gains `changes: Vec<Change>` and `comments: Vec<CommentRecord>` after `controls`. `Snapshot` derives `Serialize` only, so no `#[serde(default)]`.
   - `pub fn snapshot(docx) -> Result<Snapshot, InspectError>`; `inspect_json` = `to_string(&snapshot()?)`.
-  - `impl Snapshot { pub fn retain(&mut self, body_paragraphs: &[usize]) }` keeps `paragraphs` by index, and the `changes`/`comments` whose `paragraph` is a kept `body:p:N` (transitional colon form in the JSON field). It leaves `summary`, `stories`, `tables` and `controls` alone.
+  - `impl Snapshot { pub fn retain(&mut self, body_paragraphs: &[usize]) }` keeps `paragraphs` by index, and the `changes`/`comments` whose `paragraph` is a kept `body:p:N`. It leaves `summary`, `stories`, `tables` and `controls` alone.
   - `pub fn tables_text(&[Table]) -> String`, lifted from `run_inspect_tables` (jubarte.rs:716-753).
 - `src/markdown/mod.rs`:
   - `ReadView.selected: Option<Vec<usize>>` from the kept `Block.span`s (agent.rs `Block` 1216-1224). It flows `agent::select_blocks` (agent.rs:1366-1378; caller from_docx/mod.rs:350-359) → `ReadDocx` (markdown/mod.rs:379-385) → `read()` (484-522).
@@ -652,7 +634,7 @@ pub struct RenderArgs {   // next_help_heading = "Rendering (-o FILE.pdf or FILE
 
 **Tests:**
 - `tests/m_cli_agent.rs:45-59`, rewritten on `tests/fixtures/agent-view/received.docx`. The current fixture has no change, comment or table; hand XML works too.
-  - `read FILE --json` has `schema_version 1` and `paragraphs[1].id == "body:p:1"` (transitional `id`; schema 2 pairs `short_id`/`long_id`). `changes[0].ref` and `comments[0].ref` equal what `changes`/`comments` list first: `r0` and `c5` on received.docx.
+  - `read FILE --json` has `schema_version 1` and `paragraphs[1].id == "body:p:1"`. `changes[0].ref` and `comments[0].ref` equal what `changes`/`comments` list first: `r0` and `c5` on received.docx.
   - Every `changes --json`/`comments --json` line is a substring of the snapshot. `inspect --json` equals it.
   - `read --json -p p1` keeps one paragraph and only its changes; `summary.paragraphs` is unchanged.
   - `read --json --changed` drops the unchanged paragraphs.
@@ -872,7 +854,7 @@ pub fn top_level_command() -> clap::Command {
   - Text: `* TEXT_INSIDE_DELETION\terror\tword/document.xml#w:body[0]/w:p[0]` and `1 finding(s): 1 error, 0 warning, 0 info`.
   - JSON row: `set "word"`, `severity "error"`, `location "w:body[0]/w:p[0]"`.
   - A word-only lead fixture still exits 2.
-  - `--rules style` on bullets → 0 with `  LITERAL_BULLET\twarning\tp0\t` (text output prints the short id; JSON `location` keeps the colon form); with `--strict` → 2.
+  - `--rules style` on bullets → 0 with `  LITERAL_BULLET\twarning\tbody:p:0\t`; with `--strict` → 2.
   - `--rules a11y` on an image without a description → 2.
   - `--rules edits` alone → 2 `edits needs --original and --author`; `--rules BOGUS` → 2.
   - `--original --author` finds `UNTRACKED_EDIT` with set `edits`.
@@ -898,7 +880,7 @@ pub fn top_level_command() -> clap::Command {
 - `tests/m_cli_agent.rs`, new `retired_names_work_once_with_a_note`:
   - `text FILE` → 0, the view, stderr exactly the note.
   - `inspect FILE --json` → `{"schema_version":1`.
-  - `audit bullets` → `LITERAL_BULLET\twarning\tp0` + its note (short id in text).
+  - `audit bullets` → `LITERAL_BULLET\twarning\tbody:p:0` + its note.
   - `--help` lacks `\n  inspect ` and `\n  debug `; the last task line is `self-update`.
 - `tests/cli_parser.rs` 310-338 (312) and :478:
   - `supported=["read","diff"]`.
@@ -930,11 +912,11 @@ pub fn top_level_command() -> clap::Command {
 - `edit plan versions: 1`; `edit operations: …`; `stories: …`; `limits: …`.
 - `validate rules: word (default), edits, a11y, style, structure`; `audit codes: …`.
 - `formats: compare .docx .md .pdf .png .json; read .md .json; …`.
-- `ids: revisions r12, header1.r1, footnotes.r3, r1+2 (both); comments c27; paragraphs p12, header1.p2, t0.row1.cell2; controls cc0, p12.cc0; comment text c5.text; tables t0`. [Shipped: bare `12`/`27` are refused, never advertised; `ccN` and `c5.text` joined the manifest under `ids.control`/`ids.comment_text`.]
+- `ids: revisions r12, 12, header1.r1, footnotes.r3, r1+2 (both); comments c27, 27; paragraphs p12, 12, header1.p2, t0.row1.cell2; tables t0`.
 - Last line: `run with --json for the manifest`.
 
 **Tests:**
-- `tests/m_cli_agent.rs:316-346`: keep, and add the text assertions above. `--json` has `validate_rules`, `formats.read == [".md",".json"]` and `ids.comment == ["c27"]` (bare `27` and `#c27` are refused, not advertised).
+- `tests/m_cli_agent.rs:316-346`: keep, and add the text assertions above. `--json` has `validate_rules`, `formats.read == [".md",".json"]` and `ids.comment == ["c27","27"]` (0.12's `#c27` parses but is not advertised).
 - `tests/agent_contracts.rs:81`: the roundtrip.
 - `tests/readme_coverage.rs` still passes.
 - [ ] Run the **gate**. Commit: `feat(capabilities): text summary by default; manifest lists formats and ids`.
@@ -998,7 +980,7 @@ Python is rebuilt from source here; npm tests run against the checked-in `jubart
 - `document.py`: `audit()` keeps `AuditFinding`; its docstring (:481) says `validate --help`.
 - `mcp_server.py`:
   - `docx_text` returns the agent view via `read_view`.
-  - The docstrings at 39/121 lose `[body:p:N]` (shipped: they show `[pN]`).
+  - The docstrings at 39/121 lose `[body:p:N]`.
   - `docx_validate` (299-311) gains `rules` and `strict`, and reports `location`.
 
 **Tests:**
@@ -1050,7 +1032,7 @@ npm lacks `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG output a
 
 ### Task 21: Docs, skill, examples, generators, CHANGELOG
 **`README.md`:**
-- Quick start 75-126: line 84 is stale (the shorthand prints), plus 93-95 and 120-122; use `--id r12` (bare `--id 12` is refused).
+- Quick start 75-126: line 84 is stale (the shorthand prints), plus 93-95 and 120-122; use `--id 12`.
 - The shared command set, 188-191: `inspect`, `text` → `read`.
 - CLI reference 362-770:
   - Compare 393-421: the `-o` table and "prints the view without -o"; 399-400 "as before" goes. Then 422-430 and 432-448.
@@ -1063,7 +1045,7 @@ npm lacks `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG output a
   - Debugging 752 marks `debug` hidden.
 - `README.crates.md` and the library READMEs are regenerated, never edited.
 
-**Every old id spelling, everywhere** (Arthur: anything that points to old syntax moves to current): `#12`/`#N` → `r12`/`rN`, `#1+2` → `r1+2`, `#c5` → `c5`, `t0.r1.c2` → `t0.row1.cell2`, `in r1.c2` → `in row1.cell2`, `--id body:rev:12` in prose → `--id r12` (the colon long stays only where transitional JSON is shown). Sweep with `git grep -nE "#c?[0-9]|\\bt[0-9]+\\.r[0-9]|\\{>>#"` over `README.md`, `docs/`, `skills/`, `examples/`, the binding READMEs and help strings; the only survivors are `docs/api/` (release snapshots), the CHANGELOG's released sections, and tests that prove the 0.12 spellings are refused.
+**Every old id spelling, everywhere** (Arthur: anything that points to old syntax moves to current): `#12`/`#N` → `r12`/`rN`, `#1+2` → `r1+2`, `#c5` → `c5`, `t0.r1.c2` → `t0.row1.cell2`, `in r1.c2` → `in row1.cell2`, `--id body:rev:12` in prose → `--id r12` (the long form stays where JSON is shown). Sweep with `git grep -nE "#c?[0-9]|\\bt[0-9]+\\.r[0-9]|\\{>>#"` over `README.md`, `docs/`, `skills/`, `examples/`, the binding READMEs and help strings; the only survivors are `docs/api/` (release snapshots), the CHANGELOG's released sections, and tests that prove the 0.12 spelling parses.
 
 **`docs/`:**
 - `docs/MARKDOWN.md`: 11-19; 134-146 (`sha256:`, `revisions:`); 240-250 (ids); 287 and 347 (`Redline`); 315-363 (commands); Diffs 381-469 and 470-502 (diff → compare).
@@ -1071,7 +1053,7 @@ npm lacks `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG output a
 - `docs/TODO.md` §7 (233-257): mark it shipped and note how it differs from D5 (the no-change case, page labels, context, the report). Add an item: remove the retired spellings in 0.14.
 - `docs/python.md:30`.
 - `docs/adoption/anthropic-docx-skill.md:40-52`; `docs/adoption/openai-doc-skill.md:44-56, 80-82`; `docs/adoption/mcp.md:23-34` (MCP `docx_audit` at :34 stays); `docs/adoption/plans.md:146-151`.
-- `docs/2026-10-09-agent-edit-follow-ups.md`: Task 4 spells paraIds `pid:HEX` (Task 6 already moved its Task 3 to `sha256:`). [Superseded: `pid:` never shipped; the contract puts a paraId only inside the four-field long `document.w:p.w14:paraId.HEX`.]
+- `docs/2026-10-09-agent-edit-follow-ups.md`: Task 4 spells paraIds `pid:HEX` (Task 6 already moved its Task 3 to `sha256:`).
 
 **Skill and top-level files:** `skills/jubarte-documents/SKILL.md`:
 - Lines 17, 20-21, 25, 50-52, 58-73, 86, 94-99, 114, 334-350, 359-360, 369, 391.
@@ -1117,7 +1099,7 @@ The `jubarte` on PATH is 0.11.2, so always pass `JUBARTE`. Verify with `scripts/
 **`CHANGELOG.md` `## [Unreleased]`:**
 - **Added:**
   - `read --json` (the snapshot, now with `changes` and `comments`, filtered by the selection flags), `read --tables`, `read -o`; the `sha256:` header line.
-  - One id grammar: revisions `r12`, `header1.r1`, `footnotes.r3`, `r1+2` (both); comments `c27`; paragraphs `p12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2` (`.p1` cell paragraphs, transitional — the contract spells `.ps1`); controls `cc0`, `p12.cc0`; comment text `c5.text`; on `accept`/`reject --id`, `edit`/`add -p`, plan `resolve_revisions`/`comment_id`. 0.12's `#12`, `#c27`, `t0.r1.c2`, bare numbers and the colon longs are all refused, exit 2 naming the settled spelling. Every id is safe unquoted in bash, csh and zsh.
+  - One id grammar: revisions `r12`/`12`, `header1.r1`, `r1+2`, `body:rev:12`; comments `c27`/`27`; paragraphs `p12`/`12`, `footnotes.p3`, `t0.row1.cell2`; on `accept`/`reject --id`, `edit`/`add -p`, plan `resolve_revisions`/`comment_id`. 0.12's `#12` and `#c27` still parse. Every id is safe unquoted in bash, csh and zsh.
   - `edit -p r12 --accept|--reject` resolves one revision; `--reply TEXT` on `edit` and `add` answers a comment.
   - `-o FILE.md|.pdf|.png|.json` on compare, convert, accept, reject, append, scrub.
   - `--pages` for PDF. `--changed-pages` keeps comment-anchor pages and the first page where a revised header or footer paints.
@@ -1140,13 +1122,13 @@ The `jubarte` on PATH is 0.11.2, so always pass `JUBARTE`. Verify with `scripts/
   - `edit`/`add` default author `Redline`.
   - PNG pages are named by document page.
   - `--pdf`/`--png` are aliases of `--to`, so `convert --pdf --png` and `--to md --png` are usage errors.
-  - `edit -p 6` exits 2 naming `p6` (bare numbers refused).
+  - `edit -p 6` means `p6`.
   - Ids with leading zeros (`-p p012`) are refused; each number has one spelling.
 - **Changed:** not breaking:
   - The view tags note, header and footer changes with their story, and shows header/footer changes on the `headers:`/`footers:` lines.
   - MCP `docx_text` returns the agent view.
   - The npm CLI still has no `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG or `--pages`; the Python CLI has no `append` or `scrub`.
-- **Deprecated:** `text`, `inspect`, `audit`, `diff-render`, `--changed-only`, `--pdf`/`--png` keep working as hidden aliases and print `note: X is now Y` on stderr (a plan's JSON prints none); the cell id `t0.r1.c2` is instead refused outright, exit 2 naming `t0.row1.cell2`; `debug` is hidden.
+- **Deprecated:** `text`, `inspect`, `audit`, `diff-render`, `--changed-only`, `--pdf`, `--png` and the cell id `t0.r1.c2` keep working and print `note: X is now Y; X is removed in 0.14` (a plan's JSON prints none); `debug` is hidden.
 - **Fixed:**
   - `convert -o x.json` wrote a PDF; `diff -o x.json` wrote Word; `diff` wrote `_v_.docx` beside the input without `-o`; `convert --pdf -o x.png` wrote a PDF named x.png.
   - `--changed-only` named PNG pages by kept-page index (document page 3, kept alone, was written as `-page-01.png`).
@@ -1250,7 +1232,7 @@ Arthur asked (2026-10-12) how to change a footnote and how to change text that a
 - npm `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG and `--pages`; Python `append` and `scrub` (D14, Q6).
 - WASM `getRevisions` (jubarte-wasm/src/lib.rs:170-180) keeps its own grouping; aligning it with `list_changes` is a follow-up.
 - `read -p` learning story, cell and comment ids (Q11).
-- The follow-ups plan's `--nth`, `--digest` (it reads `sha256:`), `--pids` and `--move-after`. They are bound by Task 2's grammar, with paraIds as `pid:HEX` (Q12). [Superseded: `pid:`/`--pids` never shipped; the contract puts a paraId only inside `document.w:p.w14:paraId.HEX` and forbids a third address family.]
+- The follow-ups plan's `--nth`, `--digest` (it reads `sha256:`), `--pids` and `--move-after`. They are bound by Task 2's grammar, with paraIds as `pid:HEX` (Q12).
 - `-p` meaning `--part` on the hidden `debug`.
 - `jubarte FILE --author X` (and every compare-only flag with one file) is silently ignored today (docs/glm_new_cli_review.md). Refusing it is the next small fix (Q13).
 
@@ -1271,7 +1253,7 @@ Arthur accepted every default below; Q10 was replaced by his own decision.
 | Q9 | Migrate every retired spelling in `examples/adoption`, or only the hard breaks? | Every one (Task 21) |
 | Q10 | Ids for revisions, rows and cells? | Arthur: `rN` is a revision, `rowN` a row (and `cellN` a cell); `edit -p rN --accept/--reject`; `--reply` on edit and add (D7, D7b, Tasks 2, 3b, 5). Every id is bash/csh/zsh-safe (Rule 6). |
 | Q11 | `read -p` keeps today's grammar (pN, N, ranges, tN)? | Yes; stories/cells/comments are a follow-up |
-| Q12 | The follow-ups plan spells paraIds `pid:0DCBD3F9`? | Yes (Precedence) — superseded: `pid:` never shipped; contract v3 forbids a third address family |
+| Q12 | The follow-ups plan spells paraIds `pid:0DCBD3F9`? | Yes (Precedence) |
 | Q13 | Refuse compare-only flags with one file? | Follow-up, not this PR |
 
 ## Decisions taken with Arthur (2026-10-12)
@@ -1292,7 +1274,7 @@ Raised by the catalogues of PR #458 (`docs/flags_datetime.md`, `docs/locations.m
 | Q | Question | Facts | Recommendation |
 |---|---|---|---|
 | Q18 | Typed ids: one Rust type per id kind, parsed by clap? | No id flag has a `value_parser` today: `--id`, `-p/--location` and `-p/--paragraphs` reach `String` fields and are parsed after clap, by three parsers (`ids::parse_change_ids`, `ids::parse_location`, `markdown::Select::parse`). So a bad id exits 1 on `read -p` and 2 elsewhere, and each parser has its own message. A newtype per kind (`ChangeRef`, `CommentRef`, `Location`, `BlockSpec`) that implements `FromStr`, used as the field type, makes clap refuse a bad id at parse time with its own error and exit 2, in the binary, Python and npm alike (they share `parse_json`). | Yes. The types live in `src/ids.rs`; `read -p` joins the one grammar (the audit's A1/E1/G2). |
-| Q19 | `--id` for the short, intuitive id (`p3`, `c5`, `footnotes.r2`, `t0.row1.cell2`) and `--long-id` for one that strictly mimics the docx? | The long ids mimic the XML only in part. `body:rev:12` is the story (the part's file stem) plus the change's own `w:id`, as the XML spells it. `body:p:12` is the story plus the paragraph's position: no XML attribute holds it, and it shifts when a paragraph is inserted before it. No long id is a UUID. Word's only per-paragraph id is the optional `w14:paraId` (8 hex digits, Word 2010+). Word rewrites it on some edits and does not guarantee it unique. Footnotes have their own `w:id`, but `footnotes.p3` counts paragraphs across the whole part, not notes. Arthur also asked (2026-10-13) to treat long ids as deprecated; a `--long-id` flag keeps them alive. | **Decided 2026-10-17 by contract v3:** long ids stay, in the four-field form `PART.ELEMENT.ATTRIBUTE.VALUE` (`document.w:p.w14:paraId.3F2A1B7C`, `document.w:ins.w:id.12`, `comments.w:comment.w:id.5`); the positional colon forms are retired outright (transitional JSON only), `--long-id` is contract input, keyless targets take `j:short`, and no paragraph stamping is required. Options A/B/C below are history. |
+| Q19 | `--id` for the short, intuitive id (`p3`, `c5`, `footnotes.r2`, `t0.row1.cell2`) and `--long-id` for one that strictly mimics the docx? | The long ids mimic the XML only in part. `body:rev:12` is the story (the part's file stem) plus the change's own `w:id`, as the XML spells it. `body:p:12` is the story plus the paragraph's position: no XML attribute holds it, and it shifts when a paragraph is inserted before it. No long id is a UUID. Word's only per-paragraph id is the optional `w14:paraId` (8 hex digits, Word 2010+). Word rewrites it on some edits and does not guarantee it unique. Footnotes have their own `w:id`, but `footnotes.p3` counts paragraphs across the whole part, not notes. Arthur also asked (2026-10-13) to treat long ids as deprecated; a `--long-id` flag keeps them alive. | Decide first whether long ids stay. If they stay: `--long-id` takes `story:rev:WID` and `story:comment:WID` (true XML ids), plus `story:para:PARAID` from `w14:paraId` where the document has one, and refuses the positional `body:p:12`. If they go: they stay only in JSON and machine hints (D7), and the CLI accepts short ids only. |
 | Q20 | Deprecate `cN.text` (Task 23) and let any edit change commented text: keep the comment and move its anchor when the range's boundaries survive, drop the comment when they do not? | Today `-p p1 --anchor …` inside a comment's range already works; replacing the whole range leaves the deletion outside the comment (the Task 23 bug). Dropping a comment deletes a reviewer's words, so it should be reported on stderr, never silent. Arthur expects Word's behaviour to depend on the end of the range. | Investigate Word first (below), then decide. |
 
 **Q19 alternatives (Arthur, 2026-10-13: "assume 8 hex digits are always unique").** Measured first, on 400 documents of `tests/corpus`:
@@ -1308,7 +1290,7 @@ Whichever scheme wins therefore needs two rules: (a) what a paragraph without a 
 | B | Story + kind + XML id | `body:para:3F2A1B7C`, `footnotes:note:2`, `header1:rev:4`, `body:comment:5`, `body:row:1A2B3C4D.cell2` | Same shape as today's `body:rev:12`; the story names the part to open; one rule for every kind | Longer; the story repeats what a unique paraId already says |
 | C | Part path + XPath, strictly the docx | `word/document.xml#w:p[@w14:paraId='3F2A1B7C']`; without an id, the element path `word/document.xml#/w:body/w:tbl[1]/w:tr[2]/w:tc[3]/w:p[1]` (what `validate` already prints as element chains) | Addresses every element, id or not; reads 1:1 against the XML | Long; `[`, `@`, `'` and `#` need quoting in every shell (breaks D7's shell-safe rule); positional where there is no id |
 
-For A and B, rule (a): jubarte gives a paraId to every paragraph that lacks one, as Word does on save, whenever it writes a file. Before that ships, check in Word that the stamped file opens cleanly. Recommendation: B, with stamping. It keeps the shape agents already parse (`body:rev:12`), and the positional `body:p:12` goes. [Superseded by contract v3: none of A/B/C is the long grammar — it is the four-field `PART.ELEMENT.ATTRIBUTE.VALUE` — and stamping is explicitly not a prerequisite; keyless paragraphs get `j:short` longs.]
+For A and B, rule (a): jubarte gives a paraId to every paragraph that lacks one, as Word does on save, whenever it writes a file. Before that ships, check in Word that the stamped file opens cleanly. Recommendation: B, with stamping. It keeps the shape agents already parse (`body:rev:12`), and the positional `body:p:12` goes.
 
 **Q20 investigation: what Word does to a comment range when the text it covers changes.** Use the bench scripts only (`word_redline.py`; Word Compare of each pair, then read where Word puts `commentRangeStart`, `commentRangeEnd` and `commentReference` in its redline). Pairs (original → modified), each on a paragraph whose comment covers "ten dollars":
 1. the whole range replaced ("twelve euros");

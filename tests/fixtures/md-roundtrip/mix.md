@@ -15,9 +15,9 @@ styles:
   table: TableNormal
 notes: {fmt: footnotes.r0 @ASR; footnotes.r1 @ASR; endnotes.r2 @ASR; endnotes.r3 @ASR, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
-  default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r223 @ASR<<}", style: Normal, fmt: header1.r222 @ASR in header1}
+  default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r223 @ASR<<}", style: Normal, fmt: header1.r222 @ASR}
 footers:
-  default: {id: footer1, text: "{--Page       {PAGE \\* MERGEFORMAT}1       {/}of       {NUMPAGES \\* MERGEFORMAT}1       {/}·       {HYPERLINK \\h}eigenpal.com         {/}--}{>>footer1.r225 @ASR<<}", style: ListParagraph, fmt: footer1.r224 @ASR in footer1}
+  default: {id: footer1, text: "{--Page       {PAGE \\* MERGEFORMAT}1       {/}of       {NUMPAGES \\* MERGEFORMAT}1       {/}·       {HYPERLINK \\h}eigenpal.com         {/}--}{>>footer1.r225 @ASR<<}", style: ListParagraph, fmt: footer1.r224 @ASR}
 ---
 
 <!-- p0 fmt r4 @ASR; r5 @ASR; r6 @ASR; r9 @ASR -->
@@ -123,7 +123,7 @@ _file\__{~~**14**~>_15_~~}{>>r8+7 @ASR<<}_.docx_
 
 <!-- p76 empty, break-del r160 @ASR -->
 
-<!-- p77 page-break-del r162 @ASR, break-del r161 @ASR -->
+<!-- p77 page-break, break-del r161 @ASR, rev r162 @ASR -->
 
 <!-- p78 break-del r163 @ASR -->
 {--**Ref methods**         --}{>>r164 @ASR<<}

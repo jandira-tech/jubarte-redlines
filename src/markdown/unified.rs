@@ -269,8 +269,7 @@ pub fn patch_markdown(old: &str, new: &str, options: &PatchOptions) -> Patch {
 /// # Attribution rules
 ///
 /// - `{>>Name (date)<<}` immediately after a change is that change's
-///   author and date. After a substitution, a second one is the
-///   insertion's: the deletion and the insertion become two changes.
+///   author and date.
 /// - `{>>Name (date): text<<}` is a comment by `Name`, attached to the
 ///   preceding change (or to a highlight, depending on the context).
 /// - Every other comment, and every change without an author, is the
@@ -588,9 +587,6 @@ struct Edit {
     old_marked: String,
     new_marked: String,
     by: Option<(String, String)>,
-    /// The insertion's own author and date, when a substitution's sides
-    /// were made by two authors (the view names them old then new).
-    new_by: Option<(String, String)>,
 }
 
 impl Edit {
@@ -676,13 +672,6 @@ fn segments(critic: &str) -> Vec<Segment> {
                 }
             }
             Token::CommentStart => note = Some(String::new()),
-            // A comment paragraph break, inside a note or in dropped
-            // text.
-            Token::CommentBreak => {
-                if let Some(note) = &mut note {
-                    note.push_str("\n\n");
-                }
-            }
             Token::CommentEnd => {
                 let text = note.take().unwrap_or_default();
                 if edit.is_some() {
@@ -697,49 +686,20 @@ fn segments(critic: &str) -> Vec<Segment> {
 }
 
 /// `Name (date)` in the comment right after a change, or after the
-/// comments that follow it, becomes the change's author and date; so does
-/// the plain view's numbered note (`r3 Name (date)`), whose number says it
-/// names the change. A number alone names no one: the owner made it.
-/// A substitution whose sides two authors made is followed by two such
-/// notes, the deletion's then the insertion's.
+/// comments that follow it, becomes the change's author and date.
 fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
-    // Whether the last edit has taken its (first) note.
-    let mut named_edit = false;
     for segment in segments {
         if let Segment::Note(text) = &segment
             && let Some(Segment::Edit(edit)) = out
                 .iter_mut()
                 .rev()
                 .find(|s| !matches!(s, Segment::Note(_)))
+            && edit.by.is_none()
+            && let Some((Some(author), date, "")) = named(text.trim())
         {
-            let by = if let Some(plain) = super::view_notes::plain_revision(text.trim()) {
-                Some(
-                    (!plain.author.is_empty() || !plain.date.is_empty())
-                        .then_some((plain.author, plain.date)),
-                )
-            } else if let Some((Some(author), date, "")) = named(text.trim()) {
-                Some(Some((author, date.to_string())))
-            } else {
-                None
-            };
-            if let Some(by) = by {
-                let both_sides = !edit.old_marked.is_empty() && !edit.new_marked.is_empty();
-                // A note that names no one (`r3`) leaves a one-sided change
-                // to the next note that does.
-                if !named_edit || (!both_sides && edit.by.is_none()) {
-                    edit.by = by;
-                    named_edit = true;
-                    continue;
-                }
-                if both_sides && edit.new_by.is_none() && by.is_some() {
-                    edit.new_by = by;
-                    continue;
-                }
-            }
-        }
-        if matches!(segment, Segment::Edit(_)) {
-            named_edit = false;
+            edit.by = Some((author, date.to_string()));
+            continue;
         }
         out.push(segment);
     }
@@ -973,9 +933,13 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                 }
             }
             Segment::Edit(edit) => {
-                // The note after a change names its author unless the
-                // owner made it then.
-                let named = |text: &mut String, by: &Option<(String, String)>| match by {
+                if !edit.old_marked.is_empty() {
+                    text.push_str(&format!("[-{}-]", escape(&edit.old_marked)));
+                }
+                if !edit.new_marked.is_empty() {
+                    text.push_str(&format!("{{+{}+}}", escape(&edit.new_marked)));
+                }
+                let (author, date) = match &edit.by {
                     Some((author, date)) => {
                         if author != &owner.author || date != &owner.date {
                             text.push_str(&format!("{{>>{author} ({date})<<}}"));
@@ -984,44 +948,16 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                     }
                     None => (owner.author.clone(), owner.date.clone()),
                 };
-                let mut sides = Vec::with_capacity(2);
-                match &edit.new_by {
-                    // Two authors: the deletion and the insertion are
-                    // changes of their own, each named after itself.
-                    Some(_) => {
-                        text.push_str(&format!("[-{}-]", escape(&edit.old_marked)));
-                        sides.push((edit.old.clone(), String::new(), named(&mut text, &edit.by)));
-                        text.push_str(&format!("{{+{}+}}", escape(&edit.new_marked)));
-                        sides.push((
-                            String::new(),
-                            edit.new.clone(),
-                            named(&mut text, &edit.new_by),
-                        ));
-                    }
-                    None => {
-                        if !edit.old_marked.is_empty() {
-                            text.push_str(&format!("[-{}-]", escape(&edit.old_marked)));
-                        }
-                        if !edit.new_marked.is_empty() {
-                            text.push_str(&format!("{{+{}+}}", escape(&edit.new_marked)));
-                        }
-                        sides.push((
-                            edit.old.clone(),
-                            edit.new.clone(),
-                            named(&mut text, &edit.by),
-                        ));
-                    }
-                }
                 if let Some(h) = &mut highlight {
                     h.push_str(&edit.new);
                 }
-                changes.extend(sides.into_iter().map(|(old, new, (author, date))| Change {
-                    old,
-                    new,
+                changes.push(Change {
+                    old: edit.old.clone(),
+                    new: edit.new.clone(),
                     author,
                     date,
                     comment: None,
-                }));
+                });
             }
             Segment::HighlightStart => {
                 text.push_str("{==");
@@ -1044,11 +980,10 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                 match (previous, changes.last_mut()) {
                     (Some(Segment::Edit(edit)), Some(change))
                         if change.comment.is_none()
-                            && edit
-                                .new_by
-                                .as_ref()
-                                .or(edit.by.as_ref())
-                                .is_none_or(|(a, d)| a == &owner.author && d == &owner.date) =>
+                            && (edit.by.is_none()
+                                || edit.by.as_ref().is_some_and(|(a, d)| {
+                                    a == &owner.author && d == &owner.date
+                                })) =>
                     {
                         change.comment = Some(comment);
                     }
@@ -1288,42 +1223,6 @@ mod tests {
         assert!(!can_break(line, line.find(" c`").unwrap(), &ranges));
         assert!(!can_break(line, line.find(" f)").unwrap(), &ranges));
         assert!(can_break(line, 1, &ranges));
-    }
-
-    #[test]
-    fn a_numbered_note_after_a_change_names_its_author_never_a_comment() {
-        let by = |critic: &str| {
-            attribute(segments(critic))
-                .into_iter()
-                .map(|segment| match segment {
-                    Segment::Edit(edit) => format!("edit {:?}", edit.by),
-                    Segment::Note(note) => format!("note {note}"),
-                    _ => String::new(),
-                })
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-        };
-        let ana = Some(("Ana Lima".to_string(), "2026-09-30T14:05:00Z".to_string()));
-        assert_eq!(
-            by("a {++b++}{>>r3 Ana Lima (2026-09-30T14:05:00Z)<<} c"),
-            [format!("edit {ana:?}")]
-        );
-        assert_eq!(
-            by("a {++b++}{>>footnotes.r3+4 Ana Lima (2026-09-30T14:05:00Z)<<}"),
-            [format!("edit {ana:?}")]
-        );
-        // The old note without a number still names the author.
-        assert_eq!(
-            by("a {++b++}{>>Ana Lima (2026-09-30T14:05:00Z)<<}"),
-            [format!("edit {ana:?}")]
-        );
-        // A number alone names the change and no one: the owner made it.
-        assert_eq!(by("a {++b++}{>>r3<<}"), ["edit None"]);
-        // A comment is still a comment.
-        assert_eq!(
-            by("a {++b++}{>>Ana Lima (2026-09-30T14:05:00Z): why<<}"),
-            ["edit None", "note Ana Lima (2026-09-30T14:05:00Z): why"]
-        );
     }
 
     #[test]

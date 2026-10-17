@@ -14,27 +14,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 > --all-features` passes on rustc 1.97. Everything in "What was verified"
 > was read from this tree or fetched live on 2026-10-02; nothing below is
 > quoted from memory.
->
-> **Status (2026-10-17): all ten tasks shipped.** Task 1 (S10) #279
-> `8b1d5348`; Task 2 (S3) #292 `d49a420f`; Task 3 (S2) #289 `c6a26f76`;
-> Task 4 (S1) #277 `e1dfccfa`; Task 5 (S9) #301 `70dccf39`; Task 6 (S7)
-> #276 `26994ca4`; Task 7 (S6) #275 `fb3e225f`; Task 8 (S8) #297
-> `170b3e84` plus #300 `be529171`; Tasks 9–10 (S4, S5) #278 `55bbb28d`.
-> Task 11 partially: `docs/adoption/` and `examples/agents/` exist with a
-> subset of the planned files. **ID spelling note:** the address grammar
-> this plan was written against is retired; the snippets below have been
-> updated to the current spellings — `pN`, `rN`, `story.pN`
-> (`footnotes.p0`, `header1.p1`), `ccN`/`pN.ccK`, `sN`, `tN.rowN.cellN`,
-> and `<!-- pN -->` id lines in the agent view (`inspect::markdown`
-> prints `[pN …]`). The retired forms were `body`-prefixed paragraph,
-> revision and story spellings.
-> `CommentRecord` shipped with `id` (the `w:id`) plus `ref` (`cN`), not
-> the planned single `id`. The v3 short/long-ID contract
-> (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
-> docs in `4612a155`) is **not implemented on any branch**: when it lands,
-> schema 1 plans become schema 2 and JSON document references become
-> paired `short_id`/`long_id` instead of today's `id`/`ref`/`paragraph`
-> fields, and scoped cell/text-box paragraphs spell `psN`.
 
 **Goal:** Close the ten gaps (S1 to S10 of the method mapping) that keep the
 four provider DOCX skills from replacing their LibreOffice, pandoc, Poppler
@@ -552,11 +531,11 @@ fn the_audit_names_an_untracked_edit_by_paragraph() {
     let findings = audit_tracked(&original, &edited, "Reviewer").unwrap();
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].code, "UNTRACKED_EDIT");
-    assert!(findings[0].message.contains("p1"), "{}", findings[0].message);
+    assert!(findings[0].message.contains("body:p:1"), "{}", findings[0].message);
     // The same edit done by the engine is fully tracked.
     let tracked = compare_documents(&original, &edited, "Reviewer").unwrap();
     assert!(audit_tracked(&original, &tracked, "Reviewer").unwrap().is_empty());
-    assert_eq!(markdown(&tracked).unwrap().matches("[p").count(), 2);
+    assert_eq!(markdown(&tracked).unwrap().matches("[body:p:").count(), 2);
 }
 ```
 
@@ -792,7 +771,7 @@ pub struct CommentRecord {
     pub parent: Option<u32>,
     /// `w15:done`.
     pub done: bool,
-    /// Story and paragraph id of the range start (`p12`), when anchored.
+    /// Story and paragraph id of the range start (`body:p:12`), when anchored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paragraph: Option<String>,
     /// The anchored text, exact.
@@ -805,9 +784,7 @@ pub struct CommentRecord {
 pub fn list_comments(docx: &[u8]) -> Result<Vec<CommentRecord>, CommentError>;
 ```
 
-New plan operations (wire tag `kind`). `comment_id` accepts the `w:id`
-number or the `cN` short id today; the v3 contract migrates these numeric
-inputs to typed short/long references (schema 2, not yet implemented):
+New plan operations (wire tag `kind`):
 
 | kind | fields | effect |
 |---|---|---|
@@ -850,14 +827,14 @@ fn plan(json: &str) -> EditPlan {
 fn reply_and_resolve_round_trip() {
     let source = docx(&para("The cap is 10."));
     let first = apply_plan(&source, &plan(r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"p0","find":"cap","text":"Too low"}]}"#)).unwrap();
+        {"kind":"comment","paragraph":"body:p:0","find":"cap","text":"Too low"}]}"#)).unwrap();
     assert_word_valid_package(&first.clean);
     let listed = list_comments(&first.clean).unwrap();
     assert_eq!(listed.len(), 1);
     let root = &listed[0];
     assert_eq!((root.author.as_str(), root.text.as_str(), root.done, root.parent), ("Ann", "Too low", false, None));
     assert_eq!(root.anchor_text, "cap");
-    assert_eq!(root.paragraph.as_deref(), Some("p0"));
+    assert_eq!(root.paragraph.as_deref(), Some("body:p:0"));
 
     let second = apply_plan(&first.clean, &plan(&format!(r#"{{"schema_version":1,"author":"Bob","operations":[
         {{"kind":"reply_comment","comment_id":{id},"text":"Agreed"}},
@@ -878,7 +855,7 @@ fn reply_and_resolve_round_trip() {
 fn edit_and_delete_leave_a_valid_package() {
     let source = docx(&(para("One.") + &para("Two.")));
     let with = apply_plan(&source, &plan(r#"{"schema_version":1,"author":"Ann","operations":[
-        {"kind":"comment","paragraph":"p0","through":"p1","text":"Both paragraphs"}]}"#)).unwrap();
+        {"kind":"comment","paragraph":"body:p:0","through":"body:p:1","text":"Both paragraphs"}]}"#)).unwrap();
     let id = list_comments(&with.clean).unwrap()[0].id;
     let edited = apply_plan(&with.clean, &plan(&format!(r#"{{"schema_version":1,"author":"Ann","operations":[
         {{"kind":"edit_comment","comment_id":{id},"text":"Both, reworded"}}]}}"#))).unwrap();
@@ -955,7 +932,7 @@ from docx_fixture import docx, para
 
 def test_reply_and_resolve_round_trip() -> None:
     doc = jubarte.Document.from_bytes(docx(para("The cap is 10.")))
-    first = doc.edit(jubarte.EditPlan(author="Ann").comment("p0", find="cap", text="Too low"))
+    first = doc.edit(jubarte.EditPlan(author="Ann").comment("body:p:0", find="cap", text="Too low"))
     (root,) = first.clean.comments()
     assert (root.text, root.done, root.parent) == ("Too low", False, None)
     second = first.clean.edit(
@@ -1020,7 +997,7 @@ fn source() -> Vec<u8> {
 #[test]
 fn the_second_occurrence_is_replaced() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"replace","paragraph":"p0","find":"fee","occurrence":2,"replacement":"cost"}]}"#).unwrap();
+        {"kind":"replace","paragraph":"body:p:0","find":"fee","occurrence":2,"replacement":"cost"}]}"#).unwrap();
     let out = apply_plan(&source(), &plan).unwrap();
     assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "fee cost fee");
     assert_eq!(out.report.operations[0].matches, 3);
@@ -1029,7 +1006,7 @@ fn the_second_occurrence_is_replaced() {
 #[test]
 fn an_out_of_range_occurrence_names_the_range() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"delete","paragraph":"p0","find":"fee","occurrence":4}]}"#).unwrap();
+        {"kind":"delete","paragraph":"body:p:0","find":"fee","occurrence":4}]}"#).unwrap();
     let e = apply_plan(&source(), &plan).unwrap_err();
     assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
     assert!(e.message.contains("occurs 3 times") && e.message.contains("occurrence 1..=3"), "{}", e.message);
@@ -1038,7 +1015,7 @@ fn an_out_of_range_occurrence_names_the_range() {
 #[test]
 fn without_occurrence_the_refusal_now_says_how_to_fix_it() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"insert","paragraph":"p0","after":"fee","text":"!"}]}"#).unwrap();
+        {"kind":"insert","paragraph":"body:p:0","after":"fee","text":"!"}]}"#).unwrap();
     let e = apply_plan(&source(), &plan).unwrap_err();
     assert_eq!(e.code, "AMBIGUOUS_ANCHOR");
     assert!(e.message.contains("set \"occurrence\" to 1..=3"), "{}", e.message);
@@ -1047,7 +1024,7 @@ fn without_occurrence_the_refusal_now_says_how_to_fix_it() {
 #[test]
 fn occurrence_zero_is_an_invalid_edit() {
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"comment","paragraph":"p0","find":"fee","occurrence":0,"text":"?"}]}"#).unwrap();
+        {"kind":"comment","paragraph":"body:p:0","find":"fee","occurrence":0,"text":"?"}]}"#).unwrap();
     assert_eq!(apply_plan(&source(), &plan).unwrap_err().code, "INVALID_EDIT");
 }
 ```
@@ -1211,7 +1188,7 @@ default and say so in the doc comment). Ignored when `reference` is given
 (its section wins), with a warning in `WrittenDocx.warnings`. CLI
 `--page`. `jubarte text --track-changes` maps to
 `markdown::docx_to_markdown` with `MarkdownOptions{track_changes}`; the
-help text says the output then has no `[pN]` ids (CriticMarkup
+help text says the output then has no `[body:p:N]` ids (CriticMarkup
 instead). Python `_native.markdown_to_docx(text, reference=None,
 page="letter", author="Redline", date=None, critic=True,
 track_changes="all") -> bytes` and `jubarte_redlines.from_markdown(text,
@@ -1394,7 +1371,7 @@ Test (`tests/edit_insert_table.rs`):
 fn an_inserted_table_is_tracked_and_valid() {
     let source = docx(&(para("Intro.") + &para("Outro.")));
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"insert_table","paragraph":"p0","position":"after","header_row":true,
+        {"kind":"insert_table","paragraph":"body:p:0","position":"after","header_row":true,
          "rows":[["Item","Qty"],["Bolt","40"]],"widths_dxa":[6000,3360]}]}"#).unwrap();
     let out = apply_plan(&source, &plan).unwrap();
     assert_word_valid_package(&out.clean);
@@ -1425,7 +1402,7 @@ range.
 
 **8d `insert_footnote`**
 
-Wire: `{"kind":"insert_footnote","paragraph":Selector,"after":"anchor text","occurrence":N,"text":"Note text"}`. Creates `word/footnotes.xml` with separators when absent (`markdown::package::footnotes` does this), appends `w:footnote w:id="N"` (`FootnoteText` style, `FootnoteReference` run), inserts the `w:footnoteReference` run after the anchor. Test: `summary.footnotes == 1`, story `footnotes.p0` text equals the note, redline valid, `list_changes` has an insertion whose `text` contains the reference.
+Wire: `{"kind":"insert_footnote","paragraph":Selector,"after":"anchor text","occurrence":N,"text":"Note text"}`. Creates `word/footnotes.xml` with separators when absent (`markdown::package::footnotes` does this), appends `w:footnote w:id="N"` (`FootnoteText` style, `FootnoteReference` run), inserts the `w:footnoteReference` run after the anchor. Test: `summary.footnotes == 1`, story `footnotes:p:0` text equals the note, redline valid, `list_changes` has an insertion whose `text` contains the reference.
 
 **8e `insert_image`**
 
@@ -1533,7 +1510,7 @@ fn scrub_removes_the_author_and_rsids_everywhere() {
 fn redact_leaves_blocks_and_no_copy_of_the_text() {
     let source = docx(&para("Account 12345678 is closed."));
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"redact","paragraph":"p0","find":"12345678"}]}"#).unwrap();
+        {"kind":"redact","paragraph":"body:p:0","find":"12345678"}]}"#).unwrap();
     let out = apply_plan(&source, &plan).unwrap();
     for doc in [&out.clean, &out.redline] {
         assert_word_valid_package(doc);
@@ -1546,9 +1523,9 @@ fn redact_leaves_blocks_and_no_copy_of_the_text() {
 fn a_redaction_that_survives_in_a_comment_is_refused() {
     let source = docx(&para("Account 12345678 is closed."));
     let commented = apply_plan(&source, &EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"comment","paragraph":"p0","text":"12345678 again"}]}"#).unwrap()).unwrap().clean;
+        {"kind":"comment","paragraph":"body:p:0","text":"12345678 again"}]}"#).unwrap()).unwrap().clean;
     let e = apply_plan(&commented, &EditPlan::from_json(r#"{"schema_version":1,"author":"A","operations":[
-        {"kind":"redact","paragraph":"p0","find":"12345678"}]}"#).unwrap()).unwrap_err();
+        {"kind":"redact","paragraph":"body:p:0","find":"12345678"}]}"#).unwrap()).unwrap_err();
     assert_eq!(e.code, "REDACTION_LEAK");
     assert!(e.message.contains("word/comments.xml"));
 }

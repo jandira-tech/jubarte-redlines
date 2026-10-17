@@ -1,13 +1,13 @@
 # Delimiters in the text
 
-Plain text with {\++ this ++\}, {\-- that --\}, {\~\~ a \~\> b \~\~}, {\=\= mark \=\=} and {\>> note <<\}.
+Plain text with {++ this ++}, {-- that --}, {~~ a ~> b ~~}, {== mark ==} and {>> note <<}.
 
-Inserted: x {\++ y ++\} z --\} w \~\> v and deleted: .
+Inserted: x {++ y ++} z --} w ~> v and deleted: .
 
-A comment on {\=\= text \=\=} here.
+A comment on {== text ==} here.
 
 Split across runs: a -**-}** and {_++_ and ~**>** end.
 
-An insertion ending in a dash --\} right after it.
+An insertion ending in a dash --} right after it.
 
-Math-like text $x\_{\--\}$ and $y\^{\++\}$ stays.
+Math-like text $x_{--}$ and $y^{++}$ stays.

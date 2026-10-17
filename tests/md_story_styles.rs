@@ -399,32 +399,3 @@ fn normal_is_described_once_when_no_style_is_marked_default() {
     assert_eq!(part_styles(&again, "word/header"), ["Header", "-"]);
     assert_eq!(view_again, view);
 }
-
-/// Word's own line-number style (`LineNumber`, named `line number`) keeps
-/// Word's name when the view names it: a footer paragraph that numbers
-/// lines (ids-tables, #528) must not come back as a style named by its id.
-#[test]
-fn line_number_keeps_words_own_name() {
-    let styles = styles_xml("Header", "Footer").replace(
-        "</w:styles>",
-        r#"<w:style w:type="character" w:styleId="LineNumber"><w:name w:val="line number"/><w:basedOn w:val="DefaultParagraphFont"/></w:style></w:styles>"#,
-    );
-    let docx = docx(
-        &styled(Some("Header"), "Draft"),
-        &styled(Some("LineNumber"), "12"),
-        &styles,
-    );
-    let (view, again, once) = round_trip(&docx);
-    assert!(view.contains("style: LineNumber"), "{view}");
-    assert_eq!(part_styles(&again, "word/footer"), ["LineNumber"]);
-    let styles = styles_of(&again);
-    let definition = styles
-        .split("<w:style ")
-        .find(|s| s.contains("w:styleId=\"LineNumber\""))
-        .unwrap_or_else(|| panic!("no LineNumber: {styles}"));
-    assert!(
-        definition.contains("<w:name w:val=\"line number\"/>"),
-        "{definition}"
-    );
-    assert_eq!(view, once);
-}

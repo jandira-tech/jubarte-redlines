@@ -38,10 +38,6 @@ const HAND_WRITTEN: &[&str] = &[
     "eLife.00047.md",
     "git_manuscript.md",
     "list_of_figures.md",
-    // A Google Docs export (2026-10-16). Arthur: "we will use its syntax for
-    // rendering images": `![][image4]` in the text, `[image4]: <data:image/
-    // png;base64,…>` defined at the end, a definition shared by every use.
-    "docx-libraries-comparison.md",
 ];
 
 fn jubarte(dir: &Path, args: &[&str]) -> Result<String, String> {
@@ -157,7 +153,8 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
     };
     let mut part = String::new();
     let mut lines = Vec::new();
-    // A lost line and a new line that say the same cancel each other.
+    // A lost line and a new line that say the same once what the view
+    // cannot say is left out (a highlight's colour) cancel each other.
     let mut lost: Vec<(String, String)> = Vec::new();
     let mut new: Vec<(String, String)> = Vec::new();
     for line in out.lines() {
@@ -249,8 +246,8 @@ fn a_moved_render_line_is_reported_and_an_equal_one_cancels() {
 /// What the Markdown view cannot say, so a docx it writes cannot hold it,
 /// or says in another form Word shows alike: each pattern with why. Everything else `debug --check render` lists is
 /// compared: the styles legend (each style's font, size, bold, spacing,
-/// alignment), the page, highlights (their colour on the `<mark>`'s
-/// `class`), tables, sections, fields, notes and parts.
+/// alignment), the page, highlights (all print as `==`), tables, sections,
+/// fields, notes and parts.
 static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
     [
         // A font set on a run, not through a style: the view has no run font.
@@ -294,10 +291,11 @@ static OUT_OF_DIALECT: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
 });
 
 /// A `debug --check render` line as far as the view can say it, `None` when
-/// it says nothing the view can: a table's cell shading is left out, so the
-/// table itself is compared without it. A highlight's colour the view does
-/// say (`<mark class="hl-…">`), so it is compared too.
+/// it says nothing the view can: a highlight's colour and a table's cell
+/// shading are left out, so only whether text is highlighted and the table
+/// itself are compared.
 fn in_dialect(part: &str, rest: &str) -> Option<String> {
+    static HIGHLIGHT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^highlight \S+").unwrap());
     static CELLS_SHD: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r" cells-shd\[[^\]]*\]").unwrap());
     let line = format!("{part}{rest}");
@@ -307,7 +305,8 @@ fn in_dialect(part: &str, rest: &str) -> Option<String> {
     {
         return None;
     }
-    Some(CELLS_SHD.replace_all(rest, "").into_owned())
+    let rest = HIGHLIGHT.replace(rest, "highlight");
+    Some(CELLS_SHD.replace_all(&rest, "").into_owned())
 }
 
 /// The docx a committed view was read from (`views.txt`), by file name.
@@ -614,15 +613,7 @@ fn markdown_and_docx_round_trip_exactly() {
         unlisted.is_empty(),
         "every Markdown fixture is a view listed in views.txt or hand-written (HAND_WRITTEN): {unlisted:?}"
     );
-    // `MD_FIXED_POINT_ONLY=ids-tables` replays only the fixtures whose path
-    // holds that text, for a quick loop on one document; the gate itself
-    // runs them all.
-    let only = std::env::var("MD_FIXED_POINT_ONLY").ok();
-    let picked = |path: &Path| {
-        only.as_deref()
-            .is_none_or(|only| path.to_string_lossy().contains(only))
-    };
-    for path in markdown.iter().filter(|p| picked(p)) {
+    for path in &markdown {
         let dir = tempfile::tempdir().unwrap();
         let file = path.file_name().unwrap().to_string_lossy().to_string();
         cases.push(markdown_case(
@@ -633,7 +624,7 @@ fn markdown_and_docx_round_trip_exactly() {
     }
     let docx = docx_list();
     assert!(!docx.is_empty(), "no docx fixtures in {FIXTURES}/docx.txt");
-    for path in docx.iter().filter(|p| picked(p)) {
+    for path in &docx {
         let dir = tempfile::tempdir().unwrap();
         cases.push(docx_case(dir.path(), path));
     }
