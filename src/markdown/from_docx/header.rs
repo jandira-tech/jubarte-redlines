@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The YAML header of the agent view.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::agent::{Handles, RevTag};
 use super::ooxml::Element;
@@ -230,17 +230,42 @@ fn revisions_comment(f: &Facts) -> String {
             c.kind == ChangeKind::Formatting && matches!(story(c).as_str(), "body" | "styles")
         })
         .count();
-    let mut others: Vec<(String, usize)> = Vec::new();
+    // A part's group prints where its block does — headers then footers,
+    // first, default, even, section by section — not where its relationship
+    // happens to sit, which a writer cannot keep.
+    let mut counts: HashMap<String, usize> = HashMap::new();
     for c in &f.changes {
         let s = story(c);
         if matches!(s.as_str(), "body" | "styles") {
             continue;
         }
-        match others.iter_mut().find(|(name, _)| *name == s) {
-            Some((_, n)) => *n += 1,
-            None => others.push((s, 1)),
+        *counts.entry(s).or_default() += 1;
+    }
+    let mut order: Vec<String> = Vec::new();
+    for section in &f.sections {
+        for kind in ["header", "footer"] {
+            for ty in ["first", "default", "even"] {
+                if let Some(s) = section
+                    .stories
+                    .iter()
+                    .find(|s| s.kind == kind && s.ty == ty && counts.contains_key(&s.part))
+                    && !order.contains(&s.part)
+                {
+                    order.push(s.part.clone());
+                }
+            }
         }
     }
+    for c in &f.changes {
+        let s = story(c);
+        if counts.contains_key(&s) && !order.contains(&s) {
+            order.push(s);
+        }
+    }
+    let others: Vec<(String, usize)> = order
+        .into_iter()
+        .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
+        .collect();
     let mut parts = Vec::new();
     if marks > 0 {
         let mut kinds = Vec::new();
@@ -1246,6 +1271,18 @@ fn part_two(out: &mut String, f: &Facts) {
     out.push_str("styles:\n");
     let default = f.default_style.unwrap_or("Normal");
     let base = resolve(f.styles, f.theme, default);
+    // A style a tracked change names but no paragraph uses still gets a
+    // legend line after the used ones, so the view's own docx defines it
+    // and the change has a holder there. The changed list's order is the
+    // styles part's; the writer keeps it, so the next view names the same
+    // order.
+    let changes = if f.resolved.is_none() {
+        f.styles
+            .map(|styles| style_changes(styles, f.handles))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     kv(
         out,
         &format!(
@@ -1303,6 +1340,31 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         );
     }
+    for (style, _) in &changes {
+        if style.as_str() == "docDefaults"
+            || style == default
+            || f.heading_styles.iter().any(|(_, h)| h == style)
+            || f.other_styles.iter().any(|o| o == style)
+        {
+            continue;
+        }
+        kv(
+            out,
+            &format!(
+                "  {}: {}",
+                scalar(style, false),
+                scalar(
+                    &format!(
+                        "{}{}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, style)
+                    ),
+                    false
+                )
+            ),
+            Some("tracked changes to it"),
+        );
+    }
     match f.table_styles.as_slice() {
         [] => {}
         [one] if !f.tables_differ => kv(
@@ -1319,21 +1381,44 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         ),
     }
-    if f.resolved.is_none()
-        && let Some(styles) = f.styles
-    {
-        let changes = style_changes(styles, f.handles);
-        if !changes.is_empty() {
-            let list: Vec<String> = changes
+    if !changes.is_empty() {
+        // Legend order: the default style first, then the styles the body
+        // uses, then the ones only a change names; `docDefaults` leads.
+        let order = |id: &str| {
+            if id == "docDefaults" {
+                return usize::MIN;
+            }
+            if id == default {
+                return 0;
+            }
+            f.heading_styles
                 .iter()
-                .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
-                .collect();
-            kv(
-                out,
-                &format!("style_changes: {{{}}}", list.join(", ")),
-                Some("tracked changes to the styles"),
-            );
-        }
+                .position(|(_, h)| h == id)
+                .map(|i| i + 1)
+                .or_else(|| {
+                    f.other_styles
+                        .iter()
+                        .position(|o| o == id)
+                        .map(|i| i + 1 + f.heading_styles.len())
+                })
+                .unwrap_or_else(|| {
+                    changes
+                        .iter()
+                        .position(|(holder, _)| holder == id)
+                        .map_or(usize::MAX, |i| i + usize::MAX / 2)
+                })
+        };
+        let mut ordered = changes.clone();
+        ordered.sort_by_key(|(holder, _)| order(holder));
+        let list: Vec<String> = ordered
+            .iter()
+            .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
+            .collect();
+        kv(
+            out,
+            &format!("style_changes: {{{}}}", list.join(", ")),
+            Some("tracked changes to the styles"),
+        );
     }
     let (rev, fmt) = &f.note_changes;
     let mut clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]

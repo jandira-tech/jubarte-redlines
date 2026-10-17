@@ -802,8 +802,9 @@ fn changes_without_text_name_their_ids() {
         "{out}"
     );
     assert!(
-        lines
-            .contains(&"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC}"),
+        lines.contains(
+            &"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC in header1}"
+        ),
         "{out}"
     );
     assert!(
@@ -878,7 +879,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     let lines = header_lines(&out);
     assert!(
         lines.iter().any(|l| l.starts_with(
-            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC}"
+            "  first: {id: header1, text: Cover, style: Normal, inactive, fmt: header1.r4 @AC in header1}"
         ) && l.ends_with("# defined, but different first page is off")),
         "{out}"
     );
@@ -1009,7 +1010,7 @@ fn changes_printed_nowhere_else_are_unplaced() {
     assert!(unplaced.contains("r21 @AC in p0"), "{out}");
     assert!(!unplaced.contains("r20"), "{out}");
     // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
-    assert!(unplaced.contains(r#""r22 @?? in p0""#), "{out}");
+    assert!(unplaced.contains(r#""del r22 @?? in p0""#), "{out}");
     let yaml = header_yaml(&out);
     assert_eq!(yaml["unplaced"].as_vec().map(Vec::len), Some(3), "{out}");
     for view in [TrackChanges::Accept, TrackChanges::Reject] {

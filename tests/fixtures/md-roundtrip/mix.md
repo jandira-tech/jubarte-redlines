@@ -15,9 +15,9 @@ styles:
   table: TableNormal
 notes: {fmt: footnotes.r0 @ASR; footnotes.r1 @ASR; endnotes.r2 @ASR; endnotes.r3 @ASR, empty: [footnotes, endnotes]}  # changes in notes the body does not show (separators)
 headers:
-  default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r223 @ASR<<}", style: Normal, fmt: header1.r222 @ASR}
+  default: {id: header1, text: "{--Docx Editor: Project Charter & Contributor Agreement       --}{>>header1.r223 @ASR<<}", style: Normal, fmt: header1.r222 @ASR in header1}
 footers:
-  default: {id: footer1, text: "{--Page       {PAGE \\* MERGEFORMAT}1       {/}of       {NUMPAGES \\* MERGEFORMAT}1       {/}·       {HYPERLINK \\h}eigenpal.com         {/}--}{>>footer1.r225 @ASR<<}", style: ListParagraph, fmt: footer1.r224 @ASR}
+  default: {id: footer1, text: "{--Page       {PAGE \\* MERGEFORMAT}1       {/}of       {NUMPAGES \\* MERGEFORMAT}1       {/}·       {HYPERLINK \\h}eigenpal.com         {/}--}{>>footer1.r225 @ASR<<}", style: ListParagraph, fmt: footer1.r224 @ASR in footer1}
 ---
 
 <!-- p0 fmt r4 @ASR; r5 @ASR; r6 @ASR; r9 @ASR -->
