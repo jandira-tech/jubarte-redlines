@@ -1027,22 +1027,24 @@ fn changes_printed_nowhere_else_are_unplaced() {
 /// A textless change inside a printed container is not shown by the
 /// container's tag: accepting the inserted row keeps the row and leaves
 /// the deleted drawing tracked, so the drawing's own id must be printed.
+/// Since 54621454 carries the deleted `w:drawing` whole, that id prints
+/// inside the cell, in the drawing's own `{--![][d1]--}` mark where
+/// Word's markup places the deletion — not on the `unplaced:` line the
+/// view used when it could not carry a drawing at all.
 #[test]
-fn a_textless_change_in_a_printed_row_is_unplaced() {
-    let body = format!(
+fn a_textless_change_in_a_printed_row_prints_its_own_tag() {
+    let body_xml = format!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
         ins(3, "Ann Counsel", "Cell")
     );
-    let out = agent(&docx(&body));
-    let lines = header_lines(&out);
-    let unplaced = lines
-        .iter()
-        .find(|l| l.starts_with("unplaced: "))
-        .unwrap_or_else(|| panic!("no unplaced line in {out}"));
-    assert!(unplaced.contains("r2 @AC"), "{out}");
-    // The row's own tag and the cell text's print, so neither is unplaced.
-    assert!(!unplaced.contains("r1 "), "{out}");
-    assert!(!unplaced.contains("r3 "), "{out}");
+    let out = agent(&docx(&body_xml));
+    // The deleted drawing is carried whole, so its own mark and tag sit in
+    // the cell: not the row's tag, not the cell text's.
+    assert!(body(&out).contains("{--![][d1]--}{>>r2 @AC<<}"), "{out}");
+    assert!(out.contains("rev r1 @AC in t0.row0"), "{out}");
+    assert!(body(&out).contains("{++Cell++}{>>r3 @AC<<}"), "{out}");
+    // Every change prints, so none lands on the `unplaced:` line.
+    assert!(!out.contains("unplaced:"), "{out}");
 }
 
 /// pi review of the 5b fixes F2/F5/F6: an author whose only change is a
