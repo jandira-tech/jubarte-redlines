@@ -140,3 +140,49 @@ fn a_character_grid_without_a_line_pitch_comes_back() {
     }
     assert_eq!(view(&again), first);
 }
+
+/// #561 review defect 4: the sizes Word's own paper list names round-trip
+/// exactly. The view names the sheet as Word does, the writer writes
+/// Word's own twips back, and the view of that names the same sheet again.
+#[test]
+fn word_s_named_page_sizes_round_trip_exactly() {
+    let cases = [
+        (12_240, 15_840, "", "Letter"),
+        (12_240, 20_160, "", "Legal"),
+        (10_440, 15_120, "", "Executive"),
+        (15_840, 24_480, "", "Tabloid"),
+        (24_480, 15_840, r#" w:orient="landscape""#, "Ledger"),
+        (16_838, 23_811, "", "A3"),
+        (11_906, 16_838, "", "A4"),
+        (8_391, 11_906, "", "A5"),
+        (14_570, 20_636, "", "B4 (JIS)"),
+        (10_318, 14_570, "", "B5 (JIS)"),
+    ];
+    for (w, h, orient, name) in cases {
+        let source = docx_with_sect_pr(
+            r#"<w:p><w:r><w:t>One</w:t></w:r></w:p>"#,
+            &[],
+            &format!(
+                r#"<w:sectPr><w:pgSz w:w="{w}" w:h="{h}"{orient}/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+            ),
+        );
+        let first = view(&source);
+        let expected = format!(
+            "page: {name} {}, margins 1in, header/footer 0.5in",
+            if orient.is_empty() {
+                "portrait"
+            } else {
+                "landscape"
+            }
+        );
+        assert!(first.contains(&expected), "{name}:\n{first}");
+        // The writer writes the same twips back.
+        let again = write(&first);
+        let document = part_string(&again, "word/document.xml").unwrap();
+        assert!(
+            document.contains(&format!(r#"<w:pgSz w:w="{w}" w:h="{h}"{orient}/>"#)),
+            "{name}:\n{document}"
+        );
+        assert_eq!(view(&again), first, "{name}");
+    }
+}

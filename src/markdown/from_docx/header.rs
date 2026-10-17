@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 use super::agent::{Handles, RevTag};
 use super::ooxml::Element;
+use crate::markdown::view_notes::WORD_PAGE_SIZES;
 
 /// Where the owner's name came from.
 pub(crate) enum Owner {
@@ -550,11 +551,16 @@ fn page_setup(sect: &Element) -> String {
     let landscape = size.and_then(|s| s.attr("orient")) == Some("landscape") || w > h;
     let (short, long) = if w < h { (w, h) } else { (h, w) };
     // Named sizes match on the rounded twip: 210mm is the 11906 an A4
-    // spells, not the 11905 a truncating cast reads (#531).
-    let name = match (short.round() as i64, long.round() as i64) {
-        (12240, 15840) => "Letter".to_string(),
-        (12240, 20160) => "Legal".to_string(),
-        (11906, 16838) => "A4".to_string(),
+    // spells, not the 11905 a truncating cast reads (#531). The names are
+    // Word's own paper list, and the writer writes the same twips back
+    // for each (#561); a twip off a named size is not that size.
+    let name = match WORD_PAGE_SIZES.iter().find(|&&(_, w, h)| {
+        (short.round() as i64, long.round() as i64) == (i64::from(w), i64::from(h))
+    }) {
+        // Word's paper list names the Tabloid sheet Ledger lying
+        // landscape.
+        Some(&(name, _, _)) if landscape && name == "Tabloid" => "Ledger".to_string(),
+        Some(&(name, _, _)) => name.to_string(),
         _ => format!(
             "{}x{}",
             super::agent::inches(w).trim_end_matches("in"),
@@ -1862,6 +1868,46 @@ mod tests {
         .unwrap();
         assert_eq!(page_setup(&mm), "A4 portrait");
         assert_eq!(page_setup(&mm), page_setup(&twin));
+    }
+
+    /// Word's paper list: every size Word names and the writer writes
+    /// back exactly is named by the rounded twips Word spells it in — the
+    /// short side first, whatever way the sheet lies (#561 review defect
+    /// 4). Tabloid is the sheet Word's list names Ledger lying landscape.
+    #[test]
+    fn word_s_paper_list_names_its_sizes() {
+        let cases = [
+            (12_240, 15_840, "", "Letter portrait"),
+            (12_240, 20_160, "", "Legal portrait"),
+            (10_440, 15_120, "", "Executive portrait"),
+            (15_840, 24_480, "", "Tabloid portrait"),
+            (
+                24_480,
+                15_840,
+                r#" w:orient="landscape""#,
+                "Ledger landscape",
+            ),
+            (16_838, 23_811, "", "A3 portrait"),
+            (11_906, 16_838, "", "A4 portrait"),
+            (8_391, 11_906, "", "A5 portrait"),
+            (14_570, 20_636, "", "B4 (JIS) portrait"),
+            (10_318, 14_570, "", "B5 (JIS) portrait"),
+        ];
+        for (w, h, orient, expected) in cases {
+            let sect = parse_xml(
+                format!(r#"<w:sectPr {W}><w:pgSz w:w="{w}" w:h="{h}"{orient}/></w:sectPr>"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(page_setup(&sect), expected, "{w}x{h}");
+        }
+        // A twip off the named size is not the named size: the rounded
+        // match is exact, so an unnamed sheet keeps its inches.
+        let off = parse_xml(
+            format!(r#"<w:sectPr {W}><w:pgSz w:w="8392" w:h="11906"/></w:sectPr>"#).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(page_setup(&off), "5.828x8.268in portrait");
     }
 
     /// A strict table style names its side borders `start`/`end`: the
