@@ -352,10 +352,15 @@ pub const IDS_NOTE: &str = "body ids print without a story (r12); every other st
      (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh";
 
 /// Whether `runtime` dispatches PlanV2 end to end. The CLI runs `edit
-/// apply --plan`, templates and inline edits through
-/// [`crate::edit::prepare_v2`], and a Rust embedder calls it directly; the
-/// Python and WASM bindings expose no PlanV2 entry point yet, so their
-/// hosts stay on plan version 1.
+/// apply --plan` and inline edits through [`crate::edit::prepare_v2`];
+/// `edit template` generates a PlanV2 that `edit apply --plan` then runs.
+/// A Rust embedder calls `prepare_v2` directly. The Python and WASM bindings
+/// expose no PlanV2 entry point yet, so their hosts stay on plan version 1.
+///
+/// Runtime names form a closed set: `cli`, `rust`, `python`, `wasm`, used
+/// by `src/bin/jubarte.rs`, the library tests, `jubarte-python/src/lib.rs`
+/// and `jubarte-wasm/src/lib.rs`, respectively. Any other name gets plan
+/// version 1 only.
 fn dispatches_v2(runtime: &str) -> bool {
     matches!(runtime, "cli" | "rust")
 }

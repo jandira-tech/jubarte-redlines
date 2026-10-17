@@ -120,8 +120,9 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
         for track in ["on", "off"] {
             for existing in ["refuse", "accept", "reject", "keep"] {
                 let refusal = if version == 2 && super::dispatches_v2(runtime) {
-                    // V2 has a track policy and the preserving engine path:
-                    // every combination is dispatched, source checks aside.
+                    // V2 dispatches every combination through the preserving engine.
+                    // Source, anchor and revision checks still refuse per apply_plan's
+                    // contract; dispatch does not guarantee preparation succeeds.
                     None
                 } else if version == 2 {
                     Some("PlanV2 is parsed by the library but is not dispatched by this runtime")

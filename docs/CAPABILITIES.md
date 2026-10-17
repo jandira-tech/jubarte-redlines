@@ -31,10 +31,11 @@ arguments are usage errors. Field queries without an operation search all kinds.
 
 `dispatched` is separate from syntax recognition. The three runtimes dispatch all
 24 v1 kinds through the same Rust editor. The CLI also dispatches the eleven
-v2 kinds end to end (`edit apply --plan`, templates and inline edits run
-`edit::prepare_v2`), so its v2 rows are conditional and its executable plan
-versions are `[1, 2]`. The Python and WASM bindings expose no PlanV2 entry
-point: their v2 syntax stays discoverable, every execution row is
+v2 kinds end to end: `edit apply --plan` and inline edits run `edit::prepare_v2`;
+`edit template` generates a PlanV2 that `edit apply --plan` then runs. Its v2
+rows are conditional and its executable plan versions are `[1, 2]`.
+The Python and WASM bindings expose no PlanV2 entry point: their v2 syntax stays
+discoverable, every execution row is
 `unsupported`, and the executable plan versions remain `[1]`. Selective
 revision decisions remain plan-level data, not an extra kind.
 

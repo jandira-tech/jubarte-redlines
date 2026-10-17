@@ -451,6 +451,22 @@ fn cli_v2_rows_match_prepare_v2_and_bindings_stay_on_v1() {
                     && !conditions.contains("the legacy emitter"),
                 "{kind}: {conditions}"
             );
+            assert!(
+                conditions.contains("requires the bound source digest, target pairs naming one entity, nonconflicting edits and supported source structure; composed edits may not remove a comment's whole anchor"),
+                "{kind}: {conditions}"
+            );
+            if row["existing_revisions"] == "refuse" {
+                assert!(
+                    conditions.contains("; no remaining revision anywhere after selected decisions, including unknown revision forms"),
+                    "{kind} refuse: {conditions}"
+                );
+            }
+            if row["existing_revisions"] == "keep" {
+                assert!(
+                    conditions.contains("; remaining revisions stay beside the new edits"),
+                    "{kind} keep: {conditions}"
+                );
+            }
             let plan = v2_plan(
                 &source,
                 row["track"].as_str().unwrap(),
@@ -458,10 +474,14 @@ fn cli_v2_rows_match_prepare_v2_and_bindings_stay_on_v1() {
                 &operation,
             );
             let parsed = jubarte::edit::v2::PlanV2::from_json(&plan).unwrap();
+            // Match a v2 CLI request without --require-change.
             let probed = jubarte::edit::prepare_v2(
                 &source,
                 &parsed,
-                &jubarte::edit::PrepareOptions::default(),
+                &jubarte::edit::PrepareOptions {
+                    require_change: false,
+                    exact_text: true,
+                },
             );
             let row_name = format!(
                 "{kind} target={} track={} existing_revisions={}",
