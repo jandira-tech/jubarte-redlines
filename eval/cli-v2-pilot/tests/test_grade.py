@@ -15,8 +15,6 @@ interpretation does not silently flip a passing run to a failing one.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from harness.models import (
@@ -42,8 +40,11 @@ def _empty_task(task_id: str = "demo") -> Task:
             "genuinely_unsupported": False,
             "checks": [
                 {"kind": "text_contains", "text": "alpha"},
-                {"kind": "text_equals", "selector": {"contains": "alpha"},
-                 "text": "alpha and beta"},
+                {
+                    "kind": "text_equals",
+                    "selector": {"contains": "alpha"},
+                    "text": "alpha and beta",
+                },
                 {"kind": "text_absent", "text": "gamma"},
                 {"kind": "revision_count", "min": 1, "max": 2},
                 {"kind": "revision_present", "text": "alpha", "author": "PilotBot"},
@@ -64,19 +65,33 @@ def _empty_snap() -> Snapshot:
             {"id": "p1", "text": "unrelated", "runs": [], "limitations": []},
         ],
         revisions=[
-            {"id": "r1", "kind": "insertion", "author": "PilotBot",
-             "text": "alpha", "paragraph": "p0"},
+            {
+                "id": "r1",
+                "kind": "insertion",
+                "author": "PilotBot",
+                "text": "alpha",
+                "paragraph": "p0",
+            },
         ],
         comments=[
-            {"id": 1, "ref": "c1", "author": "PilotBot",
-             "text": "hello world", "done": False, "paragraph": "p0",
-             "anchor_text": "alpha", "before": "", "after": ""},
+            {
+                "id": 1,
+                "ref": "c1",
+                "author": "PilotBot",
+                "text": "hello world",
+                "done": False,
+                "paragraph": "p0",
+                "anchor_text": "alpha",
+                "before": "",
+                "after": "",
+            },
         ],
     )
 
 
-def _empty_run(*, artifact_exists: bool, claim_value: str | None = "success"
-               ) -> RunRecord:
+def _empty_run(
+    *, artifact_exists: bool, claim_value: str | None = "success"
+) -> RunRecord:
     return RunRecord(
         run_id="r",
         pilot_id="pilot",
@@ -114,54 +129,76 @@ def _empty_run(*, artifact_exists: bool, claim_value: str | None = "success"
         artifact_exists=artifact_exists,
         run_dir_files=[],
         claim=(
-            ClaimObservation(raw=f"JUBARTE_RESULT: {claim_value}",
-                             value=claim_value)
+            ClaimObservation(raw=f"JUBARTE_RESULT: {claim_value}", value=claim_value)
             if claim_value
             else None
         ),
     )
 
 
-def test_eval_task_check_handles_each_kind_unaffected(monkeypatch: pytest.MonkeyPatch
-                                                    ) -> None:
+def test_eval_task_check_handles_each_kind_unaffected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness.grading import eval_task_check
 
     task = _empty_task()
     snap = _empty_snap()
     results = []
     for check in task.checks:
-        results.append(eval_task_check(
-            check.model_dump(), snap, artifact_exists=True,
-            revisions_total=1, comments_total=1,
-        ))
+        results.append(
+            eval_task_check(
+                check.model_dump(),
+                snap,
+                artifact_exists=True,
+                revisions_total=1,
+                comments_total=1,
+            )
+        )
     assert [r.status for r in results] == [
-        "pass", "pass", "pass", "pass", "pass", "pass", "fail",
+        "pass",
+        "pass",
+        "pass",
+        "pass",
+        "pass",
+        "pass",
+        "fail",
     ]
 
 
 def test_claim_accuracy_accurate_when_marker_agrees() -> None:
     from harness.grading import claim_accuracy, eval_task_check
+
     task = _empty_task()
     run = _empty_run(artifact_exists=True)
     snap = _empty_snap()
     results = [
         eval_task_check(
-            check.model_dump(), snap, artifact_exists=True,
-            revisions_total=1, comments_total=1,
+            check.model_dump(),
+            snap,
+            artifact_exists=True,
+            revisions_total=1,
+            comments_total=1,
         )
         for check in task.checks
     ]
+    assert results[-1].status == "fail"
     # Drop the no_artifact check (artifact exists), keep the rest.
     pruned = [c for c in task.checks if c.kind != "no_artifact"]
     pruned_results = [
         eval_task_check(
-            check.model_dump(), snap, artifact_exists=True,
-            revisions_total=1, comments_total=1,
+            check.model_dump(),
+            snap,
+            artifact_exists=True,
+            revisions_total=1,
+            comments_total=1,
         )
         for check in pruned
     ]
     claim_value, claim_expected, accuracy, detail = claim_accuracy(
-        run, task, snapshot_ok=True, task_checks=pruned_results,
+        run,
+        task,
+        snapshot_ok=True,
+        task_checks=pruned_results,
         artifact_exists=True,
     )
     assert accuracy == "accurate"
@@ -169,10 +206,14 @@ def test_claim_accuracy_accurate_when_marker_agrees() -> None:
 
 def test_claim_accuracy_inaccurate_when_marker_disagrees() -> None:
     from harness.grading import claim_accuracy
+
     task = _empty_task()
     run = _empty_run(artifact_exists=True, claim_value="failed")
     claim_value, claim_expected, accuracy, detail = claim_accuracy(
-        run, task, snapshot_ok=True, task_checks=[],
+        run,
+        task,
+        snapshot_ok=True,
+        task_checks=[],
         artifact_exists=True,
     )
     assert accuracy == "inaccurate"
@@ -180,10 +221,14 @@ def test_claim_accuracy_inaccurate_when_marker_disagrees() -> None:
 
 def test_claim_accuracy_missing_when_no_marker() -> None:
     from harness.grading import claim_accuracy
+
     task = _empty_task()
     run = _empty_run(artifact_exists=True, claim_value=None)
     _, _, accuracy, _ = claim_accuracy(
-        run, task, snapshot_ok=True, task_checks=[],
+        run,
+        task,
+        snapshot_ok=True,
+        task_checks=[],
         artifact_exists=True,
     )
     assert accuracy == "missing"
@@ -191,24 +236,28 @@ def test_claim_accuracy_missing_when_no_marker() -> None:
 
 def test_tool_correctness_for_a_refused_run() -> None:
     from harness.grading import tool_correctness
-    task = Task.model_validate({
-        "schema_version": 1,
-        "id": "refuse",
-        "family": "unsupported",
-        "source": {"path": "x.docx", "sha256": "0" * 64},
-        "prompt": "p {binary} {output} {author} JUBARTE_RESULT",
-        "required_author": "A",
-        "output_path": "out.docx",
-        "tracked": True,
-        "settlement": False,
-        "genuinely_unsupported": True,
-        "checks": [],
-        "rubric": [],
-        "stub": {"expected_claim": "failed", "steps": []},
-    })
+
+    task = Task.model_validate(
+        {
+            "schema_version": 1,
+            "id": "refuse",
+            "family": "unsupported",
+            "source": {"path": "x.docx", "sha256": "0" * 64},
+            "prompt": "p {binary} {output} {author} JUBARTE_RESULT",
+            "required_author": "A",
+            "output_path": "out.docx",
+            "tracked": True,
+            "settlement": False,
+            "genuinely_unsupported": True,
+            "checks": [],
+            "rubric": [],
+            "stub": {"expected_claim": "failed", "steps": []},
+        }
+    )
     run = _empty_run(artifact_exists=False, claim_value="failed")
-    results = tool_correctness(run, task, snapshot_ok=False,
-                                validate_rc=2, validate_findings=[])
+    results = tool_correctness(
+        run, task, snapshot_ok=False, validate_rc=2, validate_findings=[]
+    )
     by_name = {r.name: r for r in results}
     assert by_name["refused"].status == "pass"
     assert by_name["no_artifact"].status == "pass"

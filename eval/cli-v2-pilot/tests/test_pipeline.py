@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture()
 def smoke_pilot(tmp_path: Path, repo_root: Path, jubarte_binary: Path) -> dict:
@@ -33,16 +35,13 @@ def _python() -> str:
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                            check=False)
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, (
         f"command failed: {cmd}\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
 
-def test_full_pipeline_runs_24_runs_and_grades_each(
-    smoke_pilot: dict
-) -> None:
+def test_full_pipeline_runs_24_runs_and_grades_each(smoke_pilot: dict) -> None:
     root = smoke_pilot["root"]
     pkg = root / "eval/cli-v2-pilot"
     runs_root = smoke_pilot["runs"]
@@ -53,20 +52,27 @@ def test_full_pipeline_runs_24_runs_and_grades_each(
         [
             _python(),
             str(pkg / "run.py"),
-            "--arm-a", str(smoke_pilot["bin"]),
-            "--arm-b", str(smoke_pilot["bin"]),
-            "--agent", str(pkg / "stub-agent.json"),
-            "--runs-root", str(runs_root),
-            "--repetitions", "1",
-            "--seed", "20260215",
+            "--arm-a",
+            str(smoke_pilot["bin"]),
+            "--arm-b",
+            str(smoke_pilot["bin"]),
+            "--agent",
+            str(pkg / "stub-agent.json"),
+            "--runs-root",
+            str(runs_root),
+            "--repetitions",
+            "1",
+            "--seed",
+            "20260215",
         ],
         cwd=pkg,
     )
 
     assert (runs_root / "config.json").is_file()
     runs_path = runs_root / "runs.jsonl"
-    runs_records = [json.loads(line) for line in runs_path.read_text().splitlines()
-                    if line.strip()]
+    runs_records = [
+        json.loads(line) for line in runs_path.read_text().splitlines() if line.strip()
+    ]
     assert len(runs_records) == 24
 
     # Every run must have a captured claim (the stub prints one) and
@@ -78,16 +84,22 @@ def test_full_pipeline_runs_24_runs_and_grades_each(
         [
             _python(),
             str(pkg / "grade.py"),
-            "--runs-root", str(runs_root),
-            "--tasks-dir", str(pkg / "tasks"),
-            "--repo-root", str(root),
-            "--grader-binary", str(smoke_pilot["bin"]),
+            "--runs-root",
+            str(runs_root),
+            "--tasks-dir",
+            str(pkg / "tasks"),
+            "--repo-root",
+            str(root),
+            "--grader-binary",
+            str(smoke_pilot["bin"]),
         ],
         cwd=pkg,
     )
-    grades = [json.loads(line) for line in
-              (runs_root / "grades.jsonl").read_text().splitlines()
-              if line.strip()]
+    grades = [
+        json.loads(line)
+        for line in (runs_root / "grades.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
     assert len(grades) == 24
 
     # Stub produces a faithful reproduction of every task: tool, task,
@@ -104,9 +116,7 @@ def test_full_pipeline_runs_24_runs_and_grades_each(
     )
 
 
-def test_run_with_two_repetitions_yields_48_runs(
-    smoke_pilot: dict
-) -> None:
+def test_run_with_two_repetitions_yields_48_runs(smoke_pilot: dict) -> None:
     root = smoke_pilot["root"]
     pkg = root / "eval/cli-v2-pilot"
     runs_root = smoke_pilot["runs"]
@@ -114,23 +124,30 @@ def test_run_with_two_repetitions_yields_48_runs(
         [
             _python(),
             str(pkg / "run.py"),
-            "--arm-a", str(smoke_pilot["bin"]),
-            "--arm-b", str(smoke_pilot["bin"]),
-            "--agent", str(pkg / "stub-agent.json"),
-            "--runs-root", str(runs_root),
-            "--repetitions", "2",
-            "--seed", "20260215",
+            "--arm-a",
+            str(smoke_pilot["bin"]),
+            "--arm-b",
+            str(smoke_pilot["bin"]),
+            "--agent",
+            str(pkg / "stub-agent.json"),
+            "--runs-root",
+            str(runs_root),
+            "--repetitions",
+            "2",
+            "--seed",
+            "20260215",
         ],
         cwd=pkg,
     )
-    n = sum(1 for line in (runs_root / "runs.jsonl").read_text().splitlines()
-            if line.strip())
+    n = sum(
+        1
+        for line in (runs_root / "runs.jsonl").read_text().splitlines()
+        if line.strip()
+    )
     assert n == 48
 
 
-def test_report_emits_a_markdown_summary(
-    smoke_pilot: dict
-) -> None:
+def test_report_emits_a_markdown_summary(smoke_pilot: dict) -> None:
     root = smoke_pilot["root"]
     pkg = root / "eval/cli-v2-pilot"
     runs_root = smoke_pilot["runs"]
@@ -138,12 +155,18 @@ def test_report_emits_a_markdown_summary(
         [
             _python(),
             str(pkg / "run.py"),
-            "--arm-a", str(smoke_pilot["bin"]),
-            "--arm-b", str(smoke_pilot["bin"]),
-            "--agent", str(pkg / "stub-agent.json"),
-            "--runs-root", str(runs_root),
-            "--repetitions", "1",
-            "--seed", "1",
+            "--arm-a",
+            str(smoke_pilot["bin"]),
+            "--arm-b",
+            str(smoke_pilot["bin"]),
+            "--agent",
+            str(pkg / "stub-agent.json"),
+            "--runs-root",
+            str(runs_root),
+            "--repetitions",
+            "1",
+            "--seed",
+            "1",
         ],
         cwd=pkg,
     )
@@ -151,10 +174,14 @@ def test_report_emits_a_markdown_summary(
         [
             _python(),
             str(pkg / "grade.py"),
-            "--runs-root", str(runs_root),
-            "--tasks-dir", str(pkg / "tasks"),
-            "--repo-root", str(root),
-            "--grader-binary", str(smoke_pilot["bin"]),
+            "--runs-root",
+            str(runs_root),
+            "--tasks-dir",
+            str(pkg / "tasks"),
+            "--repo-root",
+            str(root),
+            "--grader-binary",
+            str(smoke_pilot["bin"]),
         ],
         cwd=pkg,
     )
@@ -163,8 +190,10 @@ def test_report_emits_a_markdown_summary(
         [
             _python(),
             str(pkg / "report.py"),
-            "--runs-root", str(runs_root),
-            "--output", str(out),
+            "--runs-root",
+            str(runs_root),
+            "--output",
+            str(out),
         ],
         cwd=pkg,
     )

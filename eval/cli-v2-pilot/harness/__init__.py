@@ -7,6 +7,7 @@
 """The harness package for the jubarte CLI v2 held-out pilot."""
 
 from harness.models import (  # noqa: F401
+    REFUSAL_CLASSES,
     SCHEMA_VERSION,
     AgentConfig,
     ArmConfig,
@@ -18,11 +19,10 @@ from harness.models import (  # noqa: F401
     NamedResult,
     OrderEntry,
     PreservationDefect,
-    REFUSAL_CLASSES,
     RefusalClass,
+    RubricAssessment,
     RunConfig,
     RunRecord,
-    RubricAssessment,
     StubSpec,
     StubStep,
     Task,

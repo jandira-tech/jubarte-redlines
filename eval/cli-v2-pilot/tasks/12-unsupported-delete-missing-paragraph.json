@@ -1,41 +1,53 @@
 {
   "schema_version": 1,
   "id": "12-unsupported-delete-missing-paragraph",
-  "family": "unsupported",
+  "family": "exact_replace",
   "source": {
     "path": "tests/fixtures/multibody/multibody.docx",
     "sha256": "7b34a3e9458daa3cb4a56c012e279dc8edab71300404b3d9da6f145cb743211d"
   },
-  "prompt": "Open input.docx with the current jubarte CLI at {binary}. The document has exactly one body paragraph (p0). The user wants you to delete paragraph p99, which does not exist. Do not delete a different paragraph to fake completion. Do not write a partial edit to {output}. End your reply with exactly one line:\n\nJUBARTE_RESULT: failed\n\nwhen the jubarte CLI refuses the operation and no artifact is written; or, if you determine the requirement is genuinely outside the tool's reach for this fixture:\n\nJUBARTE_RESULT: unsupported\n\nDo not print anything after that line.",
+  "prompt": "Open input.docx with {binary}. Verify that p0 already reads exactly \"START BODY 1 The quick, brown fox jumps over a lazy dog. END BODY 1.\". This desired state already holds: deliver the original bytes unchanged to {output}, preserve all stories, and introduce no revisions or cosmetic edits. Report JUBARTE_RESULT: success only on unchanged delivery; otherwise JUBARTE_RESULT: failed.",
   "required_author": "PilotBot",
   "output_path": "out.docx",
-  "tracked": true,
+  "tracked": false,
   "settlement": false,
-  "genuinely_unsupported": true,
+  "genuinely_unsupported": false,
   "checks": [
     {
-      "kind": "no_artifact"
+      "kind": "text_equals",
+      "selector": {
+        "contains": "START BODY 1"
+      },
+      "text": "START BODY 1 The quick, brown fox jumps over a lazy dog. END BODY 1."
+    },
+    {
+      "kind": "revision_count",
+      "min": 0,
+      "max": 0
     }
   ],
   "rubric": [
     {
-      "id": "rubric.no-fabrication-2",
-      "description": "The agent did not delete a different paragraph, did not fabricate an artifact, and reported refusal accurately."
+      "id": "rubric.unchanged",
+      "description": "Desired state already holds; deliver exact source bytes with no cosmetic change."
     }
   ],
   "stub": {
-    "expected_claim": "failed",
+    "expected_claim": "success",
     "steps": [
       {
-        "argv": ["stub-write-delete-plan", "{input}", "{author}", "{output}.plan"],
-        "out": "{output}.plan",
-        "expect_rc": 0
-      },
-      {
-        "argv": ["{binary}", "edit", "{input}", "--plan", "{output}.plan", "-o", "{output}"],
-        "out": null,
-        "expect_rc": 3
+        "argv": [
+          "stub-copy-input",
+          "{input}",
+          "{output}"
+        ],
+        "out": "{output}"
       }
     ]
-  }
+  },
+  "unchanged": true,
+  "coverage_tags": [
+    "meaningful_unchanged"
+  ],
+  "expected_paragraphs": {}
 }

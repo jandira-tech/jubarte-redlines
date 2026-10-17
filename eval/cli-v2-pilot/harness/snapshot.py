@@ -39,6 +39,20 @@ class Snapshot:
     comments: list[dict] = field(default_factory=list)
 
 
+def paragraph_rows(snapshot) -> list[dict]:
+    """All exposed stories, with story-qualified identities for alignment."""
+    rows = [dict(p, _story="body") for p in snapshot.paragraphs]
+    for story in (getattr(snapshot, "document", None) or {}).get("stories", []):
+        rows.extend(dict(p, _story=story["id"]) for p in story.get("paragraphs", []))
+    return rows
+
+
+def paragraph_key(paragraph: dict) -> str:
+    pid = str(paragraph.get("id", ""))
+    story = paragraph.get("_story", "body")
+    return pid if story == "body" else f"{story}:{pid}"
+
+
 def _run(argv: list[str], timeout: float = 120.0) -> CommandResult:
     proc = subprocess.run(
         argv,
@@ -63,9 +77,7 @@ def read_snapshot(binary: Path, artifact: Path) -> Snapshot:
 
     with tempfile.TemporaryDirectory(prefix="pilot-snap-") as tmp:
         out = Path(tmp) / "snapshot.json"
-        result = _run(
-            [str(binary), "read", str(artifact), "--json", "-o", str(out)]
-        )
+        result = _run([str(binary), "read", str(artifact), "--json", "-o", str(out)])
         if result.return_code != 0 or not out.is_file():
             return Snapshot(ok=False, command=result, error=result.stderr.strip())
         try:
@@ -82,8 +94,13 @@ def read_snapshot(binary: Path, artifact: Path) -> Snapshot:
         )
 
 
-def validate(binary: Path, artifact: Path, *, original: Path | None = None,
-             author: str | None = None) -> tuple[CommandResult, list[dict]]:
+def validate(
+    binary: Path,
+    artifact: Path,
+    *,
+    original: Path | None = None,
+    author: str | None = None,
+) -> tuple[CommandResult, list[dict]]:
     """Run `jubarte validate` and return its parsed JSONL findings."""
 
     argv = [str(binary), "validate", str(artifact), "--json"]
