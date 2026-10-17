@@ -818,7 +818,15 @@ pub(super) fn story(
                         }
                         open = marks.pop();
                         write_run(context, run, relate, &mut out);
-                        close_mark(context, &natural, &mut out, &mut open);
+                        // The resumed mark ends here unless the change it
+                        // holds another of resumes later: a piece of it is
+                        // still ahead, past the inner change, and its mark
+                        // stays open around that one as around this piece.
+                        if open.is_none_or(|outer| {
+                            !resumes_later(context.document, &items[at + 1..], outer)
+                        }) {
+                            close_mark(context, &natural, &mut out, &mut open);
+                        }
                         continue;
                     }
                     // A change of the other kind the open mark resumes after
@@ -1308,6 +1316,24 @@ fn resumes_after(document: &Document, rest: &[Item], inner: Change, outer: Chang
         }
     }
     false
+}
+
+/// Whether `outer`'s change holds another change ahead in `rest`: a run
+/// of a piece of it is still to come, past the nested ones between, so
+/// its mark stays open around them as around the piece it just resumed.
+fn resumes_later(document: &Document, rest: &[Item], outer: Change) -> bool {
+    rest.iter().any(|item| match item {
+        Item::Bookmark(_)
+        | Item::RangeStart(_)
+        | Item::RangeEnd(_)
+        | Item::CommentReference(_)
+        | Item::LinkStart(..)
+        | Item::LinkEnd => false,
+        Item::Run(run) => run
+            .change
+            .is_some_and(|change| continues_change(document, change, outer)),
+        _ => false,
+    })
 }
 
 /// Ends the open mark. A change the view gives more ids than it has pieces
