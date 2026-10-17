@@ -44,6 +44,18 @@ fn run(
 ) -> Result<jubarte::edit::v2_apply::V2EditResult, jubarte::edit::EditError> {
     apply_plan(bytes, &PlanV2::from_json(&plan.to_string()).unwrap())
 }
+fn refused(bytes: &[u8], plan: &Value) -> jubarte::edit::EditError {
+    let result = run(bytes, plan);
+    assert!(
+        result.as_ref().ok().map(|out| &out.redline).is_none(),
+        "refusal exposed primary bytes"
+    );
+    assert!(
+        result.as_ref().ok().map(|out| &out.clean).is_none(),
+        "refusal exposed candidate bytes"
+    );
+    result.unwrap_err()
+}
 fn texts(bytes: &[u8]) -> Vec<String> {
     paragraphs(bytes)
         .unwrap()
@@ -463,7 +475,15 @@ fn attached_comments_use_nonempty_result_anchors() {
             jubarte::comments::list_comments(&out.redline).unwrap()[0].anchor_text,
             want
         );
-        assert_word_valid_package(&out.redline);
+        for bytes in [&out.clean, &out.redline] {
+            let comments = jubarte::comments::list_comments(bytes).unwrap();
+            assert_eq!(comments.len(), 1);
+            assert_eq!(comments[0].anchor_text, want);
+            assert_eq!(comments[0].author, "Me");
+            assert_eq!(comments[0].initials.as_deref(), Some("M"));
+            assert_eq!(comments[0].date.as_deref(), Some("2026-10-17T00:00:00Z"));
+            assert_word_valid_package(bytes);
+        }
     }
     let mut invalid = plan(&s, json!([rewrite(0, "Alpha Beta", "")]));
     invalid["operations"][0]["attached_comment"] = json!({"text":"Note"});
@@ -563,8 +583,23 @@ fn settlement_discloses_comments_removed_with_selected_parent() {
     q["resolve_revisions"]["reject"] = json!([r(7)]);
     let out = run(&s, &q).unwrap();
     assert_eq!(out.dependent_comments, [0]);
-    q["operations"] = json!([{"kind":"reply_comment","target":c(0),"text":"Reply"}]);
-    assert_eq!(run(&s, &q).unwrap_err().code, "UNKNOWN_COMMENT");
+    for operation in [
+        json!({"kind":"reply_comment","target":c(0),"text":"Reply"}),
+        json!({"kind":"edit_comment","target":c(0),"text":"Changed"}),
+        json!({"kind":"resolve_comment","target":c(0),"done":true}),
+        json!({"kind":"delete_comment","target":c(0),"include_replies":true}),
+    ] {
+        q["operations"] = json!([operation]);
+        let error = run(&s, &q).unwrap_err();
+        assert_eq!(error.code, "UNKNOWN_COMMENT");
+        assert!(
+            error
+                .message
+                .contains("gone once the plan's revisions are settled"),
+            "{error}"
+        );
+        assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    }
 }
 #[test]
 fn direct_scope_and_decision_target_types_are_not_interchangeable() {
@@ -783,6 +818,561 @@ fn source_ids_survive_deleted_tables_without_retargeting() {
     );
     q["operations"] = json!([rewrite(0, "Gone", "Wrong")]);
     assert_eq!(run(&s, &q).unwrap_err().code, "UNSUPPORTED_CORRESPONDENCE");
+}
+
+#[test]
+fn comment_boundary_inside_replacement_refuses_atomically() {
+    let s = docx(&para("Alpha Beta"));
+    for existing in [false, true] {
+        let comment = json!({"kind":"comment","target":p(0),"find":"pha Be","text":"Boundary"});
+        let source = if existing {
+            run(&s, &plan(&s, json!([comment.clone()]))).unwrap().clean
+        } else {
+            s.clone()
+        };
+        let mut ops = vec![replace(0, "Alpha", "A")];
+        if !existing {
+            ops.push(comment);
+        }
+        // A refused transaction exposes no candidate bytes to publish.
+        let error = refused(&source, &plan(&source, json!(ops)));
+        assert_eq!(error.code, "COMMENT_ANCHOR_UNMAPPABLE", "{error}");
+        assert!(error.message.contains("boundary"), "{error}");
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if existing {
+                "/operations/0"
+            } else {
+                "/operations/1"
+            })
+        );
+    }
+}
+
+#[test]
+fn whole_comment_anchor_deletion_refuses_without_preservation() {
+    let s = docx(&(para("Alpha Beta") + &para("Last")));
+    let comment = json!({"kind":"comment","target":p(0),"find":"Beta","text":"Anchor"});
+    let with = run(&s, &plan(&s, json!([comment.clone()]))).unwrap().clean;
+    for existing in [false, true] {
+        for edit in [
+            json!({"kind":"delete","target":p(0),"find":"Beta"}),
+            json!({"kind":"delete_paragraph","target":p(0)}),
+        ] {
+            let source = if existing { &with } else { &s };
+            let mut ops = vec![edit];
+            if !existing {
+                ops.push(comment.clone());
+            }
+            let mut q = plan(source, json!(ops));
+            // Tracking off removes the original anchor from the primary.
+            // Existing tracked deletion preservation has its own positive test.
+            q["policy"]["track"] = json!("off");
+            let error = run(source, &q).unwrap_err();
+            assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+            assert_eq!(
+                error.operation.as_deref(),
+                Some(if existing {
+                    "/operations/0"
+                } else {
+                    "/operations/1"
+                })
+            );
+            assert!(
+                error.message.contains("entire comment anchor")
+                    && error.message.contains("no supported preservation rule"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn comment_anchor_preservation_supports_replacement_and_containing_ranges() {
+    let s = docx(&para("Alpha Beta Omega"));
+    for find in ["Beta", "Alpha Beta Omega"] {
+        let comment = json!({"kind":"comment","target":p(0),"find":find,"text":"Keep"});
+        let with = run(&s, &plan(&s, json!([comment.clone()]))).unwrap().clean;
+        for existing in [false, true] {
+            let source = if existing { &with } else { &s };
+            let mut ops = vec![replace(0, "Beta", "Gamma")];
+            if !existing {
+                ops.push(comment.clone());
+            }
+            for track in ["on", "off"] {
+                let mut q = plan(source, json!(ops));
+                q["policy"]["track"] = json!(track);
+                let out = run(source, &q).unwrap();
+                for bytes in [&out.clean, &out.redline] {
+                    let comments = jubarte::comments::list_comments(bytes).unwrap();
+                    assert_eq!(comments.len(), 1);
+                    // Existing tracked anchors also retain the deleted original
+                    // text in the package. Accept only our revisions to observe
+                    // the final anchor, independently of that display detail.
+                    let final_bytes = accept_changes(bytes, &mine()).unwrap();
+                    assert_eq!(
+                        jubarte::comments::list_comments(&final_bytes).unwrap()[0].anchor_text,
+                        find.replace("Beta", "Gamma")
+                    );
+                    assert_word_valid_package(bytes);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn duplicate_comment_edits_and_thread_state_aliases_conflict() {
+    let s = comment_source();
+    let with = run(
+        &s,
+        &plan(
+            &s,
+            json!([{"kind":"reply_comment","target":c(0),"text":"Existing reply"}]),
+        ),
+    )
+    .unwrap()
+    .clean;
+    for ops in [
+        json!([{"kind":"edit_comment","target":c(0),"text":"First"},{"kind":"edit_comment","target":c(0),"text":"Second"}]),
+        json!([{"kind":"resolve_comment","target":c(0),"done":true},{"kind":"resolve_comment","target":c(1),"done":true}]),
+        json!([{"kind":"resolve_comment","target":c(1),"done":false},{"kind":"resolve_comment","target":c(0),"done":true}]),
+    ] {
+        let error = refused(&with, &plan(&with, ops.clone()));
+        assert_eq!(error.code, "CONFLICT");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+        assert!(
+            error.message.contains(if ops[1]["kind"] == "edit_comment" {
+                "edits a comment another operation edits"
+            } else {
+                "only one final state"
+            }),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn deleting_a_reply_conflicts_with_mutations_on_its_thread() {
+    let s = comment_source();
+    let with = run(
+        &s,
+        &plan(
+            &s,
+            json!([{"kind":"reply_comment","target":c(0),"text":"Existing reply"}]),
+        ),
+    )
+    .unwrap()
+    .clean;
+    for target in [c(0), c(1)] {
+        for op in [
+            json!({"kind":"edit_comment","target":target,"text":"Changed"}),
+            json!({"kind":"reply_comment","target":target,"text":"New"}),
+            json!({"kind":"resolve_comment","target":target,"done":true}),
+        ] {
+            for reverse in [false, true] {
+                let mut ops = vec![
+                    json!({"kind":"delete_comment","target":c(1),"include_replies":false}),
+                    op.clone(),
+                ];
+                if reverse {
+                    ops.reverse();
+                }
+                let error = refused(&with, &plan(&with, json!(ops)));
+                assert_eq!(error.code, "CONFLICT");
+                assert_eq!(
+                    error.operation.as_deref(),
+                    Some(if reverse {
+                        "/operations/0"
+                    } else {
+                        "/operations/1"
+                    })
+                );
+                assert!(
+                    error
+                        .message
+                        .contains("delete_comment conflicts with another mutation of its thread"),
+                    "{error}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn replies_preserve_prior_state_and_sibling_parentage() {
+    let s = comment_source();
+    for done in [false, true] {
+        let with = run(
+            &s,
+            &plan(
+                &s,
+                json!([
+                    {"kind":"reply_comment","target":c(0),"text":"Existing reply"},
+                    {"kind":"resolve_comment","target":c(0),"done":done}
+                ]),
+            ),
+        )
+        .unwrap()
+        .clean;
+        for final_state in [None, Some(false), Some(true)] {
+            let mut ops = vec![
+                json!({"kind":"reply_comment","target":c(1),"text":"First"}),
+                json!({"kind":"reply_comment","target":c(0),"text":"Second"}),
+            ];
+            if let Some(state) = final_state {
+                ops.insert(
+                    0,
+                    json!({"kind":"resolve_comment","target":c(1),"done":state}),
+                );
+            }
+            let out = run(&with, &plan(&with, json!(ops))).unwrap();
+            for bytes in [&out.clean, &out.redline] {
+                let comments = jubarte::comments::list_comments(bytes).unwrap();
+                assert_eq!(
+                    comments.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+                    ["Original", "Existing reply", "First", "Second"]
+                );
+                assert!(
+                    comments
+                        .iter()
+                        .all(|c| c.done == final_state.unwrap_or(done)),
+                    "{comments:?}"
+                );
+                assert!(
+                    comments[1..].iter().all(|c| c.parent == Some(0)),
+                    "{comments:?}"
+                );
+                assert_word_valid_package(bytes);
+            }
+        }
+    }
+}
+
+#[test]
+fn comment_attribution_is_preserved_or_taken_from_plan() {
+    let s = comment_source();
+    let original = jubarte::comments::list_comments(&s).unwrap().remove(0);
+    let out = run(
+        &s,
+        &plan(
+            &s,
+            json!([
+                {"kind":"edit_comment","target":c(0),"text":"Updated"},
+                {"kind":"reply_comment","target":c(0),"text":"Reply <literal> & text"},
+                {"kind":"comment","target":p(0),"find":"Alpha","text":"Standalone"}
+            ]),
+        ),
+    )
+    .unwrap();
+    for bytes in [&out.clean, &out.redline] {
+        let comments = jubarte::comments::list_comments(bytes).unwrap();
+        let edited = comments.iter().find(|c| c.id == 0).unwrap();
+        assert_eq!(edited.text, "Updated");
+        assert_eq!(
+            (&edited.author, &edited.date, &edited.initials),
+            (&original.author, &original.date, &original.initials)
+        );
+        for comment in comments.iter().filter(|c| c.id != 0) {
+            assert_eq!(comment.author, "Me");
+            assert_eq!(comment.initials.as_deref(), Some("M"));
+            assert_eq!(comment.date.as_deref(), Some("2026-10-17T00:00:00Z"));
+        }
+        assert!(comments.iter().any(|c| c.text == "Reply <literal> & text"));
+        assert_word_valid_package(bytes);
+    }
+}
+
+#[test]
+fn unchanged_text_attachments_keep_exact_span_and_plan_attribution() {
+    let s = docx(&para("Alpha Beta"));
+    let mut unchanged = rewrite(0, "Alpha Beta", "Alpha Beta");
+    unchanged["attached_comment"] = json!({"text":"<literal> & note"});
+    let mut identity = replace(0, "Beta", "Beta");
+    identity["attached_comment"] = json!({"text":"<literal> & note"});
+    for (op, want) in [(unchanged, "Alpha Beta"), (identity, "Beta")] {
+        let out = run(&s, &plan(&s, json!([op]))).unwrap();
+        assert!(list_changes(&out.redline).unwrap().is_empty());
+        assert_eq!(out.report.comments_added, 1);
+        for bytes in [&out.clean, &out.redline] {
+            let comments = jubarte::comments::list_comments(bytes).unwrap();
+            assert_eq!(comments.len(), 1);
+            assert_eq!(comments[0].anchor_text, want);
+            assert_eq!(comments[0].text, "<literal> & note");
+            assert_eq!(comments[0].author, "Me");
+            assert_eq!(comments[0].initials.as_deref(), Some("M"));
+            assert_eq!(comments[0].date.as_deref(), Some("2026-10-17T00:00:00Z"));
+            assert_eq!(texts(bytes), ["Alpha Beta"]);
+        }
+    }
+}
+
+#[test]
+fn all_attachment_kinds_refuse_empty_results() {
+    let s = docx(&para("Alpha Beta"));
+    for mut op in [
+        replace(0, "Beta", ""),
+        rewrite(0, "Alpha Beta", ""),
+        json!({"kind":"insert","target":p(0),"edge":"end","text":""}),
+        json!({"kind":"insert_paragraph","target":p(0),"position":"after","text":""}),
+    ] {
+        op["attached_comment"] = json!({"text":"Note"});
+        let error = PlanV2::from_json(&plan(&s, json!([op])).to_string()).unwrap_err();
+        assert_eq!(error.code, "INVALID_PLAN");
+        assert!(error.message.contains("nonempty"), "{error}");
+    }
+}
+
+#[test]
+fn rewrite_attachment_covers_complete_result_at_both_edges() {
+    for (before, after) in [
+        ("Alpha Beta", "Prefix Alpha Beta Suffix"),
+        ("Alpha Beta", "Completely new"),
+    ] {
+        let s = docx(&para(before));
+        let mut op = rewrite(0, before, after);
+        op["attached_comment"] = json!({"text":"Complete paragraph"});
+        for track in ["on", "off"] {
+            let mut q = plan(&s, json!([op]));
+            q["policy"]["track"] = json!(track);
+            let out = run(&s, &q).unwrap();
+            for bytes in [&out.clean, &out.redline] {
+                let final_bytes = accept_changes(bytes, &mine()).unwrap();
+                let comments = jubarte::comments::list_comments(&final_bytes).unwrap();
+                assert_eq!(comments.len(), 1);
+                assert_eq!(comments[0].anchor_text, after, "{before:?} -> {after:?}");
+                assert_word_valid_package(bytes);
+            }
+        }
+    }
+}
+
+#[test]
+fn unchanged_attachment_refuses_when_composition_removes_its_anchor() {
+    let s = docx(&para("Alpha Beta"));
+    let mut op = replace(0, "Beta", "Beta");
+    op["attached_comment"] = json!({"text":"Keep"});
+    let error = run(
+        &s,
+        &plan(
+            &s,
+            json!([op, {"kind":"delete","target":p(0),"find":"Beta"}]),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    assert!(error.message.contains("entire comment anchor"), "{error}");
+    let mut op = rewrite(0, "Alpha Beta", "Alpha Beta");
+    op["attached_comment"] = json!({"text":"Keep"});
+    let error = run(
+        &s,
+        &plan(
+            &s,
+            json!([op, {"kind":"delete","target":p(0),"find":"Alpha Beta"}]),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    assert!(error.message.contains("entire comment anchor"), "{error}");
+}
+
+#[test]
+fn unknown_comment_targets_refuse_before_any_candidate() {
+    let s = comment_source();
+    for op in [
+        json!({"kind":"edit_comment","target":c(99),"text":"Changed"}),
+        json!({"kind":"reply_comment","target":c(99),"text":"Reply"}),
+        json!({"kind":"resolve_comment","target":c(99),"done":true}),
+        json!({"kind":"delete_comment","target":c(99),"include_replies":true}),
+    ] {
+        let error = refused(&s, &plan(&s, json!([replace(0, "Beta", "Gamma"), op])));
+        assert_eq!(error.code, "TARGET_ID_MISMATCH");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+    }
+}
+
+#[test]
+fn empty_source_paragraph_keeps_existing_structure_refusal() {
+    // The existing engine deliberately gates insertion into an empty source
+    // paragraph. An attachment must not bypass that structural restriction.
+    let s = docx(&para(""));
+    let mut op = rewrite(0, "", "New paragraph text");
+    op["attached_comment"] = json!({"text":"Complete paragraph"});
+    let error = run(&s, &plan(&s, json!([op]))).unwrap_err();
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE");
+    assert!(error.message.contains("empty paragraph"), "{error}");
+}
+
+#[test]
+fn explicit_comment_deletion_authorizes_anchor_removal() {
+    let s = comment_source();
+    let out = run(
+        &s,
+        &plan(
+            &s,
+            json!([
+                {"kind":"delete","target":p(0),"find":"Alpha Beta"},
+                {"kind":"delete_comment","target":c(0),"include_replies":true}
+            ]),
+        ),
+    )
+    .unwrap();
+    for bytes in [&out.clean, &out.redline] {
+        assert!(jubarte::comments::list_comments(bytes).unwrap().is_empty());
+        assert_word_valid_package(bytes);
+    }
+}
+
+#[test]
+fn existing_containing_comment_survives_interior_paragraph_deletion() {
+    let s = docx(&(para("First") + &para("Middle") + &para("Last")));
+    let with = run(
+        &s,
+        &plan(
+            &s,
+            json!([
+                {"kind":"comment","target":p(0),"through":p(2),"text":"All"}
+            ]),
+        ),
+    )
+    .unwrap()
+    .clean;
+    let out = run(
+        &with,
+        &plan(
+            &with,
+            json!([
+                {"kind":"delete_paragraph","target":p(1)}
+            ]),
+        ),
+    )
+    .unwrap();
+    for bytes in [&out.clean, &out.redline] {
+        let final_bytes = accept_changes(bytes, &mine()).unwrap();
+        let comments = jubarte::comments::list_comments(&final_bytes).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].anchor_text, "First\nLast");
+        assert_word_valid_package(bytes);
+    }
+}
+
+#[test]
+fn comment_mapping_does_not_mask_text_or_thread_conflicts() {
+    let s = comment_source();
+    for ops in [
+        json!([replace(0, "Alpha Beta", "X"), replace(0, "Beta", "Y")]),
+        json!([
+            {"kind":"delete","target":p(0),"find":"Alpha Beta"},
+            {"kind":"edit_comment","target":c(0),"text":"First"},
+            {"kind":"edit_comment","target":c(0),"text":"Second"}
+        ]),
+    ] {
+        let thread = ops.as_array().unwrap().len() == 3;
+        let error = refused(&s, &plan(&s, ops));
+        assert_eq!(error.code, "CONFLICT", "{error}");
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if thread {
+                "/operations/2"
+            } else {
+                "/operations/1"
+            })
+        );
+        assert!(
+            error.message.contains(if thread {
+                "edits a comment another operation edits"
+            } else {
+                "overlaps an earlier edit"
+            }),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn existing_comment_anchor_survives_tracked_deletion() {
+    let s = comment_source();
+    for edit in [
+        json!({"kind":"delete","target":p(0),"find":"Alpha Beta"}),
+        json!({"kind":"delete","target":p(0),"find":"Alpha"}),
+    ] {
+        let out = run(&s, &plan(&s, json!([edit]))).unwrap();
+        assert_word_valid_package(&out.redline);
+        let comments = jubarte::comments::list_comments(&out.redline).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].text, "Original");
+        assert_eq!(comments[0].author, "Other");
+        let rejected = reject_changes(&out.redline, &mine()).unwrap();
+        assert_eq!(
+            jubarte::comments::list_comments(&rejected).unwrap()[0].anchor_text,
+            "Alpha Beta"
+        );
+        let xml = part_string(&out.redline, "word/document.xml").unwrap();
+        let start = xml.find("<w:commentRangeStart").unwrap();
+        let end = xml.find("<w:commentRangeEnd").unwrap();
+        let deletion = xml.find("<w:delText").unwrap();
+        assert!(start < deletion && deletion < end, "{xml}");
+    }
+    let s = docx(&(para("Alpha Beta") + &para("Last")));
+    let with = run(
+        &s,
+        &plan(
+            &s,
+            json!([
+                {"kind":"comment","target":p(0),"text":"Original"}
+            ]),
+        ),
+    )
+    .unwrap()
+    .clean;
+    let out = run(
+        &with,
+        &plan(
+            &with,
+            json!([
+                {"kind":"delete_paragraph","target":p(0)}
+            ]),
+        ),
+    )
+    .unwrap();
+    assert_word_valid_package(&out.redline);
+    assert_eq!(
+        jubarte::comments::list_comments(&out.redline)
+            .unwrap()
+            .len(),
+        1
+    );
+    let rejected = reject_changes(&out.redline, &mine()).unwrap();
+    assert_eq!(
+        jubarte::comments::list_comments(&rejected).unwrap()[0].anchor_text,
+        "Alpha Beta"
+    );
+}
+
+#[test]
+fn a_new_comment_cannot_anchor_to_text_deleted_in_the_same_plan() {
+    let s = docx(&(para("Alpha Beta") + &para("Last")));
+    for edit in [
+        json!({"kind":"delete","target":p(0),"find":"Beta"}),
+        json!({"kind":"delete_paragraph","target":p(0)}),
+    ] {
+        let error = run(
+            &s,
+            &plan(
+                &s,
+                json!([
+                    edit,
+                    {"kind":"comment","target":p(0),"find":"Beta","text":"New"}
+                ]),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+        assert!(error.message.contains("entire comment anchor"), "{error}");
+    }
 }
 
 #[test]
@@ -1263,4 +1853,204 @@ fn source_identity_inventory_keeps_story_and_duplicate_distinctions() {
     let mut q = plan(&s, json!([]));
     q["resolve_revisions"]["accept"] = json!([r(7)]);
     assert_eq!(run(&s, &q).unwrap_err().code, "TARGET_ID_MISMATCH");
+}
+
+#[test]
+fn comment_through_settlement_removed_paragraph_reports_selected_cause() {
+    // A removed row really removes its paragraph. Rejecting only inline
+    // insertion text leaves an empty paragraph and cannot exercise Gone.
+    let removed = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:trPr><w:del w:id="7" {STAMP}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:del w:id="8" {STAMP}><w:r><w:delText>Gone</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl>"#
+    );
+    let s = docx(&(removed.clone() + &para("Last")));
+    for (first, last) in [(0, 1), (0, 0)] {
+        let mut q = plan(
+            &s,
+            json!([
+                {"kind":"comment","target":p(first),"through":p(last),"text":"Range"}
+            ]),
+        );
+        q["resolve_revisions"]["accept"] =
+            json!([{"short_id":"r7","long_id":"document.w:del.w:id.7"}]);
+        let error = refused(&s, &q);
+        assert_eq!(error.code, "PARAGRAPH_RESOLVED", "{error}");
+        assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+        assert!(
+            error
+                .message
+                .contains("gone once the plan's revisions are settled"),
+            "{error}"
+        );
+        assert!(
+            error.message.contains("accept") && error.message.contains("r7"),
+            "{error}"
+        );
+    }
+    // The removed paragraph can also be interior to the requested range.
+    let s = docx(&(para("First") + &removed + &para("Last")));
+    let mut q = plan(
+        &s,
+        json!([{"kind":"comment","target":p(0),"through":p(2),"text":"Range"}]),
+    );
+    q["resolve_revisions"]["accept"] = json!([{"short_id":"r7","long_id":"document.w:del.w:id.7"}]);
+    let error = refused(&s, &q);
+    assert_eq!(error.code, "PARAGRAPH_RESOLVED", "{error}");
+    assert!(
+        error.message.contains("gone") && error.message.contains("r7"),
+        "{error}"
+    );
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    // Rejecting a selected inserted row exercises the opposite decision and
+    // the standalone (no through) target through the same removal diagnosis.
+    let inserted = removed
+        .replace("w:delText", "w:t")
+        .replace("w:del", "w:ins");
+    let s = docx(&(inserted + &para("Last")));
+    let mut q = plan(&s, json!([{"kind":"comment","target":p(0),"text":"Range"}]));
+    q["resolve_revisions"]["reject"] = json!([r(7)]);
+    let error = refused(&s, &q);
+    assert_eq!(error.code, "PARAGRAPH_RESOLVED", "{error}");
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"));
+    assert!(
+        error.message.contains("gone")
+            && error.message.contains("reject")
+            && error.message.contains("r7"),
+        "{error}"
+    );
+}
+
+#[test]
+fn multi_paragraph_comment_maps_edits_in_other_covered_paragraphs() {
+    let s = docx(&(para("First") + &para("Middle") + &para("Last")));
+    let comment = json!({"kind":"comment","target":p(0),"through":p(2),"text":"All"});
+    let with = run(&s, &plan(&s, json!([comment.clone()]))).unwrap().clean;
+    for existing in [false, true] {
+        let source = if existing { &with } else { &s };
+        let mut ops = vec![replace(0, "First", "Start"), replace(2, "Last", "End")];
+        if !existing {
+            ops.push(comment.clone());
+        }
+        for track in ["on", "off"] {
+            let mut q = plan(source, json!(ops));
+            q["policy"]["track"] = json!(track);
+            let out = run(source, &q).unwrap();
+            for bytes in [&out.clean, &out.redline] {
+                let final_bytes = accept_changes(bytes, &mine()).unwrap();
+                let comments = jubarte::comments::list_comments(&final_bytes).unwrap();
+                assert_eq!(comments.len(), 1);
+                assert_eq!(comments[0].anchor_text, "Start\nMiddle\nEnd");
+                assert_word_valid_package(bytes);
+            }
+        }
+    }
+}
+
+#[test]
+fn comment_end_inside_replacement_refuses_atomically() {
+    let s = docx(&para("Alpha Beta Omega"));
+    let comment = json!({"kind":"comment","target":p(0),"find":"Beta Ome","text":"End boundary"});
+    let with = run(&s, &plan(&s, json!([comment.clone()]))).unwrap().clean;
+    for existing in [false, true] {
+        let source = if existing { &with } else { &s };
+        let mut ops = vec![replace(0, "a Omega", "X")];
+        if !existing {
+            ops.push(comment.clone());
+        }
+        let error = refused(source, &plan(source, json!(ops)));
+        assert_eq!(error.code, "COMMENT_ANCHOR_UNMAPPABLE", "{error}");
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if existing {
+                "/operations/0"
+            } else {
+                "/operations/1"
+            })
+        );
+        assert!(
+            error.message.contains("boundary") && error.message.contains("removed text"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn zero_width_comment_on_deleted_empty_paragraph_refuses() {
+    let s = docx(&(para("") + &para("Last")));
+    for track in ["on", "off"] {
+        let mut q = plan(
+            &s,
+            json!([
+                {"kind":"delete_paragraph","target":p(0)},
+                {"kind":"comment","target":p(0),"text":"Empty anchor"}
+            ]),
+        );
+        q["policy"]["track"] = json!(track);
+        let error = refused(&s, &q);
+        assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+        assert_eq!(error.operation.as_deref(), Some("/operations/1"));
+        assert!(error.message.contains("entire comment anchor"), "{error}");
+    }
+}
+
+#[test]
+fn adjacent_replacement_disables_tracked_anchor_deletion_preservation() {
+    let s = docx(&para("Alpha Beta"));
+    let with = run(
+        &s,
+        &plan(
+            &s,
+            json!([{"kind":"comment","target":p(0),"find":"Beta","text":"Keep"}]),
+        ),
+    )
+    .unwrap()
+    .clean;
+    for reverse in [false, true] {
+        let mut ops = vec![
+            replace(0, "Alpha ", "X "),
+            json!({"kind":"delete","target":p(0),"find":"Beta"}),
+        ];
+        if reverse {
+            ops.reverse();
+        }
+        let error = refused(&with, &plan(&with, json!(ops)));
+        assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+        assert_eq!(
+            error.operation.as_deref(),
+            Some(if reverse {
+                "/operations/0"
+            } else {
+                "/operations/1"
+            })
+        );
+        assert!(
+            error.message.contains("no supported preservation rule"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn requested_containing_comment_survives_interior_paragraph_deletion() {
+    let s = docx(&(para("First") + &para("Middle") + &para("Last")));
+    for track in ["on", "off"] {
+        for reverse in [false, true] {
+            let mut ops = vec![
+                json!({"kind":"delete_paragraph","target":p(1)}),
+                json!({"kind":"comment","target":p(0),"through":p(2),"text":"All"}),
+            ];
+            if reverse {
+                ops.reverse();
+            }
+            let mut q = plan(&s, json!(ops));
+            q["policy"]["track"] = json!(track);
+            let out = run(&s, &q).unwrap();
+            for bytes in [&out.clean, &out.redline] {
+                let final_bytes = accept_changes(bytes, &mine()).unwrap();
+                let comments = jubarte::comments::list_comments(&final_bytes).unwrap();
+                assert_eq!(comments.len(), 1);
+                assert_eq!(comments[0].anchor_text, "First\nLast");
+                assert_word_valid_package(bytes);
+            }
+        }
+    }
 }
