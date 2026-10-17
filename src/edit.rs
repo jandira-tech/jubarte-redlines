@@ -198,6 +198,7 @@ pub enum OperationKind {
         /// `replacement` inserted, instead of Word Compare's word-level diff.
         whole: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -231,6 +232,7 @@ pub enum OperationKind {
         /// Comment text anchored to the changed text; blank is none.
         comment: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -242,6 +244,7 @@ pub enum OperationKind {
         /// Exact text to delete; must occur exactly once.
         find: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -264,6 +267,7 @@ pub enum OperationKind {
         /// must be left out.
         through: Option<Selector>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -411,6 +415,7 @@ pub enum OperationKind {
         /// Mark the first row as a header row that repeats on each page.
         header_row: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(inner(range(min = 1, max = structural::MAX_WIDTH_DXA)))]
         /// Column widths in twentieths of a point; the text width split
         /// evenly when omitted.
         widths_dxa: Option<Vec<u32>>,
@@ -431,6 +436,7 @@ pub enum OperationKind {
         /// Bullets, decimal numbers or lowercase letters.
         kind_of_list: ListKind,
         #[serde(default)]
+        #[schemars(range(min = 0, max = 8))]
         /// List level, 0 (outermost) to 8.
         level: u32,
         #[serde(default = "default_true")]
@@ -443,6 +449,7 @@ pub enum OperationKind {
     /// One per document. It is header content, not a tracked change: the
     /// clean copy and the redline both carry it.
     Watermark {
+        #[schemars(length(min = 1, max = watermark::MAX_TEXT))]
         /// The watermark text, plain, 1 to 64 characters.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -487,6 +494,7 @@ pub enum OperationKind {
         /// Formatting to set; fields not given stay as they are.
         format: RunFormat,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1))]
         /// Which occurrence of `find` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
     },
@@ -501,6 +509,7 @@ pub enum OperationKind {
         /// Plain text of the note.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1))]
         /// Which occurrence of `after` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
     },
@@ -519,6 +528,7 @@ pub enum OperationKind {
         /// The picture's media type; checked against its bytes when given.
         content_type: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1, max = images::MAX_WIDTH_EMU))]
         /// Width in EMU (914400 per inch); the height keeps the aspect
         /// ratio. Default: the pixel size at 96 dpi, at most 6.5 inches.
         width_emu: Option<u64>,
@@ -556,6 +566,7 @@ pub enum OperationKind {
         /// Which side of the anchor paragraph.
         position: Side,
         #[serde(default = "default_toc_levels")]
+        #[schemars(range(min = 1, max = 9))]
         /// Heading levels listed, 1 to 9 (default 3).
         levels: u8,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -573,6 +584,7 @@ pub enum OperationKind {
         /// Exact text to remove.
         find: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1))]
         /// Which occurrence of `find` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
     },
@@ -1451,6 +1463,10 @@ pub fn operation_schemas() -> &'static [serde_json::Value] {
             .clone();
         for variant in &mut variants {
             variant["properties"]["id"] = common["properties"]["id"].clone();
+            // Closed as `check_operation_keys` is: a key outside these
+            // properties (besides the flattened `id`) is an error, not a
+            // silently ignored extra.
+            variant["additionalProperties"] = serde_json::json!(false);
         }
         variants
     });
@@ -1503,7 +1519,7 @@ fn exactly_one(fields: &[&str]) -> serde_json::Value {
 /// Allowed keys per operation kind; serde's `flatten` cannot deny unknown
 /// fields itself, and a misspelled key must not silently change meaning.
 fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
-    const COMMON: &[&str] = &["id", "kind", "paragraph"];
+    const COMMON: &[&str] = &["id", "kind"];
     let Some(ops) = plan.get("operations").and_then(|o| o.as_array()) else {
         return Ok(());
     };

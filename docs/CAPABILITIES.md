@@ -19,10 +19,14 @@ jubarte capabilities --matrix --json
 
 Known syntax returns `supported: true` and the matching `profiles`. Each profile
 names its `plan_version`, exact `fields`, `required` fields, cross-field
-`constraints`, and `support` rows. References in the v2 field schemas are expanded
+`constraints`, and `support` rows. Every focused answer carries
+`schema_version: 1`, like the default manifest, so an agent can date a build
+without parsing every field; v1 profiles are closed
+(`additionalProperties: false` in `constraints`) and their numeric fields
+publish the dispatcher's own bounds. References in the v2 field schemas are expanded
 locally, so a reply's target shape is available in the same call. Unknown fields
 and operation names return `supported: false`, a reason, and up to three nearest
-valid names. These are successful discovery answers (exit 0); malformed CLI
+valid names in prose. These are successful discovery answers (exit 0); malformed CLI
 arguments are usage errors. Field queries without an operation search all kinds.
 
 `dispatched` is separate from syntax recognition. On this branch the three

@@ -385,6 +385,36 @@ test("capabilities claims only what this CLI does (#454, #447, #453)", () => {
   assert.doesNotMatch(summary, /append \./);
 });
 
+test("capability query: --matrix and --operation answer through the wasm engine", () => {
+  const wasm = createRequire(import.meta.url)("../../npm/node/jubarte_wasm.js");
+  // The CLI's --matrix is the engine's capabilityQuery with no arguments.
+  const matrix = JSON.parse(run("capabilities", "--matrix", "--json").out);
+  const direct = JSON.parse(wasm.capabilityQuery(undefined, undefined));
+  assert.equal(matrix.runtime, "wasm");
+  assert.deepEqual(matrix.edit_operations, direct.edit_operations);
+  assert.equal(matrix.edit_operations.length, 24);
+  assert.deepEqual(matrix.edit_plan_versions, [1]);
+  // Every advertised kind answers a focused query as a dispatched operation.
+  for (const kind of matrix.edit_operations) {
+    const answer = JSON.parse(run("capabilities", "--operation", kind, "--json").out);
+    assert.equal(answer.supported, true, kind);
+    const v1 = answer.profiles.find((p) => p.plan_version === 1);
+    assert.equal(v1.dispatched, true, kind);
+  }
+  // A name the engine refuses is not advertised, and the query says so.
+  assert.ok(!matrix.edit_operations.includes("definitely_not_an_operation"));
+  const refused = JSON.parse(wasm.capabilityQuery("definitely_not_an_operation", undefined));
+  assert.equal(refused.supported, false);
+  assert.equal(refused.reason, "unsupported operation");
+  assert.equal(refused.nearest.length, 3);
+  // Field queries suggest the nearest valid name.
+  const near = JSON.parse(wasm.capabilityQuery("reply_comment", "tex"));
+  assert.equal(near.supported, false);
+  assert.equal(near.nearest[0], "text");
+  // The text rendering names the runtime without JSON quotes.
+  assert.match(wasm.capabilityQueryText("reply_comment", undefined), /^runtime: /);
+});
+
 test("convert --scholar and --tracking, as the binary has them", () => {
   const source = path.join(tmp, "paper.md");
   fs.writeFileSync(source, "# Title\n\nBody.\n");

@@ -59,8 +59,10 @@ pub enum Paper {
 #[serde(deny_unknown_fields)]
 pub struct CustomPage {
     /// Page width in twentieths of a point, 1 to 31_680 (22 inches).
+    #[schemars(range(min = 1, max = MAX_SIDE))]
     pub width_dxa: u32,
     /// Page height in twentieths of a point, 1 to 31_680 (22 inches).
+    #[schemars(range(min = 1, max = MAX_SIDE))]
     pub height_dxa: u32,
 }
 
@@ -83,21 +85,27 @@ pub enum Orientation {
 #[serde(deny_unknown_fields)]
 pub struct Margins {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = -31_680, max = MAX_SIDE))]
     /// Top margin in twentieths of a point.
     pub top: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Right margin in twentieths of a point.
     pub right: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = -31_680, max = MAX_SIDE))]
     /// Bottom margin in twentieths of a point.
     pub bottom: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Left margin in twentieths of a point.
     pub left: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Distance from the page top to the header, in twentieths of a point.
     pub header: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Distance from the page bottom to the footer, in twentieths of a
     /// point.
     pub footer: Option<u32>,

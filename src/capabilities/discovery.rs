@@ -185,8 +185,10 @@ fn distance(a: &str, b: &str) -> usize {
 
 /// Discover an operation, a field (optionally within an operation), or the
 /// full edit matrix when both are absent. `supported` means known syntax;
-/// `dispatched` and the support rows describe execution. No full plan schema
-/// is embedded. All three hosts share the same v1 edit dispatcher today.
+/// `dispatched` and the support rows describe execution. `schema_version`
+/// is `1`, as the manifest's is, so an agent can date a build from any
+/// focused answer. No full plan schema is embedded. All three hosts share
+/// the same v1 edit dispatcher today.
 #[must_use]
 pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) -> Value {
     let all = profiles(runtime);
@@ -199,8 +201,10 @@ pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) ->
         .filter(|p| operation.is_none_or(|op| p["operation"] == op))
         .collect();
     if selected.is_empty() {
-        return json!({"runtime": runtime, "supported": false, "operation": operation,
-            "reason": "unsupported operation", "nearest": nearest(operation.unwrap_or_default(), kinds)});
+        return json!({"runtime": runtime, "schema_version": 1, "supported": false,
+            "operation": operation,
+            "reason": "unsupported operation",
+            "nearest": nearest(operation.unwrap_or_default(), kinds)});
     }
     let fields = selected
         .iter()
@@ -211,7 +215,8 @@ pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) ->
         .filter(|p| field.is_none_or(|f| p["fields"].get(f).is_some()))
         .collect();
     if selected.is_empty() {
-        return json!({"runtime": runtime, "supported": false, "operation": operation, "field": field,
+        return json!({"runtime": runtime, "schema_version": 1, "supported": false,
+            "operation": operation, "field": field,
             "reason": "unsupported field", "nearest": nearest(field.unwrap_or_default(), fields)});
     }
     if let Some(field) = field {
@@ -222,7 +227,8 @@ pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) ->
                 .retain(|name, _| name == field);
         }
     }
-    let mut answer = json!({"runtime": runtime, "supported": true, "profiles": selected});
+    let mut answer =
+        json!({"runtime": runtime, "schema_version": 1, "supported": true, "profiles": selected});
     if operation.is_none() && field.is_none() {
         answer["edit_operations"] = json!(crate::edit::dispatched_operation_kinds());
         answer["edit_plan_versions"] = json!([crate::inspect::SCHEMA_VERSION]);
@@ -231,17 +237,26 @@ pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) ->
 }
 
 /// Text presentation for focused queries; the default manifest renderer stays
-/// unchanged. Unsupported names are answers, with suggestions, not usage errors.
+/// unchanged. Unsupported names are answers, with suggestions, not usage
+/// errors: the operation and field names print as prose, and the field
+/// clause is left out when no field was asked.
 #[must_use]
 pub fn discovery_text(answer: &Value) -> String {
     if answer["supported"] == false {
-        return format!(
-            "{}: operation {}, field {}\nnearest valid names: {}\n",
-            answer["reason"].as_str().unwrap_or("unsupported"),
-            answer["operation"],
-            answer["field"],
-            answer["nearest"]
-        );
+        let reason = answer["reason"].as_str().unwrap_or("unsupported");
+        let operation = answer["operation"].as_str().filter(|name| !name.is_empty());
+        let named = match (answer["field"].as_str(), operation) {
+            (Some(field), Some(operation)) => format!("{reason}: {field} (operation {operation})"),
+            (Some(field), None) => format!("{reason}: {field}"),
+            (None, operation) => format!("{reason}: {}", operation.unwrap_or_default()),
+        };
+        let nearest: Vec<&str> = answer["nearest"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        return format!("{named}\nnearest valid names: {}\n", nearest.join(", "));
     }
     let mut text = format!(
         "runtime: {}\nsupported syntax; execution depends on the rows below\n",
@@ -378,5 +393,38 @@ mod tests {
         assert_eq!(distance("", "text"), 4);
         assert_eq!(distance("é", "e"), 1);
         assert_eq!(distance("reply_coment", "reply_comment"), 1);
+    }
+
+    #[test]
+    fn every_discovery_answer_carries_a_schema_version() {
+        for answer in [
+            discovery("cli", None, None),
+            discovery("cli", Some("reply_comment"), None),
+            discovery("cli", Some("reply_comment"), Some("text")),
+            discovery("cli", Some("reply_coment"), None),
+            discovery("cli", Some("reply_comment"), Some("tex")),
+        ] {
+            assert_eq!(answer["schema_version"], 1, "{answer}");
+        }
+    }
+
+    #[test]
+    fn unsupported_names_render_as_prose() {
+        // No `field null`, no JSON quoting, no JSON array in prose: the
+        // clause names what was asked and nothing else.
+        assert_eq!(
+            discovery_text(&discovery("cli", Some("reply_coment"), None)),
+            "unsupported operation: reply_coment\nnearest valid names: reply_comment, edit_comment, resolve_comment\n"
+        );
+        assert_eq!(
+            discovery_text(&discovery("cli", Some("reply_comment"), Some("tex"))),
+            "unsupported field: tex (operation reply_comment)\nnearest valid names: text, id, kind\n"
+        );
+        let text = discovery_text(&discovery("cli", None, Some("imaginary")));
+        assert!(
+            text.starts_with("unsupported field: imaginary\nnearest valid names: ")
+                && !text.contains('"'),
+            "{text}"
+        );
     }
 }

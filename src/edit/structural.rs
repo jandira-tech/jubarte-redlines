@@ -18,7 +18,7 @@ use super::{RunSpec, build_paragraph, check_text, insert_ppr_child, is_range_mar
 /// Word's column limit.
 const MAX_COLUMNS: usize = 63;
 /// The widest cell Word accepts: 22 inches, in twentieths of a point.
-const MAX_WIDTH_DXA: u32 = 31_680;
+pub(super) const MAX_WIDTH_DXA: u32 = 31_680;
 /// Table styles a document may lack that the engine can add: `(id, name)`.
 const BUILTIN_TABLE_STYLES: &[(&str, &str)] = &[("TableGrid", "Table Grid")];
 
