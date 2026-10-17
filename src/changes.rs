@@ -253,8 +253,8 @@ fn kind_name(kind: ChangeKind) -> &'static str {
 }
 
 /// `jubarte changes`' listing: one line per change, `{ref}\t{kind}\t{target}
-/// \t{author}\t{date}\t{paragraph}\t{text}[\tinside {ref}]` (`-` for an absent
-/// author, date or paragraph; the text quoted, its first 60 characters), then
+/// \t{author}\t{paragraph}\t{text}[\tinside {ref}]` (`-` for an absent
+/// author or paragraph; the text quoted, its first 60 characters), then
 /// `{n} change(s)`.
 pub fn changes_text(changes: &[Change]) -> String {
     let mut out = String::new();
@@ -267,12 +267,11 @@ pub fn changes_text(changes: &[Change]) -> String {
             .map(|id| format!("\tinside {id}"))
             .unwrap_or_default();
         out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
+            "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
             c.r#ref,
             kind_name(c.kind),
             c.target,
             c.author.as_deref().unwrap_or("-"),
-            c.date.as_deref().unwrap_or("-"),
         ));
     }
     out.push_str(&format!("{} change(s)\n", changes.len()));

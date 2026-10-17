@@ -106,13 +106,23 @@ fn revision_dates_flag_uses_utc_and_legacy_fallback() {
 }
 
 #[test]
-fn revision_dates_changes_text_and_json_use_utc() {
+fn revision_dates_changes_json_uses_utc_and_the_listing_keeps_its_columns() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("dates.docx"), revisions("utc")).unwrap();
+    // The text listing's six tab-separated columns are a contract
+    // (docs/javascript.md, `changes_text`): it prints no date, UTC or not.
     let text = cli(&["changes", "dates.docx"], directory.path());
-    assert!(text.contains(UTC), "{text}");
-    assert!(text.contains(LEGACY), "{text}");
-    assert!(!text.contains(LOCAL), "{text}");
+    let rows: Vec<&str> = text.lines().filter(|line| line.starts_with('r')).collect();
+    assert_eq!(rows.len(), 4, "{text}");
+    for row in rows {
+        let columns = row
+            .split('\t')
+            .filter(|column| !column.starts_with("inside "));
+        assert_eq!(columns.count(), 6, "{row:?}");
+    }
+    for date in [UTC, LEGACY, LOCAL] {
+        assert!(!text.contains(date), "{text}");
+    }
     let json = cli(&["changes", "dates.docx", "--json"], directory.path());
     let changes: Vec<serde_json::Value> = json
         .lines()

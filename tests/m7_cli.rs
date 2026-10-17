@@ -382,17 +382,16 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         "one row per revision before the summary"
     );
     for line in &lines {
-        // ref \t kind \t target \t author \t date \t paragraph \t {text:?}
-        // This 7-field count assumes the fixture's revision authors contain no
+        // ref \t kind \t target \t author \t paragraph \t {text:?}
+        // This 6-field count assumes the fixture's revision authors contain no
         // literal tab (they don't). The human row format is tab-delimited by
         // contract, so a tab inside an author would need `changes` to escape
         // it before this could stay parseable.
         assert_eq!(
             line.split('\t').count(),
-            7,
-            "row has 7 tab-separated fields: {line:?}"
+            6,
+            "row has 6 tab-separated fields: {line:?}"
         );
-        assert_eq!(line.split('\t').nth(4), Some("1970-01-01T00:00:00Z"));
         let short = line.split('\t').next().unwrap();
         assert!(
             short.starts_with('r') && jubarte::ids::parse_change_ids(short).is_ok(),
