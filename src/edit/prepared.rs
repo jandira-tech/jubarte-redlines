@@ -719,6 +719,59 @@ fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditE
     super::err(code, operation, message)
 }
 
+/// Prepare a PlanV2 through the existing source/working-baseline adapter and
+/// the same serialized candidate checks as v1. Both inline and saved v2
+/// requests use this entry point; tracking never selects a different primary.
+///
+/// # Errors
+/// Returns the adapter's source, scope, baseline and effect errors, candidate
+/// validation failures, or `NO_CHANGES_REQUESTED` when required.
+pub fn prepare_v2(
+    source: &[u8],
+    plan: &super::v2::PlanV2,
+    options: &PrepareOptions,
+) -> Result<PreparedEdit, EditError> {
+    let applied = super::v2_apply::apply_plan(source, plan)?;
+    let result = EditResult {
+        clean: applied.clean,
+        redline: applied.redline,
+        report: applied.report,
+    };
+    let primary = result.redline.clone();
+    let unchanged = primary == source;
+    let effect = if unchanged {
+        Effect::Unchanged
+    } else {
+        Effect::Changed
+    };
+    let checks = check_candidates(source, &result)?;
+    if options.require_change && unchanged {
+        return Err(err(
+            codes::NO_CHANGES_REQUESTED,
+            None,
+            "the primary transaction has no document effect; --require-change was given",
+        ));
+    }
+    Ok(PreparedEdit {
+        source_sha256: source_sha256(source),
+        request_sha256: source_sha256(
+            serde_json::to_string(plan)
+                .expect("plan serializes")
+                .as_bytes(),
+        ),
+        primary_sha256: source_sha256(&primary),
+        primary,
+        primary_bytes: if unchanged {
+            PrimaryBytes::Source
+        } else {
+            PrimaryBytes::Candidate
+        },
+        primary_effect: effect,
+        result,
+        checks,
+    })
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
