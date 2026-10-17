@@ -398,9 +398,8 @@ fn a_note_naming_two_outers_keeps_the_file_word_valid() {
     assert_eq!(document.matches("<w:ins ").count(), 1, "{document}");
     assert_eq!(document.matches("<w:del ").count(), 1, "{document}");
     assert!(
-        document.contains(r#"<w:del w:id="3" w:author="BO""#) && document.contains(
-            r#"<w:ins w:id="5" w:author="CD""#
-        ),
+        document.contains(r#"<w:del w:id="3" w:author="BO""#)
+            && document.contains(r#"<w:ins w:id="5" w:author="CD""#),
         "{document}"
     );
 }

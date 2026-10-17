@@ -2736,7 +2736,7 @@ mod tests {
         let facts = LineFacts {
             index: 0,
             style: None,
-            default_style: None,
+            outline: None,
             heading: None,
             marker: None,
             level: 0,
@@ -2765,7 +2765,7 @@ mod tests {
             let facts = LineFacts {
                 index: 0,
                 style: None,
-                default_style: None,
+                outline: None,
                 heading: None,
                 marker: None,
                 level: 0,
