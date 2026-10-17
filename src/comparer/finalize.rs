@@ -11483,7 +11483,7 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
 /// attributes (`w:sz`, …) are never touched (LO mis-paginates the
 /// `strict01` pairs).
 pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
-    normalize_measures(dom, root, true)
+    normalize_measures(dom, root, true);
 }
 
 /// [`normalize_universal_measures`] without the fractional-plain-value
@@ -11491,7 +11491,7 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
 /// render diagnostic reports a plain value (gdocs-style `1440.4`) as the
 /// file spells it — a diagnostic does not repair what it describes.
 pub fn normalize_unit_measures(dom: &mut Dom, root: NodeId) {
-    normalize_measures(dom, root, false)
+    normalize_measures(dom, root, false);
 }
 
 fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool) {
