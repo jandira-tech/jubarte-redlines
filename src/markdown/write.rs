@@ -1045,6 +1045,14 @@ impl Anchor {
 
 struct Writer<'o, 'a> {
     options: &'o DocxOptions<'a>,
+    /// A soft line break holds until the words after it arrive: the space
+    /// it stands for belongs inside the change delimiters around it, and
+    /// one the paragraph ends on (a change that takes the paragraph's own
+    /// line break) holds no words at all and is dropped.
+    soft_break: bool,
+    /// The change delimiters held behind a soft line break, replayed when
+    /// the words arrive (or when the paragraph ends, without the space).
+    held: Vec<critic::Token>,
     body: Vec<Item>,
     /// Footnote definitions by label.
     definitions: HashMap<String, Vec<Item>>,
@@ -1215,6 +1223,8 @@ struct Writer<'o, 'a> {
 impl<'o, 'a> Writer<'o, 'a> {
     fn new(options: &'o DocxOptions<'a>) -> Self {
         Self {
+            soft_break: false,
+            held: Vec::new(),
             options,
             body: Vec::new(),
             definitions: HashMap::new(),
@@ -1326,6 +1336,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Event::Text(text) => self.text(&text),
             Event::Code(text) => {
+                self.soft_break_resolved(true);
                 self.code += 1;
                 self.text(&text);
                 self.code -= 1;
@@ -1338,7 +1349,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 None => self.id_lines(&html),
             },
             Event::FootnoteReference(label) => self.note_reference(&label),
-            Event::SoftBreak => self.text(" "),
+            Event::SoftBreak => self.soft_break = true,
             Event::HardBreak => {
                 if let Some(comment) = &mut self.comment {
                     comment.paragraphs.push(String::new());
@@ -2145,6 +2156,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// Ends the open paragraph. Its mark is in the change still open, or in
     /// the change that is the paragraph's whole text.
     fn end_paragraph(&mut self) {
+        // A soft line break the paragraph ends on was the paragraph's own
+        // line break: no words follow it, so it holds no space.
+        self.soft_break_resolved(false);
         let Some(index) = self.paragraph.take() else {
             return;
         };
@@ -2311,6 +2325,9 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn text(&mut self, text: &str) {
+        if self.metadata.is_some() || self.image.is_some() || !self.options.critic {
+            self.soft_break_resolved(true);
+        }
         if let Some(metadata) = &mut self.metadata {
             metadata.push_str(text);
             return;
@@ -2332,15 +2349,38 @@ impl<'o, 'a> Writer<'o, 'a> {
         });
         for piece in pieces {
             match piece {
-                Ok(text) => self.plain(&text),
-                Err(token) => self.token(token),
+                Ok(text) => {
+                    self.soft_break_resolved(true);
+                    self.plain(&text);
+                }
+                Err(token) => {
+                    if self.soft_break {
+                        self.held.push(token);
+                    } else {
+                        self.token(token);
+                    }
+                }
             }
+        }
+    }
+
+    /// Resolves a held soft line break: the words after it have arrived
+    /// (`words`) or the paragraph has ended. The change delimiters held
+    /// behind it replay either way; the space only when words follow, and
+    /// before them, inside the change it sat in.
+    fn soft_break_resolved(&mut self, words: bool) {
+        if std::mem::take(&mut self.soft_break) && words {
+            self.plain(" ");
+        }
+        for token in std::mem::take(&mut self.held) {
+            self.token(token);
         }
     }
 
     /// `$latex$` (or `$$latex$$` when `display`): an equation, or its
     /// LaTeX as text where an equation cannot go (a comment, alt text).
     fn math(&mut self, latex: &str, display: bool) {
+        self.soft_break_resolved(true);
         if self.metadata.is_some() || self.image.is_some() || self.comment.is_some() {
             let fence = if display { "$$" } else { "$" };
             let text = format!("{fence}{}{fence}", critic::restore(latex));

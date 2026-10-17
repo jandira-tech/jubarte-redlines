@@ -330,7 +330,11 @@ impl Literal {
                 b'(' if at > 0 && bytes[at - 1] == b']' && !escaped(source, at - 1) => {
                     destinations.get(&(at + 1)).copied()
                 }
-                b'<' if !escaped(source, at) => autolink_end(source, at),
+                b'<' if !escaped(source, at) => comment_end(source, at).or_else(|| {
+                    (!source[at..].starts_with("<!--"))
+                        .then(|| autolink_end(source, at))
+                        .flatten()
+                }),
                 _ => None,
             };
             match end {
@@ -466,6 +470,15 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
         line_start += line.len() + 1;
     }
     ends
+}
+
+/// The end of the HTML comment that starts at `at` (`<!-- … -->`), if it
+/// closes. The writer drops comments whole, so nothing inside one opens.
+fn comment_end(source: &str, at: usize) -> Option<usize> {
+    if !source[at..].starts_with("<!--") {
+        return None;
+    }
+    source[at + 4..].find("-->").map(|close| at + 4 + close + 3)
 }
 
 /// The end of an autolink (`<https://a.example>`) at `at`: a scheme, `:`,
@@ -866,6 +879,14 @@ fn footnote_label(text: &str) -> Option<&str> {
 /// reading the markup rather than the Markdown.
 pub(crate) fn encode_spans_only(source: &str) -> String {
     encode_spans(source, ALL, false)
+}
+
+/// The ranges of `source` the reader passes over verbatim: code spans
+/// (across single line breaks), link destinations, autolinks and HTML
+/// comments. The Markdown diff escaper skips them, so it escapes exactly
+/// where the reader recognizes delimiters.
+pub(super) fn verbatim_ranges(source: &str) -> Vec<std::ops::Range<usize>> {
+    Literal::new(source).verbatim
 }
 
 /// The source of text that holds no stand-ins, as it was.
