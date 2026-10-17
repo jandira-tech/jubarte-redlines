@@ -273,6 +273,35 @@ fn v2_literal_occurrences_are_exact_and_overlap_aware() {
     q["operations"] = json!([replace(0, "a b", "X")]);
     assert_eq!(run(&s, &q).unwrap_err().code, "ANCHOR_NOT_FOUND");
 }
+
+fn assert_max_occurrence_reports_ambiguity(mut operation: Value) {
+    let s = docx(&para("two two"));
+    operation["occurrence"] = json!(18446744073709551615_u64);
+    let q = plan(&s, json!([operation]));
+    let error = run(&s, &q).unwrap_err();
+    assert_eq!(error.code, "AMBIGUOUS_ANCHOR");
+    assert!(error.message.contains("occurs 2 times"), "{error:?}");
+}
+
+#[test]
+fn v2_max_occurrence_replace_reports_full_candidate_count() {
+    assert_max_occurrence_reports_ambiguity(replace(0, "two", "X"));
+}
+
+#[test]
+fn v2_max_occurrence_insert_reports_full_candidate_count() {
+    assert_max_occurrence_reports_ambiguity(
+        json!({"kind":"insert","target":p(0),"before_text":"two","text":"X"}),
+    );
+}
+
+#[test]
+fn v2_max_occurrence_comment_reports_full_candidate_count() {
+    assert_max_occurrence_reports_ambiguity(
+        json!({"kind":"comment","target":p(0),"find":"two","text":"Note"}),
+    );
+}
+
 #[test]
 fn changed_rewrite_conflicts_with_other_active_text_in_its_paragraph() {
     let s = docx(&para("Alpha Beta"));
