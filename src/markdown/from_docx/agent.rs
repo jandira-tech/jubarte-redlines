@@ -780,7 +780,6 @@ pub(crate) fn runs(indices: &[usize]) -> Vec<(usize, usize)> {
 pub(crate) struct LineFacts<'a> {
     pub index: usize,
     pub style: Option<&'a str>,
-    pub default_style: Option<&'a str>,
     pub heading: Option<usize>,
     /// The list marker the converter computed (`1.`, `(a)`, `-`).
     pub marker: Option<&'a str>,
@@ -788,6 +787,10 @@ pub(crate) struct LineFacts<'a> {
     /// view prints no list indentation, since each id line ends the
     /// Markdown list.
     pub level: usize,
+    /// The paragraph's own `w:outlineLvl`, when no style carries the
+    /// level (`outline 2`): the `#` count alone would give the writer's
+    /// `HeadingN`.
+    pub outline: Option<usize>,
     pub page_break: bool,
     /// Accept-all or reject-all view: print the `rev` tags.
     pub resolved: bool,
@@ -799,29 +802,32 @@ pub(crate) struct LineFacts<'a> {
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 empty, break-ins r3 @AC -->`.
     pub empty: bool,
-    /// Tracked view: the paragraph's changes its text prints no tag for
-    /// (see [`unshown_tags`]).
-    pub unshown: &'a [String],
+    /// Tracked view: the paragraph's changes its text prints no tag for,
+    /// `true` for an insertion (see [`unshown_tags`]).
+    pub unshown: &'a [(bool, String)],
 }
 
 /// The tags of the insertions, deletions and moves in paragraph `p` whose
 /// id no note in `shown` (the paragraph's rendered text) prints: a deleted
 /// object, break, field character or empty mark has no text to wrap. The
-/// tracked view's id line names them (`rev r12 @AC`), so every change
-/// reads from the view. The paragraph mark's own changes (`break-ins`,
-/// `break-del`) and formatting (`fmt`) have their own clauses; a text box
-/// renders its own blocks, and Word's Fallback copy is the Choice's twin.
-pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<String> {
-    fn walk(e: &Element, handles: &Handles, out: &mut Vec<(String, String)>) {
+/// tracked view's id line names them (`rev r12 @AC`, a deletion `rev-del
+/// r13 @AC`), so every change reads from the view. The paragraph mark's
+/// own changes (`break-ins`, `break-del`) and formatting (`fmt`) have
+/// their own clauses; a text box renders its own blocks, and Word's
+/// Fallback copy is the Choice's twin. Each entry's `bool` says the mark
+/// inserts (`ins`, `moveTo`) rather than deletes (`del`, `moveFrom`).
+pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<(bool, String)> {
+    fn walk(e: &Element, handles: &Handles, out: &mut Vec<(bool, String, String)>) {
         for child in shown_children(e) {
             match child.local() {
                 "pPr" | "txbxContent" => {}
                 // A formatting change's own history (`w:rPrChange/w:rPr/w:del`)
                 // is no change `jubarte changes` lists.
                 local if local.ends_with("PrChange") => {}
-                "ins" | "del" | "moveFrom" | "moveTo" => {
+                local @ ("ins" | "del" | "moveFrom" | "moveTo") => {
                     if let Some(id) = child.attr("id") {
-                        out.push((id.to_string(), tag_of(child, handles)));
+                        let inserted = matches!(local, "ins" | "moveTo");
+                        out.push((inserted, id.to_string(), tag_of(child, handles)));
                     }
                     walk(child, handles, out);
                 }
@@ -835,10 +841,10 @@ pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<S
         return Vec::new();
     }
     let printed = printed_wids(shown, "body");
-    let mut unshown: Vec<String> = Vec::new();
-    for (id, tag) in carriers {
-        if !printed.contains(&id) && !unshown.contains(&tag) {
-            unshown.push(tag);
+    let mut unshown: Vec<(bool, String)> = Vec::new();
+    for (inserted, id, tag) in carriers {
+        if !printed.contains(&id) && !unshown.iter().any(|(_, t)| *t == tag) {
+            unshown.push((inserted, tag));
         }
     }
     unshown
@@ -1019,51 +1025,84 @@ fn split_story_text(line: &str) -> (String, Vec<String>) {
     (out, texts)
 }
 
-/// A change on the header's `unplaced:` line: `r3 @AC in p0`.
+/// A change on the header's `unplaced:` line: `del r3 @AC in p0`, the
+/// kind first so the writer gives the mark the same (`ins` by omission).
 pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles) -> String {
     let handle = handles.of(change.author.as_deref()).unwrap_or("??");
+    let kind = match change.kind {
+        crate::changes::ChangeKind::Deletion => "del ",
+        crate::changes::ChangeKind::Move
+            if change.move_side == Some(crate::changes::MoveSide::From) =>
+        {
+            "del "
+        }
+        crate::changes::ChangeKind::Formatting => "fmt ",
+        _ => "ins ",
+    };
     match change.paragraph.as_deref() {
         Some(p) => format!(
-            "{} @{handle} in {}",
+            "{kind}{} @{handle} in {}",
             change.r#ref,
             crate::ids::short_paragraph(p)
         ),
-        None => format!("{} @{handle}", change.r#ref),
+        None => format!("{kind}{} @{handle}", change.r#ref),
     }
 }
 
 /// A whole story part's changes (a header, a footer, one note) whose id
 /// `shown` prints no tag for, as printed tags: insertions, deletions and
-/// moves (`rev`), then formatting (`fmt`). The view shows a header by one
-/// paragraph and a note by its text, so these name the rest.
+/// moves, each `true` for an insertion (`rev`/`rev-del`), then formatting
+/// (`fmt`), each with its paragraph when one holds it (`in footer1.p1`).
+/// The view shows a header by one paragraph and a note by its text, so
+/// these name the rest.
+/// A change `story_unshown` names: whether it inserts, and its tag.
+pub(crate) type StoryRev = (bool, String);
+/// A formatting change `story_unshown` names: its paragraph when one
+/// holds it, and its tag.
+pub(crate) type StoryFmt = (Option<usize>, String);
+
 pub(crate) fn story_unshown(
     root: &Element,
     story: &str,
     shown: &str,
     skip: &HashSet<String>,
     handles: &Handles,
-) -> (Vec<String>, Vec<String>) {
-    fn walk<'e>(e: &'e Element, out: &mut Vec<(bool, &'e Element)>) {
+) -> (Vec<StoryRev>, Vec<StoryFmt>) {
+    // `at` is the carrier's paragraph, counted as [`paragraphs`] does, so a
+    // formatting change lands on the paragraph it is in (`in footer1.p1`).
+    fn walk<'e>(
+        e: &'e Element,
+        at: Option<usize>,
+        counted: bool,
+        next: &mut usize,
+        out: &mut Vec<(Option<usize>, bool, bool, &'e Element)>,
+    ) {
         for child in shown_children(e) {
             let local = child.local();
+            if local == "p" && counted {
+                let index = *next;
+                *next += 1;
+                walk(child, Some(index), counted, next, out);
+                continue;
+            }
             if matches!(local, "ins" | "del" | "moveFrom" | "moveTo") {
-                out.push((false, child));
+                out.push((at, false, matches!(local, "ins" | "moveTo"), child));
             } else if local.ends_with("PrChange")
                 || matches!(local, "tblGridChange" | "numberingChange")
             {
-                out.push((true, child));
+                out.push((at, true, true, child));
                 continue;
             } else if matches!(local, "cellIns" | "cellDel" | "cellMerge") {
-                out.push((false, child));
+                out.push((at, false, local == "cellIns", child));
             }
-            walk(child, out);
+            walk(child, at, counted && local != "txbxContent", next, out);
         }
     }
     let mut carriers = Vec::new();
-    walk(root, &mut carriers);
+    walk(root, None, true, &mut 0, &mut carriers);
     let printed = printed_wids(shown, story);
-    let (mut rev, mut fmt): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
-    for (formatting, carrier) in carriers {
+    let (mut rev, mut fmt) = (Vec::new(), Vec::new());
+    for (at, formatting, inserted, carrier) in carriers {
         let Some(id) = carrier.attr("id") else {
             continue;
         };
@@ -1071,9 +1110,12 @@ pub(crate) fn story_unshown(
             continue;
         }
         let tag = format_tag(&format!("{story}#{}", tag_of(carrier, handles)));
-        let list = if formatting { &mut fmt } else { &mut rev };
-        if !list.contains(&tag) {
-            list.push(tag);
+        if formatting {
+            if !fmt.iter().any(|(_, t)| *t == tag) {
+                fmt.push((at, tag));
+            }
+        } else if !rev.iter().any(|(_, t)| *t == tag) {
+            rev.push((inserted, tag));
         }
     }
     (rev, fmt)
@@ -1448,13 +1490,16 @@ pub(crate) fn line(head: &str, clauses: &[String]) -> String {
 }
 
 /// `<!-- p3 justify, first-line 0.5in, comments c5 -->` (the plan's grammar).
+/// A paragraph that states a style names it, the default too: the statement
+/// is the document's own, not the view's to drop (#528). A heading's own
+/// `HeadingN` with text needs no name, the `#` count says it; an empty
+/// paragraph has no `#`, so even that one is named.
 pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     let mut head = format!("p{}", f.index);
     if let Some(style) = f.style {
-        let implied = match f.heading {
-            Some(level) => style == format!("Heading{level}"),
-            None => Some(style) == f.default_style || style == "Normal",
-        };
+        let implied = !f.empty
+            && f.heading
+                .is_some_and(|level| style == format!("Heading{level}"));
         if !implied {
             head.push(' ');
             head.push_str(&crate::markdown::view_notes::style_token(style));
@@ -1462,6 +1507,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     let ppr = p.child("pPr");
     let mut clauses: Vec<String> = Vec::new();
+    if let Some(outline) = f.outline {
+        clauses.push(format!("outline {outline}"));
+    }
     if f.empty {
         clauses.push("empty".to_string());
     }
@@ -1488,11 +1536,11 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
             (&["left", "start"][..], "left"),
             (&["right", "end"][..], "right"),
         ] {
-            if let Some(v) = attrs
-                .iter()
-                .find_map(|attr| ind.attr(attr))
-                .and_then(|v| v.parse::<f64>().ok())
-            {
+            if let Some(v) = attrs.iter().find_map(|attr| ind.attr(attr)).and_then(|v| {
+                v.parse::<f64>()
+                    .ok()
+                    .or_else(|| crate::util::universal_measure_twips(v))
+            }) {
                 clauses.push(format!("{name} {}", inches(v)));
             }
         }
@@ -1533,14 +1581,24 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
-    let unshown: Vec<String> = f
+    let unshown: Vec<(bool, String)> = f
         .unshown
         .iter()
-        .filter(|tag| tracked_break.as_ref().is_none_or(|(_, b)| b != *tag))
+        .filter(|(_, tag)| tracked_break.as_ref().is_none_or(|(_, b)| b != tag))
         .cloned()
         .collect();
-    if !f.resolved && !unshown.is_empty() {
-        clauses.push(format!("rev {}", format_tags(&unshown)));
+    if !f.resolved {
+        for inserted in [true, false] {
+            let tags: Vec<String> = unshown
+                .iter()
+                .filter(|(ins, _)| *ins == inserted)
+                .map(|(_, tag)| tag.clone())
+                .collect();
+            if !tags.is_empty() {
+                let word = if inserted { "rev" } else { "rev-del" };
+                clauses.push(format!("{word} {}", format_tags(&tags)));
+            }
+        }
     }
     if f.resolved {
         let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();
@@ -2714,6 +2772,62 @@ mod tests {
         indices(&body, &mut seen);
         assert_eq!(seen, ["0", "1", "2", "3", "-", "4"]);
         assert_eq!(body.child("tbl").unwrap().attr(TABLE), Some("0"));
+    }
+
+    /// A strict `w:ind` writes universal measures (`72pt`, `1in`) where
+    /// Transitional writes twips; the clause prints the same inches.
+    #[test]
+    fn a_universal_measure_indent_on_the_id_line_reads_as_twips() {
+        let p = body(
+            r#"<w:p><w:pPr><w:ind w:start="72pt" w:end="36pt" w:firstLine="18pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+        );
+        let p = p.child("p").unwrap();
+        let facts = LineFacts {
+            index: 0,
+            style: None,
+            outline: None,
+            heading: None,
+            marker: None,
+            level: 0,
+            page_break: false,
+            resolved: false,
+            comments: &[],
+            spans: &[],
+            empty: false,
+            unshown: &[],
+        };
+        let line = id_line(p, &facts, &Handles::default());
+        assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
+    }
+
+    /// A parsable-but-absurd measure is not a measure the schema spells
+    /// (`1e300pt`, `nanpt`): the clause drops, as it did before the Strict
+    /// reader, instead of printing 250-digit inches or `NaNin`
+    /// (#531 review defect 5).
+    #[test]
+    fn an_absurd_measure_indent_drops_its_clause() {
+        for start in ["1e300pt", "nanpt", "999999999999999999999999999in"] {
+            let p = body(&format!(
+                r#"<w:p><w:pPr><w:ind w:start="{start}" w:end="36pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#
+            ));
+            let p = p.child("p").unwrap();
+            let facts = LineFacts {
+                index: 0,
+                style: None,
+                outline: None,
+                heading: None,
+                marker: None,
+                level: 0,
+                page_break: false,
+                resolved: false,
+                comments: &[],
+                spans: &[],
+                empty: false,
+                unshown: &[],
+            };
+            let line = id_line(p, &facts, &Handles::default());
+            assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");
+        }
     }
 
     #[test]

@@ -204,6 +204,59 @@ fn t6_tab_pos_and_cell_margin_measures_normalized() {
 }
 
 #[test]
+fn t6b_section_column_and_float_geometry_measures_normalized() {
+    use jubarte::comparer::finalize::normalize_universal_measures;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:body xmlns:w=\"{w}\">\
+             <w:p><w:pPr><w:sectPr><w:cols w:space=\"36pt\"/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr><w:framePr w:w=\"2in\" w:h=\"1in\" w:x=\"36pt\" w:y=\"36pt\"/></w:pPr></w:p>\
+             <w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"9pt\" w:tblpX=\"1in\" w:tblpY=\"72pt\"/></w:tblPr></w:tbl>\
+             </w:body>",
+            w = W::URI
+        ),
+    );
+    normalize_universal_measures(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(x.contains("w:space=\"720\""), "36pt → 720 twips: {x}");
+    assert!(x.contains("w:w=\"2880\""), "2in → 2880 twips: {x}");
+    assert!(x.contains("w:h=\"1440\""), "1in → 1440 twips: {x}");
+    assert!(x.contains("w:x=\"720\""), "36pt → 720 twips: {x}");
+    assert!(x.contains("w:leftFromText=\"180\""), "9pt → 180 twips: {x}");
+    assert!(x.contains("w:tblpX=\"1440\""), "1in → 1440 twips: {x}");
+    assert!(x.contains("w:tblpY=\"1440\""), "72pt → 1440 twips: {x}");
+}
+
+#[test]
+fn t6c_fractional_plain_float_geometry_rounds_as_a_validity_repair() {
+    // A fractional plain value on an integer-typed attribute is
+    // schema-invalid wherever the Strict whitelist now reads it
+    // (OpenXmlValidator on `w:tblpX="100.5"`: not a valid Int32 — same
+    // for `w:ind/@w:left`, a union member fail), so the output sweep
+    // rounds it: a validity repair, kept and recorded in CHANGELOG.md.
+    // The render diagnostic keeps the literal (normalize_unit_measures).
+    use jubarte::comparer::finalize::normalize_universal_measures;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:body xmlns:w=\"{w}\">\
+             <w:tbl><w:tblPr><w:tblpPr w:tblpX=\"100.5\" w:tblpY=\"50.25\"/></w:tblPr></w:tbl>\
+             <w:p><w:pPr><w:framePr w:x=\"33.5\"/></w:pPr></w:p>\
+             </w:body>",
+            w = W::URI
+        ),
+    );
+    normalize_universal_measures(&mut dom, root);
+    let x = dom.serialize_element(root);
+    assert!(x.contains("w:tblpX=\"101\""), "100.5 → 101: {x}");
+    assert!(x.contains("w:tblpY=\"50\""), "50.25 → 50: {x}");
+    assert!(x.contains("w:x=\"34\""), "33.5 → 34: {x}");
+}
+
+#[test]
 fn t7_drawingml_percent_attrs_to_per_thousand() {
     let mut dom = Dom::new();
     let root = parse(

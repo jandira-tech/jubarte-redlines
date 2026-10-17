@@ -1133,7 +1133,7 @@ fn story_part(
     texts.push(&story.text);
     texts.extend(story.more.iter().map(String::as_str));
     let mut paragraph_marks: HashMap<usize, Vec<(&str, super::view_notes::Tag)>> = HashMap::new();
-    let mut unplaced = Vec::new();
+    let mut unplaced: Vec<(&str, super::view_notes::Tag)> = Vec::new();
     for entry in &story.rev {
         let placed = ["break-ins ", "break-del "].iter().find_map(|word| {
             let (tag, at) = entry.strip_prefix(word)?.rsplit_once(" in ")?;
@@ -1155,11 +1155,24 @@ fn story_part(
             Some((index, mark)) => {
                 paragraph_marks.entry(index).or_default().push(mark);
             }
-            None => unplaced.extend(
-                super::view_notes::revision_tags(entry)
-                    .into_iter()
-                    .flatten(),
-            ),
+            // A bare tag is an insertion; `del ` names a deletion (`del
+            // footer1.r3 @AC`) and `fmt ` a formatting change, which goes
+            // with `fmt:`'s own list.
+            None => match entry.split_once(' ') {
+                Some(("del", tag)) => unplaced.extend(
+                    super::view_notes::revision_tags(tag)
+                        .into_iter()
+                        .flatten()
+                        .map(|tag| ("w:del", tag)),
+                ),
+                Some(("fmt", _)) => {}
+                _ => unplaced.extend(
+                    super::view_notes::revision_tags(entry)
+                        .into_iter()
+                        .flatten()
+                        .map(|tag| ("w:ins", tag)),
+                ),
+            },
         }
     }
     if let Some(&deepest) = paragraph_marks.keys().max() {
@@ -1212,12 +1225,26 @@ fn story_part(
         }
     }
     *next_doc_pr = next;
-    let formats: Vec<super::view_notes::Tag> = story
-        .fmt
-        .iter()
-        .filter_map(|entry| super::view_notes::revision_tags(entry))
-        .flatten()
-        .collect();
+    // A `fmt` entry names its paragraph (`r1657 @AB in footer1.p1`); a bare
+    // one is the paragraph at its place in the list, as before.
+    let mut placed: HashMap<usize, Vec<super::view_notes::Tag>> = HashMap::new();
+    let mut positional: Vec<super::view_notes::Tag> = Vec::new();
+    for entry in &story.fmt {
+        let Some((tag, index)) = entry.rsplit_once(" in ").and_then(|(tag, at)| {
+            let (part, index) = story_id(at)?;
+            (part == story.part).then_some((tag, index))
+        }) else {
+            positional.extend(
+                super::view_notes::revision_tags(entry)
+                    .into_iter()
+                    .flatten(),
+            );
+            continue;
+        };
+        if let Some(tags) = super::view_notes::revision_tags(tag) {
+            placed.entry(index).or_default().extend(tags);
+        }
+    }
     let mut body = String::new();
     let last = texts.len() - 1;
     for (index, text) in texts.iter().enumerate() {
@@ -1260,14 +1287,16 @@ fn story_part(
             }
             properties.push_str("</w:rPr>");
         }
-        if let Some(tag) = index
-            .checked_sub(story.paragraph)
-            .and_then(|i| formats.get(i))
-        {
+        for tag in placed.remove(&index).unwrap_or_default().into_iter().chain(
+            index
+                .checked_sub(story.paragraph)
+                .and_then(|i| positional.get(i))
+                .cloned(),
+        ) {
             let _ = write!(
                 properties,
                 "<{}><w:pPr>{base}</w:pPr></w:pPrChange>",
-                marks.mark("w:pPrChange", Some(tag), 0)
+                marks.mark("w:pPrChange", Some(&tag), 0)
             );
         }
         let mut content = runs(text, marks, &drawings);
@@ -1281,8 +1310,8 @@ fn story_part(
         }
         let _ = write!(body, "<w:p><w:pPr>{properties}</w:pPr>{content}");
         if index == last {
-            for tag in &unplaced {
-                let _ = write!(body, "<{}/>", marks.mark("w:ins", Some(tag), 0));
+            for (name, tag) in &unplaced {
+                let _ = write!(body, "<{}/>", marks.mark(name, Some(tag), 0));
             }
         }
         body.push_str("</w:p>");

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The YAML header of the agent view.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::agent::{Handles, RevTag};
 use super::ooxml::Element;
@@ -230,17 +230,42 @@ fn revisions_comment(f: &Facts) -> String {
             c.kind == ChangeKind::Formatting && matches!(story(c).as_str(), "body" | "styles")
         })
         .count();
-    let mut others: Vec<(String, usize)> = Vec::new();
+    // A part's group prints where its block does — headers then footers,
+    // first, default, even, section by section — not where its relationship
+    // happens to sit, which a writer cannot keep.
+    let mut counts: HashMap<String, usize> = HashMap::new();
     for c in &f.changes {
         let s = story(c);
         if matches!(s.as_str(), "body" | "styles") {
             continue;
         }
-        match others.iter_mut().find(|(name, _)| *name == s) {
-            Some((_, n)) => *n += 1,
-            None => others.push((s, 1)),
+        *counts.entry(s).or_default() += 1;
+    }
+    let mut order: Vec<String> = Vec::new();
+    for section in &f.sections {
+        for kind in ["header", "footer"] {
+            for ty in ["first", "default", "even"] {
+                if let Some(s) = section
+                    .stories
+                    .iter()
+                    .find(|s| s.kind == kind && s.ty == ty && counts.contains_key(&s.part))
+                    && !order.contains(&s.part)
+                {
+                    order.push(s.part.clone());
+                }
+            }
         }
     }
+    for c in &f.changes {
+        let s = story(c);
+        if counts.contains_key(&s) && !order.contains(&s) {
+            order.push(s);
+        }
+    }
+    let others: Vec<(String, usize)> = order
+        .into_iter()
+        .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
+        .collect();
     let mut parts = Vec::new();
     if marks > 0 {
         let mut kinds = Vec::new();
@@ -530,8 +555,14 @@ pub(crate) fn render(f: &Facts) -> String {
     out
 }
 
+/// A twips-valued attribute; Strict files write the universal measure
+/// (`72pt`, `1in`) where Transitional writes the integer.
 fn twips(e: &Element, attr: &str) -> Option<f64> {
-    e.attr(attr).and_then(|v| v.parse::<f64>().ok())
+    e.attr(attr).and_then(|v| {
+        v.parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))
+    })
 }
 
 /// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
@@ -543,7 +574,9 @@ fn page_setup(sect: &Element) -> String {
     );
     let landscape = size.and_then(|s| s.attr("orient")) == Some("landscape") || w > h;
     let (short, long) = if w < h { (w, h) } else { (h, w) };
-    let name = match (short as i64, long as i64) {
+    // Named sizes match on the rounded twip: 210mm is the 11906 an A4
+    // spells, not the 11905 a truncating cast reads (#531).
+    let name = match (short.round() as i64, long.round() as i64) {
         (12240, 15840) => "Letter".to_string(),
         (12240, 20160) => "Legal".to_string(),
         (11906, 16838) => "A4".to_string(),
@@ -635,6 +668,17 @@ fn page_setup(sect: &Element) -> String {
             out.push_str(&format!(", char space {space}"));
         }
     }
+    // How the section starts, when its `w:sectPr` states it: `nextPage`
+    // is Word's default, but a document that says so keeps saying it
+    // (#528). A value outside Word's five says nothing the view can write.
+    if let Some(kind) = sect.child("type").and_then(|t| t.attr("val")).filter(|v| {
+        matches!(
+            *v,
+            "nextPage" | "continuous" | "evenPage" | "oddPage" | "nextColumn"
+        )
+    }) {
+        out.push_str(&format!(", starts {kind}"));
+    }
     out
 }
 
@@ -696,7 +740,15 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             r.font = font_of(rpr, theme);
         }
         if r.size_half_points.is_none() {
-            r.size_half_points = rpr.child("sz").and_then(|s| twips(s, "val"));
+            // `w:sz` is half-points (`ST_HpsMeasure`), not twips: a strict
+            // `"11pt"` is 22, as the plain `"22"` is.
+            r.size_half_points = rpr.child("sz").and_then(|s| {
+                s.attr("val").and_then(|v| {
+                    v.parse::<f64>()
+                        .ok()
+                        .or_else(|| crate::util::universal_measure_half_points(v))
+                })
+            });
         }
         r.bold |= rpr.toggle("b").unwrap_or(false);
         r.italic |= rpr.toggle("i").unwrap_or(false);
@@ -880,17 +932,38 @@ fn named(styles: Option<&Element>, id: &str, expected: &str) -> String {
 }
 
 fn table_style_line(styles: Option<&Element>, id: &str) -> String {
+    // The style's name, when it is not the one the writer would give the
+    // id (`9` is named `Normal Table`, `TableGrid0` `TableGrid`, #528).
+    let named = styles
+        .and_then(|s| style_by_id(s, id))
+        .and_then(|s| s.child("name"))
+        .and_then(|n| n.attr("val"))
+        .filter(|name| {
+            *name
+                != super::super::package::word_table_style_name(id)
+                    .unwrap_or_else(|| id.to_string())
+        })
+        .map(|name| format!(", named {name}"))
+        .unwrap_or_default();
     let borders = styles
         .and_then(|s| style_by_id(s, id))
         .and_then(|s| s.path(&["tblPr", "tblBorders"]));
     let Some(borders) = borders else {
-        return id.to_string();
+        return format!("{id}{named}");
     };
-    let sides = ["top", "left", "bottom", "right", "insideH", "insideV"];
+    // The strict `start`/`end` elements name the `left`/`right` borders.
+    let sides = [
+        &["top"][..],
+        &["left", "start"][..],
+        &["bottom"][..],
+        &["right", "end"][..],
+        &["insideH"][..],
+        &["insideV"][..],
+    ];
     let sizes: Vec<Option<(String, String)>> = sides
         .iter()
-        .map(|side| {
-            borders.child(side).map(|b| {
+        .map(|names| {
+            names.iter().find_map(|side| borders.child(side)).map(|b| {
                 (
                     b.attr("val").unwrap_or("").to_string(),
                     b.attr("sz").unwrap_or("").to_string(),
@@ -908,11 +981,11 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
             let pt = sz.parse::<f64>().map(|s| s / 8.0).unwrap_or(0.5);
             let pt = format!("{pt:.2}");
             format!(
-                "{id}, all borders {}pt",
+                "{id}, all borders {}pt{named}",
                 pt.trim_end_matches('0').trim_end_matches('.')
             )
         }
-        _ => format!("{id}, borders vary"),
+        _ => format!("{id}, borders vary{named}"),
     }
 }
 
@@ -1198,6 +1271,18 @@ fn part_two(out: &mut String, f: &Facts) {
     out.push_str("styles:\n");
     let default = f.default_style.unwrap_or("Normal");
     let base = resolve(f.styles, f.theme, default);
+    // A style a tracked change names but no paragraph uses still gets a
+    // legend line after the used ones, so the view's own docx defines it
+    // and the change has a holder there. The changed list's order is the
+    // styles part's; the writer keeps it, so the next view names the same
+    // order.
+    let changes = if f.resolved.is_none() {
+        f.styles
+            .map(|styles| style_changes(styles, f.handles))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     kv(
         out,
         &format!(
@@ -1255,6 +1340,31 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         );
     }
+    for (style, _) in &changes {
+        if style.as_str() == "docDefaults"
+            || style == default
+            || f.heading_styles.iter().any(|(_, h)| h == style)
+            || f.other_styles.iter().any(|o| o == style)
+        {
+            continue;
+        }
+        kv(
+            out,
+            &format!(
+                "  {}: {}",
+                scalar(style, false),
+                scalar(
+                    &format!(
+                        "{}{}",
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, style)
+                    ),
+                    false
+                )
+            ),
+            Some("tracked changes to it"),
+        );
+    }
     match f.table_styles.as_slice() {
         [] => {}
         [one] if !f.tables_differ => kv(
@@ -1271,21 +1381,44 @@ fn part_two(out: &mut String, f: &Facts) {
             None,
         ),
     }
-    if f.resolved.is_none()
-        && let Some(styles) = f.styles
-    {
-        let changes = style_changes(styles, f.handles);
-        if !changes.is_empty() {
-            let list: Vec<String> = changes
+    if !changes.is_empty() {
+        // Legend order: the default style first, then the styles the body
+        // uses, then the ones only a change names; `docDefaults` leads.
+        let order = |id: &str| {
+            if id == "docDefaults" {
+                return usize::MIN;
+            }
+            if id == default {
+                return 0;
+            }
+            f.heading_styles
                 .iter()
-                .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
-                .collect();
-            kv(
-                out,
-                &format!("style_changes: {{{}}}", list.join(", ")),
-                Some("tracked changes to the styles"),
-            );
-        }
+                .position(|(_, h)| h == id)
+                .map(|i| i + 1)
+                .or_else(|| {
+                    f.other_styles
+                        .iter()
+                        .position(|o| o == id)
+                        .map(|i| i + 1 + f.heading_styles.len())
+                })
+                .unwrap_or_else(|| {
+                    changes
+                        .iter()
+                        .position(|(holder, _)| holder == id)
+                        .map_or(usize::MAX, |i| i + usize::MAX / 2)
+                })
+        };
+        let mut ordered = changes.clone();
+        ordered.sort_by_key(|(holder, _)| order(holder));
+        let list: Vec<String> = ordered
+            .iter()
+            .map(|(style, tags)| format!("{}: {}", scalar(style, true), scalar(tags, true)))
+            .collect();
+        kv(
+            out,
+            &format!("style_changes: {{{}}}", list.join(", ")),
+            Some("tracked changes to the styles"),
+        );
     }
     let (rev, fmt) = &f.note_changes;
     let mut clauses: Vec<String> = [("rev", rev), ("fmt", fmt)]
@@ -1798,6 +1931,80 @@ mod tests {
     }
 
     #[test]
+    fn a_section_s_universal_measures_read_as_twips() {
+        // Strict packages write `595.3pt` where Transitional writes `11906`;
+        // none of these are the fallback defaults, so a lost decode says so.
+        let strict = parse_xml(
+            format!(
+                r#"<w:sectPr {W}><w:pgSz w:w="595.3pt" w:h="841.9pt"/><w:pgMar w:top="54pt" w:right="0.75in" w:bottom="54pt" w:left="0.75in" w:header="54pt" w:footer="54pt"/></w:sectPr>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let transitional = parse_xml(
+            format!(
+                r#"<w:sectPr {W}><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080" w:header="1080" w:footer="1080"/></w:sectPr>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            page_setup(&strict),
+            "A4 portrait, margins 0.75in, header/footer 0.75in"
+        );
+        assert_eq!(page_setup(&strict), page_setup(&transitional));
+    }
+
+    /// An mm-spelled page is the page its twips twin names: 210mm x 297mm
+    /// is A4 once rounded to the twips it is (11905.5 → 11906), not the
+    /// `8.268x11.693in` a truncating cast reads from any producer whose
+    /// spelling is not Word's own `595.3pt` (#531 review defect 6).
+    #[test]
+    fn an_mm_spelled_page_is_the_page_its_twips_twin_names() {
+        let mm = parse_xml(
+            format!(r#"<w:sectPr {W}><w:pgSz w:w="210mm" w:h="297mm"/></w:sectPr>"#).as_bytes(),
+        )
+        .unwrap();
+        let twin = parse_xml(
+            format!(r#"<w:sectPr {W}><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>"#).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(page_setup(&mm), "A4 portrait");
+        assert_eq!(page_setup(&mm), page_setup(&twin));
+    }
+
+    /// A strict table style names its side borders `start`/`end`: the
+    /// legend reads them as the `left`/`right` they name, and one side a
+    /// twip apart still varies.
+    #[test]
+    fn a_table_style_s_start_end_borders_read_as_left_right() {
+        let borders = |sides: &str| {
+            parse_xml(
+                format!(
+                    r#"<w:styles {W}><w:style w:type="table" w:styleId="T"><w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr></w:style></w:styles>"#
+                )
+                .as_bytes(),
+            )
+            .unwrap()
+        };
+        let strict = borders(
+            r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
+        );
+        let transitional = borders(
+            r#"<w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
+        );
+        assert_eq!(table_style_line(Some(&strict), "T"), "T, all borders 0.5pt");
+        assert_eq!(
+            table_style_line(Some(&transitional), "T"),
+            table_style_line(Some(&strict), "T")
+        );
+        let varied = borders(
+            r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
+        );
+        assert_eq!(table_style_line(Some(&varied), "T"), "T, borders vary");
+    }
+
+    #[test]
     fn a_long_value_aligns_by_characters_not_bytes() {
         let mut ascii = String::new();
         // 32 characters (35 bytes): the padded branch.
@@ -2006,5 +2213,29 @@ mod tests {
             ..Resolved::default()
         };
         assert_eq!(describe(&flat, None), "Calibri 11pt, left");
+    }
+
+    /// A strict style carries its measures as universal measures (`11pt`,
+    /// `1in`) and its font size in half-points either way: the legend reads
+    /// the same as the transitional integers.
+    #[test]
+    fn a_style_s_universal_measures_read_as_their_integers() {
+        let legend = |rpr: &str, ppr: &str| {
+            let xml = format!(
+                r#"<w:styles {W}><w:style w:type="paragraph" w:styleId="S"><w:name w:val="S"/><w:pPr>{ppr}</w:pPr><w:rPr>{rpr}</w:rPr></w:style></w:styles>"#
+            );
+            let styles = parse_xml(xml.as_bytes()).unwrap();
+            describe(&resolve(Some(&styles), None, "S"), None)
+        };
+        assert_eq!(
+            legend(
+                r#"<w:rFonts w:ascii="Calibri"/><w:sz w:val="16pt"/>"#,
+                r#"<w:spacing w:before="10pt" w:after="5pt" w:line="12.95pt" w:lineRule="auto"/><w:ind w:start="0.25in"/>"#
+            ),
+            legend(
+                r#"<w:rFonts w:ascii="Calibri"/><w:sz w:val="32"/>"#,
+                r#"<w:spacing w:before="200" w:after="100" w:line="259" w:lineRule="auto"/><w:ind w:left="360"/>"#
+            )
+        );
     }
 }

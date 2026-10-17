@@ -7,7 +7,7 @@ authors:
   document_owner: Belen Civera     # dc:creator
   ATGH: Achensee Tourismus - Gunther Hochhold  # 1 revision, 2026-09-22T12:22:00Z
 body: p0-p172, 5 tables, 2 pages   # pages from Word's cached layout
-page: 8.264x11.6806in portrait, margins top 1.2035in, right 0.764in, bottom 0.616in, left 0.903in, header 0.193in, footer 0.5in
+page: 8.264x11.6806in portrait, margins top 1.2035in, right 0.764in, bottom 0.616in, left 0.903in, header 0.193in, footer 0.5in, starts continuous
 styles:
   Normal: Calibri 12pt, left       # default; unannotated paragraphs use it
   "##": Heading2, Arial 9pt, indent 0.37in
@@ -20,7 +20,7 @@ headers:
 
 <!-- p0 empty -->
 
-<!-- p1 center, left 2.076in, right 1.981in -->
+<!-- p1 outline 1, center, left 2.076in, right 1.981in -->
 # ANEXO V
 
 <!-- p2 center, left 2.077in, right 1.981in -->
@@ -28,7 +28,7 @@ headers:
 
 <!-- p3-p5 empty -->
 
-<!-- p6 left 0.37in -->
+<!-- p6 outline 2, left 0.37in -->
 ## 1.- Datos de identificación:
 
 <!-- p7 empty -->
@@ -125,7 +125,7 @@ Fdo.
 <!-- p109 BodyText center, first-line 0.34in, left 1.3785in, right 1.281in -->
 **CURSO 2019/ 2020**
 
-<!-- p110 empty -->
+<!-- p110 BodyText empty, center, first-line 0.34in, left 0.027in, right 1.281in -->
 
 <!-- p111 BodyText justify -->
 D./Dª. ……………………………………………………………………………………………
@@ -133,12 +133,12 @@ D./Dª. ………………………………………………………………
 <!-- p112 BodyText justify -->
 Director/a del …….……………………………………………………………………………….
 
-<!-- p113 empty -->
+<!-- p113 BodyText empty, justify, right 0.925in -->
 
 <!-- p114 BodyText justify, right 0.297in -->
 **COMUNICA** que el profesorado que a continuación se relaciona ha participado activamente durante el curso 2019/2020 en el desarrollo del _Proyecto de Desarrollo de Capacidades:_
 
-<!-- p115 empty -->
+<!-- p115 BodyText empty, justify, right 0.925in -->
 
 <!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText -->
 |NOMBRE|APELLIDOS|NIF|COORDINADOR/ PARTICIPANTE|
@@ -149,22 +149,28 @@ Director/a del …….…………………………………………………�
 |||||
 |||||
 
-<!-- p140-p141 empty -->
+<!-- p140 BodyText empty, justify -->
+
+<!-- p141 BodyText empty, justify -->
 
 <!-- p142 BodyText justify, right 0.297in -->
 **SOLICITA** su reconocimiento de acuerdo con la ORDEN ECD/1400/2018, 28 de agosto, por la que se autoriza la continuación del Programa de “Desarrollo de Capacidades” y se convoca a los centros docentes no universitarios sostenidos con fondos públicos de la Comunidad de Aragón para participar en dicho programa durante el curso 2018/2019 y la Resolución de la Directora General de Planificación y Equidad de 6 de septiembre de 2019 sobre la prórroga de estos centros educativos en dicho programa.
 
-<!-- p143-p144 empty -->
+<!-- p143 BodyText empty, justify -->
+
+<!-- p144 BodyText empty, justify -->
 
 <!-- p145 BodyText left 2.419in -->
 Sello del centro ………a …de ………….de 2020
 
-<!-- p146 empty -->
+<!-- p146 BodyText empty -->
 
 <!-- p147 BodyText first-line 0.3535in, left 0.138in -->
 El coordinador/a  del proyecto
 
-<!-- p148-p149 empty -->
+<!-- p148 BodyText empty, left 0.138in -->
+
+<!-- p149 BodyText empty, first-line 0.3535in, left 2.5965in -->
 
 <!-- p150 BodyText first-line 0.3535in, left 2.5965in -->
 V.ºB.º
@@ -175,7 +181,19 @@ Director/a del centro
 <!-- p152 BodyText first-line 0.37in -->
 &#32;&#32;&#32;&#32;Fdo.: 						Fdo.:
 
-<!-- p153-p171 empty -->
+<!-- p153 Heading2 empty -->
+
+<!-- p154 Heading2 empty -->
+
+<!-- p155 Heading2 empty -->
+
+<!-- p156 Heading2 empty -->
+
+<!-- p157 Heading2 empty -->
+
+<!-- p158 Heading2 empty -->
+
+<!-- p159-p171 empty -->
 
 <!-- p172 fmt r2 @ATGH -->
 ## DIRECCIÓN GENERAL DE PLANIFICACIÓN Y EQUIDAD
