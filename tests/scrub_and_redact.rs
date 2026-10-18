@@ -542,3 +542,216 @@ fn leaks_finds_escaped_text_split_across_runs() {
     assert_eq!(leaks(&split, "Acme & Sons"), ["word/document.xml"]);
     assert!(leaks(&split, "Sons & Acme").is_empty());
 }
+
+// Integration probes cover the in-memory report and every CLI delivery of it.
+// All files and documents are synthetic; the engine needs no external service.
+fn redaction_report_probe(
+    body: &str,
+    operation: serde_json::Value,
+    secrets: &[&str],
+    code: Option<&str>,
+) {
+    use jubarte::edit::preview_plan;
+    use std::process::Command;
+
+    let source = docx(body);
+    let json = serde_json::json!({
+        "schema_version": 1, "author": "Alice", "date": "2026-01-01T00:00:00Z",
+        "source_sha256": jubarte::inspect::source_sha256(&source),
+        "existing_revisions": "keep",
+        "operations": [operation],
+    });
+    let plan = EditPlan::from_json(&json.to_string()).unwrap();
+    let mut channels = Vec::new();
+    match apply_plan(&source, &plan) {
+        Ok(result) => {
+            assert!(code.is_none(), "expected refusal: {code:?}");
+            for doc in [&result.clean, &result.redline] {
+                let text = jubarte::inspect::paragraphs(doc).unwrap()[0].text.clone();
+                assert!(text.contains('█'), "redaction must still write blocks");
+            }
+            channels.push((
+                "outcome Debug".to_string(),
+                format!("{:?}", result.report.operations),
+            ));
+            channels.push(("to_jsonl".to_string(), result.report.to_jsonl()));
+        }
+        Err(error) => {
+            assert_eq!(Some(error.code.as_str()), code, "{error}");
+            if secrets.contains(&"Account  12345") {
+                assert!(
+                    error.message.contains("differs") || error.near.is_some(),
+                    "whitespace help must survive"
+                );
+            }
+            channels.push(("outcome Debug".to_string(), format!("{:?}", error.outcomes)));
+            channels.push(("EditError Display".to_string(), error.to_string()));
+            channels.push(("EditError Debug".to_string(), format!("{error:?}")));
+            // Refusals expose outcomes, rather than an EditReport. Exercise the
+            // same JSONL serializer on those outcomes as well as CLI refusal JSONL.
+            let empty = EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-01-01T00:00:00Z","existing_revisions":"keep","operations":[]}"#).unwrap();
+            let mut report = preview_plan(&source, &empty).unwrap();
+            report.ok = false;
+            report.operations = error.outcomes;
+            channels.push(("to_jsonl".to_string(), report.to_jsonl()));
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), source).unwrap();
+    std::fs::write(dir.path().join("plan.json"), json.to_string()).unwrap();
+    for typed in [false, true] {
+        for dry in [true, false] {
+            let mut args = vec!["edit"];
+            if typed {
+                args.push("apply");
+            }
+            args.extend(["input.docx", "--plan", "plan.json"]);
+            if typed {
+                args.push("--json");
+            }
+            let bundle = if typed { "typed-bundle" } else { "bundle" };
+            if dry {
+                args.push("--dry-run");
+            } else {
+                args.extend(["--out-dir", bundle]);
+            }
+            let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+                .current_dir(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            let label = format!("CLI typed={typed} dry={dry}");
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert_eq!(
+                output.status.success(),
+                code.is_none(),
+                "{label}: {stdout}\n{stderr}"
+            );
+            if typed {
+                let envelope: jubarte::result::Envelope = serde_json::from_str(&stdout).unwrap();
+                channels.push((format!("{label} envelope Debug"), format!("{envelope:?}")));
+            }
+            channels.push((format!("{label} stdout"), stdout));
+            channels.push((format!("{label} stderr"), stderr));
+            if !dry {
+                let report = dir.path().join(bundle).join(if typed {
+                    "report.json"
+                } else {
+                    "report.jsonl"
+                });
+                if code.is_none() {
+                    channels.push((
+                        format!("{label} report.jsonl"),
+                        std::fs::read_to_string(report).unwrap(),
+                    ));
+                } else {
+                    assert!(!report.exists(), "refusal must not publish a bundle");
+                }
+            }
+        }
+    }
+    let mut leaks = Vec::new();
+    for (channel, output) in channels {
+        for secret in secrets {
+            // These probes use ASCII and curly apostrophes: shown() spells the
+            // latter as a Unicode escape, whereas Rust Debug leaves it literal.
+            let shown = format!("\"{}\"", secret.replace('’', "\\u{2019}"));
+            for form in [secret.to_string(), shown, format!("{secret:?}")] {
+                for encoded in [
+                    form.clone(),
+                    serde_json::to_string(&form)
+                        .unwrap()
+                        .trim_matches('"')
+                        .to_string(),
+                    format!("{form:?}"),
+                ] {
+                    if output.contains(&encoded) {
+                        leaks.push(format!("{channel} leaks {encoded:?}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(leaks.is_empty(), "{}", leaks.join("\n"));
+}
+
+#[test]
+fn redact_whitespace_miss_keeps_only_text_free_help() {
+    redaction_report_probe(
+        &para("Account 12345"),
+        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Account  12345"}),
+        &["Account  12345", "Account 12345"],
+        Some("ANCHOR_NOT_FOUND"),
+    );
+}
+
+#[test]
+fn redact_read_as_success_never_reports_either_spelling() {
+    redaction_report_probe(
+        &para("Carol’s key 9876"),
+        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
+        &["Carol's key 9876", "Carol’s key 9876"],
+        None,
+    );
+}
+
+#[test]
+fn redact_curly_quote_refusal_never_reports_shown_text() {
+    redaction_report_probe(
+        &para("Carol’s key 9876; Carol’s key 9876"),
+        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol’s key 9876"}),
+        &["Carol’s key 9876"],
+        Some("AMBIGUOUS_ANCHOR"),
+    );
+}
+
+#[test]
+fn redact_plain_success_never_reports_marked_anchor() {
+    redaction_report_probe(
+        &para("Account 12345"),
+        serde_json::json!({"kind":"redact","paragraph":"p0","find":"**Account 12345**"}),
+        &["**Account 12345**", "Account 12345"],
+        None,
+    );
+}
+
+#[test]
+fn redact_context_never_copies_a_neighbouring_secret() {
+    redaction_report_probe(
+        &para("Account 12345 Account 12345"),
+        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Account 12345","occurrence":1}),
+        &["Account 12345"],
+        Some("REDACTION_LEAK"),
+    );
+}
+
+#[test]
+fn redact_selector_refusal_never_reports_the_selector_text() {
+    redaction_report_probe(
+        &para("Public text"),
+        serde_json::json!({"kind":"redact","paragraph":{"contains":"Account 12345"},"find":"Account 12345"}),
+        &["Account 12345"],
+        Some("ANCHOR_NOT_FOUND"),
+    );
+}
+
+#[test]
+fn redact_structure_refusal_never_reports_control_alias() {
+    redaction_report_probe(
+        r#"<w:p><w:sdt><w:sdtPr><w:alias w:val="Carol’s key 9876"/></w:sdtPr><w:sdtContent><w:r><w:t>Carol’s key 9876</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
+        &["Carol's key 9876", "Carol’s key 9876"],
+        Some("UNSUPPORTED_STRUCTURE"),
+    );
+}
+
+#[test]
+fn redact_revision_refusal_never_reports_the_document_copy() {
+    redaction_report_probe(
+        r#"<w:p><w:sdt><w:sdtContent><w:ins w:id="7" w:author="Carol’s key 9876" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Carol’s key 9876</w:t></w:r></w:ins></w:sdtContent></w:sdt></w:p>"#,
+        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
+        &["Carol's key 9876", "Carol’s key 9876"],
+        Some("UNSUPPORTED_STRUCTURE"),
+    );
+}
