@@ -267,14 +267,19 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
         })?;
         (source.to_vec(), source.to_vec(), identity)
     };
-    preserve_history(
+    preserve_direct_history(
         &working,
         &clean,
         &edited_insertions,
         &plan.author,
         &BTreeMap::new(),
     )?;
-    preserve_history(
+    let guard = if plan.policy.track == Track::On {
+        preserve_history
+    } else {
+        preserve_direct_history
+    };
+    guard(
         &working,
         &redline,
         &edited_insertions,
@@ -2304,15 +2309,38 @@ fn edited_insertions(tx: &Transaction<'_>) -> BTreeSet<String> {
     ids
 }
 
-/// Unedited history keeps its content, attribution and dependency in order.
-/// Editing insertion content may shorten its first piece or correct one's
-/// own insertion, but never changes the source revision's attribution.
+/// Tracked edits retain another author's words, in order, either alive
+/// or in the editor's nested deletions. Split pieces retain the source stamp.
 fn preserve_history(
     working: &[u8],
     candidate: &[u8],
     edited: &BTreeSet<String>,
     author: &str,
     insertion_origins: &BTreeMap<String, String>,
+) -> Result<(), EditError> {
+    compare_history(working, candidate, edited, author, insertion_origins, true)
+}
+
+/// The direct artifact intentionally applies new text without revision marks.
+/// Its resolved text is checked by check_dom_realized; this guard also keeps
+/// unedited history and every retained source stamp/dependency intact.
+fn preserve_direct_history(
+    working: &[u8],
+    candidate: &[u8],
+    edited: &BTreeSet<String>,
+    author: &str,
+    insertion_origins: &BTreeMap<String, String>,
+) -> Result<(), EditError> {
+    compare_history(working, candidate, edited, author, insertion_origins, false)
+}
+
+fn compare_history(
+    working: &[u8],
+    candidate: &[u8],
+    edited: &BTreeSet<String>,
+    author: &str,
+    insertion_origins: &BTreeMap<String, String>,
+    tracked: bool,
 ) -> Result<(), EditError> {
     let failure = || {
         err(
@@ -2325,6 +2353,7 @@ fn preserve_history(
     let ids: BTreeSet<_> = before.iter().map(|c| c.id.clone()).collect();
     let mut after = Vec::new();
     let mut seen_insertions = BTreeSet::new();
+    let mut insertion_text = BTreeMap::<String, String>::new();
     for mut change in changes(candidate)? {
         if let Some(origin) = change
             .inside
@@ -2333,9 +2362,21 @@ fn preserve_history(
         {
             change.inside = Some(origin.clone());
         }
+        // Old nested revisions keep their own attribution. A new deletion
+        // inside a retained insertion must belong to this editor.
+        if tracked
+            && !ids.contains(&change.id)
+            && change.kind == ChangeKind::Deletion
+            && change.inside.as_ref().is_some_and(|id| edited.contains(id))
+            && change.author.as_deref() != Some(author)
+        {
+            return Err(failure());
+        }
         if change.kind == ChangeKind::Insertion
             && change.target == "text"
-            && let Some(origin) = insertion_origins.get(&change.id)
+            && let Some(origin) = insertion_origins
+                .get(&change.id)
+                .or_else(|| ids.get(&change.id))
         {
             let original = before
                 .iter()
@@ -2354,12 +2395,30 @@ fn preserve_history(
             if metadata != *original {
                 return Err(failure());
             }
+            // Change::text includes surviving text and nested delText in
+            // document order, including pre-existing nested deletions.
+            insertion_text
+                .entry(origin.clone())
+                .or_default()
+                .push_str(&change.text);
             if !seen_insertions.insert(origin.clone()) {
                 continue;
             }
         }
         if ids.contains(&change.id) {
             after.push(change);
+        }
+    }
+    if tracked {
+        for original in &before {
+            if original.kind == ChangeKind::Insertion
+                && original.target == "text"
+                && edited.contains(&original.id)
+                && original.author.as_deref() != Some(author)
+                && insertion_text.get(&original.id) != Some(&original.text)
+            {
+                return Err(failure());
+            }
         }
     }
     before.retain_mut(|c| {
@@ -2387,6 +2446,126 @@ mod tests {
     use super::*;
     use crate::edit::deeper_boundary_fixture::{docx, para};
     use crate::edit::for_edit::{ForEditRequest, ForEditRow, for_edit};
+
+    #[test]
+    fn history_guard_rejects_words_dropped_without_a_nested_deletion() {
+        let package = |text: &str| {
+            docx(&format!(
+                r#"<w:p><w:ins w:id="6" w:author="Alice"><w:r><w:t>{text}</w:t></w:r></w:ins></w:p>"#
+            ))
+        };
+        let result = preserve_history(
+            &package("old"),
+            &package("new"),
+            &BTreeSet::from(["r6".into()]),
+            "Carol Diaz",
+            &BTreeMap::from([("r6".into(), "r6".into())]),
+        );
+        assert_eq!(
+            result.err().map(|error| error.code),
+            Some("REVISION_PRESERVATION_FAILED".into()),
+            "another author's words must survive inside an editor deletion"
+        );
+    }
+
+    #[test]
+    fn history_guard_checks_all_fragments_and_the_nested_deletion_author() {
+        let insertion = |id: u32, content: &str| {
+            format!(r#"<w:ins w:id="{id}" w:author="Alice">{content}</w:ins>"#)
+        };
+        let run = |text: &str| format!("<w:r><w:t>{text}</w:t></w:r>");
+        let deletion = |author: &str, text: &str| {
+            format!(
+                r#"<w:del w:id="7" w:author="{author}"><w:r><w:delText>{text}</w:delText></w:r></w:del>"#
+            )
+        };
+        let source = docx(&format!(
+            "<w:p>{}</w:p>",
+            insertion(6, &run("alpha beta gamma"))
+        ));
+        let head = format!("{}{}", run("alpha "), deletion("Carol Diaz", "beta"));
+        let editor = r#"<w:ins w:id="8" w:author="Carol Diaz"><w:r><w:t>new</w:t></w:r></w:ins>"#;
+        let origins = BTreeMap::from([("r6".into(), "r6".into()), ("r9".into(), "r6".into())]);
+        for (content, valid) in [
+            (
+                format!(
+                    "{}{editor}{}",
+                    insertion(6, &head),
+                    insertion(9, &run(" gamma"))
+                ),
+                true,
+            ),
+            (format!("{}{editor}", insertion(6, &head)), false),
+            (
+                format!("{}{}", insertion(9, &run(" gamma")), insertion(6, &head)),
+                false,
+            ),
+            (
+                insertion(
+                    6,
+                    &format!(
+                        "{}{}{}",
+                        run("changed "),
+                        deletion("Carol Diaz", "beta"),
+                        run(" gamma")
+                    ),
+                ),
+                false,
+            ),
+            (
+                insertion(
+                    6,
+                    &format!(
+                        "{}{}{}",
+                        run("alpha "),
+                        deletion("Bob", "beta"),
+                        run(" gamma")
+                    ),
+                ),
+                false,
+            ),
+            (
+                format!(
+                    "{}{}",
+                    insertion(6, &format!("{}{}", run("alpha "), run(" gamma"))),
+                    deletion("Carol Diaz", "beta")
+                ),
+                false,
+            ),
+        ] {
+            let result = preserve_history(
+                &source,
+                &docx(&format!("<w:p>{content}</w:p>")),
+                &BTreeSet::from(["r6".into()]),
+                "Carol Diaz",
+                &origins,
+            );
+            assert_eq!(result.is_ok(), valid, "{content}: {result:?}");
+            if let Err(error) = result {
+                assert_eq!(error.code, "REVISION_PRESERVATION_FAILED");
+            }
+        }
+        // The guard also protects an insertion that was not split.
+        let nested = insertion(
+            6,
+            &format!(
+                "{}{}{}",
+                run("alpha "),
+                deletion("Carol Diaz", "beta"),
+                run(" gamma")
+            ),
+        );
+        assert!(
+            preserve_history(
+                &source,
+                &docx(&format!("<w:p>{nested}</w:p>")),
+                &BTreeSet::from(["r6".into()]),
+                "Carol Diaz",
+                &BTreeMap::new()
+            )
+            .is_ok()
+        );
+    }
 
     #[test]
     fn history_guard_keeps_unedited_content_and_all_source_attribution() {
@@ -2419,7 +2598,7 @@ mod tests {
                 &source,
                 &package("new", "unrelated", "Alice"),
                 &edited,
-                "Carol Diaz",
+                "Alice",
                 &BTreeMap::from([("r6".into(), "r6".into())])
             )
             .is_ok()
