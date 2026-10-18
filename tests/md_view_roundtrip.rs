@@ -55,7 +55,7 @@ fn changes(docx: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// A revision's note (`{>>r1+2 @AC<<}`) names its author through the
+/// A revision's note (`{r1+2 @AC}`) names its author through the
 /// header's `authors:` table, and its date: it never becomes a comment.
 #[test]
 fn revision_notes_keep_their_author_and_date() {

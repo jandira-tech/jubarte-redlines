@@ -135,7 +135,7 @@ Unchanged paragraph.
 
 {--8.4 Non-Solicitation. Seller shall not solicit.--}{>>Arthur Rodrigues (2026-09-30T14:05:00Z): Seller refused.<<}
 
-9.2 Confidentiality. {~~Each party~>Each Party~~}{>>Maria Santos (2026-09-29T18:22:00Z)<<} shall keep {==all information==}{>>Arthur Rodrigues (2026-09-30T14:05:00Z): Check scope.<<} confidential. A {++new++} word.{>>Unsigned note.<<}
+9.2 Confidentiality. {~~Each party~>Each Party~~}{noid Maria Santos (2026-09-29T18:22:00Z)} shall keep {==all information==}{>>Arthur Rodrigues (2026-09-30T14:05:00Z): Check scope.<<} confidential. A {++new++} word.{>>Unsigned note.<<}
 ";
 
 #[test]
@@ -181,7 +181,7 @@ fn comments_carry_author_and_date_and_other_authors_are_named() {
 #[test]
 fn a_change_by_the_owner_at_another_time_is_attributed() {
     let patch = patch_critic(
-        "Due in {~~30~>45~~}{>>Arthur Rodrigues (2026-09-01T09:00:00Z)<<} days.\n",
+        "Due in {~~30~>45~~}{noid Arthur Rodrigues (2026-09-01T09:00:00Z)} days.\n",
         &options("a.md", "a.md"),
     );
     assert!(
@@ -399,7 +399,7 @@ fn a_comment_that_ends_inside_a_change_follows_it() {
 #[test]
 fn a_changes_author_after_a_comment_moved_out_of_it_still_names_it() {
     let patch = patch_critic(
-        "A {++b{>>Ana Lima (2026-09-01T00:35:00Z): Why?<<}c++}{>>Bo Chen (2026-09-02T00:00:00Z)<<} d.\n",
+        "A {++b{>>Ana Lima (2026-09-01T00:35:00Z): Why?<<}c++}{noid Bo Chen (2026-09-02T00:00:00Z)} d.\n",
         &options("a.md", "a.md"),
     );
     assert!(
@@ -412,7 +412,7 @@ fn a_changes_author_after_a_comment_moved_out_of_it_still_names_it() {
     // The owner's own change carries no name.
     let patch = patch_critic(
         "A {++b{>>Ana Lima (2026-09-01T00:35:00Z): Why?<<}c++}\
-         {>>Arthur Rodrigues (2026-09-30T14:05:00Z)<<} d.\n",
+         {noid Arthur Rodrigues (2026-09-30T14:05:00Z)} d.\n",
         &options("a.md", "a.md"),
     );
     assert!(
@@ -430,8 +430,8 @@ fn a_substitution_by_two_authors_names_each_side() {
     // never a comment, and each side is a change of its own.
     for (ana, bo) in [
         (
-            "Ana Lima (2026-09-01T00:35:00Z)",
-            "Bo Chen (2026-09-02T00:00:00Z)",
+            "noid Ana Lima (2026-09-01T00:35:00Z)",
+            "noid Bo Chen (2026-09-02T00:00:00Z)",
         ),
         (
             "r1 Ana Lima (2026-09-01T00:35:00Z)",
@@ -439,7 +439,7 @@ fn a_substitution_by_two_authors_names_each_side() {
         ),
     ] {
         let patch = patch_critic(
-            &format!("A {{~~old~>new~~}}{{>>{ana}<<}}{{>>{bo}<<}} d.\n"),
+            &format!("A {{~~old~>new~~}}{{{ana}}}{{{bo}}} d.\n"),
             &options("a.md", "a.md"),
         );
         assert!(
@@ -460,7 +460,7 @@ fn a_substitution_by_two_authors_names_each_side() {
     }
     // One note still names the whole substitution.
     let patch = patch_critic(
-        "A {~~old~>new~~}{>>Bo Chen (2026-09-02T00:00:00Z)<<} d.\n",
+        "A {~~old~>new~~}{noid Bo Chen (2026-09-02T00:00:00Z)} d.\n",
         &options("a.md", "a.md"),
     );
     assert!(

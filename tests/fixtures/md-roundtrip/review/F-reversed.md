@@ -11,4 +11,4 @@ page: Letter portrait, margins 1in
 ---
 
 <!-- p0 -->
-{++added++}{>>r1 @AL<<} kept
+{++added++}{r1 @AL} kept
