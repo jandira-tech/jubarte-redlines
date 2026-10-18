@@ -2199,7 +2199,27 @@ impl<'p> Transaction<'p> {
     /// the clean copy, which the emitted redline would then not accept to:
     /// refused beside such an edit, as under keep.
     fn emits_directly(&self) -> Result<bool, EditError> {
-        let emit = self.edits_a_comment_range() && tracked::emits_all(self);
+        // The comparer resolves compatibility branches before comparing.
+        // Emit edits beside raw AC tables directly so an untouched Fallback
+        // survives, as it does under keep.
+        let has_alternate_table = self
+            .opened
+            .dom
+            .descendants(self.opened.body, Some(&W::tbl()))
+            .into_iter()
+            .any(|table| {
+                !crate::inspect::in_text_box(&self.opened.dom, table)
+                    && !self
+                        .opened
+                        .dom
+                        .ancestors(
+                            table,
+                            Some(&crate::namespaces::MC::name("AlternateContent")),
+                        )
+                        .is_empty()
+            });
+        let emit =
+            (self.edits_a_comment_range() || has_alternate_table) && tracked::emits_all(self);
         if emit && self.plan.update_fields {
             return Err(err(
                 "INVALID_PLAN",

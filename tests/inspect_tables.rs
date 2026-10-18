@@ -642,3 +642,183 @@ fn a_text_box_table_takes_no_inventory_index() {
     assert!(!grid.contains("In text box"), "{selected}");
     assert!(rest.contains("|Body table|"), "{selected}");
 }
+
+/// Raw tables in AlternateContent are opaque to tN addressing, even
+/// without a text box. Paragraph numbering still includes both branches.
+fn alternate_tables(body_table: bool) -> Vec<u8> {
+    let choice = table(false, &[cell(&["Alice"])]);
+    let fallback = table(false, &[cell(&["Bob"])]);
+    let body = if body_table {
+        table(false, &[cell(&["Carol Diaz"])])
+    } else {
+        String::new()
+    };
+    docx(&format!(
+        r#"{}<mc:AlternateContent xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><mc:Choice Requires="wps">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>{body}"#,
+        para("Intro.")
+    ))
+}
+
+#[test]
+fn alternate_content_tables_take_no_inventory_or_snapshot_index() {
+    let source = alternate_tables(true);
+    let found = tables(&source).unwrap();
+    assert_eq!(found.len(), 1, "only the body table takes a tN");
+    assert_eq!(found[0].index, 0);
+    assert_eq!(found[0].rows[0][0].text, "Carol Diaz");
+    assert_eq!(summary(&source).unwrap().tables, 1);
+    let out = read_table_fixture(&source, false, &["--tables"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), tables_text(&found));
+    for task in ["read", "inspect"] {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("alternate.docx");
+        std::fs::write(&file, &source).unwrap();
+        let out = Command::new(BIN)
+            .arg(task)
+            .arg(&file)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let snapshot: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(snapshot["summary"]["tables"], 1, "{task}");
+        assert_eq!(snapshot["tables"].as_array().unwrap().len(), 1);
+        assert_eq!(snapshot["tables"][0]["index"], 0);
+        assert_eq!(snapshot["tables"][0]["rows"][0][0]["text"], "Carol Diaz");
+    }
+}
+
+#[test]
+fn alternate_content_tables_take_no_view_or_picker_index() {
+    let source = alternate_tables(true);
+    let out = read_table_fixture(&source, false, &[]);
+    assert!(out.status.success(), "{out:?}");
+    let view = String::from_utf8_lossy(&out.stdout);
+    assert!(view.contains("<!-- t0 "), "{view}");
+    assert!(
+        !view.contains("<!-- t1 ") && !view.contains("<!-- t2 "),
+        "{view}"
+    );
+    assert!(
+        !view.contains("Alice") && !view.contains("Bob"),
+        "AC text is omitted: {view}"
+    );
+    let out = read_table_fixture(&source, false, &["-p", "t0"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Carol Diaz"),
+        "{out:?}"
+    );
+    let out = read_table_fixture(&source, false, &["--tables", "-p", "t0"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("p3=Carol Diaz"),
+        "{out:?}"
+    );
+}
+
+fn alternate_edit_plan() -> EditPlan {
+    EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T00:00:00Z","operations":[{"kind":"rewrite","paragraph":"t0.row0.cell0","text":"Updated"}]}"#).unwrap()
+}
+
+#[test]
+fn alternate_content_tables_take_no_origin_edit_index_and_keep_fallback() {
+    let out = apply_plan(&alternate_tables(true), &alternate_edit_plan()).unwrap();
+    assert_eq!(out.report.operations[0].paragraph.as_deref(), Some("p3"));
+    for bytes in [&out.clean, &out.redline] {
+        let xml = common::docx::part_string(bytes, "word/document.xml").unwrap();
+        assert!(
+            xml.contains("mc:Fallback") && xml.contains("Bob") && xml.contains("Alice"),
+            "{xml}"
+        );
+    }
+    assert_eq!(tables(&out.clean).unwrap()[0].rows[0][0].text, "Updated");
+}
+
+#[test]
+fn alternate_content_only_cell_paths_are_refused() {
+    let result = apply_plan(&alternate_tables(false), &alternate_edit_plan());
+    assert!(result.is_err(), "an AC table must not be edited through t0");
+    let error = result.unwrap_err();
+    assert_eq!(error.code, "ANCHOR_NOT_FOUND");
+    assert!(
+        error
+            .to_string()
+            .contains("t0 is not a table of this document (0 tables)"),
+        "{error}"
+    );
+}
+
+#[test]
+fn alternate_content_tables_take_no_cli_edit_index_and_keep_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("alternate.docx");
+    std::fs::write(&file, alternate_tables(true)).unwrap();
+    let out = Command::new(BIN)
+        .current_dir(dir.path())
+        .args([
+            "edit",
+            "alternate.docx",
+            "-p",
+            "t0.row0.cell0",
+            "--content",
+            "Updated",
+            "--author",
+            "Alice",
+            "--datetime",
+            "2026-10-18T00:00:00Z",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let bytes = std::fs::read(dir.path().join("alternate_modified.docx")).unwrap();
+    let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap();
+    assert!(
+        xml.contains("mc:Fallback") && xml.contains("Bob") && xml.contains("Alice"),
+        "{xml}"
+    );
+    assert_eq!(tables(&bytes).unwrap()[0].rows[0][0].text, "Updated");
+    std::fs::write(&file, alternate_tables(false)).unwrap();
+    std::fs::remove_file(dir.path().join("alternate_modified.docx")).unwrap();
+    let out = Command::new(BIN)
+        .current_dir(dir.path())
+        .args([
+            "edit",
+            "alternate.docx",
+            "-p",
+            "t0.row0.cell0",
+            "--content",
+            "Updated",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "{out:?}");
+    assert!(!dir.path().join("alternate_modified.docx").exists());
+}
+
+#[test]
+fn alternate_content_tables_take_no_v2_container_index() {
+    use jubarte::edit::for_edit::{ForEditRequest, for_edit};
+    let source = alternate_tables(true);
+    for select in ["t0", "t0.row0", "t0.row0.cell0"] {
+        let result = for_edit(
+            &source,
+            &ForEditRequest {
+                select: Some(select.to_string()),
+                ..ForEditRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.paragraphs.len(), 1, "{select}");
+        assert_eq!(result.paragraphs[0].target.short_id, "p3", "{select}");
+    }
+    let result = for_edit(
+        &alternate_tables(false),
+        &ForEditRequest {
+            select: Some("t0.row0.cell0".to_string()),
+            ..ForEditRequest::default()
+        },
+    );
+    assert!(result.is_err(), "AC-only v2 cell scope must be refused");
+}

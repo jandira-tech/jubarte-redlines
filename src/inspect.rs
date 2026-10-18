@@ -24,6 +24,7 @@ use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
 mod tables;
+pub(crate) use tables::top_level_table_nodes;
 
 pub use tables::{NestedTable, Table, TableCell};
 

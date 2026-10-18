@@ -908,14 +908,7 @@ impl SourceModel {
                 if rest.is_empty()
                     || matches!(rest, [Step::Row(_)] | [Step::Row(_), Step::Cell(_)]) =>
             {
-                let tables = dom
-                    .descendants(root, Some(&W::tbl()))
-                    .into_iter()
-                    .filter(|&t| {
-                        dom.ancestors(t, Some(&W::tc())).is_empty()
-                            && !crate::inspect::in_text_box(dom, t)
-                    })
-                    .collect::<Vec<_>>();
+                let tables = crate::inspect::top_level_table_nodes(dom, root);
                 let mut node = *tables.get(*n)?;
                 for step in rest {
                     let (name, n) = match step {

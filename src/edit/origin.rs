@@ -106,11 +106,7 @@ impl Ids<'_> {
             dom.ancestors(node, Some(name)).first().copied()
         };
         let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
-        let tables: Vec<NodeId> = dom
-            .descendants(self.body, Some(&tbl))
-            .into_iter()
-            .filter(|&t| nearest(t, &tc).is_none() && !crate::inspect::in_text_box(dom, t))
-            .collect();
+        let tables = crate::inspect::top_level_table_nodes(dom, self.body);
         let Some(&table) = tables.get(n) else {
             return Err(format!(
                 "{head} is not a table of this document ({})",

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use super::{body_paragraph_nodes, project_paragraph};
-use crate::namespaces::W;
+use crate::namespaces::{MC, W};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 /// A top-level body table, numbered as the view's `tN`.
@@ -62,11 +62,16 @@ fn nearest(dom: &Dom, node: NodeId, name: &XName) -> Option<NodeId> {
     dom.ancestors(node, Some(name)).first().copied()
 }
 
-/// The tables numbered by the view: outside cells and text boxes.
-pub(super) fn top_level_table_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
+/// Whether a table is hidden from tN addressing by an opaque wrapper.
+pub(crate) fn opaque_table(dom: &Dom, table: NodeId) -> bool {
+    super::in_text_box(dom, table) || nearest(dom, table, &MC::name("AlternateContent")).is_some()
+}
+
+/// The tables numbered by the view: outside cells, text boxes and AC.
+pub(crate) fn top_level_table_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::tbl()))
         .into_iter()
-        .filter(|&table| nearest(dom, table, &W::tc()).is_none() && !super::in_text_box(dom, table))
+        .filter(|&table| nearest(dom, table, &W::tc()).is_none() && !opaque_table(dom, table))
         .collect()
 }
 
@@ -155,8 +160,7 @@ fn table_grid(
                         .descendants(cell, Some(&tbl))
                         .into_iter()
                         .filter(|&child| {
-                            nearest(dom, child, &tc) == Some(cell)
-                                && !super::in_text_box(dom, child)
+                            nearest(dom, child, &tc) == Some(cell) && !opaque_table(dom, child)
                         })
                         .enumerate()
                     {

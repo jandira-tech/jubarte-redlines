@@ -602,7 +602,9 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
         element.attrs.push((TABLE.to_string(), c.t.to_string()));
         c.t += 1;
     }
-    let in_cell = in_cell || element.is("tc");
+    // AC's raw tables are not rendered as blocks. Keep numbering their
+    // paragraphs, but do not consume a tN in either compatibility branch.
+    let in_cell = in_cell || element.is("tc") || element.is("AlternateContent");
     for child in element.children.iter_mut() {
         if let Node::Element(child) = child {
             if child.is("txbxContent") {
@@ -1486,7 +1488,10 @@ pub(crate) fn escape_line_starts(text: &str) -> String {
 /// The tables under `e` in document order, text boxes excluded.
 pub(crate) fn tables(e: &Element) -> Vec<&Element> {
     fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
-        for c in e.elements().filter(|c| !c.is("txbxContent")) {
+        for c in e
+            .elements()
+            .filter(|c| !c.is("txbxContent") && !c.is("AlternateContent"))
+        {
             if c.is("tbl") {
                 out.push(c);
             }
