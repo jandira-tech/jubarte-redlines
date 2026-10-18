@@ -306,6 +306,13 @@ impl Element {
         })
     }
 
+    /// A reporting-only stamp supplied by the linked comment family.
+    pub(crate) const COMMENT_DATE: &str = "\u{E000}jubarteCommentDate";
+
+    pub(crate) fn comment_date(&self) -> Option<&str> {
+        self.attr(Self::COMMENT_DATE).or_else(|| self.attr("date"))
+    }
+
     pub(crate) fn revision_date(&self) -> Option<String> {
         crate::changes::revision_date(|ns, local| {
             if ns == crate::namespaces::W::URI {

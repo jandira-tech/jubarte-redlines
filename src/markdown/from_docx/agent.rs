@@ -70,7 +70,7 @@ impl Handles {
             .then(|| {
                 dates
                     .iter()
-                    .max_by_key(|date| (crate::convert::timestamp_order_key(date), *date))
+                    .max_by_key(|date| crate::convert::timestamp_order_key(date))
                     .map(String::as_str)
             })
             .flatten()
@@ -726,7 +726,7 @@ pub(crate) fn handles(
             if !order.iter().any(|a| a == author) {
                 order.push(author.to_string());
             }
-            if let Some(date) = c.attr("date") {
+            if let Some(date) = c.comment_date() {
                 dates
                     .entry(author.to_string())
                     .or_default()

@@ -109,10 +109,28 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             .map(|r| r.target.clone())
             .unwrap_or_else(|| fallback.to_string())
     };
-    let comments_root = package
+    let mut comments_root = package
         .xml(&part("/comments", "word/comments.xml"))
         .ok()
         .flatten();
+    // Reuse the comment family's durable-id linkage. This private stamp is
+    // only for reporting; the source attributes and write paths stay separate.
+    if let Some(root) = &mut comments_root
+        && let Ok(pkg) = crate::opc::PartFs::open(bytes)
+        && let Ok(family) = crate::comments::CommentFamily::load(&pkg, &main)
+    {
+        for child in &mut root.children {
+            if let ooxml::Node::Element(comment) = child
+                && comment.is("comment")
+                && let Some(id) = comment.attr("id").and_then(|id| id.parse().ok())
+                && let Some(date) = family.reported_date(id)
+            {
+                comment
+                    .attrs
+                    .push((Element::COMMENT_DATE.to_string(), date));
+            }
+        }
+    }
     let extended = if options.ids {
         package
             .xml(&part("/commentsExtended", "word/commentsExtended.xml"))
@@ -3829,7 +3847,7 @@ impl Writer<'_> {
         self.open_comments = open_comments;
         let note = if self.agent {
             let date = (self.dates && self.handles.needs_date(comment.attr("author")))
-                .then(|| comment.attr("date"))
+                .then(|| comment.comment_date())
                 .flatten();
             let head = |text: String| {
                 let mut inner = agent::comment_head(
@@ -3848,8 +3866,8 @@ impl Writer<'_> {
             }
         } else {
             critic::Note {
-                prose: comment_note(comment.attr("author"), comment.attr("date"), &prose),
-                code: comment_note(comment.attr("author"), comment.attr("date"), &code),
+                prose: comment_note(comment.attr("author"), comment.comment_date(), &prose),
+                code: comment_note(comment.attr("author"), comment.comment_date(), &code),
             }
         };
         self.notes.insert(id.to_string(), note.clone());

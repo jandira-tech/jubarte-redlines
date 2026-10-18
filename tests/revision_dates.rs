@@ -360,3 +360,73 @@ fn shared_and_latest_dates_compare_instants_across_offsets() {
         assert!(md.contains(expected), "{md}");
     }
 }
+
+#[test]
+fn corpus_comment_and_revision_report_the_same_instant() {
+    let bytes = std::fs::read("tests/corpus/broken_ones_two/sources/file_170.docx").unwrap();
+    let comments = jubarte::comments::list_comments(&bytes).unwrap();
+    assert_eq!(
+        comments[0].date.as_deref(),
+        Some("2026-05-02T14:42:00-04:00")
+    );
+    let plain = view(&bytes, false, true);
+    assert!(
+        plain.matches("(2026-05-02T14:42:00-04:00)").count() >= 2,
+        "{plain}"
+    );
+    let agent = view(&bytes, true, true);
+    assert!(agent.contains("2026-05-02T14:42:00-04:00"), "{agent}");
+}
+
+#[test]
+fn comment_instant_wins_latest_over_earlier_revision() {
+    use common::docx::{Part, W_NS, docx_with};
+    let body = r#"<w:p><w:ins xmlns:utc="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w:id="1" w:author="Alice" w:date="2026-05-02T18:41:00Z" utc:dateUtc="2026-05-02T18:41:00Z"><w:r><w:t>text</w:t></w:r></w:ins><w:commentRangeStart w:id="0"/><w:r><w:t>anchor</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#;
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:comment w:id="0" w:author="Alice" w:date="2026-05-02T14:42:00Z"><w:p w14:paraId="00000001"><w:r><w:t>note</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let ids = r#"<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid"><w16cid:commentId w16cid:paraId="00000001" w16cid:durableId="00000002"/></w16cid:commentsIds>"#;
+    let ext = r#"<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex"><w16cex:commentExtensible w16cex:durableId="00000002" w16cex:dateUtc="2026-05-02T18:42:00Z"/></w16cex:commentsExtensible>"#;
+    let bytes = docx_with(
+        body,
+        &[
+            Part {
+                name: "word/comments.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                xml: &comments,
+            },
+            Part {
+                name: "word/commentsIds.xml",
+                content_type: "application/vnd.ms-word.commentsIds+xml",
+                rel_type: "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds",
+                xml: ids,
+            },
+            Part {
+                name: "word/commentsExtensible.xml",
+                content_type: "application/vnd.ms-word.commentsExtensible+xml",
+                rel_type: "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible",
+                xml: ext,
+            },
+        ],
+    );
+    let md = view(&bytes, true, true);
+    assert!(md.contains("latest 2026-05-02T14:42:00-04:00"), "{md}");
+    let plain = view(&bytes, false, true);
+    assert!(plain.contains("(2026-05-02T14:42:00-04:00)"), "{plain}");
+}
+
+#[test]
+fn latest_comment_selection_compares_offsets_as_instants() {
+    let bytes = std::fs::read("tests/corpus/broken_ones_two/sources/file_170.docx").unwrap();
+    let mut first = jubarte::comments::list_comments(&bytes).unwrap().remove(0);
+    first.id = 0;
+    first.parent = None;
+    first.date = Some("2026-05-02T18:41:00Z".into());
+    let mut later = first.clone();
+    later.id = 1;
+    later.parent = Some(0);
+    later.date = Some("2026-05-02T14:42:00-04:00".into());
+    let selected = jubarte::comments::select_comments(vec![first, later], None, true);
+    assert_eq!(selected[0].id, 1);
+}

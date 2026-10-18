@@ -212,7 +212,15 @@ pub fn select_comments(
         let root = root_of(record.id);
         match threads.iter_mut().find(|(r, _)| *r == root) {
             Some((_, best)) => {
-                if record.date >= best.date {
+                if record
+                    .date
+                    .as_deref()
+                    .and_then(crate::convert::timestamp_order_key)
+                    >= best
+                        .date
+                        .as_deref()
+                        .and_then(crate::convert::timestamp_order_key)
+                {
                     *best = record;
                 }
             }
@@ -605,7 +613,7 @@ impl CommentFamily {
             r#ref: format!("c{id}"),
             author: attr("author").unwrap_or_default(),
             initials: attr("initials"),
-            date: attr("date"),
+            date: self.reported_date(id),
             text: comment_text(&self.dom, meta.node),
             parent: meta.parent,
             done: meta.done,
@@ -615,6 +623,16 @@ impl CommentFamily {
             before: String::new(),
             after: String::new(),
         }
+    }
+
+    /// The comment instant, sharing the revision reader's offset and fallback rule.
+    pub(crate) fn reported_date(&self, id: u32) -> Option<String> {
+        let meta = self.meta.get(&id)?;
+        crate::changes::reported_date(
+            self.dom.attribute(meta.node, &W::date()),
+            meta.cex_row
+                .and_then(|row| self.dom.attribute(row, &XName::get("dateUtc", CEX))),
+        )
     }
 
     /// Add a comment; a reply goes right after the last comment of its
