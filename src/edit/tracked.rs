@@ -10,11 +10,11 @@
 //! as tracked changes by the plan's author and date, which is what Word does
 //! when you type on a received redline with Track Changes on: new `w:ins`
 //! and `w:del` runs, inserted and deleted paragraph marks, and `w:pPrChange`
-//! for paragraph formatting. The other party's markup is never touched.
-//! Resolution already refuses ranges inside a revision, so every range here
-//! holds only runs that are direct children of their paragraph.
+//! for paragraph formatting. An edit inside another author's insertion
+//! nests the deletion there and splits off the new words and remainder.
+//! The editor's own insertion is edited in place.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::structural;
 use super::{
@@ -29,11 +29,20 @@ use crate::inspect::{Opened, Piece, project_paragraph};
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XName};
 
+/// The original identity of a pending insertion, retained across every split.
+#[derive(Clone)]
+struct InsertionOrigin {
+    story: String,
+    id: String,
+    root: NodeId,
+}
+
 /// Revision attribution for the containers the emitter creates.
 struct Stamp<'a> {
     author: &'a str,
     date: &'a str,
     next_id: u64,
+    insertions: HashMap<NodeId, InsertionOrigin>,
 }
 
 impl Stamp<'_> {
@@ -44,6 +53,22 @@ impl Stamp<'_> {
         dom.set_attribute_value(node, &W::author(), Some(self.author));
         dom.set_attribute_value(node, &W::date(), Some(self.date));
         node
+    }
+
+    fn insertion_origins(&self, dom: &Dom) -> BTreeMap<String, String> {
+        self.insertions
+            .iter()
+            .filter_map(|(&node, origin)| {
+                if !dom.ancestors(node, None).contains(&origin.root) {
+                    return None;
+                }
+                let id = dom.attribute(node, &W::id())?;
+                Some((
+                    crate::ids::ChangeId::new(&origin.story, id).short(),
+                    origin.id.clone(),
+                ))
+            })
+            .collect()
     }
 }
 
@@ -189,6 +214,9 @@ pub(super) struct TrackedParagraphs {
     /// `apply_watermark`, which no v2 operation reaches; the regression
     /// net under `v2_apply`'s tests pins that equivalence.
     pub(super) output_states: Option<Vec<super::v2_apply::FinalView>>,
+    /// Every surviving source insertion piece's emitted id -> source id.
+    /// Split pieces share an origin even when a leading edit renumbers it.
+    pub(super) insertion_origins: BTreeMap<String, String>,
 }
 
 /// As [`result_v2`], also returning the tracked primary's paragraph walks
@@ -277,10 +305,26 @@ fn redline(
         .enumerate()
         .filter_map(|(op, outcome)| outcome.comment_id.map(|id| (op, id)))
         .collect();
+    let mut insertions = HashMap::new();
+    for story in &t.stories {
+        for node in t.opened.dom.descendants(story.root, Some(&W::ins())) {
+            if let Some(id) = t.opened.dom.attribute(node, &W::id()) {
+                insertions.insert(
+                    node,
+                    InsertionOrigin {
+                        story: story.id.clone(),
+                        id: crate::ids::ChangeId::new(&story.id, id).short(),
+                        root: story.root,
+                    },
+                );
+            }
+        }
+    }
     let mut stamp = Stamp {
         author: &tx.plan.author,
         date: &tx.date,
         next_id: first_free_id(&t.opened, &comments),
+        insertions,
     };
     let floor = stamp.next_id;
     let tables = emit(&mut t, &comment_ids, &mut stamp, array_order);
@@ -300,6 +344,7 @@ fn redline(
             .map(|&node| super::v2_apply::paragraph_final_state(&t.opened.dom, node))
             .collect()
     });
+    let insertion_origins = stamp.insertion_origins(&t.opened.dom);
     let (redline, _) = t.finish()?;
     Ok((
         redline,
@@ -308,6 +353,7 @@ fn redline(
             base,
             output,
             output_states,
+            insertion_origins,
         },
     ))
 }
@@ -445,7 +491,17 @@ fn emit(
                     edit.attach_before,
                 );
             } else {
-                emit_text(dom, node, edit, stamp);
+                let pieces = if matches!(
+                    t.plan.operations[edit.op].kind,
+                    OperationKind::Replace { whole: false, .. }
+                ) {
+                    insertion_replacement(dom, node, edit)
+                } else {
+                    vec![edit.clone()]
+                };
+                for piece in pieces.iter().rev() {
+                    emit_text(dom, node, piece, stamp);
+                }
             }
         }
         let mut pending: Vec<(usize, usize, usize)> = Vec::new();
@@ -836,11 +892,96 @@ fn thread_markers(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>) {
     }
 }
 
+/// Reuse the word diff for default replacements inside an insertion. For
+/// example, `month.` -> `month, in cash.` only inserts `, in cash` and
+/// preserves both the word and period. A `whole` replacement bypasses this.
+fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> Vec<ScheduledEdit> {
+    let projection = project_paragraph(dom, paragraph);
+    let touched: Vec<_> = projection
+        .segments
+        .iter()
+        .filter(|s| s.start < edit.end && edit.start < s.end)
+        .collect();
+    let ins = touched
+        .first()
+        .and_then(|s| super::editable_insertion(dom, &s.piece));
+    if ins.is_none()
+        || !touched
+            .iter()
+            .all(|s| super::editable_insertion(dom, &s.piece) == ins)
+    {
+        return vec![edit.clone()];
+    }
+    let old = &projection.text[edit.start..edit.end];
+    let ranges = super::rewrite::rewrite_ranges(old, &edit.replacement);
+    let mut rewritten = old.to_string();
+    for (start, end, replacement) in ranges.iter().rev() {
+        rewritten.replace_range(*start..*end, replacement);
+    }
+    // The rewrite diff normalizes whitespace. An exact replacement still
+    // has to write every requested byte, including whitespace-only edits.
+    if rewritten != edit.replacement {
+        return vec![edit.clone()];
+    }
+    ranges
+        .into_iter()
+        .map(|(start, end, replacement)| ScheduledEdit {
+            start: edit.start + start,
+            end: edit.start + end,
+            replacement,
+            ..edit.clone()
+        })
+        .collect()
+}
+
 /// Emit one text edit: the range's runs in `w:del`, then the replacement in
 /// a `w:ins` run formatted like the first deleted run, or like the run the
 /// insertion attaches to.
 fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut Stamp<'_>) {
+    let projection = project_paragraph(dom, paragraph);
+    let touched: Vec<_> = if edit.start == edit.end {
+        attach_segment(&projection, edit.start, edit.attach_before)
+            .into_iter()
+            .collect()
+    } else {
+        projection
+            .segments
+            .iter()
+            .filter(|s| s.start < edit.end && edit.start < s.end)
+            .collect()
+    };
+    // Word treats typing in one's own insertion as a correction to that
+    // insertion, preserving its original id and timestamp.
+    if let Some(ins) = touched
+        .first()
+        .and_then(|s| super::editable_insertion(dom, &s.piece))
+        && dom.attribute(ins, &W::author()) == Some(stamp.author)
+        && touched
+            .iter()
+            .all(|s| super::editable_insertion(dom, &s.piece) == Some(ins))
+    {
+        apply_text_edit(
+            dom,
+            &projection,
+            edit.start,
+            edit.end,
+            &edit.replacement,
+            edit.attach_before,
+        );
+        if let Some(format) = &edit.format {
+            super::format_range(
+                dom,
+                paragraph,
+                edit.start,
+                edit.start + edit.replacement.len(),
+                format,
+            );
+        }
+        remove_empty_insertion(dom, ins);
+        return;
+    }
     let (start, end) = (edit.start, edit.end);
+    let mut replacement = edit.replacement.as_str();
     // `None` places the insertion right after `anchor`, `Some(true)` before.
     let (template, anchor, before) = if start < end {
         let runs = isolate_range(dom, paragraph, start, end);
@@ -854,7 +995,35 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
             }
         }
         let mut last_del = None;
-        for group in groups {
+        for (index, group) in groups.into_iter().enumerate() {
+            if let Some(ins) = dom.parent(group[0]).filter(|&n| dom.name_is(n, &W::ins()))
+                && dom.attribute(ins, &W::author()) == Some(stamp.author)
+            {
+                let projection = project_paragraph(dom, paragraph);
+                let pieces: Vec<_> = projection
+                    .segments
+                    .iter()
+                    .filter(|s| group.contains(&super::run_of(&s.piece)))
+                    .collect();
+                if let (Some(first), Some(last)) = (pieces.first(), pieces.last()) {
+                    let text = if index == 0 { replacement } else { "" };
+                    apply_text_edit(dom, &projection, first.start, last.end, text, true);
+                    if index == 0 {
+                        if let Some(format) = &edit.format {
+                            super::format_range(
+                                dom,
+                                paragraph,
+                                first.start,
+                                first.start + text.len(),
+                                format,
+                            );
+                        }
+                        replacement = "";
+                    }
+                }
+                remove_empty_insertion(dom, ins);
+                continue;
+            }
             let del = stamp.container(dom, W::del());
             dom.add_before_self(group[0], del);
             for run in group {
@@ -872,9 +1041,14 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
         };
         split_run_at(dom, &seg, start);
         let projection = project_paragraph(dom, paragraph);
-        let text_piece = |s: &crate::inspect::Segment| match s.piece {
-            Piece::Text { t, run } if s.direct => Some((t, run)),
-            _ => None,
+        let text_piece = |s: &crate::inspect::Segment| {
+            if !s.direct && super::editable_insertion(dom, &s.piece).is_none() {
+                return None;
+            }
+            Some(match s.piece {
+                Piece::Text { t, run } => (t, run),
+                Piece::Glyph { element, run } => (element, run),
+            })
         };
         let left = projection
             .segments
@@ -897,42 +1071,95 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
         isolate(dom, run, t);
         (Some(run), Some(run), before)
     };
-    if edit.replacement.is_empty() {
-        return;
-    }
-    let run = dom.new_element(W::r());
-    let rpr = template
-        .and_then(|r| dom.element(r, &W::r_pr()))
-        .map(|rpr| clean_rpr(dom, rpr));
-    let rpr = match (rpr, &edit.format) {
-        (Some(rpr), _) => Some(rpr),
-        (None, Some(_)) => Some(dom.new_element(W::r_pr())),
-        (None, None) => None,
-    };
-    if let Some(rpr) = rpr {
-        if let Some(format) = &edit.format {
-            apply_run_format(dom, rpr, format);
+    // A deletion stays inside the source insertion. Everything following
+    // the edit moves to a separate insertion after the editor's new words.
+    let split = anchor.and_then(|anchor| {
+        let ins = dom.parent(anchor).filter(|&n| dom.name_is(n, &W::ins()))?;
+        let children = dom.elements(ins, None);
+        let at = children.iter().position(|&n| n == anchor)? + usize::from(!before);
+        if at == 0 {
+            // There is no first piece to keep. The complete source
+            // insertion becomes the newly numbered trailing piece.
+            return Some((ins, true, Some(ins)));
         }
-        if dom.elements(rpr, None).is_empty() {
-            dom.remove(rpr);
+        let tail = if at < children.len() {
+            let tail = dom.clone_subtree(ins);
+            for child in dom.nodes(tail) {
+                dom.remove(child);
+            }
+            for &child in &children[at..] {
+                dom.remove(child);
+                dom.add(tail, child);
+            }
+            Some(tail)
         } else {
-            dom.add(run, rpr);
+            None
+        };
+        Some((ins, false, tail))
+    });
+    let (anchor, before) = split.map_or((anchor, before), |(ins, before, _)| (Some(ins), before));
+    let mut last = anchor;
+    if !replacement.is_empty() {
+        let run = dom.new_element(W::r());
+        let rpr = template
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| clean_rpr(dom, rpr));
+        let rpr = match (rpr, &edit.format) {
+            (Some(rpr), _) => Some(rpr),
+            (None, Some(_)) => Some(dom.new_element(W::r_pr())),
+            (None, None) => None,
+        };
+        if let Some(rpr) = rpr {
+            if let Some(format) = &edit.format {
+                apply_run_format(dom, rpr, format);
+            }
+            if dom.elements(rpr, None).is_empty() {
+                dom.remove(rpr);
+            } else {
+                dom.add(run, rpr);
+            }
         }
+        let text = dom.new_element(W::t());
+        set_text(dom, text, replacement);
+        dom.add(run, text);
+        let ins = stamp.container(dom, W::ins());
+        dom.add(ins, run);
+        match anchor {
+            Some(anchor) if before => dom.add_before_self(anchor, ins),
+            Some(anchor) => dom.add_after_self(anchor, ins),
+            None => dom.add(paragraph, ins),
+        }
+        last = Some(ins);
     }
-    let text = dom.new_element(W::t());
-    set_text(dom, text, &edit.replacement);
-    dom.add(run, text);
-    let ins = stamp.container(dom, W::ins());
-    dom.add(ins, run);
-    match anchor {
-        Some(anchor) if before => dom.add_before_self(anchor, ins),
-        Some(anchor) => dom.add_after_self(anchor, ins),
-        None => dom.add(paragraph, ins),
+    if let Some((source, _, Some(tail))) = split {
+        if let Some(origin) = stamp.insertions.get(&source).cloned() {
+            stamp.insertions.insert(tail, origin);
+        }
+        // Allocate after the deletion and editor insertion, using the same
+        // package-wide allocator. The source attribution stays on the tail.
+        dom.set_attribute_value(tail, &W::id(), Some(&stamp.next_id.to_string()));
+        stamp.next_id += 1;
+        dom.remove(tail);
+        dom.add_after_self(last.expect("a split has a first piece"), tail);
     }
 }
 
-/// Split runs so that each `w:t` of `[start, end)` sits alone in its run
-/// (beside the run's `w:rPr`); the runs, in document order.
+/// Empty run shells must not keep an otherwise deleted own insertion alive.
+fn remove_empty_insertion(dom: &mut Dom, ins: NodeId) {
+    for run in dom.elements(ins, Some(&W::r())) {
+        if dom.elements(run, None).iter().all(|&c| {
+            dom.name_is(c, &W::r_pr()) || (dom.name_is(c, &W::t()) && dom.value(c).is_empty())
+        }) {
+            dom.remove(run);
+        }
+    }
+    if dom.elements(ins, None).is_empty() {
+        dom.remove(ins);
+    }
+}
+
+/// Split runs so each text or glyph of `[start, end)` sits alone in its
+/// run (beside the run's `w:rPr`); return the runs in document order.
 fn isolate_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> Vec<NodeId> {
     for at in [start, end] {
         let projection = project_paragraph(dom, paragraph);
@@ -951,9 +1178,9 @@ fn isolate_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> 
             .segments
             .iter()
             .filter(|s| s.start >= start && s.end <= end && s.start < s.end)
-            .filter_map(|s| match s.piece {
-                Piece::Text { t, run } => Some((t, run)),
-                Piece::Glyph { .. } => None,
+            .map(|s| match s.piece {
+                Piece::Text { t, run } => (t, run),
+                Piece::Glyph { element, run } => (element, run),
             })
             .collect();
         match pieces.iter().find(|&&(t, run)| !alone(dom, run, t)) {
@@ -1010,8 +1237,12 @@ fn isolate(dom: &mut Dom, run: NodeId, t: NodeId) {
         } else {
             dom.add_after_self(run, copy);
         }
-        for c in side {
-            dom.remove(c);
+    }
+    // Both copies need the original child indexes. Removing the left
+    // side before cloning the right shifts those indexes and loses text.
+    for child in children {
+        if child != t && content(dom, child) {
+            dom.remove(child);
         }
     }
 }
@@ -1195,6 +1426,7 @@ mod tests {
             author: "Me",
             date: "2026-10-02T00:00:00Z",
             next_id: 5,
+            insertions: HashMap::new(),
         };
         mark(&mut dom, p, W::ins(), &mut stamp);
         mark(&mut dom, p, W::del(), &mut stamp);
@@ -1224,6 +1456,7 @@ mod tests {
             author: "Me",
             date: "d",
             next_id: 0,
+            insertions: HashMap::new(),
         };
         delete_runs(&mut dom, p, &mut stamp);
         assert_eq!(
@@ -1310,6 +1543,7 @@ mod nested_run_deletion_source_boundary_tests {
                 author: "New owner",
                 date: "2001-02-03T04:05:06Z",
                 next_id: 100,
+                insertions: HashMap::new(),
             };
             delete_runs(&mut dom, paragraph, &mut stamp);
             mark(&mut dom, paragraph, W::del(), &mut stamp);
@@ -1368,6 +1602,7 @@ mod tracked_source_property_boundary_tests {
                 author: "Ada",
                 date: "2026-10-09T12:34:00Z",
                 next_id: 50,
+                insertions: HashMap::new(),
             };
             track_properties(&mut dom, p, &mut stamp, |dom| {
                 let ppr = paragraph_properties(dom, p);

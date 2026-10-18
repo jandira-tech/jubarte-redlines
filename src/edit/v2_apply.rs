@@ -187,6 +187,7 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     let effect = !tx.resolved.is_empty()
         || !tx.resolved_revisions.is_empty()
         || !remaining_revisions.is_empty();
+    let edited_insertions = edited_insertions(&tx);
     tx.apply()?;
     super::prepared::check_dom_realized(&tx, true)?;
     let (clean, _) = tx.finish()?;
@@ -196,8 +197,10 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     // replay's DOM before it is dropped; the direct primary is the serialized
     // transaction DOM, walked below. Either way the walk is taken from the
     // DOM that produced the primary bytes, not by re-matching text.
+    let mut insertion_origins = BTreeMap::new();
     let (result, primary_base, primary_output, replay_states) = if plan.policy.track == Track::On {
         let (result, paragraphs) = tracked::result_v2_with_paragraphs(&tx, clean)?;
+        insertion_origins = paragraphs.insertion_origins;
         (
             result,
             paragraphs.base,
@@ -264,8 +267,20 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
         })?;
         (source.to_vec(), source.to_vec(), identity)
     };
-    preserve_history(&working, &clean)?;
-    preserve_history(&working, &redline)?;
+    preserve_history(
+        &working,
+        &clean,
+        &edited_insertions,
+        &plan.author,
+        &BTreeMap::new(),
+    )?;
+    preserve_history(
+        &working,
+        &redline,
+        &edited_insertions,
+        &plan.author,
+        &insertion_origins,
+    )?;
     Ok(V2EditResult {
         clean,
         redline,
@@ -2249,25 +2264,120 @@ fn exact_rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)> {
         .collect()
 }
 
-/// Mandatory preservation check for history W retained. Paragraph addresses
-/// may shift with structural edits, while each existing revision and its
-/// attribution/content/dependency must survive unchanged and in order.
-fn preserve_history(working: &[u8], candidate: &[u8]) -> Result<(), EditError> {
+/// Only insertion content touched by a resolved text operation may change.
+/// Snapshot these identities before applying the transaction: the stored
+/// projection nodes themselves are mutated by `apply`.
+fn edited_insertions(tx: &Transaction<'_>) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for (_, resolved) in &tx.resolved {
+        let Resolved::Text {
+            para,
+            start,
+            end,
+            attach_before,
+            ..
+        } = resolved
+        else {
+            continue;
+        };
+        let projection = &tx.projections[*para];
+        let touched: Vec<_> = if start == end {
+            super::attach_segment(projection, *start, *attach_before)
+                .into_iter()
+                .collect()
+        } else {
+            projection
+                .segments
+                .iter()
+                .filter(|s| s.start < *end && *start < s.end)
+                .collect()
+        };
+        for segment in touched {
+            if let Some(ins) = super::editable_insertion(&tx.opened.dom, &segment.piece)
+                && let Some(wid) = tx.opened.dom.attribute(ins, &W::id())
+            {
+                let story = &tx.stories[tx.paragraph_story[*para].0].id;
+                ids.insert(crate::ids::ChangeId::new(story, wid).short());
+            }
+        }
+    }
+    ids
+}
+
+/// Unedited history keeps its content, attribution and dependency in order.
+/// Editing insertion content may shorten its first piece or correct one's
+/// own insertion, but never changes the source revision's attribution.
+fn preserve_history(
+    working: &[u8],
+    candidate: &[u8],
+    edited: &BTreeSet<String>,
+    author: &str,
+    insertion_origins: &BTreeMap<String, String>,
+) -> Result<(), EditError> {
+    let failure = || {
+        err(
+            "REVISION_PRESERVATION_FAILED",
+            None,
+            "candidate changed revision history retained in W",
+        )
+    };
     let mut before = changes(working)?;
     let ids: BTreeSet<_> = before.iter().map(|c| c.id.clone()).collect();
-    let mut after: Vec<_> = changes(candidate)?
-        .into_iter()
-        .filter(|c| ids.contains(&c.id))
-        .collect();
+    let mut after = Vec::new();
+    let mut seen_insertions = BTreeSet::new();
+    for mut change in changes(candidate)? {
+        if let Some(origin) = change
+            .inside
+            .as_ref()
+            .and_then(|id| insertion_origins.get(id))
+        {
+            change.inside = Some(origin.clone());
+        }
+        if change.kind == ChangeKind::Insertion
+            && change.target == "text"
+            && let Some(origin) = insertion_origins.get(&change.id)
+        {
+            let original = before
+                .iter()
+                .find(|old| old.id == *origin)
+                .ok_or_else(failure)?;
+            if change.id != *origin && !edited.contains(origin) {
+                return Err(failure());
+            }
+            change.id.clone_from(origin);
+            change.r#ref.clone_from(origin);
+            // Every fragment retains the source stamp/dependency. Content
+            // changes are authorized only on the resolved insertion ids.
+            let mut metadata = change.clone();
+            metadata.text.clone_from(&original.text);
+            metadata.paragraph.clone_from(&original.paragraph);
+            if metadata != *original {
+                return Err(failure());
+            }
+            if !seen_insertions.insert(origin.clone()) {
+                continue;
+            }
+        }
+        if ids.contains(&change.id) {
+            after.push(change);
+        }
+    }
+    before.retain_mut(|c| {
+        if c.kind == ChangeKind::Insertion && c.target == "text" && edited.contains(&c.id) {
+            if let Some(new) = after.iter().find(|new| new.id == c.id) {
+                c.text.clone_from(&new.text);
+            } else if c.author.as_deref() == Some(author) {
+                // Deleting one's entire insertion removes its carrier.
+                return false;
+            }
+        }
+        true
+    });
     for c in before.iter_mut().chain(after.iter_mut()) {
         c.paragraph = None;
     }
     if before != after {
-        return Err(err(
-            "REVISION_PRESERVATION_FAILED",
-            None,
-            "candidate changed revision history retained in W",
-        ));
+        return Err(failure());
     }
     Ok(())
 }
@@ -2277,6 +2387,44 @@ mod tests {
     use super::*;
     use crate::edit::deeper_boundary_fixture::{docx, para};
     use crate::edit::for_edit::{ForEditRequest, ForEditRow, for_edit};
+
+    #[test]
+    fn history_guard_keeps_unedited_content_and_all_source_attribution() {
+        let package = |first: &str, second: &str, author: &str| {
+            docx(&format!(
+                r#"<w:p><w:ins w:id="6" w:author="{author}" w:date="2026-10-17T09:00:00Z"><w:r><w:t>{first}</w:t></w:r></w:ins><w:ins w:id="9" w:author="Bob" w:date="2026-10-17T09:00:00Z"><w:r><w:t>{second}</w:t></w:r></w:ins></w:p>"#
+            ))
+        };
+        let source = package("old", "unrelated", "Alice");
+        let edited = BTreeSet::from(["r6".into()]);
+        for candidate in [
+            package("new", "changed", "Alice"),
+            package("new", "unrelated", "Bob"),
+        ] {
+            assert_eq!(
+                preserve_history(
+                    &source,
+                    &candidate,
+                    &edited,
+                    "Carol Diaz",
+                    &BTreeMap::from([("r6".into(), "r6".into())])
+                )
+                .unwrap_err()
+                .code,
+                "REVISION_PRESERVATION_FAILED"
+            );
+        }
+        assert!(
+            preserve_history(
+                &source,
+                &package("new", "unrelated", "Alice"),
+                &edited,
+                "Carol Diaz",
+                &BTreeMap::from([("r6".into(), "r6".into())])
+            )
+            .is_ok()
+        );
+    }
 
     /// An effectful v2 apply builds its expectations correspondence without
     /// reopening the emitted primary: the final-view dispositions come from
