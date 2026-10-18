@@ -501,10 +501,16 @@ endnote text names their styles after the id, one per paragraph, the last
 for every paragraph after it: `<!-- endnotes.p0 Endnote -->` for a note in
 LibreOffice's `Endnote`, `<!-- footnotes.p1-p2 FootnoteText, "My Note" -->`
 for one whose second paragraph is in `My Note` (an id that is no plain word
-is quoted). A silent line is Word's own style, spelled as Word spells it
-(`footnote text`); a document that renames it (`Footnote Text`) names the
-style, and the styles legend the name, so the writer defines it as
-spelled. A table cell does the same: `<br>` ends one of the cell's
+is quoted). A silent line uses Word's own `FootnoteText` or `EndnoteText`
+style. Its name matches `footnote text` or `endnote text` ignoring ASCII
+case, under any source style id. Spaces remain significant: `Footnote Text`
+matches, while `FootnoteText`, `Footnote  Text`, and names with leading or
+trailing spaces do not. The legend keeps a case-only spelling difference
+(`FootnoteText: …, named Footnote Text`), so the writer preserves the exact
+name even with a silent id line. A localized source id with that name also
+rebuilds as the canonical note style, with its spelling kept in the legend.
+A real rename (`Notes`, LibreOffice's `Endnote`) keeps its explicit style
+token. A table cell does the same: `<br>` ends one of the cell's
 paragraphs, `<br/>` is a line break (`w:br`) within one. A view written
 before that distinction still converts: when the id or table line's
 paragraph count and the `<br>`s disagree, the writer reads every `<br>`

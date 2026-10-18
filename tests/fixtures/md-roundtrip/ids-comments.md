@@ -92,5 +92,5 @@ the statutory _rate_.
 <!-- p36 Normal left -->
 **This** agreement is governed by the **laws** _of_ the _State_ of New {--York--}{r61 @AL}{++notice++}{r62 @CD}.{>>c29 @BC: Is this consistent with the master agreement?<<}
 
-<!-- footnotes.p0 FootnoteText -->
+<!-- footnotes.p0 -->
 [^1]: The buyer{++ on a business day++}{footnotes.r63 @DP} shall return defective goods within fourteen days.
