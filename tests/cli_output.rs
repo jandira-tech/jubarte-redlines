@@ -907,10 +907,14 @@ fn refusal_is_usage(args: &[&str], existing: &str) {
         "{args:?}: {}",
         text(&out.stderr)
     );
+    // The message names the output with the `/` spelling agent-facing
+    // outputs use on every OS (#568), even when the argument or the file
+    // name held `\` (as a Windows separator, or a Unix file name).
+    let shown = existing.replace('\\', "/");
     assert_eq!(
         text(&out.stderr),
         format!(
-            "error: OUTPUT_EXISTS: output '{existing}' already exists (use --force to overwrite)\n"
+            "error: OUTPUT_EXISTS: output '{shown}' already exists (use --force to overwrite)\n"
         )
     );
     assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
@@ -958,6 +962,7 @@ output_refusals! {
     existing_report: "out.json" => ["convert", "in.docx", "-o", "new.pdf", "--report", "out.json"];
     existing_font_report: "out.json" => ["convert", "in.docx", "-o", "new.pdf", "--font-report", "out.json"];
     existing_visual_diff: "pages/diff.json" => ["visual-diff", "in.docx", "in.docx", "--out-dir", "pages", "--dpi", "20"];
+    existing_backslash_name: r"odd\name.md" => ["convert", "in.docx", "-o", r"odd\name.md"];
 }
 
 fn diff_status_label(format: Option<&str>, label: &str) {
