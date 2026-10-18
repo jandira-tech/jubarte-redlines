@@ -1142,8 +1142,9 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
     }
 }
 
-/// Opening markers travel with the words to their right, closing markers
-/// with the words to their left. A comment reference stays with its end.
+/// The sibling an insertion at `run`'s edge goes beside: past the range
+/// markers that open before the run (`before`) or close after it, so those
+/// ranges keep their source endpoints. `run` itself when none sit there.
 pub(super) fn insertion_boundary_anchor(dom: &Dom, run: NodeId, before: bool) -> NodeId {
     let Some(parent) = dom.parent(run) else {
         return run;
@@ -1156,6 +1157,8 @@ pub(super) fn insertion_boundary_anchor(dom: &Dom, run: NodeId, before: bool) ->
     children[if before { at } else { at - 1 }]
 }
 
+/// Opening markers travel with the words to their right, closing markers
+/// with the words to their left. A comment reference stays with its end.
 fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, before: bool) -> usize {
     if before {
         while at > 0
