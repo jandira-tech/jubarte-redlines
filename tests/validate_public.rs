@@ -1075,8 +1075,11 @@ fn foreign_reverse_ten_thousand_revisions_is_fast() {
     let _findings = foreign_messages(&original, &edited);
     let elapsed = start.elapsed();
     eprintln!("10,000 reversed revisions took {elapsed:?}");
+    // Quadratic matching took 200 s here; linear takes about 2 s, and up to
+    // 5 s while other builds share the machine. A wide bound stays
+    // deterministic under load and still fails the quadratic shape.
     assert!(
-        elapsed < std::time::Duration::from_secs(6),
+        elapsed < std::time::Duration::from_secs(60),
         "10,000 reversed revisions took {elapsed:?}"
     );
 }

@@ -15,9 +15,3 @@ path = "junit.xml"
 [profile.default-miri]
 fail-fast = false
 slow-timeout = { period = "300s", terminate-after = 4 }
-
-# This integration benchmark measures wall time. Reserve the run's worker
-# slots so unrelated integration tests cannot consume its CPU budget.
-[[profile.default.overrides]]
-filter = 'test(foreign_reverse_ten_thousand_revisions_is_fast)'
-threads-required = "num-cpus"
