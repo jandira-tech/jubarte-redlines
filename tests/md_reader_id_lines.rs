@@ -799,6 +799,9 @@ fn a_bookmark_between_two_changes_stays_between_them() {
 #[test]
 fn latest_dates_undated_revisions_marks_and_comments() {
     let latest = "2026-10-17T16:59:00.125+02:00";
+    // Re-reading a written view falls back to Word's Z-labelled wall clock:
+    // conversion does not emit dateUtc extension attributes.
+    let stored_latest = "2026-10-17T16:59:00.125Z";
     let explicit = "2026-10-01T09:00:00Z";
     let view = format!(
         "---\nauthors:\n  AL: Ann Lee  # 4 revisions, 2 comments, latest {latest}\n---\n\n\
@@ -817,13 +820,13 @@ fn latest_dates_undated_revisions_marks_and_comments() {
         let expected = if change.text == "dated" {
             explicit
         } else {
-            latest
+            stored_latest
         };
         assert_eq!(change.date.as_deref(), Some(expected), "{change:?}");
     }
     let comments = jubarte::comments::list_comments(&docx).unwrap();
     assert_eq!(comments.len(), 2);
-    assert_eq!(comments[0].date.as_deref(), Some(latest));
+    assert_eq!(comments[0].date.as_deref(), Some(stored_latest));
     assert_eq!(comments[1].date.as_deref(), Some(explicit));
 }
 

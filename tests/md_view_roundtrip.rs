@@ -71,11 +71,48 @@ fn revision_notes_keep_their_author_and_date() {
 fn comment_notes_keep_their_author_initials_and_date() {
     let dir = tempfile::tempdir().unwrap();
     let (source, back) = round_trip(dir.path());
+    // The source reports the paired instant; a view write preserves the
+    // stored wall clock and does not emit the UTC extension.
+    assert_eq!(
+        jubarte::comments::list_comments(&source).unwrap()[1]
+            .date
+            .as_deref(),
+        Some("2026-10-09T16:13:00-04:00")
+    );
+    assert_eq!(
+        jubarte::comments::list_comments(&back).unwrap()[1]
+            .date
+            .as_deref(),
+        Some("2026-10-09T16:13:00Z")
+    );
     let comments = |docx: &[u8]| -> Vec<String> {
+        use jubarte::namespaces::W;
+        let package = jubarte::opc::PartFs::open(docx).unwrap();
+        let xml = package.part_string("word/comments.xml").unwrap();
+        let mut dom = jubarte::xmllinq::Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let dates: std::collections::HashMap<_, _> = dom
+            .descendants(dom.root(document).unwrap(), Some(&W::name("comment")))
+            .into_iter()
+            .map(|node| {
+                (
+                    dom.attribute(node, &W::id())
+                        .unwrap()
+                        .parse::<u32>()
+                        .unwrap(),
+                    dom.attribute(node, &W::date()).map(str::to_string),
+                )
+            })
+            .collect();
         jubarte::comments::list_comments(docx)
             .unwrap()
             .into_iter()
-            .map(|c| format!("{} {:?} {:?} {:?}", c.author, c.initials, c.date, c.text))
+            .map(|c| {
+                format!(
+                    "{} {:?} {:?} {:?}",
+                    c.author, c.initials, dates[&c.id], c.text
+                )
+            })
             .collect()
     };
     assert_eq!(comments(&back), comments(&source));

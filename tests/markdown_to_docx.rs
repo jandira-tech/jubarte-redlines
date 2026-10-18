@@ -1095,7 +1095,8 @@ fn attributions_name_the_author_and_date_of_the_change_before_them() {
             // side (Cy's) before the deleted side (Bo's).
             r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
             r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
-            r#"w:author="Redline" w:date="2026-04-05T06:07:08+01:00""#,
+            // View offsets write Word's local wall clock with a Z label.
+            r#"w:author="Redline" w:date="2026-04-05T06:07:08Z""#,
             r#"w:author="Redline" w:date="1970-01-01T00:00:00Z""#,
         ]
     );

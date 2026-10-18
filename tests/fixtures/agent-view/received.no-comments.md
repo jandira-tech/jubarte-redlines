@@ -8,7 +8,7 @@ comments: 2 threads open, c6 style Normal  # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z
+  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00-04:00
 body: p0-p20, 1 table, 2 pages     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:

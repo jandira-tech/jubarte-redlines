@@ -22,6 +22,17 @@ fn golden(name: &str) -> String {
     std::fs::read_to_string(fixture(name)).unwrap()
 }
 
+fn assert_golden(name: &str, actual: &str) {
+    if std::env::var_os("JUBARTE_BLESS").is_some() {
+        std::fs::write(fixture(name), actual).unwrap();
+    }
+    assert_eq!(
+        actual,
+        golden(name),
+        "{name}: regenerate with JUBARTE_BLESS=1 and received_docx_*_view*_match*"
+    );
+}
+
 fn agent(docx: &[u8]) -> String {
     agent_with(docx, TrackChanges::All, true)
 }
@@ -2440,9 +2451,9 @@ fn cli_read_prints_the_agent_view_with_flags() {
 fn received_docx_tracked_view_matches_the_golden() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
-    assert_eq!(
-        ok(&["read", "received.docx"], dir.path()),
-        golden("received.tracked.md")
+    assert_golden(
+        "received.tracked.md",
+        &ok(&["read", "received.docx"], dir.path()),
     );
 }
 
@@ -2450,23 +2461,23 @@ fn received_docx_tracked_view_matches_the_golden() {
 fn received_docx_other_views_match_their_goldens() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
-    assert_eq!(
-        ok(&["read", "received.docx", "--comments", "none"], dir.path()),
-        golden("received.no-comments.md")
+    assert_golden(
+        "received.no-comments.md",
+        &ok(&["read", "received.docx", "--comments", "none"], dir.path()),
     );
-    assert_eq!(
-        ok(
+    assert_golden(
+        "received.accept.md",
+        &ok(
             &["read", "received.docx", "--track-changes", "accept"],
-            dir.path()
+            dir.path(),
         ),
-        golden("received.accept.md")
     );
-    assert_eq!(
-        ok(
+    assert_golden(
+        "received.reject.md",
+        &ok(
             &["read", "received.docx", "--track-changes", "reject"],
-            dir.path()
+            dir.path(),
         ),
-        golden("received.reject.md")
     );
 }
 
