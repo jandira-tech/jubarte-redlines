@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Edit-only restoration after comparison. Compare's range policy is unchanged.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use similar::{Algorithm, DiffTag, capture_diff_slices};
 
-use crate::inspect::Opened;
 use crate::namespaces::{PT, W};
-use crate::xmllinq::{Dom, NodeId};
+use crate::opc::PartFs;
+use crate::xmllinq::{Dom, NodeId, XName};
 
 use super::{EditError, err};
 
@@ -79,48 +79,15 @@ fn unchanged(
 }
 
 /// Find original empty paragraphs among the paragraphs left unchanged in
-/// both the edited copy and the comparison. Only endpoints directly in those
-/// paragraphs are moved; all other endpoints keep bookmark offset semantics.
+/// both the edited copy and the comparison. Index endpoints once per part;
+/// each source occurrence moves at most one corresponding output endpoint.
 fn restore_empty(dom: &mut Dom, original: NodeId, revised: NodeId, output: NodeId) {
     let source = dom.descendants(original, Some(&W::p()));
     let edited = dom.descendants(revised, Some(&W::p()));
     let target = dom.descendants(output, Some(&W::p()));
-    // Keep marker identity on this leg: adjacent empty paragraphs can be
-    // identical apart from their ranges, and one may have been removed.
     let first = unchanged(dom, &source, &edited, true);
     let second = unchanged(dom, &edited, &target, false);
-    let mut ids = HashMap::new();
-    let mut next_id = dom
-        .descendants(output, None)
-        .into_iter()
-        .filter_map(|n| dom.attribute(n, &W::id())?.parse::<u64>().ok())
-        .max()
-        .unwrap_or(0)
-        + 1;
-    for start in dom.descendants(original, Some(&W::bookmark_start())) {
-        let Some((id, name)) = dom
-            .attribute(start, &W::id())
-            .zip(dom.attribute(start, &W::name("name")))
-        else {
-            continue;
-        };
-        if name == "_GoBack" {
-            continue;
-        }
-        let matching = dom
-            .descendants(output, Some(&W::bookmark_start()))
-            .into_iter()
-            .find(|&n| dom.attribute(n, &W::name("name")) == Some(name));
-        let new = matching
-            .and_then(|n| dom.attribute(n, &W::id()))
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                let id = next_id.to_string();
-                next_id += 1;
-                id
-            });
-        ids.insert(id.to_string(), new);
-    }
+    let mut candidates = Vec::new();
     for p in source {
         if dom
             .descendants(p, Some(&W::t()))
@@ -132,49 +99,243 @@ fn restore_empty(dom: &mut Dom, original: NodeId, revised: NodeId, output: NodeI
         let Some(&destination) = first.get(&p).and_then(|p| second.get(p)) else {
             continue;
         };
-        let children = dom.elements(p, None);
-        let anchors: Vec<_> = dom
-            .elements(destination, None)
+        let mut gap = 0;
+        for node in dom.elements(p, None) {
+            if is_marker(dom, node) {
+                candidates.push((node, destination, gap));
+            } else {
+                gap += 1;
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+    let restoring: HashSet<_> = candidates.iter().map(|c| c.0).collect();
+    let mut endpoints: HashMap<(XName, String), VecDeque<NodeId>> = HashMap::new();
+    let mut names: HashMap<String, VecDeque<String>> = HashMap::new();
+    let mut next_id = 0;
+    for node in dom.descendants(output, None) {
+        let Some(id) = dom.attribute(node, &W::id()) else {
+            continue;
+        };
+        next_id = next_id.max(id.parse::<u64>().unwrap_or(0));
+        if is_marker(dom, node) {
+            endpoints
+                .entry((dom.name(node).unwrap(), id.to_string()))
+                .or_default()
+                .push_back(node);
+        }
+        if dom.name_is(node, &W::bookmark_start())
+            && let Some(name) = dom.attribute(node, &W::name("name"))
+        {
+            names
+                .entry(name.to_string())
+                .or_default()
+                .push_back(id.to_string());
+        }
+    }
+    // Pair by source occurrence, not by name (which malformed-but-readable
+    // inputs can repeat). Keep the comparer id of each existing occurrence.
+    let available: HashSet<_> = endpoints.keys().cloned().collect();
+    let mut open: HashMap<String, VecDeque<NodeId>> = HashMap::new();
+    let mut partners = HashMap::new();
+    let mut ids = HashMap::new();
+    for node in dom.descendants(original, None) {
+        let Some(id) = dom.attribute(node, &W::id()) else {
+            continue;
+        };
+        if dom.name_is(node, &W::bookmark_start()) {
+            let Some(name) = dom.attribute(node, &W::name("name")) else {
+                continue;
+            };
+            if name == "_GoBack" {
+                continue;
+            }
+            let new = names
+                .get_mut(name)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or_else(|| {
+                    next_id += 1;
+                    next_id.to_string()
+                });
+            ids.insert(node, new);
+            open.entry(id.to_string()).or_default().push_back(node);
+        } else if dom.name_is(node, &W::bookmark_end())
+            && let Some(start) = open.get_mut(id).and_then(VecDeque::pop_front)
+        {
+            ids.insert(node, ids[&start].clone());
+            partners.insert(node, start);
+            partners.insert(start, node);
+        }
+    }
+    let anchors: HashMap<_, Vec<_>> = candidates
+        .iter()
+        .map(|&(_, p, _)| p)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .map(|p| {
+            (
+                p,
+                dom.elements(p, None)
+                    .into_iter()
+                    .filter(|&n| !is_marker(dom, n))
+                    .collect(),
+            )
+        })
+        .collect();
+    for (node, destination, gap) in candidates {
+        let Some(name) = dom.name(node) else { continue };
+        let Some(source_id) = dom.attribute(node, &W::id()) else {
+            continue;
+        };
+        let bookmark = name == W::bookmark_start() || name == W::bookmark_end();
+        let id = if bookmark {
+            let Some(id) = ids.get(&node) else { continue };
+            let Some(&partner) = partners.get(&node) else {
+                continue;
+            };
+            if !restoring.contains(&partner)
+                && !available.contains(&(dom.name(partner).unwrap(), id.clone()))
+            {
+                continue; // Restoring half a bookmark must never create an orphan.
+            }
+            id.clone()
+        } else {
+            source_id.to_string()
+        };
+        if let Some(old) = endpoints
+            .get_mut(&(name, id.clone()))
+            .and_then(VecDeque::pop_front)
+        {
+            dom.remove(old);
+        }
+        let copy = dom.clone_subtree(node);
+        if bookmark {
+            dom.set_attribute_value(copy, &W::id(), Some(&id));
+        }
+        if let Some(&anchor) = anchors[&destination].get(gap) {
+            dom.add_before_self(anchor, copy);
+        } else {
+            dom.add(destination, copy);
+        }
+    }
+}
+
+/// A streaming eligibility scan keeps ordinary bookmarked text paragraphs off
+/// the restoration path. Prefixes do not matter; unknown XML stays conservative.
+fn needs_restore(xml: &str) -> bool {
+    if xml.contains("permStart") || xml.contains("permEnd") {
+        return true;
+    }
+    if !xml.contains("bookmarkStart") && !xml.contains("bookmarkEnd") {
+        return false;
+    }
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut paragraphs = Vec::new();
+    let mut in_text = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => match e.local_name().as_ref() {
+                "p" => paragraphs.push((false, false)),
+                "t" => in_text = true,
+                "bookmarkStart" | "bookmarkEnd" => {
+                    if let Some(p) = paragraphs.last_mut() {
+                        p.0 = true;
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(e))
+                if matches!(e.local_name().as_ref(), "bookmarkStart" | "bookmarkEnd") =>
+            {
+                if let Some(p) = paragraphs.last_mut() {
+                    p.0 = true;
+                }
+            }
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                "p" => {
+                    if paragraphs
+                        .pop()
+                        .is_some_and(|(marker, text)| marker && !text)
+                    {
+                        return true;
+                    }
+                }
+                "t" => in_text = false,
+                _ => {}
+            },
+            Ok(Event::Text(t)) if in_text && !t.is_empty() => {
+                for p in &mut paragraphs {
+                    p.1 = true;
+                }
+            }
+            Ok(Event::CData(t)) if in_text && !t.is_empty() => {
+                for p in &mut paragraphs {
+                    p.1 = true;
+                }
+            }
+            Ok(Event::Eof) => return false,
+            Err(_) => return true,
+            _ => {}
+        }
+    }
+}
+
+/// Text has no offset projection in an empty story. Index structural parent
+/// paths and gaps instead; the revised story supplies the current properties.
+fn restore_textless_permissions(dom: &mut Dom, revised: NodeId, output: NodeId) {
+    fn index(dom: &Dom, node: NodeId, path: &[usize], out: &mut HashMap<Vec<usize>, Vec<NodeId>>) {
+        let children: Vec<_> = dom
+            .elements(node, None)
             .into_iter()
             .filter(|&n| !is_marker(dom, n))
             .collect();
+        out.insert(path.to_vec(), children.clone());
+        for (i, child) in children.into_iter().enumerate() {
+            let mut path = path.to_vec();
+            path.push(i);
+            index(dom, child, &path, out);
+        }
+    }
+    let mut target = HashMap::new();
+    index(dom, output, &[], &mut target);
+    let mut parents = HashMap::from([(Vec::new(), output)]);
+    for (path, children) in &target {
+        for (i, &child) in children.iter().enumerate() {
+            let mut path = path.clone();
+            path.push(i);
+            parents.insert(path, child);
+        }
+    }
+    for name in [W::name("permStart"), W::name("permEnd")] {
+        for node in dom.descendants(output, Some(&name)) {
+            dom.remove(node);
+        }
+    }
+    let mut stack = vec![(revised, Vec::new())];
+    while let Some((node, path)) = stack.pop() {
         let mut gap = 0;
-        for node in children {
-            if !is_marker(dom, node) {
-                gap += 1;
-                continue;
-            }
-            let Some(name) = dom.name(node) else { continue };
-            let Some(id) = dom.attribute(node, &W::id()) else {
-                continue;
-            };
-            if name == W::bookmark_start()
-                && dom.attribute(node, &W::name("name")) == Some("_GoBack")
-            {
-                continue;
-            }
-            let bookmark = name == W::bookmark_start() || name == W::bookmark_end();
-            let id = if bookmark {
-                let Some(id) = ids.get(id) else { continue };
-                id.clone()
-            } else {
-                id.to_string()
-            };
-            // Remove the endpoint already placed by text. Its paired endpoint
-            // may live in a text paragraph and is deliberately left there.
-            for old in dom.descendants(output, Some(&name)) {
-                if dom.attribute(old, &W::id()) == Some(id.as_str()) {
-                    dom.remove(old);
+        for child in dom.elements(node, None) {
+            if is_marker(dom, child) {
+                if dom
+                    .name(child)
+                    .is_some_and(|n| [W::name("permStart"), W::name("permEnd")].contains(&n))
+                    && let Some(&parent) = parents.get(&path)
+                {
+                    let copy = dom.clone_subtree(child);
+                    if let Some(&anchor) = target.get(&path).and_then(|c| c.get(gap)) {
+                        dom.add_before_self(anchor, copy);
+                    } else {
+                        dom.add(parent, copy);
+                    }
                 }
-            }
-            let copy = dom.clone_subtree(node);
-            if bookmark {
-                dom.set_attribute_value(copy, &W::id(), Some(&id));
-            }
-            if let Some(&anchor) = anchors.get(gap) {
-                dom.add_before_self(anchor, copy);
             } else {
-                dom.add(destination, copy);
+                let mut child_path = path.clone();
+                child_path.push(gap);
+                stack.push((child, child_path));
+                gap += 1;
             }
         }
     }
@@ -187,48 +348,78 @@ pub(super) fn restore(
     revised: &[u8],
     author: &str,
 ) -> Result<Vec<u8>, EditError> {
-    let open = |bytes| Opened::open(bytes).map_err(|e| err("COMPARE_FAILED", None, e.to_string()));
+    let open = |bytes| PartFs::open(bytes).map_err(|e| err("COMPARE_FAILED", None, e.to_string()));
     let before = open(original)?;
     let after = open(revised)?;
     let mut out = open(redline)?;
-    let mut parts = vec![before.main.clone()];
-    parts.extend(before.story_parts().into_iter().map(|(_, _, part)| part));
+    let main = before
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    let mut parts = vec![main.clone()];
+    parts.extend(
+        before
+            .read_rels_for(&main)
+            .into_iter()
+            .flat_map(|rels| &rels.items)
+            .filter(|rel| {
+                rel.target_mode.as_deref() != Some("External")
+                    && matches!(
+                        rel.rel_type.rsplit('/').next(),
+                        Some("header" | "footer" | "footnotes" | "endnotes")
+                    )
+            })
+            .map(|rel| before.resolve_rel_target(&main, &rel.target)),
+    );
+    parts.sort();
+    parts.dedup();
+    let mut dom = Dom::new();
+    let mut changed = false;
     for part in parts {
-        let Some(xml) = out.pkg.part_string(&part) else {
+        let Some(a) = before.part_string(&part) else {
             continue;
         };
-        let Some(a) = before.pkg.part_string(&part) else {
+        let Some(b) = after.part_string(&part) else {
             continue;
         };
-        let Some(b) = after.pkg.part_string(&part) else {
+        if !needs_restore(&a) && !needs_restore(&b) {
+            continue;
+        }
+        let Some(xml) = out.part_string(&part) else {
             continue;
         };
-        if ![&a, &b]
-            .iter()
-            .any(|s| s.contains("permStart") || s.contains("bookmarkStart"))
+        let d = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(d) else { continue };
+        if a.contains("permStart")
+            || a.contains("permEnd")
+            || b.contains("permStart")
+            || b.contains("permEnd")
         {
-            continue;
+            crate::comparer::bookmarks::carry_permissions(
+                &mut dom,
+                root,
+                (&before, &part),
+                (&after, &part),
+                author,
+            );
         }
-        let d = out.dom.parse_xdocument(&xml);
-        let Some(root) = out.dom.root(d) else {
-            continue;
-        };
-        crate::comparer::bookmarks::carry_permissions(
-            &mut out.dom,
-            root,
-            (&before.pkg, &part),
-            (&after.pkg, &part),
-            author,
-        );
-        let ad = out.dom.parse_xdocument(&a);
-        let bd = out.dom.parse_xdocument(&b);
-        if let Some((a, b)) = out.dom.root(ad).zip(out.dom.root(bd)) {
-            restore_empty(&mut out.dom, a, b, root);
+        let ad = dom.parse_xdocument(&a);
+        let bd = dom.parse_xdocument(&b);
+        if let Some((a, b)) = dom.root(ad).zip(dom.root(bd)) {
+            if dom
+                .descendants(b, Some(&W::t()))
+                .into_iter()
+                .all(|n| dom.value(n).is_empty())
+            {
+                restore_textless_permissions(&mut dom, b, root);
+            }
+            restore_empty(&mut dom, a, b, root);
         }
-        let xml = out.dom.serialize_document(d);
-        out.pkg.set_part(&part, xml.into_bytes());
+        out.set_part(&part, dom.serialize_document(d).into_bytes());
+        changed = true;
     }
-    out.pkg
-        .to_zip()
+    if !changed {
+        return Ok(redline.to_vec());
+    }
+    out.to_zip()
         .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
 }

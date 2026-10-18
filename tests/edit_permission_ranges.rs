@@ -605,20 +605,6 @@ fn deleted_bookmark_end_stays_at_source_offset() {
 }
 
 #[test]
-fn bookmark_endpoint_in_deleted_text_is_not_a_revision_crossing() {
-    let source = docx(
-        r#"<w:p><w:r><w:t>Intro </w:t></w:r><w:bookmarkStart w:id="5" w:name="Clause"/><w:r><w:t>text.</w:t></w:r></w:p><w:p><w:del w:id="1" w:author="Alice"><w:r><w:delText>Gone</w:delText></w:r><w:bookmarkEnd w:id="5"/><w:r><w:delText> words.</w:delText></w:r></w:del></w:p>"#,
-    );
-    let findings = jubarte::validate::validate(&source).unwrap();
-    assert!(
-        !findings
-            .iter()
-            .any(|f| f.code == "BOOKMARK_CROSSES_REVISION"),
-        "{findings:?}"
-    );
-}
-
-#[test]
 fn deleted_permission_redline_has_no_dropped_range_finding() {
     let source = docx(&format!(
         "<w:p>{}{START}{}</w:p><w:p>{END}</w:p>{}",
@@ -634,6 +620,72 @@ fn deleted_permission_redline_has_no_dropped_range_finding() {
             .iter()
             .any(|f| f.code == "PERMISSION_RANGE_DROPPED"),
         "{findings:?}"
+    );
+}
+
+#[test]
+fn surviving_textbox_permission_end_is_not_duplicated() {
+    let source = docx(&format!(
+        r#"<w:p>{START}{}<w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent><w:p>{}{END}</w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>{}"#,
+        run("Alice.", false, false, None),
+        run("Bob.", false, false, None),
+        para("Next.")
+    ));
+    let result = edit(&source, "p1", "Next", "Following");
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:permEnd").count(), 1, "{xml}");
+}
+
+fn header_with(body: &str) -> Vec<u8> {
+    let (source, part) = story_source("header");
+    let xml = format!(r#"<w:hdr xmlns:w="{}">{body}</w:hdr>"#, W::URI);
+    common::docx::replace_entry(&source, &part, xml.as_bytes())
+}
+
+#[test]
+fn empty_header_bookmark_never_restores_orphan() {
+    let source = header_with(&format!(
+        r#"<w:p><w:bookmarkStart w:id="7" w:name="Clause"/></w:p><w:p>{}<w:bookmarkEnd w:id="7"/></w:p>"#,
+        run("Bob.", false, false, None)
+    ));
+    let result = edit(&source, "header1.p1", "Bob", "Carol Diaz");
+    let actual = markers(&result.redline, "word/header1.xml", "bookmark");
+    assert_eq!(actual.len() % 2, 0, "orphan restored: {actual:?}");
+}
+
+#[test]
+fn repeated_permission_id_keeps_both_positions() {
+    let source = docx(&format!(
+        "<w:p>{START}{}{END}</w:p><w:p>{START}{}{END}</w:p>{}",
+        run("Alice.", false, false, None),
+        run("Bob.", false, false, None),
+        para("Next.")
+    ));
+    let result = edit(&source, "p2", "Next", "Following");
+    assert_permissions(&source, &result, "word/document.xml", None);
+}
+
+#[test]
+fn textless_header_permission_range_survives() {
+    let source = header_with(&format!("{START}<w:p/>{END}"));
+    let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:00:00Z","operations":[{"kind":"format_paragraph","paragraph":"header1.p0","alignment":"center"}]}"#).unwrap();
+    let result = apply_plan(&source, &plan).unwrap();
+    assert_permissions(&source, &result, "word/header1.xml", None);
+}
+
+#[test]
+fn repeated_empty_ranges_keep_positions_and_bookmark_names() {
+    let source = docx(&format!(
+        r#"<w:p>{START}{END}<w:bookmarkStart w:id="7" w:name="Clause"/><w:bookmarkEnd w:id="7"/></w:p><w:p>{START}{END}<w:bookmarkStart w:id="8" w:name="Clause"/><w:bookmarkEnd w:id="8"/></w:p>{}"#,
+        para("Next.")
+    ));
+    let result = edit(&source, "p2", "Next", "Following");
+    assert_permissions(&source, &result, "word/document.xml", None);
+    let actual = markers(&result.redline, "word/document.xml", "bookmark");
+    assert_eq!(
+        actual.iter().map(|m| m.0).collect::<Vec<_>>(),
+        [0, 0, 1, 1],
+        "{actual:?}"
     );
 }
 
@@ -669,5 +721,19 @@ fn deleted_permission_f1_accepts_without_either_endpoint() {
         markers(&accepted, "word/document.xml", "perm").is_empty(),
         "{}",
         part_string(&accepted, "word/document.xml").unwrap()
+    );
+}
+
+#[test]
+fn bookmark_endpoint_in_deleted_text_is_not_a_revision_crossing() {
+    let source = docx(
+        r#"<w:p><w:r><w:t>Intro </w:t></w:r><w:bookmarkStart w:id="5" w:name="Clause"/><w:r><w:t>text.</w:t></w:r></w:p><w:p><w:del w:id="1" w:author="Alice"><w:r><w:delText>Gone</w:delText></w:r><w:bookmarkEnd w:id="5"/><w:r><w:delText> words.</w:delText></w:r></w:del></w:p>"#,
+    );
+    let findings = jubarte::validate::validate(&source).unwrap();
+    assert!(
+        !findings
+            .iter()
+            .any(|f| f.code == "BOOKMARK_CROSSES_REVISION"),
+        "{findings:?}"
     );
 }

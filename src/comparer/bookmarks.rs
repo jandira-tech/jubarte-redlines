@@ -45,6 +45,8 @@ type EndpointAttributes = Vec<(XName, String)>;
 /// One source range and its character interval in the source projection.
 struct Marker {
     name: String,
+    /// Source-order occurrence distinguishes repeated permission ids.
+    ordinal: usize,
     /// Permission endpoints retain every source attribute, including their ids.
     permission: Option<(EndpointAttributes, EndpointAttributes)>,
     start: usize,
@@ -108,6 +110,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
     let mut text: Vec<char> = Vec::new();
     let mut with_text: HashSet<NodeId> = HashSet::new();
     let mut names: HashSet<String> = HashSet::new();
+    let mut occurrences: HashMap<String, usize> = HashMap::new();
     let mut open: HashMap<String, Marker> = HashMap::new();
     let mut markers = Vec::new();
     for n in dom.descendant_nodes(body) {
@@ -133,7 +136,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
             .filter(|s| !s.is_empty()) else {
                 continue;
             };
-            if bm == GO_BACK || !names.insert(bm.to_string()) {
+            if bm == GO_BACK || (!permission && !names.insert(bm.to_string())) {
                 continue;
             }
             let cols = dom.attribute(n, &col_first).map(|first| {
@@ -150,7 +153,9 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                         .skip(1)
                         .all(|node| !dom.name_is(node, &t) || dom.value(node).is_empty())
                 });
+            let ordinal = occurrences.entry(bm.to_string()).or_default();
             let marker = Marker {
+                ordinal: *ordinal,
                 name: bm.to_string(),
                 permission: permission.then(|| (dom.attributes(n), Vec::new())),
                 start: text.len(),
@@ -164,6 +169,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                 cols,
                 in_sdt: !dom.ancestors(n, Some(&W::name("sdt"))).is_empty(),
             };
+            *ordinal += 1;
             open.insert(id.to_string(), marker);
         } else if name == end
             && let Some(mut marker) = open.remove(id)
@@ -481,7 +487,12 @@ pub fn carry_matching_bookmarks(
     b_marks.retain(|m| keep(&m.name));
     // A surviving start is not an empty range when its original end was
     // deleted. Keep the original pair on the projection containing that text.
-    b_marks.retain(|b| b.paired || !a_marks.iter().any(|a| a.name == b.name && a.paired));
+    let complete: HashSet<_> = a_marks
+        .iter()
+        .filter(|m| m.paired)
+        .map(|m| m.name.as_str())
+        .collect();
+    b_marks.retain(|b| b.paired || !complete.contains(b.name.as_str()));
     let (present, mut next_id) = settle_present_bookmarks(dom, result_root);
     if a_marks.is_empty() && b_marks.is_empty() {
         return;
@@ -525,23 +536,48 @@ pub(crate) fn carry_permissions(
 ) {
     let (a_text, a_marks) = extract(original.0, original.1, true);
     let (b_text, mut b_marks) = extract(revised.0, revised.1, true);
-    b_marks.retain(|b| b.paired || !a_marks.iter().any(|a| a.name == b.name && a.paired));
-    let b_ids: HashSet<&str> = b_marks.iter().map(|m| m.name.as_str()).collect();
-    let present: HashSet<String> = dom
-        .descendants(root, Some(&W::name("permStart")))
-        .into_iter()
-        .filter_map(|n| dom.attribute(n, &W::id()).map(str::to_string))
-        .collect();
-    let b_new: Vec<&Marker> = b_marks
+    let complete: HashSet<_> = a_marks
         .iter()
-        .filter(|m| !present.contains(&m.name))
+        .filter(|m| m.paired)
+        .map(|m| (m.name.as_str(), m.ordinal))
         .collect();
-    let a_only: Vec<&Marker> = a_marks
+    b_marks.retain(|b| b.paired || !complete.contains(&(b.name.as_str(), b.ordinal)));
+    let b_ids: HashSet<_> = b_marks
         .iter()
-        .filter(|m| !b_ids.contains(m.name.as_str()) && !present.contains(&m.name))
+        .map(|m| (m.name.as_str(), m.ordinal))
+        .collect();
+    // Opaque content can retain either endpoint. Index both kinds once, and
+    // retain the copied endpoint when removing duplicate injections.
+    let mut present = HashMap::new();
+    let mut existing = HashSet::new();
+    for node in dom.descendants(root, None) {
+        if let Some(name) = dom.name(node)
+            && [W::name("permStart"), W::name("permEnd")].contains(&name)
+            && let Some(id) = dom.attribute(node, &W::id())
+        {
+            *present.entry((name, id.to_string())).or_insert(0usize) += 1;
+            existing.insert(node);
+        }
+    }
+    let b_new: Vec<_> = b_marks.iter().collect();
+    let a_only: Vec<_> = a_marks
+        .iter()
+        .filter(|m| !b_ids.contains(&(m.name.as_str(), m.ordinal)))
         .collect();
     inject_side(dom, root, (&b_text, &b_new), true, author, &mut 0);
     inject_side(dom, root, (&a_text, &a_only), false, author, &mut 0);
+    for node in dom.descendants(root, None) {
+        if !existing.contains(&node)
+            && let Some(key) = dom
+                .name(node)
+                .zip(dom.attribute(node, &W::id()).map(str::to_string))
+            && let Some(count) = present.get_mut(&key)
+            && *count > 0
+        {
+            *count -= 1;
+            dom.remove(node);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -578,6 +614,7 @@ mod tests {
             let container = dom.elements(owner, None)[0];
             let marker = Marker {
                 name: "Clause".into(),
+                ordinal: 0,
                 permission: None,
                 paired: true,
                 start: if trailing_start { 3 } else { 0 },
