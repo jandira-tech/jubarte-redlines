@@ -799,8 +799,8 @@ fn a_bookmark_between_two_changes_stays_between_them() {
 #[test]
 fn latest_dates_undated_revisions_marks_and_comments() {
     let latest = "2026-10-17T16:59:00.125+02:00";
-    // Re-reading a written view falls back to Word's Z-labelled wall clock:
-    // conversion does not emit dateUtc extension attributes.
+    // Revisions preserve the instant and offset. Plain comments retain only
+    // Word's Z-labelled wall clock because they have no extension part.
     let stored_latest = "2026-10-17T16:59:00.125Z";
     let explicit = "2026-10-01T09:00:00Z";
     let view = format!(
@@ -820,7 +820,7 @@ fn latest_dates_undated_revisions_marks_and_comments() {
         let expected = if change.text == "dated" {
             explicit
         } else {
-            stored_latest
+            latest
         };
         assert_eq!(change.date.as_deref(), Some(expected), "{change:?}");
     }

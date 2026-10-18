@@ -456,7 +456,7 @@ fn corpus_round_trip_preserves_all_361_stored_dates() {
     let output = jubarte::markdown::markdown_to_docx(&md, &Default::default()).unwrap();
     assert_eq!(stored_dates(&output.docx), original);
     assert!(
-        !part_string(&output.docx, "word/document.xml")
+        part_string(&output.docx, "word/document.xml")
             .unwrap()
             .contains("dateUtc")
     );
@@ -473,6 +473,87 @@ fn offset_view_writer_preserves_wall_clock_for_marks_and_comments() {
         "{comments}"
     );
     assert!(!comments.contains("dateUtc"));
+    assert!(part_string(&output.docx, "word/commentsExtensible.xml").is_none());
+}
+
+#[test]
+fn offset_view_revision_writes_utc_and_root_compatibility() {
+    let mut reference = jubarte::opc::PartFs::open(&docx("<w:p/>")).unwrap();
+    let source = reference.part_string("word/document.xml").unwrap().replace("<w:document ", "<w:document xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" mc:Ignorable=\"w14\" ");
+    reference.set_part("word/document.xml", source.into_bytes());
+    let reference = reference.to_zip().unwrap();
+
+    for (date, utc) in [
+        ("2026-09-25T20:04:00-04:00", "2026-09-26T00:04:00Z"),
+        ("2026-01-01T00:15:00.500+05:30", "2025-12-31T18:45:00.5Z"),
+        ("2026-09-25T20:04:00+00:00", "2026-09-25T20:04:00Z"),
+    ] {
+        let md = format!(
+            "---\nauthors:\n  A: Alice # 1 revision, {date}\n---\n\n{{++text++}}{{>>r1 @A<<}}\n"
+        );
+        let output = jubarte::markdown::markdown_to_docx(
+            &md,
+            &jubarte::markdown::DocxOptions {
+                reference: Some(&reference),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let xml = part_string(&output.docx, "word/document.xml").unwrap();
+        assert!(xml.contains(&format!(r#"w16du:dateUtc="{utc}""#)), "{xml}");
+        let mut dom = jubarte::xmllinq::Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+        assert_eq!(
+            dom.attribute(root, &xmlns.name("w16du")),
+            Some("http://schemas.microsoft.com/office/word/2023/wordml/word16du")
+        );
+        assert_eq!(
+            dom.attribute(root, &xmlns.name("mc")),
+            Some(jubarte::namespaces::MC::URI)
+        );
+        assert!(
+            dom.attribute(root, &jubarte::namespaces::MC::name("Ignorable"))
+                .unwrap()
+                .split_whitespace()
+                .any(|p| p == "w16du")
+        );
+        assert!(
+            dom.attribute(root, &jubarte::namespaces::MC::name("Ignorable"))
+                .unwrap()
+                .split_whitespace()
+                .any(|p| p == "w14")
+        );
+        let report = common::validity::check_word_valid_package(&output.docx);
+        assert!(report.ok(), "{:?}", report.errors);
+    }
+}
+
+#[test]
+fn z_view_revision_keeps_legacy_attributes() {
+    let md = "---\nauthors:\n  A: Alice # 1 revision, 2026-09-25T20:04:00Z\n---\n\n{++text++}{>>r1 @A<<}\n";
+    let output = jubarte::markdown::markdown_to_docx(md, &Default::default()).unwrap();
+    let xml = part_string(&output.docx, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"w:date="2026-09-25T20:04:00Z""#));
+    assert!(!xml.contains("w16du"));
+}
+
+#[test]
+fn threaded_comment_offset_writes_linked_utc_instant() {
+    let md = "---\nauthors:\n  A: Alice # 2026-09-25T20:04:00-04:00\n---\n\n{==anchor==}{>>c0 @A: note<<}{>>c1 @A re c0: reply<<}\n";
+    let output = jubarte::markdown::markdown_to_docx(md, &Default::default()).unwrap();
+    let ext = part_string(&output.docx, "word/commentsExtensible.xml").unwrap();
+    assert!(
+        ext.contains(r#"w16cex:dateUtc="2026-09-26T00:04:00Z""#),
+        "{ext}"
+    );
+    let comments = jubarte::comments::list_comments(&output.docx).unwrap();
+    assert_eq!(comments.len(), 2);
+    for comment in comments {
+        assert_eq!(comment.date.as_deref(), Some("2026-09-25T20:04:00-04:00"));
+    }
+    common::validity::assert_word_valid_package(&output.docx);
 }
 
 fn paired_fraction_round_trip(local: &str, utc: &str, reported: &str) {

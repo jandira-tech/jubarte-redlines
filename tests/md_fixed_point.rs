@@ -117,8 +117,8 @@ fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
     Ok(docx)
 }
 
-/// Each author's mark and comment dates, as the reader reports them: Word's
-/// UTC instant (`w16du:dateUtc`) when the mark has one, else `w:date`.
+/// Each author's raw mark and comment dates: the revision UTC attribute
+/// when present, otherwise the stored wall clock.
 fn author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
     use jubarte::namespaces::W;
     let date_utc = jubarte::xmllinq::XName::get(
@@ -153,6 +153,26 @@ fn author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
     dates
 }
 
+/// Public reports resolve revision pairs and linked comment UTC dates, keeping
+/// the author's offset. Use these as well as the original raw-instant guard.
+fn reported_author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
+    let (Ok(changes), Ok(comments)) = (
+        jubarte::changes::list_changes(docx),
+        jubarte::comments::list_comments(docx),
+    ) else {
+        return HashMap::new();
+    };
+    let mut dates: HashMap<String, Vec<Option<String>>> = HashMap::new();
+    for (author, date) in changes
+        .into_iter()
+        .filter_map(|c| c.author.map(|author| (author, c.date)))
+        .chain(comments.into_iter().map(|c| (c.author, c.date)))
+    {
+        dates.entry(author).or_default().push(date);
+    }
+    dates
+}
+
 fn author_has_date(line: &str, date: &str, dates: &HashMap<String, Vec<Option<String>>>) -> bool {
     use saphyr::LoadableYamlNode;
     let Ok(yaml) = saphyr::Yaml::load_from_str(line) else {
@@ -173,6 +193,7 @@ fn author_has_date(line: &str, date: &str, dates: &HashMap<String, Vec<Option<St
 // Undated marks take the latest timestamp, which can become shared.
 fn round_trip_comparable(markdown: &str, docx: &[u8]) -> String {
     let dates = author_dates(docx);
+    let reported_dates = reported_author_dates(docx);
     let mut front_matter = false;
     let mut authors = false;
     let mut out = String::new();
@@ -187,7 +208,8 @@ fn round_trip_comparable(markdown: &str, docx: &[u8]) -> String {
             && authors
             && line.starts_with(' ')
             && let Some((before, date)) = line.rsplit_once(", latest ")
-            && author_has_date(before, date, &dates)
+            && (author_has_date(before, date, &dates)
+                || author_has_date(before, date, &reported_dates))
         {
             out.push_str(before);
             out.push_str(", ");
@@ -228,6 +250,23 @@ fn latest_and_shared_headers_compare_after_undated_marks_take_latest() {
     assert_ne!(
         round_trip_comparable(latest, &docx),
         round_trip_comparable(&shared.replace("16:59:00Z", "16:58:00Z"), &docx)
+    );
+}
+
+#[test]
+fn latest_and_shared_offset_headers_compare_only_when_all_dates_agree() {
+    let latest =
+        "---\nauthors:\n  AL: Ann Lee # 2 revisions, latest 2026-09-25T20:04:00-04:00\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    let docx = dated_marks("2026-09-25T20:04:00-04:00");
+    assert_eq!(
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared, &docx)
+    );
+    let wrong_offset = dated_marks("2026-09-25T20:04:00-03:00");
+    assert_ne!(
+        round_trip_comparable(latest, &wrong_offset),
+        round_trip_comparable(&shared, &wrong_offset)
     );
 }
 
@@ -886,6 +925,30 @@ fn markdown_and_docx_round_trip_exactly() {
         cases.len(),
         summary.join("\n")
     );
+}
+
+#[test]
+fn ids_fields_markdown_round_trip_is_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = markdown_case(
+        dir.path(),
+        Path::new(FIXTURES).join("ids-fields.md").as_path(),
+        None,
+    );
+    assert_eq!(case.got.unwrap(), case.want);
+}
+
+#[test]
+fn offset_namespace_declaration_preserves_opaque_drawing_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = docx_case(
+        dir.path(),
+        Path::new(
+            "tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/ac6cd8d92f.docx",
+        ),
+    );
+    assert_eq!(case.got.unwrap(), case.want);
+    assert!(case.docx.is_empty(), "{:?}", case.docx);
 }
 
 /// A committed view of a docx fixture is what `jubarte read` prints for it

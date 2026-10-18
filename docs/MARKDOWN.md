@@ -650,7 +650,11 @@ undated marks and comments take that latest timestamp; explicit inline
 `--dates` timestamps keep their own dates. If every mark then shares one
 timestamp, reading the result prints it bare. A view date with an offset
 writes its wall clock followed by `Z` into `w:date`, Word's encoding;
-conversion does not emit `w16du:dateUtc`.
+revision elements also store the instant in `w16du:dateUtc`, with the namespace
+declared ignorable on the part root. A `Z` view date writes only `w:date`.
+For replies or resolved comments, the writer already creates
+`commentsExtensible.xml`; offset dates store their instant there, linked by
+durable id. Plain comments keep their wall clock only and do not add this part.
 
 Older views with a day range (`2026-03-02..2026-03-04`) still convert as
 before: undated marks and comments take the first day at `00:00:00Z`, and

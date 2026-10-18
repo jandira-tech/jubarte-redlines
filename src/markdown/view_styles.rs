@@ -41,11 +41,7 @@ pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMar
     let mut out = styles.to_string();
     for (holder, marks) in changes {
         for mark in marks {
-            let date = if mark.date.is_empty() {
-                String::new()
-            } else {
-                format!(" w:date=\"{}\"", escape(&super::xml::word_date(&mark.date)))
-            };
+            let date = super::xml::date_attribute(&mark.date);
             let id = mark
                 .id
                 .map_or_else(String::new, |id| format!(" w:id=\"{id}\""));

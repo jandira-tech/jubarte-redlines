@@ -2135,7 +2135,7 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
                     "<w:comment w:id=\"{}\" w:author=\"{}\"{} w:initials=\"{}\">",
                     comment.id,
                     escape(author),
-                    date_attribute(date),
+                    legacy_date_attribute(date),
                     escape(&initials)
                 );
             }
@@ -2561,7 +2561,25 @@ pub(super) fn word_date(date: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn date_attribute(date: &str) -> String {
+/// A revision keeps Word's wall clock and, for an explicit offset, its instant.
+pub(super) fn date_attribute(date: &str) -> String {
+    let mut attributes = legacy_date_attribute(date);
+    if let Some(utc) = offset_date_utc(date) {
+        let _ = write!(attributes, " w16du:dateUtc=\"{utc}\"");
+    }
+    attributes
+}
+
+/// The instant of an explicit offset view date; `Z` keeps the legacy path.
+pub(super) fn offset_date_utc(date: &str) -> Option<String> {
+    if !matches!(word_date(date), Cow::Owned(_)) {
+        return None;
+    }
+    let (seconds, fraction) = crate::convert::timestamp_order_key(date)?;
+    Some(crate::convert::timestamp_with_offset(seconds, fraction, 0))
+}
+
+fn legacy_date_attribute(date: &str) -> String {
     if date.is_empty() {
         String::new()
     } else {

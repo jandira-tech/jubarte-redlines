@@ -181,14 +181,7 @@ impl Marks<'_> {
                 (name, tag.date.clone().unwrap_or(date))
             })
             .unwrap_or_else(|| (self.people.author.clone(), self.people.date.clone()));
-        let date = if date.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " w:date=\"{}\"",
-                super::xml::escape(&super::xml::word_date(&date))
-            )
-        };
+        let date = super::xml::date_attribute(&date);
         format!(
             "{name} w:id=\"{id}\" w:author=\"{}\"{date}",
             super::xml::escape(&author)

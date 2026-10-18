@@ -81,6 +81,11 @@ fn threads(
     let mut family = CommentFamily::load(package, main).map_err(err)?;
     for comment in comments {
         family.set_thread(comment.id, comment.parent, comment.done);
+        if let Some((_, date)) = &comment.by
+            && let Some(utc) = xml::offset_date_utc(date)
+        {
+            family.set_date_utc(comment.id, &utc);
+        }
     }
     for comment in comments.iter().filter(|c| c.done && c.parent.is_none()) {
         family.set_done(comment.id, true);
@@ -300,6 +305,39 @@ pub(super) fn assemble(
     );
     if package.content_type_for(&format!("/{main}")).is_none() {
         package.add_content_type_override(&format!("/{main}"), MAIN_CT);
+    }
+    // Revision attributes are assembled as XML strings. Bind the extension
+    // before parsing, then reuse the comparer's Word compatibility contract.
+    for part in package.parts() {
+        if !part.ends_with(".xml") {
+            continue;
+        }
+        let Some(mut source) = package
+            .part_string(&part)
+            .filter(|s| s.contains(" w16du:dateUtc="))
+        else {
+            continue;
+        };
+        let start = source.find("<w:").expect("a Word part root");
+        let end = start + source[start..].find('>').expect("a root start tag");
+        if !source[start..end].contains("xmlns:w16du=") {
+            source.insert_str(
+                end,
+                " xmlns:w16du=\"http://schemas.microsoft.com/office/word/2023/wordml/word16du\"",
+            );
+        }
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&source);
+        if let Some(root) = dom.root(doc) {
+            crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut dom, root);
+            // Only rewrite the root tag. Re-serializing the content would
+            // normalize attribute whitespace inside opaque drawing payloads.
+            let declared = serialize_element(&dom, root);
+            let declared_end = declared.find('>').expect("a root start tag");
+            let source_end = start + source[start..].find('>').expect("a root start tag");
+            source.replace_range(start..=source_end, &declared[..=declared_end]);
+            package.set_part(&part, source.into_bytes());
+        }
     }
     package.to_zip().map_err(err)
 }

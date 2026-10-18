@@ -71,8 +71,7 @@ fn revision_notes_keep_their_author_and_date() {
 fn comment_notes_keep_their_author_initials_and_date() {
     let dir = tempfile::tempdir().unwrap();
     let (source, back) = round_trip(dir.path());
-    // The source reports the paired instant; a view write preserves the
-    // stored wall clock and does not emit the UTC extension.
+    // Threaded comments preserve both the stored wall clock and linked instant.
     assert_eq!(
         jubarte::comments::list_comments(&source).unwrap()[1]
             .date
@@ -83,7 +82,7 @@ fn comment_notes_keep_their_author_initials_and_date() {
         jubarte::comments::list_comments(&back).unwrap()[1]
             .date
             .as_deref(),
-        Some("2026-10-09T16:13:00Z")
+        Some("2026-10-09T16:13:00-04:00")
     );
     let comments = |docx: &[u8]| -> Vec<String> {
         use jubarte::namespaces::W;

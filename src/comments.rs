@@ -716,6 +716,18 @@ impl CommentFamily {
         Some((meta.parent, meta.done, date))
     }
 
+    /// Set a linked UTC date before storing the existing comment family.
+    pub(crate) fn set_date_utc(&mut self, id: u32, date: &str) {
+        let Some(meta) = self.meta.get_mut(&id) else {
+            return;
+        };
+        let row = *meta
+            .cex_row
+            .get_or_insert_with(|| self.dom.new_element(XName::get("commentExtensible", CEX)));
+        self.dom
+            .set_attribute_value(row, &XName::get("dateUtc", CEX), Some(date));
+    }
+
     /// Add a comment copied whole from another package (its formatting,
     /// line breaks and links stay): `xml` is its `w:comment` element with
     /// the namespaces it uses declared on it. It takes id `id`, loses its
