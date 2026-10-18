@@ -918,7 +918,15 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .take_while(|&a| !STORIES.contains(&local(dom, a).as_str()))
                     .any(|a| local(dom, a) == name) =>
             {
-                f.add(&format!("{name}-nested-in-{name}"), part, path(dom, n));
+                let alternating = dom
+                    .ancestors(n, None)
+                    .into_iter()
+                    .take_while(|&a| {
+                        !STORIES.contains(&local(dom, a).as_str()) && local(dom, a) != name
+                    })
+                    .any(|a| matches!(local(dom, a).as_str(), "ins" | "del"));
+                let relation = if alternating { "interleaved" } else { "nested" };
+                f.add(&format!("{name}-{relation}-in-{name}"), part, path(dom, n));
             }
             "body" => {
                 let kids = dom.elements(n, None);
@@ -2406,7 +2414,20 @@ pub fn findings(docx: &[u8]) -> Result<Vec<crate::validate::Finding>, String> {
             } else {
                 format!("{kind} in '{part}': {detail}")
             };
-            out.push(crate::validate::Finding::new(&code, part, "", message));
+            let mut finding = crate::validate::Finding::new(&code, part, "", message);
+            if code == "NESTED_SAME_REVISION" {
+                if matches!(kind.as_str(), "ins-nested-in-ins" | "del-nested-in-del") {
+                    finding.severity = "info".to_string();
+                    finding
+                        .message
+                        .push_str("; Word opens it and reads it faithfully (#1134, 2026-10-17)");
+                } else {
+                    finding
+                        .message
+                        .push_str("; Word opens it but misreads reject-all (#1134, 2026-10-17)");
+                }
+            }
+            out.push(finding);
         }
     }
     Ok(out)
@@ -2438,7 +2459,10 @@ fn finding_code(kind: &str) -> String {
         "instrText-empty" | "delInstrText-empty" => "EMPTY_FIELD_CODE",
         "cell-not-ending-in-p" => "CELL_WITHOUT_PARAGRAPH",
         "row-without-cell" => "ROW_WITHOUT_CELL",
-        "ins-nested-in-ins" | "del-nested-in-del" => "NESTED_SAME_REVISION",
+        "ins-nested-in-ins"
+        | "del-nested-in-del"
+        | "ins-interleaved-in-ins"
+        | "del-interleaved-in-del" => "NESTED_SAME_REVISION",
         "body-sectPr-not-last" => "SECTPR_NOT_LAST",
         k if k.starts_with("bookmark-in-") && k.ends_with("-control") => {
             "BOOKMARK_IN_SINGLE_VALUE_CONTROL"

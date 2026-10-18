@@ -40,7 +40,8 @@
 //! | `RUN_OUTSIDE_PARAGRAPH` | yes | no |
 //! | `FIELD_UNBALANCED`, `FIELD_SPLIT_DELETION` | yes | no |
 //! | `FIELD_CODE_STATE` | no | no |
-//! | `EMPTY_FIELD_CODE`, `ROW_WITHOUT_CELL`, `NESTED_SAME_REVISION`, `SECTPR_NOT_LAST` | yes | no |
+//! | `EMPTY_FIELD_CODE`, `ROW_WITHOUT_CELL`, `SECTPR_NOT_LAST` | yes | no |
+//! | `NESTED_SAME_REVISION` | no: Word opens direct same-kind nests faithfully (info); alternating nests misread reject-all (warning); probe 2026-10-17, #1134 | no |
 //! | `CELL_WITHOUT_PARAGRAPH` | yes | yes: an empty paragraph is appended |
 //! | `NOTE_REFERENCE_DANGLING` | yes | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
@@ -90,7 +91,8 @@ pub struct Finding {
     /// The rule set it belongs to: one of [`RULE_SETS`].
     pub set: String,
     /// `error`, `warning` or `info`. A `word` finding is an `error` when
-    /// Word-fatal and a `warning` (a lead) otherwise.
+    /// Word-fatal; otherwise a `warning` (a lead), or `info` for direct
+    /// same-kind revision nesting that Word reads faithfully.
     pub severity: String,
     /// Package part the finding sits in.
     pub part: String,
@@ -164,7 +166,6 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "FIELD_SPLIT_DELETION"
         | "EMPTY_FIELD_CODE"
         | "ROW_WITHOUT_CELL"
-        | "NESTED_SAME_REVISION"
         | "SECTPR_NOT_LAST"
         | "NOTE_REFERENCE_DANGLING" => (true, false),
         "DUPLICATE_REVISION_ID"
@@ -178,7 +179,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 23] = [
+const RING1_CODES: [&str; 24] = [
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
     "MALFORMED_XML",
@@ -190,6 +191,7 @@ const RING1_CODES: [&str; 23] = [
     "DUPLICATE_DOCPR_ID",
     "PARA_ID_OUT_OF_RANGE",
     "TEXT_INSIDE_DELETION",
+    "INSTR_TEXT_INSIDE_DELETION",
     "DELTEXT_OUTSIDE_DELETION",
     "MOVEFROM_WITH_DELTEXT",
     "BOOKMARK_IN_SINGLE_VALUE_CONTROL",
@@ -900,17 +902,19 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
             continue;
         };
-        for del in dom.descendants(root, Some(&W::del())) {
-            for t in dom.descendants(del, Some(&W::t())) {
-                if ancestor_has(&dom, t, del, "ins") {
-                    continue;
+        for (live, deleted, code) in [
+            ("t", "delText", "TEXT_INSIDE_DELETION"),
+            ("instrText", "delInstrText", "INSTR_TEXT_INSIDE_DELETION"),
+        ] {
+            for t in dom.descendants(root, Some(&W::name(live))) {
+                if under_deletion(&dom, t) {
+                    out.push(Finding::new(
+                        code,
+                        &name,
+                        element_path(&dom, t),
+                        format!("w:{live} under w:del in '{name}' (must be w:{deleted})"),
+                    ));
                 }
-                out.push(Finding::new(
-                    "TEXT_INSIDE_DELETION",
-                    &name,
-                    element_path(&dom, t),
-                    format!("w:t under w:del in '{name}' (must be w:delText)"),
-                ));
             }
         }
         let move_from = W::name("moveFrom");
@@ -928,6 +932,15 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
             }
         }
     }
+}
+
+/// Any enclosing deletion counts, even through an insertion, but only
+/// within the run's own story (#1134, Word probe 2026-10-17).
+fn under_deletion(dom: &Dom, node: NodeId) -> bool {
+    dom.ancestors(node, None)
+        .into_iter()
+        .take_while(|&a| dom.name(a).is_none_or(|n| n.local_name() != "txbxContent"))
+        .any(|a| dom.name(a).is_some_and(|n| n == W::del()))
 }
 
 /// True when a `w:del` or `w:moveFrom` covers `node` in its own story (a
@@ -1786,12 +1799,10 @@ fn edit_part(pkg: &mut PartFs, part: &str, f: impl FnOnce(&mut Dom, NodeId)) {
 /// deletion covers, become live text again.
 fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
     let mut renames: Vec<(NodeId, XName)> = Vec::new();
-    for del in dom.descendants(root, Some(&W::del())) {
-        for (live, deleted) in [("t", "delText"), ("instrText", "delInstrText")] {
-            for t in dom.descendants(del, Some(&W::name(live))) {
-                if !ancestor_has(dom, t, del, "ins") {
-                    renames.push((t, W::name(deleted)));
-                }
+    for (live, deleted) in [("t", "delText"), ("instrText", "delInstrText")] {
+        for t in dom.descendants(root, Some(&W::name(live))) {
+            if under_deletion(dom, t) {
+                renames.push((t, W::name(deleted)));
             }
         }
     }
@@ -2207,7 +2218,7 @@ mod validation_boundary_tests {
     }
 
     #[test]
-    fn deletion_scope_stops_at_textboxes_and_nested_insertions_stay_live() {
+    fn deletion_scope_stops_at_textboxes_and_covers_nested_insertions() {
         let mut dom = Dom::new();
         let root = xml(
             &mut dom,
@@ -2223,11 +2234,13 @@ mod validation_boundary_tests {
             .into_iter()
             .map(|n| dom.value(n))
             .collect::<Vec<_>>();
-        assert_eq!(live, ["inserted", "uncovered", "moved", "stranded"]);
-        assert_eq!(
-            dom.value(dom.descendants(root, Some(&W::name("delText")))[0]),
-            "deleted"
-        );
+        assert_eq!(live, ["uncovered", "moved", "stranded"]);
+        let deleted = dom
+            .descendants(root, Some(&W::name("delText")))
+            .into_iter()
+            .map(|n| dom.value(n))
+            .collect::<Vec<_>>();
+        assert_eq!(deleted, ["deleted", "inserted"]);
     }
 
     #[test]
