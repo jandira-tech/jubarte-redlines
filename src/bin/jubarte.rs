@@ -457,6 +457,19 @@ fn run_resolution(
                 comment.id, comment.author,
             );
         }
+        // #1223: --id cannot name a comment-body change, so a selection can
+        // leave some; say how many (an empty selection resolves them all).
+        if resolved.comment_changes_left > 0 {
+            eprintln!(
+                "note: {} tracked change{} inside comments were left; accept or reject all to settle them",
+                resolved.comment_changes_left,
+                if resolved.comment_changes_left == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+            );
+        }
         Ok(())
     };
     match run() {

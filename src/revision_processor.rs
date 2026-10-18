@@ -931,8 +931,12 @@ pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockCo
         .collect()
 }
 
-/// `W.BlockLevelContentContainers` (PtOpenXmlUtil.cs :5569).
-fn block_level_content_containers() -> [XName; 7] {
+/// `W.BlockLevelContentContainers` (PtOpenXmlUtil.cs :5569), plus
+/// `w:comment`: the C# pipeline never visits `comments.xml`, but Word's
+/// Accept/Reject All does, and a deleted or inserted paragraph mark inside
+/// a comment merges the comment's own paragraphs — never across the
+/// `w:comment` boundary.
+fn block_level_content_containers() -> [XName; 8] {
     [
         W::body(),
         W::tc(),
@@ -941,6 +945,7 @@ fn block_level_content_containers() -> [XName; 7] {
         W::ftr(),
         W::endnote(),
         W::footnote(),
+        W::name("comment"),
     ]
 }
 
@@ -3336,6 +3341,12 @@ fn accept_content(
     } else {
         e
     };
+    // #1223: a `w:comment` must keep at least one `w:p`. Rejecting a
+    // comment's only insertion or accepting a wholly deleted one can empty
+    // it; Word writes an empty `w:p` there.
+    if dom.name(e) == Some(W::name("comments")) {
+        ensure_comment_paragraphs(dom, e);
+    }
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
     let unique_id = PT::unique_id();
@@ -3374,6 +3385,22 @@ fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bo
     } else {
         for c in kept {
             dom.add(reverted, c);
+        }
+    }
+}
+
+/// Give every `w:comment` under a `w:comments` root without a block child
+/// (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`) an empty paragraph (#1223).
+fn ensure_comment_paragraphs(dom: &mut Dom, root: NodeId) {
+    let block = [W::p(), W::tbl(), W::sdt(), W::name("customXml")];
+    for comment in dom.elements(root, Some(&W::name("comment"))) {
+        if !dom
+            .elements(comment, None)
+            .into_iter()
+            .any(|c| dom.name(c).is_some_and(|n| block.contains(&n)))
+        {
+            let p = dom.new_element(W::p());
+            dom.add(comment, p);
         }
     }
 }
@@ -3433,21 +3460,36 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
     Some(ne)
 }
 
-/// The parts `AcceptRevisions`/`RejectRevisions` (:1277/:31) walk, in the C#
-/// order: main, headers, footers, endnotes, footnotes, then styles (flagged).
-/// The main document's numbering part, when it has one.
-fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
+/// The part `rel` of the main part targets (`numbering`, `comments`),
+/// resolved against the main part; `None` when the package has none.
+fn related_part(pkg: &crate::opc::PartFs, rel: &str) -> Option<String> {
     let main = pkg.main_document_part()?;
     let rels = pkg.read_rels_for(&main)?;
     rels.items
         .iter()
         .find(|r| {
             r.target_mode.as_deref() != Some("External")
-                && r.rel_type.rsplit('/').next() == Some("numbering")
+                && r.rel_type.rsplit('/').next() == Some(rel)
         })
         .map(|r| pkg.resolve_rel_target(&main, &r.target))
 }
 
+/// The main document's numbering part, when it has one.
+fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
+    related_part(pkg, "numbering")
+}
+
+/// The main document's comments part (`word/comments.xml`), when it has
+/// one. Its revisions resolve like every other part's, but they are not
+/// listed, so `changes` skips this part.
+pub(crate) fn comments_part(pkg: &crate::opc::PartFs) -> Option<String> {
+    related_part(pkg, "comments")
+}
+
+/// The parts `AcceptRevisions`/`RejectRevisions` (:1277/:31) walk, in the C#
+/// order — main, headers, footers, endnotes, footnotes, then styles
+/// (flagged) — with the comments part Word's own Accept/Reject All also
+/// settles (#1223) between the notes and the styles.
 pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
     let main = pkg
         .main_document_part()
@@ -3456,6 +3498,7 @@ pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, b
     let mut footers = Vec::new();
     let mut endnotes = Vec::new();
     let mut footnotes = Vec::new();
+    let mut comments = Vec::new();
     let mut styles = Vec::new();
     if let Some(rels) = pkg.read_rels_for(&main) {
         for r in &rels.items {
@@ -3467,6 +3510,7 @@ pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, b
                 "footer" => &mut footers,
                 "endnotes" => &mut endnotes,
                 "footnotes" => &mut footnotes,
+                "comments" => &mut comments,
                 "styles" => &mut styles,
                 _ => continue,
             };
@@ -3479,6 +3523,7 @@ pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, b
         .chain(footers)
         .chain(endnotes)
         .chain(footnotes)
+        .chain(comments)
     {
         out.push((p, false));
     }

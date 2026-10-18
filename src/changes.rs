@@ -14,7 +14,9 @@
 //! ([`crate::ids::ChangeId::short`]). Resolving some changes never renumbers the rest, so an
 //! id listed before stays valid after. Word moves text as one change:
 //! selecting either side of a move selects both sides and their range
-//! markers.
+//! markers. Tracked changes inside comment bodies (`word/comments.xml`)
+//! resolve under Accept/Reject All and under author or kind filters, but
+//! they are never listed and no `--id` names them (#1223).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -449,7 +451,8 @@ pub fn changes_text(changes: &[Change]) -> String {
 }
 
 /// Every tracked change, story by story (body, headers, footers, endnotes,
-/// footnotes, styles), in document order.
+/// footnotes, styles), in document order. Revisions inside comment bodies
+/// are not listed: the view has no ids for them yet (#1223).
 ///
 /// # Errors
 ///
@@ -468,11 +471,17 @@ pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeEr
 }
 
 /// The changes of an opened (transitional) package, as [`list_changes`]
-/// lists them.
+/// lists them. The comments part is revision-bearing (#1223) but its
+/// revisions stay unlisted — the view has no ids for them yet — so an
+/// `--id` cannot name one. Author and kind filters still resolve them.
 pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
     let main = main_part(pkg);
+    let comments = crate::revision_processor::comments_part(pkg);
     let mut out = Vec::new();
     for (part, _) in revision_bearing_parts(pkg) {
+        if Some(&part) == comments.as_ref() {
+            continue;
+        }
         let Some(xml) = pkg.part_string(&part) else {
             continue;
         };
@@ -503,7 +512,7 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
 /// listed change; [`ChangeError::Package`] when
 /// the package cannot be read or rewritten.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
-    resolve(docx, filter, Resolution::Accept).map(|(document, _)| document)
+    resolve(docx, filter, Resolution::Accept).map(|(document, _, _)| document)
 }
 
 /// Reject the changes `filter` selects; the others stay tracked. A Strict
@@ -513,7 +522,7 @@ pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, Cha
 ///
 /// As [`accept_changes`].
 pub fn reject_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
-    resolve(docx, filter, Resolution::Reject).map(|(document, _)| document)
+    resolve(docx, filter, Resolution::Reject).map(|(document, _, _)| document)
 }
 
 /// A resolved document and the comments removed with its revisions.
@@ -524,6 +533,10 @@ pub struct ResolvedChanges {
     /// Removed comments, including replies, with their original ids and text.
     /// Surviving comments may be renumbered in `document`.
     pub removed_comments: Vec<crate::comments::CommentRecord>,
+    /// Tracked changes still inside comment bodies after the resolution:
+    /// an author or kind filter resolves them, an id selection cannot name
+    /// them, so a partial selection can leave some (#1223).
+    pub comment_changes_left: usize,
 }
 
 /// Accept selected changes and report comments that disappeared with them.
@@ -553,7 +566,7 @@ fn resolve_with_report(
     filter: &ChangeFilter,
     resolution: Resolution,
 ) -> Result<ResolvedChanges, ChangeError> {
-    let (document, removed) = resolve(docx, filter, resolution)?;
+    let (document, removed, comment_changes_left) = resolve(docx, filter, resolution)?;
     let removed_comments = if removed.is_empty() {
         Vec::new()
     } else {
@@ -566,6 +579,7 @@ fn resolve_with_report(
     Ok(ResolvedChanges {
         document,
         removed_comments,
+        comment_changes_left,
     })
 }
 
@@ -573,9 +587,9 @@ fn resolve(
     docx: &[u8],
     filter: &ChangeFilter,
     resolution: Resolution,
-) -> Result<(Vec<u8>, Vec<String>), ChangeError> {
+) -> Result<(Vec<u8>, Vec<String>, usize), ChangeError> {
     resolve_for_edit_or_cli(docx, filter, resolution, None)
-        .map(|(bytes, removed, _)| (bytes, removed))
+        .map(|out| (out.document, out.removed, out.comment_left))
 }
 
 /// Serialized document, pruned comment ids, and rescued comment ids.
@@ -590,6 +604,7 @@ pub(crate) fn resolve_for_edit(
     keep_comments: bool,
 ) -> Result<CommentResolution, ChangeError> {
     resolve_for_edit_or_cli(docx, filter, resolution, Some(keep_comments))
+        .map(|out| (out.document, out.removed, out.kept))
 }
 
 fn resolve_for_edit_or_cli(
@@ -597,14 +612,26 @@ fn resolve_for_edit_or_cli(
     filter: &ChangeFilter,
     resolution: Resolution,
     edit: Option<bool>,
-) -> Result<CommentResolution, ChangeError> {
+) -> Result<ResolutionOutcome, ChangeError> {
     let filter = &filter.normalized()?;
     let mut pkg = open(docx)?;
     let listed = changes_in(&pkg);
     filter.check(&listed)?;
+    // Comment-body revisions are never listed, but an author or kind
+    // filter selects them all the same (#1223).
+    let comment_changes = comment_changes_in(&pkg);
     // Nothing selected: nothing to resolve, and nothing else to touch.
-    if !listed.iter().any(|c| filter.matches(c)) {
-        return Ok((docx.to_vec(), Vec::new(), Vec::new()));
+    if !listed
+        .iter()
+        .chain(comment_changes.iter())
+        .any(|c| filter.matches(c))
+    {
+        return Ok(ResolutionOutcome {
+            document: docx.to_vec(),
+            removed: Vec::new(),
+            kept: Vec::new(),
+            comment_left: comment_changes.len(),
+        });
     }
     let main = main_part(&pkg);
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
@@ -641,10 +668,47 @@ fn resolve_for_edit_or_cli(
             Vec::new(),
         ),
     };
+    // The comment-body revisions a selection left tracked (#1223). The
+    // part may be gone when every comment went.
+    let comment_left = comment_changes_in(&pkg).len();
     let document = pkg
         .to_zip()
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    Ok((document, removed, kept))
+    Ok(ResolutionOutcome {
+        document,
+        removed,
+        kept,
+        comment_left,
+    })
+}
+
+/// The listed changes of the comments part only (empty when the package
+/// has none): [`changes_in`] skips it because the view has no ids there.
+fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
+    let Some(part) = crate::revision_processor::comments_part(pkg) else {
+        return Vec::new();
+    };
+    let Some(xml) = pkg.part_string(&part) else {
+        return Vec::new();
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return Vec::new();
+    };
+    carriers(&dom, root, "comments")
+        .into_iter()
+        .filter_map(|c| c.change)
+        .collect()
+}
+
+/// Serialized document, pruned comment ids, rescued comment ids, and the
+/// comment-body revisions a selection left tracked.
+struct ResolutionOutcome {
+    document: Vec<u8>,
+    removed: Vec<String>,
+    kept: Vec<String>,
+    comment_left: usize,
 }
 
 /// The package, Strict normalized to transitional as `inspect` reads it.

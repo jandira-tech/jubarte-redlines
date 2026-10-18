@@ -1110,3 +1110,110 @@ fn nested_alternate_content_copies_join_one_change() {
     assert!(!xml.contains("<w:ins "), "every copy resolves: {xml}");
     assert_eq!(xml.matches(">Grouped<").count(), 3, "{xml}");
 }
+
+// ───────────────────────── #1223: revisions inside comment bodies ──────────
+
+#[path = "common/comment_revisions.rs"]
+mod comment_revisions;
+
+/// One body insertion by Ann, and one comment holding an insertion and a
+/// deletion by Bob.
+fn commented_body() -> Vec<u8> {
+    let body = format!(
+        r#"<w:p>{}<w:ins w:id="1" {A}><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#,
+        comment_revisions::anchor(0, "anchor")
+    );
+    let comment = comment_revisions::comment(
+        0,
+        "Alice",
+        r#"<w:p w14:paraId="00000001"><w:ins w:id="20" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:t xml:space="preserve">in </w:t></w:r></w:ins><w:del w:id="21" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:delText xml:space="preserve">out </w:delText></w:r></w:del><w:r><w:t>rest</w:t></w:r></w:p>"#,
+    );
+    comment_revisions::docx(&body, &[comment])
+}
+
+/// `word/comments.xml` as text (panics when the part is gone).
+fn comments_xml(pkg: &[u8]) -> String {
+    part_string(pkg, "word/comments.xml").unwrap()
+}
+
+/// #1223: `jubarte changes` (and the view) still names no revision inside a
+/// comment body; accept/reject all settles them anyway.
+#[test]
+fn comment_body_changes_stay_unlisted() {
+    assert_eq!(ids(&commented_body()), ["r1"]);
+    let accepted = accept_changes(&commented_body(), &ChangeFilter::default()).unwrap();
+    let xml = comments_xml(&accepted);
+    assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
+}
+
+/// #1223: `--id` cannot name a comment-body revision; selecting a body
+/// change leaves the comment's revisions tracked.
+#[test]
+fn an_id_selection_leaves_comment_body_changes() {
+    let accepted = accept_changes(&commented_body(), &filter_ids(&["r1"])).unwrap();
+    assert_word_valid_package(&accepted);
+    let xml = comments_xml(&accepted);
+    assert!(
+        xml.contains(r#"<w:ins w:id="20""#) && xml.contains(r#"<w:del w:id="21""#),
+        "comment revisions left tracked: {xml}"
+    );
+    // A comment-story id names no listed change.
+    let err = accept_changes(&commented_body(), &filter_ids(&["comments.r20"])).unwrap_err();
+    assert!(
+        matches!(&err, ChangeError::UnknownChange(id) if id == "comments.r20"),
+        "{err:?}"
+    );
+}
+
+/// #1223: an author or kind filter reaches comment bodies — "every change
+/// by Bob" includes the ones inside his comments.
+#[test]
+fn author_and_kind_filters_resolve_comment_body_changes() {
+    let bob = ChangeFilter {
+        authors: Some(vec!["Bob".into()]),
+        ..Default::default()
+    };
+    let accepted = accept_changes(&commented_body(), &bob).unwrap();
+    assert_word_valid_package(&accepted);
+    let xml = comments_xml(&accepted);
+    assert_eq!(xml.matches("<w:ins ").count(), 0, "{xml}");
+    assert_eq!(xml.matches("<w:del ").count(), 0, "{xml}");
+    assert!(xml.contains(">in ") && !xml.contains("out"), "{xml}");
+    // Ann's body insertion was not selected.
+    let doc = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(doc.contains(r#"<w:ins w:id="1""#), "{doc}");
+
+    let deletions = ChangeFilter {
+        kinds: Some(vec![ChangeKind::Deletion]),
+        ..Default::default()
+    };
+    let rejected = reject_changes(&commented_body(), &deletions).unwrap();
+    let xml = comments_xml(&rejected);
+    assert!(
+        !xml.contains(r#"<w:del w:id="21""#) && xml.contains(">out "),
+        "comment deletion restored: {xml}"
+    );
+    assert!(xml.contains(r#"<w:ins w:id="20""#), "insertion kept: {xml}");
+}
+
+/// #1223: the CLI says how many comment-body revisions a selection left.
+#[test]
+fn cli_id_selection_reports_comment_body_changes_left() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), commented_body()).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args(["accept", "input.docx", "--id", "r1", "-o", "settled.docx"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("2 tracked changes inside comments were left"),
+        "{stderr}"
+    );
+}
