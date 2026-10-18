@@ -34,7 +34,7 @@ use crate::inspect::source_sha256;
 
 /// The wire schema version this module emits. Bumped together with any
 /// backwards-incompatible change to the envelope.
-pub const ENVELOPE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const ENVELOPE_SCHEMA_VERSION: u32 = 1;
 
 /// The terminal status of a v2 result.
 ///

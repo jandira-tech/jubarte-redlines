@@ -124,7 +124,7 @@ pub struct Finding {
 }
 
 /// Every rule set `validate` runs, `word` (the default) first.
-pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
+pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
 
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
