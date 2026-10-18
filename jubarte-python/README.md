@@ -218,6 +218,12 @@ unchanged (`inspect()` decodes it). `scrub` takes `author_alias`, `rsids`,
 - **npm / WebAssembly**: [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm) (Node and browser builds)
 - **MCP server**: `pip install 'jubarte-redlines[mcp]'` then `jubarte-mcp --root .` ([setup for Claude Code, Codex and Gemini CLI](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/adoption/mcp.md))
 
+The MCP server's native `_OutputRoot.publish(files, overwrite)` returns `None`.
+Each staging cleanup failure emits a Python `RuntimeWarning`; output may already
+be installed. A publication failure raises `OSError` with the original error,
+committed outputs, durability state and every cleanup warning. The publication
+error remains primary even when warning filters promote warnings to errors.
+
 ## Text comparisons
 
 ```sh
