@@ -652,3 +652,320 @@ fn template_composes_a_leading_addition_and_an_inner_replacement() {
     ids.sort_unstable();
     assert_eq!(ids, [7, 8, 9, 10, 11]);
 }
+
+/// Three separate runs make every marker's position independent of run splitting.
+fn range_source(kind: &str, word: usize) -> Vec<u8> {
+    use common::docx::{Part, docx_with};
+    let (start, end, reference) = match kind {
+        "bookmark" => (
+            r#"<w:bookmarkStart w:id="40" w:name="Words"/>"#,
+            r#"<w:bookmarkEnd w:id="40"/>"#,
+            "",
+        ),
+        "comment" => (
+            r#"<w:commentRangeStart w:id="0"/>"#,
+            r#"<w:commentRangeEnd w:id="0"/>"#,
+            r#"<w:r><w:commentReference w:id="0"/></w:r>"#,
+        ),
+        _ => unreachable!(),
+    };
+    let mut content = String::new();
+    for (index, text) in ["alpha ", "beta", " gamma"].into_iter().enumerate() {
+        if index == word {
+            content.push_str(start);
+        }
+        content.push_str(&format!(
+            r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#
+        ));
+        if index == word {
+            content.push_str(end);
+            content.push_str(reference);
+        }
+    }
+    let body = format!(
+        r#"<w:p><w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}">{content}</w:ins></w:p>"#
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="Reviewer" w:date="{OLD_DATE}"><w:p><w:r><w:t>Existing range</w:t></w:r></w:p></w:comment></w:comments>"#,
+        W::URI
+    );
+    let extras = if kind == "comment" {
+        vec![Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }]
+    } else {
+        vec![]
+    };
+    docx_with(&body, &extras)
+}
+
+fn child_labels(dom: &Dom, parent: NodeId) -> Vec<String> {
+    dom.elements(parent, None)
+        .into_iter()
+        .map(|node| {
+            assert_eq!(dom.parent(node), Some(parent));
+            if dom.name_is(node, &W::r()) {
+                if let Some(reference) = dom.element(node, &W::name("commentReference")) {
+                    assert_eq!(dom.parent(reference), Some(node));
+                    format!(
+                        "commentReference:{}",
+                        dom.attribute(reference, &W::id()).unwrap()
+                    )
+                } else {
+                    format!("r:{}", dom.value(node))
+                }
+            } else if dom.name_is(node, &W::del()) {
+                format!("del:{}", dom.value(node))
+            } else {
+                format!(
+                    "{}:{}",
+                    dom.name(node).unwrap().local_name(),
+                    dom.attribute(node, &W::id()).unwrap()
+                )
+            }
+        })
+        .collect()
+}
+
+fn range_labels(kind: &str, text: &str) -> Vec<String> {
+    if kind == "bookmark" {
+        vec![
+            "bookmarkStart:40".into(),
+            format!("r:{text}"),
+            "bookmarkEnd:40".into(),
+        ]
+    } else {
+        vec![
+            "commentRangeStart:0".into(),
+            format!("r:{text}"),
+            "commentRangeEnd:0".into(),
+            "commentReference:0".into(),
+        ]
+    }
+}
+
+fn replacement_keeps_ranges(kind: &str, word: usize) {
+    let out = run(
+        &range_source(kind, word),
+        "Carol Diaz",
+        replace("beta", "NEW"),
+    );
+    let (dom, p) = tree(&out);
+    let first_id = if kind == "bookmark" { 41 } else { 7 };
+    let head = revision(&dom, p, "ins", "6", "Alice", OLD_DATE, "alpha beta");
+    let inserted = revision(
+        &dom,
+        p,
+        "ins",
+        &(first_id + 1).to_string(),
+        "Carol Diaz",
+        DATE,
+        "NEW",
+    );
+    let tail = revision(
+        &dom,
+        p,
+        "ins",
+        &(first_id + 2).to_string(),
+        "Alice",
+        OLD_DATE,
+        " gamma",
+    );
+    assert_eq!(dom.elements(p, None), [head, inserted, tail]);
+    let deletion = revision(
+        &dom,
+        p,
+        "del",
+        &first_id.to_string(),
+        "Carol Diaz",
+        DATE,
+        "beta",
+    );
+    assert_eq!(dom.parent(deletion), Some(head));
+    let mut expected_head = if word == 0 {
+        range_labels(kind, "alpha ")
+    } else {
+        vec!["r:alpha ".into()]
+    };
+    if word == 1 {
+        let mut marked = range_labels(kind, "beta");
+        marked[1] = "del:beta".into();
+        expected_head.extend(marked);
+    } else {
+        expected_head.push("del:beta".into());
+    }
+    assert_eq!(
+        child_labels(&dom, head),
+        expected_head,
+        "{kind} around word {word}"
+    );
+    let expected_tail = if word == 2 {
+        range_labels(kind, " gamma")
+    } else {
+        vec!["r: gamma".into()]
+    };
+    assert_eq!(child_labels(&dom, tail), expected_tail);
+    assert_eq!(child_labels(&dom, inserted), ["r:NEW"]);
+    settled(&out, "alpha NEW gamma", "");
+}
+
+#[test]
+fn split_keeps_bookmark_around_words_before_anchor() {
+    replacement_keeps_ranges("bookmark", 0);
+}
+#[test]
+fn split_keeps_bookmark_around_anchor() {
+    replacement_keeps_ranges("bookmark", 1);
+}
+#[test]
+fn split_keeps_bookmark_around_words_after_anchor() {
+    replacement_keeps_ranges("bookmark", 2);
+}
+#[test]
+fn split_keeps_comment_around_words_before_anchor() {
+    replacement_keeps_ranges("comment", 0);
+}
+#[test]
+fn split_keeps_comment_around_anchor() {
+    replacement_keeps_ranges("comment", 1);
+}
+#[test]
+fn split_keeps_comment_around_words_after_anchor() {
+    replacement_keeps_ranges("comment", 2);
+}
+
+fn insertion_keeps_range(kind: &str, before: bool) {
+    let mut operation = json!({"kind":"insert","paragraph":"p0","text":"NEW"});
+    operation[if before { "before" } else { "after" }] = json!("beta");
+    let out = run(&range_source(kind, 1), "Carol Diaz", json!([operation]));
+    let (dom, p) = tree(&out);
+    let first_id = if kind == "bookmark" { 41 } else { 7 };
+    let head = revision(
+        &dom,
+        p,
+        "ins",
+        "6",
+        "Alice",
+        OLD_DATE,
+        if before { "alpha " } else { "alpha beta" },
+    );
+    let inserted = revision(
+        &dom,
+        p,
+        "ins",
+        &first_id.to_string(),
+        "Carol Diaz",
+        DATE,
+        "NEW",
+    );
+    let tail = revision(
+        &dom,
+        p,
+        "ins",
+        &(first_id + 1).to_string(),
+        "Alice",
+        OLD_DATE,
+        if before { "beta gamma" } else { " gamma" },
+    );
+    assert_eq!(dom.elements(p, None), [head, inserted, tail]);
+    let mut expected_head = vec!["r:alpha ".into()];
+    let mut expected_tail = vec!["r: gamma".into()];
+    if before {
+        expected_tail.splice(0..0, range_labels(kind, "beta"));
+    } else {
+        expected_head.extend(range_labels(kind, "beta"));
+    }
+    assert_eq!(
+        child_labels(&dom, head),
+        expected_head,
+        "{kind} before={before}"
+    );
+    assert_eq!(child_labels(&dom, tail), expected_tail);
+    assert_eq!(child_labels(&dom, inserted), ["r:NEW"]);
+    settled(
+        &out,
+        if before {
+            "alpha NEWbeta gamma"
+        } else {
+            "alpha betaNEW gamma"
+        },
+        "",
+    );
+}
+
+#[test]
+fn split_insertion_before_bookmark_keeps_new_words_outside() {
+    insertion_keeps_range("bookmark", true);
+}
+#[test]
+fn split_insertion_after_bookmark_keeps_new_words_outside() {
+    insertion_keeps_range("bookmark", false);
+}
+#[test]
+fn split_insertion_before_comment_keeps_new_words_outside() {
+    insertion_keeps_range("comment", true);
+}
+#[test]
+fn split_insertion_after_comment_keeps_new_words_outside() {
+    insertion_keeps_range("comment", false);
+}
+
+#[test]
+fn word_fixture_split_keeps_existing_nested_deletion_in_order() {
+    let (source_dom, source_p) = tree(WORD);
+    let original = source_dom
+        .descendants(source_p, Some(&W::del()))
+        .into_iter()
+        .find(|&node| source_dom.attribute(node, &W::id()) == Some("4"))
+        .unwrap();
+    let original_xml = source_dom.serialize_element(original);
+    let out = run(WORD, "Carol Diaz", replace("pay", "remit"));
+    let (dom, p) = tree(&out);
+    let head = revision(
+        &dom,
+        p,
+        "ins",
+        "3",
+        "Alma Sato Reyes",
+        "2026-10-17T23:44:00Z",
+        "agree to pay",
+    );
+    let deletion = revision(&dom, p, "del", "7", "Carol Diaz", DATE, "pay");
+    assert_eq!(dom.parent(deletion), Some(head));
+    assert_eq!(child_labels(&dom, head), ["r:agree to ", "del:pay"]);
+    let inserted = revision(&dom, p, "ins", "8", "Carol Diaz", DATE, "remit");
+    let tail = revision(
+        &dom,
+        p,
+        "ins",
+        "9",
+        "Alma Sato Reyes",
+        "2026-10-17T23:44:00Z",
+        " the bankers",
+    );
+    assert_eq!(dom.parent(head), Some(p));
+    assert_eq!(dom.parent(inserted), Some(p));
+    assert_eq!(dom.parent(tail), Some(p));
+    assert_eq!(dom.next_element(head), Some(inserted));
+    assert_eq!(dom.next_element(inserted), Some(tail));
+    let old = revision(
+        &dom,
+        p,
+        "del",
+        "4",
+        "Bob",
+        "2026-10-17T23:46:00Z",
+        "bankers",
+    );
+    assert_eq!(dom.parent(old), Some(tail));
+    assert_eq!(dom.serialize_element(old), original_xml);
+    assert_eq!(child_labels(&dom, tail), ["r: the ", "del:bankers"]);
+    assert_eq!(child_labels(&dom, inserted), ["r:remit"]);
+    let accepted =
+        text(&accept_changes(WORD, &ChangeFilter::default()).unwrap()).replace("pay", "remit");
+    let rejected = text(&reject_changes(WORD, &ChangeFilter::default()).unwrap());
+    settled(&out, &accepted, &rejected);
+}
