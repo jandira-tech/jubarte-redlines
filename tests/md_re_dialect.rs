@@ -13,6 +13,8 @@
 //! `scripts/re-dialect-read.sh` and `scripts/re-dialect-edit.sh` run the
 //! same commands and print the diffs.
 
+mod common;
+
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -88,6 +90,23 @@ fn round_trips(name: &str) {
     );
     let back = ok(&jubarte(&["back.docx"], dir.path()), "read back");
     let expected = fixture(&md);
+    for view in [&expected, &back] {
+        common::revision_summary::assert_summary(view);
+        common::revision_summary::assert_raw_total(view);
+    }
+    let validation = jubarte(&["validate", "back.docx"], dir.path());
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&validation.stdout),
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    assert!(
+        !diagnostics.contains("DUPLICATE_REVISION_ID"),
+        "{diagnostics}"
+    );
+    let original = std::fs::read(format!("{FIXTURES}/{name}.docx")).unwrap();
+    let rewritten = std::fs::read(dir.path().join("back.docx")).unwrap();
+    common::revision_tree::assert_same(&original, &rewritten, &expected);
     assert_eq!(body(&back), body(&expected), "{md} -> docx -> md");
 }
 
@@ -238,4 +257,40 @@ fn edit_modifies_untracked_text() {
 #[test]
 fn edit_rejects_a_deletion_nested_in_an_insertion() {
     edits_as("reject-nested-deletion", "annex", &["-p", "r4", "--reject"]);
+}
+
+#[test]
+fn revision_tree_oracle_distinguishes_identity_containment_text_and_carried_dates() {
+    let source = r#"<w:p><w:ins w:id="1" w:author="Alice" w:date="2026-10-01T09:00:00Z"><w:r><w:t>live</w:t></w:r><w:del w:id="2" w:author="Bob"><w:r><w:delText>old</w:delText></w:r></w:del></w:ins></w:p>"#;
+    let view = "2026-10-01T09:00:00Z 2026-10-02T09:00:00Z";
+    let original = common::revision_tree::revisions(&common::docx::docx(source), view);
+    for (from, to) in [
+        ("w:id=\"2\"", "w:id=\"3\""),
+        ("<w:del ", "<w:ins "),
+        ("Bob", "Carol"),
+        ("old", "changed"),
+        ("2026-10-01", "2026-10-02"),
+        (
+            "</w:r><w:del",
+            "</w:r></w:ins><w:ins w:id=\"3\" w:author=\"Alice\"><w:del",
+        ),
+    ] {
+        let mut changed = source.replace(from, to);
+        if from == "<w:del " {
+            changed = changed.replace("</w:del>", "</w:ins>");
+        }
+        assert_ne!(
+            original,
+            common::revision_tree::revisions(&common::docx::docx(&changed), view),
+            "{from} -> {to}"
+        );
+    }
+    assert_eq!(
+        common::revision_tree::revisions(&common::docx::docx(source), ""),
+        common::revision_tree::revisions(
+            &common::docx::docx(&source.replace("2026-10-01", "2026-10-02")),
+            ""
+        ),
+        "dates absent from the view are outside this guard",
+    );
 }
