@@ -1826,16 +1826,17 @@ fn review_1128_story_substitution_keeps_both_authors_and_dates() {
         );
         assert!(
             view.contains(&format!(
-                "{{~~old~>new~~}}{{>>{kind}1.r2 @A<<}}{{>>{kind}1.r1 @B<<}}"
+                "{{++new++}}{{{kind}1.r1 @B}}{{--old--}}{{{kind}1.r2 @A}}"
             )),
             "{view}"
         );
     }
 }
 
-/// Characterize the existing same-author BODY date loss; fixing it is separate.
+/// A same-author replacement in the body keeps each side's date: the settled
+/// dialect pairs carriers only when their dates agree (#1142).
 #[test]
-fn review_1128_body_same_author_substitution_still_keeps_only_the_old_date() {
+fn review_1128_body_same_author_replacement_keeps_both_dates() {
     let source = docx(
         r#"<w:p><w:ins w:id="1" w:author="Alice" w:date="2026-09-30T09:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>
         <w:del w:id="2" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:delText>old</w:delText></w:r></w:del></w:p>"#,
@@ -1851,20 +1852,13 @@ fn review_1128_body_same_author_substitution_still_keeps_only_the_old_date() {
     .unwrap()
     .markdown;
     assert!(
-        view.contains("{~~old~>new~~}{>>r2+1 @A 2026-09-29T14:05:00Z<<}"),
+        view.contains("{++new++}{r1 @A 2026-09-30T09:00:00Z}{--old--}{r2 @A 2026-09-29T14:05:00Z}"),
         "{view}"
     );
     let round = written(&view);
-    let expected = vec![
-        (
-            "Alice".to_string(),
-            Some("2026-09-29T14:05:00Z".to_string())
-        );
-        2
-    ];
     assert_eq!(
         revision_attributes(&part_string(&round, "word/document.xml").unwrap()),
-        expected,
+        revision_attributes(&part_string(&source, "word/document.xml").unwrap()),
         "{view}"
     );
 }
@@ -1872,7 +1866,7 @@ fn review_1128_body_same_author_substitution_still_keeps_only_the_old_date() {
 #[test]
 fn review_1128_nested_story_notes_are_not_dropped_comments() {
     for kind in ["header", "footer"] {
-        let nested = format!("{{--old--}}{{>>{kind}1.r4 @BO on {kind}1.r3 @AL<<}}");
+        let nested = format!("{{--old--}}{{{kind}1.r4 @BO re {kind}1.r3 @AL}}");
         let comment = "{>>c0 @AL: Please check this.<<}";
         for (text, warns) in [
             (comment.to_string(), true),
