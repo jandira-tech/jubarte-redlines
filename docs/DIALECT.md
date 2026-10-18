@@ -48,6 +48,11 @@ CriticMarkup for changes, then the agent view's YAML header and id lines.
 | ` ```mermaid dN ` fence | a chart (`c:chartSpace` pie, bar or line) alone in its paragraph | the fence holds `pie`/`xychart-beta`; `<!-- dN drawing:… -->` keeps the payload and a hash of the printed text — unchanged writes the part back verbatim, edited rewrites its categories, values and title |
 | `---`, GFM table | bordered paragraph, `TableGrid` table | header row repeats |
 
+Inline code is literal: revision marks stay outside its backticks. An inserted
+code run of eight spaces prints as `` `w:del`{++`        `++}{r0 @A} `` when it
+follows `w:del`. The spaces remain code-formatted revision text on conversion;
+padding around other code text follows CommonMark's code-span rules.
+
 A body text box's words are editable Markdown paragraphs after its anchor,
 between `<!-- text-box dN.0 -->` and `<!-- /text-box -->`. The suffix
 numbers boxes in that drawing from zero; these markers do not contain

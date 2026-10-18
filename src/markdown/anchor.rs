@@ -249,6 +249,19 @@ fn without_emphasis(text: &str) -> String {
 /// text and stays, as does an escaped mark (`\*\*`). Reads the way
 /// pulldown-cmark reads the same source.
 pub fn plain_anchor(text: &str) -> String {
+    // Read code's padding and newlines as CommonMark does, then hide its
+    // literal ASCII so the change and emphasis scanners cannot strip it.
+    let mut literal = String::with_capacity(text.len());
+    let mut at = 0;
+    for (event, range) in pulldown_cmark::Parser::new(text).into_offset_iter() {
+        if let pulldown_cmark::Event::Code(code) = event {
+            literal.push_str(&text[at..range.start]);
+            literal.extend(code.chars().map(|c| if c.is_ascii() { hide(c) } else { c }));
+            at = range.end;
+        }
+    }
+    literal.push_str(&text[at..]);
+    let text = literal.as_str();
     let mut hidden = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
@@ -423,6 +436,29 @@ mod tests {
             "a _b_ c",
         ] {
             assert_eq!(plain_anchor(s), reader_text(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn plain_anchor_keeps_code_span_contents_literal() {
+        assert_eq!(
+            plain_anchor("`a*b _c_ {++literal++}{r0 @A}` {++`new`++}{r1 @A}"),
+            "a*b _c_ {++literal++}{r0 @A} new"
+        );
+    }
+
+    #[test]
+    fn plain_anchor_keeps_all_code_span_spaces() {
+        assert_eq!(
+            plain_anchor("Before `        ` after"),
+            "Before          after"
+        );
+    }
+
+    #[test]
+    fn plain_anchor_reads_code_span_padding() {
+        for (source, text) in [("`  x  `", " x "), ("`` `x` ``", "`x`"), ("`a\nb`", "a b")] {
+            assert_eq!(plain_anchor(source), text, "{source}");
         }
     }
 

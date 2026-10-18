@@ -881,12 +881,13 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         let lines: Vec<String> = core
             .split('\n')
             .map(|line| {
+                if marks.code && !line.is_empty() {
+                    let (fence_open, fence_close) = code_fence(line);
+                    return format!("{open}{fence_open}{line}{fence_close}{close}");
+                }
                 let (l, c, t) = split_ws(line);
                 if c.is_empty() {
                     line.to_string()
-                } else if marks.code {
-                    let (fence_open, fence_close) = code_fence(c);
-                    format!("{l}{open}{fence_open}{c}{fence_close}{close}{t}")
                 } else {
                     format!("{l}{open}{c}{close}{t}")
                 }
@@ -903,6 +904,9 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
 /// strike show on a space, so the spaces at the stretch's edges stay
 /// inside its marks, each `&#32;` so the marks still touch text.
 fn edges(marks: Marks, text: &str) -> (&str, std::borrow::Cow<'_, str>, &str) {
+    if marks.code {
+        return ("", std::borrow::Cow::Borrowed(text), "");
+    }
     let (lead, core, trail) = split_ws(text);
     let spaced = marks.underline || marks.highlight.is_some() || marks.strike;
     let plain = |c: char| c == ' ';
@@ -953,11 +957,15 @@ fn delimiters_read(
 }
 
 /// The backticks around a code span's text: one more than its longest run
-/// of backticks, and a space inside when the text starts or ends with one.
+/// of backticks, padded when an edge backtick or space needs protecting.
+/// CommonMark removes one space at both ends except in an all-space span.
 fn code_fence(text: &str) -> (String, String) {
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest + 1);
-    let pad = if text.starts_with('`') || text.ends_with('`') {
+    let pad = if text.starts_with('`')
+        || text.ends_with('`')
+        || ((text.starts_with(' ') || text.ends_with(' ')) && !text.chars().all(|c| c == ' '))
+    {
         " "
     } else {
         ""

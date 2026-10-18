@@ -1009,6 +1009,7 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
 /// CriticMarkup is read before Markdown, so the link and the emphasis still
 /// resolve. A change joins only if all its markers do; one that starts inside
 /// the link and ends after it stays outside.
+/// Code spans are literal to the reader: their marks must stay outside.
 fn wrap_markers(pieces: &mut [Piece]) {
     type Format = (Marks, Option<String>);
     let format = |piece: &Piece| -> Format { (piece.marks, piece.link.clone()) };
@@ -1024,8 +1025,8 @@ fn wrap_markers(pieces: &mut [Piece]) {
             .unwrap_or(pieces.len());
         let before = start.checked_sub(1).map(|at| format(&pieces[at]));
         let after = pieces.get(end).map(format);
-        if let Some(around) =
-            before.filter(|f| *f != (Marks::default(), None) && Some(f) == after.as_ref())
+        if let Some(around) = before
+            .filter(|f| !f.0.code && *f != (Marks::default(), None) && Some(f) == after.as_ref())
         {
             joined[start..end].fill(Some(around));
         }

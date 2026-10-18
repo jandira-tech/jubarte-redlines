@@ -570,3 +570,154 @@ fn undated_peer_keeps_dated_table_metadata() {
         assert_probe_date(&back, "word/document.xml", "ins", "2", None);
     }
 }
+
+/// Synthetic #1211 probes: each change is surrounded by code in the source,
+/// so the view must close the code span before printing its revision marks.
+fn code_revision_probe(kind: &str, inserted: &str) -> (Vec<u8>, String, Vec<u8>) {
+    let code = |text: &str, deleted: bool| {
+        let tag = if deleted { "delText" } else { "t" };
+        format!(
+            r#"<w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:{tag} xml:space="preserve">{}</w:{tag}></w:r>"#,
+            common::docx::esc(text)
+        )
+    };
+    let revision = |tag: &str, id: u32, text: &str| {
+        format!(
+            r#"<w:{tag} w:id="{id}" w:author="Alice">{}</w:{tag}>"#,
+            code(text, tag == "del")
+        )
+    };
+    let changed = match kind {
+        "insert" => revision("ins", 0, inserted),
+        "delete" => revision("del", 0, "x"),
+        "substitute" => revision("del", 0, "a") + &revision("ins", 1, "b"),
+        _ => unreachable!(),
+    };
+    let source = common::docx::docx(&format!(
+        "<w:p>{}{}{}{}{}</w:p>",
+        common::docx::run("Before ", false, false, None),
+        code("w:del", false),
+        changed,
+        code(" tail", false),
+        common::docx::run(" after", false, false, None),
+    ));
+    let view = undated_view(&source, false);
+    let back = markdown_to_docx(&view, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    println!(
+        "{kind} {inserted:?} VIEW:\n{view}CHANGES: {:?}\nXML: {}",
+        changes(&back),
+        common::docx::part_string(&back, "word/document.xml").unwrap()
+    );
+    if let Ok(dir) = std::env::var("JUBARTE_CODE_PROBE_OUTPUT")
+        && (kind != "insert" || inserted == "        ")
+    {
+        let dir = std::path::Path::new(&dir);
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(format!("{kind}-source.docx")), &source).unwrap();
+        std::fs::write(dir.join(format!("{kind}.md")), &view).unwrap();
+        std::fs::write(dir.join(format!("{kind}-roundtrip.docx")), &back).unwrap();
+    }
+    (source, view, back)
+}
+
+fn assert_code_revisions(kind: &str, inserted: &str) {
+    let (source, view, back) = code_revision_probe(kind, inserted);
+    assert_eq!(changes(&back), changes(&source), "{view}");
+    let xml = common::docx::part_string(&back, "word/document.xml").unwrap();
+    use jubarte::namespaces::W;
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    for kind in ["ins", "del"] {
+        for revision in dom.descendants(dom.root(document).unwrap(), Some(&W::name(kind))) {
+            for run in dom.descendants(revision, Some(&W::r())) {
+                assert!(
+                    dom.descendants(run, Some(&W::name("rStyle")))
+                        .into_iter()
+                        .any(|style| dom.attribute(style, &W::val()) == Some("VerbatimChar")),
+                    "revision lost code formatting: {xml}"
+                );
+            }
+        }
+    }
+    for (accept, expected) in [
+        (
+            true,
+            match kind {
+                "insert" => format!("Before w:del{inserted} tail after"),
+                "delete" => "Before w:del tail after".into(),
+                _ => "Before w:delb tail after".into(),
+            },
+        ),
+        (
+            false,
+            match kind {
+                "insert" => "Before w:del tail after".into(),
+                "delete" => "Before w:delx tail after".into(),
+                _ => "Before w:dela tail after".into(),
+            },
+        ),
+    ] {
+        let filter = jubarte::changes::ChangeFilter::default();
+        let resolved = if accept {
+            jubarte::changes::accept_changes(&back, &filter)
+        } else {
+            jubarte::changes::reject_changes(&back, &filter)
+        }
+        .unwrap();
+        assert_eq!(
+            jubarte::inspect::paragraphs(&resolved).unwrap()[0].text,
+            expected,
+            "accept={accept}: {view}"
+        );
+    }
+}
+
+#[test]
+fn code_span_inserted_spaces_round_trip() {
+    assert_code_revisions("insert", "        ");
+}
+
+#[test]
+fn code_span_inserted_edge_spaces_round_trip() {
+    assert_code_revisions("insert", " x ");
+}
+
+#[test]
+fn code_span_inserted_leading_space_round_trip() {
+    assert_code_revisions("insert", " x");
+}
+
+#[test]
+fn code_span_inserted_trailing_space_round_trip() {
+    assert_code_revisions("insert", "x ");
+}
+
+#[test]
+fn code_span_inserted_backticks_round_trip() {
+    assert_code_revisions("insert", "`x`");
+}
+
+#[test]
+fn code_span_deletion_round_trip() {
+    assert_code_revisions("delete", "");
+}
+
+#[test]
+fn code_span_substitution_round_trip() {
+    assert_code_revisions("substitute", "");
+}
+
+#[test]
+fn code_span_revision_anchor_has_no_attribution() {
+    for (kind, expected) in [
+        ("insert", "Before w:del         tail after"),
+        ("delete", "Before w:del tail after"),
+        ("substitute", "Before w:delb tail after"),
+    ] {
+        let (_, view, _) = code_revision_probe(kind, "        ");
+        let body = view.lines().last().unwrap();
+        assert_eq!(jubarte::markdown::plain_anchor(body), expected, "{view}");
+    }
+}
