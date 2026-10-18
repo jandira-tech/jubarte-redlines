@@ -16,6 +16,24 @@ All products under `jubarte*` share **Semantic Versioning**
 | **patch** (`0.x.y`) | bugfixes, Q0 perf micro-wins, docs, package validity — no intentional Q1 semantic change |
 | **major** (`1.0.0+`) | reserved for first stable API freeze |
 
+### What the version promise covers
+
+The library's public items are the API the rules above protect, with one
+exception: modules marked `#[doc(hidden)]` are outside it. They stay
+public only so the tests in `tests/` can call them one by one, they are
+missing from the rendered documentation, and any release, a patch
+included, may rename, change or remove them. Today that is:
+
+- `jubarte::comparer::finalize`: the individual Word-parity passes the
+  comparison pipeline runs (`M###` milestones). Call `compare_documents`,
+  not the passes.
+- `jubarte::comparer::tables`: constant tables ported from the C#
+  `WmlComparer` (`RECURSION_ELEMENTS` and friends).
+
+rustdoc leaves hidden items out, so `scripts/api_snapshot.py` lists neither
+module in a release's API snapshot, and a drift report does not count a
+change to them.
+
 ## Repos
 
 | repo | artifact | version files | bump tool |

@@ -561,7 +561,22 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `jubarte --help` no longer lists them, nor `debug` (still documented in
   AGENTS.md); `self-update` is listed last.
 
+### Removed
+
+- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
+  `util::sha1_fingerprint`, deprecated in 0.10.2 and promised to go after
+  one release: call `fnv1a_64` and `fnv1a_128`.
+- `comparer::finalize::promote_mid_pure_del_spacing_from_pprchange`,
+  `strip_default_left_jc` and `strip_redundant_equal_spacing_pprchange`.
+  Each ran all of `cleanup_spacing_and_default_jc` (M226, M228 and M231
+  together), so its name promised one pass and it ran three: call
+  `cleanup_spacing_and_default_jc`.
+
 ### Breaking (library)
+
+- **`comparer::finalize` and `comparer::tables` are hidden and outside the
+  version promise** (`docs/VERSIONING.md`). They stay public for the tests
+  that call single passes, but any release may change them.
 
 - **`PdfOptions` gains `comment_notes`.** A `PdfOptions { … }` literal that
   names every field needs it (or `..PdfOptions::default()`).
@@ -578,7 +593,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `render` and `read`. `cli::top_level_command()` is the model whose
   `--help` lists the tasks only.
 - `cli::Command::Edit` and `Add` gain `plan_default`; `Recorded::summary`
-  takes `default_plan`, and `RecordOptions` `defaultPlan`.
+  takes `default_plan`.
 - `cli::EditOptions` gains `output`; `out_dir` is
   `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
   `EditOptions::target(file)` gives the `EditTarget` (`Single` or

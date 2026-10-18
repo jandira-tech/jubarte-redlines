@@ -5546,42 +5546,6 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Thin wrappers kept for call-site clarity / tests.
-/// Promote mid pure-del spacing from `pPrChange` onto live spacing (legacy name).
-/// M228 — promote a mid pure-D paragraph's spacing from
-/// `pPrChange` onto the live `pPr` when the deleted paragraph never
-/// had its own live spacing (Word revision style: equal spacing
-/// stays in `pPrChange`, original-only spacing becomes live because
-/// that is the deleted side's actual state).
-///
-/// Runs as part of [`cleanup_spacing_and_default_jc`]; exposed
-/// separately so the test corpus can hit it directly.
-pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) {
-    cleanup_spacing_and_default_jc(dom, root);
-}
-
-/// Strip default left `jc` restatements (legacy name; shares cleanup pass).
-/// M231 — strip the default `w:jc="left"` (and the obvious synonyms
-/// `start`, `0`) so a paragraph does not carry an explicit left
-/// alignment when the package default already is left
-/// (`document_default`).
-///
-/// Exposed separately from [`cleanup_spacing_and_default_jc`] for
-/// direct test coverage.
-pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
-    cleanup_spacing_and_default_jc(dom, root);
-}
-
-/// Strip redundant equal-spacing `pPrChange` (legacy name; shares cleanup pass).
-/// M226 — drop a `w:pPrChange` whose nested `w:spacing` exactly
-/// matches the live `w:spacing` (no layout change to record).
-///
-/// Exposed separately from [`cleanup_spacing_and_default_jc`] for
-/// direct test coverage.
-pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
-    cleanup_spacing_and_default_jc(dom, root);
-}
-
 /// M221 (green_underline×heading_1_bold ~56): MIX residual carries B Heading
 /// spacing (before=400 after=120 line=240) while following pure-D bullets have
 /// none. Word parks that spacing on the **last** pure-D with live spacing +

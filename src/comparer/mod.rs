@@ -32,6 +32,9 @@ pub mod atoms;
 pub mod bookmarks;
 pub mod comments;
 pub mod cross_para;
+// Word-parity passes, public for the tests that run one at a time; outside
+// the version promise (docs/VERSIONING.md).
+#[doc(hidden)]
 pub mod finalize;
 pub mod fixups;
 pub mod footnotes;
@@ -45,6 +48,9 @@ pub mod parts;
 pub mod preprocess;
 pub mod produce;
 pub mod revisions;
+// Constant tables ported from the C# `WmlComparer`; outside the version
+// promise (docs/VERSIONING.md).
+#[doc(hidden)]
 pub mod tables;
 pub mod textbox;
 pub mod units;
