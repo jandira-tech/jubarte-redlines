@@ -521,9 +521,52 @@ pub fn mark_content_as_deleted_or_inserted(
     id_gen: &mut u32,
 ) -> NodeId {
     let v = mark_content_transform(dom, root, settings, id_gen);
-    v.into_iter()
+    let root = v
+        .into_iter()
         .next()
-        .expect("root transform yields one node")
+        .expect("root transform yields one node");
+    join_move_ranges(dom, root);
+    root
+}
+
+/// Marking emits a triple per run (and empty field), but a move names one
+/// range on each side. Word's Reject All duplicates text when the run splits
+/// give the sides different range counts (#1214). Keep every move wrapper and
+/// intervening endpoint in place; retain only the outer range boundaries.
+fn join_move_ranges(dom: &mut Dom, root: NodeId) {
+    for side in ["moveFrom", "moveTo"] {
+        let starts = dom.descendants(root, Some(&W::name(&format!("{side}RangeStart"))));
+        if starts.len() < 2 {
+            continue;
+        }
+        let ends: HashMap<String, NodeId> = dom
+            .descendants(root, Some(&W::name(&format!("{side}RangeEnd"))))
+            .into_iter()
+            .filter_map(|end| dom.attribute(end, &W::id()).map(|id| (id.to_string(), end)))
+            .collect();
+        let mut ranges: HashMap<String, (NodeId, NodeId)> = HashMap::new();
+        for start in starts {
+            let Some(name) = dom.attribute(start, &W::name("name")).map(str::to_string) else {
+                continue;
+            };
+            let Some(end) = dom
+                .attribute(start, &W::id())
+                .and_then(|id| ends.get(id))
+                .copied()
+            else {
+                continue;
+            };
+            if let Some((first, last)) = ranges.get_mut(&name) {
+                let id = dom.attribute(*first, &W::id()).unwrap().to_string();
+                dom.remove(start);
+                dom.remove(*last);
+                dom.set_attribute_value(end, &W::id(), Some(&id));
+                *last = end;
+            } else {
+                ranges.insert(name, (start, end));
+            }
+        }
+    }
 }
 
 /// True when pPr carries structural body props (pStyle/numPr/spacing/jc/ind/…).
