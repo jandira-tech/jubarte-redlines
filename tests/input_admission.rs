@@ -242,8 +242,9 @@ fn wml_document_from_bytes_admits_its_input() {
 }
 
 /// Every public entry point that opens a package refuses it past the budget,
-/// not only the compare path: `PartFs::open` inflates each entry without a
-/// bound, and an allocation abort cannot be caught by the Python or WASM host.
+/// not only the compare path. The package constructor itself is bounded
+/// (#645), so an entry point that forgets to admit still refuses; the
+/// callers here admit on their own and their refusal is unchanged.
 #[test]
 fn every_package_entry_point_refuses_a_crowd_of_entries() {
     let crowded = package_with_entries(10_010);
@@ -418,4 +419,172 @@ fn admit_keeps_refusing_over_the_count_cap_and_duplicates_in_html_mode() {
         panic!("duplicated attributes must still be refused")
     };
     assert!(err.to_string().contains("duplicated attribute"), "{err}");
+}
+
+/// The entry points that take no settings budget must refuse a crowd of
+/// entries too (#645): `PartFs::open` is the package constructor behind
+/// them, and it reads the entry count from the central directory before it
+/// indexes the archive, so the refusal does not depend on a caller that
+/// remembers to admit.
+#[test]
+fn partfs_open_refuses_a_crowd_of_entries() {
+    let crowded = package_with_entries(10_010);
+    let Err(err) = jubarte::opc::PartFs::open(&crowded) else {
+        panic!("10_013 entries must not pass the constructor's own budget")
+    };
+    let text = err.to_string();
+    assert!(text.contains("INPUT_LIMIT"), "{text}");
+    assert!(text.contains("10013 ZIP entries"), "{text}");
+}
+
+/// `scrub` opens its package through the bounded constructor: a crowd is
+/// refused before `scrub` inflates it (#645).
+#[test]
+fn scrub_refuses_a_crowd_of_entries() {
+    let crowded = package_with_entries(10_010);
+    let err = jubarte::scrub::scrub(&crowded, &jubarte::scrub::ScrubOptions::default())
+        .expect_err("scrub reaches the package constructor, which refuses the crowd");
+    assert!(err.to_string().contains("INPUT_LIMIT"), "{err}");
+}
+
+/// An excessive EOCD count must be refused before the indexer tries to
+/// follow it. The base scrub path reaches the reader first and returns a ZIP
+/// error; its later validation cannot protect that allocation (#645, #649).
+#[test]
+fn scrub_refuses_an_excess_declared_count_before_indexing() {
+    let mut docx = package(|_, _| {});
+    let end = docx.len() - 22;
+    assert_eq!(&docx[end..end + 4], b"PK\x05\x06");
+    for offset in [8, 10] {
+        docx[end + offset..end + offset + 2].copy_from_slice(&10_013u16.to_le_bytes());
+    }
+    let err = jubarte::scrub::scrub(&docx, &jubarte::scrub::ScrubOptions::default())
+        .expect_err("an excessive declared count must be refused before indexing");
+    assert!(err.to_string().contains("INPUT_LIMIT"), "{err}");
+    assert!(err.to_string().contains("10013 ZIP entries"), "{err}");
+}
+
+/// `leaks` has no refusal channel, so it fails closed: a package past the
+/// admission budget is reported as a finding, never scanned partially
+/// (#645). `edit`'s redaction check turns the finding into a refusal.
+#[test]
+fn leaks_fail_closed_on_a_crowd_of_entries() {
+    let crowded = package_with_entries(10_010);
+    let found = jubarte::scrub::leaks(&crowded, "no-such-text-occurs-here");
+    assert_eq!(
+        found,
+        ["the package (INPUT_LIMIT: 10013 ZIP entries; the limit is 10000)".to_string()],
+        "a package past the read budget fails closed"
+    );
+}
+
+/// The Markdown reader admits its input instead of sniffing it (#645):
+/// the refusal carries the stable `INPUT_LIMIT` code, not the converter's
+/// own wording.
+#[test]
+fn docx_to_markdown_refuses_a_crowd_of_entries() {
+    let crowded = package_with_entries(10_010);
+    let err = jubarte::markdown::docx_to_markdown(
+        &crowded,
+        &jubarte::markdown::MarkdownOptions::default(),
+    )
+    .expect_err("the Markdown reader admits its input before converting it");
+    let text = err.to_string();
+    assert!(text.contains("INPUT_LIMIT"), "{text}");
+    assert!(text.contains("10013 ZIP entries"), "{text}");
+}
+
+/// `debug` opens its package through the same budget (#645).
+#[test]
+fn debug_reports_refuse_a_crowd_of_entries() {
+    let crowded = package_with_entries(10_010);
+    let err = jubarte::debug::list(&crowded, None, &jubarte::debug::Options::default())
+        .expect_err("debug opens its package through the same budget");
+    assert!(err.contains("INPUT_LIMIT"), "{err}");
+    assert!(err.contains("10013 ZIP entries"), "{err}");
+}
+
+/// The controls: a small valid package still opens through every entry
+/// point the crowd tests refuse, and `leaks` still finds a text that
+/// really occurs (#645).
+#[test]
+fn the_unadmitted_entry_points_still_open_a_valid_package() {
+    let docx = package(|_, _| {});
+    let opened = jubarte::opc::PartFs::open(&docx).expect("PartFs::open");
+    assert_eq!(
+        opened.main_document_part().as_deref(),
+        Some("word/document.xml")
+    );
+    jubarte::scrub::scrub(&docx, &jubarte::scrub::ScrubOptions::default())
+        .expect("scrub opens the package");
+    assert_eq!(
+        jubarte::scrub::leaks(&docx, "hello"),
+        ["word/document.xml".to_string()],
+        "a text that occurs is still found"
+    );
+    let read =
+        jubarte::markdown::docx_to_markdown(&docx, &jubarte::markdown::MarkdownOptions::default())
+            .expect("docx_to_markdown opens the package");
+    assert!(read.markdown.contains("hello"), "{}", read.markdown);
+    jubarte::debug::list(&docx, None, &jubarte::debug::Options::default())
+        .expect("debug::list opens the package");
+}
+
+/// A package written through a non-seekable sink: every entry carries a
+/// data descriptor (general-purpose bit 3) and its sizes live only in the
+/// central directory. No fixture covers the shape; the bounded constructor
+/// and the readers behind it must still open it (#645).
+#[test]
+fn the_entry_points_open_a_package_with_data_descriptors() {
+    let mut writer = ZipWriter::new_stream(Vec::new());
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (name, body) in [
+        ("[Content_Types].xml", CONTENT_TYPES),
+        ("_rels/.rels", PACKAGE_RELS),
+        ("word/document.xml", DOCUMENT),
+    ] {
+        writer.start_file(name, options).unwrap();
+        writer.write_all(body.as_bytes()).unwrap();
+    }
+    let docx = writer.finish().unwrap().into_inner();
+    // The fixture means what it says: bit 3 (0x0008) is set in the first
+    // entry's local header flag field (offset 6).
+    let flags = u16::from_le_bytes([docx[6], docx[7]]);
+    assert!(
+        flags & 0x0008 != 0,
+        "the streamed entry must use a data descriptor"
+    );
+
+    let opened = jubarte::opc::PartFs::open(&docx).expect("PartFs::open");
+    assert_eq!(
+        opened.part_bytes("word/document.xml"),
+        Some(DOCUMENT.as_bytes())
+    );
+    jubarte::scrub::scrub(&docx, &jubarte::scrub::ScrubOptions::default())
+        .expect("scrub opens a data-descriptor package");
+    assert_eq!(
+        jubarte::scrub::leaks(&docx, "hello"),
+        ["word/document.xml".to_string()]
+    );
+    let read =
+        jubarte::markdown::docx_to_markdown(&docx, &jubarte::markdown::MarkdownOptions::default())
+            .expect("docx_to_markdown opens a data-descriptor package");
+    assert!(read.markdown.contains("hello"), "{}", read.markdown);
+    jubarte::debug::list(&docx, None, &jubarte::debug::Options::default())
+        .expect("debug::list opens a data-descriptor package");
+}
+
+/// A caller that already admitted a package under a roomier entry budget
+/// keeps that budget through the identical-input drawing-ID fixup as well.
+#[test]
+fn an_explicit_roomier_count_budget_survives_identical_compare() {
+    let docx = package_with_entries(10_010);
+    let settings = WmlComparerSettings::default().with_input_limits(InputLimits {
+        max_entries: 10_032,
+        ..InputLimits::compare()
+    });
+    compare_documents_with_settings(&docx, &docx, &settings)
+        .expect("all constructor calls must preserve the caller's admitted budget");
+    jubarte::document_comparer::get_revisions(&docx, &settings)
+        .expect("revision listing keeps the caller's budget too");
 }
