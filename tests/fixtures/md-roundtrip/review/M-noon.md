@@ -1,7 +1,7 @@
 ---
 view: tracked
 track_changes: off
-revisions: 1
+revisions: 1                       # 1 mark shown as 1 change: 1 insertion
 comments: 1 thread open
 authors:
   document_owner: none

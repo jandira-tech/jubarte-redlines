@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::agent::{Handles, RevTag};
+use super::agent::Handles;
 use super::ooxml::Element;
 use crate::markdown::view_notes::WORD_PAGE_SIZES;
 
@@ -109,7 +109,8 @@ pub(crate) struct Facts<'a> {
     pub resolved: Option<bool>,
     pub comments_inline: bool,
     pub tracking_on: bool,
-    pub tags: Vec<RevTag>,
+    /// One kind per change printed in the body.
+    pub tags: Vec<&'static str>,
     /// The document's changes, as `jubarte changes` lists them: the one
     /// revision count.
     pub changes: Vec<crate::changes::Change>,
@@ -268,7 +269,7 @@ fn revisions_comment(f: &Facts) -> String {
         .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
         .collect();
     let mut parts = Vec::new();
-    if marks > 0 {
+    if marks > 0 || !f.tags.is_empty() {
         let mut kinds = Vec::new();
         for (kind, one, many) in [
             ("ins", "insertion", "insertions"),
@@ -278,7 +279,7 @@ fn revisions_comment(f: &Facts) -> String {
             ("row", "table row", "table rows"),
             ("cell", "table cell", "table cells"),
         ] {
-            let n = f.tags.iter().filter(|t| t.kind == kind).count();
+            let n = f.tags.iter().filter(|&&t| t == kind).count();
             if n > 0 {
                 kinds.push(plural(n, one, many));
             }

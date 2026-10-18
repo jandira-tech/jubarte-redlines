@@ -3,7 +3,7 @@ source: received.docx
 sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: accept-all                   # 9 revisions by AC shown as accepted; file unchanged
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks shown as 9 changes: 5 insertions, 4 deletions
+revisions: 9                       # 9 marks
 comments: 2 threads open, c6 style Normal  # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
