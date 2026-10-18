@@ -558,37 +558,39 @@ pub fn slash_path(path: &Path) -> String {
 /// text as the path's start.
 fn unverbatimed(path: &Path) -> Option<PathBuf> {
     let mut components = path.components();
-    let head = verbatim_head(components.next())?;
-    let mut stripped = head;
-    // The head carries the root; the remainder's own RootDir component is
-    // skipped so `C:` + `\a` spells `C:\a`, not `C:\\a`.
+    let (mut stripped, keeps_root) = verbatim_head(components.next())?;
     for component in components {
-        if !matches!(component, std::path::Component::RootDir) {
+        // A disk or UNC head keeps the root: `C:` + `\` is `C:\`, while
+        // `C:` + `a` would be the drive-relative `C:a` (a bare drive takes
+        // no separator). Any other `\\?\` head is no prefix once stripped,
+        // so its root is dropped and the parts join onto the head's text.
+        if keeps_root || !matches!(component, std::path::Component::RootDir) {
             stripped.push(component.as_os_str());
         }
     }
     Some(stripped)
 }
 
-/// The path head a verbatim prefix becomes, or `None` for any other first
-/// component (`Prefix` is a Windows notion; off Windows this is always
-/// `None` and [`unverbatimed`] changes nothing).
+/// The path head a verbatim prefix becomes, and whether the root after it
+/// stays, or `None` for any other first component (`Prefix` is a Windows
+/// notion; off Windows this is always `None` and [`unverbatimed`] changes
+/// nothing).
 #[cfg(windows)]
-fn verbatim_head(component: Option<std::path::Component>) -> Option<PathBuf> {
+fn verbatim_head(component: Option<std::path::Component>) -> Option<(PathBuf, bool)> {
     use std::path::{Component, Prefix};
     match component {
         Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::VerbatimDisk(letter) => Some(PathBuf::from(format!(
-                "{}:",
-                (letter as char).to_ascii_uppercase()
-            ))),
+            Prefix::VerbatimDisk(letter) => Some((
+                PathBuf::from(format!("{}:", (letter as char).to_ascii_uppercase())),
+                true,
+            )),
             Prefix::VerbatimUNC(server, share) => {
                 let mut head = PathBuf::from(r"\\");
                 head.push(server);
                 head.push(share);
-                Some(head)
+                Some((head, true))
             }
-            Prefix::Verbatim(rest) => Some(PathBuf::from(rest)),
+            Prefix::Verbatim(rest) => Some((PathBuf::from(rest), false)),
             _ => None,
         },
         _ => None,
@@ -597,7 +599,7 @@ fn verbatim_head(component: Option<std::path::Component>) -> Option<PathBuf> {
 
 /// Off Windows no component carries a prefix, so there is nothing to drop.
 #[cfg(not(windows))]
-fn verbatim_head(_component: Option<std::path::Component>) -> Option<PathBuf> {
+fn verbatim_head(_component: Option<std::path::Component>) -> Option<(PathBuf, bool)> {
     None
 }
 
