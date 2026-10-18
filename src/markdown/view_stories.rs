@@ -136,6 +136,8 @@ pub(super) struct People {
 struct Marks<'p> {
     people: &'p People,
     next_id: u32,
+    /// One opening tag per element and id in the current story part.
+    opens: HashMap<(String, u32), String>,
 }
 
 impl Marks<'_> {
@@ -162,6 +164,10 @@ impl Marks<'_> {
                 self.next_id
             }
         };
+        let key = (name.to_string(), id);
+        if let Some(open) = self.opens.get(&key) {
+            return open.clone();
+        }
         let (author, date) = tag
             .map(|tag| {
                 // `??` names no one: the mark's author is empty, as it was.
@@ -182,10 +188,12 @@ impl Marks<'_> {
             })
             .unwrap_or_else(|| (self.people.author.clone(), self.people.date.clone()));
         let date = super::xml::date_attribute(&date);
-        format!(
+        let open = format!(
             "{name} w:id=\"{id}\" w:author=\"{}\"{date}",
             super::xml::escape(&author)
-        )
+        );
+        self.opens.insert(key, open.clone());
+        open
     }
 }
 
@@ -200,6 +208,7 @@ pub(super) fn format_changes(
     let mut marks = Marks {
         people,
         next_id: first_id,
+        opens: HashMap::new(),
     };
     let mut reserved: std::collections::HashSet<u32> =
         tags.iter().flat_map(|tag| &tag.ids).copied().collect();
@@ -1122,6 +1131,7 @@ pub(super) fn write(
     let mut marks = Marks {
         people,
         next_id: first_id,
+        opens: HashMap::new(),
     };
     let mut next_doc_pr = super::package::max_drawing_id(package) + 1;
     let mut even = false;
@@ -1202,6 +1212,8 @@ fn story_part(
     marks: &mut Marks<'_>,
     next_doc_pr: &mut u32,
 ) -> String {
+    // Revision ids are local to a story part; the next part can reuse them.
+    marks.opens.clear();
     let root = if story.kind == "header" { "hdr" } else { "ftr" };
     let style = if story.kind == "header" {
         "Header"
@@ -1584,6 +1596,7 @@ mod tests {
             &mut Marks {
                 people: &people,
                 next_id: 100,
+                opens: HashMap::new(),
             },
             &HashMap::new(),
         )

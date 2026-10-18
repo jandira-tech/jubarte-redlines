@@ -1443,3 +1443,30 @@ fn a_header_deletion_keeps_its_nested_insertion() {
         &[("w:del", "3", None), ("w:ins", "1", Some("3"))],
     );
 }
+
+#[test]
+fn review_1126_day_range_story_reuses_one_open_tag() {
+    for kind in ["header", "footer"] {
+        for text in [
+            "{++a++}{>>PART.r3 @AL<<}{--x--}{>>PART.r4 @BO on PART.r3 @AL<<}",
+            "{--x--}{>>PART.r4 @BO on PART.r3 @AL<<}{++a++}{>>PART.r3 @AL<<}",
+        ] {
+            let text = text.replace("PART", &format!("{kind}1"));
+            let view = format!(
+                "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29..2026-09-30\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\n{kind}s:\n  default: {{id: {kind}1, text: \"{text}\", style: Normal}}\n---\nBody.\n"
+            );
+            let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+            println!("{kind}: {xml}");
+            assert_eq!(xml.matches("<w:ins ").count(), 1, "{xml}");
+            assert_revision_tree(&xml, &[("w:ins", "3", None), ("w:del", "4", Some("3"))]);
+        }
+    }
+}
+
+#[test]
+fn review_1126_day_range_body_has_one_open_tag() {
+    let view = "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29..2026-09-30\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\n---\nNotify the buyer{++ and the bank++}{>>r3 @AL<<}{-- and the broker--}{>>r4 @BO on r3 @AL<<}.\n";
+    let xml = part_string(&written(view), "word/document.xml").unwrap();
+    println!("body: {xml}");
+    assert_revision_tree(&xml, &[("w:ins", "3", None), ("w:del", "4", Some("3"))]);
+}
