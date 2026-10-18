@@ -87,3 +87,14 @@ fn explicit_free_and_nonadjacent_old_looking_comments_still_read() {
         );
     }
 }
+
+#[test]
+fn review_c1_literal_closers_do_not_trigger_migration_refusal() {
+    for source in ["`{++x++}`{>>r1 @A<<}", r"\{++x++}{>>r1 @A<<}"] {
+        let result = markdown_to_docx(source, &DocxOptions::default());
+        assert!(
+            result.is_ok(),
+            "a literal closer is not attribution: {source}: {result:?}"
+        );
+    }
+}

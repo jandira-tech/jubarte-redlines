@@ -291,14 +291,12 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
         {
             continue;
         }
-        let before = source[..at].trim_end_matches(['*', '_', '`']);
-        let Some(close) = ["++}", "--}", "~~}"]
+        let encoded = encode_spans_kept(&source[..at]);
+        let before = encoded.trim_end_matches(['*', '_', '`']);
+        if ![Token::InsertEnd, Token::DeleteEnd, Token::SubstituteEnd]
             .into_iter()
-            .find(|close| before.ends_with(close))
-        else {
-            continue;
-        };
-        if escaped(source, before.len() - close.len()) {
+            .any(|token| before.ends_with(stand_in(token)))
+        {
             continue;
         }
         let Some((payload, _)) = source[at + 3..].split_once("<<}") else {
