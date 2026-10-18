@@ -867,3 +867,197 @@ fn removed_anchor_keep_moves_and_typed_reply() {
     let result = jubarte::edit::v2_apply::apply_plan(&source, &typed).unwrap();
     assert_empty_thread(&result.redline);
 }
+
+// #1159: c2 must still name the source comment after c0 disappears.
+fn settlement_identity_source() -> Vec<u8> {
+    use common::docx::{Part, W_NS, docx_with};
+    let mut body = String::new();
+    let mut definitions = String::new();
+    for (id, text) in ["Removed", "First survivor", "Target", "Other"]
+        .iter()
+        .enumerate()
+    {
+        let anchor = format!(
+            r#"<w:commentRangeStart w:id="{id}"/><w:r><w:t>{text}</w:t></w:r><w:commentRangeEnd w:id="{id}"/><w:r><w:commentReference w:id="{id}"/></w:r>"#
+        );
+        let content = if id == 0 {
+            format!(
+                r#"<w:ins w:id="1" w:author="Bob" w:date="2026-10-18T12:00:00Z">{anchor}</w:ins>"#
+            )
+        } else {
+            anchor
+        };
+        body.push_str(&format!("<w:p>{content}</w:p>"));
+        definitions.push_str(&format!(r#"<w:comment w:id="{id}" w:author="Carol Diaz" w:date="2026-10-18T12:00:00Z"><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:comment>"#));
+    }
+    body.push_str(r#"<w:p><w:bookmarkStart w:id="42" w:name="surviving_bookmark"/><w:r><w:t>Bookmarked</w:t></w:r><w:bookmarkEnd w:id="42"/></w:p>"#);
+    let comments = format!(r#"<w:comments xmlns:w="{W_NS}">{definitions}</w:comments>"#);
+    docx_with(
+        &body,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    )
+}
+
+fn settlement_identity_plan(operations: &serde_json::Value) -> EditPlan {
+    EditPlan::from_json(&serde_json::json!({"schema_version":1,"author":"Alice","date":"2026-10-18T12:06:00Z","existing_revisions":"keep","resolve_revisions":{"reject":{"ids":["r1"]}},"operations":operations}).to_string()).unwrap()
+}
+
+#[test]
+fn settlement_then_edit_addresses_source_c2() {
+    let out = apply_plan(
+        &settlement_identity_source(),
+        &settlement_identity_plan(&serde_json::json!([
+            {"kind":"edit_comment","comment_id":"c2","text":"Edited target"}
+        ])),
+    )
+    .unwrap();
+    for bytes in [&out.clean, &out.redline] {
+        let comments = list_comments(bytes).unwrap();
+        let target = comments.iter().find(|c| c.anchor_text == "Target").unwrap();
+        assert_eq!(
+            target.text, "Edited target",
+            "settlement must address the original c2: {comments:?}"
+        );
+        assert_eq!(
+            comments
+                .iter()
+                .find(|c| c.anchor_text == "Other")
+                .unwrap()
+                .text,
+            "Other"
+        );
+    }
+}
+
+#[test]
+fn settlement_then_reply_addresses_source_c2() {
+    let out = apply_plan(
+        &settlement_identity_source(),
+        &settlement_identity_plan(&serde_json::json!([
+            {"kind":"reply_comment","comment_id":"c2","text":"Reply to target"}
+        ])),
+    )
+    .unwrap();
+    for bytes in [&out.clean, &out.redline] {
+        let comments = list_comments(bytes).unwrap();
+        let target = comments.iter().find(|c| c.text == "Target").unwrap();
+        let reply = comments
+            .iter()
+            .find(|c| c.text == "Reply to target")
+            .unwrap();
+        assert_eq!(
+            reply.parent,
+            Some(target.id),
+            "reply must attach to the original c2: {comments:?}"
+        );
+    }
+}
+
+fn assert_settled_annotation_ids(bytes: &[u8], mode: &str, replies: u32) {
+    let mut ids: Vec<_> = list_comments(bytes).unwrap().iter().map(|c| c.id).collect();
+    ids.sort_unstable();
+    let count = if mode == "keep" { 4 } else { 3 } + replies;
+    assert_eq!(ids, (0..count).collect::<Vec<_>>(), "final comment ids");
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let root = dom.root(document).unwrap();
+    let bookmarks = dom.descendants(root, Some(&jubarte::namespaces::W::name("bookmarkStart")));
+    assert_eq!(bookmarks.len(), 1);
+    assert_eq!(
+        dom.attribute(bookmarks[0], &jubarte::namespaces::W::id()),
+        Some(count.to_string().as_str()),
+        "final bookmark id"
+    );
+    assert_word_valid_package(bytes);
+}
+
+fn final_annotation_probe(mode: &str, typed: bool) {
+    let source = settlement_identity_source();
+    let (clean, redline) = if typed {
+        let value = serde_json::json!({"schema_version":2,"source":{"sha256":jubarte::inspect::source_sha256(&source)},"policy":{"track":"on","existing_revisions":"keep","text_view":"final"},"resolve_revisions":{"accept":[],"reject":[{"short_id":"r1","long_id":"document.w:ins.w:id.1"}]},"author":"Alice","date":"2026-10-18T12:06:00Z","scope":{"kind":"all"},"operations":[],"removed_anchor_comments":mode});
+        let plan = jubarte::edit::v2::PlanV2::from_json(&value.to_string()).unwrap();
+        let out = jubarte::edit::v2_apply::apply_plan(&source, &plan).unwrap();
+        (out.clean, out.redline)
+    } else {
+        let mut plan = settlement_identity_plan(&serde_json::json!([]));
+        plan.removed_anchor_comments = if mode == "keep" {
+            jubarte::edit::RemovedAnchorComments::Keep
+        } else {
+            jubarte::edit::RemovedAnchorComments::Remove
+        };
+        let out = apply_plan(&source, &plan).unwrap();
+        (out.clean, out.redline)
+    };
+    assert_settled_annotation_ids(&clean, mode, 0);
+    assert_settled_annotation_ids(&redline, mode, 0);
+}
+
+#[test]
+fn settlement_renumbers_final_annotations_remove() {
+    final_annotation_probe("remove", false);
+}
+#[test]
+fn settlement_renumbers_final_annotations_keep() {
+    final_annotation_probe("keep", false);
+}
+#[test]
+fn settlement_renumbers_final_annotations_v2_remove() {
+    final_annotation_probe("remove", true);
+}
+#[test]
+fn settlement_renumbers_final_annotations_v2_keep() {
+    final_annotation_probe("keep", true);
+}
+
+#[test]
+fn settlement_renumbers_after_reply_and_reports_written_id() {
+    let out = apply_plan(
+        &settlement_identity_source(),
+        &settlement_identity_plan(&serde_json::json!([
+            {"kind":"reply_comment","comment_id":"c2","text":"Reply to target"}
+        ])),
+    )
+    .unwrap();
+    assert_settled_annotation_ids(&out.redline, "remove", 1);
+    let comments = list_comments(&out.redline).unwrap();
+    let reply = comments
+        .iter()
+        .find(|c| c.text == "Reply to target")
+        .unwrap();
+    assert_eq!(out.report.operations[0].comment_id, Some(reply.id));
+    assert_eq!(out.report.removed_comments[0].id, "c0");
+}
+
+#[test]
+fn settlement_preserves_annotation_ids_with_revisions_left() {
+    let mut pkg = jubarte::opc::PartFs::open(&settlement_identity_source()).unwrap();
+    let xml = pkg.part_string("word/document.xml").unwrap().replace(
+        "<w:t>Bookmarked</w:t>",
+        r#"<w:t>Bookmarked</w:t></w:r><w:ins w:id="2" w:author="Bob" w:date="2026-10-18T12:00:00Z"><w:r><w:t>pending</w:t></w:r></w:ins><w:r>"#,
+    );
+    pkg.set_part("word/document.xml", xml.into_bytes());
+    let out = apply_plan(
+        &pkg.to_zip().unwrap(),
+        &settlement_identity_plan(&serde_json::json!([])),
+    )
+    .unwrap();
+    assert_eq!(
+        jubarte::changes::list_changes(&out.redline).unwrap()[0].id,
+        "r2"
+    );
+    let ids: Vec<_> = list_comments(&out.redline)
+        .unwrap()
+        .iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids, [1, 2, 3]);
+    let xml = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"bookmarkStart w:id="42""#));
+    assert_word_valid_package(&out.redline);
+}

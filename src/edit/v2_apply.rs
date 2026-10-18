@@ -245,7 +245,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     // on, and pin that count at zero (#1087).
     #[cfg(test)]
     crate::inspect::reset_reopened_packages();
-    let (clean, redline, correspondence) = if effect {
+    let (mut clean, mut redline, correspondence) = if effect {
         // The primary's final-view dispositions are read off the DOM that
         // produced those bytes — the replay's own scan for a tracked
         // primary (its DOM dies with the emission), the transaction's own
@@ -302,6 +302,9 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
         &plan.author,
         &insertion_origins,
     )?;
+    if selected != source || working != selected {
+        super::comment_settlement::renumber_outputs(&mut clean, &mut redline, &mut report)?;
+    }
     Ok(V2EditResult {
         clean,
         redline,

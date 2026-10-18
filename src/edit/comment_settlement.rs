@@ -100,3 +100,36 @@ impl AnchorChanges {
         Ok((removed, kept))
     }
 }
+
+/// Settlement retains snapshot ids until all operations and tracked replays
+/// finish. Renumber only revision-free outputs, and report newly written ids.
+/// Thread settlement receipts always keep their source ids.
+pub(super) fn renumber_outputs(
+    clean: &mut Vec<u8>,
+    redline: &mut Vec<u8>,
+    report: &mut super::EditReport,
+) -> Result<(), super::EditError> {
+    fn renumber(
+        bytes: &mut Vec<u8>,
+    ) -> Result<std::collections::HashMap<String, String>, super::EditError> {
+        let mut pkg = crate::opc::PartFs::open(bytes)
+            .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
+        let Some(ids) = crate::revision_processor::renumber_settled_annotations(&mut pkg) else {
+            return Ok(std::collections::HashMap::new());
+        };
+        *bytes = pkg
+            .to_zip()
+            .map_err(|e| super::err("PACKAGE_WRITE", None, e.to_string()))?;
+        Ok(ids)
+    }
+    renumber(clean)?;
+    let ids = renumber(redline)?;
+    for outcome in &mut report.operations {
+        if let Some(id) = outcome.comment_id
+            && let Some(new) = ids.get(&id.to_string())
+        {
+            outcome.comment_id = new.parse().ok();
+        }
+    }
+    Ok(())
+}

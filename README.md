@@ -975,6 +975,10 @@ This opt-in is a jubarte convention that Word opens with threaded balloons;
 the default `"remove"` follows Word's removal behavior. Partial overlaps
 keep the existing behavior. Unknown values are refused as `INVALID_PLAN`.
 The policy is available in plans; `accept`/`reject` keep their existing warnings.
+Comment and bookmark ids stay stable while a plan runs, so later operations
+still address the source comments. Once all operations finish, each output
+with no revisions left gets Word's shared annotation numbering. The settlement
+receipts retain source comment ids; newly added comments report their written ids.
 
 The v1 plan envelope is documented in `schemas/edit-plan-v1.schema.json`,
 and the typed v2 schema in `schemas/edit-plan-v2.schema.json`.

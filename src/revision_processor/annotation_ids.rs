@@ -19,7 +19,7 @@ use crate::namespaces::W;
 use crate::opc::PartFs;
 
 /// Renumber the bookmarks and comments of `story_parts` (main first).
-pub(super) fn renumber(pkg: &mut PartFs, story_parts: &[String]) {
+pub(super) fn renumber(pkg: &mut PartFs, story_parts: &[String]) -> HashMap<String, String> {
     let id = W::id();
     let names = [
         "bookmarkStart",
@@ -87,10 +87,10 @@ pub(super) fn renumber(pkg: &mut PartFs, story_parts: &[String]) {
         }
     }
     if comment_ids.iter().all(|(old, new)| old == new) {
-        return;
+        return comment_ids;
     }
     let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
-        return;
+        return comment_ids;
     };
     for c in comments.w("comment") {
         let old = comments.dom.attribute(c, &id).unwrap_or("");
@@ -100,4 +100,5 @@ pub(super) fn renumber(pkg: &mut PartFs, story_parts: &[String]) {
         }
     }
     comments.store(pkg);
+    comment_ids
 }

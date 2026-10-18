@@ -205,7 +205,14 @@ pub fn prepare(
     let emit = tx.emits_directly()?;
     tx.apply()?;
     check_dom_realized(&tx, options.exact_text)?;
-    let result = produce(&mut tx, emit, options.role)?;
+    let mut result = produce(&mut tx, emit, options.role)?;
+    if tx.origin.is_some() {
+        super::comment_settlement::renumber_outputs(
+            &mut result.clean,
+            &mut result.redline,
+            &mut result.report,
+        )?;
+    }
     let effect = primary_effect(&tx, &result);
     let (primary, primary_bytes) = match effect {
         Effect::Unchanged => (source.to_vec(), PrimaryBytes::Source),

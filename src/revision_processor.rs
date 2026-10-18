@@ -3640,7 +3640,8 @@ fn resolve(
 }
 
 /// Edit plans retain annotation ids so subsequent operations still address the
-/// snapshot they read. Only this entry point can rescue removed anchors.
+/// snapshot they read. The edit result renumbers once all operations finish.
+/// Only this entry point can rescue removed anchors.
 pub(crate) fn resolve_package_for_edit(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
@@ -3706,10 +3707,25 @@ fn resolve_with_comments(
     let removed_comments = comments::prune_orphan_comments(pkg, &stories);
     notes::prune_orphan_notes(pkg, &stories);
     if renumber && !kept {
-        annotation_ids::renumber(pkg, &stories);
+        let _ = annotation_ids::renumber(pkg, &stories);
     }
     word_save::tidy(pkg, &stories);
     removed_comments
+}
+
+/// Canonicalize annotation ids after every operation of an edit plan has run.
+/// Pending revisions keep their snapshot ids, just as selective settlement does.
+pub(crate) fn renumber_settled_annotations(
+    pkg: &mut crate::opc::PartFs,
+) -> Option<std::collections::HashMap<String, String>> {
+    let parts = revision_bearing_parts(pkg);
+    if parts.iter().any(|(part, _)| {
+        comments::Parsed::load(pkg, part)
+            .is_some_and(|p| element_has_tracked_revisions(&p.dom, p.root))
+    }) {
+        return None;
+    }
+    Some(annotation_ids::renumber(pkg, &story_parts(&parts)))
 }
 
 /// Rename every frozen revision element under `root` back into `w:`; true
