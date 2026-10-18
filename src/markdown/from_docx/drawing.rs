@@ -2024,7 +2024,7 @@ fn name_for(want: &str, existing: &HashSet<String>, used: &HashSet<String>) -> S
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 

@@ -480,7 +480,7 @@ fn definition(dom: &mut Dom, id: &str) -> Option<NodeId> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -601,7 +601,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod numbering_source_property_boundary_tests {
     use super::*;
     #[test]

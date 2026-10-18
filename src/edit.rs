@@ -6880,7 +6880,7 @@ fn toggle(dom: &mut Dom, rpr: NodeId, local: &str, value: Option<bool>) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -6994,12 +6994,12 @@ mod tests {
 }
 // Reuse the repository's existing, entirely in-memory package fixture.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "../tests/common/docx.rs"]
 mod deeper_boundary_fixture;
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deeper_boundary_tests {
     use super::deeper_boundary_fixture::{self as fixture, Part, docx, docx_with, para};
     use super::*;

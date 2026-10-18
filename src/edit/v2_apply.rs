@@ -33,14 +33,14 @@ thread_local! {
 /// Replace this thread's [`CORRESPONDENCE_STATES`] with the states the
 /// correspondence is about to read.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn capture_correspondence_states(states: &[FinalView]) {
     CORRESPONDENCE_STATES.with(|cell| *cell.borrow_mut() = states.to_vec());
 }
 
 /// Take this thread's [`CORRESPONDENCE_STATES`], clearing the slot.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn correspondence_states() -> Vec<FinalView> {
     CORRESPONDENCE_STATES.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
 }

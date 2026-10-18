@@ -1365,7 +1365,7 @@ fn group(out: &mut Output, side: Side, lines: &[&str]) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 

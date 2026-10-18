@@ -1343,7 +1343,7 @@ fn set_section_type(dom: &mut Dom, sect: NodeId, section_break: SectionBreak) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1442,7 +1442,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_append_owner_boundary_tests {
     use super::*;
     fn semantic(dom: &Dom, node: NodeId) -> String {

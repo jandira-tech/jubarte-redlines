@@ -1800,7 +1800,7 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1918,7 +1918,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod literal_package_metadata_contract_tests {
     use super::*;
 

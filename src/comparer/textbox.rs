@@ -248,7 +248,7 @@ fn redline_boxes(dom: &mut Dom, old: NodeId, new: NodeId, settings: &WmlComparer
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_shape_revision_contract_tests {
     use super::*;
     fn document(source: &str) -> (Dom, NodeId) {

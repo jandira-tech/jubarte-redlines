@@ -8052,11 +8052,11 @@ fn compare_documents_impl(
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod based_style_record_tests;
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     //! Word-validity regressions for synthesized revision records. Word treats
     //! a colliding `w:id` on two `w:*Change` records as the same revision and
@@ -8786,7 +8786,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_boundary_tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
@@ -11427,7 +11427,7 @@ mod coverage_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_package_source_matrix_tests {
     use super::*;
 
@@ -11927,7 +11927,7 @@ mod coverage_package_source_matrix_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod comparer_relationship_contract_tests {
     use super::*;
     fn package() -> PartFs {
@@ -12077,7 +12077,7 @@ mod comparer_relationship_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod authored_style_chain_boundary_tests {
     use super::*;
     use std::collections::{BTreeMap, HashMap};
@@ -12221,7 +12221,7 @@ mod authored_style_chain_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod isolated_header_container_revision_boundary_tests {
     use super::*;
     fn semantic(dom: &Dom, node: NodeId) -> String {
@@ -12377,7 +12377,7 @@ mod isolated_header_container_revision_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod redefined_style_chain_source_owner_tests {
     use super::*;
 
@@ -12486,7 +12486,7 @@ mod redefined_style_chain_source_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod namespace_declared_default_property_owner_tests {
     use super::*;
 
@@ -12540,7 +12540,7 @@ mod namespace_declared_default_property_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod adopted_story_relationship_owner_tests {
     use super::*;
     const MAIN: &str = "word/document.xml";
@@ -12724,7 +12724,7 @@ mod adopted_story_relationship_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod word_style_line_owned_boundary_tests {
     use super::*;
     fn parse(xml: &str) -> (Dom, NodeId) {
@@ -12822,7 +12822,7 @@ mod word_style_line_owned_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_numbering_definition_source_owner_tests {
     use super::*;
 

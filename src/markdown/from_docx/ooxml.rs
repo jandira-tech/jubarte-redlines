@@ -1309,7 +1309,7 @@ impl ListIndent {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1419,7 +1419,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod ooxml_package_boundary_tests {
     use super::*;
     use std::io::Write as _;

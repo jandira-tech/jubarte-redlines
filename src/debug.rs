@@ -2681,7 +2681,7 @@ fn print_counts(
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -3873,7 +3873,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod residual_byte_diagnostic_contract_tests {
     use super::*;
     use std::io::Write;

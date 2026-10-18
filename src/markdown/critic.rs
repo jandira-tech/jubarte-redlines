@@ -470,14 +470,14 @@ thread_local! {
 /// Count `steps` closer-search steps. Test-only; an empty inline function
 /// in production builds, so the runtime cost is zero.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[inline]
 fn count_closer_steps(steps: usize) {
     CLOSER_STEPS.with(|count| count.set(count.get() + steps));
 }
 
 #[cfg(not(test))]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[inline]
 fn count_closer_steps(_steps: usize) {}
 
@@ -2204,7 +2204,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 

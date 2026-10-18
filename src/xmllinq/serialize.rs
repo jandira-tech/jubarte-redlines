@@ -836,7 +836,7 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use crate::xmllinq::{Dom, XNamespace};
@@ -1027,7 +1027,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod xml_structure_namespace_boundary_tests {
     use super::*;
 

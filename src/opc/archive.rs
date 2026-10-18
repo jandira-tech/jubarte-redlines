@@ -22,7 +22,7 @@ pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipAr
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use std::cell::Cell;

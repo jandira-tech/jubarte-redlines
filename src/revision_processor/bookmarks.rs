@@ -172,7 +172,7 @@ pub(super) fn drop_unpaired_bookmarks(dom: &mut Dom, root: NodeId) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod move_range_bookmark_regressions {
     use crate::namespaces::W;
     use crate::revision_processor::accept_revisions_document;

@@ -1709,7 +1709,7 @@ const SETTINGS_AFTER_EVEN_ODD: [&str; 53] = [
 ];
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 

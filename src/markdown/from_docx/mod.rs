@@ -4674,7 +4674,7 @@ fn story_color(p: &Element) -> Option<String> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -6565,7 +6565,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod markdown_source_owner_boundary_tests {
     use super::*;
 

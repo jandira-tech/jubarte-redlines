@@ -1447,7 +1447,7 @@ pub(crate) fn join_paragraphs(parts: Vec<Part>, separator: &str, keep_empty: boo
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use Mark::{Deletion as Del, Insertion as Ins, Scope as Sc};

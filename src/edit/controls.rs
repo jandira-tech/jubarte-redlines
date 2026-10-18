@@ -763,7 +763,7 @@ fn format_date(pattern: &str, y: i32, m: u32, d: u32) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -799,7 +799,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod control_source_boundary_tests {
     use super::*;
     use crate::edit::{EditPlan, apply_plan, preview_plan};

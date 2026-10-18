@@ -1211,7 +1211,7 @@ fn declare_ignorable(dom: &mut Dom, root: NodeId, prefix: &str, uri: &str) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1246,7 +1246,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod people_and_text_boundary_tests {
     use super::*;
 
@@ -1390,7 +1390,7 @@ mod people_and_text_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_anchor_boundary_tests {
     use super::*;
 
@@ -1572,7 +1572,7 @@ mod public_memory_anchor_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod authored_thread_reference_contract_tests {
     use super::*;
 

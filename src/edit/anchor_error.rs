@@ -667,7 +667,7 @@ fn suggest_read(refusal: &AnchorRefusal<'_>, id: &str, hits: usize) -> NextActio
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 

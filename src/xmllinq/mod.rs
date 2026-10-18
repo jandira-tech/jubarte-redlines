@@ -279,7 +279,7 @@ thread_local! {
 
 /// Add one to this thread's [`ATTR_NAME_PROBES`].
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn bump_attr_name_probes() {
     ATTR_NAME_PROBES.with(|c| c.set(c.get() + 1));
 }
@@ -418,7 +418,7 @@ impl Dom {
     /// any subsequent internal push provably reallocates. Test-only helper
     /// that pins `capacity == length` for the MEM-ATTRIBUTE-01 invariant.
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     pub fn shrink_arena_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
     }
@@ -1325,7 +1325,7 @@ impl Dom {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod node_layout_tests {
     use super::*;
 
@@ -1371,7 +1371,7 @@ mod node_layout_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod intern_tests {
     use super::*;
 

@@ -2320,7 +2320,7 @@ fn as_edits(mut findings: Vec<Finding>) -> Vec<Finding> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod validation_boundary_tests {
     use super::*;
 
@@ -2542,7 +2542,7 @@ mod validation_boundary_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod validation_owner_boundary_tests {
     use super::*;
     fn package() -> PartFs {
@@ -2651,7 +2651,7 @@ mod validation_owner_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_validator_owner_boundary_tests {
     use super::*;
     fn package(body: &str) -> PartFs {
@@ -2797,7 +2797,7 @@ mod public_memory_validator_owner_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod literal_revision_repair_contract_tests {
     use super::*;
 
@@ -2852,7 +2852,7 @@ mod literal_revision_repair_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod paragraph_id_collision_owner_tests {
     use super::*;
 
@@ -2952,7 +2952,7 @@ mod paragraph_id_collision_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod authored_comment_family_validation_contract_tests {
     use super::*;
 
@@ -3088,7 +3088,7 @@ mod authored_comment_family_validation_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod retained_namespace_finding_source_contract_tests {
     use super::*;
 
@@ -3191,7 +3191,7 @@ mod retained_namespace_finding_source_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod duplicate_drawing_owned_repair_contract_tests {
     use super::*;
 

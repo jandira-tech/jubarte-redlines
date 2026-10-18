@@ -31,14 +31,14 @@ thread_local! {
 /// Count one byte comparison. Test-only; an empty inline function in
 /// production builds, so the runtime cost is zero.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[inline]
 fn probe_compare() {
     ANCHOR_BYTE_PROBES.with(|probes| probes.set(probes.get() + 1));
 }
 
 #[cfg(not(test))]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[inline]
 fn probe_compare() {}
 
@@ -379,7 +379,7 @@ pub fn v2_select_all(
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 

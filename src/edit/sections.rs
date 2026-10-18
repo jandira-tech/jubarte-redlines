@@ -527,7 +527,7 @@ pub(super) fn targets_overlap(a: &Targets, b: &Targets) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -639,7 +639,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod mid_section_authored_history_boundary_tests {
     use super::*;
     use crate::opc::PartFs;

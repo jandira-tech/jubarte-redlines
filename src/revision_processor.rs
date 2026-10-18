@@ -3745,7 +3745,7 @@ fn story_parts(parts: &[(String, bool)]) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod revision_boundary_coverage_tests {
     use super::*;
 
@@ -4544,7 +4544,7 @@ mod revision_boundary_coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_block_control_ownership_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -4789,7 +4789,7 @@ mod public_block_control_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod body_equation_paragraph_mark_ownership_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -5010,7 +5010,7 @@ mod body_equation_paragraph_mark_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deleted_title_equation_barrier_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -5162,7 +5162,7 @@ mod deleted_title_equation_barrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_field_instruction_metadata_boundary_tests {
     use super::*;
     #[test]
@@ -5242,7 +5242,7 @@ mod complete_field_instruction_metadata_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod alternate_content_paragraph_owner_tests {
     use super::*;
     use crate::namespaces::{A, MC, W14};

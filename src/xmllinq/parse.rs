@@ -82,7 +82,7 @@ thread_local! {
 
 /// Add to this thread's [`NS_SCOPE_DECLARED_BYTES`].
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn bump_ns_scope_declared_bytes(by: usize) {
     NS_SCOPE_DECLARED_BYTES.with(|c| c.set(c.get() + by));
 }
@@ -848,7 +848,7 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod checked_xml_tests {
     use super::{Dom, parse_xdocument, validate_xml};
 
@@ -919,7 +919,7 @@ mod checked_xml_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod xml_lexical_boundary_contract_tests {
     use super::*;
 
@@ -983,7 +983,7 @@ mod xml_lexical_boundary_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tag_policy_tests {
     //! N01/N02: the checked gate (`validate_xml`, `try_parse_xdocument`, and
     //! `admission::check_xml_depth`) bounds tag width and namespace budgets

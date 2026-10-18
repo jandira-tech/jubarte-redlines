@@ -5997,7 +5997,7 @@ pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -6268,7 +6268,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod markdown_authored_boundary_tests {
     use super::*;
 
@@ -6415,7 +6415,7 @@ mod markdown_authored_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod memory_picture_import_contract_tests {
     use super::*;
 
@@ -6512,7 +6512,7 @@ mod memory_picture_import_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod html_tag_tests {
     use super::*;
 

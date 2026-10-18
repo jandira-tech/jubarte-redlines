@@ -524,14 +524,14 @@ thread_local! {
 
 /// Add one to this thread's [`REOPENED_PACKAGES`].
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn bump_reopened_packages() {
     REOPENED_PACKAGES.with(|count| count.set(count.get() + 1));
 }
 
 /// Zero this thread's [`REOPENED_PACKAGES`].
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 pub(crate) fn reset_reopened_packages() {
     REOPENED_PACKAGES.with(|count| count.set(0));
 }
@@ -1319,7 +1319,7 @@ fn merge_spans(text: &str, formats: Vec<(usize, usize, Format)>) -> Vec<Span> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 

@@ -947,7 +947,7 @@ pub fn prepare_v2(
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 pub(crate) mod tests {
     use super::super::{
         EditReport, EditResult, ExistingRevisions, ParagraphDelta, deeper_boundary_fixture,

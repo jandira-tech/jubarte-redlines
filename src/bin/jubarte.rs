@@ -3866,7 +3866,7 @@ fn refresh_fields(bytes: &[u8]) -> Result<(jubarte::fields::Updated, String), St
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};

@@ -12558,7 +12558,7 @@ fn final_peel_has_identical_closing_properties(
 /// production pipeline calls
 /// [`fold_midstream_demo_title_into_numbered_heading_with_settings`].
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: NodeId) {
     let mut id = max_numeric_id(dom, root).saturating_add(1);
     fold_midstream_demo_title_into_numbered_heading_with_settings(
@@ -15509,7 +15509,7 @@ fn stamp_trailing_numbering(
     append_empty_ppr_change(dom, ppr, settings, id_gen);
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_tests {
     use super::*;
 
@@ -16761,7 +16761,7 @@ mod coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_two_tests {
     use super::*;
 
@@ -18187,7 +18187,7 @@ mod coverage_round_two_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_three_tests {
     use super::*;
 
@@ -19338,7 +19338,7 @@ mod coverage_round_three_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_next_tests {
     use super::*;
 
@@ -20720,7 +20720,7 @@ mod coverage_round_next_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod fragmented_label_regression_tests {
     use super::*;
 
@@ -20877,7 +20877,7 @@ mod fragmented_label_regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deep_production_path_tests {
     use super::*;
 
@@ -23526,7 +23526,7 @@ mod deep_production_path_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod row_move_ownership_regressions {
     use super::mark_fully_revised_rows;
     use crate::comparer::WmlComparerSettings;
@@ -23604,7 +23604,7 @@ mod row_move_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod parked_paragraph_history_regressions {
     use super::*;
 
@@ -23666,7 +23666,7 @@ mod parked_paragraph_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod closing_layout_history_regressions {
     use super::*;
 
@@ -23739,7 +23739,7 @@ mod closing_layout_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod split_paragraph_boundary_regressions {
     use super::*;
 
@@ -23803,7 +23803,7 @@ mod split_paragraph_boundary_regressions {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod row_nontext_ownership_regressions {
     use super::*;
 
@@ -23948,7 +23948,7 @@ mod row_nontext_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod short_label_format_history_tests {
     use super::*;
 
@@ -24243,7 +24243,7 @@ mod short_label_format_history_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_final_batch_finalize_tests {
     use super::*;
 
@@ -24695,7 +24695,7 @@ mod coverage_final_batch_finalize_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_real_revision_merge_matrix_tests {
     use super::*;
 
@@ -28366,7 +28366,7 @@ mod coverage_real_revision_merge_matrix_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod consecutive_block_splice_tests {
     use super::*;
 
@@ -28484,7 +28484,7 @@ mod consecutive_block_splice_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod demo_title_pilcrow_history_tests {
     use super::*;
     const DATE: &str = "2001-02-03T04:05:06Z";
@@ -28860,7 +28860,7 @@ mod demo_title_pilcrow_history_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod paired_row_mark_ownership_tests {
     use super::*;
 
@@ -29144,7 +29144,7 @@ mod paired_row_mark_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod closing_authored_section_boundary_tests {
     use super::*;
 
@@ -29442,7 +29442,7 @@ mod closing_authored_section_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_distinct_boundary_contract_tests {
     use super::*;
 
@@ -30683,7 +30683,7 @@ mod finalizer_distinct_boundary_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_remaining_source_boundary_tests {
     use super::*;
 
@@ -31430,7 +31430,7 @@ mod finalizer_remaining_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_merge_source_guard_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -31863,7 +31863,7 @@ mod finalizer_merge_source_guard_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_reached_predicate_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32230,7 +32230,7 @@ mod finalizer_reached_predicate_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_body_heuristic_story_scope_tests {
     use super::*;
 
@@ -32563,7 +32563,7 @@ mod public_body_heuristic_story_scope_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod default_source_property_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32746,7 +32746,7 @@ mod default_source_property_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod existing_mark_layout_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33077,7 +33077,7 @@ mod existing_mark_layout_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod interleave_terminal_source_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33296,7 +33296,7 @@ mod interleave_terminal_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod whitespace_source_mark_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33460,7 +33460,7 @@ mod whitespace_source_mark_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod fragmented_source_label_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33968,7 +33968,7 @@ mod fragmented_source_label_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod nested_deleted_text_source_ownership_tests {
     use super::*;
 
@@ -34081,7 +34081,7 @@ mod nested_deleted_text_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod ladder_suffix_source_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -34219,7 +34219,7 @@ mod ladder_suffix_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod reached_word_document_policy_tests {
     use super::*;
     struct PolicyCase {
@@ -34412,7 +34412,7 @@ mod reached_word_document_policy_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod mid_list_optional_source_property_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -34508,7 +34508,7 @@ mod mid_list_optional_source_property_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod live_opaque_row_source_boundary_tests {
     use super::*;
 
@@ -34596,7 +34596,7 @@ mod live_opaque_row_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deleted_carrier_echo_source_owner_tests {
     use super::*;
     const DATE: &str = "1970-01-01T00:00:00Z";
