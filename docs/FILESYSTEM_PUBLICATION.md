@@ -25,12 +25,17 @@ there is no direct-write fallback. Staging cleanup is attempted on drop;
 cleanup errors or an interrupted process may leave staging directories. These
 are not outputs.
 
-After each commit the publisher synchronizes the parent directory. An error
-includes the committed paths and explicitly marks uncertain durability when
+On Unix, after each commit the publisher synchronizes the parent directory. An
+error includes the committed paths and explicitly marks uncertain durability when
 this acknowledgement fails. Callers must inspect the error before retrying:
 a failure can mean a complete file is visible with uncertain durability.
-Directory synchronization support depends on the OS and filesystem; an
-unsupported operation is reported, never silently treated as durable success.
+On Windows, directory synchronization is a documented no-op because the
+read-only directory handle cannot be flushed; NTFS journals metadata, but
+publication does not guarantee that a new directory entry survives immediate
+power loss.
+Outside Windows, directory synchronization support depends on the OS and
+filesystem; an unsupported operation is reported, never silently treated as
+durable success.
 
 A set of unrelated output files has one commit per file. All staging and
 validation complete first, but a later commit can fail after earlier files
