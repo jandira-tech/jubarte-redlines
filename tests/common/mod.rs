@@ -25,6 +25,8 @@
 
 pub mod docx;
 pub mod markdown_pairs;
+pub mod revision_summary;
+pub mod revision_tree;
 pub mod validity;
 
 use std::collections::BTreeMap;
