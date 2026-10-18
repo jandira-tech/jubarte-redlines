@@ -675,7 +675,7 @@ fn segments(critic: &str) -> Vec<Segment> {
                     None => out.push(Segment::HighlightEnd),
                 }
             }
-            Token::CommentStart => note = Some(String::new()),
+            Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => note = Some(String::new()),
             // A comment paragraph break, inside a note or in dropped
             // text.
             Token::CommentBreak => {
@@ -683,7 +683,7 @@ fn segments(critic: &str) -> Vec<Segment> {
                     note.push_str("\n\n");
                 }
             }
-            Token::CommentEnd => {
+            Token::CommentEnd | Token::AttributionEnd => {
                 let text = note.take().unwrap_or_default();
                 if edit.is_some() {
                     held.push(text);
