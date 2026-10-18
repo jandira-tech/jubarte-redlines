@@ -4042,6 +4042,49 @@ mod tests {
         bundle_restore_failure(false, false);
     }
 
+    /// GHSA-m665-v7pm-7grj: `jubarte debug` opens a package every other
+    /// route refuses — a local header naming an entry differently than the
+    /// central directory — because triaging refused input is its purpose.
+    #[test]
+    fn debug_opens_a_dual_header_package_instead_of_refusing() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let mut package = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut package));
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, body) in [
+                (
+                    "[Content_Types].xml",
+                    "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>",
+                ),
+                (
+                    "_rels/.rels",
+                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>",
+                ),
+                (
+                    "word/document.xml",
+                    "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body/></w:document>",
+                ),
+            ] {
+                writer.start_file(name, options).unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        let at = {
+            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&package)).unwrap();
+            archive.by_name("word/document.xml").unwrap().header_start() as usize
+        };
+        assert_eq!(&package[at..at + 4], b"PK\x03\x04");
+        let range = at + 30..at + 30 + b"word/document.xml".len();
+        package[range].copy_from_slice(b"w0rd/document.xml");
+        let file = dir.path().join("cloaked.docx");
+        std::fs::write(&file, &package).unwrap();
+        run_debug(&[file], false, Vec::new(), None, None, 5, 0)
+            .expect("debug triages a dual-header package");
+    }
+
     #[test]
     fn append_parses_files_output_and_break() {
         let cli = Cli::try_parse_from(["jubarte", "append", "a.docx", "b.docx", "-o", "out.docx"])

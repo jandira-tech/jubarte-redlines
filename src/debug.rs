@@ -166,6 +166,10 @@ struct Package {
     entries: Vec<Entry>,
     /// The package's bytes, for a layout pass.
     raw: Vec<u8>,
+    /// Why the local and central headers disagree, when they do: a package
+    /// every reader refuses is still a package a maintainer must triage, so
+    /// `debug` opens it unchecked and reports the mismatch as a finding.
+    header_mismatch: Option<String>,
 }
 
 impl Package {
@@ -203,8 +207,14 @@ impl Package {
             crate::strict_translation::strict_to_transitional_docx_within(bytes, limits);
         let bytes = translated.as_slice();
         crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
-        let mut zip =
-            crate::opc::open_archive(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
+        let mut zip = crate::opc::open_archive_unchecked(Cursor::new(bytes))
+            .map_err(|e| format!("not a zip: {e}"))?;
+        let header_mismatch = zip.validate_header_consistency().err().map(|e| {
+            format!(
+                "{}: local and central headers disagree: {e}",
+                crate::admission::AdmissionErrorKind::ZipHeaderMismatch.code()
+            )
+        });
         let mut entries = Vec::with_capacity(zip.len());
         let mut total = 0u64;
         for i in 0..zip.len() {
@@ -240,6 +250,7 @@ impl Package {
         Ok(Package {
             entries,
             raw: bytes.to_vec(),
+            header_mismatch,
         })
     }
 
@@ -1138,6 +1149,10 @@ fn analyze(pkg: &Package, opts: &Options) -> Analysis {
         textboxes: Vec::new(),
     };
     let on = |c: Check| opts.checks.contains(&c);
+    if let Some(detail) = &pkg.header_mismatch {
+        a.findings
+            .add("zip-header-mismatch", "package", detail.clone());
+    }
     let parts = pkg.xml_parts(opts.part.as_deref(), &mut a.findings);
     if on(Check::Package) {
         // Cross-part references need every part, whatever `part` selects.
@@ -2829,6 +2844,40 @@ mod tests {
     fn a_clean_package_has_no_findings() {
         let out = report(&docx(CLEAN), None, &Options::default()).unwrap();
         assert_eq!(out, "no findings\n");
+    }
+
+    /// Change only the local name, locating the header through the
+    /// central record rather than searching payload bytes.
+    fn rename_local_header(bytes: &mut [u8], from: &[u8], to: &[u8]) {
+        assert_eq!(from.len(), to.len());
+        let at = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+            archive
+                .by_name(std::str::from_utf8(from).unwrap())
+                .unwrap()
+                .header_start() as usize
+        };
+        assert_eq!(&bytes[at..at + 4], b"PK\x03\x04");
+        assert_eq!(&bytes[at + 30..at + 30 + from.len()], from);
+        bytes[at + 30..at + 30 + from.len()].copy_from_slice(to);
+    }
+
+    /// GHSA-m665-v7pm-7grj: every reader refuses a package whose local
+    /// header disagrees with its central directory — except `debug`, the
+    /// triage tool, which opens it anyway and reports the disagreement as
+    /// a finding so a maintainer can inspect what was refused.
+    #[test]
+    fn a_dual_header_package_reports_a_finding_instead_of_refusing() {
+        let mut pkg = docx(CLEAN);
+        rename_local_header(&mut pkg, b"word/document.xml", b"w0rd/document.xml");
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        assert!(out.contains("zip-header-mismatch: 1\n"), "{out}");
+        assert!(out.contains("Local file header filename mismatch"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(
+            found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
+            "{found:?}"
+        );
     }
 
     #[test]

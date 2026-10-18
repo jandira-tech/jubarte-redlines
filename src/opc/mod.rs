@@ -83,7 +83,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 mod archive;
-pub(crate) use archive::open_archive;
+pub(crate) use archive::{open_archive, open_archive_unchecked};
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
