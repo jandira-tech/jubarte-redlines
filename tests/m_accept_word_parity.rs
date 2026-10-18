@@ -891,3 +891,283 @@ fn accept_an_emptied_comment_keeps_a_paragraph() {
     );
     assert_eq!(comment_text(&accepted, 0), "");
 }
+
+// =========================================================================
+// #1224: inserted final paragraph mark across stories and shapes.
+// =========================================================================
+
+/// Paragraphs of `part` in `pkg`, each as its visible text.
+fn part_paragraphs(pkg: &[u8], part: &str) -> Vec<String> {
+    let xml = part_string(pkg, part).unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::p()))
+        .into_iter()
+        .map(|p| {
+            dom.descendants(p, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// Resolves the inserted final mark in `part`: paragraphs read `expected`,
+/// no tracked revision left, package is Word-valid.
+fn assert_part_resolved(pkg: &[u8], part: &str, expected: &[&str]) {
+    assert_eq!(part_paragraphs(pkg, part), expected);
+    let xml = part_string(pkg, part).unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    assert!(
+        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
+        "{part} still has tracked revisions"
+    );
+    assert_word_valid_package(pkg);
+}
+
+fn header_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/header1.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+        xml,
+    }
+}
+
+fn footer_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/footer1.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+        xml,
+    }
+}
+
+fn footnotes_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/footnotes.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+        xml,
+    }
+}
+
+/// A header with two paragraphs (`XA` plain, `XB` with an inserted mark).
+fn inserted_final_mark_header(ins_id: u32) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>XA</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id="{ins_id}" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>XB</w:t></w:r></w:p></w:hdr>"#
+    )
+}
+
+/// A footer with two paragraphs (`XA` plain, `XB` with an inserted mark).
+fn inserted_final_mark_footer(ins_id: u32) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>XA</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id="{ins_id}" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>XB</w:t></w:r></w:p></w:ftr>"#
+    )
+}
+
+/// A footnotes part with two separators and a footnote whose final
+/// paragraph carries an inserted mark.
+fn inserted_final_mark_footnotes(ins_id: u32) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t>XA</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id="{ins_id}" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>XB</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+    )
+}
+
+/// #1224 (A16): an inserted final mark inside a header. Word resolves
+/// the mark, as jubarte does. Accept All keeps `XA | XB`.
+#[test]
+fn accept_resolves_inserted_final_mark_in_header() {
+    let body = r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p>"#;
+    let pkg = docx_with_sect(
+        body,
+        &[header_part(&inserted_final_mark_header(11))],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/header1.xml", &["XA", "XB"]);
+    assert_eq!(paragraphs(&settled), ["Body"]);
+}
+
+/// #1224 (A16): an inserted final mark inside a footer. Word resolves
+/// the mark, as jubarte does. Accept All keeps `XA | XB`.
+#[test]
+fn accept_resolves_inserted_final_mark_in_footer() {
+    let body = r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p>"#;
+    let pkg = docx_with_sect(
+        body,
+        &[footer_part(&inserted_final_mark_footer(12))],
+        r#"<w:footerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/footer1.xml", &["XA", "XB"]);
+    assert_eq!(paragraphs(&settled), ["Body"]);
+}
+
+/// #1224 (A16): an inserted final mark inside a footnote. Word resolves
+/// the mark, as jubarte does. Accept All keeps `XA | XB`.
+#[test]
+fn accept_resolves_inserted_final_mark_in_footnote() {
+    let body = r#"<w:p><w:r><w:t>Body</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r></w:p>"#;
+    let pkg = docx_with(body, &[footnotes_part(&inserted_final_mark_footnotes(13))]);
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/footnotes.xml", &["", "", "XA", "XB"]);
+    assert_eq!(paragraphs(&settled), ["Body"]);
+}
+
+/// #1224: a document whose ONLY paragraph carries the inserted mark.
+/// The transform resolves the mark without needing a predecessor.
+#[test]
+fn accept_resolves_inserted_final_mark_when_only_paragraph() {
+    let body = r#"<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
+    let pkg = docx(body);
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["B"]);
+}
+
+/// #1224: a section-break paragraph (its `w:pPr` holds a `w:sectPr`)
+/// whose mark is inserted. Accept resolves the mark, keeps the section
+/// break.
+#[test]
+fn accept_resolves_inserted_final_mark_on_section_break_paragraph() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
+    let pkg = docx(body);
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
+    let xml = part_string(&settled, "word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:sectPr><w:pgSz w:w="12240""#),
+        "section break lost: {xml}"
+    );
+}
+
+/// #1224: a `w:moveTo` final mark (`<w:rPr><w:moveTo …/></w:rPr>` in the
+/// final paragraph's `w:pPr`, with the matching move range in the body).
+/// Accept uses `accept_move_from_move_to_transform`.
+#[test]
+fn accept_resolves_move_to_final_mark() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="2" w:name="m1"/>
+<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>
+<w:moveToRangeEnd w:id="2"/>"#;
+    let pkg = docx(body);
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
+}
+
+/// #1224: a `w:pPrChange` on the same final paragraph as the inserted
+/// mark. Accept drops both: the property history and the inserted mark.
+#[test]
+fn accept_resolves_inserted_final_mark_alongside_p_pr_change() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:p><w:pPr><w:pPrChange w:id="3" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:pPr/></w:pPrChange><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
+    let pkg = docx(body);
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
+}
+
+/// #1224: an inserted final mark inside `w:tc` (last paragraph of a
+/// cell). Accept resolves the mark.
+#[test]
+fn accept_resolves_inserted_final_mark_inside_tc() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:tbl><w:tblPr><w:tblW w:type="auto" w:w="0"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>
+<w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4000"/></w:tcPr><w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let pkg = docx(body);
+    let settled = accept_revisions(&pkg).unwrap();
+    let xml = part_string(&settled, "word/document.xml").unwrap();
+    assert_eq!(paragraphs(&settled), ["Keep", "B"]);
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    assert!(
+        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
+        "{xml}"
+    );
+    assert_word_valid_package(&settled);
+}
+
+/// #1224: an inserted final mark inside `w:txbxContent`. Accept
+/// resolves the mark.
+#[test]
+fn accept_resolves_inserted_final_mark_inside_txbx_content() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:p><w:r>
+<w:drawing xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="1000000" cy="1000000"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="Box"/><wp:cNvGraphicFramePr/>
+<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/></a:xfrm></wps:spPr><wps:txbx><w:txbxContent><w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp>
+</a:graphicData></a:graphic></wp:inline></w:drawing>
+</w:r></w:p>"#;
+    let pkg = docx(body);
+    let settled = accept_revisions(&pkg).unwrap();
+    let xml = part_string(&settled, "word/document.xml").unwrap();
+    assert!(
+        paragraphs(&settled).contains(&"B".to_string()),
+        "the text-box paragraph carries B: {xml}"
+    );
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    assert!(
+        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
+        "{xml}"
+    );
+    assert!(!xml.contains("<w:ins"), "the inserted mark survived: {xml}");
+    assert_word_valid_package(&settled);
+}
+
+/// #1224 finding 4: `A` plain, `B` inside `w:ins`, its mark inserted.
+/// Accept keeps the inserted B; the marks resolve.
+#[test]
+fn accept_resolves_finding_4_inserted_content_and_mark() {
+    let body = r#"<w:p><w:r><w:t>A</w:t></w:r></w:p>
+<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:ins w:id="10" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>B</w:t></w:r></w:ins></w:p>"#;
+    let pkg = docx(body);
+    let settled = accept_revisions(&pkg).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["A", "B"]);
+}
+
+/// #1224 (finding 3): selective CLI case. Accept only `r7` (a body run
+/// insertion); the inserted final mark `r9` stays tracked.
+#[test]
+fn cli_accept_selects_one_revision_and_leaves_inserted_final_mark() {
+    let body = r#"<w:p><w:r><w:t>A</w:t></w:r><w:ins w:id="7" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>extra</w:t></w:r></w:ins></w:p>
+<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
+    let pkg = docx(body);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.docx"), &pkg).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args(["accept", "input.docx", "--id", "r7", "-o", "settled.docx"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let settled = std::fs::read(dir.path().join("settled.docx")).unwrap();
+    assert_word_valid_package(&settled);
+    assert_eq!(paragraphs(&settled), ["Aextra", "B"]);
+    let xml = part_string(&settled, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    assert!(
+        jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
+        "r9 should still be tracked: {xml}"
+    );
+    assert!(xml.contains(r#"<w:ins w:id="9""#), "r9 lost: {xml}");
+    assert!(
+        !xml.contains(r#"<w:ins w:id="7""#),
+        "r7 was resolved: {xml}"
+    );
+}
