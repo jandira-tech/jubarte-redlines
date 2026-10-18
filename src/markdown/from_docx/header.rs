@@ -1554,7 +1554,7 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
 #[derive(Clone, Copy)]
 pub(crate) enum StoryView<'a> {
     /// The agent's tracked view, with the handles and the part's stem:
-    /// `{++DRAFT++}{>>header1.r1 @AC<<}`, `{--old--}{>>header1.r2 @AC<<}`;
+    /// `{++DRAFT++}{header1.r1 @AC}`, `{--old--}{header1.r2 @AC}`;
     /// document text that reads like CriticMarkup is escaped.
     Tagged(&'a super::agent::Handles, &'a str),
     /// Every change accepted: inserted and moved-to runs count, deleted and
@@ -1861,7 +1861,19 @@ pub(crate) fn story_text_with(
     walk(p, &mut s, draw);
     if matches!(view, StoryView::Tagged(..)) {
         s.flush();
-        s.critic.into_story().trim().to_string()
+        let mut text = s.critic.into_story().trim().to_string();
+        if let StoryView::Tagged(handles, story) = view {
+            if let Some(pr) = p.path(&["pPr", "rPr"]) {
+                for mark in pr.elements().filter(|mark| mark.is("ins")) {
+                    let tag = super::agent::format_tag(&format!(
+                        "{story}#{}",
+                        super::agent::tag_of(mark, handles)
+                    ));
+                    text.push_str(&format!("¶{{{tag}}}"));
+                }
+            }
+        }
+        text
     } else {
         s.out.trim().to_string()
     }
