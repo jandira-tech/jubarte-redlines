@@ -571,7 +571,7 @@ pub fn editing_mode_conflict_json(plan: &str, source: &[u8]) -> Option<&'static 
 /// date or `existing_revisions`, an operation id collides, a revision is both
 /// accepted and rejected, or a recorded id would narrow a filter that selects
 /// by author or kind.
-pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, String> {
+pub(crate) fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, String> {
     let Some(mut plan) = plan else {
         return Ok(more);
     };
@@ -693,7 +693,7 @@ fn filter_ids(filter: &Option<ChangeFilter>) -> &[String] {
 
 /// `notes` (`op-N: …`, numbered within one recording) renumbered after the
 /// `before` operations the plan already held.
-pub fn renumber_notes(notes: Vec<String>, before: usize) -> Vec<String> {
+pub(crate) fn renumber_notes(notes: Vec<String>, before: usize) -> Vec<String> {
     notes
         .into_iter()
         .map(|note| {

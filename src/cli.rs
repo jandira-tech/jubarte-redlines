@@ -1821,7 +1821,7 @@ pub const RETIRED: &[Retired] = &[
 /// Every task name that is gone and parses as the shorthand's first file
 /// again (`jubarte revisions x.docx` compares a file called `revisions`):
 /// a [`removed_task_note`] names what to say instead.
-pub const REMOVED_TASKS: &[Retired] = &[Retired {
+pub(crate) const REMOVED_TASKS: &[Retired] = &[Retired {
     old: "revisions",
     now: "changes",
     on: None,
@@ -1829,7 +1829,7 @@ pub const REMOVED_TASKS: &[Retired] = &[Retired {
 
 /// Each [`REMOVED_TASKS`] name `argv` puts where the task goes, as
 /// [`retired_spellings`] finds them.
-pub fn removed_tasks<'a>(
+pub(crate) fn removed_tasks<'a>(
     argv: impl IntoIterator<Item = &'a str>,
 ) -> Vec<(&'static str, &'static str)> {
     spellings_in(REMOVED_TASKS, argv)
@@ -1837,7 +1837,7 @@ pub fn removed_tasks<'a>(
 
 /// The note a removed task name earns: the run goes on, reading it as a
 /// file.
-pub fn removed_task_note(old: &str, now: &str) -> String {
+pub(crate) fn removed_task_note(old: &str, now: &str) -> String {
     format!("note: {old} is no longer a task, so it reads as a file name; use {now}")
 }
 
@@ -2034,7 +2034,7 @@ fn spellings_in<'a>(
 /// What a retired spelling still means once parsed: `audit` with no
 /// `--rules` checks `a11y,style,structure`, as the retired task did, not
 /// `validate`'s default `word`.
-pub fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
+pub(crate) fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
     if let Command::Validate { rules, .. } = task
         && rules.is_empty()
         && retired.iter().any(|(old, _)| *old == "audit")

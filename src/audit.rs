@@ -153,7 +153,7 @@ pub fn word_layout(docx: &[u8]) -> Result<RenderReport, AuditError> {
 }
 
 /// True when `rule` is one of the audit's rule sets or codes.
-pub fn is_rule(rule: &str) -> bool {
+pub(crate) fn is_rule(rule: &str) -> bool {
     RULE_SETS.contains(&rule) || RULES.iter().any(|known| known.0 == rule)
 }
 

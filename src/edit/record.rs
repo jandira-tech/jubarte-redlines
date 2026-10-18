@@ -128,7 +128,7 @@ impl Recorded {
 
 /// Where a recording is written: the file a symbolic link names (the link
 /// stays a link), else `plan` itself.
-pub fn plan_target(plan: &Path) -> PathBuf {
+pub(crate) fn plan_target(plan: &Path) -> PathBuf {
     if let Ok(real) = std::fs::canonicalize(plan) {
         return real;
     }
@@ -143,7 +143,7 @@ pub fn plan_target(plan: &Path) -> PathBuf {
 /// `target`: hidden, beside it, and named for this process, so it names no
 /// other plan or document. Two recordings into one plan at once are not
 /// serialized: the later rename wins.
-pub fn partial_path(target: &Path) -> PathBuf {
+pub(crate) fn partial_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -224,7 +224,7 @@ pub fn record(
 /// options, as the Python and npm CLIs parse them.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct RecordOptions {
+pub(crate) struct RecordOptions {
     /// `--author` (default `Redline`).
     pub author: Option<String>,
     /// `--datetime`.

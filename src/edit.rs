@@ -956,7 +956,7 @@ pub struct RevisionCounts {
 
 impl RevisionCounts {
     /// The counts of `changes`, one per listed change.
-    pub fn from_changes<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Self {
+    pub(crate) fn from_changes<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Self {
         let mut counts = Self::default();
         for change in changes {
             let slot = match change.kind {
@@ -1235,7 +1235,7 @@ fn resolve_selected(
 /// `plan`'s `resolve_revisions` has accepted and rejected what it selects.
 /// A selection that does not resolve is the plan's error, reported when it
 /// runs; here it leaves every change in place.
-pub fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
+pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
     let resolved = resolve_selected(source, plan.resolve_revisions.as_ref())
         .ok()
         .and_then(|(bytes, _)| bytes);
@@ -1443,7 +1443,7 @@ impl EditPlan {
 /// The legacy dispatcher contract, derived from its typed Serde operations.
 /// Native, Python and WASM all dispatch through `apply_plan_json` / `apply_plan`.
 /// The parser's key gate and capability discovery share these exact field facts.
-pub fn operation_schemas() -> &'static [serde_json::Value] {
+pub(crate) fn operation_schemas() -> &'static [serde_json::Value] {
     static SCHEMAS: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(|| {
         let settings = schemars::generate::SchemaSettings::draft2020_12()
             .with(|s| s.inline_subschemas = true)
@@ -1474,7 +1474,7 @@ pub fn operation_schemas() -> &'static [serde_json::Value] {
 }
 
 /// Names accepted by the common v1 dispatcher, in the legacy manifest order.
-pub fn dispatched_operation_kinds() -> Vec<String> {
+pub(crate) fn dispatched_operation_kinds() -> Vec<String> {
     operation_schemas()
         .iter()
         .map(|schema| {
