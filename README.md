@@ -368,8 +368,8 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte ORIGINAL MODIFIED` | Read, edit, compare and render Word documents |
 | `jubarte compare` | Compare documents: print the redline as the agent view, or write it with -o [alias: redline] |
 | `jubarte changes` | List tracked changes with IDs for accept, reject and edit plans |
-| `jubarte accept` | Accept all tracked changes, or select by ID, author or kind |
-| `jubarte reject` | Reject all tracked changes, or select by ID, author or kind |
+| `jubarte accept` | Accept all tracked changes — in the body, headers, footers, notes and comment bodies — or select by ID, author or kind. A selection resolves the changes it names in every part but cannot name a comment-body change by ID |
+| `jubarte reject` | Reject all tracked changes — in the body, headers, footers, notes and comment bodies — or select by ID, author or kind. A selection resolves the changes it names in every part but cannot name a comment-body change by ID |
 | `jubarte convert` | Convert Word or Markdown to DOCX, PDF, PNG or Markdown |
 | `jubarte diff` | Review differences as GitHub, word, normal, context or side-by-side text |
 | `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids |

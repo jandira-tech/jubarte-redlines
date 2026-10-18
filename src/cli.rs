@@ -899,7 +899,10 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Accept all tracked changes, or select by ID, author or kind.
+    /// Accept all tracked changes — in the body, headers, footers, notes
+    /// and comment bodies — or select by ID, author or kind. A selection
+    /// resolves the changes it names in every part but cannot name a
+    /// comment-body change by ID.
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
@@ -921,7 +924,10 @@ pub enum Command {
         #[serde(flatten)]
         render: RenderArgs,
     },
-    /// Reject all tracked changes, or select by ID, author or kind.
+    /// Reject all tracked changes — in the body, headers, footers, notes
+    /// and comment bodies — or select by ID, author or kind. A selection
+    /// resolves the changes it names in every part but cannot name a
+    /// comment-body change by ID.
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
@@ -2640,7 +2646,8 @@ pub enum Revisions {
 /// Filters selecting individual tracked changes.
 pub struct Selection {
     /// Only this change: `r12` (as the view and `jubarte changes` print
-    /// it), `header1.r1`, or `r1+2` (both). Repeatable.
+    /// it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body
+    /// changes have no ids and stay tracked.
     #[arg(long = "id", value_name = "ID")]
     pub ids: Vec<String>,
     /// Only changes by this author. Repeatable.

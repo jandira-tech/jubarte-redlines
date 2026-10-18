@@ -193,8 +193,14 @@ Tasks:
   compare       Compare documents: print the redline as the agent view, or write it with
                 -o [alias: redline]
   changes       List tracked changes with IDs for accept, reject and edit plans
-  accept        Accept all tracked changes, or select by ID, author or kind
-  reject        Reject all tracked changes, or select by ID, author or kind
+  accept        Accept all tracked changes — in the body, headers, footers, notes and
+                comment bodies — or select by ID, author or kind. A selection resolves
+                the changes it names in every part but cannot name a comment-body change
+                by ID
+  reject        Reject all tracked changes — in the body, headers, footers, notes and
+                comment bodies — or select by ID, author or kind. A selection resolves
+                the changes it names in every part but cannot name a comment-body change
+                by ID
   convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
   diff          Review differences as GitHub, word, normal, context or side-by-side text
   read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
@@ -521,7 +527,9 @@ Options:
 
 ```text
 $ jubarte accept --help
-Accept all tracked changes, or select by ID, author or kind
+Accept all tracked changes — in the body, headers, footers, notes and comment bodies —
+or select by ID, author or kind. A selection resolves the changes it names in every part
+but cannot name a comment-body change by ID
 
 Usage: jubarte accept [OPTIONS] --output <FILE> <FILE>
 
@@ -539,7 +547,8 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable
+          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
+          and stay tracked
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -606,7 +615,9 @@ Rendering (-o FILE.pdf or FILE.png):
 
 ```text
 $ jubarte reject --help
-Reject all tracked changes, or select by ID, author or kind
+Reject all tracked changes — in the body, headers, footers, notes and comment bodies —
+or select by ID, author or kind. A selection resolves the changes it names in every part
+but cannot name a comment-body change by ID
 
 Usage: jubarte reject [OPTIONS] --output <FILE> <FILE>
 
@@ -624,7 +635,8 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable
+          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
+          and stay tracked
 
       --author <NAME>
           Only changes by this author. Repeatable

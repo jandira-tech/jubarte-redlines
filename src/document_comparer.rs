@@ -4950,9 +4950,9 @@ const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!(
 );
 
 /// A.11 — `RevisionProcessor.AcceptRevisions` byte facade: accept every
-/// tracked revision across main + headers/footers + notes + styles parts
-/// and return the result as a `.docx` byte vector. The input is admitted
-/// under [`crate::admission::InputLimits::compare`] first.
+/// tracked revision across main + headers/footers + notes + comments +
+/// styles parts and return the result as a `.docx` byte vector. The input
+/// is admitted under [`crate::admission::InputLimits::compare`] first.
 ///
 /// # Errors
 ///
@@ -4979,7 +4979,8 @@ fn accept_source_revisions(
 }
 
 /// A.11 — `RevisionProcessor.RejectRevisions` byte facade: reject every
-/// tracked revision across main + headers/footers + notes + styles parts.
+/// tracked revision across main + headers/footers + notes + comments +
+/// styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
