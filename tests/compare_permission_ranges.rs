@@ -12,7 +12,6 @@ use jubarte::document_comparer::{
 };
 use jubarte::namespaces::W;
 use jubarte::xmllinq::Dom;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 const MAIN: &str = "word/document.xml";
@@ -464,18 +463,21 @@ fn foreign_content_control_is_left() {
     assert!(xml.find("permStart").unwrap() < xml.find("<w:sdt>").unwrap());
     assert!(xml.find("permEnd").unwrap() > xml.find("</w:sdt>").unwrap());
 }
+/// Without ranges on either side the output holds no permission marker. That
+/// the union changes no byte then is a crate test beside the comparer
+/// (`the_permission_union_is_a_no_op_without_ranges`).
 #[test]
-fn no_ranges_keeps_base_bytes() {
+fn no_ranges_writes_no_permission_markers() {
     let out = compare(
         &body(TEXT, None, "Next clause."),
         &body(TEXT, None, "Following clause."),
     );
-    let hash = Sha256::digest(&out)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    assert_eq!(
-        hash,
-        "e601cde1a6829b166d76d78447e9fe50c441417e430e5247d8472e236e8700e2"
-    );
+    let pkg = jubarte::opc::PartFs::open(&out).unwrap();
+    for part in pkg.parts() {
+        let text = String::from_utf8_lossy(pkg.part_bytes(&part).unwrap());
+        assert!(
+            !text.contains("permStart") && !text.contains("permEnd"),
+            "{part} holds a permission marker"
+        );
+    }
 }

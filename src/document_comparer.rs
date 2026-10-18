@@ -8863,6 +8863,40 @@ mod coverage_boundary_tests {
         }
     }
 
+    /// #1190: `compare_documents_with_settings` and
+    /// `compare_documents_for_edit` differ only in the permission union. A
+    /// pair without ranges compares to the same bytes either way; a pair with
+    /// one does not, so the control shows the flag reaches the union.
+    #[test]
+    fn the_permission_union_is_a_no_op_without_ranges() {
+        let body = |range: bool, last: &str| {
+            let (start, end) = if range {
+                (
+                    r#"<w:permStart w:id="5" w:edGrp="everyone"/>"#,
+                    r#"<w:permEnd w:id="5"/>"#,
+                )
+            } else {
+                ("", "")
+            };
+            format!(
+                "<w:body><w:p>{start}<w:r><w:t>The Customer shall pay.</w:t></w:r>{end}</w:p>\
+                 <w:p><w:r><w:t>{last}</w:t></w:r></w:p></w:body>"
+            )
+        };
+        let compared = |range: bool| {
+            let a = package(&body(range, "Next clause.")).to_zip().unwrap();
+            let b = package(&body(range, "Following clause.")).to_zip().unwrap();
+            (
+                compare_documents_with_settings(&a, &b, &settings()).unwrap(),
+                compare_documents_for_edit(&a, &b, &settings()).unwrap(),
+            )
+        };
+        let (union, edit) = compared(false);
+        assert!(union == edit, "without ranges the union changed the output");
+        let (union, edit) = compared(true);
+        assert!(union != edit, "the control did not reach the union");
+    }
+
     fn assert_revision(dom: &Dom, node: NodeId, id: &str) {
         assert_eq!(dom.attribute(node, &W::id()), Some(id));
         assert_eq!(dom.attribute(node, &W::author()), Some("Boundary author"));
