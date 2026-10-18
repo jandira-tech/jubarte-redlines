@@ -360,9 +360,16 @@ auditTracked(original: Uint8Array, edited: Uint8Array, author: string): string
 Every text change from `original` to `edited` must be a revision by
 `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
 array. Existing foreign revisions may remain: `FOREIGN_AUTHOR` reports
-foreign history added, changed or removed against `original`. Revision ids
-and adjacent splits with the same author, kind and date do not count as
-new history.
+foreign history added, changed or removed against `original`. Paragraphs
+align by full text, including deleted text, within each story. Groups with
+the same author, kind, target, date and move side are compared in document
+order within the aligned paragraph or non-paragraph owner (for example, a
+style id). Revision ids do not define identity. Split carriers combine only
+when they touch, with no visible content or still-present revision between
+them. A boundary explained solely by a missing separator revision adds no
+finding beyond that separator. Changed revisions say `differs from the
+original`; new revisions say `is new`. These messages name ids and authors,
+never revision text.
 
 Mirrors `jubarte::validate::audit_tracked`.
 
