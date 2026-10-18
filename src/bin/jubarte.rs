@@ -828,12 +828,107 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
     format!("{stem}-page-{:0width$}.png", index + 1)
 }
 
-/// `read --tables`: each body table as a grid.
-fn run_read_tables(file: &Path) -> Result<(), String> {
+/// Resolve the shared `-p` grammar against inventory cell ownership before
+/// printing anything. A bad item refuses the whole request; retaining the
+/// original entries preserves document indices, order and formatting.
+fn select_table_inventory(
+    tables: &mut Vec<jubarte::inspect::Table>,
+    paragraph_count: usize,
+    spec: &str,
+) -> Result<(), String> {
+    use jubarte::markdown::{MarkdownError, Pick, Select};
+    use std::collections::{BTreeSet, HashMap};
+
+    let Select::Picks(picks) = Select::parse(spec)? else {
+        unreachable!("the -p parser returns picks");
+    };
+    // Parents precede their descendants in the inventory. Map every entry
+    // to the view's top-level tN, without changing the inventory's labels.
+    let mut top_level_count = 0;
+    let mut view_indices = Vec::with_capacity(tables.len());
+    for table in tables.iter() {
+        let view_index = if let Some(parent) = table.parent_index {
+            view_indices[parent]
+        } else {
+            let index = top_level_count;
+            top_level_count += 1;
+            index
+        };
+        view_indices.push(view_index);
+    }
+    let owners: HashMap<&str, usize> = tables
+        .iter()
+        .flat_map(|table| {
+            let view_index = view_indices[table.index];
+            table.rows.iter().flatten().flat_map(move |cell| {
+                cell.paragraph_ids
+                    .iter()
+                    .map(move |id| (id.as_str(), view_index))
+            })
+        })
+        .collect();
+    let unreadable = |message| MarkdownError::Docx(message).to_string();
+    let mut selected = BTreeSet::new();
+    for pick in picks {
+        match pick {
+            Pick::Table(index) => {
+                if index >= top_level_count {
+                    return Err(unreadable(format!(
+                        "t{index} is not a table of this document"
+                    )));
+                }
+                selected.insert(index);
+            }
+            Pick::Paragraphs { from, to } => {
+                let last = paragraph_count
+                    .checked_sub(1)
+                    .ok_or_else(|| unreadable("the body has no paragraphs".to_string()))?;
+                let to = to.unwrap_or(last);
+                for n in [from, to] {
+                    if n > last {
+                        return Err(unreadable(format!(
+                            "p{n} is past the last paragraph p{last}"
+                        )));
+                    }
+                }
+                for n in from..=to {
+                    let id = format!("p{n}");
+                    let Some(&index) = owners.get(id.as_str()) else {
+                        return Err(format!(
+                            "{id} is not in a table; --tables -p takes tN, or a pN inside a table"
+                        ));
+                    };
+                    selected.insert(index);
+                }
+            }
+        }
+    }
+    tables.retain(|table| selected.contains(&view_indices[table.index]));
+    Ok(())
+}
+
+/// `read --tables`: the inventory, followed by the unchanged view when
+/// `-p` selects tables. Build both before printing, so refusals leave stdout
+/// empty. Selection errors exit 2; I/O failures keep their usual status.
+fn run_read_tables(file: &Path, args: &ReadArgs) -> Result<(), ConvertFailure> {
     let bytes = read_word(file)?;
     warn_nested_text_boxes(&bytes);
-    let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
-    write_stdout(jubarte::inspect::tables_text(&tables))
+    let mut tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
+    if let Some(spec) = args.paragraphs.as_deref() {
+        let paragraph_count = jubarte::inspect::paragraphs(&bytes)
+            .map_err(|e| e.to_string())?
+            .len();
+        select_table_inventory(&mut tables, paragraph_count, spec)
+            .map_err(|message| (EXIT_USAGE, message))?;
+    }
+    let mut text = jubarte::inspect::tables_text(&tables);
+    if args.paragraphs.is_some() {
+        let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
+        let view = agent_view(&bytes, source, args)?;
+        text.push('\n');
+        text.push_str(&view.markdown);
+    }
+    write_stdout(text).map_err(Into::into)
 }
 
 /// `read --for-edit` (V2-10): the working document template/apply
@@ -937,7 +1032,7 @@ fn run_text(
         return run_for_edit(file, args, output, force, quiet);
     }
     if args.tables {
-        return Ok(run_read_tables(file)?);
+        return run_read_tables(file, args);
     }
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if let Some(path) = output {

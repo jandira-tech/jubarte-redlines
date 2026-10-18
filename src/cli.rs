@@ -85,7 +85,11 @@ pub struct ReadArgs {
     pub no_page_markers: bool,
     /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
     /// `p17-` / `-p3` spellings still parse, transitionally; the 17 October
-    /// 2026 contract retires them — spell the end, `p17-p20`).
+    /// 2026 contract retires them — spell the end, `p17-p20`). With --tables,
+    /// select top-level tables (including their nested tables) by the same
+    /// tN as the view, or by a pN inside them; lists and paragraph ranges
+    /// must contain only table paragraphs. Print their grid, then a blank
+    /// line and the same view as read -p SPEC.
     #[arg(
         short = 'p',
         long = "paragraphs",
@@ -135,14 +139,20 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub json: bool,
-    /// Print each body table as a grid instead of the view: a `table N:
+    /// Print each body table as a grid: a `table N:
     /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
-    /// tab-separated `ids=text` cells.
+    /// tab-separated `ids=text` cells. Use -p t0,t2 or -p pN (a cell
+    /// paragraph) to select top-level tables and all their nested tables,
+    /// in document order, each once. tN is the view's top-level index;
+    /// inventory labels stay unchanged. Every selected paragraph must be
+    /// inside a table. With -p, follow the selected grids with a blank
+    /// line and the same view as read -p SPEC, including its YAML header.
+    /// Without -p, print only the inventory.
     #[arg(
         long,
         conflicts_with_all = [
             "json", "track_changes", "comments", "dates",
-            "paragraphs", "head", "tail", "changed", "by",
+            "head", "tail", "changed", "by",
         ],
         help_heading = "Read options"
     )]
@@ -589,7 +599,7 @@ fn swallowed_file(flag: &str, value: &Path) -> String {
 /// view conflict teaches the valid invocation; `edit --plan a.docx -p p1 …`
 /// identifies the swallowed FILE from the raw tokens. Other errors stay
 /// clap's own (including help, unknown options and invalid values).
-fn usage_error(command: &clap::Command, tokens: &[String], error: clap::Error) -> clap::Error {
+fn usage_error(command: &clap::Command, tokens: &[String], mut error: clap::Error) -> clap::Error {
     if error.kind() == clap::error::ErrorKind::ArgumentConflict {
         use clap::error::ContextKind;
         // Use clap's identified arguments, not option-looking values in
@@ -607,6 +617,14 @@ fn usage_error(command: &clap::Command, tokens: &[String], error: clap::Error) -
             && let Some(output) = ["--json", "--tables", "--for-edit"].into_iter().find(names)
         {
             return read_usage_error(command, read_view_conflict(flag, output));
+        }
+        if names(&"--tables") {
+            error.insert(
+                ContextKind::Usage,
+                clap::error::ContextValue::StyledStr(
+                    format!("Usage: {} read [OPTIONS] <FILE>", command.get_name()).into(),
+                ),
+            );
         }
     }
     if error.kind() != clap::error::ErrorKind::MissingRequiredArgument {

@@ -850,6 +850,22 @@ jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND
 jubarte add  FILE -p c5 --content TEXT                         a reply (also --reply TEXT)
 ```
 
+`read --tables` prints the table inventory: a `table N: ROWSxCOLS
+header_rows=H widths=…` line, then one line per row of tab-separated
+`ids=text` cells. Add `-p t0,t2` to select the same top-level tables as
+`read -p t0,t2`. The selected grids come first, then one empty line, then
+exactly the view from `read -p t0,t2`, including its YAML header, tracked
+changes and comments. Without `-p`, only the inventory prints, unchanged.
+Each selected table includes
+all its nested tables; entries keep their existing inventory labels and
+print once in document order. A cell paragraph (`-p p11`) selects its
+containing top-level table, including when the paragraph is nested.
+Paragraph ranges (`-p p11-p13`) and lists may contain only paragraphs
+inside tables: an outside paragraph refuses the entire selection with
+exit 2. Table ranges (`t0-t2`) are not part of the `-p` grammar; list them
+as `t0,t1,t2`. `--head`, `--tail`, `--changed` and `--by` cannot be combined
+with `--tables`.
+
 The printed view is the output of `jubarte FILE` and `jubarte A B`, so `-q`
 does not hide it (it silences the `wrote …` line of `-o`). Options go after
 the task: `jubarte --head 2 read a.docx` is refused, since the parser would

@@ -557,6 +557,7 @@ jubarte convert redline.docx \
 jubarte read contract.docx               # the agent view
 jubarte read contract.docx --json        # the snapshot: paragraphs, runs, tables, changes, comments
 jubarte read contract.docx --tables      # each table as a grid of `ids=text` cells
+jubarte read contract.docx --tables -p t0 # t0 and its nested tables: grid, then view
 jubarte read contract.docx -p p12,p40-p48 -o excerpt.md
 ```
 

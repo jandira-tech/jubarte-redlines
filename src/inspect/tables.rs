@@ -19,6 +19,10 @@ pub struct Table {
     /// Position among the body's tables in document order, nested ones
     /// counted where they start.
     pub index: usize,
+    /// Inventory index of the containing table, or `None` for a top-level
+    /// table. Selection metadata only; omitted from the JSON snapshot.
+    #[serde(skip)]
+    pub parent_index: Option<usize>,
     /// Cells row by row, as they appear in the XML: a merged cell is one
     /// cell, so rows can differ in length.
     pub rows: Vec<Vec<TableCell>>,
@@ -56,7 +60,13 @@ pub(super) fn body_tables(dom: &Dom, body: NodeId) -> Vec<Table> {
             by_cell.entry(cell).or_default().push((index, p));
         }
     }
-    dom.descendants(body, Some(&tbl))
+    let nodes = dom.descendants(body, Some(&tbl));
+    let indices: HashMap<NodeId, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, &node)| (node, index))
+        .collect();
+    nodes
         .into_iter()
         .enumerate()
         .map(|(index, table)| {
@@ -113,6 +123,8 @@ pub(super) fn body_tables(dom: &Dom, body: NodeId) -> Vec<Table> {
                 .collect();
             Table {
                 index,
+                parent_index: nearest(dom, table, &tbl)
+                    .and_then(|parent| indices.get(&parent).copied()),
                 rows,
                 header_rows,
                 widths_dxa,

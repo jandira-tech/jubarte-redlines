@@ -236,3 +236,271 @@ fn read_json_of_a_cell_paragraph_holds_that_paragraph_only() {
     assert_eq!(ids("p0-p1"), ["p0", "p1"]);
     assert_eq!(ids("t0"), ["p1", "p2", "p3", "p4", "p5"]);
 }
+
+// CLI integration tests: real temporary packages and subprocesses exercise
+// selection, exit status and the exact inventory wire format together.
+const TABLE_ENTRIES: [&str; 3] = [
+    "table 0: 1x2 header_rows=1 widths=6000,3360\np1=Alice\tp2=One\n",
+    "table 1: 1x2 header_rows=1 widths=6000,3360\np4=Bob\tp5=Two\n",
+    "table 2: 1x2 header_rows=1 widths=6000,3360\np7=Carol Diaz\tp8=Three\n",
+];
+
+fn three_tables() -> Vec<u8> {
+    docx(
+        &(para("Before.")
+            + &table(true, &[cell(&["Alice"]) + &cell(&["One"])])
+            + &para("Between.")
+            + &table(true, &[cell(&["Bob"]) + &cell(&["Two"])])
+            + &para("Between again.")
+            + &table(true, &[cell(&["Carol Diaz"]) + &cell(&["Three"])])
+            + &para("After.")),
+    )
+}
+
+fn read_table_fixture(source: &[u8], shorthand: bool, flags: &[&str]) -> std::process::Output {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("selection.docx");
+    std::fs::write(&path, source).unwrap();
+    let mut command = Command::new(BIN);
+    if !shorthand {
+        command.arg("read");
+    }
+    command.arg(path).args(flags).output().unwrap()
+}
+
+fn selected_inventory(spec: &str, indices: &[usize]) {
+    let source = three_tables();
+    let full = read_table_fixture(&source, false, &["--tables"]);
+    assert!(full.status.success(), "{full:?}");
+    assert_eq!(full.stdout, TABLE_ENTRIES.concat().as_bytes());
+    let out = read_table_fixture(&source, false, &["--tables", "-p", spec]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{spec}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let expected: String = indices.iter().map(|&i| TABLE_ENTRIES[i]).collect();
+    assert_summary_and_view(&source, spec, &expected, &out);
+    assert!(out.stderr.is_empty(), "{out:?}");
+}
+
+fn assert_summary_and_view(source: &[u8], spec: &str, summary: &str, out: &std::process::Output) {
+    let view = read_table_fixture(source, false, &["-p", spec]);
+    assert!(view.status.success(), "{view:?}");
+    let expected = [summary.as_bytes(), b"\n", &view.stdout].concat();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&expected),
+        "{spec}: selected grid, blank line, and unchanged view"
+    );
+}
+
+#[test]
+fn table_inventory_selects_one_document_index() {
+    selected_inventory("t0", &[0]);
+    selected_inventory("t1", &[1]);
+}
+
+#[test]
+fn table_inventory_selects_a_list() {
+    selected_inventory("t0,t2", &[0, 2]);
+}
+
+#[test]
+fn table_inventory_sorts_and_deduplicates_a_list() {
+    selected_inventory("t2,t0,t2", &[0, 2]);
+    selected_inventory("t2,t0", &[0, 2]);
+}
+
+#[test]
+fn table_inventory_selects_a_cell_paragraph() {
+    selected_inventory("p4", &[1]);
+}
+
+#[test]
+fn table_inventory_selects_a_paragraph_range() {
+    selected_inventory("p4-p5", &[1]);
+}
+
+#[test]
+fn table_inventory_selects_paragraphs_from_several_tables() {
+    selected_inventory("p8,p1,p4", &[0, 1, 2]);
+}
+
+fn refused_inventory(spec: &str, message: &str) {
+    let out = read_table_fixture(&three_tables(), false, &["--tables", "-p", spec]);
+    assert_eq!(out.status.code(), Some(2), "{spec}: {out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains(message), "{spec}: {stderr}");
+}
+
+#[test]
+fn table_inventory_refuses_a_non_table_paragraph() {
+    refused_inventory(
+        "p3",
+        "p3 is not in a table; --tables -p takes tN, or a pN inside a table",
+    );
+}
+
+#[test]
+fn table_inventory_refuses_mixed_table_and_non_table_items() {
+    refused_inventory(
+        "t0,p3",
+        "p3 is not in a table; --tables -p takes tN, or a pN inside a table",
+    );
+}
+
+#[test]
+fn table_inventory_refuses_the_first_non_table_paragraph_in_a_range() {
+    refused_inventory(
+        "p4-p8",
+        "p6 is not in a table; --tables -p takes tN, or a pN inside a table",
+    );
+}
+
+#[test]
+fn table_inventory_refuses_missing_tables_with_the_view_diagnosis() {
+    let view = read_table_fixture(&three_tables(), false, &["-p", "t9"]);
+    let stderr = String::from_utf8(view.stderr).unwrap();
+    let diagnosis = stderr.trim().strip_prefix("error: ").unwrap();
+    refused_inventory("t9", diagnosis);
+}
+
+#[test]
+fn table_inventory_refuses_invalid_selection_grammar() {
+    for spec in ["t0-t2", "p5-p4", "Alice", "p99", ","] {
+        let view = read_table_fixture(&three_tables(), false, &["-p", spec]);
+        let stderr = String::from_utf8(view.stderr).unwrap();
+        let diagnosis = stderr.trim().strip_prefix("error: ").unwrap();
+        refused_inventory(spec, diagnosis);
+    }
+}
+
+#[test]
+fn table_inventory_shorthand_selects_the_same_entry() {
+    let source = three_tables();
+    let flags = ["--tables", "-p", "t0"];
+    let explicit = read_table_fixture(&source, false, &flags);
+    let shorthand = read_table_fixture(&source, true, &flags);
+    assert_eq!(
+        shorthand.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&shorthand.stderr)
+    );
+    assert_summary_and_view(&source, "t0", TABLE_ENTRIES[0], &shorthand);
+    assert_eq!(shorthand.stdout, explicit.stdout);
+}
+
+fn hard_tables() -> Vec<u8> {
+    include_bytes!("fixtures/from-docx/critic/synthetic/hard-tables.docx").to_vec()
+}
+
+#[test]
+fn table_inventory_selects_a_top_level_table_and_its_nested_tables() {
+    let source = hard_tables();
+    let full = read_table_fixture(&source, false, &["--tables"]);
+    assert!(full.status.success(), "{full:?}");
+    let text = String::from_utf8_lossy(&full.stdout);
+    assert!(text.contains("table 0: 3x3"), "{text}");
+    assert!(text.contains("table 1:"), "{text}");
+    let out = read_table_fixture(&source, false, &["--tables", "-p", "t0"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_summary_and_view(
+        &source,
+        "t0",
+        &String::from_utf8(full.stdout).unwrap(),
+        &out,
+    );
+}
+
+#[test]
+fn table_inventory_selects_a_nested_tables_own_paragraph() {
+    let source = hard_tables();
+    let full = read_table_fixture(&source, false, &["--tables"]);
+    let out = read_table_fixture(&source, false, &["--tables", "-p", "p9"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_summary_and_view(
+        &source,
+        "p9",
+        &String::from_utf8(full.stdout).unwrap(),
+        &out,
+    );
+}
+
+#[test]
+fn table_inventory_refuses_a_nested_inventory_index_as_a_view_table() {
+    let source = hard_tables();
+    let view = read_table_fixture(&source, false, &["-p", "t1"]);
+    assert_eq!(view.status.code(), Some(1), "{view:?}");
+    let out = read_table_fixture(&source, false, &["--tables", "-p", "t1"]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert_eq!(out.stderr, view.stderr);
+    assert!(out.stdout.is_empty());
+}
+
+fn deeply_nested_tables() -> Vec<u8> {
+    let deepest = table(false, &[cell(&["Carol Diaz"]) + &cell(&["Three"])]);
+    let middle_cell = format!("<w:tc>{}{deepest}<w:p/></w:tc>", para("Bob"));
+    let middle = table(false, &[middle_cell + &cell(&["Two"])]);
+    let outer_cell = format!("<w:tc>{}{middle}<w:p/></w:tc>", para("Alice"));
+    let outer = table(false, &[outer_cell + &cell(&["One"])]);
+    docx(&(outer + &para("Between.") + &table(false, &[cell(&["Alice"]) + &cell(&["After"])])))
+}
+
+#[test]
+fn table_inventory_selection_follows_top_level_indices_at_any_depth() {
+    let source = deeply_nested_tables();
+    let found = tables(&source).unwrap();
+    assert_eq!(found.len(), 4);
+    for spec in ["t0", "p2"] {
+        let out = read_table_fixture(&source, false, &["--tables", "-p", spec]);
+        assert!(out.status.success(), "{out:?}");
+        assert_summary_and_view(&source, spec, &tables_text(&found[..3]), &out);
+    }
+    let out = read_table_fixture(&source, false, &["--tables", "-p", "t1"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_summary_and_view(&source, "t1", &tables_text(&found[3..]), &out);
+    let view = read_table_fixture(&source, false, &["-p", "t1"]);
+    assert!(view.status.success(), "{view:?}");
+    assert!(String::from_utf8_lossy(&view.stdout).contains("|Alice|After|"));
+}
+
+#[test]
+fn table_inventory_without_selection_and_the_table_view_are_unchanged() {
+    let source = three_tables();
+    let full = read_table_fixture(&source, false, &["--tables"]);
+    assert_eq!(full.status.code(), Some(0));
+    assert_eq!(full.stdout, TABLE_ENTRIES.concat().as_bytes());
+    let view = read_table_fixture(&source, false, &["-p", "t1"]);
+    assert_eq!(view.status.code(), Some(0), "{view:?}");
+    let stdout = String::from_utf8(view.stdout).unwrap();
+    assert!(stdout.contains("range: t1 of p0-p9\n"), "{stdout}");
+    assert!(
+        stdout.ends_with(
+            "<!-- t1 1x2, cells p4-p5 by row, header row repeats -->\n|Bob|Two|\n|-|-|\n"
+        ),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn table_inventory_still_refuses_other_selection_flags() {
+    for flags in [
+        vec!["--tables", "--head", "3"],
+        vec!["--tables", "--tail", "3"],
+        vec!["--tables", "--changed"],
+        vec!["--tables", "--by", "Alice"],
+    ] {
+        let out = read_table_fixture(&three_tables(), false, &flags);
+        assert_eq!(out.status.code(), Some(2), "{flags:?}: {out:?}");
+        assert!(out.stdout.is_empty(), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("Usage: jubarte read [OPTIONS] <FILE>"),
+            "{stderr}"
+        );
+    }
+}
