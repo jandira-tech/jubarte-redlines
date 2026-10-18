@@ -131,13 +131,21 @@ pub(super) struct People {
     pub drawing_backings: HashMap<String, String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct MarkIdentity {
+    name: String,
+    id: u32,
+    handle: Option<String>,
+    date: Option<String>,
+}
+
 /// The marks of one story part being written: their people and the next
 /// `w:id` for a mark no tag numbers.
 struct Marks<'p> {
     people: &'p People,
     next_id: u32,
     /// One opening tag per element and id in the current story part.
-    opens: HashMap<(String, u32), String>,
+    opens: HashMap<MarkIdentity, String>,
     error: Option<String>,
 }
 
@@ -165,7 +173,12 @@ impl Marks<'_> {
                 self.next_id
             }
         };
-        let key = (name.to_string(), id);
+        let key = MarkIdentity {
+            name: name.to_string(),
+            id,
+            handle: tag.map(|tag| tag.handle.clone()),
+            date: tag.and_then(|tag| tag.date.clone()),
+        };
         if let Some(open) = self.opens.get(&key) {
             return open.clone();
         }
@@ -915,9 +928,7 @@ fn append_revision(
     let shared = last
         .iter()
         .zip(&wrappers)
-        .take_while(|((before, close, folded), (open, end, nested))| {
-            before == open && close == end && (*folded || *nested)
-        })
+        .take_while(|((before, close, _), (open, end, _))| before == open && close == end)
         .count();
     let close: String = last[..shared]
         .iter()

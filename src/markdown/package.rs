@@ -102,6 +102,8 @@ fn err(message: impl std::fmt::Display) -> MarkdownError {
 pub(super) fn assemble(
     document: &Document,
     options: &DocxOptions<'_>,
+    markdown: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<u8>, MarkdownError> {
     let template = match options.reference {
         Some(bytes) => bytes.to_vec(),
@@ -221,6 +223,8 @@ pub(super) fn assemble(
         next_revision,
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
+        warnings,
+        revision_prefix: "",
         pending_marks: Vec::new(),
         num_ids,
         label_nums,
@@ -339,7 +343,80 @@ pub(super) fn assemble(
             package.set_part(&part, source.into_bytes());
         }
     }
+    unique_revision_ids(&mut package, markdown, warnings);
     package.to_zip().map_err(err)
+}
+
+/// The body allocator handles its own ids. Enforce the same invariant in
+/// every other written part too (stories, styles and property revisions).
+/// Keep every source line naming a story id: a folded mark can appear in
+/// several source tags but becomes just one XML element.
+fn unique_revision_ids(package: &mut PartFs, markdown: &str, warnings: &mut Vec<String>) {
+    let mut lines: HashMap<crate::ids::ChangeId, Vec<usize>> = HashMap::new();
+    for (line, text) in markdown.lines().enumerate() {
+        for word in text
+            .split(|c: char| c.is_whitespace() || matches!(c, '{' | '}' | ';' | ',' | '"' | '\''))
+        {
+            if let Ok(ids) = crate::ids::parse_change_ids(word) {
+                for id in ids {
+                    let found = lines.entry(id).or_default();
+                    if found.last() != Some(&(line + 1)) {
+                        found.push(line + 1);
+                    }
+                }
+            }
+        }
+    }
+    for part in package
+        .parts()
+        .into_iter()
+        .filter(|part| part.ends_with(".xml"))
+    {
+        let Some(xml) = package.part_string(&part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(document) else {
+            continue;
+        };
+        let renamed = crate::validate::renumber_duplicate_revision_ids(&mut dom, root);
+        if renamed.is_empty() {
+            continue;
+        }
+        let story = if package.main_document_part().as_deref() == Some(part.as_str()) {
+            "body"
+        } else {
+            part.rsplit('/')
+                .next()
+                .unwrap_or(&part)
+                .trim_end_matches(".xml")
+        };
+        for (old, new) in renamed {
+            let old = crate::ids::ChangeId::new(story, old);
+            let new = crate::ids::ChangeId::new(story, new).short();
+            let location = match lines.get(&old).map(Vec::as_slice) {
+                Some([line]) => format!("on line {line}"),
+                Some(found) => format!(
+                    "on lines {}",
+                    found
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                None => format!("in {part}"),
+            };
+            warnings.push(format!(
+                "{} names two separate changes {location}; the second is written as {new}",
+                old.short()
+            ));
+        }
+        package.set_part(
+            &part,
+            crate::xmllinq::serialize::serialize_document(&dom, document).into_bytes(),
+        );
+    }
 }
 
 /// The styles part `main` relates to, made empty when there is none.
@@ -1230,6 +1307,10 @@ fn footnotes(
         .filter_map(|id| u32::try_from(id).ok())
         .collect();
         let outside = std::mem::replace(&mut context.used_revisions, in_part);
+        let outside_prefix = std::mem::replace(
+            &mut context.revision_prefix,
+            if endnote { "endnotes." } else { "footnotes." },
+        );
         {
             let mut relate = PartRelate {
                 package,
@@ -1249,6 +1330,7 @@ fn footnotes(
             context.in_endnote = false;
         }
         context.used_revisions = outside;
+        context.revision_prefix = outside_prefix;
         let mut root = existing;
         let open = format!("<w:{kind}s");
         for (prefix, namespace) in [("r", R_NS), ("wp", WP_NS)] {
