@@ -33,14 +33,15 @@ use super::from_docx::Element;
 use super::xml::{FormatMark, escape};
 
 /// `styles` with a tracked change on each holder the view's
-/// `style_changes:` names: one `w:pPrChange` and `w:rPrChange` per tag a
-/// style's entry gives, a `w:rPrChange` on `docDefaults`, each carrying an
-/// empty previous properties element as the view names no payload. A
-/// holder the part has no style of is left out.
+/// `style_changes:` names. A style's two tags name its `w:pPrChange` and
+/// `w:rPrChange` in document order; a legacy single tag names both, with
+/// package assembly assigning distinct ids. `docDefaults` takes only a
+/// `w:rPrChange`. Each carries empty previous properties as the view names
+/// no payload. A holder the part has no style of is left out.
 pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMark>)]) -> String {
     let mut out = styles.to_string();
     for (holder, marks) in changes {
-        for mark in marks {
+        for (index, mark) in marks.iter().enumerate() {
             let date = super::xml::date_attribute(&mark.date);
             let id = mark
                 .id
@@ -65,18 +66,23 @@ pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMar
             let mut block = out[at..end].to_string();
             // `w:pPr` is the style's own first: the one before `w:rPr`,
             // never the previous-properties one inside a change.
-            let ppr_end = block.find("<w:rPr>").unwrap_or(block.len());
-            if let Some(close) = block[..ppr_end].rfind("</w:pPr>") {
-                block.insert_str(close, &change("pPr", "pPr"));
-            } else {
-                block.insert_str(ppr_end, &format!("<w:pPr>{}</w:pPr>", change("pPr", "pPr")));
+            if marks.len() != 2 || index == 0 {
+                let ppr_end = block.find("<w:rPr>").unwrap_or(block.len());
+                if let Some(close) = block[..ppr_end].rfind("</w:pPr>") {
+                    block.insert_str(close, &change("pPr", "pPr"));
+                } else {
+                    block.insert_str(ppr_end, &format!("<w:pPr>{}</w:pPr>", change("pPr", "pPr")));
+                }
             }
-            let rpr_at = block.find("<w:rPr>");
-            if let Some(close) = rpr_at.and_then(|at| block[at..].find("</w:rPr>").map(|i| at + i))
-            {
-                block.insert_str(close, &change("rPr", "rPr"));
-            } else {
-                block.push_str(&format!("<w:rPr>{}</w:rPr>", change("rPr", "rPr")));
+            if marks.len() != 2 || index == 1 {
+                let rpr_at = block.find("<w:rPr>");
+                if let Some(close) =
+                    rpr_at.and_then(|at| block[at..].find("</w:rPr>").map(|i| at + i))
+                {
+                    block.insert_str(close, &change("rPr", "rPr"));
+                } else {
+                    block.push_str(&format!("<w:rPr>{}</w:rPr>", change("rPr", "rPr")));
+                }
             }
             out.replace_range(at..end, &block);
         }

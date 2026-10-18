@@ -2576,3 +2576,96 @@ fn issue_1137_adjacent_pieces_compare_the_written_dates() {
     let view = plain(&out.docx);
     assert_eq!(plain(&written(&view)), view);
 }
+
+fn issue_1137_style_view(marks: &str) -> String {
+    format!(
+        "---\nview: tracked\nauthors:\n  A: Alice\n  B: Bob\nstyle_changes: {{Normal: {marks}}}\n---\nBody.\n"
+    )
+}
+
+fn issue_1137_style_records(bytes: &[u8]) -> Vec<(String, String, String)> {
+    use jubarte::{namespaces::W, xmllinq::Dom};
+    let xml = part_string(bytes, "word/styles.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, None)
+        .into_iter()
+        .filter_map(|node| {
+            let name = dom.name(node)?;
+            matches!(name.local_name(), "pPrChange" | "rPrChange").then(|| {
+                (
+                    name.local_name().to_string(),
+                    dom.attribute(node, &W::name("id")).unwrap().to_string(),
+                    dom.attribute(node, &W::name("author")).unwrap().to_string(),
+                )
+            })
+        })
+        .collect()
+}
+
+fn issue_1137_agent_without_hash(bytes: &[u8]) -> String {
+    agent(bytes)
+        .lines()
+        .filter(|line| !line.starts_with("sha256:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn issue_1137_distinct_style_tags_name_distinct_property_records() {
+    let out = issue_1137_checked(
+        &issue_1137_style_view("styles.r7 @A; styles.r9 @B"),
+        "word/styles.xml",
+        0,
+        0,
+    );
+    let records = issue_1137_style_records(&out.docx);
+    assert_eq!(records.len(), 2, "{records:?}");
+    assert_eq!(
+        records,
+        [
+            (
+                "pPrChange".to_string(),
+                "7".to_string(),
+                "Alice".to_string()
+            ),
+            ("rPrChange".to_string(), "9".to_string(), "Bob".to_string())
+        ]
+    );
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let view = issue_1137_agent_without_hash(&out.docx);
+    assert_eq!(issue_1137_agent_without_hash(&written(&view)), view);
+}
+
+#[test]
+fn issue_1137_renamed_style_records_reach_a_fixed_point() {
+    let first = issue_1137_checked(
+        &issue_1137_style_view("styles.r1 @A"),
+        "word/styles.xml",
+        0,
+        0,
+    );
+    assert_eq!(issue_1137_style_records(&first.docx).len(), 2);
+    assert_eq!(first.warnings.len(), 1, "{:?}", first.warnings);
+    let view = issue_1137_agent_without_hash(&first.docx);
+    let second = issue_1137_checked(&view, "word/styles.xml", 0, 0);
+    let records = issue_1137_style_records(&second.docx);
+    assert_eq!(records.len(), 2, "{records:?}");
+    assert!(second.warnings.is_empty(), "{:?}", second.warnings);
+    assert_eq!(issue_1137_agent_without_hash(&second.docx), view);
+}
+
+#[test]
+fn issue_1137_adjacent_hyperlink_pieces_merge() {
+    for mark in ["++", "--"] {
+        let view = issue_1137_view(&format!(
+            "{{{mark}a{mark}}}{{r1 @A}}{{{mark}[b](https://example.com/){mark}}}{{r1 @A}}{{{mark}c{mark}}}{{r1 @A}}"
+        ));
+        let (ins, del) = if mark == "++" { (1, 0) } else { (0, 1) };
+        let out = issue_1137_checked(&view, "word/document.xml", ins, del);
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        let canonical = plain(&out.docx);
+        assert_eq!(plain(&written(&canonical)), canonical);
+    }
+}
