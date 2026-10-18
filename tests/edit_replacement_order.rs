@@ -117,6 +117,33 @@ fn replace(source: &[u8], whole: bool) -> Vec<u8> {
     apply_plan(source, &plan).unwrap().redline
 }
 
+// A received Word Compare redline is insertion first. Editing another
+// paragraph must leave its pairs, their order and their ids as they were.
+#[test]
+fn an_edit_keeps_an_existing_insertion_first_pair_untouched() {
+    let source = docx(&format!(
+        r#"{}<w:p><w:r><w:t xml:space="preserve">Rate </w:t></w:r><w:ins w:id="7" w:author="Opposing" w:date="2026-01-01T00:00:00Z"><w:r><w:t>45</w:t></w:r></w:ins><w:del w:id="9" w:author="Opposing" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>30</w:delText></w:r></w:del></w:p>"#,
+        para(OLD)
+    ));
+    let (out, _) = anchored(&source, "p0");
+    let found = revisions(&out, "word/document.xml");
+    assert_eq!(found.len(), 4, "{found:?}");
+    assert_eq!(
+        (found[0].0.as_str(), found[1].0.as_str()),
+        ("del", "ins"),
+        "{found:?}"
+    );
+    assert!(found[0].1 < found[1].1, "{found:?}");
+    assert_eq!(
+        found[2..],
+        [
+            ("ins".to_string(), 7, "45".to_string()),
+            ("del".to_string(), 9, "30".to_string())
+        ],
+        "the received pair keeps its order and ids"
+    );
+}
+
 #[test]
 fn anchored_body_xml_uses_typing_order() {
     let source = docx(&para(OLD));
