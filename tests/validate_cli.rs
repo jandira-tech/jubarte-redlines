@@ -87,7 +87,7 @@ fn validate_exit_codes_prose_json_and_repair() {
         dir.path(),
         &["validate", "broken.docx", "--repair", "fixed.docx"],
     );
-    assert_eq!(code, 1);
+    assert_eq!(code, 2);
     assert!(err.contains("already exists"), "{err}");
     let (code, _, _) = run(
         dir.path(),

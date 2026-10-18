@@ -60,7 +60,12 @@ fn alias(path: &Path, inputs: &[(&Path, &str)]) -> Result<(), Failure> {
 }
 fn writable(path: &Path, inputs: &[(&Path, &str)], force: bool) -> Result<(), Failure> {
     alias(path, inputs)?;
-    ensure_writable(path, force).map_err(|message| failure("OUTPUT_EXISTS", message))
+    ensure_writable(path, force).map_err(|error| {
+        failure(
+            "OUTPUT_EXISTS",
+            error.message.trim_start_matches("OUTPUT_EXISTS: "),
+        )
+    })
 }
 
 enum Request {
@@ -773,7 +778,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             *error.clone(),
         ),
     };
-    let code: u8 = jubarte::result::exit_status_for_envelope(&receipt).into();
+    let code = edit_envelope_exit(&receipt);
     let delivery = action.delivery();
     if !delivery.json && !delivery.jsonl && receipt.status != Status::Ok {
         let error = receipt.error.as_ref().expect("failure error");

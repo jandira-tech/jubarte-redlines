@@ -22939,7 +22939,7 @@ fn cli_convert_refuses_overwrite_without_force() {
         .arg(&output)
         .output()
         .unwrap();
-    assert_eq!(second.status.code(), Some(1));
+    assert_eq!(second.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&second.stderr).contains("already exists"));
 }
 

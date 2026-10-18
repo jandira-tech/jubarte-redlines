@@ -71,7 +71,7 @@ fn github_file_output_has_no_stdout_and_preserves_no_clobber() {
     let patch = std::fs::read_to_string(dir.path().join("changes.patch")).unwrap();
     assert!(patch.starts_with("diff --git "));
     let refused = jubarte(&args, dir.path());
-    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(refused.status.code(), Some(2));
     assert!(refused.stdout.is_empty());
     assert!(failed(&refused).contains("already exists"));
     assert_eq!(
@@ -644,7 +644,7 @@ fn diff_writes_the_patch_once_and_never_over_a_file() {
         &["diff", "old.md", "new.md", "-o", "taken.patch"],
         dir.path(),
     );
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     assert!(failed(&out).contains("already exists"));
     assert!(out.stdout.is_empty(), "{:?}", out.stdout);
     // Before the inputs are read: missing ones are not what it says.

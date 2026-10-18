@@ -209,12 +209,9 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 }
 
 /// No-clobber contract shared by every writing subcommand.
-fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
+fn ensure_writable(output: &Path, force: bool) -> Result<(), ConvertFailure> {
     if output.exists() && !force {
-        return Err(format!(
-            "output '{}' already exists (use --force to overwrite)",
-            output.display()
-        ));
+        return Err(taken_output(output).into());
     }
     Ok(())
 }
@@ -293,7 +290,7 @@ enum Produced<'a> {
 
 /// Refuse an existing output before any work: PNG pages are checked once
 /// their names are known.
-fn check_output(out: &Output<'_>) -> Result<(), String> {
+fn check_output(out: &Output<'_>) -> Result<(), ConvertFailure> {
     if out.kind == Format::Png {
         return Ok(());
     }
@@ -372,13 +369,12 @@ fn check_side_file(
     flag: &str,
     others: [(&Path, &str); 2],
     force: bool,
-) -> Result<(), String> {
+) -> Result<(), ConvertFailure> {
     for (other, name) in others {
         if same_path(side, other) {
-            return Err(format!(
-                "{flag} '{}' is the same file as the {name}",
-                side.display()
-            ));
+            return Err(
+                format!("{flag} '{}' is the same file as the {name}", side.display()).into(),
+            );
         }
     }
     ensure_writable(side, force)
@@ -406,7 +402,7 @@ fn run_resolution(
         let filter = filter
             .normalized()
             .map_err(|e| (ExitCode::from(2), e.to_string()))?;
-        check_output(out).map_err(failed)?;
+        check_output(out).map_err(|f| (ExitCode::from(f.code), f.message))?;
         let bytes = read_word(file).map_err(failed)?;
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
             ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
@@ -511,7 +507,7 @@ fn arm_timeout(limit: std::time::Duration) {
 const EXIT_FONT_SUBSTITUTED: u8 = 4;
 
 /// Why `convert` failed, and the exit status that says so.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct ConvertFailure {
     code: u8,
     message: String,
@@ -520,6 +516,12 @@ struct ConvertFailure {
 impl From<String> for ConvertFailure {
     fn from(message: String) -> Self {
         Self { code: 1, message }
+    }
+}
+
+impl From<(u8, String)> for ConvertFailure {
+    fn from((code, message): (u8, String)) -> Self {
+        Self { code, message }
     }
 }
 
@@ -724,7 +726,7 @@ struct DiffRenderJob<'a> {
 }
 
 /// Compare two documents page by page; `Ok(true)` when any page differs.
-fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
+fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, ConvertFailure> {
     let a = read_word(job.a)?;
     let b = read_word(job.b)?;
     let options = jubarte::convert::DiffOptions {
@@ -882,7 +884,7 @@ fn run_for_edit(
     let json =
         serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
     if let Some(path) = output {
-        ensure_writable(path, force).map_err(ConvertFailure::from)?;
+        ensure_writable(path, force)?;
         publish_file(path, json.as_bytes(), force).map_err(ConvertFailure::from)?;
         if !quiet {
             eprintln!("{}", wrote_line(path, Format::Json, json.len(), None));
@@ -1340,7 +1342,20 @@ fn run_edit(
     Ok(())
 }
 
-/// An existing output of `edit` or `add` without --force: exit 2.
+/// Keep typed edit/template output refusals on the CLI's usage exit code.
+fn edit_envelope_exit(receipt: &jubarte::result::Envelope) -> u8 {
+    if receipt
+        .error
+        .as_ref()
+        .is_some_and(|error| error.code == "OUTPUT_EXISTS")
+    {
+        EXIT_USAGE
+    } else {
+        jubarte::result::exit_status_for_envelope(receipt).into()
+    }
+}
+
+/// An existing output without --force is a usage refusal: exit 2.
 fn taken_output(path: &Path) -> (u8, String) {
     (
         EXIT_USAGE,
@@ -2986,17 +3001,12 @@ struct ValidateJob<'a> {
 /// ([`jubarte::validate::fails`]), `Err` when a file could not be read or
 /// written or the rules cannot run. With `--repair` the findings are the
 /// repaired package's.
-fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
+fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     use jubarte::validate::{fails, findings_text, repair, validate_with};
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
     if let Some(out) = job.repair {
-        if out.exists() && !job.force {
-            return Err(format!(
-                "output '{}' already exists (use --force to overwrite)",
-                out.display()
-            ));
-        }
+        ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
         publish_file(out, &fixed.docx, job.force)?;
         if !job.json {
@@ -3460,10 +3470,7 @@ fn cli_main() -> ExitCode {
                 Ok(false) => ExitCode::SUCCESS,
                 // Like `edit`'s 3: a CI step can gate on a visual change.
                 Ok(true) => ExitCode::from(5),
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    ExitCode::FAILURE
-                }
+                Err(e) => convert_exit_code(Err(e)),
             };
         }
         Some(Command::Debug {
@@ -3526,7 +3533,7 @@ fn cli_main() -> ExitCode {
             };
             return match run_validate(&job) {
                 Ok(true) => ExitCode::from(2),
-                result => exit_code(result.map(|_| ())),
+                result => convert_exit_code(result.map(|_| ())),
             };
         }
         Some(Command::Scrub {
@@ -4700,7 +4707,7 @@ mod tests {
         assert_eq!(json["pages"][2]["only_in"], "b");
 
         let err = run_diff_render(&diff_job(&a, &b, Some(&out))).expect_err("files exist");
-        assert!(err.contains("already exists"), "{err}");
+        assert!(err.message.contains("already exists"), "{err:?}");
         let again = DiffRenderJob {
             force: true,
             overlay: false,
@@ -4740,7 +4747,7 @@ mod tests {
         );
         let missing = dir.path().join("missing.docx");
         let err = run_diff_render(&diff_job(&missing, &b, None)).expect_err("no file");
-        assert!(err.contains("missing.docx"), "{err}");
+        assert!(err.message.contains("missing.docx"), "{err:?}");
     }
 
     #[test]

@@ -147,6 +147,9 @@ convention. PNG output caps at `MAX_PNG_DPI` (1200).
 
 ## CLI reference
 
+An existing output without `--force` is a usage refusal (exit 2).
+Input, operational and I/O failures exit 1.
+
 The block below is generated from the real `--help` output of this source
 tree's `jubarte` binary — every command, every flag, every default. Hidden
 debug flags are not shown; `jubarte <command> --help` on the installed

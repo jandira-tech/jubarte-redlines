@@ -518,7 +518,7 @@ fn writers_refuse_overwrite_and_force_replaces_the_output() {
             let refused = jubarte(dir.path(), &args);
             assert_eq!(
                 refused.status.code(),
-                Some(1),
+                Some(2),
                 "{args:?}: {}",
                 text(&refused.stderr)
             );
@@ -570,7 +570,7 @@ fn writer_png_selection_keeps_page_numbers_and_checks_all_paths_before_writing()
         "reject", "in.docx", "-o", "out.png", "--pages", "3,1,3", "--dpi", "20",
     ];
     let refused = jubarte(dir.path(), &args);
-    assert_eq!(refused.status.code(), Some(1), "{}", text(&refused.stderr));
+    assert_eq!(refused.status.code(), Some(2), "{}", text(&refused.stderr));
     assert!(
         text(&refused.stderr).contains("output 'out-page-03.png' already exists"),
         "{}",
@@ -883,4 +883,79 @@ fn audit_d35_read_for_edit_export_does_not_follow_symlink() {
             .unwrap()
             .is_symlink()
     );
+}
+
+/// Integration checks: the process and its temporary files are deliberate real I/O.
+fn refusal_is_usage(args: &[&str], existing: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let input = docx(&para("Alice pays Bob."));
+    std::fs::write(dir.path().join("in.docx"), &input).unwrap();
+    std::fs::write(dir.path().join("in.md"), "Alice pays Bob.\n").unwrap();
+    let path = dir.path().join(existing);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(&path, b"keep output").unwrap();
+    let before: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    let out = jubarte(dir.path(), args);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{args:?}: {}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        text(&out.stderr),
+        format!(
+            "error: OUTPUT_EXISTS: output '{existing}' already exists (use --force to overwrite)\n"
+        )
+    );
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    assert_eq!(std::fs::read(path).unwrap(), b"keep output");
+    assert_eq!(std::fs::read(dir.path().join("in.docx")).unwrap(), input);
+    let mut after: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    let mut before = before;
+    before.sort();
+    after.sort();
+    assert_eq!(after, before, "refusal must create no side outputs");
+    if existing == "pages/diff.json" {
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("pages")).unwrap().count(),
+            1
+        );
+    }
+}
+
+macro_rules! output_refusals {
+    ($($name:ident: $existing:literal => [$($arg:literal),*];)*) => {
+        $(#[test]
+        fn $name() { refusal_is_usage(&[$($arg),*], $existing); })*
+    };
+}
+
+output_refusals! {
+    existing_accept: "out.docx" => ["accept", "in.docx", "-o", "out.docx"];
+    existing_reject: "out.docx" => ["reject", "in.docx", "-o", "out.docx"];
+    existing_compare: "out.docx" => ["compare", "in.docx", "in.docx", "-o", "out.docx"];
+    existing_convert: "out.md" => ["convert", "in.docx", "-o", "out.md"];
+    existing_diff: "out.txt" => ["diff", "in.docx", "in.docx", "--format", "github", "-o", "out.txt"];
+    existing_append: "out.docx" => ["append", "in.docx", "in.docx", "-o", "out.docx"];
+    existing_scrub: "out.docx" => ["scrub", "in.docx", "-o", "out.docx"];
+    existing_repair: "out.docx" => ["validate", "in.docx", "--repair", "out.docx"];
+    existing_edit: "out.docx" => ["edit", "in.docx", "-p", "p0", "--content", "Carol Diaz.", "-o", "out.docx"];
+    existing_add: "out.docx" => ["add", "in.docx", "-p", "p0", "--content", "Carol Diaz.", "-o", "out.docx"];
+    existing_typed_edit: "out.docx" => ["edit", "rewrite", "in.docx", "--at", "p0", "--text", "Carol Diaz.", "--track", "off", "-o", "out.docx"];
+    existing_edit_template: "out.json" => ["edit", "template", "in.docx", "-o", "out.json"];
+    existing_read: "out.json" => ["read", "in.docx", "-o", "out.json"];
+    existing_read_for_edit: "out.json" => ["read", "in.docx", "--for-edit", "-o", "out.json"];
+    existing_pdf: "out.pdf" => ["convert", "in.docx", "-o", "out.pdf", "--report", "new-report.json"];
+    existing_report: "out.json" => ["convert", "in.docx", "-o", "new.pdf", "--report", "out.json"];
+    existing_font_report: "out.json" => ["convert", "in.docx", "-o", "new.pdf", "--font-report", "out.json"];
+    existing_visual_diff: "pages/diff.json" => ["visual-diff", "in.docx", "in.docx", "--out-dir", "pages", "--dpi", "20"];
 }

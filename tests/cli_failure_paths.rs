@@ -62,7 +62,7 @@ fn convert_update_fields_reports_the_written_cache_and_refuses_clobbering() {
     let xml = part_string(&saved, "word/document.xml").unwrap();
     assert!(xml.contains("NUMPAGES") && xml.contains(">1</w:t>"));
     let refused = run(dir.path(), &args);
-    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(refused.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&refused.stderr).contains("already exists"));
     assert_eq!(
         std::fs::read(dir.path().join("updated.docx")).unwrap(),
@@ -171,7 +171,7 @@ fn convert_update_fields_refuses_an_existing_report_without_force() {
         "fields.json",
     ];
     let refused = run(dir.path(), &args);
-    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
     assert!(String::from_utf8_lossy(&refused.stderr).contains("already exists"));
     assert_eq!(
         std::fs::read(dir.path().join("fields.json")).unwrap(),
@@ -365,7 +365,7 @@ fn convert_update_fields_refuses_a_report_on_the_input_or_the_output() {
         dir.path(),
         &[update.as_slice(), &["--report", "fields.json"]].concat(),
     );
-    assert_eq!(kept.status.code(), Some(1), "{kept:?}");
+    assert_eq!(kept.status.code(), Some(2), "{kept:?}");
     assert!(String::from_utf8_lossy(&kept.stderr).contains("already exists"));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("fields.json")).unwrap(),
