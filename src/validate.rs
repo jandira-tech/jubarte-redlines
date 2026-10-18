@@ -28,7 +28,7 @@
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
 //! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
-//! | `DUPLICATE_REVISION_ID` | pending: OOXML validator refuses same-kind duplicates (`Sem_UniqueAttributeValue`); error blocks publication | yes: renumbered |
+//! | `DUPLICATE_REVISION_ID` | pending: OOXML validator refuses same-kind duplicates (`Sem_UniqueAttributeValue`); error diagnostic, not Word-fatal | yes: renumbered |
 //! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
 //! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
@@ -790,8 +790,10 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
-/// Revision elements whose `w:id` must be unique within a part. Range
-/// ends share their starts' ids and comment/bookmark ids have other scopes.
+/// Revision elements whose `w:id` must be unique among elements of the
+/// same record type within a part (the SDK's `Sem_UniqueAttributeValue`).
+/// Different kinds can share an id: Word pairs a style's `pPrChange` and `rPrChange`.
+/// Range ends share their starts' ids and comment/bookmark ids have other scopes.
 fn has_unique_revision_id(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && (name.local_name().ends_with("PrChange")
@@ -812,6 +814,20 @@ fn has_unique_revision_id(name: &XName) -> bool {
             ))
 }
 
+/// The SDK distinguishes run revisions from row/paragraph-mark revisions,
+/// even though both use `ins`, `del`, `moveFrom` or `moveTo`. Row and
+/// paragraph marks share their own scope; the immediate parent alone is
+/// therefore not the scope. Keep detection and repair on the same key.
+fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
+    let property_mark = matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+        && dom.parent(node).is_some_and(|parent| {
+            dom.name(parent).is_some_and(|parent| {
+                parent.namespace_name() == W::URI && matches!(parent.local_name(), "rPr" | "trPr")
+            })
+        });
+    format!("{}:{property_mark}:{id}", name.local_name())
+}
+
 fn collect_ids(
     dom: &Dom,
     root: NodeId,
@@ -825,11 +841,11 @@ fn collect_ids(
             continue;
         };
         let local = name.local_name();
-        // comment* share one id space (start/end/ref/entry); ins/del/move*
-        // share another and are the ones enforced here.
+        // Revision ids are scoped by record type, not by the union of
+        // ins/del/move/property records. Comment ids have a separate scope.
         if has_unique_revision_id(&name)
             && let Some(id) = dom.attribute(e, &W::name("id"))
-            && !rev_ids.insert(format!("rev:{id}"))
+            && !rev_ids.insert(revision_id_key(dom, e, &name, id))
         {
             out.push(Finding::new(
                 "DUPLICATE_REVISION_ID",
@@ -1919,8 +1935,9 @@ fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &Hash
     }
 }
 
-/// A second use of a revision id is renumbered from the part's highest
-/// `w:id` upwards; a move range start takes its end along.
+/// A second use of a revision id on the same record type is renumbered
+/// from the part's highest `w:id` upwards; a move range start takes its end
+/// along. Accepted cross-kind pairs retain their ids.
 pub(crate) fn renumber_duplicate_revision_ids(
     dom: &mut Dom,
     root: NodeId,
@@ -1946,7 +1963,7 @@ pub(crate) fn renumber_duplicate_revision_ids(
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
             continue;
         };
-        if seen.insert(id.clone()) {
+        if seen.insert(revision_id_key(dom, n, &name, &id)) {
             continue;
         }
         let fresh = next.to_string();
