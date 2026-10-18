@@ -68,6 +68,51 @@ for untrusted XML. The unmaintained
 rustybuzz/ttf-parser exceptions track a separate migration, not a known
 exploitable vulnerability; revisit them on each release.
 
+### Recorded dependency advisories
+
+Advisories this repository has answered, kept here so a gap in the automated
+watch cannot hide one. `scripts/test_oracle_dependency.py` fails while an
+advisory named there is missing from this section.
+
+**GHSA-m665-v7pm-7grj** — zip-rs/zip2 repository advisory (critical,
+published 2026-10-17): "Parser Differential & Security Control Bypass via
+Dual-Header Inconsistencies (Zip Cloaking) Leading to Arbitrary File
+Overwrite & RCE". Affected `zip <= 9.0.4`; patched in 9.0.5. The manifest
+floor and every committed lockfile hold 9.0.5.
+
+Call paths here: the engine reads packages in memory through `ZipArchive`
+and writes them with `ZipWriter`. Every production package open goes
+through `crate::opc::open_archive` (`src/opc/archive.rs`), which runs zip
+9.0.5's `ZipArchive::validate_header_consistency`: a local header that
+disagrees with the central directory fails the open and every caller
+reports `ZIP_HEADER_MISMATCH`. Admission keeps the typed
+`AdmissionErrorKind::ZipHeaderMismatch` refusal for the same check, and
+existing duplicate-part identity checks retain `DUPLICATE_PART`. The
+`self_update` updater path is covered below.
+
+`jubarte debug`, the maintainer triage tool, is the one deliberate
+exception: it opens through `open_archive_unchecked` and prints the
+disagreement as a `zip-header-mismatch` finding instead of refusing, so a
+file every reader rejects can still be inspected.
+
+The Windows updater delegates unpacking to `self_update::Extract::extract_file`;
+its ZIP arm opens a `ZipArchive`, selects the binary with `by_name`, checks
+`enclosed_name`, and copies that entry. It uses neither archive-wide
+`ZipArchive::extract` nor the streaming reader. Our code in `src/update.rs`
+configures the updater and its signature policy; it does not unpack ZIPs.
+
+The version bump alone does **not** reject conflicting headers:
+`ZipArchive::new`/`by_name` still trust the central directory by default.
+9.0.5 adds opt-in consistency checks to both random-access and streaming
+readers; the delegated updater's `extract_file` does not opt in. Its
+single-entry central-directory lookup does not cross into a streaming
+extractor. See the [repository advisory](https://github.com/zip-rs/zip2/security/advisories/GHSA-m665-v7pm-7grj).
+
+Why the watch stayed green: this is a repository advisory on zip-rs/zip2,
+not an entry in the RustSec database `cargo-deny` reads
+(`scripts/security-check.sh`), so the daily advisory watch reported
+nothing until the version was checked by hand.
+
 ## Security checks
 
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, then run:

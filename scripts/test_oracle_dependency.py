@@ -30,10 +30,18 @@ class OracleDependency(unittest.TestCase):
         for name in ("ooxmlsdk", "ooxmlsdk-derive"):
             with self.subTest(package=name):
                 self.assertEqual(packages[name].get("source"), f"git+{FORK}?rev={REV}#{REV}")
-        self.assertEqual(
-            {p["version"] for p in lock["package"] if p["name"] == "zip"},
-            {"9.0.4"},
-        )
+        for filename in (
+            "Cargo.lock",
+            "jubarte-python/Cargo.lock",
+            "jubarte-wasm/Cargo.lock",
+            "jubarte-rust-inproc/Cargo.lock",
+        ):
+            with self.subTest(lock=filename):
+                binding_lock = tomllib.loads((ROOT / filename).read_text())
+                self.assertEqual(
+                    {p["version"] for p in binding_lock["package"] if p["name"] == "zip"},
+                    {"9.0.5"},
+                )
 
     def test_fork_is_explicitly_allowed(self) -> None:
         policy = tomllib.loads((ROOT / "deny.toml").read_text())
@@ -43,3 +51,22 @@ class OracleDependency(unittest.TestCase):
         self.assertFalse((ROOT / "vendor" / "ooxmlsdk").exists())
         self.assertNotIn("vendor/ooxmlsdk", (ROOT / "Cargo.toml").read_text())
         self.assertNotIn("vendor/", (ROOT / "REUSE.toml").read_text())
+
+
+class SecurityAdvisoryRecord(unittest.TestCase):
+    """SECURITY.md must name every dependency advisory this tree has answered.
+
+    The daily cargo-deny watch reads only RustSec, so a repository advisory
+    (GHSA-m665-v7pm-7grj lives on zip-rs/zip2 alone) never turns it red. This
+    check fails while the advisory is missing from SECURITY.md, whatever the
+    watch says.
+    """
+
+    def test_zip_cloaking_advisory_is_recorded(self) -> None:
+        security = (ROOT / "SECURITY.md").read_text()
+        self.assertIn("GHSA-m665-v7pm-7grj", security)
+        self.assertIn("9.0.5", security)
+
+
+if __name__ == "__main__":
+    unittest.main()
