@@ -32,7 +32,7 @@ Where they live (files with three or more):
 
 A public item shows up in the report when nothing in `tests/`, `benches/`, `examples/`, `fuzz/` or the bindings names it. For 259 of the 275 that is a consequence of module visibility, not a leftover:
 
-- `comparer::finalize`, `util::sha1`, `opc`, `settings`, `xmllinq` and `cli` are `pub mod`, so every `pub fn` inside is public API from the day it was written, whether or not it was meant for outsiders. The tests do reach into `comparer::finalize` (for example `coalesce_adjacent_revisions`, `move_paragraph_properties_first`, `resolve_alternate_content`), so that module is deliberately a test-facing surface. The 81 of its public functions that nothing outside `src/` names are passes with no direct test.
+- `comparer::finalize`, `util::sha1`, `opc`, `settings`, `xmllinq` and `cli` are `pub mod`, so every `pub fn` inside is public API from the day it was written, whether or not it was meant for outsiders. The tests do reach into `comparer::finalize` (for example `coalesce_adjacent_revisions`, `move_paragraph_properties_first`, `resolve_alternate_content`), so that module is deliberately a test-facing surface. The 81 of its public functions that nothing outside `src/` names are still tested inside the file: 71 of the 79 functions are named in `finalize.rs`'s own `#[cfg(test)]` modules (many only in the story-scope invariant table), and only 8 are named in no test.
 - The 62 unpublished items are scaffolding for the CLI v2 work in progress (ids grammar, result envelope, PlanV2, new CLI flags). Their callers are the commands that are not written yet.
 
 ## The 16 never-mentioned items
@@ -54,7 +54,7 @@ A public item shows up in the report when nothing in `tests/`, `benches/`, `exam
 
 ## Clusters in the 259 others
 
-**`comparer/finalize.rs` (81, all published).** Each function is one Word-parity pass added for a benchmark milestone (`M69`, `M226`, `M392`, `M471`, ...), taken from the initial import. They are public because the module is. The pipeline calls them (that is why they are in the "used inside `src/`" list), but only a handful have a direct test. Use: these are natural targets for the direct tests the module was made public to allow. Narrowing the module to `pub(crate)` instead is a semver break, and the existing tests that import from `comparer::finalize` would have to move inside the crate.
+**`comparer/finalize.rs` (81, all published).** Each function is one Word-parity pass added for a benchmark milestone (`M69`, `M226`, `M392`, `M471`, ...), taken from the initial import. They are public because the module is. The pipeline calls them (that is why they are in the "used inside `src/`" list), and 71 of the 79 functions are named in the file's own test modules; only `sanitize_sdt_properties`, `unwrap_hyperlinks_to_styled_runs`, `normalize_incomplete_spacing`, `closing_paragraph_properties`, `last_body_para_spacing` and the three wrappers are named in no test. Narrowing the module to `pub(crate)` instead is a semver break, and the existing tests that import from `comparer::finalize` would have to move inside the crate.
 
 **`ids.rs` (20, all unpublished).** The constants `CHANGE_SPELLINGS`, `COMMENT_SPELLINGS`, `PARAGRAPH_SPELLINGS`, `TABLE_SPELLINGS`, `CONTROL_SPELLINGS` and the `*_EXPECTED` refusal texts feed the capabilities manifest and the `-p` refusals; `IdError`, `parse_location`, `short_number`, `hint_where`, `comment_text_id`, `comment_id_de` and `part_story` are the id grammar's building blocks, added in "one grammar for change, comment and paragraph ids". They are used inside the crate and nowhere else. Nothing has shipped, so `pub(crate)` would cost nothing today; making them public later is the cheaper direction.
 
@@ -74,7 +74,7 @@ A public item shows up in the report when nothing in `tests/`, `benches/`, `exam
 2. **Use `Dom::has_attributes` at the 11 call sites** that clone attributes just to test for none. It is an allocation fix with no behaviour change, and it gives the method its first caller.
 3. **Remove `sha1_fingerprint128`, `sha1_fingerprint` and `util::sha1_fingerprint`** at the next release. The changelog promised one release and they have now shipped in four (v0.11.0, v0.11.2, v0.11.3, v0.12.0).
 4. **Decide the three `finalize` wrappers.** Deprecate them as aliases of `cleanup_spacing_and_default_jc`, or split that pass so each can be tested alone.
-5. **Add direct tests for the `finalize` passes** that only the pipeline exercises, starting with those whose doc comment already says "exposed ... for direct test coverage".
+5. **Add direct tests for the `finalize` passes** that no test names (the five listed above), after measuring coverage, since most passes already appear in the file's own tests.
 6. **Use `tracked_revisions_elements` (or the static set behind it) in a drift test** against the three other revision-name lists.
 7. **Do not mass-narrow the published items to `pub(crate)`.** 213 of the 275 are in release snapshots, so each is a semver break for no behavioural gain.
 
@@ -84,3 +84,9 @@ A public item shows up in the report when nothing in `tests/`, `benches/`, `exam
 - "Published" means present in a `docs/api/jubarte-v*.api.txt` snapshot, v0.10.0 to v0.12.0. An item first listed in v0.10.0 may be older than that; the earliest snapshot kept is v0.10.0.
 - "Expected use" for items from the initial import rests on the doc comment and the C# source it mirrors. Where a design document names the caller (the v2 items), it is cited; where nothing does, the entry says so.
 - The proposed uses were found by reading and grepping, not by changing the code; none was compiled or benchmarked.
+
+## Corrections (2026-10-18)
+
+- An earlier version said the `finalize` passes had no direct test. That was wrong: `finalize.rs` has its own test modules, and 71 of the 79 functions are named there. The figures above are corrected.
+- The reports counted `src/bin/jubarte.rs` as part of `src/`, but the binary is a separate crate. Six of the unpublished items (`sniff_package`, `EditTarget`, `slash_path`, `removed_error`, `Tracking`, `docx_stamp`) are used by it and so must stay public; they were kept public when the rest were narrowed.
+- Follow-up done since: 38 unpublished items narrowed to `pub(crate)`, `Dom::attributes_iter` added, the `sha1_fingerprint` aliases and the three `finalize` wrappers removed, `comparer::finalize` and `comparer::tables` hidden and declared outside the version promise, and a snapshot test of every public body pass added (see the CHANGELOG and the git log).
