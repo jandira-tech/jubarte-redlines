@@ -105,7 +105,7 @@ pub fn markdown_to_docx(
             options.page.as_str()
         ));
     }
-    let docx = package::assemble(&document, options)?;
+    let docx = package::assemble(&document, options, markdown, &mut warnings)?;
     let docx = match options.track_changes {
         _ if !options.critic => docx,
         TrackChanges::All => docx,
@@ -164,7 +164,9 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         .collect();
     writer.document.drawing_backings = super::from_docx::drawing::backing_comments(&source);
     let mut inserted_end: Option<usize> = None;
+    let newlines: Vec<usize> = source.match_indices('\n').map(|(at, _)| at).collect();
     for (event, range) in parser.into_offset_iter() {
+        writer.source_line = newlines.partition_point(|&at| at < range.start) + 1;
         if let Some(end) = inserted_end
             && range.start >= end
         {
@@ -1796,6 +1798,7 @@ struct Writer<'o, 'a> {
     /// language, its backing's name and the source accumulated so far.
     drawing_block: Option<(String, String, String)>,
     metadata: Option<String>,
+    source_line: usize,
     box_markdown: HashMap<String, String>,
     box_names: HashMap<String, usize>,
     box_duplicates: HashSet<String>,
@@ -1939,6 +1942,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             image: None,
             drawing_block: None,
             metadata: None,
+            source_line: 1,
             box_markdown: HashMap::new(),
             box_names: HashMap::new(),
             box_duplicates: HashSet::new(),
@@ -3584,7 +3588,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.document
                     .attributions
                     .insert(self.serial, (plain.author, plain.date));
-                self.document.revision_ids.insert(self.serial, plain.ids);
+                self.name_revision(self.serial, plain.ids);
                 self.serial
             } else {
                 return;
@@ -3621,11 +3625,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let Some(new) = anchor.serials[0].and(anchor.serials[1]) {
                     let (old, inserted) = view_stories::substitution_ids(&tags[0].ids);
                     old_ids = old.to_vec();
-                    self.document.revision_ids.insert(new, inserted.to_vec());
+                    self.name_revision(new, inserted.to_vec());
                     self.document.attributions.insert(new, (author, date));
                 }
                 if !old_ids.is_empty() {
-                    self.document.revision_ids.insert(inner, old_ids);
+                    self.name_revision(inner, old_ids);
                 }
                 if let Some(tag) = tags.get(1) {
                     let outer = (other(kind), self.tag_serial(tag));
@@ -3645,13 +3649,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let Some(new) = anchor.serials[0].and(anchor.serials[1]) {
                     let (old, inserted) = view_stories::substitution_ids(&first.ids);
                     old_ids = old.to_vec();
-                    self.document.revision_ids.insert(new, inserted.to_vec());
+                    self.name_revision(new, inserted.to_vec());
                     self.document
                         .attributions
                         .insert(new, (first.author.clone(), first.date.clone()));
                 }
                 if !old_ids.is_empty() {
-                    self.document.revision_ids.insert(inner, old_ids);
+                    self.name_revision(inner, old_ids);
                 }
                 if let Some(part) = parts.get(1) {
                     self.serial += 1;
@@ -3660,7 +3664,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .attributions
                         .insert(outer.1, (part.author.clone(), part.date.clone()));
                     if !part.ids.is_empty() {
-                        self.document.revision_ids.insert(outer.1, part.ids.clone());
+                        self.name_revision(outer.1, part.ids.clone());
                     }
                     self.document.wraps.insert(inner, outer);
                 }
@@ -3698,7 +3702,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         ranged.push((tag.handle.clone(), *serial));
                     }
                     if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
-                        self.document.revision_ids.insert(*serial, ids.clone());
+                        self.name_revision(*serial, ids.clone());
                     }
                 }
                 if serials.len() == 2 {
@@ -3751,7 +3755,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .attributions
                         .insert(*serial, (plain.author.clone(), plain.date.clone()));
                     if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
-                        self.document.revision_ids.insert(*serial, ids.clone());
+                        self.name_revision(*serial, ids.clone());
                     }
                 }
                 anchor.attributed += 1;
@@ -4517,6 +4521,14 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// Remember where an explicit id was supplied, including a parent tag.
+    fn name_revision(&mut self, serial: u32, ids: Vec<u32>) {
+        self.document.revision_ids.insert(serial, ids);
+        self.document
+            .revision_lines
+            .insert(serial, self.source_line);
+    }
+
     /// A change of its own for `tag`: attributed and numbered as it says.
     fn tag_serial(&mut self, tag: &view_notes::Tag) -> u32 {
         self.serial += 1;
@@ -4537,7 +4549,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         let attribution = self.view_author(&tag.handle, tag.date.as_deref());
         self.document.attributions.insert(serial, attribution);
         if !tag.ids.is_empty() {
-            self.document.revision_ids.insert(serial, tag.ids.clone());
+            self.name_revision(serial, tag.ids.clone());
         }
         serial
     }
@@ -4859,7 +4871,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .attributions
                 .insert(serial, (mark.author.clone(), mark.date.clone()));
             if let Some(id) = mark.id {
-                self.document.revision_ids.insert(serial, vec![id]);
+                self.name_revision(serial, vec![id]);
             }
             for id in ids {
                 self.document

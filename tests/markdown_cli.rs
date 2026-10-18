@@ -1081,3 +1081,51 @@ fn github_display_clips_around_unicode_change_and_full_lines_restores_content() 
     ));
     assert!(full.contains(&old) && full.contains(&new), "{full}");
 }
+
+#[test]
+fn issue_1137_convert_reports_renamed_revision_and_source_line() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(
+        dir.path(),
+        &[(
+            "changes.md",
+            "---\nauthors:\n  A: Alice\n---\n{++a++}{r1 @A} x {++b++}{r1 @A}\n",
+        )],
+    );
+    let out = jubarte(&["convert", "changes.md"], dir.path());
+    ok(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(
+            "warning: r1 names two separate changes on line 5; the second is written as r2"
+        ),
+        "{stderr}"
+    );
+    let bytes = std::fs::read(dir.path().join("changes.docx")).unwrap();
+    assert_word_valid_package(&bytes);
+    let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:ins ").count(), 2, "{xml}");
+    assert_eq!(xml.matches("w:id=\"1\"").count(), 1, "{xml}");
+    assert_eq!(xml.matches("w:id=\"2\"").count(), 1, "{xml}");
+}
+
+#[test]
+fn issue_1137_convert_merges_adjacent_revision_without_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(
+        dir.path(),
+        &[(
+            "changes.md",
+            "---\nauthors:\n  A: Alice\n---\n{--a--}{r1 @A}{--b--}{r1 @A}\n",
+        )],
+    );
+    let out = jubarte(&["convert", "changes.md"], dir.path());
+    ok(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("warning:"), "{stderr}");
+    let bytes = std::fs::read(dir.path().join("changes.docx")).unwrap();
+    assert_word_valid_package(&bytes);
+    let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:del ").count(), 1, "{xml}");
+    assert_eq!(xml.matches("w:id=\"1\"").count(), 1, "{xml}");
+}

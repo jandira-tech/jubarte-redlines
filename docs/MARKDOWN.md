@@ -638,6 +638,12 @@ plain attribution, or as a comment.
 
 Distinct revision ids always stay separate, including adjacent insertions or
 adjacent deletions by the same author. One id may appear on several marks.
+When writing DOCX, adjacent pieces with the same id, kind, author and date
+become one revision element, including formatting boundaries and changes
+nested inside that revision. Pieces separated by live text or a paragraph
+boundary take distinct OOXML ids. The writer warns with the source line
+and the replacement id; reading the DOCX back prints that new id. Reusing
+an id with a different kind, author or date also requires a new id.
 Only a deletion directly followed by a live insertion by the same author
 pairs as a substitution. Proofing markers, bookmarks that print nothing,
 and empty runs may intervene; visible text and rendered content interrupt
