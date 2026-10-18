@@ -1072,6 +1072,31 @@ fn print_success(
     write_stdout(block)
 }
 
+/// A redaction's original view would repeat the text we just removed.
+fn print_edit_success(
+    before_path: &Path,
+    source: &[u8],
+    after_path: &Path,
+    published: &[u8],
+    redacted: bool,
+) -> Result<(), String> {
+    if redacted {
+        return match confirmation_view(after_path, published) {
+            Ok(after) => write_stdout(format!("SUCCESS:\n{after}")),
+            Err(_) => {
+                edit_status(format_args!("warning: the published view cannot be shown"));
+                Ok(())
+            }
+        };
+    }
+    print_success(
+        before_path,
+        confirmation_view(before_path, source),
+        after_path,
+        published,
+    )
+}
+
 /// The agent view of `bytes` on stdout.
 fn print_agent_view(bytes: &[u8], source: Option<String>, args: &ReadArgs) -> Result<(), String> {
     write_stdout(&agent_view(bytes, source, args)?.markdown)
@@ -1359,11 +1384,16 @@ fn run_edit(
     }
     for (name, bytes) in &outputs {
         if Path::new(name).extension().is_some_and(|ext| ext == "docx") {
-            print_success(
+            print_edit_success(
                 job.file,
-                confirmation_view(job.file, source),
+                source,
                 &out_dir.join(name),
                 bytes,
+                result
+                    .report
+                    .operations
+                    .iter()
+                    .any(|op| op.kind == "redact"),
             )
             .map_err(committed)?;
         }
@@ -1951,11 +1981,16 @@ fn write_edited(
     for note in edit_notes(notes, result) {
         edit_status(format_args!("{note}"));
     }
-    print_success(
+    print_edit_success(
         job.file,
-        confirmation_view(job.file, source),
+        source,
         path,
         document,
+        result
+            .report
+            .operations
+            .iter()
+            .any(|op| op.kind == "redact"),
     )
     .map_err(|e| {
         fail(format!(

@@ -547,7 +547,7 @@ fn leaks_finds_escaped_text_split_across_runs() {
 // All files and documents are synthetic; the engine needs no external service.
 fn redaction_report_probe(
     body: &str,
-    operation: serde_json::Value,
+    operation: &serde_json::Value,
     secrets: &[&str],
     code: Option<&str>,
 ) {
@@ -563,10 +563,18 @@ fn redaction_report_probe(
     });
     let plan = EditPlan::from_json(&json.to_string()).unwrap();
     let mut channels = Vec::new();
+    let outcomes;
     match apply_plan(&source, &plan) {
         Ok(result) => {
             assert!(code.is_none(), "expected refusal: {code:?}");
+            outcomes = result.report.operations.clone();
             for doc in [&result.clean, &result.redline] {
+                for secret in secrets {
+                    assert!(
+                        !contains(&all_bytes(doc), secret),
+                        "secret survived in a document"
+                    );
+                }
                 let text = jubarte::inspect::paragraphs(doc).unwrap()[0].text.clone();
                 assert!(text.contains('█'), "redaction must still write blocks");
             }
@@ -577,6 +585,7 @@ fn redaction_report_probe(
             channels.push(("to_jsonl".to_string(), result.report.to_jsonl()));
         }
         Err(error) => {
+            outcomes = error.outcomes.clone();
             assert_eq!(Some(error.code.as_str()), code, "{error}");
             if secrets.contains(&"Account  12345") {
                 assert!(
@@ -599,28 +608,40 @@ fn redaction_report_probe(
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("input.docx"), source).unwrap();
     std::fs::write(dir.path().join("plan.json"), json.to_string()).unwrap();
-    for typed in [false, true] {
-        for dry in [true, false] {
+    for (typed, structured) in [(false, false), (true, true), (true, false)] {
+        for delivery in ["dry", "bundle", "single"] {
+            let dry = delivery == "dry";
             let mut args = vec!["edit"];
             if typed {
                 args.push("apply");
             }
             args.extend(["input.docx", "--plan", "plan.json"]);
-            if typed {
+            if structured {
                 args.push("--json");
             }
-            let bundle = if typed { "typed-bundle" } else { "bundle" };
+            let bundle = match (typed, structured) {
+                (false, _) => "bundle",
+                (true, true) => "typed-bundle",
+                (true, false) => "human-bundle",
+            };
+            let single = match (typed, structured) {
+                (false, _) => "single.docx",
+                (true, true) => "typed.docx",
+                (true, false) => "human.docx",
+            };
             if dry {
                 args.push("--dry-run");
-            } else {
+            } else if delivery == "bundle" {
                 args.extend(["--out-dir", bundle]);
+            } else {
+                args.extend(["-o", single]);
             }
             let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
                 .current_dir(dir.path())
                 .args(args)
                 .output()
                 .unwrap();
-            let label = format!("CLI typed={typed} dry={dry}");
+            let label = format!("CLI typed={typed} structured={structured} delivery={delivery}");
             let stdout = String::from_utf8(output.stdout).unwrap();
             let stderr = String::from_utf8(output.stderr).unwrap();
             assert_eq!(
@@ -628,13 +649,13 @@ fn redaction_report_probe(
                 code.is_none(),
                 "{label}: {stdout}\n{stderr}"
             );
-            if typed {
+            if structured {
                 let envelope: jubarte::result::Envelope = serde_json::from_str(&stdout).unwrap();
                 channels.push((format!("{label} envelope Debug"), format!("{envelope:?}")));
             }
             channels.push((format!("{label} stdout"), stdout));
             channels.push((format!("{label} stderr"), stderr));
-            if !dry {
+            if delivery == "bundle" {
                 let report = dir.path().join(bundle).join(if typed {
                     "report.json"
                 } else {
@@ -642,7 +663,7 @@ fn redaction_report_probe(
                 });
                 if code.is_none() {
                     channels.push((
-                        format!("{label} report.jsonl"),
+                        format!("{label} {}", report.file_name().unwrap().to_string_lossy()),
                         std::fs::read_to_string(report).unwrap(),
                     ));
                 } else {
@@ -674,13 +695,30 @@ fn redaction_report_probe(
         }
     }
     assert!(leaks.is_empty(), "{}", leaks.join("\n"));
+    for outcome in &outcomes {
+        assert!(outcome.near.is_none());
+        assert!(outcome.anchor_given.is_none());
+        assert!(outcome.anchor_read_as.is_none());
+        assert!(outcome.comment_id.is_none());
+        if let Some(context) = &outcome.context {
+            assert!(context.chars().all(|c| matches!(c, '{' | '}' | '█')));
+        }
+    }
+    if secrets.contains(&"Account  12345") {
+        assert_eq!(
+            outcomes[0].message.as_deref(),
+            Some(
+                "the text to redact does not occur in p0; a passage differs from it only in whitespace"
+            )
+        );
+    }
 }
 
 #[test]
 fn redact_whitespace_miss_keeps_only_text_free_help() {
     redaction_report_probe(
         &para("Account 12345"),
-        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Account  12345"}),
+        &serde_json::json!({"kind":"redact","paragraph":"p0","find":"Account  12345"}),
         &["Account  12345", "Account 12345"],
         Some("ANCHOR_NOT_FOUND"),
     );
@@ -690,7 +728,7 @@ fn redact_whitespace_miss_keeps_only_text_free_help() {
 fn redact_read_as_success_never_reports_either_spelling() {
     redaction_report_probe(
         &para("Carol’s key 9876"),
-        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
+        &serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
         &["Carol's key 9876", "Carol’s key 9876"],
         None,
     );
@@ -700,7 +738,7 @@ fn redact_read_as_success_never_reports_either_spelling() {
 fn redact_curly_quote_refusal_never_reports_shown_text() {
     redaction_report_probe(
         &para("Carol’s key 9876; Carol’s key 9876"),
-        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol’s key 9876"}),
+        &serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol’s key 9876"}),
         &["Carol’s key 9876"],
         Some("AMBIGUOUS_ANCHOR"),
     );
@@ -710,7 +748,7 @@ fn redact_curly_quote_refusal_never_reports_shown_text() {
 fn redact_plain_success_never_reports_marked_anchor() {
     redaction_report_probe(
         &para("Account 12345"),
-        serde_json::json!({"kind":"redact","paragraph":"p0","find":"**Account 12345**"}),
+        &serde_json::json!({"kind":"redact","paragraph":"p0","find":"**Account 12345**"}),
         &["**Account 12345**", "Account 12345"],
         None,
     );
@@ -720,7 +758,7 @@ fn redact_plain_success_never_reports_marked_anchor() {
 fn redact_context_never_copies_a_neighbouring_secret() {
     redaction_report_probe(
         &para("Account 12345 Account 12345"),
-        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Account 12345","occurrence":1}),
+        &serde_json::json!({"kind":"redact","paragraph":"p0","find":"Account 12345","occurrence":1}),
         &["Account 12345"],
         Some("REDACTION_LEAK"),
     );
@@ -730,7 +768,7 @@ fn redact_context_never_copies_a_neighbouring_secret() {
 fn redact_selector_refusal_never_reports_the_selector_text() {
     redaction_report_probe(
         &para("Public text"),
-        serde_json::json!({"kind":"redact","paragraph":{"contains":"Account 12345"},"find":"Account 12345"}),
+        &serde_json::json!({"kind":"redact","paragraph":{"contains":"Account 12345"},"find":"Account 12345"}),
         &["Account 12345"],
         Some("ANCHOR_NOT_FOUND"),
     );
@@ -740,7 +778,7 @@ fn redact_selector_refusal_never_reports_the_selector_text() {
 fn redact_structure_refusal_never_reports_control_alias() {
     redaction_report_probe(
         r#"<w:p><w:sdt><w:sdtPr><w:alias w:val="Carol’s key 9876"/></w:sdtPr><w:sdtContent><w:r><w:t>Carol’s key 9876</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
-        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
+        &serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
         &["Carol's key 9876", "Carol’s key 9876"],
         Some("UNSUPPORTED_STRUCTURE"),
     );
@@ -750,7 +788,7 @@ fn redact_structure_refusal_never_reports_control_alias() {
 fn redact_revision_refusal_never_reports_the_document_copy() {
     redaction_report_probe(
         r#"<w:p><w:sdt><w:sdtContent><w:ins w:id="7" w:author="Carol’s key 9876" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Carol’s key 9876</w:t></w:r></w:ins></w:sdtContent></w:sdt></w:p>"#,
-        serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
+        &serde_json::json!({"kind":"redact","paragraph":"p0","find":"Carol's key 9876"}),
         &["Carol's key 9876", "Carol’s key 9876"],
         Some("UNSUPPORTED_STRUCTURE"),
     );

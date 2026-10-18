@@ -377,7 +377,7 @@ fn prepare_and_publish(
     action: &EditAction,
     source: &[u8],
     command: &str,
-) -> Result<Envelope, Failure> {
+) -> Result<(Envelope, bool), Failure> {
     let delivery = action.delivery();
     let payload_bytes = action
         .payload()
@@ -594,13 +594,19 @@ fn prepare_and_publish(
     data.counts.comments_added = prepared.result.report.comments_added;
     data.counts.revisions_accepted = prepared.result.report.resolved_revisions.accepted.len();
     data.counts.revisions_rejected = prepared.result.report.resolved_revisions.rejected.len();
+    let redacted = prepared
+        .result
+        .report
+        .operations
+        .iter()
+        .any(|op| op.kind == "redact");
     if delivery.dry_run {
         data.set_predicted(if prepared.primary_effect == Effect::Changed {
             PredictedEffect::Changed
         } else {
             PredictedEffect::Unchanged
         });
-        return Ok(receipt);
+        return Ok((receipt, redacted));
     }
     let mut outputs = Vec::<(PathBuf, Vec<u8>, MediaRole)>::new();
     if let Some(path) = save {
@@ -738,7 +744,7 @@ fn prepare_and_publish(
         )
         .map_err(publish_failure)?;
     }
-    Ok(receipt)
+    Ok((receipt, redacted))
 }
 
 pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
@@ -748,7 +754,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
     if let Ok(source) = &source {
         super::warn_nested_text_boxes(source);
     }
-    let receipt = match source.as_ref() {
+    let (receipt, redacted) = match source.as_ref() {
         Ok(source) => prepare_and_publish(action, source, &command).unwrap_or_else(|error| {
             let operational = matches!(
                 error.code.as_str(),
@@ -771,12 +777,15 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             {
                 data.verification.expectations = "unresolved".to_string();
             }
-            receipt
+            (receipt, false)
         }),
-        Err(error) => Envelope::new_error(
-            &command,
-            Source::from_digest("").with_path(absolute(action.file())),
-            *error.clone(),
+        Err(error) => (
+            Envelope::new_error(
+                &command,
+                Source::from_digest("").with_path(absolute(action.file())),
+                *error.clone(),
+            ),
+            false,
         ),
     };
     let code = edit_envelope_exit(&receipt);
@@ -884,12 +893,9 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             let published = std::fs::read(&path);
             match published {
                 Ok(bytes) => {
-                    if let Err(error) = print_success(
-                        action.file(),
-                        confirmation_view(action.file(), source),
-                        &path,
-                        &bytes,
-                    ) {
+                    if let Err(error) =
+                        print_edit_success(action.file(), source, &path, &bytes, redacted)
+                    {
                         eprintln!(
                             "error: committed {}, but reporting the result failed: {error}",
                             path.display()

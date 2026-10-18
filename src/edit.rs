@@ -2573,6 +2573,72 @@ impl<'p> Transaction<'p> {
         id: &str,
         kind: &OperationKind,
     ) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>> {
+        match kind {
+            OperationKind::Redact { find, .. } => {
+                let result = self.resolve_one_unreported(id, kind);
+                // A refusal can quote a selector, field, control or revision
+                // author as well as the anchor. None is safe locating help for
+                // a redaction, including the deferred revision diagnostics.
+                self.revision_refusal.take();
+                let scrub = |outcome: EditOutcome| EditOutcome {
+                    id: outcome.id,
+                    kind: outcome.kind,
+                    status: outcome.status,
+                    paragraph: outcome.paragraph,
+                    matches: outcome.matches,
+                    context: outcome.context.map(|_| format!("{{{}}}", redaction(find))),
+                    comment_id: None,
+                    anchor_given: None,
+                    anchor_read_as: None,
+                    near: None,
+                    code: None,
+                    message: None,
+                };
+                // Rebuild from safe fields on both paths. Adding an outcome
+                // field requires an explicit privacy decision here, rather
+                // than silently forwarding another copy of document text.
+                match result {
+                    Ok((resolved, outcome)) => Ok((resolved, scrub(outcome))),
+                    Err(boxed) => {
+                        let (error, outcome) = *boxed;
+                        let at = outcome.paragraph.as_ref().map_or_else(
+                            || "in the selected paragraphs".to_string(),
+                            |p| format!("in {}", crate::ids::short_paragraph(p)),
+                        );
+                        let message = match error.code.as_str() {
+                            "ANCHOR_NOT_FOUND" => format!(
+                                "the text to redact does not occur {at}{}",
+                                if outcome.near.is_some() {
+                                    "; a passage differs from it only in whitespace"
+                                } else {
+                                    ""
+                                }
+                            ),
+                            "AMBIGUOUS_ANCHOR" => format!(
+                                "the text to redact has {} matches {at}; select one paragraph and set a 1-based occurrence",
+                                outcome.matches
+                            ),
+                            "INVALID_EDIT" => format!(
+                                "the text to redact needs a nonempty find; occurrence is 1-based {at}"
+                            ),
+                            _ => format!("the text to redact cannot be edited {at}"),
+                        };
+                        Err(Box::new((
+                            err(&error.code, Some(id), message),
+                            scrub(outcome),
+                        )))
+                    }
+                }
+            }
+            _ => self.resolve_one_unreported(id, kind),
+        }
+    }
+
+    fn resolve_one_unreported(
+        &self,
+        id: &str,
+        kind: &OperationKind,
+    ) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
             kind: String::new(),
@@ -2769,13 +2835,11 @@ impl<'p> Transaction<'p> {
             OperationKind::Redact {
                 find, occurrence, ..
             } => {
-                // Refusals name the text by its place, never by itself.
-                let hide = |m: String| m.replace(&format!("{find:?}"), "the text to redact");
                 let (start, end) = self
                     .find_range(projection, find, *occurrence, &mut outcome)
-                    .map_err(|(c, m)| fail(&c, hide(m), outcome.clone()))?;
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                 let blocks = redaction(find);
-                outcome.context = Some(context(text, start, end, &format!("{{{blocks}}}")));
+                outcome.context = Some(format!("{{{blocks}}}"));
                 Ok((
                     Resolved::Text {
                         para,
