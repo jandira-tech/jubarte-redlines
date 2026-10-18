@@ -373,13 +373,14 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte convert` | Convert Word or Markdown to DOCX, PDF, PNG or Markdown |
 | `jubarte diff` | Review differences as GitHub, word, normal, context or side-by-side text |
 | `jubarte read` | Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids |
-| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3) |
-| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent view |
+| `jubarte edit` | Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3) |
+| `jubarte add` | Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command). Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after diff of the full agent views |
 | `jubarte capabilities` | What this binary can do, for agents choosing an operation |
 | `jubarte visual-diff` | Compare rendered pages pixel by pixel (different pages: exit 5) |
 | `jubarte comments` | List comments, threads and the text they annotate |
 | `jubarte append` | Join documents in order, preserving images, styles, lists and notes |
 | `jubarte validate` | Check Word validity, tracked edits, accessibility, style and structure; or repair Word validity |
+| `jubarte check` | Check a document against a source-bound expectation contract |
 | `jubarte scrub` | Remove authors, editing IDs, metadata and comments before sharing |
 | `jubarte self-update` | Check or install a release from GitHub |
 <!-- gen:cli-summary:end -->
@@ -439,6 +440,36 @@ The text listing prints short ids (`r12`, `header1.r1`, `footnotes.r3`);
 `--json` prints JSON Lines with the same short `id` (and `ref`). `--id`
 takes the short ids: `r12`, `r1+2` (both marks of one
 change), `header1.r1`.
+
+
+With human-readable CLI output, every command that writes a DOCX from a
+document prints a confirmation after publication (unless `-q`):
+
+````text
+SUCCESS:
+~~~~diff
+--- before in.docx
++++ after out.docx
+@@ -1,3 +1,3 @@
+ ---
+-source: in.docx
++source: out.docx
+ sha256: …
+~~~~
+````
+
+The diff compares the full input and output agent views, including `source:`
+and `sha256:`. It uses three context lines; the output view comes from the
+published bytes. Markdown conversion uses the original Markdown text as its
+before-view; comparison uses its first input. Identical views print
+`no differences` inside the fence. The fence grows past any leading tilde
+run in the diff. Edit's former changed-range view and resolved-lines output
+are replaced by this block; an existing bundle summary stays before it,
+with one block per DOCX. The `wrote …` lines and notes remain on stderr.
+`-q` silences the block, summary and status; warnings and errors still print.
+Dry runs, saved plans and non-DOCX outputs retain their existing output.
+Template generation writes a JSON plan; applying it writes the DOCX.
+Typed `--json`/`--jsonl` delivery retains its machine-readable receipt.
 
 ### Accept or reject
 

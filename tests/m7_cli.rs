@@ -112,7 +112,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
     );
     let expected = dir.path().join("a_v_b.docx");
     assert!(!expected.exists(), "no -o, no file");
-    // -o writes the redline and says so on stderr only.
+    // -o writes the redline, reports status on stderr and confirms its views.
     let out = Command::new(BIN)
         .arg("compare")
         .arg(&a)
@@ -123,7 +123,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
         .unwrap();
     assert!(out.status.success());
     assert!(
-        out.stdout.is_empty(),
+        String::from_utf8_lossy(&out.stdout).starts_with("SUCCESS:\n~~~~diff\n"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );

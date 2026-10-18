@@ -117,7 +117,14 @@ fn edit_and_add_record_into_one_plan_that_edit_applies_and_consumes() {
         "--consume deletes the plan"
     );
     let (_, view, _) = run(dir, &["read", "out/redline.docx"]);
-    assert!(view.contains("{~~his or her~>their~~}"), "{view}");
+    assert!(
+        view.contains("{++their++}") && view.contains("{--his or her--}"),
+        "{view}"
+    );
+    assert!(
+        view.find("{++their++}") < view.find("{--his or her--}"),
+        "{view}"
+    );
     assert!(view.contains("Why 3?"), "{view}");
 }
 
@@ -1917,17 +1924,30 @@ fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
         ],
     );
     assert_eq!(code, 0, "{out} {err}");
-    assert_eq!(
-        out,
-        format!(
-            "edit replace: changed; wrote {}\n",
-            dir.path()
-                .join("out.docx")
-                .canonicalize()
-                .unwrap()
-                .display()
-        )
+    let summary = format!(
+        "edit replace: changed; wrote {}\n",
+        dir.path()
+            .join("out.docx")
+            .canonicalize()
+            .unwrap()
+            .display()
     );
+    assert!(
+        out.starts_with(&format!("{summary}SUCCESS:\n~~~~diff\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains("--- before letter.docx\n+++ after out.docx\n@@ "),
+        "{out}"
+    );
+    assert!(
+        out.contains("\n-fee\n")
+            && out
+                .lines()
+                .any(|line| line.starts_with('+') && line.contains("{~~fee~>cost~~}")),
+        "{out}"
+    );
+    assert!(out.ends_with("~~~~\n"), "{out}");
     assert!(err.is_empty(), "{err}");
 }
 

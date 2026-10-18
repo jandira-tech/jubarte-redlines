@@ -5,7 +5,7 @@
 //! Tasks 12 and 13: one writer for `-o`. Compare, accept, reject, scrub,
 //! append, convert and read write what the output's extension names: a Word package, the agent
 //! view (`.md`), a PDF, PNG pages or the snapshot (`.json`), and say so on
-//! stderr, never on stdout.
+//! stderr, with a SUCCESS diff on stdout for DOCX publication.
 
 mod common;
 
@@ -77,8 +77,17 @@ fn every_writing_task_writes_what_its_output_names() {
             let out = jubarte(dir.path(), &[args, &["-o", &file]].concat());
             let stderr = text(&out.stderr);
             assert!(out.status.success(), "{file}: {stderr}");
-            assert_eq!(text(&out.stdout), "", "{file}: stdout stays empty");
             let kind = if ext == "tmp" { unknown } else { ext };
+            if kind == "docx" {
+                assert!(
+                    text(&out.stdout).starts_with("SUCCESS:\n~~~~diff\n"),
+                    "{file}: {}",
+                    text(&out.stdout)
+                );
+                assert!(text(&out.stdout).contains(&format!("+++ after {file}\n")));
+            } else {
+                assert_eq!(text(&out.stdout), "", "{file}: stdout stays empty");
+            }
             assert!(
                 stderr.contains(&format!("wrote {file} ({kind}, ")),
                 "{file}: {stderr}"

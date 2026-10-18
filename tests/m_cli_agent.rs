@@ -765,7 +765,7 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
 }
 
 #[test]
-fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
+fn edit_writes_the_patch_and_confirms_full_views_unless_quiet() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_fixture(dir.path());
     let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
@@ -798,7 +798,7 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
         ),
         "{patch}"
     );
-    assert!(patch.contains("[-his or her-]{+an+}"), "{patch}");
+    assert!(patch.contains("{+an+}[-his or her-]"), "{patch}");
     // The comparer aligns the insertion as "c), 2(" after the old "2(";
     // the comment on it follows the change, never inside it.
     let unwrapped = patch.replace('\n', " ");
@@ -815,15 +815,19 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
         )
         .replace(['{', '}', '+', '='], "");
     assert!(accepted.contains("1(g), 2(c), 2(e), 3"), "{accepted}");
-    // stdout carries the redline's changed blocks as the agent view, not
-    // the patch (which stays on disk).
-    assert!(!stdout.contains("\n@@ "), "{stdout}");
+    // The patch stays on disk; stdout compares the full published views.
+    assert!(stdout.contains("SUCCESS:\n~~~~diff\n"), "{stdout}");
+    assert!(stdout.contains("\n@@ "), "{stdout}");
     assert!(
-        stdout.contains("\nrange: changed by @C (p1, p2) of p0-p2\n"),
+        stdout.lines().any(|line| line.starts_with('+')
+            && line.contains("{++an++}")
+            && line.contains("{--his or her--}")),
         "{stdout}"
     );
     assert!(
-        stdout.contains("{~~his or her~>an~~}") && stdout.contains("c0 @C: post-disclosure duty"),
+        stdout
+            .lines()
+            .any(|line| line.starts_with('+') && line.contains("c0 @C: post-disclosure duty")),
         "{stdout}"
     );
     assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");

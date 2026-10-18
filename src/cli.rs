@@ -34,8 +34,8 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// No status on success: no `wrote` lines, and no summary or view of
-    /// what `edit`/`add` changed. Files are still written; a reading task
+    /// No status on success: no `wrote` lines, SUCCESS block or edit summary.
+    /// Files are still written; a reading task
     /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
     /// still prints what it read, and warnings and errors still print.
     #[arg(
@@ -1024,8 +1024,8 @@ pub enum Command {
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
     /// --resolve, --reply, --accept, --reject or --style (several -p per
     /// command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
-    /// bundle), then prints the changed paragraphs as the agent view (a
-    /// pure --accept/--reject prints the resolved changes; refusal: exit 3).
+    /// bundle), then prints SUCCESS and a fenced before/after diff of the
+    /// full agent views (refusal: exit 3).
     #[command(after_help = "Examples:\n  \
         jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
         jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
@@ -1132,7 +1132,7 @@ pub enum Command {
     },
     /// Add a paragraph, a comment or a reply: -p WHERE --content TEXT
     /// (several -p per command). Writes FILE_modified.docx, as edit does,
-    /// and prints the changed paragraphs as the agent view.
+    /// and prints SUCCESS and a fenced before/after diff of the full agent views.
     #[command(after_help = "Examples:\n  \
         jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
         jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
@@ -1901,6 +1901,75 @@ pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize
         path.display(),
         format.name()
     )
+}
+
+/// Confirmation of the published document, comparing the two agent views.
+pub fn success_block(before_name: &str, before: &str, after_name: &str, after: &str) -> String {
+    let body = if before == after {
+        "no differences\n".to_string()
+    } else {
+        similar::TextDiff::from_lines(before, after)
+            .unified_diff()
+            .context_radius(3)
+            .header(
+                &format!("before {before_name}"),
+                &format!("after {after_name}"),
+            )
+            .to_string()
+    };
+    let longest = body
+        .lines()
+        .map(|line| line.bytes().take_while(|b| *b == b'~').count())
+        .max()
+        .unwrap_or(0);
+    let fence = "~".repeat(4.max(longest + 1));
+    format!("SUCCESS:\n{fence}diff\n{body}{fence}\n")
+}
+
+#[cfg(test)]
+mod success_tests {
+    use super::success_block;
+
+    #[test]
+    fn equal_views() {
+        assert_eq!(
+            success_block("in.docx", "same", "out.docx", "same"),
+            "SUCCESS:\n~~~~diff\nno differences\n~~~~\n"
+        );
+    }
+
+    #[test]
+    fn labels_and_known_hunk() {
+        assert_eq!(
+            success_block(
+                "dir/in.docx",
+                "one\ntwo\nthree\n",
+                "out.docx",
+                "one\nnew\nthree\n"
+            ),
+            "SUCCESS:\n~~~~diff\n--- before dir/in.docx\n+++ after out.docx\n@@ -1,3 +1,3 @@\n one\n-two\n+new\n three\n~~~~\n"
+        );
+    }
+
+    #[test]
+    fn fence_exceeds_leading_tildes_in_diff_body() {
+        let block = success_block("a", "a\n", "b\n~~~~~", "b\n");
+        assert!(block.starts_with("SUCCESS:\n~~~~~~diff\n"), "{block}");
+        assert!(block.ends_with("~~~~~~\n"), "{block}");
+        // Tildes after a diff marker do not begin the line.
+        assert!(success_block("a", "~~~~~~\n", "b", "x\n").starts_with("SUCCESS:\n~~~~diff\n"));
+    }
+
+    #[test]
+    fn three_context_lines_and_missing_newline() {
+        let block = success_block(
+            "a",
+            "0\n1\n2\n3\n4\n5\n6\n7",
+            "b",
+            "0\n1\n2\n3\n4\n5\n6\nnew",
+        );
+        assert!(block.contains("@@ -5,4 +5,4 @@\n 4\n 5\n 6\n-7\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n"), "{block}");
+    }
 }
 
 /// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
