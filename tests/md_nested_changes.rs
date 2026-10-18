@@ -1775,3 +1775,81 @@ fn review_1126_open_tag_identity_is_local_to_each_story_part() {
         );
     }
 }
+
+fn story_keeps_its_three_level_chain(kind: &str) {
+    let source = docx(
+        r#"<w:p><w:ins w:id="1" w:author="Alice" w:date="2026-09-29T14:05:00Z">
+     <w:r><w:t>liveA </w:t></w:r>
+     <w:del w:id="3" w:author="Bob" w:date="2026-09-30T09:00:00Z">
+       <w:ins w:id="5" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:delText>x</w:delText></w:r></w:ins>
+       <w:r><w:delText> mid </w:delText></w:r>
+       <w:ins w:id="7" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:delText>y</w:delText></w:r></w:ins>
+     </w:del>
+     <w:r><w:t>tail</w:t></w:r></w:ins></w:p>"#,
+    );
+    // #1134: Word-safe delText inside an inserted child is currently omitted
+    // by the story reader. Feed its note grammar directly to pin the writer.
+    let text = "{++liveA ++}{>>PART.r1 @A<<}{++x++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{-- mid --}{>>PART.r3 @B on PART.r1 @A<<}{++y++}{>>PART.r7 @A on PART.r3 @B on PART.r1 @A<<}{++tail++}{>>PART.r1 @A<<}".replace("PART", &format!("{kind}1"));
+    let view = format!(
+        "---\nauthors:\n  A: Alice # 3 revisions, 2026-09-29T14:05:00Z\n  B: Bob # 1 revision, 2026-09-30T09:00:00Z\n{kind}s:\n  default: {{id: {kind}1, text: \"{text}\"}}\n---\nBody.\n"
+    );
+    let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+    assert_revision_tree(
+        &xml,
+        &[
+            ("w:ins", "1", None),
+            ("w:del", "3", Some("1")),
+            ("w:ins", "5", Some("3")),
+            ("w:ins", "7", Some("3")),
+        ],
+        &revision_attributes(&part_string(&source, "word/document.xml").unwrap()),
+    );
+}
+
+#[test]
+fn a_header_keeps_its_three_level_chain() {
+    story_keeps_its_three_level_chain("header");
+}
+
+#[test]
+fn a_footer_keeps_its_three_level_chain() {
+    story_keeps_its_three_level_chain("footer");
+}
+
+fn review_1129_story_view(kind: &str, text: &str) -> String {
+    format!(
+        "---\nauthors:\n  A: Alice # 2 revisions, 2026-09-29..2026-09-30\n  B: Bob # 2 revisions, 2026-09-29..2026-09-30\n{kind}s:\n  default: {{id: {kind}1, text: \"{}\", style: Normal}}\n---\nBody.\n",
+        text.replace("PART", &format!("{kind}1"))
+    )
+}
+
+#[test]
+fn review_1129_anonymous_parents_at_every_level() {
+    for kind in ["header", "footer"] {
+        let view = review_1129_story_view(
+            kind,
+            "{++live++}{>>PART.noid @A<<}{--mid--}{>>PART.noid @B on PART.noid @A<<}{++x++}{>>PART.r5 @A on PART.noid @B on PART.noid @A<<}{--tail--}{>>PART.noid @B on PART.noid @A<<}{++end++}{>>PART.noid @A<<}",
+        );
+        let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+        assert_eq!(xml.matches("<w:ins ").count(), 2, "{xml}");
+        assert_eq!(xml.matches("<w:del ").count(), 1, "{xml}");
+        let ids = xml
+            .split("w:id=\"")
+            .skip(1)
+            .map(|s| s.split('"').next().unwrap())
+            .collect::<Vec<_>>();
+        assert_revision_tree(
+            &xml,
+            &[
+                ("w:ins", ids[0], None),
+                ("w:del", ids[1], Some(ids[0])),
+                ("w:ins", "5", Some(ids[1])),
+            ],
+            &[
+                revision_by("Alice", Some("2026-09-29T00:00:00Z")),
+                revision_by("Bob", Some("2026-09-29T00:00:00Z")),
+                revision_by("Alice", Some("2026-09-30T23:59:59Z")),
+            ],
+        );
+    }
+}
