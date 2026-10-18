@@ -539,6 +539,15 @@ pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
     Some(PlainRevision { ids, author, date })
 }
 
+/// Plain attributions of a substitution whose sides retain distinct dates.
+/// A semicolon separates complete revision parts, as in the handle grammar.
+pub(super) fn plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
+    text.split("; ")
+        .map(plain_revision)
+        .collect::<Option<Vec<_>>>()
+        .or_else(|| plain_revision(text).map(|part| vec![part]))
+}
+
 /// The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a
 /// larger number a view names is left for a fresh one.
 pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
@@ -1801,11 +1810,11 @@ mod tests {
             })
         };
         assert_eq!(
-            nested_revision_tags("r3 @BO on r1 @AL"),
+            nested_revision_tags("r3 @BO re r1 @AL"),
             Some(vec![tag("BO", None, &[3]), tag("AL", None, &[1])])
         );
         assert_eq!(
-            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z on r1 @AL"),
+            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z re r1 @AL"),
             Some(vec![
                 tag("BO", Some("2026-01-02T10:00:00Z"), &[3]),
                 tag("AL", None, &[1])
@@ -1813,7 +1822,7 @@ mod tests {
         );
         // Deeper nests chain the same way, innermost first.
         assert_eq!(
-            nested_revision_tags("r5 @CD on r3 @BO on r1 @AL"),
+            nested_revision_tags("r5 @CD re r3 @BO re r1 @AL"),
             Some(vec![
                 tag("CD", None, &[5]),
                 tag("BO", None, &[3]),
@@ -1822,7 +1831,7 @@ mod tests {
         );
         assert_eq!(
             nested_plain_revisions(
-                "r3 Ben Ode (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
+                "r3 Ben Ode (2026-01-02T10:00:00Z) re r1 Ana Lima (2026-01-01T09:00:00Z)"
             ),
             Some(vec![
                 plain(&[3], "Ben Ode", "2026-01-02T10:00:00Z").unwrap(),
@@ -1833,7 +1842,7 @@ mod tests {
         // changes only where both sides parse.
         assert_eq!(
             nested_plain_revisions(
-                "r3 Ben Ode on High (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
+                "r3 Ben Ode on High (2026-01-02T10:00:00Z) re r1 Ana Lima (2026-01-01T09:00:00Z)"
             ),
             Some(vec![
                 plain(&[3], "Ben Ode on High", "2026-01-02T10:00:00Z").unwrap(),

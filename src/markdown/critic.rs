@@ -1109,11 +1109,19 @@ fn encode_range(
         let paragraph = rest.starts_with("¶{") && !escaped(source, at);
         let tag_at = at + if paragraph { "¶".len() } else { 0 };
         let before = source[..at].trim_end_matches(['*', '_', '`']);
-        let follows = ["++}", "--}", "~~}"].iter().any(|close| before.ends_with(close));
-        if (paragraph || follows) && !escaped(source, tag_at)
+        let follows = out.ends_with(stand_in(Token::AttributionEnd))
+            || ["++}", "--}", "~~}"]
+                .iter()
+                .any(|close| before.ends_with(close));
+        if (paragraph || follows)
+            && !escaped(source, tag_at)
             && let Some((note, width)) = attribution_tag(&source[tag_at..range.end])
         {
-            out.push(stand_in(if paragraph { Token::ParagraphInsertion } else { Token::AttributionStart }));
+            out.push(stand_in(if paragraph {
+                Token::ParagraphInsertion
+            } else {
+                Token::AttributionStart
+            }));
             encode_comment(source, closers, tag_at + 1..tag_at + 1 + note.len(), out);
             out.push(stand_in(Token::AttributionEnd));
             at = tag_at + width;
@@ -1261,13 +1269,64 @@ fn encode_range(
 /// this grammar; callers also check the preceding closer or pilcrow.
 pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
     let after = text.strip_prefix('{')?;
-    let end = after.find('}')?;
+    // An attribution is one flat line. Stopping at the next opener also
+    // bounds malformed-tag scans instead of rescanning an unclosed tail.
+    let end = after.char_indices().find_map(|(at, c)| {
+        (matches!(c, '}' | '{' | '\n') && !escaped(text, at + 1)).then_some((at, c))
+    })?;
+    if end.1 != '}' {
+        return None;
+    }
+    let end = end.0;
     let note = &after[..end];
     (super::view_notes::revision_tags(note).is_some()
         || super::view_notes::nested_revision_tags(note).is_some()
-        || super::view_notes::plain_revision(note).is_some()
+        || super::view_notes::plain_revisions(note).is_some()
         || super::view_notes::nested_plain_revisions(note).is_some())
-        .then_some((note, end + 2))
+    .then_some((note, end + 2))
+}
+
+/// Complete attribution payloads in rendered text, paired with their mark.
+/// The delimiter prepass keeps comments, escaped literals and code spans opaque.
+pub(crate) fn attributed_notes(source: &str) -> Vec<(Token, String)> {
+    let mut notes = Vec::new();
+    let mut closer = Token::InsertEnd;
+    let mut note = None;
+    Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
+        Piece::Token(token @ (Token::InsertEnd | Token::DeleteEnd | Token::SubstituteEnd)) => {
+            closer = token
+        }
+        Piece::Token(Token::AttributionStart) => note = Some((closer, String::new())),
+        Piece::Token(Token::ParagraphInsertion) => {
+            note = Some((Token::ParagraphInsertion, String::new()))
+        }
+        Piece::Token(Token::AttributionEnd) => {
+            if let Some(note) = note.take() {
+                notes.push(note);
+            }
+        }
+        Piece::Text(text) => {
+            if let Some((_, note)) = &mut note {
+                note.push_str(text);
+            }
+        }
+        _ => {}
+    });
+    notes
+}
+
+/// Rendered text without revision tags or inserted paragraph marks.
+pub(crate) fn without_attributions(source: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
+        Piece::Token(Token::AttributionStart | Token::ParagraphInsertion) => inside = true,
+        Piece::Token(Token::AttributionEnd) => inside = false,
+        Piece::Text(text) if !inside => out.push_str(text),
+        Piece::Token(token) if !inside => out.push_str(delimiter(token)),
+        _ => {}
+    });
+    out
 }
 
 /// A comment's body: text, with every run of blank or whitespace-only
@@ -1332,6 +1391,21 @@ fn fence_escape_at(source: &str, at: usize) -> Option<(String, usize)> {
     /// What can hold the run a closer escapes (`++` + run + `}`).
     const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="];
     let bytes = source.as_bytes();
+    if bytes.get(at) == Some(&b'\\') {
+        let run = bytes[at..].iter().take_while(|&&b| b == b'\\').count();
+        if let Some((_, width)) = attribution_tag(&source[at + run..]) {
+            let kept = if run % 2 == 1 { (run - 1) / 2 } else { run };
+            return Some((
+                format!(
+                    "{}{}",
+                    "\\".repeat(kept),
+                    &source[at + run..at + run + width]
+                ),
+                run + width,
+            ));
+        }
+    }
+
     let (head, run, tail) = {
         let shape = |head: usize, tails: &[&str]| {
             let mut run = at + head;
@@ -1933,7 +2007,9 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     folded_at = None;
                     Some(In::Old)
                 }
-                Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => Some(In::Comment),
+                Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => {
+                    Some(In::Comment)
+                }
                 // A highlight shows its text as the text around it does.
                 Token::HighlightStart => Some(state),
                 Token::SubstituteSeparator => {

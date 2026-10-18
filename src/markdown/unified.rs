@@ -359,7 +359,7 @@ pub fn patch_documents(
     let known = segments(&docx_to_markdown(&old, &MarkdownOptions::default())?.markdown)
         .into_iter()
         .filter_map(|segment| match segment {
-            Segment::Note(note) => Some(note),
+            Segment::Note(note, _) => Some(note),
             _ => None,
         })
         .collect();
@@ -613,7 +613,7 @@ enum Segment {
     HighlightStart,
     HighlightEnd,
     /// A comment's text, as written.
-    Note(String),
+    Note(String, bool),
 }
 
 /// The document as text, changes, highlight delimiters and comments.
@@ -622,6 +622,7 @@ fn segments(critic: &str) -> Vec<Segment> {
     let mut edit: Option<Edit> = None;
     let mut side = Side::New;
     let mut note: Option<String> = None;
+    let mut attribution = false;
     // Comments that end inside a change, written after it.
     let mut held: Vec<String> = Vec::new();
     critic::Pieces::default().feed(&critic::encode_spans_only(critic), |piece| match piece {
@@ -665,7 +666,7 @@ fn segments(critic: &str) -> Vec<Segment> {
                 if let Some(edit) = edit.take() {
                     out.push(Segment::Edit(edit));
                 }
-                out.extend(held.drain(..).map(Segment::Note));
+                out.extend(held.drain(..).map(|text| Segment::Note(text, false)));
             }
             Token::HighlightStart | Token::HighlightEnd => {
                 let start = token == Token::HighlightStart;
@@ -675,7 +676,10 @@ fn segments(critic: &str) -> Vec<Segment> {
                     None => out.push(Segment::HighlightEnd),
                 }
             }
-            Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => note = Some(String::new()),
+            Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => {
+                attribution = token != Token::CommentStart;
+                note = Some(String::new());
+            }
             // A comment paragraph break, inside a note or in dropped
             // text.
             Token::CommentBreak => {
@@ -688,7 +692,7 @@ fn segments(critic: &str) -> Vec<Segment> {
                 if edit.is_some() {
                     held.push(text);
                 } else {
-                    out.push(Segment::Note(text));
+                    out.push(Segment::Note(text, attribution));
                 }
             }
         },
@@ -707,11 +711,11 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
     // Whether the last edit has taken its (first) note.
     let mut named_edit = false;
     for segment in segments {
-        if let Segment::Note(text) = &segment
+        if let Segment::Note(text, true) = &segment
             && let Some(Segment::Edit(edit)) = out
                 .iter_mut()
                 .rev()
-                .find(|s| !matches!(s, Segment::Note(_)))
+                .find(|s| !matches!(s, Segment::Note(..)))
         {
             let by = if let Some(plain) = super::view_notes::plain_revision(text.trim()) {
                 Some(
@@ -761,7 +765,7 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
     let mut after: Option<String> = None;
     for segment in segments {
-        if !matches!(segment, Segment::Note(_))
+        if !matches!(segment, Segment::Note(..))
             && let Some(text) = after.take()
         {
             same(&mut out, &text);
@@ -839,7 +843,7 @@ impl Block {
         self.segments.iter().any(|s| match (s, known) {
             (Segment::Same(_), _) => false,
             (Segment::Edit(_), _) | (_, None) => true,
-            (Segment::Note(note), Some(known)) => !known.contains(note),
+            (Segment::Note(note, _), Some(known)) => !known.contains(note),
             (_, Some(_)) => false,
         })
     }
@@ -978,7 +982,7 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                 let named = |text: &mut String, by: &Option<(String, String)>| match by {
                     Some((author, date)) => {
                         if author != &owner.author || date != &owner.date {
-                            text.push_str(&format!("{{>>{author} ({date})<<}}"));
+                            text.push_str(&format!("{{noid {author} ({date})}}"));
                         }
                         (author.clone(), date.clone())
                     }
@@ -1031,7 +1035,7 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                 text.push_str("==}");
                 highlighted = highlight.take();
             }
-            Segment::Note(note) => {
+            Segment::Note(note, _) => {
                 let on = match previous {
                     Some(Segment::HighlightEnd) => highlighted.take(),
                     _ => None,
@@ -1297,7 +1301,7 @@ mod tests {
                 .into_iter()
                 .map(|segment| match segment {
                     Segment::Edit(edit) => format!("edit {:?}", edit.by),
-                    Segment::Note(note) => format!("note {note}"),
+                    Segment::Note(note, _) => format!("note {note}"),
                     _ => String::new(),
                 })
                 .filter(|s| !s.is_empty())
@@ -1305,20 +1309,20 @@ mod tests {
         };
         let ana = Some(("Ana Lima".to_string(), "2026-09-30T14:05:00Z".to_string()));
         assert_eq!(
-            by("a {++b++}{>>r3 Ana Lima (2026-09-30T14:05:00Z)<<} c"),
+            by("a {++b++}{r3 Ana Lima (2026-09-30T14:05:00Z)} c"),
             [format!("edit {ana:?}")]
         );
         assert_eq!(
-            by("a {++b++}{>>footnotes.r3+4 Ana Lima (2026-09-30T14:05:00Z)<<}"),
+            by("a {++b++}{footnotes.r3+4 Ana Lima (2026-09-30T14:05:00Z)}"),
             [format!("edit {ana:?}")]
         );
         // The old note without a number still names the author.
         assert_eq!(
-            by("a {++b++}{>>Ana Lima (2026-09-30T14:05:00Z)<<}"),
+            by("a {++b++}{noid Ana Lima (2026-09-30T14:05:00Z)}"),
             [format!("edit {ana:?}")]
         );
         // A number alone names the change and no one: the owner made it.
-        assert_eq!(by("a {++b++}{>>r3<<}"), ["edit None"]);
+        assert_eq!(by("a {++b++}{r3}"), ["edit None"]);
         // A comment is still a comment.
         assert_eq!(
             by("a {++b++}{>>Ana Lima (2026-09-30T14:05:00Z): why<<}"),

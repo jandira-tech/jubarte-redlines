@@ -329,6 +329,9 @@ const DELIMITERS: [(&str, usize); 11] = [
 
 fn text_has_delimiter(text: &str) -> bool {
     DELIMITERS.iter().any(|(d, _)| text.contains(d))
+        || text
+            .match_indices('{')
+            .any(|(at, _)| super::critic::attribution_tag(&text[at..]).is_some())
 }
 
 /// Byte positions where a backslash must be inserted.
@@ -346,6 +349,12 @@ fn escape_points(text: &str) -> Vec<usize> {
             end = spans[span].end;
             span += 1;
             continue;
+        }
+        if bytes[i] == b'{'
+            && !escaped_at(text, i)
+            && super::critic::attribution_tag(&text[i..]).is_some()
+        {
+            points.push(i);
         }
         for (delimiter, insert) in DELIMITERS {
             if bytes[i..].starts_with(delimiter.as_bytes()) && !escaped_at(text, i) {

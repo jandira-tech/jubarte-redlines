@@ -2587,6 +2587,21 @@ impl Writer<'_> {
         if code_block {
             inline.set_code_block();
         }
+        // An inserted paragraph mark is visible metadata at the end of
+        // its paragraph; a deleted mark remains an id-line clause.
+        if self.agent && !self.resolved {
+            for (mark, by) in p
+                .path(&["pPr", "rPr"])
+                .map(|pr| self.revision_marks(pr))
+                .unwrap_or_default()
+            {
+                if mark == Mark::Insertion
+                    && let Some(by) = by
+                {
+                    inline.raw(&format!("¶{{{}}}", critic::display(&by)));
+                }
+            }
+        }
         let written = !inline.is_blank();
         let inline = inline.into_inline();
         // Comment threads whose range runs past this paragraph, for its id
@@ -5263,11 +5278,11 @@ mod tests {
         ]
         .concat();
 
-        // An insertion then a deletion is a replacement, as Word Compare
-        // writes it: CriticMarkup's substitution, as pandiff writes it.
+        // An insertion before a deletion preserves that source order as
+        // separate changes.
         assert_eq!(
             md(&docx(&body, &[])),
-            "Keep {~~_old_~>**new**~~}{>>r1+2<<}.\n\n{++destination++}{>>r3<<} / {--source--}{>>r3<<}\n"
+            "Keep {++**new**++}{r2}{--_old_--}{r1}.\n\n{++destination++}{r3} / {--source--}{r3}\n"
         );
     }
 
@@ -5281,7 +5296,7 @@ mod tests {
 
         assert_eq!(
             md(&docx(&body, &[])),
-            "## {++Added heading++}{>>r1<<}\n\n{--Deleted paragraph--}{>>r2<<}\n"
+            "## {++Added heading++}{r1}\n\n{--Deleted paragraph--}{r2}\n"
         );
     }
 
@@ -5351,7 +5366,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|Head|\n|-|\n|{--old--}{>>r1 Ana (2026-01-02T03:04:00Z)<<}|\n"
+            "|Head|\n|-|\n|{--old--}{r1 Ana (2026-01-02T03:04:00Z)}|\n"
         );
     }
 
@@ -5370,7 +5385,7 @@ mod tests {
         // print as the block after it, in the same mark.
         assert_eq!(
             payloads_elided(&md(&docx(&body, &[]))),
-            "{--![Text Box 7][d1]--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- text-box d1.0 -->\n\n{--Deleted box--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- /text-box -->\n\nKeep{++![Text Box 7][d2]++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- text-box d2.0 -->\n\n{++Added box++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n[d2]: drawing:…\n"
+            "{--![Text Box 7][d1]--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n<!-- text-box d1.0 -->\n\n{--Deleted box--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n<!-- /text-box -->\n\nKeep{++![Text Box 7][d2]++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n<!-- text-box d2.0 -->\n\n{++Added box++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n[d2]: drawing:…\n"
         );
     }
 
@@ -5379,15 +5394,15 @@ mod tests {
         let deleted = [pm("", &["del"], &r("A")), p("", &r("B"))].concat();
         assert_eq!(
             md(&docx(&deleted, &[])),
-            "A{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n"
+            "A{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}B\n"
         );
         let inserted = [pm("", &["ins"], &r("A")), p("", &r("B"))].concat();
         assert_eq!(
             md(&docx(&inserted, &[])),
-            "A{++\n\n++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n"
+            "A{++\n\n++}{r92 Ana (2026-01-02T03:04:00Z)}B\n"
         );
-        // A whole deleted paragraph: its text and its break are one
-        // deletion, whose note names both marks.
+        // A whole deleted paragraph keeps the text and paragraph mark
+        // as separate deletions because their revision ids differ.
         let whole = [
             pm("", &["del"], &del(&dr("Deleted paragraph"))),
             p("", &r("Next")),
@@ -5395,7 +5410,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&whole, &[])),
-            "{--Deleted paragraph\n\n--}{>>r91+92 Ana (2026-01-02T03:04:00Z)<<}Next\n"
+            "{--Deleted paragraph--}{r91 Ana (2026-01-02T03:04:00Z)}{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}Next\n"
         );
     }
 
@@ -5416,7 +5431,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[("word/footnotes.xml", &footnotes)])),
-            "Claim[^1]\n\n[^1]: Source{++ updated++}{>>footnotes.r90 Ana (2026-01-02T03:04:00Z)<<}{-- --}{>>footnotes.r92 Ana (2026-01-02T03:04:00Z)<<}page 4\n"
+            "Claim[^1]\n\n[^1]: Source{++ updated++}{footnotes.r90 Ana (2026-01-02T03:04:00Z)}{-- --}{footnotes.r92 Ana (2026-01-02T03:04:00Z)}page 4\n"
         );
     }
 
@@ -5718,11 +5733,11 @@ mod tests {
         assert_eq!(with_comments(&tracked, &xml), "{==text==}{>>Ana: n<<}\n");
         assert_eq!(
             with_comments(&deleted, &xml),
-            "{=={--old--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}==}{>>Ana: n<<}\n"
+            "{=={--old--}{r91 Ana (2026-01-02T03:04:00Z)}==}{>>Ana: n<<}\n"
         );
         assert_eq!(
             with_comments(&crossing, &xml),
-            "{==a{++b++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}==}{++c++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}{>>Ana: n<<}\n"
+            "{==a{++b++}{r90 Ana (2026-01-02T03:04:00Z)}==}{++c++}{r90 Ana (2026-01-02T03:04:00Z)}{>>Ana: n<<}\n"
         );
     }
 
@@ -5807,23 +5822,22 @@ mod tests {
     #[test]
     fn substitutions_merges_and_empty_changes() {
         let body = [
-            // Replacement written insertion first still reads old ~> new.
+            // An insertion before a deletion stays two changes in source order.
             p("", &format!("{}{}{}", r("I really love "), ins(&r("font-styles")), del(&dr("fonts")))),
             // Word splits one insertion over several w:ins; they join.
             p("", &format!("{}{}{}", ins(&r("one ")), ins(&r("insertion")), r("."))),
             // Empty change elements vanish; an inserted space stays.
             p("", &format!("{}{}{}{}", r("a"), ins(""), del(&r("")), ins(&r(" ")))),
             // Inserted by one author and deleted by another: the insertion
-            // held nothing else, so the note names it after ` on `.
+            // held nothing else, so the note names it after ` re `.
             p("", &format!("{}{}", r("x"), ins(&del(&dr("y"))))),
-            // Moves are an insertion and a deletion; the inserted side then
-            // the deleted one read as a substitution.
+            // Moves retain their source order as an insertion and a deletion.
             p("", r#"<w:moveTo w:id="4"><w:r><w:t>there</w:t></w:r></w:moveTo><w:moveFrom w:id="3"><w:r><w:delText>here</w:delText></w:r></w:moveFrom>"#),
         ]
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{--y--}{>>r91 Ana (2026-01-02T03:04:00Z) on r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
+            "I really love {++font-styles++}{r90 Ana (2026-01-02T03:04:00Z)}{--fonts--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n{++one ++}{r90 Ana (2026-01-02T03:04:00Z)}{++insertion++}{r90 Ana (2026-01-02T03:04:00Z)}.\n\na{++ ++}{r90 Ana (2026-01-02T03:04:00Z)}\n\nx{--y--}{r91 Ana (2026-01-02T03:04:00Z) re r90 Ana (2026-01-02T03:04:00Z)}\n\n{++there++}{r4}{--here--}{r3}\n"
         );
     }
 
@@ -5833,7 +5847,7 @@ mod tests {
         let body = p("", &r("x {++ y ++} ~> z")) + &p("", &ins(&r("new")));
         assert_eq!(
             md(&docx(&body, &[])),
-            "x {\\++ y ++\\} \\~\\> z\n\n{++new++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
+            "x {\\++ y ++\\} \\~\\> z\n\n{++new++}{r90 Ana (2026-01-02T03:04:00Z)}\n"
         );
         // Without one the text is escaped all the same (#519): a later
         // convert cannot read it as changes.
@@ -5855,7 +5869,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[("word/_rels/document.xml.rels", rels)])),
-            "[keep](https://x.test) {++[new](https://x.test)++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++[added link](https://x.test)++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{--[old link](https://f.test)--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\nseen\n"
+            "[keep](https://x.test) {++[new](https://x.test)++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n{++[added link](https://x.test)++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n{--[old link](https://f.test)--}{r91 Ana (2026-01-02T03:04:00Z)}\n\nseen\n"
         );
     }
 
@@ -5903,7 +5917,7 @@ mod tests {
         .concat();
         assert_eq!(
             payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
-            "A{++\n\n## ++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n\n1. one{--\n2. two--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}E\n\nF\n\n|G|\n|-|\n\nH![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\nbox\n\n<!-- /text-box -->\n\nI\n\nJ\n\n[d1]: drawing:…\n"
+            "A{++\n\n## ++}{r92 Ana (2026-01-02T03:04:00Z)}B\n\n1. one{--\n2. two--}{r91 Ana (2026-01-02T03:04:00Z)}\n3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}E\n\nF\n\n|G|\n|-|\n\nH![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\nbox\n\n<!-- /text-box -->\n\nI\n\nJ\n\n[d1]: drawing:…\n"
         );
     }
 
@@ -5922,7 +5936,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{--n1; n2--}|{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}|\n"
+            "|a{--<br>--}{r92 Ana (2026-01-02T03:04:00Z)}b{++<br>++}{r92 Ana (2026-01-02T03:04:00Z)}c|{++block ins++}{r90 Ana (2026-01-02T03:04:00Z)}|\n|-|-|\n|{--n1; n2--}|{--wrapped--}{r91 Ana (2026-01-02T03:04:00Z)}|\n"
         );
     }
 
@@ -5935,7 +5949,7 @@ mod tests {
         ));
         assert_eq!(
             md(&docx(&body, &[])),
-            "{++in control++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++in custom xml++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
+            "{++in control++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n{++in custom xml++}{r90 Ana (2026-01-02T03:04:00Z)}\n"
         );
     }
 
@@ -5963,7 +5977,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{~~ boxed~>tagged~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n# Title{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}Body\n\nx\n"
+            "{++tagged++}{r90 Ana (2026-01-02T03:04:00Z)}{-- boxed--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n# Title{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}Body\n\nx\n"
         );
     }
 
@@ -6000,10 +6014,7 @@ mod tests {
         let body = r#"<w:p><w:pPr><w:rPr><w:del w:id="1"/></w:rPr></w:pPr><w:r><w:t>First</w:t></w:r></w:p>
 <w:p><w:r><w:t>Second</w:t></w:r></w:p>
 <w:p><w:r><w:t>Third</w:t></w:r></w:p>"#;
-        assert_eq!(
-            md(&docx(body, &[])),
-            "First{--\n\n--}{>>r1<<}Second\n\nThird\n"
-        );
+        assert_eq!(md(&docx(body, &[])), "First{--\n\n--}{r1}Second\n\nThird\n");
     }
 
     #[test]
@@ -6062,7 +6073,7 @@ mod tests {
 </w:p></w:tc></w:tr></w:tbl>"#;
         assert_eq!(
             md(&docx(body, &[])),
-            "|Header|\n|-|\n|{--Before **old** after--}{>>r1<<}|\n"
+            "|Header|\n|-|\n|{--Before **old** after--}{r1}|\n"
         );
     }
 
@@ -6087,7 +6098,7 @@ mod tests {
         let t1 = "2026-09-29T14:05:00Z";
         let t2 = "2026-09-29T15:10:00Z";
         let body = [
-            // One person's replacement: one note after the substitution.
+            // An insertion before a deletion keeps both marks and attributions.
             p(
                 "",
                 &format!(
@@ -6096,7 +6107,7 @@ mod tests {
                     by("del", "Ana Lima", t1, &dr("fonts"))
                 ),
             ),
-            // Two people's: both notes, old side first.
+            // Different authors keep both marks in their original order.
             p(
                 "",
                 &format!(
@@ -6131,11 +6142,11 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{~~fonts~>styles~~}{>>r7+7 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
-             {~~old~>new~~}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{>>r7 Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
-             {++a++}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{++b++}{>>r7 Ana Lima (2026-09-29T15:10:00Z)<<}\n\n\
-             {++moved here++}{>>r7 Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
-             {~~x~>w~~}{>>r7 (2026-09-29T14:05:00Z)<<}{>>r7 Ana Lima<<}{++y++}{>>r7<<}{++z++}{>>r7 A <<\\} B (2026-09-29T14:05:00Z)<<}\n"
+            "{++styles++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--fonts--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
+             {++new++}{r7 Bo Chen (2026-09-29T15:10:00Z)}{--old--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
+             {++a++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{++b++}{r7 Ana Lima (2026-09-29T15:10:00Z)}\n\n\
+             {++moved here++}{r7 Bo Chen (2026-09-29T15:10:00Z)}\n\n\
+             {++w++}{r7 Ana Lima}{~~x~>y~~}{r7 (2026-09-29T14:05:00Z); r7}{++z++}{r7 A <<\\} B (2026-09-29T14:05:00Z)}\n"
         );
     }
 
@@ -6164,9 +6175,9 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{--A--}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{--\n\n--}{>>r8 Bo Chen (2026-09-29T15:10:00Z)<<}Next\n\n\
-             {--B\n\nC--}{>>r7+8 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
-             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}|\n|-|-|\n"
+            "{--A--}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--\n\n--}{r8 Bo Chen (2026-09-29T15:10:00Z)}Next\n\n\
+             {--B--}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--\n\n--}{r8 Ana Lima (2026-09-29T14:05:00Z)}{--C--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
+             |{++row++}{r9 Bo Chen (2026-09-29T15:10:00Z)}|{--cell--}{r10 Ana Lima (2026-09-29T14:05:00Z)}|\n|-|-|\n"
         );
     }
 
@@ -6249,7 +6260,7 @@ mod tests {
         .concat();
         assert_eq!(
             with_comments(&body, &xml),
-            "{==a==}{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}{>>Ana: first<<}\n\n|cell|\n|-|\n"
+            "{==a==}{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}{>>Ana: first<<}\n\n|cell|\n|-|\n"
         );
     }
 
@@ -6490,7 +6501,7 @@ mod tests {
             p("", &format!("{}{}", r("Gone "), ins(&r("note")))),
         );
         let bytes = docx(&body, &[("word/footnotes.xml", &footnotes)]);
-        let by = |id: &str| format!("{{>>{id} Ana (2026-01-02T03:04:00Z)<<}}");
+        let by = |id: &str| format!("{{{id} Ana (2026-01-02T03:04:00Z)}}");
         let (added, gone) = (by("r90"), by("r91"));
         assert_eq!(
             md(&bytes),

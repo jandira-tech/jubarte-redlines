@@ -1270,18 +1270,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
 
 /// A `{>>…<<}` in a header's or footer's text that is no change's tag.
 fn has_comment(text: &str) -> bool {
-    let mut rest = text;
-    while let Some(at) = rest.find("{>>") {
-        let after = &rest[at + 3..];
-        let Some(end) = after.find("<<}") else {
-            return false;
-        };
-        if view_notes::revision_tags(&after[..end]).is_none() {
-            return true;
-        }
-        rest = &after[end + 3..];
-    }
-    false
+    text.contains("{>>")
 }
 
 /// `<br>`, `<br/>` or `<br class="x">`, as the view and authors write a
@@ -1538,8 +1527,8 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
                         | Token::SubstituteStart
                         | Token::HighlightStart
                         | Token::CommentStart
-                | Token::AttributionStart
-                | Token::ParagraphInsertion
+                        | Token::AttributionStart
+                        | Token::ParagraphInsertion
                         | Token::MarkStart
                 ) {
                     open.push((token, at));
@@ -1800,12 +1789,12 @@ struct Writer<'o, 'a> {
     comment_anchor: Option<Anchor>,
     attribution_open: bool,
     paragraph_attribution: bool,
-    /// Scopes (`{==…==}`) with no comment yet and no text since them
-    /// outside a scope: pieces of one range whose comment follows the last
-    /// piece.
+    /// Scopes (`{==…==}`) with no comment yet and no untracked text since
+    /// them outside a scope: pieces of one range whose comment follows the
+    /// last piece.
     pending_scopes: Vec<(usize, usize)>,
-    /// Where the comment range of a scope inside a substitution's
-    /// inserted side ends, once that side moved before the deleted one.
+    /// Where the last closed scope's comment range ends, even when
+    /// another tagged revision stands before the comment.
     range_end_at: Option<usize>,
     /// The slot of the range a comment just took, while another comment
     /// may follow on the same text.
@@ -3015,6 +3004,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                         && span.at_start
                         && span.paragraph == self.paragraph_serial
                         && self.closed == Some(span.serial)
+                        // An explicit text tag names only the printed span;
+                        // its paragraph mark has its own break or pilcrow.
+                        && !self.document.revision_ids.contains_key(&span.serial)
                         && !folded(span.serial)
                         && !self.run_after_close
                         && self.paragraph_runs > 0
@@ -3118,7 +3110,9 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.ensure_paragraph();
         let blank = matches!(&content, Content::Text(text) if text.trim().is_empty())
             || matches!(content, Content::Tab | Content::Break);
-        if self.scope.is_none() && !blank {
+        // A separately tagged revision can stand between a closed scope
+        // and its comment. Its text does not end the pending range.
+        if self.scope.is_none() && self.change.is_none() && !blank {
             self.pending_scopes.clear();
             self.range_end_at = None;
             self.shared_range = None;
@@ -3424,6 +3418,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             Token::HighlightEnd => {
                 if let Some((slot, group)) = self.scope.take() {
                     self.pending_scopes.push((slot, group));
+                    // The comment may follow another tagged revision, but
+                    // its range ends at this scope's closing delimiter.
+                    self.range_end_at = Some(self.story().len());
                     self.anchor = Some(Anchor {
                         slot,
                         group: Some(group),
@@ -3457,12 +3454,18 @@ impl<'o, 'a> Writer<'o, 'a> {
         let id = u32::try_from(self.document.comments.len()).unwrap_or(u32::MAX);
         if self.paragraph_attribution {
             self.ensure_paragraph();
-            self.comment = Some(Comment { id, paragraphs: vec![String::new()], ..Comment::default() });
+            self.comment = Some(Comment {
+                id,
+                paragraphs: vec![String::new()],
+                ..Comment::default()
+            });
             return;
         }
         match self.anchor.take() {
             // Anchored when it ends, unless it names the change's author.
-            Some(anchor) if self.attribution_open && anchor.takes_attribution() => self.comment_anchor = Some(anchor),
+            Some(anchor) if self.attribution_open && anchor.takes_attribution() => {
+                self.comment_anchor = Some(anchor)
+            }
             Some(anchor) => self.anchor_comment(anchor, id),
             None => self.anchor_here(id),
         }
@@ -3533,13 +3536,18 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.tag_serial(&tag)
             } else if let Some(plain) = view_notes::plain_revision(&whole) {
                 self.serial += 1;
-                self.document.attributions.insert(self.serial, (plain.author, plain.date));
+                self.document
+                    .attributions
+                    .insert(self.serial, (plain.author, plain.date));
                 self.document.revision_ids.insert(self.serial, plain.ids);
                 self.serial
-            } else { return; };
+            } else {
+                return;
+            };
             self.ensure_paragraph();
             if let Some(index) = self.paragraph
-                && let Item::Paragraph(p) = &mut self.story()[index] {
+                && let Item::Paragraph(p) = &mut self.story()[index]
+            {
                 p.mark_fixed = true;
                 p.mark = Some(Kind::Insert);
                 p.mark_by = Some(serial);
@@ -3554,12 +3562,16 @@ impl<'o, 'a> Writer<'o, 'a> {
             // refuses w:t under a deletion, not same-kind nesting. It opens
             // ins > del > ins with delText but misreads reject-all. Keep
             // rebuilding only the first outer pending the chain decision.
-            let sole = self.sole_change(&anchor).or_else(|| anchor.serials[0].map(|old| (Kind::Delete, old)));
+            let sole = self
+                .sole_change(&anchor)
+                .or_else(|| anchor.serials[0].map(|old| (Kind::Delete, old)));
             if let Some((kind, inner)) = sole
                 && let Some(tags) = view_notes::nested_revision_tags(&whole)
             {
                 let (author, date) = self.view_author(&tags[0].handle, tags[0].date.as_deref());
-                self.document.attributions.insert(inner, (author.clone(), date.clone()));
+                self.document
+                    .attributions
+                    .insert(inner, (author.clone(), date.clone()));
                 let mut old_ids = tags[0].ids.clone();
                 if let Some(new) = anchor.serials[0].and(anchor.serials[1]) {
                     let (old, inserted) = view_stories::substitution_ids(&tags[0].ids);
@@ -3589,7 +3601,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                     let (old, inserted) = view_stories::substitution_ids(&first.ids);
                     old_ids = old.to_vec();
                     self.document.revision_ids.insert(new, inserted.to_vec());
-                    self.document.attributions.insert(new, (first.author.clone(), first.date.clone()));
+                    self.document
+                        .attributions
+                        .insert(new, (first.author.clone(), first.date.clone()));
                 }
                 if !old_ids.is_empty() {
                     self.document.revision_ids.insert(inner, old_ids);
@@ -3653,7 +3667,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 // @AS<<}` when two authors made them).
                 let numbers: usize = tags.iter().map(|tag| tag.ids.len()).sum();
                 anchor.attributed += 1;
-                if serials.len() == 2 && numbers == 1 {
+                if serials.len() == 2 && numbers <= 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
                 return;
@@ -3661,22 +3675,33 @@ impl<'o, 'a> Writer<'o, 'a> {
             // The plain view's note: the change's ids, then who made it and
             // when, absent ones left empty (`r5 Ana Lima (2026-…)`, `r7 Di
             // Eng`). The number says it is no comment on the change.
-            if let Some(plain) = view_notes::plain_revision(&whole) {
+            if let Some(mut parts) = view_notes::plain_revisions(&whole) {
+                for plain in &mut parts {
+                    if plain.ids.is_empty() && plain.author.is_empty() {
+                        plain.author = self.options.author.to_string();
+                    }
+                }
                 let serials: Vec<u32> = if anchor.attributed == 0 {
                     anchor.serials.iter().flatten().copied().collect()
                 } else {
                     anchor.serials[1..].iter().flatten().copied().collect()
                 };
-                let tag = view_notes::Tag {
-                    handle: String::new(),
-                    date: None,
-                    ids: plain.ids,
-                };
-                let ids = mark_ids(std::slice::from_ref(&tag), serials.len());
-                if let [deleted, inserted] = serials.as_slice() {
+                let tags: Vec<_> = parts
+                    .iter()
+                    .map(|plain| view_notes::Tag {
+                        handle: String::new(),
+                        date: None,
+                        ids: plain.ids.clone(),
+                    })
+                    .collect();
+                let ids = mark_ids(&tags, serials.len());
+                if parts.len() == 1
+                    && let [deleted, inserted] = serials.as_slice()
+                {
                     self.shared_tags.push((*deleted, *inserted));
                 }
                 for (i, serial) in serials.iter().enumerate() {
+                    let plain = &parts[i.min(parts.len() - 1)];
                     self.document
                         .attributions
                         .insert(*serial, (plain.author.clone(), plain.date.clone()));
@@ -3687,7 +3712,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 anchor.attributed += 1;
                 // One number after a substitution names its deleted side:
                 // the inserted side's note may follow.
-                if serials.len() == 2 && tag.ids.len() == 1 {
+                if serials.len() == 2 && tags.iter().map(|tag| tag.ids.len()).sum::<usize>() <= 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
                 return;
@@ -3770,16 +3795,21 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         self.ensure_paragraph();
         let id = comment.id;
-        let mut end_at = self.range_end_at.take();
+        // Within this paragraph, keep a closed scope's exact endpoint.
+        // Across paragraphs, the id line says whether the range continues
+        // into the note's paragraph or ends at the boundary before it.
+        let mut end_at = self
+            .range_end_at
+            .take()
+            .filter(|&at| self.paragraph.is_none_or(|start| at >= start));
         // A range from an earlier block whose note is in a paragraph the
         // range does not run into (its id line's `in` names other comments
         // or none) ends before that paragraph, as Word wrote it.
         let runs_in = |ids: &Vec<u32>| comment.number.map_or(!ids.is_empty(), |n| ids.contains(&n));
-        if end_at.is_none()
-            && self
-                .paragraph_in_comments
-                .as_ref()
-                .is_some_and(|ids| !runs_in(ids))
+        if self
+            .paragraph_in_comments
+            .as_ref()
+            .is_some_and(|ids| !runs_in(ids))
             && let Some(start) = self.paragraph
         {
             let mine: Vec<usize> = (0..self.document.slots.len())

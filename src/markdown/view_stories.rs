@@ -651,7 +651,6 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                 noid_parent.clear();
             }
             flush(&mut plain, &mut out, false);
-            let notes = after;
             let (mut tags, mut parents, after) = tags_after(after);
             let mut changed = String::new();
             let mut wrappers = Vec::new();
@@ -716,13 +715,6 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     wrappers.reverse();
                 }
                 Change::Substitute(old, new) => {
-                    if !parents.is_empty() {
-                        let note = &notes[..notes.len() - after.len()];
-                        marks
-                            .error
-                            .get_or_insert_with(|| substitution_parent_error(note));
-                        return String::new();
-                    }
                     noid_parent.clear();
                     // One tag names both sides (`r5+6`, old first), or
                     // each side has its own.
@@ -734,19 +726,29 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     tracked(
                         &mut changed,
                         marks,
-                        ("w:ins", false),
-                        new_tag,
-                        new_ids,
-                        new,
-                        drawings,
-                    );
-                    tracked(
-                        &mut changed,
-                        marks,
                         ("w:del", true),
                         old_tag,
                         old_ids,
                         old,
+                        drawings,
+                    );
+                    let mut parent_kind = "w:ins";
+                    for parent in &parents {
+                        let open = format!("<{}>", marks.mark(parent_kind, Some(parent), 0));
+                        changed = format!("{open}{changed}</{parent_kind}>");
+                        parent_kind = if parent_kind == "w:ins" {
+                            "w:del"
+                        } else {
+                            "w:ins"
+                        };
+                    }
+                    tracked(
+                        &mut changed,
+                        marks,
+                        ("w:ins", false),
+                        new_tag,
+                        new_ids,
+                        new,
                         drawings,
                     );
                 }
@@ -782,9 +784,6 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
 
 /// Substitutions have two sides and no unambiguous named parent. The
 /// writer never emits such a note; refuse it instead of losing its nest.
-pub(super) fn substitution_parent_error(note: &str) -> String {
-    format!("substitution cannot name a parent: {note}")
-}
 
 /// The anonymous parent of a contiguous nest. Its tag keeps the author
 /// and explicit date as well as the fresh id shared by its pieces.
@@ -960,7 +959,9 @@ fn tags_after(
             parents = nested.into_iter().skip(1).collect();
         } else if let Some(found) = super::view_notes::revision_tags(note) {
             tags.extend(found);
-        } else { break; }
+        } else {
+            break;
+        }
         text = &text[width..];
     }
     (tags, parents, text)
@@ -1506,6 +1507,23 @@ fn story_part(
     let mut body = String::new();
     let last = texts.len() - 1;
     for (index, text) in texts.iter().enumerate() {
+        let (text, inline_mark) = text
+            .rsplit_once("¶")
+            .and_then(|(body, tail)| {
+                let (note, width) = super::critic::attribution_tag(tail)?;
+                if width != tail.len() {
+                    return None;
+                }
+                let tag = super::view_notes::revision_tags(note)?.into_iter().next()?;
+                Some((body, tag))
+            })
+            .map_or((*text, None), |(text, tag)| (text, Some(tag)));
+        if let Some(tag) = inline_mark {
+            paragraph_marks
+                .entry(index)
+                .or_default()
+                .push(("w:ins", tag));
+        }
         let style = match story.styles.as_slice() {
             [one] => one.as_str(),
             many => many.get(index).map_or(style, String::as_str),
@@ -1773,7 +1791,7 @@ mod tests {
     #[test]
     fn fields_and_changes_become_runs_and_marks() {
         assert_eq!(
-            written("p {PAGE} {++new++}{>>header1.r3 @AC<<}{--old--}{>>header1.r4 @AC<<}"),
+            written("p {PAGE} {++new++}{header1.r3 @AC}{--old--}{header1.r4 @AC}"),
             "<w:r><w:t xml:space=\"preserve\">p </w:t></w:r>\
              <w:fldSimple w:instr=\" PAGE \"/>\
              <w:r><w:t xml:space=\"preserve\"> </w:t></w:r>\
@@ -1785,19 +1803,12 @@ mod tests {
         // A substitution is Word's: the insertion, then the deletion; a
         // field inside a mark is a complex one; a comment is dropped.
         assert_eq!(
-            written("{~~a~>{PAGE}2{/}~~}{>>header1.r5+6 @AC 2026-10-02T00:00:00Z<<}{>>note<<}"),
-            "<w:ins w:id=\"6\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\">\
-             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
-             <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
-             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
-             <w:r><w:t xml:space=\"preserve\">2</w:t></w:r>\
-             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins>\
-             <w:del w:id=\"5\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\">\
-             <w:r><w:delText xml:space=\"preserve\">a</w:delText></w:r></w:del>"
+            written("{~~a~>{PAGE}2{/}~~}{header1.r5+6 @AC 2026-10-02T00:00:00Z}{>>note<<}"),
+            "<w:del w:id=\"5\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\"><w:r><w:delText xml:space=\"preserve\">a</w:delText></w:r></w:del><w:ins w:id=\"6\" w:author=\"Ann Counsel\" w:date=\"2026-10-02T00:00:00Z\"><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t xml:space=\"preserve\">2</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins>"
         );
         // A bare field inside a mark has no result either.
         assert_eq!(
-            written("{++{PAGE}++}{>>header1.r7 @AC<<}"),
+            written("{++{PAGE}++}{header1.r7 @AC}"),
             "<w:ins w:id=\"7\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
              <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
              <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
