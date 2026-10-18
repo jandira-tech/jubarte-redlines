@@ -23,6 +23,14 @@ trait Backend {
     type Staged;
     fn stage(&mut self, path: &Path) -> io::Result<Self::Staged>;
     fn step(&mut self, staged: &mut Self::Staged, phase: Phase, bytes: &[u8]) -> io::Result<()>;
+    fn cleanup(&mut self, staged: &mut Self::Staged) -> io::Result<()>;
+}
+
+/// A successful publication, including any staging cleanup warnings.
+#[derive(Debug, Default)]
+pub struct PublishReport {
+    /// Cleanup failures do not undo installed output.
+    pub warnings: Vec<String>,
 }
 
 /// A publication failure, including output that has already become visible.
@@ -34,6 +42,8 @@ pub struct PublishError {
     pub durability_uncertain: bool,
     /// The operation's I/O error.
     pub source: io::Error,
+    /// Staging cleanup failures, separate from the original publication error.
+    pub warnings: Vec<String>,
 }
 
 impl std::fmt::Display for PublishError {
@@ -57,10 +67,23 @@ impl std::error::Error for PublishError {
     }
 }
 
+fn finish(
+    result: Result<(), PublishError>,
+    warnings: Vec<String>,
+) -> Result<PublishReport, PublishError> {
+    match result {
+        Ok(()) => Ok(PublishReport { warnings }),
+        Err(mut error) => {
+            error.warnings = warnings;
+            Err(error)
+        }
+    }
+}
+
 fn transaction<B: Backend>(
     backend: &mut B,
     files: &[(PathBuf, &[u8])],
-) -> Result<(), PublishError> {
+) -> Result<PublishReport, PublishError> {
     let mut staged = Vec::with_capacity(files.len());
     let mut committed = Vec::new();
     let failure = |source: io::Error, path: &Path, committed: &[PathBuf], durability_uncertain| {
@@ -71,37 +94,53 @@ fn transaction<B: Backend>(
             ),
             committed: committed.to_vec(),
             durability_uncertain,
+            warnings: vec![],
         }
     };
-    for (path, bytes) in files {
-        if staged.iter().any(|(previous, _)| previous == path) {
-            return Err(failure(
-                io::Error::new(io::ErrorKind::InvalidInput, "duplicate output path"),
-                path,
-                &committed,
-                false,
-            ));
-        }
-        let mut held = backend
-            .stage(path)
-            .map_err(|e| failure(e, path, &committed, false))?;
-        for phase in [Phase::Write, Phase::Flush, Phase::Sync, Phase::Validate] {
-            backend
-                .step(&mut held, phase, bytes)
+    let result = (|| {
+        for (path, bytes) in files {
+            if staged.iter().any(|(previous, _)| previous == path) {
+                return Err(failure(
+                    io::Error::new(io::ErrorKind::InvalidInput, "duplicate output path"),
+                    path,
+                    &committed,
+                    false,
+                ));
+            }
+            let held = backend
+                .stage(path)
                 .map_err(|e| failure(e, path, &committed, false))?;
+            // Retain every staged file, including the one whose next step fails,
+            // until the explicit cleanup below has reported its outcome.
+            staged.push((path.clone(), held));
+            let (_, held) = staged.last_mut().expect("just staged");
+            for phase in [Phase::Write, Phase::Flush, Phase::Sync, Phase::Validate] {
+                backend
+                    .step(held, phase, bytes)
+                    .map_err(|e| failure(e, path, &committed, false))?;
+            }
         }
-        staged.push((path.clone(), held));
-    }
-    for (path, mut held) in staged {
-        backend
-            .step(&mut held, Phase::Commit, &[])
-            .map_err(|e| failure(e, &path, &committed, false))?;
-        committed.push(path.clone());
-        backend
-            .step(&mut held, Phase::SyncParent, &[])
-            .map_err(|e| failure(e, &path, &committed, true))?;
-    }
-    Ok(())
+        for (path, held) in &mut staged {
+            backend
+                .step(held, Phase::Commit, &[])
+                .map_err(|e| failure(e, path, &committed, false))?;
+            committed.push(path.clone());
+            backend
+                .step(held, Phase::SyncParent, &[])
+                .map_err(|e| failure(e, path, &committed, true))?;
+        }
+        Ok(())
+    })();
+    let warnings = staged
+        .iter_mut()
+        .filter_map(|(path, held)| {
+            backend
+                .cleanup(held)
+                .err()
+                .map(|error| format!("cleaning staging for {}: {error}", path.display()))
+        })
+        .collect();
+    finish(result, warnings)
 }
 
 /// A caller-granted directory held open across all operations. Relative path
@@ -132,12 +171,18 @@ impl OutputRoot {
     /// # Errors
     /// Rejects nonportable paths, escaping symlinks, output symlinks and conflicts.
     /// A commit or durability error reports the files already committed.
-    pub fn publish(&self, files: &[(PathBuf, &[u8])], overwrite: bool) -> Result<(), PublishError> {
+    /// Cleanup failures are returned as warnings on either outcome.
+    pub fn publish(
+        &self,
+        files: &[(PathBuf, &[u8])],
+        overwrite: bool,
+    ) -> Result<PublishReport, PublishError> {
         // Validate all names before even creating output directories.
         for (path, _) in files {
             validate_relative(path).map_err(|source| PublishError {
                 committed: vec![],
                 durability_uncertain: false,
+                warnings: vec![],
                 source,
             })?;
         }
@@ -147,6 +192,8 @@ impl OutputRoot {
                 overwrite,
                 #[cfg(test)]
                 fail: None,
+                #[cfg(test)]
+                fail_cleanup: false,
             },
             files,
         )
@@ -160,13 +207,19 @@ impl OutputRoot {
 ///
 /// # Errors
 /// See [`PublishError`]; no fallback removes an old destination.
-pub fn publish_paths(files: &[(PathBuf, &[u8])], overwrite: bool) -> Result<(), PublishError> {
+/// Cleanup failures are returned as warnings, including after successful installation.
+pub fn publish_paths(
+    files: &[(PathBuf, &[u8])],
+    overwrite: bool,
+) -> Result<PublishReport, PublishError> {
     transaction(
         &mut FsBackend {
             root: None,
             overwrite,
             #[cfg(test)]
             fail: None,
+            #[cfg(test)]
+            fail_cleanup: false,
         },
         files,
     )
@@ -225,16 +278,21 @@ struct FsBackend<'a> {
     overwrite: bool,
     #[cfg(test)]
     fail: Option<Phase>,
+    #[cfg(test)]
+    fail_cleanup: bool,
 }
 /// Verified bytes held in private staging beside an authorized local output.
 /// Dropping an uncommitted file removes its staging directory best effort.
 pub struct StagedFile {
     path: PathBuf,
     parent: cap_std::fs::Dir,
-    scratch: cap_std::fs::Dir,
+    scratch: Option<cap_std::fs::Dir>,
+    scratch_name: Option<String>,
     file: Option<cap_std::fs::File>,
     target: std::ffi::OsString,
     overwrite: bool,
+    #[cfg(test)]
+    fail_cleanup: bool,
 }
 impl StagedFile {
     /// Write, flush, sync and verify bytes without changing the destination.
@@ -244,6 +302,8 @@ impl StagedFile {
             overwrite,
             #[cfg(test)]
             fail: None,
+            #[cfg(test)]
+            fail_cleanup: false,
         };
         let mut staged = backend.stage(path)?;
         for phase in [Phase::Write, Phase::Flush, Phase::Sync, Phase::Validate] {
@@ -254,27 +314,73 @@ impl StagedFile {
 
     /// Install the verified bytes, then acknowledge parent-directory durability.
     /// A durability error names the output that has already committed.
-    pub fn commit(mut self) -> Result<(), PublishError> {
+    pub fn commit(mut self) -> Result<PublishReport, PublishError> {
         let mut backend = FsBackend {
             root: None,
             overwrite: self.overwrite,
             #[cfg(test)]
             fail: None,
+            #[cfg(test)]
+            fail_cleanup: false,
         };
-        backend
-            .step(&mut self, Phase::Commit, &[])
-            .map_err(|source| PublishError {
-                committed: vec![],
-                durability_uncertain: false,
-                source,
-            })?;
-        backend
-            .step(&mut self, Phase::SyncParent, &[])
-            .map_err(|source| PublishError {
-                committed: vec![self.path.clone()],
-                durability_uncertain: true,
-                source,
-            })
+        let result = (|| {
+            backend
+                .step(&mut self, Phase::Commit, &[])
+                .map_err(|source| PublishError {
+                    committed: vec![],
+                    durability_uncertain: false,
+                    source,
+                    warnings: vec![],
+                })?;
+            backend
+                .step(&mut self, Phase::SyncParent, &[])
+                .map_err(|source| PublishError {
+                    committed: vec![self.path.clone()],
+                    durability_uncertain: true,
+                    source,
+                    warnings: vec![],
+                })
+        })();
+        let warnings = self
+            .cleanup()
+            .err()
+            .map(|error| format!("cleaning staging for {}: {error}", self.path.display()))
+            .into_iter()
+            .collect();
+        finish(result, warnings)
+    }
+
+    /// Remove staging after closing all of its handles. Safe to call again.
+    /// A swapped symlink is refused; its referent must never be traversed.
+    fn cleanup(&mut self) -> io::Result<()> {
+        drop(self.file.take());
+        // cap-std directory handles deny FILE_SHARE_DELETE on Windows. Even
+        // a clone passed to remove_open_dir_all leaves the original blocking it.
+        drop(self.scratch.take());
+        let Some(name) = self.scratch_name.as_ref() else {
+            return Ok(());
+        };
+        #[cfg(test)]
+        if self.fail_cleanup {
+            return Err(io::Error::other("injected cleanup"));
+        }
+        match self.parent.symlink_metadata(name) {
+            Ok(metadata) if metadata.is_symlink() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "refusing staging cleanup through a symlink",
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.scratch_name = None;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+            Ok(_) => (),
+        }
+        self.parent.remove_dir_all(name)?;
+        self.scratch_name = None;
+        Ok(())
     }
 }
 
@@ -302,11 +408,7 @@ pub fn sync_directory(path: &Path) -> io::Result<()> {
 
 impl Drop for StagedFile {
     fn drop(&mut self) {
-        // Close the file before cleanup on Windows as well.
-        drop(self.file.take());
-        if let Ok(dir) = self.scratch.try_clone() {
-            let _ = dir.remove_open_dir_all();
-        }
+        let _ = self.cleanup();
     }
 }
 impl Backend for FsBackend<'_> {
@@ -379,15 +481,24 @@ impl Backend for FsBackend<'_> {
         let mut staged = StagedFile {
             path: path.to_path_buf(),
             parent,
-            scratch,
+            scratch: Some(scratch),
+            scratch_name: Some(name),
             file: None,
             target,
             overwrite: self.overwrite,
+            #[cfg(test)]
+            fail_cleanup: self.fail_cleanup,
         };
-        staged.file = Some(staged.scratch.open_with(
-            "bytes",
-            OpenOptions::new().read(true).write(true).create_new(true),
-        )?);
+        staged.file = Some(
+            staged
+                .scratch
+                .as_ref()
+                .expect("open staging directory")
+                .open_with(
+                    "bytes",
+                    OpenOptions::new().read(true).write(true).create_new(true),
+                )?,
+        );
         if let Some(permissions) = permissions {
             staged
                 .file
@@ -397,12 +508,19 @@ impl Backend for FsBackend<'_> {
         }
         Ok(staged)
     }
+    fn cleanup(&mut self, staged: &mut StagedFile) -> io::Result<()> {
+        staged.cleanup()
+    }
     fn step(&mut self, staged: &mut StagedFile, phase: Phase, bytes: &[u8]) -> io::Result<()> {
         use std::io::{Read, Seek, SeekFrom, Write};
         #[cfg(test)]
         if self.fail == Some(phase) {
             if phase == Phase::Commit {
-                staged.scratch.remove_file("bytes")?;
+                staged
+                    .scratch
+                    .as_ref()
+                    .expect("open staging directory")
+                    .remove_file("bytes")?;
             } else {
                 return Err(io::Error::other(format!("injected {phase:?}")));
             }
@@ -432,15 +550,17 @@ impl Backend for FsBackend<'_> {
                 }
                 Ok(())
             }
-            Phase::Commit if staged.overwrite => {
-                staged
-                    .scratch
-                    .rename("bytes", &staged.parent, &staged.target)
-            }
+            Phase::Commit if staged.overwrite => staged
+                .scratch
+                .as_ref()
+                .expect("open staging directory")
+                .rename("bytes", &staged.parent, &staged.target),
             // hard_link is an atomic no-clobber installation, including when a
             // hostile writer creates the target after the initial check.
             Phase::Commit => staged
                 .scratch
+                .as_ref()
+                .expect("open staging directory")
                 .hard_link("bytes", &staged.parent, &staged.target),
             Phase::SyncParent => sync_directory_handle(&staged.parent),
         }
@@ -451,6 +571,167 @@ impl Backend for FsBackend<'_> {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    // Filesystem integration probes: exercise actual handle lifetime and hard links.
+    #[test]
+    fn cleanup_failure_is_reported_after_install_and_alongside_publish_failure() {
+        for phase in [
+            None,
+            Some(Phase::Write),
+            Some(Phase::Commit),
+            Some(Phase::SyncParent),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = OutputRoot::open(temp.path()).unwrap();
+            let mut backend = FsBackend {
+                root: Some(&root.dir),
+                overwrite: false,
+                fail: phase,
+                fail_cleanup: true,
+            };
+            let result = transaction(&mut backend, &[("output".into(), b"Alice")]);
+            let installed = phase.is_none() || phase == Some(Phase::SyncParent);
+            assert_eq!(temp.path().join("output").exists(), installed);
+            if installed {
+                assert_eq!(root.read(Path::new("output")).unwrap(), b"Alice");
+            }
+            let warnings = match result {
+                Ok(report) => {
+                    assert!(phase.is_none());
+                    report.warnings
+                }
+                Err(error) => {
+                    assert!(phase.is_some());
+                    assert_eq!(
+                        error.committed,
+                        if installed {
+                            vec![PathBuf::from("output")]
+                        } else {
+                            vec![]
+                        }
+                    );
+                    assert_eq!(error.durability_uncertain, phase == Some(Phase::SyncParent));
+                    if phase == Some(Phase::Commit) {
+                        assert_eq!(error.source.kind(), io::ErrorKind::NotFound);
+                    } else {
+                        assert!(
+                            error
+                                .source
+                                .to_string()
+                                .contains(&format!("injected {:?}", phase.unwrap()))
+                        );
+                    }
+                    error.warnings
+                }
+            };
+            assert_eq!(warnings.len(), 1);
+            assert!(
+                warnings[0].contains("injected cleanup"),
+                "cleanup failure was swallowed: {warnings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_commit_reports_cleanup_failure_after_install() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("output");
+        let mut staged = StagedFile::prepare(&path, b"Bob", false).unwrap();
+        staged.fail_cleanup = true;
+        let result = staged.commit();
+        assert_eq!(std::fs::read(path).unwrap(), b"Bob");
+        let report = result.unwrap();
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("injected cleanup"));
+    }
+
+    #[test]
+    fn every_publish_path_removes_partial_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("output");
+        // Fresh replacement, forced replacement, then no-overwrite hard-link commit.
+        for overwrite in [true, true, false] {
+            if !overwrite {
+                std::fs::remove_file(&output).unwrap();
+            }
+            let report = publish_paths(&[(output.clone(), b"Carol Diaz")], overwrite).unwrap();
+            assert!(report.warnings.is_empty(), "{report:?}");
+            assert_no_partials(temp.path());
+            assert_eq!(std::fs::read(&output).unwrap(), b"Carol Diaz");
+        }
+        for phase in [
+            Phase::Write,
+            Phase::Flush,
+            Phase::Sync,
+            Phase::Validate,
+            Phase::Commit,
+            Phase::SyncParent,
+        ] {
+            let mut backend = FsBackend {
+                root: None,
+                overwrite: true,
+                fail: Some(phase),
+                fail_cleanup: false,
+            };
+            let error = transaction(
+                &mut backend,
+                &[
+                    (output.clone(), b"Alice"),
+                    (temp.path().join("second"), b"Bob"),
+                ],
+            )
+            .unwrap_err();
+            assert!(error.warnings.is_empty(), "{error:?}");
+            assert_no_partials(temp.path());
+        }
+    }
+
+    fn assert_no_partials(parent: &Path) {
+        let partials: Vec<_> = std::fs::read_dir(parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with(".jubarte-") && name.ends_with(".partial")
+            })
+            .collect();
+        assert!(partials.is_empty(), "staging leftovers: {partials:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_refuses_a_swapped_scratch_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("keep"), b"Carol Diaz").unwrap();
+        let path = temp.path().join("output");
+        let staged = StagedFile::prepare(&path, b"Alice", false).unwrap();
+        let name = std::fs::read_dir(temp.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .file_name();
+        std::fs::rename(temp.path().join(&name), temp.path().join("held")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), temp.path().join(&name)).unwrap();
+        let result = staged.commit();
+        assert_eq!(
+            std::fs::read(outside.path().join("keep")).unwrap(),
+            b"Carol Diaz"
+        );
+        assert!(
+            temp.path()
+                .join(&name)
+                .symlink_metadata()
+                .unwrap()
+                .is_symlink()
+        );
+        let report = format!("{result:?}");
+        assert!(
+            report.contains("symlink"),
+            "swapped symlink was not reported: {report}"
+        );
+    }
 
     #[test]
     fn windows_directory_sync_is_a_noop() {
@@ -521,6 +802,9 @@ mod tests {
             }
             Ok((id, path.into(), vec![]))
         }
+        fn cleanup(&mut self, _staged: &mut Self::Staged) -> io::Result<()> {
+            Ok(())
+        }
         fn step(
             &mut self,
             staged: &mut Self::Staged,
@@ -554,6 +838,7 @@ mod tests {
             root: Some(&root.dir),
             overwrite: true,
             fail: Some(phase),
+            fail_cleanup: false,
         };
         let error = transaction(&mut backend, &[("output".into(), b"new output")])
             .expect_err("configured filesystem fault must fail publication");

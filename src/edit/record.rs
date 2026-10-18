@@ -150,18 +150,20 @@ pub fn partial_path(target: &Path) -> PathBuf {
 }
 
 /// Write `json` (a [`Recorded::json`]) to PLAN.json at `plan`, atomically:
-/// a precommit error leaves the plan as it was; staging cleanup is best effort.
+/// a precommit error leaves the plan as it was. Returns staging cleanup warnings
+/// after successful installation; publication errors retain their warning payload.
 ///
 /// # Errors
 ///
 /// The I/O error when the partial file cannot be written beside the plan or
 /// renamed into place (a missing directory, no permission). After a successful
 /// commit, a durability error explicitly reports the committed plan.
-pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<()> {
+pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<Vec<String>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let target = plan_target(plan);
         crate::publication::publish_paths(&[(target, json.as_bytes())], true)
+            .map(|report| report.warnings)
             .map_err(|error| std::io::Error::new(error.source.kind(), error))
     }
     #[cfg(target_arch = "wasm32")]

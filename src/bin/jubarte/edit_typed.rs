@@ -719,7 +719,7 @@ fn prepare_and_publish(
             })
             .collect();
         files.push((stage.join("manifest.json"), manifest.as_bytes()));
-        if let Err(error) = jubarte::publication::publish_paths(&files, false) {
+        if let Err(error) = publish_paths(&files, false) {
             let _ = std::fs::remove_dir_all(&stage);
             return Err(io_error(error.to_string()));
         }
