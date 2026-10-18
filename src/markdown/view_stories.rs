@@ -618,6 +618,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
     let mut out = String::new();
     let mut plain = String::new();
     let mut last_revision = None;
+    let mut noid_parent = None;
     let mut rest = text;
     while let Some(c) = rest.chars().next() {
         if let Some(after) = rest.strip_prefix("{>>")
@@ -634,6 +635,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
         }
         if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
             last_revision = None;
+            noid_parent = None;
             flush(&mut plain, &mut out, false);
             if let Some(drawing) = drawings.get(dest) {
                 out.push_str(drawing);
@@ -644,9 +646,10 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
         if let Some((change, after)) = change(rest) {
             if !plain.is_empty() {
                 last_revision = None;
+                noid_parent = None;
             }
             flush(&mut plain, &mut out, false);
-            let (tags, parent, after) = tags_after(after);
+            let (mut tags, mut parent, after) = tags_after(after);
             let mut changed = String::new();
             let mut wrapper = None;
             match change {
@@ -656,6 +659,14 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     } else {
                         "w:del"
                     };
+                    let anonymous_nest = number_noid_parent(
+                        name,
+                        &mut tags,
+                        &mut parent,
+                        after,
+                        marks,
+                        &mut noid_parent,
+                    );
                     let tag = tags.first();
                     let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
                     tracked(&mut changed, marks, name, tag, ids, inner, drawings);
@@ -675,11 +686,12 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                             "</w:del>"
                         };
                         if let Some(end) = changed.find('>') {
-                            wrapper = Some((changed[..=end].to_string(), close, false));
+                            wrapper = Some((changed[..=end].to_string(), close, anonymous_nest));
                         }
                     }
                 }
                 Change::Substitute(old, new) => {
+                    noid_parent = None;
                     // One tag names both sides (`r5+6`, old first), or
                     // each side has its own.
                     let (old_tag, new_tag, (old_ids, new_ids)) = match tags.as_slice() {
@@ -713,6 +725,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
         }
         if let Some((field, after)) = field(rest) {
             last_revision = None;
+            noid_parent = None;
             flush(&mut plain, &mut out, false);
             match field {
                 Field::Coded(code, result) => out.push_str(&format!(
@@ -733,6 +746,79 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
     }
     flush(&mut plain, &mut out, false);
     out
+}
+
+/// The anonymous parent of a contiguous nest. Its tag keeps the author
+/// and explicit date as well as the fresh id shared by its pieces.
+struct NoidParent {
+    name: &'static str,
+    tag: super::view_notes::Tag,
+    id: u32,
+}
+
+fn number_noid_parent(
+    name: &'static str,
+    tags: &mut [super::view_notes::Tag],
+    parent: &mut Option<super::view_notes::Tag>,
+    after: &str,
+    marks: &mut Marks<'_>,
+    current: &mut Option<NoidParent>,
+) -> bool {
+    let nested = parent.is_some();
+    let candidate = if let Some(tag) = parent.as_mut() {
+        (if name == "w:ins" { "w:del" } else { "w:ins" }, tag)
+    } else if let Some(tag) = tags.first_mut() {
+        (name, tag)
+    } else {
+        *current = None;
+        return false;
+    };
+    let (name, tag) = candidate;
+    if !tag.ids.is_empty() {
+        *current = None;
+        return false;
+    }
+    let same = current
+        .as_ref()
+        .filter(|last| last.name == name && last.tag == *tag);
+    let id = if let Some(last) = same {
+        last.id
+    } else if nested || names_noid_parent(after, name, tag) {
+        marks.next_id = marks.next_id.saturating_add(1);
+        let id = marks.next_id;
+        *current = Some(NoidParent {
+            name,
+            tag: tag.clone(),
+            id,
+        });
+        id
+    } else {
+        *current = None;
+        return false;
+    };
+    tag.ids.push(id);
+    true
+}
+
+/// Only a contiguous nest shares an anonymous id. Plain adjacent changes
+/// without a named parent keep their own fresh ids.
+fn names_noid_parent(mut text: &str, name: &str, tag: &super::view_notes::Tag) -> bool {
+    while let Some((piece, after)) = change(text) {
+        let piece_name = match piece {
+            Change::Insert(_) => "w:ins",
+            Change::Delete(_) => "w:del",
+            Change::Substitute(_, _) => return false,
+        };
+        let (tags, parent, after) = tags_after(after);
+        if parent.as_ref() == Some(tag) && piece_name != name {
+            return true;
+        }
+        if parent.is_some() || piece_name != name || tags.as_slice() != [tag.clone()] {
+            return false;
+        }
+        text = after;
+    }
+    false
 }
 
 /// One tracked change at the start of a story's text, and what follows it.

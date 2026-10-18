@@ -1470,3 +1470,64 @@ fn review_1126_day_range_body_has_one_open_tag() {
     println!("body: {xml}");
     assert_revision_tree(&xml, &[("w:ins", "3", None), ("w:del", "4", Some("3"))]);
 }
+
+#[test]
+fn review_1126_noid_parent_is_one_fresh_revision() {
+    for kind in ["header", "footer"] {
+        for text in [
+            "{++a++}{>>PART.noid @AL<<}{++b++}{>>PART.noid @AL<<}{--x--}{>>PART.r4 @BO on PART.noid @AL<<}{++c++}{>>PART.noid @AL<<}",
+            "{++a++}{>>PART.noid @AL<<}{--x--}{>>PART.r4 @BO on PART.noid @AL<<}{++b++}{>>PART.noid @AL<<}",
+            "{--x--}{>>PART.r4 @BO on PART.noid @AL<<}{++ab++}{>>PART.noid @AL<<}",
+            "{++ab++}{>>PART.noid @AL<<}{--x--}{>>PART.r4 @BO on PART.noid @AL<<}",
+        ] {
+            let text = text.replace("PART", &format!("{kind}1"));
+            let view = format!(
+                "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29T14:05:00Z\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\n{kind}s:\n  default: {{id: {kind}1, text: \"{text}\", style: Normal}}\n---\nBody.\n"
+            );
+            let round = written(&view);
+            let xml = part_string(&round, &format!("word/{kind}1.xml")).unwrap();
+            assert_eq!(xml.matches("<w:ins ").count(), 1, "{xml}");
+            let id = xml
+                .split("<w:ins w:id=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap();
+            assert_ne!(id, "4", "fresh parent id collides with child: {xml}");
+            assert_revision_tree(&xml, &[("w:ins", id, None), ("w:del", "4", Some(id))]);
+            assert!(check_word_valid_package(&round).ok(), "{xml}");
+        }
+    }
+}
+
+#[test]
+fn review_1126_noid_ids_stop_at_nest_boundaries() {
+    let nest = "{++a++}{>>header1.noid @AL<<}{--x--}{>>header1.r4 @BO on header1.noid @AL<<}{++b++}{>>header1.noid @AL<<}";
+    for text in [
+        "{++a++}{>>header1.noid @AL<<}{++b++}{>>header1.noid @AL<<}".to_string(),
+        format!("{nest} gap {}", nest.replace("r4", "r5")),
+        format!("{nest}{{PAGE}}{}", nest.replace("r4", "r5")),
+        format!(
+            "{nest}{}",
+            nest.replace("@AL", "@AL 2026-09-30T12:00:00Z")
+                .replace("r4", "r5")
+        ),
+        format!("{nest}{}", nest.replace("@AL", "@BO").replace("r4", "r5")),
+    ] {
+        let view = format!(
+            "---\nauthors:\n  AL: Alice # 2 revisions, 2026-09-29T14:05:00Z\n  BO: Bob # 2 revisions, 2026-09-30T09:00:00Z\nheaders:\n  default: {{id: header1, text: \"{text}\", style: Normal}}\n---\nBody.\n"
+        );
+        let xml = part_string(&written(&view), "word/header1.xml").unwrap();
+        let ids = xml
+            .split("<w:ins w:id=\"")
+            .skip(1)
+            .map(|tail| tail.split('"').next().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 2, "{xml}");
+        assert_ne!(
+            ids[0], ids[1],
+            "separate anonymous revisions share an id: {xml}"
+        );
+    }
+}
