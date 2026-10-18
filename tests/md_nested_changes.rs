@@ -1775,3 +1775,65 @@ fn review_1126_open_tag_identity_is_local_to_each_story_part() {
         );
     }
 }
+
+/// A story substitution retains each side's metadata and uses consecutive notes.
+#[test]
+fn review_1128_story_substitution_keeps_both_authors_and_dates() {
+    let source = docx(
+        r#"<w:p><w:ins w:id="1" w:author="Bob" w:date="2026-09-30T09:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>
+        <w:del w:id="2" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:delText>old</w:delText></w:r></w:del></w:p>"#,
+    );
+    for kind in ["header", "footer"] {
+        let source = in_story(&source, kind);
+        let view = agent(&source);
+        let round = written(&view);
+        let part = format!("word/{kind}1.xml");
+        assert_eq!(
+            revision_attributes(&part_string(&round, &part).unwrap()),
+            revision_attributes(&part_string(&source, &part).unwrap()),
+            "{view}"
+        );
+        assert!(
+            view.contains(&format!(
+                "{{~~old~>new~~}}{{>>{kind}1.r2 @A<<}}{{>>{kind}1.r1 @B<<}}"
+            )),
+            "{view}"
+        );
+    }
+}
+
+/// Characterize the existing same-author BODY date loss; fixing it is separate.
+#[test]
+fn review_1128_body_same_author_substitution_still_keeps_only_the_old_date() {
+    let source = docx(
+        r#"<w:p><w:ins w:id="1" w:author="Alice" w:date="2026-09-30T09:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>
+        <w:del w:id="2" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:delText>old</w:delText></w:r></w:del></w:p>"#,
+    );
+    let view = read(
+        &source,
+        &ReadOptions {
+            dates: true,
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(
+        view.contains("{~~old~>new~~}{>>r2+1 @A 2026-09-29T14:05:00Z<<}"),
+        "{view}"
+    );
+    let round = written(&view);
+    let expected = vec![
+        (
+            "Alice".to_string(),
+            Some("2026-09-29T14:05:00Z".to_string())
+        );
+        2
+    ];
+    assert_eq!(
+        revision_attributes(&part_string(&round, "word/document.xml").unwrap()),
+        expected,
+        "{view}"
+    );
+}

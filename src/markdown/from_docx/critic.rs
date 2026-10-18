@@ -873,8 +873,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 match (old_by.as_deref(), new_by.as_deref()) {
                     (Some(a), Some(b))
                         if tag(Some(a)).is_some()
-                            && (escaping.story
-                                || same_author(old_by.as_deref(), new_by.as_deref())) =>
+                            && same_author(old_by.as_deref(), new_by.as_deref()) =>
                     {
                         let joined = join_tagged(a, b);
                         attribution(out, Some(&joined), id);
@@ -2211,6 +2210,52 @@ mod tests {
         assert_eq!(
             script(&steps),
             "{++new++}{>>Ana (2026-01-02T03:04:00Z)<<} and {--old--}{>>Bo<<}."
+        );
+    }
+
+    #[test]
+    fn a_story_substitution_keeps_each_inline_date_when_written_back() {
+        let mut critic = Critic::default();
+        for (mark, tag, text) in [
+            (Ins, "header1#1@BO 2026-09-30T09:00:00Z", "new"),
+            (Del, "header1#2@AL 2026-09-29T14:05:00Z", "old"),
+        ] {
+            critic.open(mark, Some(&format!("{TAG}{tag}")));
+            critic.raw(text);
+            critic.close(mark);
+        }
+        let story = critic.into_story();
+        let view = format!(
+            "---\nauthors:\n  AL: Alice\n  BO: Bob\nheaders:\n  default: {{id: header1, text: \"{story}\"}}\n---\nBody.\n"
+        );
+        let written =
+            crate::markdown::markdown_to_docx(&view, &crate::markdown::DocxOptions::default())
+                .unwrap();
+        let package = crate::opc::PartFs::open(&written.docx).unwrap();
+        let xml = package.part_string("word/header1.xml").unwrap();
+        let header = super::super::ooxml::parse_xml(xml.as_bytes()).unwrap();
+        let paragraph = header
+            .elements()
+            .find(|element| element.local() == "p")
+            .unwrap();
+        let revisions: Vec<_> = paragraph
+            .elements()
+            .filter(|element| matches!(element.local(), "ins" | "del"))
+            .map(|element| {
+                (
+                    element.local(),
+                    element.attr("author"),
+                    element.attr("date"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            revisions,
+            [
+                ("ins", Some("Bob"), Some("2026-09-30T09:00:00Z")),
+                ("del", Some("Alice"), Some("2026-09-29T14:05:00Z")),
+            ],
+            "{view}\n{xml}"
         );
     }
 
