@@ -331,14 +331,14 @@ List tracked changes with IDs for accept, reject and edit plans
 
 ## jubarte accept
 
-Accept all tracked changes, or select by ID, author or kind
+Accept all tracked changes — in the body, headers, footers, notes and comment bodies — or select by ID, author or kind. A selection resolves the changes it names in every part but cannot name a comment-body change by ID
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to accept |
 | `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
-| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable |
+| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
@@ -352,14 +352,14 @@ Accept all tracked changes, or select by ID, author or kind
 
 ## jubarte reject
 
-Reject all tracked changes, or select by ID, author or kind
+Reject all tracked changes — in the body, headers, footers, notes and comment bodies — or select by ID, author or kind. A selection resolves the changes it names in every part but cannot name a comment-body change by ID
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to reject |
 | `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
-| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable |
+| `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Rendering (-o FILE.pdf or FILE.png)" | How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette) |
