@@ -1608,6 +1608,17 @@ output. `input_limits` overrides the admission budget key by key
 `max_uncompressed_bytes`, `max_xml_depth`); a package past it raises
 `JubarteError` with `INPUT_LIMIT`.
 
+The OPC constructor enforces `InputLimits::compare()`:
+512 MiB compressed, 10,000 declared ZIP entries, 512 MiB per inflated part,
+and 2 GiB inflated in total. `scrub` and the maintainer `debug` command now
+refuse packages over those ceilings with `INPUT_LIMIT`; Markdown reads use
+the same bounded constructor. Entry counts are checked before indexing,
+and actual inflation is capped even when ZIP size declarations lie.
+`scrub` still applies its existing validation limits as well. A leak scan
+that exceeds a budget or cannot read a part reports a finding; editing a
+redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
+incomplete scan. Comparer settings continue to supply their own limits.
+
 ### `docx_to_pdf`
 
 ```python
