@@ -316,6 +316,19 @@ Word's explicit flattening and faithful mode's original/revised ID, tag and
 alias ancestry. Use faithful mode when retaining revised form controls matters;
 for `fill_control`, the clean edit output also retains the control.
 
+### 13. Duplicate identical empty permission ranges (Compare)
+
+- **What happens.** When both documents carry the same empty permission
+  range (`w:permStart`/`w:permEnd` adjacent, at body level or inside a
+  paragraph), Word's Compare writes both copies: two pairs at the same
+  spot, each with its own document's id (#1215 synthetic pairs `wemptybody`,
+  `wemptyinparagraph`, Word 16, 2026-10-18).
+- **What we do.** The union writes one pair. Two empty ranges of one editor
+  that sit at the same position touch, and touching ranges merge.
+- **Which is better.** Ours. Both pairs grant nothing beyond the same empty
+  spot, and writing one keeps a redline of a redline from growing a pair on
+  every compare.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow

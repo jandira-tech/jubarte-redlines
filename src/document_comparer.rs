@@ -8897,6 +8897,27 @@ mod coverage_boundary_tests {
         assert!(union != edit, "the control did not reach the union");
     }
 
+    /// #1215: bookmarks alone must not reach the permission union either.
+    /// Its early return keeps a bookmark-only redline byte-identical to the
+    /// edit path's output, which never runs the union.
+    #[test]
+    fn the_permission_union_is_a_no_op_with_bookmarks_only() {
+        let body = |last: &str| {
+            format!(
+                "<w:body><w:p><w:bookmarkStart w:id=\"5\" w:name=\"Alice\"/><w:r><w:t>The Customer shall pay.</w:t></w:r><w:bookmarkEnd w:id=\"5\"/></w:p>\
+                 <w:p><w:r><w:t>{last}</w:t></w:r></w:p></w:body>"
+            )
+        };
+        let a = package(&body("Next clause.")).to_zip().unwrap();
+        let b = package(&body("Following clause.")).to_zip().unwrap();
+        let union = compare_documents_with_settings(&a, &b, &settings()).unwrap();
+        let edit = compare_documents_for_edit(&a, &b, &settings()).unwrap();
+        assert!(
+            union == edit,
+            "the union changed a bookmark-only redline's bytes"
+        );
+    }
+
     fn assert_revision(dom: &Dom, node: NodeId, id: &str) {
         assert_eq!(dom.attribute(node, &W::id()), Some(id));
         assert_eq!(dom.attribute(node, &W::author()), Some("Boundary author"));
