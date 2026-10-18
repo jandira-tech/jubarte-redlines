@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# re-dialect-edit.sh: write and edit the #1135 fixtures, and fail when the
-# view read back differs from the settled syntax.
+# re-dialect-edit.sh: write and edit the #1135 fixtures; fail when a
+# command fails or the view read back differs from the settled syntax.
 #
 # 1. Round trip: `jubarte convert F.md -o F.docx`, then `jubarte F.docx`.
 #    The body read back must equal F.md's body.
@@ -25,14 +25,14 @@ fail=0
 
 body() { awk 'n >= 2 { print } /^---$/ { n++ }' "$1"; }
 
-check() { # NAME EXPECTED_BODY GOT_VIEW ERR COMMAND
+check() { # NAME EXPECTED_BODY GOT_VIEW ERR COMMAND STATUS
   [ -f "$3" ] && body "$3" > "$3.body"
-  if [ -s "$3" ] && diff -u --label "expected $1" --label "$5" "$2" "$3.body" > "$3.diff"; then
+  if [ "$6" -eq 0 ] && [ -s "$3" ] && diff -u --label "expected $1" --label "$5" "$2" "$3.body" > "$3.diff"; then
     echo "ok    $5"
     pass=$((pass + 1))
   else
     echo "FAIL  $5"
-    [ -s "$3" ] && cat "$3.diff"
+    [ -f "$3.diff" ] && cat "$3.diff"
     [ -s "$4" ] && sed 's/^/  stderr: /' "$4"
     fail=$((fail + 1))
   fi
@@ -50,8 +50,9 @@ for expected in "$fixtures"/*.md; do
     "$jubarte" -q convert "$name.md" -o "$name.docx" 2> convert.err &&
       "$jubarte" "$name.docx" > back.md 2>> convert.err
   )
+  status=$?
   body "$expected" > "$dir/expected.body"
-  check "$name.md" "$dir/expected.body" "$dir/back.md" "$dir/convert.err" "jubarte convert $name.md -o $name.docx; jubarte $name.docx"
+  check "$name.md" "$dir/expected.body" "$dir/back.md" "$dir/convert.err" "jubarte convert $name.md -o $name.docx; jubarte $name.docx" "$status"
 done
 
 echo "== edits as @CD"
@@ -66,9 +67,10 @@ edit() { # NAME FIXTURE EDIT_ARGS...
     "$jubarte" -q edit "$fixture.docx" "$@" -a "Carol Diaz" -d 2026-10-18T10:00:00Z -o out.docx > edit.out 2> edit.err &&
       "$jubarte" out.docx > out.md 2>> edit.err
   )
+  local status=$?
   local shown
   shown=$(printf '%q ' "$@")
-  check "edits/$name.md" "$fixtures/edits/$name.md" "$dir/out.md" "$dir/edit.err" "jubarte edit $fixture.docx ${shown% }"
+  check "edits/$name.md" "$fixtures/edits/$name.md" "$dir/out.md" "$dir/edit.err" "jubarte edit $fixture.docx ${shown% }" "$status"
 }
 
 edit modify-inside-insertion step2-tracked -p p0 --anchor their --content its
