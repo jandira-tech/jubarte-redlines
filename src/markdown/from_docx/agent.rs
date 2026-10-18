@@ -32,6 +32,9 @@ pub(crate) struct Handles {
     pub order: Vec<String>,
     /// Author → every timestamp on their marks and comments.
     pub dates: HashMap<String, BTreeSet<String>>,
+    /// Authors with at least one undated mark or comment: no header date
+    /// may stand in for their individual timestamps.
+    undated: HashSet<String>,
     /// Comment ids whose ranges the view prints (`{==…==}`) and bookmark
     /// names it prints (`<a id>`): either one between two marks keeps them
     /// apart, as the text shows them.
@@ -51,6 +54,9 @@ impl Handles {
 
     /// The one timestamp all of the author's marks and comments share.
     pub(crate) fn unique_date(&self, author: &str) -> Option<&str> {
+        if self.undated.contains(author) {
+            return None;
+        }
         let dates = self.dates.get(author)?;
         let first = dates.iter().next()?;
         dates
@@ -65,6 +71,9 @@ impl Handles {
 
     /// The latest whole timestamp of an author with several timestamps.
     pub(crate) fn latest_date(&self, author: &str) -> Option<&str> {
+        if self.undated.contains(author) {
+            return None;
+        }
         let dates = self.dates.get(author)?;
         (self.unique_date(author).is_none())
             .then(|| {
@@ -76,11 +85,15 @@ impl Handles {
             .flatten()
     }
 
-    /// Whether a note of this author needs its timestamp inline (`--dates`).
-    pub(crate) fn needs_date(&self, author: Option<&str>) -> bool {
+    /// Undated marks make each dated note's timestamp necessary even without
+    /// `--dates`: an absent timestamp must keep meaning undated on writeback.
+    pub(crate) fn needs_date(&self, author: Option<&str>, dates: bool) -> bool {
         // A shared instant can have different local offsets or precision.
         // Its individual spellings still belong in --dates notes.
-        author.is_some_and(|a| self.dates.get(a).is_some_and(|dates| dates.len() > 1))
+        author.is_some_and(|a| {
+            self.undated.contains(a)
+                || (dates && self.dates.get(a).is_some_and(|dates| dates.len() > 1))
+        })
     }
 }
 
@@ -180,6 +193,19 @@ pub(crate) fn tag_of(element: &Element, handles: &Handles) -> String {
     let id = element.attr("id").map_or_else(|| "?".to_string(), tag_id);
     let handle = handles.of(element.attr("author")).unwrap_or("??");
     format!("{id}@{handle}")
+}
+
+/// A tag being printed rather than stamped internally. When an author's
+/// undated marks forbid a header timestamp, keep this mark's date on its note.
+pub(crate) fn required_date_tag_of(element: &Element, handles: &Handles) -> String {
+    let mut tag = tag_of(element, handles);
+    if handles.needs_date(element.attr("author"), false)
+        && let Some(date) = element.revision_date()
+    {
+        tag.push(' ');
+        tag.push_str(&date);
+    }
+    tag
 }
 
 /// `12@Ana%20Lima%20(2026-…)` for the plain view: the element's `w:id` and
@@ -466,13 +492,21 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
 
 /// Tracked paragraph mark: the `w:ins` / `w:del` under `w:pPr/w:rPr`.
 pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<String>) {
+    mark_tags_by(p, handles, tag_of)
+}
+
+fn mark_tags_by(
+    p: &Element,
+    handles: &Handles,
+    tag: fn(&Element, &Handles) -> String,
+) -> (Vec<String>, Vec<String>) {
     let mut ins = Vec::new();
     let mut del = Vec::new();
     if let Some(rpr) = p.path(&["pPr", "rPr"]) {
         for e in rpr.elements() {
             match kind_of(e.local()) {
-                Some("ins") => ins.push(tag_of(e, handles)),
-                Some("del") => del.push(tag_of(e, handles)),
+                Some("ins") => ins.push(tag(e, handles)),
+                Some("del") => del.push(tag(e, handles)),
                 _ => {}
             }
         }
@@ -484,17 +518,30 @@ pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<Str
 /// its own properties, its list number), a text box Word stores twice read
 /// once.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
-    fn walk(e: &Element, handles: &Handles, out: &mut Vec<String>) {
+    format_change_tags_by(p, handles, tag_of)
+}
+
+fn format_change_tags_by(
+    p: &Element,
+    handles: &Handles,
+    tag: fn(&Element, &Handles) -> String,
+) -> Vec<String> {
+    fn walk(
+        e: &Element,
+        handles: &Handles,
+        tag: fn(&Element, &Handles) -> String,
+        out: &mut Vec<String>,
+    ) {
         for child in shown_children(e) {
             if child.is("rPrChange") || child.is("pPrChange") || child.is("numberingChange") {
-                out.push(tag_of(child, handles));
+                out.push(tag(child, handles));
             } else {
-                walk(child, handles, out);
+                walk(child, handles, tag, out);
             }
         }
     }
     let mut found = Vec::new();
-    walk(p, handles, &mut found);
+    walk(p, handles, tag, &mut found);
     found
 }
 
@@ -673,6 +720,7 @@ fn walk_revision_authors(
     e: &Element,
     out: &mut Vec<String>,
     dates: &mut HashMap<String, BTreeSet<String>>,
+    undated: &mut HashSet<String>,
 ) {
     // Every kind `jubarte changes` lists: marks, cell merges, and
     // formatting (`*PrChange`, `numberingChange`, `tblGridChange`).
@@ -684,13 +732,15 @@ fn walk_revision_authors(
         }
         if let Some(date) = e.revision_date() {
             dates.entry(author.to_string()).or_default().insert(date);
+        } else {
+            undated.insert(author.to_string());
         }
     }
     // Every child, a text box's `mc:Fallback` copy too: `jubarte changes`
     // lists a change only the Fallback holds, so its author needs a handle.
     // A Fallback twin repeats the Choice's authors, already in `out`.
     for child in e.elements() {
-        walk_revision_authors(child, out, dates);
+        walk_revision_authors(child, out, dates, undated);
     }
 }
 
@@ -706,9 +756,10 @@ pub(crate) fn handles(
 ) -> Handles {
     let mut order = Vec::new();
     let mut dates: HashMap<String, BTreeSet<String>> = HashMap::new();
-    walk_revision_authors(document, &mut order, &mut dates);
+    let mut undated = HashSet::new();
+    walk_revision_authors(document, &mut order, &mut dates, &mut undated);
     for root in stories {
-        walk_revision_authors(root, &mut order, &mut dates);
+        walk_revision_authors(root, &mut order, &mut dates, &mut undated);
     }
     let mut initials: HashMap<String, String> = HashMap::new();
     if let Some(comments) = comments {
@@ -724,6 +775,8 @@ pub(crate) fn handles(
                     .entry(author.to_string())
                     .or_default()
                     .insert(date.to_string());
+            } else {
+                undated.insert(author.to_string());
             }
             if let Some(i) = c.attr("initials").map(str::trim).filter(|i| !i.is_empty()) {
                 initials
@@ -733,7 +786,7 @@ pub(crate) fn handles(
         }
     }
     if let Some(styles) = styles {
-        walk_revision_authors(styles, &mut order, &mut dates);
+        walk_revision_authors(styles, &mut order, &mut dates, &mut undated);
     }
     let mut by_author = HashMap::new();
     let mut taken: HashSet<String> = HashSet::new();
@@ -771,6 +824,7 @@ pub(crate) fn handles(
         by_author,
         order,
         dates,
+        undated,
         shown_ranges: HashSet::new(),
         shown_bookmarks: HashSet::new(),
         hidden_styles: HashSet::new(),
@@ -841,7 +895,11 @@ pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<(
                 local @ ("ins" | "del" | "moveFrom" | "moveTo") => {
                     if let Some(id) = child.attr("id") {
                         let inserted = matches!(local, "ins" | "moveTo");
-                        out.push((inserted, id.to_string(), tag_of(child, handles)));
+                        out.push((
+                            inserted,
+                            id.to_string(),
+                            required_date_tag_of(child, handles),
+                        ));
                     }
                     walk(child, handles, out);
                 }
@@ -1033,6 +1091,11 @@ fn split_story_text(line: &str) -> (String, Vec<String>) {
 /// kind first so the writer gives the mark the same (`ins` by omission).
 pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles) -> String {
     let handle = handles.of(change.author.as_deref()).unwrap_or("??");
+    let date = change
+        .date
+        .as_deref()
+        .filter(|_| handles.needs_date(change.author.as_deref(), false))
+        .map_or(String::new(), |date| format!(" {date}"));
     let kind = match change.kind {
         crate::changes::ChangeKind::Deletion => "del ",
         crate::changes::ChangeKind::Move
@@ -1045,11 +1108,11 @@ pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles)
     };
     match change.paragraph.as_deref() {
         Some(p) => format!(
-            "{kind}{} @{handle} in {}",
+            "{kind}{} @{handle}{date} in {}",
             change.r#ref,
             crate::ids::short_paragraph(p)
         ),
-        None => format!("{kind}{} @{handle}", change.r#ref),
+        None => format!("{kind}{} @{handle}{date}", change.r#ref),
     }
 }
 
@@ -1113,7 +1176,10 @@ pub(crate) fn story_unshown(
         if printed.contains(id) || skip.contains(id) {
             continue;
         }
-        let tag = format_tag(&format!("{story}#{}", tag_of(carrier, handles)));
+        let tag = format_tag(&format!(
+            "{story}#{}",
+            required_date_tag_of(carrier, handles)
+        ));
         if formatting {
             if !fmt.iter().any(|(_, t)| *t == tag) {
                 fmt.push((at, tag));
@@ -1152,7 +1218,7 @@ pub(crate) fn story_paragraph_marks(
             };
             let Some(id) = mark.attr("id") else { continue };
             ids.insert(id.to_string());
-            let tag = format_tag(&format!("{story}#{}", tag_of(mark, handles)));
+            let tag = format_tag(&format!("{story}#{}", required_date_tag_of(mark, handles)));
             let at = crate::ids::short_paragraph(&format!("{story}:p:{index}"));
             entries.push(format!("{word} {tag} in {at}"));
         }
@@ -1163,7 +1229,7 @@ pub(crate) fn story_paragraph_marks(
 /// An empty paragraph that still says something the `pN empty` run would
 /// lose: a tracked mark, a formatting change or, resolved, a revision.
 pub(crate) fn holds_revision_facts(p: &Element, resolved: bool, handles: &Handles) -> bool {
-    let (ins, del) = mark_tags(p, handles);
+    let (ins, del) = mark_tags_by(p, handles, required_date_tag_of);
     !ins.is_empty()
         || !del.is_empty()
         || !format_change_tags(p, handles).is_empty()
@@ -1237,7 +1303,7 @@ fn tracked_page_break(p: &Element, handles: &Handles) -> Option<(&'static str, S
             }
             if is_page_break(child) {
                 if let Some((kind, change)) = within {
-                    return Some((kind, tag_of(change, handles)));
+                    return Some((kind, required_date_tag_of(change, handles)));
                 }
                 continue;
             }
@@ -1579,11 +1645,11 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if has_section_break(p) {
         clauses.push("section-break".to_string());
     }
-    let (_, del) = mark_tags(p, handles);
+    let (_, del) = mark_tags_by(p, handles, required_date_tag_of);
     if !del.is_empty() {
         clauses.push(format!("break-del {}", format_tags(&del)));
     }
-    let fmt = format_change_tags(p, handles);
+    let fmt = format_change_tags_by(p, handles, required_date_tag_of);
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
@@ -1855,7 +1921,10 @@ pub(crate) fn table_line(
             .flat_map(|e| e.elements())
             .filter(|c| c.local().ends_with("Change"))
         {
-            out.push(format!("{}{at}", format_tag(&tag_of(change, handles))));
+            out.push(format!(
+                "{}{at}",
+                format_tag(&required_date_tag_of(change, handles))
+            ));
         }
     };
     if !resolved {
@@ -1884,7 +1953,7 @@ pub(crate) fn table_line(
                     .flat_map(|e| e.elements())
                     .filter(|e| matches!(e.local(), "ins" | "del"))
                 {
-                    let tag = format!("{}{at}", format_tag(&tag_of(mark, handles)));
+                    let tag = format!("{}{at}", format_tag(&required_date_tag_of(mark, handles)));
                     if mark.local() == "del" {
                         rev_del.push(tag);
                     } else {
@@ -1964,7 +2033,10 @@ pub(crate) fn table_line(
                         "ins" | "del" | "cellIns" | "cellDel" | "cellMerge"
                     )
                 }) {
-                    let tag = format!("{}{at}", format_tag(&tag_of(cell_change, handles)));
+                    let tag = format!(
+                        "{}{at}",
+                        format_tag(&required_date_tag_of(cell_change, handles))
+                    );
                     match cell_change.local() {
                         "del" | "cellDel" => rev_del.push(tag),
                         "cellMerge" => rev_merge.push(tag),
@@ -1983,7 +2055,7 @@ pub(crate) fn table_line(
             }
             for p in &ps {
                 let Some(i) = p.attr(INDEX) else { continue };
-                let (ins, del) = mark_tags(p, handles);
+                let (ins, del) = mark_tags_by(p, handles, required_date_tag_of);
                 break_ins.extend(ins.iter().map(|t| format!("{} in p{i}", format_tag(t))));
                 break_del.extend(del.iter().map(|t| format!("{} in p{i}", format_tag(t))));
                 if resolved {
@@ -1996,7 +2068,7 @@ pub(crate) fn table_line(
                     // A cell's paragraph has no id line to carry its own
                     // formatting changes.
                     fmt.extend(
-                        format_change_tags(p, handles)
+                        format_change_tags_by(p, handles, required_date_tag_of)
                             .iter()
                             .map(|t| format!("{} in p{i}", format_tag(t))),
                     );

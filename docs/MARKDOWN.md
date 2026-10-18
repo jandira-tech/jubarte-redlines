@@ -700,8 +700,14 @@ several timestamps. Revisions and comments both count. These dates report
 an instant in the author's local offset when both times are recorded, for
 example `2026-09-25T20:04:00-04:00`; otherwise they keep `w:date` as stored.
 Shared and latest dates compare instants across offsets. Converting back,
-undated marks and comments take that latest timestamp; explicit inline
-`--dates` timestamps keep their own dates. If every mark then shares one
+notes without an inline date inherit a header timestamp when present;
+explicit inline timestamps keep their own dates. An author with any undated
+mark or comment (including replies, property changes, moves and other
+stories) has neither a shared nor a latest timestamp in the generated
+header. Each dated note then prints its own timestamp, even without
+`--dates`, and undated notes print none, so writeback leaves their
+`w:date` attribute absent. Older views with a shared or latest timestamp
+still supply that timestamp to notes without dates. If every mark shares one
 timestamp, reading the result prints it bare. A view date with an offset
 writes its wall clock followed by `Z` into `w:date`, Word's encoding;
 revision elements also store the instant in `w16du:dateUtc`, with the namespace

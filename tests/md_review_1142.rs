@@ -123,7 +123,10 @@ fn review_inline_a_missing_date_does_not_share_a_dated_attribution() {
     .unwrap()
     .markdown;
     assert!(!view.contains("{~~"), "{view}");
-    assert!(view.contains("{--old--}{r1 @A}{++new++}{r2 @A}"), "{view}");
+    assert!(
+        view.contains("{--old--}{r1 @A 2026-10-01T09:00:00Z}{++new++}{r2 @A}"),
+        "{view}"
+    );
 }
 
 #[test]

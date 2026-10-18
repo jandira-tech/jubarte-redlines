@@ -800,17 +800,18 @@ fn changes_without_text_name_their_ids() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("style_changes: {Normal: styles.r9 @AC}")),
+            .any(|l| l
+                .starts_with(r#"style_changes: {Normal: "styles.r9 @AC 2026-01-01T00:00:00Z"}"#)),
         "{out}"
     );
     assert!(
         lines.contains(
-            &"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC in header1}"
+            &r#"  default: {id: header1, text: Title, style: Normal, fmt: "header1.r4 @AC 2026-01-01T00:00:00Z in header1"}"#
         ),
         "{out}"
     );
     assert!(
-        out.contains("[^1]: **Source** <!-- fmt footnotes.r7 @AC -->"),
+        out.contains("[^1]: **Source** <!-- fmt footnotes.r7 @AC 2026-01-01T00:00:00Z -->"),
         "{out}"
     );
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
@@ -1010,11 +1011,17 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .find(|l| l.starts_with("unplaced: "))
         .unwrap_or_else(|| panic!("no unplaced line in {out}"));
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
-    assert!(unplaced.contains("r21 @AC in p0"), "{out}");
+    assert!(
+        unplaced.contains("r21 @AC 2026-10-01T09:00:00Z in p0"),
+        "{out}"
+    );
     // The shown branch's text box prints its content as the paragraph
     // after the drawing, so the Choice branch's own insertion is placed
-    // there (`Box{++Choice++}{r20 @AC}`), not unplaced.
-    assert!(out.contains("\nBox{++Choice++}{r20 @AC}\n"), "{out}");
+    // there (`Box{++Choice++}{r20 @AC 2026-10-01T09:00:00Z}`), not unplaced.
+    assert!(
+        out.contains("\nBox{++Choice++}{r20 @AC 2026-10-01T09:00:00Z}\n"),
+        "{out}"
+    );
     assert!(!unplaced.contains("r20"), "{out}");
     // A handle no author gave (`@??`) is quoted: plain, YAML misreads it.
     assert!(unplaced.contains(r#""del r22 @?? in p0""#), "{out}");
@@ -1049,7 +1056,7 @@ fn a_textless_change_in_a_printed_row_prints_its_own_tag() {
     // The deleted drawing and the following insertion by the same author/date
     // form a substitution whose tag preserves both ids.
     assert!(
-        body(&out).contains("{~~![][d1]~>Cell~~}{r2+3 @AC}"),
+        body(&out).contains("{~~![][d1]~>Cell~~}{r2+3 @AC 2026-10-01T09:00:00Z}"),
         "{out}"
     );
     assert!(out.contains("rev r1 @AC in t0.row0"), "{out}");
@@ -1175,7 +1182,7 @@ fn header_text_follows_each_view() {
     };
     assert_eq!(
         text(&agent(&bytes)),
-        r#"  default: {id: header1, text: "Status: {++DRAFT++}{header1.r1 @AC}{--FINAL--}{header1.r2 @AC} {\\>>x<<\\} Page {++2++}{header1.r9 @AC}{--7--}{header1.r8 @AC} of 3", style: Normal}"#
+        r#"  default: {id: header1, text: "Status: {++DRAFT++}{header1.r1 @AC 2026-10-01T09:00:00Z}{--FINAL--}{header1.r2 @AC 2026-10-01T09:00:00Z} {\\>>x<<\\} Page {++2++}{header1.r9 @AC}{--7--}{header1.r8 @AC} of 3", style: Normal}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Accept, true)),
@@ -6113,7 +6120,32 @@ fn a_revision_id_holding_a_plus_prints_as_one_change() {
     assert!(listed.contains(&"body:rev:1+2".to_string()), "{listed:?}");
     let out = agent(&bytes);
     assert!(out.contains("{body:rev:1+2 @AC}"), "{out}");
-    assert!(out.contains("{r1 @AC}"), "{out}");
+    assert!(out.contains("{r1 @AC 2026-10-01T09:00:00Z}"), "{out}");
     assert!(!out.contains("r1+2 @AC"), "{out}");
     assert!(!out.contains("unplaced:"), "{out}");
+}
+
+#[test]
+fn undated_peer_keeps_a_dated_unplaced_change_timestamp() {
+    let alternate = format!(
+        r#"<mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent>"#,
+        drawing_box(&run("Choice")),
+        pict_box(&ins(3, "Alice", "Fallback")),
+    );
+    let source = docx(&format!(
+        r#"<w:p><w:r>{alternate}</w:r><w:ins w:id="2" w:author="Alice"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#
+    ));
+    let view = agent(&source);
+    assert!(
+        view.contains("ins r3 @A 2026-10-01T09:00:00Z in p0"),
+        "{view}"
+    );
+    let back = markdown_to_docx(&view, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let changes = jubarte::changes::list_changes(&back).unwrap();
+    assert!(
+        changes.iter().any(|c| c.text == "new" && c.date.is_none()),
+        "{changes:?}"
+    );
 }

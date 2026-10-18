@@ -331,6 +331,7 @@ pub struct MarkdownOptions {
     pub page_markers: bool,
     /// With `ids`: timestamps inline on notes when an author's marks and
     /// comments have different recorded date forms, including local offsets.
+    /// An author with undated marks always gets explicit dated notes.
     pub dates: bool,
     /// With `ids`: which blocks of the body to print.
     pub select: Option<Select>,
@@ -682,6 +683,7 @@ pub struct ReadOptions {
     /// Comments inline (`true`), or hidden with their ids on the id lines.
     pub comments: bool,
     /// Timestamps inline on the notes of an author with several.
+    /// An author with undated marks always gets explicit dated notes.
     pub dates: bool,
     /// `<!-- page N of M -->` lines from the layout pass (`true`), or none.
     pub page_markers: bool,

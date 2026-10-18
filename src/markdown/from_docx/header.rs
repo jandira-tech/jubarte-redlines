@@ -1264,7 +1264,7 @@ fn section_changes(section: &SectionFact, handles: &Handles) -> Option<String> {
     let sect = section.sect_pr.as_ref()?;
     let tags: Vec<String> = sect
         .children_named("sectPrChange")
-        .map(|change| super::agent::tag_of(change, handles))
+        .map(|change| super::agent::required_date_tag_of(change, handles))
         .collect();
     (!tags.is_empty()).then(|| super::agent::format_tags(&tags))
 }
@@ -1287,7 +1287,10 @@ fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
         collect(holder, &mut carriers);
         let mut tags: Vec<String> = Vec::new();
         for carrier in carriers {
-            let tag = format!("styles#{}", super::agent::tag_of(carrier, handles));
+            let tag = format!(
+                "styles#{}",
+                super::agent::required_date_tag_of(carrier, handles)
+            );
             if !tags.contains(&tag) {
                 tags.push(tag);
             }
@@ -1716,7 +1719,7 @@ pub(crate) fn story_text_with(
                         let by = format!(
                             "{}{stem}#{}",
                             super::critic::TAG,
-                            super::agent::tag_of(run, handles)
+                            super::agent::required_date_tag_of(run, handles)
                         );
                         s.critic.open(mark, Some(&by));
                     }
@@ -1872,7 +1875,7 @@ pub(crate) fn story_text_with(
             for mark in pr.elements().filter(|mark| mark.is("ins")) {
                 let tag = super::agent::format_tag(&format!(
                     "{story}#{}",
-                    super::agent::tag_of(mark, handles)
+                    super::agent::required_date_tag_of(mark, handles)
                 ));
                 text.push_str(&format!("¶{{{tag}}}"));
             }

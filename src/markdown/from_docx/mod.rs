@@ -3829,7 +3829,7 @@ impl Writer<'_> {
     }
 
     /// The agent tag of a revision element, with its timestamp when
-    /// `--dates` asks for one and the author has several.
+    /// the author has undated marks, or `--dates` asks for differing dates.
     fn agent_tag(&self, element: &Element) -> String {
         let story = self
             .story
@@ -3840,8 +3840,7 @@ impl Writer<'_> {
             critic::TAG,
             agent::tag_of(element, &self.handles)
         );
-        if self.dates
-            && self.handles.needs_date(element.attr("author"))
+        if self.handles.needs_date(element.attr("author"), self.dates)
             && let Some(date) = element.revision_date()
         {
             tagged.push(' ');
@@ -3897,7 +3896,9 @@ impl Writer<'_> {
         self.revisions = revisions;
         self.open_comments = open_comments;
         let note = if self.agent {
-            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
+            let date = self
+                .handles
+                .needs_date(comment.attr("author"), self.dates)
                 .then(|| comment.comment_date())
                 .flatten();
             let head = |text: String| {
