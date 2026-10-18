@@ -28,7 +28,7 @@
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
 //! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
-//! | `DUPLICATE_REVISION_ID` | pending: OOXML validator refuses same-kind duplicates (`Sem_UniqueAttributeValue`); error diagnostic, not Word-fatal | yes: renumbered |
+//! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
 //! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
 //! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
@@ -49,10 +49,12 @@
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
-//! Revision ids are unique across revision kinds within a part. This policy
-//! also rejects the shared `pPrChange`/`rPrChange` id found in Word style
-//! histories, which OpenXmlValidator accepts. Word's opening verdict for
-//! the duplicate-id probes remains pending; this is not marked Word-fatal.
+//! Revision ids are unique per OOXML record type within a part, as
+//! OpenXmlValidator checks them (`Sem_UniqueAttributeValue`): two `w:ins`
+//! runs sharing an id are a finding, a `w:ins` and a `w:del` sharing one are
+//! not, and neither is the `pPrChange`/`rPrChange` pair Word writes in style
+//! histories. Word opens every duplicate-id probe (102 files, 2026-10-18,
+//! #1137), so this is an error diagnostic, not Word-fatal.
 //!
 //! The comment codes follow a 98-file Word probe (2026-10-10). Word opens
 //! a comment whatever its range markers: missing, reversed, repeated, at
@@ -125,7 +127,7 @@ pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
     /// code's table ([`traits`]). OOXML-invalid duplicate revision ids
-    /// are errors even while their Word verdict is pending.
+    /// are errors, though Word opens them.
     pub fn new(
         code: &str,
         part: &str,
