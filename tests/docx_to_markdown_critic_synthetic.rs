@@ -336,10 +336,11 @@ fn every_output_matches_its_source_of_truth() {
 /// normalize those empty-property slots, keeping the rest of the XML.
 fn coalesced_box_slots(markdown: &str) -> String {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    let slots = regex::Regex::new(
-        r#"(?:<w:r><w:rPr/><w:(?:t|delText)(?: xml:space="preserve")?/></w:r>)+"#,
-    )
-    .unwrap();
+    let boxes = regex::Regex::new(r"(?s)<w:txbxContent>.*?</w:txbxContent>").unwrap();
+    let slots =
+        regex::Regex::new(r#"<w:r><w:rPr/><w:(t|delText)(?: xml:space="preserve")?/></w:r>"#)
+            .unwrap();
+    let all_slots = regex::Regex::new(r"<w:(?:t|delText)(?:\s[^>]*)?/>").unwrap();
     let mut normalized = markdown
         .lines()
         .map(|line| {
@@ -351,14 +352,50 @@ fn coalesced_box_slots(markdown: &str) -> String {
             if drawing.get("boxes").is_none() {
                 return line.to_string();
             }
-            let xml = drawing["xml"].as_str().unwrap();
-            drawing["xml"] = slots
-                .replace_all(xml, "<w:r><w:rPr/><w:t/></w:r>")
-                .into_owned()
-                .into();
-            for boxed in drawing["boxes"].as_array_mut().unwrap() {
-                boxed.as_object_mut().unwrap().remove("lengths");
-            }
+            let xml = drawing["xml"].as_str().unwrap().to_string();
+            let mut index = 0;
+            let normalized_xml = boxes
+                .replace_all(&xml, |boxed: &regex::Captures<'_>| {
+                    let source = boxed.get(0).unwrap().as_str();
+                    let frame = &mut drawing["boxes"][index];
+                    index += 1;
+                    let lengths = frame["lengths"].as_array().unwrap();
+                    let mut summed: Vec<u64> = Vec::new();
+                    let mut out = String::new();
+                    let mut from = 0;
+                    let mut slot = 0;
+                    let mut previous_kind = String::new();
+                    for run in slots.captures_iter(source) {
+                        let range = run.get(0).unwrap();
+                        let between = &source[from..range.start()];
+                        for _ in all_slots.find_iter(between) {
+                            summed.push(lengths[slot].as_u64().unwrap());
+                            slot += 1;
+                        }
+                        let kind = &run[1];
+                        let length = lengths[slot].as_u64().unwrap();
+                        slot += 1;
+                        if between.is_empty() && previous_kind == kind {
+                            *summed.last_mut().unwrap() += length;
+                        } else {
+                            out.push_str(between);
+                            out.push_str(&format!("<w:r><w:rPr/><w:{kind}/></w:r>"));
+                            summed.push(length);
+                        }
+                        previous_kind = kind.to_string();
+                        from = range.end();
+                    }
+                    out.push_str(&source[from..]);
+                    for _ in all_slots.find_iter(&source[from..]) {
+                        summed.push(lengths[slot].as_u64().unwrap());
+                        slot += 1;
+                    }
+                    assert_eq!(slot, lengths.len(), "slot/length mismatch");
+                    frame["lengths"] = serde_json::json!(summed);
+                    out
+                })
+                .into_owned();
+            drawing["xml"] = normalized_xml.into();
             format!(
                 "{name}: drawing:{}",
                 URL_SAFE_NO_PAD.encode(serde_json::to_vec(&drawing).unwrap())
@@ -462,6 +499,45 @@ fn jubartes_reader_resolves_the_markup_as_the_converter_resolves_the_document() 
     }
 }
 
+fn slot_probe(xml: &str, lengths: &[usize]) -> String {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let drawing = serde_json::json!({"xml": format!("<w:txbxContent>{xml}</w:txbxContent>"), "boxes": [{"lengths": lengths, "hash": "same", "text_hash": "same"}]});
+    format!(
+        "[d1]: drawing:{}\n",
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&drawing).unwrap())
+    )
+}
+
+#[test]
+fn coalescing_box_slots_detects_dropped_words() {
+    let slot = "<w:r><w:rPr/><w:t/></w:r>";
+    assert_ne!(
+        coalesced_box_slots(&slot_probe(&slot.repeat(2), &[4, 5])),
+        coalesced_box_slots(&slot_probe(slot, &[4]))
+    );
+}
+
+#[test]
+fn coalescing_box_slots_preserves_slot_kind() {
+    assert_ne!(
+        coalesced_box_slots(&slot_probe("<w:r><w:rPr/><w:t/></w:r>", &[4])),
+        coalesced_box_slots(&slot_probe("<w:r><w:rPr/><w:delText/></w:r>", &[4]))
+    );
+}
+
+#[test]
+fn coalescing_box_slots_detects_corrupted_lengths() {
+    let xml = "<w:r><w:rPr/><w:t/></w:r>".repeat(2);
+    assert_ne!(
+        coalesced_box_slots(&slot_probe(&xml, &[4, 5])),
+        coalesced_box_slots(&slot_probe(&xml, &[4, 0]))
+    );
+    assert_eq!(
+        coalesced_box_slots(&slot_probe(&xml, &[4, 5])),
+        coalesced_box_slots(&slot_probe("<w:r><w:rPr/><w:t/></w:r>", &[9]))
+    );
+}
+
 fn box_payloads(markdown: &str) -> Vec<serde_json::Value> {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     markdown
@@ -471,6 +547,44 @@ fn box_payloads(markdown: &str) -> Vec<serde_json::Value> {
             serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
         })
         .collect()
+}
+
+#[test]
+fn every_synthetic_box_payload_is_text_free_in_every_view() {
+    let words = regex::Regex::new(r"<w:(?:t|delText)(?:\s[^>]*)?>[^<]+").unwrap();
+    for name in DOCUMENTS {
+        for suffix in ["", ".accepted", ".rejected"] {
+            for revisions in [
+                TrackChanges::All,
+                TrackChanges::Accept,
+                TrackChanges::Reject,
+            ] {
+                for ids in [false, true] {
+                    let bytes = std::fs::read(path(&format!("{name}{suffix}.docx"))).unwrap();
+                    let view = docx_to_markdown(
+                        &bytes,
+                        &MarkdownOptions {
+                            ids,
+                            track_changes: revisions,
+                            ..MarkdownOptions::default()
+                        },
+                    )
+                    .unwrap()
+                    .markdown;
+                    for drawing in box_payloads(&view) {
+                        if drawing.get("boxes").is_none() {
+                            continue;
+                        }
+                        let xml = drawing["xml"].as_str().unwrap();
+                        assert!(
+                            !words.is_match(xml),
+                            "{name}{suffix} ids={ids} {revisions:?}: {xml}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]

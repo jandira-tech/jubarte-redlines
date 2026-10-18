@@ -1382,6 +1382,14 @@ fn an_edited_alternate_box_updates_both_branches_and_is_a_fixed_point() {
     let view = box_view(&alternate_boxes(false))
         .replace("Added box", "Edited first")
         .replace("Other box", "Edited second");
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let payload = view.split_once("[d1]: drawing:").unwrap().1.trim();
+    let drawing: serde_json::Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
+    assert_eq!(drawing["boxes"].as_array().unwrap().len(), 4);
+    let frame = drawing["xml"].as_str().unwrap();
+    assert_eq!(frame.matches("<w:txbxContent>").count(), 4);
+    assert!(!frame.contains("Added box") && !frame.contains("Other box"));
     let out = write_box_view(&view).unwrap();
     let xml = part(&out, "word/document.xml");
     for branch in ["mc:Choice", "mc:Fallback"] {
