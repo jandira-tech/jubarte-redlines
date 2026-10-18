@@ -1309,3 +1309,88 @@ fn reject_dead_comment_probe_e_keeps_surviving_thread_replies() {
     );
     assert_eq!(paragraphs(&rejected), ["beta", "kept"]);
 }
+
+/// #1155: the issue's two paragraphs, optionally with a comment spanning A to B.
+fn inserted_final_mark_source(with_comment: bool) -> Vec<u8> {
+    let (start, end) = if with_comment {
+        (
+            dead_comments::start(0),
+            format!("{}{}", dead_comments::end(0), dead_comments::reference(0)),
+        )
+    } else {
+        (String::new(), String::new())
+    };
+    let body = format!(
+        r#"<w:p>{start}<w:r><w:t>A</w:t></w:r></w:p>
+<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r>{end}</w:p>"#
+    );
+    if with_comment {
+        dead_comments::package(&body, false)
+    } else {
+        docx(&body)
+    }
+}
+
+fn assert_inserted_final_mark_resolved(settled: &[u8], with_comment: bool) {
+    assert_eq!(paragraphs(settled), ["A", "B"]);
+    let xml = part_string(settled, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    assert!(
+        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
+        "#1155: final paragraph mark must be resolved"
+    );
+    if with_comment {
+        dead_comments::assert_state(settled, false, &[(0, "Existing range", None)]);
+    } else {
+        assert_word_valid_package(settled);
+    }
+}
+
+fn reject_inserted_final_mark_with_cli(with_comment: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        inserted_final_mark_source(with_comment),
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args(["reject", "input.docx", "-o", "settled.docx"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let settled = std::fs::read(dir.path().join("settled.docx")).unwrap();
+    assert_inserted_final_mark_resolved(&settled, with_comment);
+}
+
+/// A16 (#1155): differs from Word on purpose; resolve the final inserted mark.
+#[test]
+fn reject_resolves_inserted_final_mark() {
+    let settled = reject_revisions(&inserted_final_mark_source(false)).unwrap();
+    assert_inserted_final_mark_resolved(&settled, false);
+}
+
+/// A16 (#1155): differs from Word on purpose, also with a comment ending on B.
+#[test]
+fn reject_resolves_inserted_final_mark_with_comment() {
+    let settled = reject_revisions(&inserted_final_mark_source(true)).unwrap();
+    assert_inserted_final_mark_resolved(&settled, true);
+}
+
+/// A16 (#1155): CLI differs from Word on purpose; leave no final-mark revision.
+#[test]
+fn cli_reject_resolves_inserted_final_mark() {
+    reject_inserted_final_mark_with_cli(false);
+}
+
+/// A16 (#1155): CLI differs from Word on purpose, also with a comment ending on B.
+#[test]
+fn cli_reject_resolves_inserted_final_mark_with_comment() {
+    reject_inserted_final_mark_with_cli(true);
+}
