@@ -355,6 +355,8 @@ pub(super) struct Document {
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
     /// order (`{r5+6 @AB}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
+    /// Source line of each explicitly numbered change, for rename warnings.
+    pub revision_lines: HashMap<u32, usize>,
     /// A change that was another change's only content, by the serial of
     /// the note's own change: the change it sits inside (`{--x--}{r3 @BO
     /// re r1 @AL}` is a deletion inside an insertion), innermost first.
@@ -499,10 +501,12 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
-    /// Every revision `w:id` written so far: none is written twice by the
-    /// fresh counter, though one the view names twice (`r43+43`) is, as
-    /// Word's own files repeat it (a mark split around a `w:hyperlink`).
+    /// Every revision `w:id` written so far: named ids and fresh ids
+    /// both respect uniqueness. Contiguous pieces reuse an open element.
     pub used_revisions: HashSet<u32>,
+    pub warnings: &'d mut Vec<String>,
+    /// The owning part's short-id prefix; empty for body revisions.
+    pub revision_prefix: &'static str,
     /// Each open paragraph's mark whose numbered change its runs share:
     /// its kind, its change and where in the output its `w:rPr` takes it.
     /// The mark is written at the paragraph's end, so its id follows the
@@ -544,8 +548,21 @@ impl Context<'_> {
             let at = self.cursors.entry(serial).or_insert(0);
             if let Some(&id) = ids.get(*at) {
                 *at += 1;
-                self.used_revisions.insert(id);
-                return id;
+                if self.used_revisions.insert(id) {
+                    return id;
+                }
+                let fresh = self.revision_id(None);
+                let line = self
+                    .document
+                    .revision_lines
+                    .get(&serial)
+                    .copied()
+                    .unwrap_or(1);
+                let prefix = self.revision_prefix;
+                self.warnings.push(format!(
+                    "{prefix}r{id} names two separate changes on line {line}; the second is written as {prefix}r{fresh}"
+                ));
+                return fresh;
             }
         }
         // Fresh ids stay within the `int` Word reads, past the view's own.
@@ -899,7 +916,18 @@ pub(super) fn story(
                 });
                 if carried {
                     close_mark(context, &natural, &mut out, &mut open);
-                } else if open != run.change {
+                } else if open != run.change
+                    && !open.zip(run.change).is_some_and(|(outer, change)| {
+                        // Formatting belongs to the runs, not to another
+                        // copy of the same revision element.
+                        context
+                            .document
+                            .revision_ids
+                            .get(&outer.1)
+                            .is_some_and(|ids| ids.len() == 1)
+                            && continues_change(context.document, change, outer)
+                    })
+                {
                     let chain = run
                         .change
                         .map(|change| wrapping_chain(context.document, change))
@@ -1465,8 +1493,17 @@ fn wrapping_chain(document: &Document, change: Change) -> Vec<Change> {
 /// shares. Word marks a nested change inside the mark it splits, so the
 /// pieces are the only same-kind changes that can name spent ids.
 fn continues_change(document: &Document, inner: Change, outer: Change) -> bool {
+    // A date range can replace the tag's first day with its last day.
+    // Compare the attribution the element actually writes.
+    let attribution = |serial| {
+        document
+            .attributions
+            .get(&serial)
+            .map(|(author, date)| (author, document.range_ends.get(&serial).unwrap_or(date)))
+    };
     inner.0 == outer.0
         && inner.1 != outer.1
+        && attribution(inner.1) == attribution(outer.1)
         && document.revision_ids.get(&inner.1).is_some_and(|inner| {
             !inner.is_empty()
                 && document

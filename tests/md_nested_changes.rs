@@ -720,7 +720,7 @@ fn two_inner_changes_with_outer_text_between_stay_nested() {
 }
 
 #[test]
-fn an_outer_continued_into_the_next_paragraph_keeps_its_id() {
+fn an_outer_continued_into_the_next_paragraph_gets_a_fresh_id() {
     let source = outer_into_next_paragraph();
     let markdown = plain(&source);
     assert!(
@@ -729,31 +729,21 @@ fn an_outer_continued_into_the_next_paragraph_keeps_its_id() {
     );
     let docx = written(&markdown);
     let document = part_string(&docx, "word/document.xml").unwrap();
-    // Two paragraphs, the second's nest naming the id the first spent: one
-    // revision across the paragraph mark, as Word writes it — the same
-    // `w:id` twice, which the source carries too (Ring-1 warns of it and
-    // nothing else). #1134: Word refuses w:t under a deletion; it opens
-    // ins > del > ins with delText but misreads reject-all.
+    // One XML element per paragraph: the second outer receives a fresh
+    // id instead of repeating the first paragraph's id (#1137).
     assert_eq!(document.matches("<w:p>").count(), 2, "{document}");
-    assert!(
-        document.contains(r#"<w:ins w:id="1""#) && !document.contains(r#"<w:ins w:id="4""#),
+    assert_eq!(
+        document.matches(r#"<w:ins w:id="1""#).count(),
+        1,
         "{document}"
     );
     assert_eq!(
-        document.matches(r#"<w:ins w:id="1""#).count(),
-        2,
+        document.matches(r#"<w:ins w:id="4""#).count(),
+        1,
         "{document}"
     );
     let findings = check_word_valid_package(&docx);
-    assert!(
-        findings.findings.is_empty()
-            || findings
-                .findings
-                .iter()
-                .all(|f| f.code == "DUPLICATE_REVISION_ID"),
-        "defect 5: {}",
-        findings.errors.join("\n")
-    );
+    assert!(findings.ok(), "defect 5: {:?}", findings.errors);
     for accept in [false, true] {
         assert_eq!(
             resolved(&docx, accept),
@@ -762,12 +752,21 @@ fn an_outer_continued_into_the_next_paragraph_keeps_its_id() {
             if accept { "accept" } else { "reject" }
         );
     }
-    // Both views are fixed points, the agent view agreeing with the
-    // source's.
-    assert_eq!(plain(&docx), markdown, "defect 5: plain fixed point");
+    // Both views retain the fresh id on subsequent round trips.
+    let renamed = markdown.replace("re r1 Ana Lima", "re r4 Ana Lima");
+    assert_eq!(plain(&docx), renamed, "defect 5: renamed plain view");
+    assert_eq!(
+        plain(&written(&renamed)),
+        renamed,
+        "defect 5: plain fixed point"
+    );
     let view = agent(&source);
     let agent_docx = written(&view);
-    assert_eq!(body(&agent(&agent_docx)), body(&view), "defect 5: agent");
+    assert_eq!(
+        body(&agent(&agent_docx)),
+        body(&view.replace("re r1 @AL", "re r4 @AL")),
+        "defect 5: agent"
+    );
 }
 
 #[test]
@@ -1192,14 +1191,34 @@ fn split_revision_parent_choice_is_deterministic() {
         <w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
         <w:r><w:delText>c</w:delText></w:r></w:del></w:ins></w:p>"#,
     ];
-    for (name, order, outer_ids, bare_parent) in [
-        ("between", [0, 1, 2], ["1", "4", "2"], "Ana Lima"),
-        ("before", [1, 0, 2], ["1", "4", "2"], "Ana Lima"),
-        ("after", [0, 2, 1], ["1", "2", "4"], "Cy Dee"),
+    for (name, order, outer_ids, delete_ids, bare_parent) in [
+        (
+            "between",
+            [0, 1, 2],
+            ["1", "4", "2"],
+            ["3", "5", "6"],
+            "Ana Lima",
+        ),
+        (
+            "before",
+            [1, 0, 2],
+            ["1", "4", "2"],
+            ["3", "5", "6"],
+            "Ana Lima",
+        ),
+        (
+            "after",
+            [0, 2, 1],
+            ["1", "2", "5"],
+            ["3", "4", "6"],
+            "Cy Dee",
+        ),
     ] {
         let source = docx(&order.map(|at| pieces[at]).concat());
         let view = agent(&source);
         let first = written(&view);
+        let checked = check_word_valid_package(&first);
+        assert!(checked.ok(), "{name}: {:?}", checked.errors);
         for attempt in 1..64 {
             let next = written(&view);
             assert!(
@@ -1216,9 +1235,11 @@ fn split_revision_parent_choice_is_deterministic() {
             .map(|part| part.split("</w:p>").next().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(paragraphs.len(), 3, "{name}: {document}");
-        for ((paragraph, outer_id), piece) in paragraphs.iter().zip(outer_ids).zip(order) {
-            // Word repeats revision 3 across paragraphs. Check each tree
-            // separately: the helper also rejects duplicate ids within it.
+        for (((paragraph, outer_id), deleted_id), piece) in
+            paragraphs.iter().zip(outer_ids).zip(delete_ids).zip(order)
+        {
+            // Every paragraph keeps the deterministic parent attribution,
+            // with separate OOXML ids for separate elements.
             let parent = match piece {
                 0 => "Ana Lima",
                 1 => bare_parent,
@@ -1231,7 +1252,10 @@ fn split_revision_parent_choice_is_deterministic() {
             };
             assert_revision_tree(
                 &format!("<w:p>{paragraph}</w:p>"),
-                &[("w:ins", outer_id, None), ("w:del", "3", Some(outer_id))],
+                &[
+                    ("w:ins", outer_id, None),
+                    ("w:del", deleted_id, Some(outer_id)),
+                ],
                 &revision_attributes(pieces[parent_piece]),
             );
             assert!(
@@ -2340,4 +2364,298 @@ fn issue_1134_header_deletion_field() {
 #[test]
 fn issue_1134_footer_deletion_field() {
     deletion_text_probe("footer", "{PAGE}x{/}");
+}
+
+// #1137: one view id can name several marks, but each written element
+// needs a unique OOXML id. These are synthetic, in-memory packages.
+fn issue_1137_view(body: &str) -> String {
+    format!("---\nauthors:\n  A: Alice\n  B: Bob\n---\n{body}\n")
+}
+
+fn issue_1137_checked(
+    markdown: &str,
+    part: &str,
+    ins: usize,
+    del: usize,
+) -> jubarte::markdown::WrittenDocx {
+    let output = markdown_to_docx(markdown, &DocxOptions::default()).unwrap();
+    let checked = check_word_valid_package(&output.docx);
+    assert!(checked.ok(), "{:?}", checked.errors);
+    let package = jubarte::opc::PartFs::open(&output.docx).unwrap();
+    for name in package
+        .parts()
+        .into_iter()
+        .filter(|name| name.ends_with(".xml"))
+    {
+        let xml = package.part_string(&name).unwrap();
+        let mut dom = jubarte::xmllinq::Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        let mut ids = std::collections::HashSet::new();
+        for node in dom.descendants(root, None) {
+            let Some(name) = dom.name(node) else { continue };
+            if name.namespace_name() == common::docx::W_NS
+                && matches!(
+                    name.local_name(),
+                    "ins"
+                        | "del"
+                        | "moveFrom"
+                        | "moveTo"
+                        | "rPrChange"
+                        | "pPrChange"
+                        | "sectPrChange"
+                        | "tblPrChange"
+                        | "tblGridChange"
+                        | "trPrChange"
+                        | "tcPrChange"
+                        | "cellIns"
+                        | "cellDel"
+                        | "cellMerge"
+                        | "numberingChange"
+                )
+            {
+                let id = dom
+                    .attribute(node, &jubarte::namespaces::W::name("id"))
+                    .unwrap();
+                assert!(ids.insert(id.to_string()), "duplicate {id} in {xml}");
+            }
+        }
+    }
+    let xml = part_string(&output.docx, part).unwrap();
+    assert_eq!(xml.matches("<w:ins ").count(), ins, "{xml}");
+    assert_eq!(xml.matches("<w:del ").count(), del, "{xml}");
+    output
+}
+
+#[test]
+fn issue_1137_adjacent_deletions_merge_and_round_trip() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{--a--}{r1 @A}{--b--}{r1 @A}"),
+        "word/document.xml",
+        0,
+        1,
+    );
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let view = plain(&out.docx);
+    assert!(view.contains("{--ab--}{r1 Alice"), "{view}");
+    assert_eq!(plain(&written(&view)), view);
+}
+
+#[test]
+fn issue_1137_adjacent_insertions_merge_across_formatting() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{++a **bold**++}{r1 @A}{++ b++}{r1 @A}"),
+        "word/document.xml",
+        1,
+        0,
+    );
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let xml = part_string(&out.docx, "word/document.xml").unwrap();
+    assert!(xml.contains("<w:b/>") && xml.contains(">bold<"), "{xml}");
+    let view = plain(&out.docx);
+    assert_eq!(view.matches("{r1 ").count(), 1, "{view}");
+    assert_eq!(plain(&written(&view)), view);
+}
+
+#[test]
+fn issue_1137_nested_deletion_keeps_one_outer_insertion() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{++a++}{r1 @A}{--x--}{r3 @B re r1 @A}{++b++}{r1 @A}"),
+        "word/document.xml",
+        1,
+        1,
+    );
+    let xml = part_string(&out.docx, "word/document.xml").unwrap();
+    assert!(
+        xml.find("<w:ins ").unwrap() < xml.find("<w:del ").unwrap(),
+        "{xml}"
+    );
+    assert!(
+        xml.find("</w:del>").unwrap() < xml.find("</w:ins>").unwrap(),
+        "{xml}"
+    );
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let view = plain(&out.docx);
+    assert_eq!(plain(&written(&view)), view);
+}
+
+#[test]
+fn issue_1137_separate_deletions_rename_and_round_trip() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{--a--}{r1 @A} x {--b--}{r1 @A}"),
+        "word/document.xml",
+        0,
+        2,
+    );
+    assert_eq!(
+        out.warnings,
+        ["r1 names two separate changes on line 6; the second is written as r2"]
+    );
+    let view = plain(&out.docx);
+    assert!(
+        view.contains("{--a--}{r1 Alice") && view.contains("{--b--}{r2 Alice"),
+        "{view}"
+    );
+    assert_eq!(plain(&written(&view)), view);
+}
+
+#[test]
+fn issue_1137_separate_insertions_reserve_later_ids_and_report_lines() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{++a++}{r1 @A}\n x {++b++}{r1 @A} {++c++}{r2 @B}\n y {++d++}{r1 @A}"),
+        "word/document.xml",
+        4,
+        0,
+    );
+    assert_eq!(
+        out.warnings,
+        [
+            "r1 names two separate changes on line 7; the second is written as r3",
+            "r1 names two separate changes on line 8; the second is written as r4"
+        ]
+    );
+    let view = plain(&out.docx);
+    for id in [1, 2, 3, 4] {
+        assert!(view.contains(&format!("{{r{id} ")), "{view}");
+    }
+    assert_eq!(plain(&written(&view)), view);
+}
+
+#[test]
+fn issue_1137_same_id_with_different_author_stays_separate() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{++a++}{r1 @A}{++b++}{r1 @B}"),
+        "word/document.xml",
+        2,
+        0,
+    );
+    assert_eq!(
+        revision_attributes(&part_string(&out.docx, "word/document.xml").unwrap())
+            .iter()
+            .map(|(author, _)| author.as_str())
+            .collect::<Vec<_>>(),
+        ["Alice", "Bob"]
+    );
+    assert_eq!(out.warnings.len(), 1);
+}
+
+#[test]
+fn issue_1137_same_id_with_different_date_stays_separate() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{++a++}{r1 @A 2026-10-01T09:00:00Z}{++b++}{r1 @A 2026-10-02T09:00:00Z}"),
+        "word/document.xml",
+        2,
+        0,
+    );
+    let xml = part_string(&out.docx, "word/document.xml").unwrap();
+    assert_eq!(
+        revision_attributes(&xml)
+            .iter()
+            .map(|(_, date)| date.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["2026-10-01T09:00:00Z", "2026-10-02T09:00:00Z"]
+    );
+    assert_eq!(out.warnings.len(), 1);
+}
+
+#[test]
+fn issue_1137_same_id_with_different_kind_stays_separate() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{--a--}{r1 @A}{++b++}{r1 @A}"),
+        "word/document.xml",
+        1,
+        1,
+    );
+    assert_eq!(out.warnings.len(), 1);
+}
+
+#[test]
+fn issue_1137_same_id_in_separate_paragraphs_is_renamed() {
+    let out = issue_1137_checked(
+        &issue_1137_view("{++a++}{r1 @A}\n\n{++b++}{r1 @A}"),
+        "word/document.xml",
+        2,
+        0,
+    );
+    assert_eq!(
+        out.warnings,
+        ["r1 names two separate changes on line 8; the second is written as r2"]
+    );
+}
+
+#[test]
+fn issue_1137_header_adjacent_marks_merge() {
+    let view = review_1129_fixed_story_view("header", "{++a++}{PART.r1 @A}{++b++}{PART.r1 @A}");
+    let out = issue_1137_checked(&view, "word/header1.xml", 1, 0);
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+}
+
+#[test]
+fn issue_1137_footer_separate_marks_rename_and_round_trip() {
+    let view = review_1129_fixed_story_view("footer", "{--a--}{PART.r1 @A} x {--b--}{PART.r1 @A}");
+    let out = issue_1137_checked(&view, "word/footer1.xml", 0, 2);
+    assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
+    assert!(
+        out.warnings[0].contains("footer1.r1")
+            && out.warnings[0].contains("footer1.r2")
+            && out.warnings[0].contains("line"),
+        "{:?}",
+        out.warnings
+    );
+    let round = agent(&out.docx);
+    assert!(round.contains("footer1.r2"), "{round}");
+    let reread = written(&round);
+    assert!(check_word_valid_package(&reread).ok());
+    let without_hash = |view: &str| {
+        view.lines()
+            .filter(|line| !line.starts_with("sha256:"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(without_hash(&agent(&reread)), without_hash(&round));
+}
+
+#[test]
+fn issue_1137_header_same_id_keeps_distinct_authors() {
+    let view = review_1129_fixed_story_view("header", "{++a++}{PART.r1 @A}{++b++}{PART.r1 @B}");
+    let out = issue_1137_checked(&view, "word/header1.xml", 2, 0);
+    let xml = part_string(&out.docx, "word/header1.xml").unwrap();
+    assert_eq!(
+        revision_attributes(&xml)
+            .iter()
+            .map(|(author, _)| author.as_str())
+            .collect::<Vec<_>>(),
+        ["Alice", "Bob"]
+    );
+    assert_eq!(out.warnings.len(), 1);
+}
+
+#[test]
+fn issue_1137_footnote_rename_names_its_story() {
+    let view =
+        issue_1137_view("Lead[^1].\n\n[^1]: {++a++}{footnotes.r1 @A} x {++b++}{footnotes.r1 @A}");
+    let out = issue_1137_checked(&view, "word/footnotes.xml", 2, 0);
+    assert_eq!(
+        out.warnings,
+        [
+            "footnotes.r1 names two separate changes on line 8; the second is written as footnotes.r2"
+        ]
+    );
+}
+
+#[test]
+fn issue_1137_adjacent_pieces_compare_the_written_dates() {
+    let view = "---\nauthors:\n  A: Alice # 3 revisions, 2026-10-01..2026-10-02\n---\n{++earlier++}{r2 @A} x {++a++}{r1 @A}{++b++}{r1 @A 2026-10-02T23:59:59Z}\n";
+    let out = issue_1137_checked(view, "word/document.xml", 2, 0);
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let xml = part_string(&out.docx, "word/document.xml").unwrap();
+    assert_eq!(
+        revision_attributes(&xml),
+        [
+            revision_by("Alice", Some("2026-10-01T00:00:00Z")),
+            revision_by("Alice", Some("2026-10-02T23:59:59Z"))
+        ]
+    );
+    let view = plain(&out.docx);
+    assert_eq!(plain(&written(&view)), view);
 }
