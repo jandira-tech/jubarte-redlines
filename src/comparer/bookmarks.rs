@@ -327,10 +327,10 @@ fn inject_side(
     let identical = merged == src;
     let mut hint = 0usize;
     for (index, m) in markers.iter().enumerate() {
+        let empty = m.end == m.start;
         let (s, e) = if identical {
             (m.start, m.end)
         } else {
-            let empty = m.end == m.start;
             let Some(s) = map_point(
                 src,
                 &merged,
@@ -380,15 +380,20 @@ fn inject_side(
         // A body endpoint belongs beside the paragraph, even when its
         // adjacent text now sits in an inline insertion. Offset placement
         // alone would pull it into that paragraph (and that revision).
-        for (endpoint, in_body, after) in
-            [(start, m.start_in_body, false), (end, m.end_in_body, true)]
-        {
-            if in_body && let Some(paragraph) = paragraph_of(dom, endpoint) {
-                dom.remove(endpoint);
-                if after {
-                    dom.add_after_self(paragraph, endpoint);
-                } else {
-                    dom.add_before_self(paragraph, endpoint);
+        // A balanced empty pair is the exception: Word keeps a block-level
+        // empty range inside the paragraph it precedes — never around it,
+        // which would grant the paragraph's text (#1215).
+        if !(empty && m.start_in_body && m.end_in_body) {
+            for (endpoint, in_body, after) in
+                [(start, m.start_in_body, false), (end, m.end_in_body, true)]
+            {
+                if in_body && let Some(paragraph) = paragraph_of(dom, endpoint) {
+                    dom.remove(endpoint);
+                    if after {
+                        dom.add_after_self(paragraph, endpoint);
+                    } else {
+                        dom.add_before_self(paragraph, endpoint);
+                    }
                 }
             }
         }
@@ -604,7 +609,17 @@ pub(crate) fn carry_permission_union(
     }
     let a = extract(original.0, original.1, true);
     let b = extract(revised.0, revised.1, true);
-    let mut reserved: HashSet<String> = a.1.iter().chain(&b.1).map(|m| m.name.clone()).collect();
+    // Word's Compare drops a body-level orphan start (no end) instead of
+    // granting the text after it. An orphan inside a paragraph keeps its
+    // close-where-it-starts placement (#1215).
+    let ((a_text, mut a_marks), (b_text, mut b_marks)) = (a, b);
+    a_marks.retain(|m| m.paired || !m.start_in_body);
+    b_marks.retain(|m| m.paired || !m.start_in_body);
+    let mut reserved: HashSet<String> = a_marks
+        .iter()
+        .chain(&b_marks)
+        .map(|m| m.name.clone())
+        .collect();
     for n in dom.descendants(root, None) {
         if let Some(id) = dom.attribute(n, &W::id()) {
             reserved.insert(id.to_string());
@@ -619,7 +634,7 @@ pub(crate) fn carry_permission_union(
         }
     }
     let mut pairs = Vec::new();
-    for ((text, markers), original) in [(&a, true), (&b, false)] {
+    for ((text, markers), original) in [((&a_text, &a_marks), true), ((&b_text, &b_marks), false)] {
         let refs: Vec<_> = markers.iter().collect();
         inject_side(
             dom,
@@ -637,10 +652,31 @@ pub(crate) fn carry_permission_union(
     }
     let mut positions = HashMap::new();
     let mut offset = 0;
+    // Word's character model gives a paragraph mark, a table cell or row end
+    // and an inline object (`w:drawing`, `w:pict`, `w:object`) one position
+    // each (#1215). Only then does `first <= previous last` below mean
+    // "touch or overlap" in that model: ranges separated by one of those
+    // marks stay apart, as Word keeps them. `w:tab`, `w:br` and `w:sym`
+    // keep zero width here — no Word pair has measured them yet.
+    let (p, tc, tr) = (W::p(), W::tc(), W::tr());
+    let object = [W::drawing(), W::pict(), W::object()];
+    let mut open: Vec<NodeId> = Vec::new();
     for (order, n) in dom.descendants(root, None).into_iter().enumerate() {
+        // Pre-order: every element that closed since the previous node left
+        // its end mark behind (a ¶, a cell end, a row end).
+        let parent = dom.parent(n);
+        while open.last().is_some_and(|&top| Some(top) != parent) {
+            let closed = open.pop().expect("the walk stays under its root");
+            if dom.name_is(closed, &p) || dom.name_is(closed, &tc) || dom.name_is(closed, &tr) {
+                offset += 1;
+            }
+        }
+        open.push(n);
         positions.insert(n, (offset, order));
         if dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()) {
             offset += dom.value(n).chars().count();
+        } else if object.iter().any(|name| dom.name_is(n, name)) {
+            offset += 1;
         }
     }
     let mut spans: Vec<_> = pairs
