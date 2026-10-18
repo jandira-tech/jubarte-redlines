@@ -278,11 +278,26 @@ impl StagedFile {
     }
 }
 
-/// Acknowledge directory durability using a held directory handle.
+/// Windows directory handles are read-only, but FlushFileBuffers needs
+/// GENERIC_WRITE. NTFS journals metadata; directory sync is a no-op there.
+/// Reopening the parent for writing by path would break root confinement (D35).
+fn sync_directory_for_platform(
+    windows: bool,
+    sync: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    if windows { Ok(()) } else { sync() }
+}
+
+fn sync_directory_handle(dir: &cap_std::fs::Dir) -> io::Result<()> {
+    sync_directory_for_platform(cfg!(windows), || {
+        dir.try_clone()?.into_std_file().sync_all()
+    })
+}
+
+/// Acknowledge directory durability using a held directory handle (no-op on Windows).
 pub fn sync_directory(path: &Path) -> io::Result<()> {
-    cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())?
-        .into_std_file()
-        .sync_all()
+    let dir = cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())?;
+    sync_directory_handle(&dir)
 }
 
 impl Drop for StagedFile {
@@ -311,7 +326,7 @@ impl Backend for FsBackend<'_> {
             for component in parent.components() {
                 if let std::path::Component::Normal(name) = component {
                     match dir.create_dir(name) {
-                        Ok(()) => dir.try_clone()?.into_std_file().sync_all()?,
+                        Ok(()) => sync_directory_handle(&dir)?,
                         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
                         Err(e) => return Err(e),
                     }
@@ -427,7 +442,7 @@ impl Backend for FsBackend<'_> {
             Phase::Commit => staged
                 .scratch
                 .hard_link("bytes", &staged.parent, &staged.target),
-            Phase::SyncParent => staged.parent.try_clone()?.into_std_file().sync_all(),
+            Phase::SyncParent => sync_directory_handle(&staged.parent),
         }
     }
 }
@@ -436,6 +451,42 @@ impl Backend for FsBackend<'_> {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn windows_directory_sync_is_a_noop() {
+        let mut called = false;
+        let result = sync_directory_for_platform(true, || {
+            called = true;
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "read-only directory",
+            ))
+        });
+        assert!(
+            result.is_ok(),
+            "Windows directory sync must succeed: {result:?}"
+        );
+        assert!(!called, "Windows must not attempt the directory sync");
+    }
+
+    #[test]
+    fn unix_directory_sync_calls_the_operation_and_preserves_its_result() {
+        for kind in [None, Some(io::ErrorKind::PermissionDenied)] {
+            let mut called = false;
+            let result = sync_directory_for_platform(false, || {
+                called = true;
+                match kind {
+                    None => Ok(()),
+                    Some(kind) => Err(io::Error::new(kind, "read-only directory")),
+                }
+            });
+            assert!(called, "Unix must attempt the directory sync");
+            assert_eq!(result.as_ref().err().map(io::Error::kind), kind);
+            if let Err(error) = result {
+                assert_eq!(error.to_string(), "read-only directory");
+            }
+        }
+    }
 
     /// Deterministic filesystem fake: all state and injected failures stay in memory.
     struct Memory {
