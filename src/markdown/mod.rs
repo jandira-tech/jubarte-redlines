@@ -329,8 +329,8 @@ pub struct MarkdownOptions {
     /// Word's cached breaks (`true`, the default), or no page lines at all;
     /// the header's page count is unaffected.
     pub page_markers: bool,
-    /// With `ids`: timestamps inline on the notes of an author whose marks
-    /// and comments do not all share one timestamp.
+    /// With `ids`: timestamps inline on notes when an author's marks and
+    /// comments have different recorded date forms, including local offsets.
     pub dates: bool,
     /// With `ids`: which blocks of the body to print.
     pub select: Option<Select>,

@@ -318,9 +318,10 @@ Consultant will deliver the services in each Statement of Work, including {++qua
 
 `--track-changes accept|reject` prints the document with every change
 resolved, `--comments none` leaves the comments out of the text (their ids
-move to the id lines), `--dates` puts timestamps in the notes of authors
-with several, `-p p3,p10-p20,t0`, `--head N` and `--tail N` print a
-selection, and `--no-page-markers` skips the layout pass.
+move to the id lines), `--dates` puts timestamps in notes whose author's
+recorded date forms differ, including offsets for the same instant.
+`-p p3,p10-p20,t0`, `--head N` and `--tail N` print a selection, and
+`--no-page-markers` skips the layout pass.
 
 ### Id lines
 

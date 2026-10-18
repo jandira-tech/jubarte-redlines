@@ -78,7 +78,9 @@ impl Handles {
 
     /// Whether a note of this author needs its timestamp inline (`--dates`).
     pub(crate) fn needs_date(&self, author: Option<&str>) -> bool {
-        author.is_some_and(|a| self.dates.contains_key(a) && self.unique_date(a).is_none())
+        // A shared instant can have different local offsets or precision.
+        // Its individual spellings still belong in --dates notes.
+        author.is_some_and(|a| self.dates.get(a).is_some_and(|dates| dates.len() > 1))
     }
 }
 

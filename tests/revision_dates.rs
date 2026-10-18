@@ -320,7 +320,7 @@ fn reported_date_offset_bounds_and_fractions() {
         (
             "2026-09-25T20:04:00.5Z",
             "2026-09-26T00:04:00.500Z",
-            "2026-09-25T20:04:00.500-04:00",
+            "2026-09-25T20:04:00.5-04:00",
         ),
         (
             "2026-09-25T20:04:00.1Z",
@@ -473,4 +473,49 @@ fn offset_view_writer_preserves_wall_clock_for_marks_and_comments() {
         "{comments}"
     );
     assert!(!comments.contains("dateUtc"));
+}
+
+fn paired_fraction_round_trip(local: &str, utc: &str, reported: &str) {
+    let bytes = docx(&format!(
+        r#"<w:p xmlns:utc="http://schemas.microsoft.com/office/word/2023/wordml/word16du"><w:ins w:id="1" w:author="Alice" w:date="{local}" utc:dateUtc="{utc}"><w:r><w:t>text</w:t></w:r></w:ins></w:p>"#
+    ));
+    assert_eq!(
+        list_changes(&bytes).unwrap()[0].date.as_deref(),
+        Some(reported)
+    );
+    let md = view(&bytes, true, true);
+    let output = jubarte::markdown::markdown_to_docx(&md, &Default::default()).unwrap();
+    assert_eq!(stored_dates(&output.docx), [local]);
+}
+
+#[test]
+fn paired_fraction_precision_survives_markdown_round_trip() {
+    paired_fraction_round_trip(
+        "2026-09-25T20:04:00.5Z",
+        "2026-09-26T00:04:00.500Z",
+        "2026-09-25T20:04:00.5-04:00",
+    );
+}
+
+#[test]
+fn zero_offset_pair_preserves_fraction_precision() {
+    paired_fraction_round_trip(
+        "2026-09-26T00:04:00.5Z",
+        "2026-09-26T00:04:00.500Z",
+        "2026-09-26T00:04:00.5Z",
+    );
+}
+
+#[test]
+fn shared_instant_keeps_each_wall_clock_in_dated_view_notes() {
+    let bytes = docx(
+        r#"<w:p xmlns:utc="http://schemas.microsoft.com/office/word/2023/wordml/word16du"><w:ins w:id="1" w:author="Alice" w:date="2026-09-25T20:04:00Z" utc:dateUtc="2026-09-26T00:04:00Z"><w:r><w:t>first</w:t></w:r></w:ins><w:r><w:t> separator </w:t></w:r><w:ins w:id="2" w:author="Alice" w:date="2026-09-26T02:04:00Z" utc:dateUtc="2026-09-26T00:04:00Z"><w:r><w:t>second</w:t></w:r></w:ins></w:p>"#,
+    );
+    let md = view(&bytes, true, true);
+    let output = jubarte::markdown::markdown_to_docx(&md, &Default::default()).unwrap();
+    assert_eq!(stored_dates(&output.docx), stored_dates(&bytes), "{md}");
+    assert!(
+        md.contains("2 revisions, 2026-09-25T20:04:00-04:00"),
+        "{md}"
+    );
 }

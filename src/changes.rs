@@ -457,16 +457,18 @@ pub(crate) fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<St
     else {
         return local.map(str::to_string);
     };
-    let offset = local
-        .and_then(crate::convert::timestamp_order_key)
-        .filter(|(wall, digits)| {
+    let paired = local
+        .and_then(|date| crate::convert::timestamp_order_key(date).map(|key| (date, key)))
+        .filter(|(_, (wall, digits))| {
             digits == &fraction && (wall - instant) % 60 == 0 && (wall - instant).abs() <= 14 * 3600
-        })
-        .map_or(0, |(wall, _)| wall - instant);
-    if offset == 0 && utc.ends_with('Z') {
-        return Some(utc.to_string());
+        });
+    // Equivalent fractions can have different precision. Keep the local
+    // spelling so writing the view preserves the original w:date bytes.
+    let (offset, display) = paired.map_or((0, utc), |(date, (wall, _))| (wall - instant, date));
+    if offset == 0 && display.ends_with('Z') {
+        return Some(display.to_string());
     }
-    let display_fraction = utc[19..]
+    let display_fraction = display[19..]
         .strip_prefix('.')
         .unwrap_or_default()
         .split(['Z', '+', '-'])
