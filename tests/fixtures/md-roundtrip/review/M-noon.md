@@ -11,7 +11,7 @@ page: Letter portrait, margins 1in
 ---
 
 <!-- p0 -->
-{++a++}{>>r1 @A<<} kept
+{++a++}{r1 @A} kept
 
 <!-- p1 -->
 {==x==}{>>c0 @A 2026-03-02T09:00:00Z: ok<<}

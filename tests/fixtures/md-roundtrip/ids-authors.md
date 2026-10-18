@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 22                      # 22 marks shown as 21 changes: 6 insertions, 8 deletions, 1 substitution, 6 paragraph marks
+revisions: 22                      # 22 marks shown as 22 changes: 7 insertions, 9 deletions, 6 paragraph marks
 comments: 0
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -20,37 +20,37 @@ styles:
 # Adjacent and spanning changes
 
 <!-- p1 Normal left -->
-Back to back: {++one++}{>>r0 @AL<<}{~~three~>two~~}{>>r2 @CD<<}{>>r1 @BC<<}{--four--}{>>r3 @DP<<}.
+Back to back: {++one++}{r0 @AL}{++two++}{r1 @BC}{--three--}{r2 @CD}{--four--}{r3 @DP}.
 
 <!-- p2 Normal left -->
-{++Start of paragraph ++}{>>r4 @AL<<}middle{-- end of paragraph--}{>>r5 @BC<<}
+{++Start of paragraph ++}{r4 @AL}middle{-- end of paragraph--}{r5 @BC}
 
 <!-- p3 Normal left -->
-Replaced by two people: {--old--}{>>r6 @AL<<}{++new++}{>>r7 @BC<<}.
+Replaced by two people: {--old--}{r6 @AL}{++new++}{r7 @BC}.
 
 <!-- p4 Normal left, break-del r9 @BC -->
-Deletion across paragraphs: alpha{-- beta--}{>>r8 @BC<<}
+Deletion across paragraphs: alpha{-- beta--}{r8 @BC}
 
 <!-- p5 Normal left -->
-{--gamma--}{>>r10 @BC<<} delta.
+{--gamma--}{r10 @BC} delta.
 
-<!-- p6 Normal left, break-ins r12 @AL -->
-Insertion across paragraphs: one{++ two++}{>>r11 @AL<<}
+<!-- p6 Normal left -->
+Insertion across paragraphs: one{++ two++}{r11 @AL}¶{r12 @AL}
 
 <!-- p7 Normal left -->
-{++three++}{>>r13 @AL<<} four.
+{++three++}{r13 @AL} four.
 
 <!-- p8 Normal left -->
 Before three cut paragraphs.
 
 <!-- p9 Normal left, break-del r15 @BC -->
-{--Cut one.--}{>>r14 @BC<<}
+{--Cut one.--}{r14 @BC}
 
 <!-- p10 Normal left, break-del r17 @BC -->
-{--Cut two.--}{>>r16 @BC<<}
+{--Cut two.--}{r16 @BC}
 
 <!-- p11 Normal left, break-del r19 @BC -->
-{--Cut three.--}{>>r18 @BC<<}
+{--Cut three.--}{r18 @BC}
 
 <!-- p12 Normal left -->
 After them.
@@ -64,4 +64,4 @@ An empty paragraph above
 &#32;and a joined one.
 
 <!-- p16 Normal left -->
-Last{++ words++}{>>r21 @AL<<}
+Last{++ words++}{r21 @AL}

@@ -1077,8 +1077,8 @@ fn a_block_added_after_a_paragraph_leaves_that_paragraph_as_it_was() {
 #[test]
 fn attributions_name_the_author_and_date_of_the_change_before_them() {
     let docx = write(
-        "A{++b++}{>>Ana Lima (2026-01-02T03:04:00Z)<<} c{~~d~>e~~}{>>Bo (2026-02-03T04:05:06Z)<<}\
-         {>>Cy (2026-03-04T05:06:07Z)<<} f{--g--}{>>(2026-04-05T06:07:08+01:00)<<}.\n\n\
+        "A{++b++}{noid Ana Lima (2026-01-02T03:04:00Z)} c{~~d~>e~~}{noid Bo (2026-02-03T04:05:06Z)}\
+         {noid Cy (2026-03-04T05:06:07Z)} f{--g--}{noid (2026-04-05T06:07:08+01:00)}.\n\n\
          {==h==}{>>Dee (2026-05-06T07:08:09Z): Why?<<} i{++j++}{>>Ana Lima<<}\n",
     );
     let xml = document_xml(&docx);
@@ -1091,10 +1091,9 @@ fn attributions_name_the_author_and_date_of_the_change_before_them() {
         changes,
         [
             r#"w:author="Ana Lima" w:date="2026-01-02T03:04:00Z""#,
-            // A substitution is written as Word writes one: the inserted
-            // side (Cy's) before the deleted side (Bo's).
-            r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
+            // A substitution writes its deleted side before its live insertion.
             r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
+            r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
             // View offsets write Word's wall clock beside the UTC instant.
             r#"w:author="Redline" w:date="2026-04-05T06:07:08Z" w16du:dateUtc="2026-04-05T05:07:08Z""#,
             r#"w:author="Redline" w:date="1970-01-01T00:00:00Z""#,
@@ -1304,7 +1303,7 @@ fn a_range_split_into_highlights_is_one_comment() {
     // How a comment range that crosses paragraphs and changes is read from
     // Word: pieces, with the comment after the last.
     let docx = write(
-        "Start {==of a range.==}\n\n{==The middle.==}\n\n{==The{++ new++}{>>Ana (2026-01-02T03:04:00Z)<<} end==}{>>Bo (2026-01-02T03:05:00Z): Note<<} after.\n\n\
+        "Start {==of a range.==}\n\n{==The middle.==}\n\n{==The{++ new++}{noid Ana (2026-01-02T03:04:00Z)} end==}{>>Bo (2026-01-02T03:05:00Z): Note<<} after.\n\n\
          {==apart==} text {==b==}{>>n<<}\n",
     );
     let xml = document_xml(&docx);
@@ -1316,7 +1315,7 @@ fn a_range_split_into_highlights_is_one_comment() {
     assert_eq!(xml.matches("<w:highlight ").count(), 1, "{xml}");
     // A comment after an attribution is on its own point, not the change.
     let docx =
-        write("a{--b--}{>>Bo (2026-01-02T03:04:00Z)<<}{>>Cy (2026-01-02T03:05:00Z): why<<} c\n");
+        write("a{--b--}{noid Bo (2026-01-02T03:04:00Z)}{>>Cy (2026-01-02T03:05:00Z): why<<} c\n");
     let xml = document_xml(&docx);
     let start = xml.find("<w:commentRangeStart").unwrap();
     assert!(xml.find("</w:del>").unwrap() < start, "{xml}");
@@ -1326,7 +1325,7 @@ fn a_range_split_into_highlights_is_one_comment() {
 fn comments_as_read_from_word_keep_their_ranges_and_authors() {
     let docx = write(
         "An {==empty comment==}{>>Émile Zola-Ng (2026-10-01T00:20:00Z)<<} and \
-         {++{==inserted text==}++}{>>Ana (2026-10-01T00:45:00Z)<<}{>>Carla (2026-10-01T00:50:00Z): Good.<<}.\n",
+         {++{==inserted text==}++}{noid Ana (2026-10-01T00:45:00Z)}{>>Carla (2026-10-01T00:50:00Z): Good.<<}.\n",
     );
     let comments = part_string(&docx, "word/comments.xml").unwrap();
     assert!(

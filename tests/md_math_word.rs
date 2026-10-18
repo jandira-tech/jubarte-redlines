@@ -219,7 +219,7 @@ fn round_trip(markdown: &str) -> (String, String) {
 #[test]
 fn an_equation_inserted_whole_is_one_change_around_it() {
     let (view, xml) = round_trip("Added {++$E=mc^2$++} here.\n");
-    assert!(view.contains("{++$E=mc^2$++}{>>r"), "{view}");
+    assert!(view.contains("{++$E=mc^2$++}{r"), "{view}");
     // Word marks inside the math, never around it.
     assert!(xml.contains("<m:r><w:ins "), "{xml}");
     assert!(!xml.contains("\"><m:oMath"), "{xml}");
@@ -246,20 +246,22 @@ fn display_lines_become_an_equation_array() {
 
 #[test]
 fn dollar_amounts_keep_revision_ids_and_authors() {
-    let line = "The price is {--$100--}{>>r5 @A<<}{--$120--}{>>r7 @ASR on r6 @A<<}{++$110++}{>>r8 @ASR<<}.";
+    let line = "The price is {--$100--}{r5 @A}{--$120--}{r7 @ASR re r6 @A}{++$110++}{r8 @ASR}.";
     let markdown = format!(
         "---\ntrack_changes: on\nauthors:\n  A: Alice\n  ASR: Arthur Souza Rodrigues\n---\n\n{line}\n"
     );
     let (view, xml) = round_trip(&markdown);
-    assert_eq!(view, line);
+    assert_eq!(
+        view,
+        "The price is {--$100--}{r5 @A}{~~$120~>$110~~}{r7+8 @ASR re r6 @A}."
+    );
     assert!(!xml.contains("<m:oMath"), "{xml}");
 }
 
 #[test]
 fn dollar_amounts_in_adjacent_changes_stay_text() {
     let (view, xml) = round_trip("{--$5--}{++$7++}");
-    assert!(view.contains("{--$5--}"), "{view}");
-    assert!(view.contains("{++$7++}"), "{view}");
+    assert!(view.contains("{~~$5~>$7~~}"), "{view}");
     assert!(!xml.contains("<m:oMath"), "{xml}");
 }
 
@@ -333,8 +335,8 @@ fn dollar_formulas_keep_numeric_starts_and_literal_delimiters() {
 
 #[test]
 fn display_dollars_do_not_cross_revisions_or_leak_comments() {
-    for annotation in ["r5 @A", "note"] {
-        let source = format!("The price is {{--$$100--}}{{>>{annotation}<<}}{{--$$120--}}.");
+    for annotation in ["r5 @A", ">>note<<"] {
+        let source = format!("The price is {{--$$100--}}{{{annotation}}}{{--$$120--}}.");
         let (view, xml) = round_trip(&source);
         assert!(!xml.contains("<m:oMath"), "{xml}");
         assert_eq!(xml.matches("<w:del ").count(), 2, "{xml}");
@@ -342,7 +344,7 @@ fn display_dollars_do_not_cross_revisions_or_leak_comments() {
         assert!(view.contains("{--$$120--}"), "{view}");
         if annotation == "r5 @A" {
             // This note attributes the revision; it is not a comment body.
-            assert!(view.contains("{>>r5 @A<<}"), "{view}");
+            assert!(view.contains("{r5 @A}"), "{view}");
             assert!(xml.contains("<w:del w:id=\"5\" w:author=\"A\""), "{xml}");
         } else {
             assert!(xml.contains("<w:commentReference "), "{xml}");
@@ -380,8 +382,8 @@ fn dollar_reparse_keeps_cjk_prose_out_of_accepted_formulas() {
 #[test]
 fn dollar_reparse_can_reuse_a_refused_closer_as_a_formula_opener() {
     for (source, equation) in [
-        ("{++cost $5++}{>>r1 @A<<}x$y$", "y"),
-        ("{++cost $5++}{>>r1 @A<<}x$2+2$", "2+2"),
+        ("{++cost $5++}{r1 @A}x$y$", "y"),
+        ("{++cost $5++}{r1 @A}x$2+2$", "2+2"),
     ] {
         let (_, xml) = round_trip(source);
         assert_eq!(xml.matches("</m:oMath>").count(), 1, "{source}: {xml}");

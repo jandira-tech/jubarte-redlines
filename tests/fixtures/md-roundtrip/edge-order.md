@@ -14,19 +14,19 @@ styles:
 ---
 
 <!-- p0 -->
-Del then ins: {--old--}{>>r50 @AL<<}{++new++}{>>r51 @AL<<}.
+Del then ins: {~~old~>new~~}{r50+51 @AL}.
 
 <!-- p1 -->
-Ins then del: {~~old~>new~~}{>>r53+52 @AL<<}.
+Ins then del: {++new++}{r52 @AL}{--old--}{r53 @AL}.
 
 <!-- p2 -->
-Ins ins del del: {++one ++}{>>r54 @AL<<}{~~three ~>two ~~}{>>r56 @AL<<}{>>r55 @BC<<}{--four--}{>>r57 @BC<<}.
+Ins ins del del: {++one ++}{r54 @AL}{++two ++}{r55 @BC}{--three --}{r56 @AL}{--four--}{r57 @BC}.
 
 <!-- p3 -->
-Two authors: {--hers--}{>>r58 @AL<<}{++his++}{>>r59 @BC<<}.
+Two authors: {--hers--}{r58 @AL}{++his++}{r59 @BC}.
 
 <!-- p4 -->
-Side by side: {--a--}{>>r60 @AL<<}{~~c~>b~~}{>>r62+61 @AL<<}{++d++}{>>r63 @AL<<}.
+Side by side: {~~a~>b~~}{r60+61 @AL}{~~c~>d~~}{r62+63 @AL}.
 
 <!-- p5 -->
-Spaced: {--x--}{>>r64 @AL<<} {++y++}{>>r65 @AL<<}.
+Spaced: {--x--}{r64 @AL} {++y++}{r65 @AL}.

@@ -11,7 +11,7 @@ page: Letter portrait, margins 1in
 ---
 
 <!-- p0 -->
-{++one++}{>>r1 @AL 2026-03-09T05:00:00Z<<} here
+{++one++}{r1 @AL 2026-03-09T05:00:00Z} here
 
 <!-- p1 -->
-{++two++}{>>r2 @AL<<} here
+{++two++}{r2 @AL} here
