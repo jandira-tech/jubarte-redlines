@@ -407,6 +407,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         pending_notes: Vec::new(),
         in_comment: false,
         in_box: false,
+        nested_editable: true,
+        box_regions: Vec::new(),
         agent: options.ids,
         comments_inline: options.comments,
         resolved: accept.is_some(),
@@ -2355,10 +2357,12 @@ struct Writer<'a> {
     /// changes keep their marks but not their author, and comment anchors are
     /// ignored.
     in_comment: bool,
-    /// Writing a drawn text box's content for its comment lines: a drawing
-    /// inside it prints no payload token (the captured drawing already holds
-    /// it) and a box nested inside it is walked through, not printed twice.
+    /// A text-box story: its paragraphs consume no body paragraph ids.
     in_box: bool,
+    /// The enclosing drawing's branch copies correspond, permitting transfer.
+    nested_editable: bool,
+    /// Recursive regions, deferred until the enclosing region closes.
+    box_regions: Vec<String>,
     /// Agent view (`Options::ids`).
     agent: bool,
     /// Agent view: comments inline, or hidden and listed on id lines.
@@ -3422,21 +3426,12 @@ impl Writer<'_> {
         out: &mut Critic,
         extra: &mut Vec<String>,
     ) {
-        if self.in_box {
-            // Inside a drawn box's content: the capturing drawing already
-            // holds this one; print only what the layer can say in words.
+        if self.in_comment || (self.in_box && !self.nested_editable) {
             self.drawing_text(element, out, extra);
             return;
         }
-        if self.in_comment {
-            self.drawing_text(element, out, extra);
-            return;
-        }
-        let first = extra.len();
-        self.box_blocks(element, extra);
-        let stories = extra[first..].to_vec();
-        let mut plain_image = false;
-        if drawing::is_plain_inline(element)
+        if !self.in_box
+            && drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
         {
             let alt = doc_pr
@@ -3451,80 +3446,79 @@ impl Writer<'_> {
                 .map(|r| r.target.clone());
             if let Some(image) = self.media.extracted_markdown(alt, target.as_deref()) {
                 out.raw(&image);
-                plain_image = true;
+                return;
             }
         }
-        if !plain_image {
-            let scope = self.scopes.scope(element);
-            let part = self.part.clone();
-            let name = format!("d{}", self.pendings.len() + 1);
-            for (index, block) in extra[first..].iter_mut().enumerate() {
-                *block =
-                    format!("<!-- text-box {name}.{index} -->\n\n{block}\n\n<!-- /text-box -->");
-            }
-            out.raw(&drawing::Pending::push(
-                &mut self.pendings,
-                element,
-                &part,
-                scope,
-                wrap,
-                stories,
-            ));
+        let Some((index, token)) = drawing::Pending::reserve(
+            &mut self.pendings,
+            element,
+            &self.part,
+            self.scopes.scope(element),
+            wrap,
+        ) else {
+            self.drawing_text(element, out, extra);
+            return;
+        };
+        let enclosing = std::mem::take(&mut self.box_regions);
+        let mut stories = Vec::new();
+        self.box_blocks(element, &mut stories);
+        let nested = std::mem::replace(&mut self.box_regions, enclosing);
+        let name = format!("d{}", index + 1);
+        let mut regions = stories
+            .iter()
+            .enumerate()
+            .map(|(ordinal, block)| {
+                format!("<!-- text-box {name}.{ordinal} -->\n\n{block}\n\n<!-- /text-box -->")
+            })
+            .collect::<Vec<_>>();
+        regions.extend(nested);
+        drawing::Pending::attach(&mut self.pendings, index, element, stories);
+        out.raw(&token);
+        if self.in_box {
+            self.box_regions.extend(regions);
+        } else {
+            extra.extend(regions);
         }
     }
 
-    /// The `txbxContent` Word renders of `element` — under an
-    /// `mc:AlternateContent`, only the shown branch's, never the
-    /// `mc:Fallback` copy — each printed as a block of `extra`: the box's
-    /// words, where a reader reads them and an edit lands (#1101 A).
+    /// Only the nearest-owned stories in the shown branch. Recursive drawings
+    /// enqueue their own flat regions, preserving their position as tokens.
     fn box_blocks(&mut self, element: &Element, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
-        let root = match element
+        let root = element
             .child("Choice")
             .or_else(|| element.child("Fallback"))
-        {
-            Some(branch) => branch,
-            None => element,
-        };
+            .unwrap_or(element);
         root.find_all("txbxContent", &mut boxes);
-        if boxes.is_empty() {
-            return;
-        }
-        let open_comments = std::mem::take(&mut self.open_comments);
-        let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
-        let in_box = std::mem::replace(&mut self.in_box, true);
+        let editable = (!self.in_box || self.nested_editable) && drawing::nested_editable(element);
         for content in boxes {
+            let open_comments = std::mem::take(&mut self.open_comments);
+            let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
+            let open_fields = std::mem::take(&mut self.open_fields);
+            let closing_fields = std::mem::take(&mut self.closing_fields);
+            let heading_slug = self.heading_slug.take();
+            let monospace = self.monospace_paragraph;
+            let in_box = std::mem::replace(&mut self.in_box, true);
+            let nested_editable = std::mem::replace(&mut self.nested_editable, editable);
             let mut blocks = Blocks::new();
             let mut list = ListIndent::default();
             self.blocks(content, &mut blocks, &mut list);
             extra.push(blocks.finish());
+            self.in_box = in_box;
+            self.nested_editable = nested_editable;
+            self.open_comments = open_comments;
+            self.hidden_ranges = hidden_ranges;
+            self.open_fields = open_fields;
+            self.closing_fields = closing_fields;
+            self.heading_slug = heading_slug;
+            self.monospace_paragraph = monospace;
         }
-        self.in_box = in_box;
-        self.open_comments = open_comments;
-        self.hidden_ranges = hidden_ranges;
     }
 
-    /// A drawing's printable content inside a comment or a drawn text box:
-    /// its text boxes as extra blocks (a text box is a story of its own, so
-    /// comment ranges around its anchor do not cover it) and its image's
-    /// alt text.
+    /// Rejected nested drawings remain readable, with no independent editable
+    /// token. The enclosing opaque template preserves them on an unchanged write.
     fn drawing_text(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
-        let mut boxes = Vec::new();
-        // Inside a drawn box's content, `blocks` already walked a nested
-        // box through: printing it again as a block would show it twice.
-        if !self.in_box {
-            drawing.find_all("txbxContent", &mut boxes);
-        }
-        let open_comments = std::mem::take(&mut self.open_comments);
-        let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
-        for content in boxes {
-            let mut blocks = Blocks::new();
-            let mut list = ListIndent::default();
-            self.blocks(content, &mut blocks, &mut list);
-            extra.push(blocks.finish());
-        }
-        self.open_comments = open_comments;
-        self.hidden_ranges = hidden_ranges;
+        self.box_blocks(drawing, extra);
         if let Some(doc_pr) = drawing.find("docPr") {
             let alt = doc_pr
                 .attr("descr")

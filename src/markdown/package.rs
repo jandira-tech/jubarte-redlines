@@ -1594,7 +1594,12 @@ impl Relate for PartRelate<'_, '_, '_> {
         )?;
         // A text box's frame is refilled from the story the view printed.
         match story {
-            Some(story) => Some(super::from_docx::drawing::fill_boxes(&xml, drawing, story)),
+            Some(story) => Some(super::from_docx::drawing::fill_boxes(
+                &xml,
+                drawing,
+                story,
+                next_doc_pr,
+            )),
             None => Some(xml),
         }
     }
