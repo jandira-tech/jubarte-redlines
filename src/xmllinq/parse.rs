@@ -9,7 +9,12 @@
 //! for OOXML parts, which is all the engine needs. It is transcribed
 //! directly from the TypeScript rather than driven by `quick-xml`, so the
 //! parse / serialize pair round-trips byte-identically to the TS oracle
-//! (the basis of the M1.8 round-trip gate).
+//! (the basis of the M1.8 round-trip gate). One deliberate XML 1.0
+//! correction over the TS port: raw attribute values and text runs are
+//! whitespace / line-end normalized (§3.3.3, §2.11) *before* entity
+//! decoding, so the DOM holds the value a conforming reader sees (literal
+//! TAB/CR/LF in an attribute are spaces, a literal CR in text is LF;
+//! character references keep the characters they name).
 //!
 //! # Entry points
 //!
@@ -533,7 +538,13 @@ impl<'a> Parser<'a> {
                 avalue = self.slice(vstart, self.pos);
                 self.pos += 1; // closing quote
             }
-            raw_attrs.push((aname, unescape_xml_text(&avalue)));
+            // Normalize the RAW slice before entity decoding: literal
+            // whitespace reads as space (§3.3.3) but character references
+            // keep the characters they name.
+            raw_attrs.push((
+                aname,
+                unescape_xml_text(&normalize_raw_attribute_whitespace(avalue)),
+            ));
         }
 
         // N02: this element's xmlns / xmlns:* attributes push onto the
@@ -589,7 +600,9 @@ impl<'a> Parser<'a> {
             if self.starts_with("<![CDATA[") {
                 let end = self.index_of("]]>", self.pos);
                 let body = self.slice(self.pos + 9, end.unwrap_or(len));
-                let t = self.dom.new_text(&body);
+                // Line-end normalization (§2.11) applies inside CDATA too;
+                // entities do not.
+                let t = self.dom.new_text(&normalize_raw_text_end_of_line(body));
                 self.dom.add(el, t);
                 self.pos = end.map(|e| e + 3).unwrap_or(len);
                 continue;
@@ -608,7 +621,9 @@ impl<'a> Parser<'a> {
             while self.pos < len && self.cur() != '<' {
                 self.pos += 1;
             }
-            let raw = self.slice(tstart, self.pos);
+            // Normalize the RAW slice before entity decoding: a literal
+            // CR/CRLF reads as LF (§2.11) but a &#13; reference keeps CR.
+            let raw = normalize_raw_text_end_of_line(self.slice(tstart, self.pos));
             if !raw.is_empty() {
                 let t = self.dom.new_text(&unescape_xml_text(&raw));
                 self.dom.add(el, t);
@@ -754,6 +769,64 @@ fn decode_entity(body: &str) -> Option<String> {
         "apos" => Some("'".to_string()),
         _ => None,
     }
+}
+
+/// XML 1.0 §3.3.3 attribute-value normalization, applied to the RAW value
+/// slice *before* [`unescape_xml_text`]: §2.11 end-of-line handling folds a
+/// literal CRLF (and a lone CR) to one LF first, and every literal
+/// whitespace character then reads as one space — the value a conforming
+/// reader (Word) sees. Character references are untouched here: `&#9;`
+/// still decodes to a tab afterwards, so referenced whitespace survives.
+///
+/// Returns the input unchanged when it holds no literal TAB, CR or LF —
+/// the allocation-free fast path every ordinary attribute takes.
+fn normalize_raw_attribute_whitespace(value: String) -> String {
+    if !value.contains(['\t', '\n', '\r']) {
+        return value;
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\t' | '\n' => out.push(' '),
+            // A literal CRLF is one end-of-line — one space, not two.
+            '\r' => {
+                if chars.as_str().starts_with('\n') {
+                    chars.next();
+                }
+                out.push(' ');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// XML 1.0 §2.11 end-of-line handling, applied to the RAW text slice (CDATA
+/// bodies included — the processor normalizes line breaks before parsing)
+/// *before* [`unescape_xml_text`]: a literal CRLF and a lone CR both read
+/// as one LF. TAB and LF stay as they are; a `&#13;` reference still
+/// decodes to CR afterwards.
+///
+/// Returns the input unchanged when it holds no literal CR — the
+/// allocation-free fast path every ordinary text run takes.
+fn normalize_raw_text_end_of_line(text: String) -> String {
+    if !text.contains('\r') {
+        return text;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            if chars.as_str().starts_with('\n') {
+                chars.next();
+            }
+            out.push('\n');
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Structural admission for a part before the permissive DOM parser reads
@@ -939,6 +1012,78 @@ mod xml_lexical_boundary_contract_tests {
             ("A &lt; B &amp; C", "A < B & C"),
         ] {
             assert_eq!(unescape_xml_text(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn literal_attribute_whitespace_reads_as_spaces_references_survive() {
+        // XML 1.0 §2.11 + §3.3.3, the value a conforming reader (Word) sees:
+        // end-of-line handling folds the literal CRLF to one LF first, then
+        // every literal whitespace character in the attribute value reads
+        // as one space.
+        let mut dom = Dom::new();
+        let document = parse_xdocument(&mut dom, "<a b=\"x\ty\nz\r\nw\"/>");
+        let root = dom.root(document).unwrap();
+        assert_eq!(
+            dom.attribute(root, &crate::xmllinq::XName::get("b", "")),
+            Some("x y z w")
+        );
+        // Character references are not literal whitespace: &#9;/&#10;/&#13;
+        // still decode to the characters they name.
+        let mut dom = Dom::new();
+        let document = parse_xdocument(&mut dom, "<a b=\"x&#9;y&#10;z&#13;w\"/>");
+        let root = dom.root(document).unwrap();
+        assert_eq!(
+            dom.attribute(root, &crate::xmllinq::XName::get("b", "")),
+            Some("x\ty\nz\rw")
+        );
+    }
+
+    #[test]
+    fn literal_text_end_of_line_reads_as_lf_references_survive() {
+        // §2.11: a literal CRLF and a lone CR both read as LF; TAB and LF
+        // stay as they are. CDATA content is line-normalized the same way
+        // (the processor normalizes before parsing) and builds the same
+        // text-node value from raw markup.
+        let mut dom = Dom::new();
+        let document = parse_xdocument(&mut dom, "<a>t\r\nu\rv</a>");
+        let root = dom.root(document).unwrap();
+        assert_eq!(dom.value_str(root), "t\nu\nv");
+        let mut dom = Dom::new();
+        let document = parse_xdocument(&mut dom, "<a><![CDATA[t\r\nu\rv]]></a>");
+        let root = dom.root(document).unwrap();
+        assert_eq!(dom.value_str(root), "t\nu\nv");
+        // A CR reference still decodes to CR.
+        let mut dom = Dom::new();
+        let document = parse_xdocument(&mut dom, "<a>t&#13;u</a>");
+        let root = dom.root(document).unwrap();
+        assert_eq!(dom.value_str(root), "t\ru");
+    }
+
+    #[test]
+    fn literal_whitespace_sources_round_trip_to_the_same_dom_values() {
+        for source in [
+            "<a b=\"x\ty\nz\r\nw\">t\r\nu\rv</a>",
+            "<a b=\"x&#9;y&#10;z&#13;w\">t&#13;u</a>",
+        ] {
+            let mut dom = Dom::new();
+            let document = parse_xdocument(&mut dom, source);
+            let root = dom.root(document).unwrap();
+            let attr = dom
+                .attribute(root, &crate::xmllinq::XName::get("b", ""))
+                .unwrap()
+                .to_string();
+            let text = dom.value(root);
+            let serialized = dom.serialize_document(document);
+            let mut reparsed = Dom::new();
+            let document2 = parse_xdocument(&mut reparsed, &serialized);
+            let root2 = reparsed.root(document2).unwrap();
+            assert_eq!(
+                reparsed.attribute(root2, &crate::xmllinq::XName::get("b", "")),
+                Some(attr.as_str()),
+                "{source} → {serialized}"
+            );
+            assert_eq!(reparsed.value(root2), text, "{source} → {serialized}");
         }
     }
 
