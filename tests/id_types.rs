@@ -88,6 +88,62 @@ fn printed_ids(places: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The shared audit used by the fixture gate and synthetic probes.
+fn printed_failures(view: &str) -> (usize, Vec<String>) {
+    let mut places = printed_places(view);
+    let mut checked = 0;
+    let mut failures = Vec::new();
+    places.retain(|place| {
+        let Some((label, _)) = place.split_once(" drawing:") else {
+            return true;
+        };
+        if label.is_empty() || label.chars().any(char::is_whitespace) {
+            return true;
+        }
+        // The writer uses d + digits. Keep even malformed d-number labels
+        // (d9x, d01) in the strict ShortId audit, whether referenced or not.
+        if label
+            .strip_prefix('d')
+            .is_some_and(|tail| tail.starts_with(|c: char| c.is_ascii_digit()))
+        {
+            return true;
+        }
+        checked += 1;
+        let reference = format!("[{label}]");
+        let definition = format!("{reference}:");
+        let used = view.lines().any(|line| {
+            !line.trim_start().starts_with(&definition)
+                && COMMENT.replace_all(line, "").contains(&reference)
+        });
+        if !used {
+            failures.push(format!(
+                "    ✗ {label}: drawing label has no reference in the text"
+            ));
+        }
+        false
+    });
+    for expired in places.iter().flat_map(|p| EXPIRED.captures_iter(p)) {
+        checked += 1;
+        let line = format!("    ✗ {}: an expired spelling is printed", &expired[1]);
+        if !failures.contains(&line) {
+            failures.push(line);
+        }
+    }
+    for token in printed_ids(&places) {
+        checked += 1;
+        let why = match token.parse::<ShortId>() {
+            Ok(id) if id.to_string() == token => continue,
+            Ok(id) => format!("prints back as {id}"),
+            Err(e) => e.to_string(),
+        };
+        let line = format!("    ✗ {token}: {why}");
+        if !failures.contains(&line) {
+            failures.push(line);
+        }
+    }
+    (checked, failures)
+}
+
 #[test]
 fn every_id_the_views_print_parses_and_prints_back() {
     let mut fixtures: Vec<_> = std::fs::read_dir(FIXTURES)
@@ -101,27 +157,10 @@ fn every_id_the_views_print_parses_and_prints_back() {
     for path in &fixtures {
         let text = std::fs::read_to_string(path).unwrap();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        let places = printed_places(&text);
-        for expired in places.iter().flat_map(|p| EXPIRED.captures_iter(p)) {
-            checked += 1;
-            let line = format!("    ✗ {}: an expired spelling is printed", &expired[1]);
-            let list = failures.entry(name.clone()).or_default();
-            if !list.contains(&line) {
-                list.push(line);
-            }
-        }
-        for token in printed_ids(&places) {
-            checked += 1;
-            let why = match token.parse::<ShortId>() {
-                Ok(id) if id.to_string() == token => continue,
-                Ok(id) => format!("prints back as {id}"),
-                Err(e) => e.to_string(),
-            };
-            let list = failures.entry(name.clone()).or_default();
-            let line = format!("    ✗ {token}: {why}");
-            if !list.contains(&line) {
-                list.push(line);
-            }
+        let (count, lines) = printed_failures(&text);
+        checked += count;
+        if !lines.is_empty() {
+            failures.insert(name, lines);
         }
     }
     assert!(checked > 1000, "only {checked} ids found in {FIXTURES}");
@@ -153,4 +192,38 @@ fn places_include_trailing_comments_quoted_notes_and_expired_spellings() {
         .map(|c| c[1].to_string())
         .collect();
     assert_eq!(expired, ["#12"]);
+}
+
+#[test]
+fn referenced_foreign_drawing_labels_are_not_short_ids() {
+    for text in ["![Alice][image1]", "![image1][]", "![image1]"] {
+        let view = format!(
+            "{text}\n[image1]: <data:image/png;base64,AA==>\n<!-- image1 drawing:AA== -->\n"
+        );
+        let (checked, failures) = printed_failures(&view);
+        assert_eq!(checked, 1);
+        assert!(failures.is_empty(), "{text}: {failures:?}");
+    }
+}
+
+#[test]
+fn drawing_labels_still_require_short_id_round_trips() {
+    for label in ["d9x", "d01"] {
+        let view = format!("![Alice][{label}]\n<!-- {label} drawing:AA== -->\n");
+        let (checked, failures) = printed_failures(&view);
+        assert_eq!(checked, 1);
+        assert_eq!(failures.len(), 1, "{label}: {failures:?}");
+        assert!(failures[0].contains(label), "{failures:?}");
+    }
+}
+
+#[test]
+fn foreign_drawing_labels_require_a_reference_in_the_text() {
+    for text in ["", "![Alice][other]", "<!-- ![Alice][logo] -->"] {
+        let view =
+            format!("{text}\n[logo]: <data:image/png;base64,AA==>\n<!-- logo drawing:AA== -->\n");
+        let (_, failures) = printed_failures(&view);
+        assert_eq!(failures.len(), 1, "{text}: {failures:?}");
+        assert!(failures[0].contains("logo"), "{failures:?}");
+    }
 }
