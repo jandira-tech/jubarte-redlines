@@ -3493,6 +3493,46 @@ pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
 /// come back unchanged ([`crate::changes`]).
 pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
 
+/// Start a writer's allocator above every existing `w:id` in the package,
+/// including records a selective resolution will freeze or remove.
+pub(crate) fn next_revision_id(pkg: &crate::opc::PartFs) -> u64 {
+    pkg.parts()
+        .into_iter()
+        .filter(|part| part.ends_with(".xml"))
+        .filter_map(|part| {
+            let xml = pkg.part_string(&part)?;
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let root = dom.root(doc)?;
+            dom.descendants(root, None)
+                .into_iter()
+                .filter_map(|node| dom.attribute(node, &W::id())?.parse::<u64>().ok())
+                .max()
+        })
+        .max()
+        .map_or(0, |id| id + 1)
+}
+
+/// A copied property history is a distinct record. Allocate at the copy
+/// site, leaving the original's attribution, payload and id untouched.
+pub(crate) fn clone_with_fresh_property_ids(
+    dom: &mut Dom,
+    source: NodeId,
+    next_id: &mut u64,
+) -> NodeId {
+    let copy = dom.clone_subtree(source);
+    for node in std::iter::once(copy).chain(dom.descendants(copy, None)) {
+        if dom.name(node).is_some_and(|name| {
+            matches!(name.namespace_name(), W::URI | FROZEN_NS)
+                && matches!(name.local_name(), "rPrChange" | "pPrChange")
+        }) {
+            dom.set_attribute_value(node, &W::id(), Some(&next_id.to_string()));
+            *next_id += 1;
+        }
+    }
+    copy
+}
+
 /// Called with each revision-bearing part's name and parsed root before it
 /// is resolved; renames the revisions to keep into [`FROZEN_NS`].
 pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
@@ -3515,6 +3555,7 @@ fn resolve(
     renumber: bool,
 ) -> Vec<String> {
     let parts = revision_bearing_parts(pkg);
+    let mut next_id = next_revision_id(pkg);
     let levels = numbering_part(pkg)
         .and_then(|p| pkg.part_string(&p))
         .map(|xml| style_records::Levels::parse(&xml))
@@ -3530,7 +3571,13 @@ fn resolve(
                 (true, Resolution::Reject) => {
                     let recorded = style_records::recorded_blocks(dom, root);
                     let rejected = reject_revisions_for_styles_transform(dom, root)?;
-                    style_records::restore_against_built_ins(dom, rejected, &recorded, &levels);
+                    style_records::restore_against_built_ins(
+                        dom,
+                        rejected,
+                        &recorded,
+                        &levels,
+                        &mut next_id,
+                    );
                     accept_revisions_for_styles_transform(dom, rejected)
                 }
                 (false, _) => {
