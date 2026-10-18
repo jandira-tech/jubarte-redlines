@@ -619,8 +619,8 @@ pub(super) fn section(entry: &str) -> Stories {
 fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -> String {
     let mut out = String::new();
     let mut plain = String::new();
-    let mut last_revision = None;
-    let mut noid_parent = None;
+    let mut last_revision = Vec::new();
+    let mut noid_parent = Vec::new();
     let mut rest = text;
     while let Some(c) = rest.chars().next() {
         if let Some(after) = rest.strip_prefix("{>>")
@@ -636,8 +636,8 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
             continue;
         }
         if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
-            last_revision = None;
-            noid_parent = None;
+            last_revision.clear();
+            noid_parent.clear();
             flush(&mut plain, &mut out, false);
             if let Some(drawing) = drawings.get(dest) {
                 out.push_str(drawing);
@@ -647,14 +647,14 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
         }
         if let Some((change, after)) = change(rest) {
             if !plain.is_empty() {
-                last_revision = None;
-                noid_parent = None;
+                last_revision.clear();
+                noid_parent.clear();
             }
             flush(&mut plain, &mut out, false);
             let notes = after;
-            let (mut tags, mut parent, after) = tags_after(after);
+            let (mut tags, mut parents, after) = tags_after(after);
             let mut changed = String::new();
-            let mut wrapper = None;
+            let mut wrappers = Vec::new();
             match change {
                 Change::Insert(inner) | Change::Delete(inner) => {
                     let name = if matches!(change, Change::Insert(_)) {
@@ -665,7 +665,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     let anonymous_nest = number_noid_parent(
                         name,
                         &mut tags,
-                        &mut parent,
+                        &mut parents,
                         after,
                         marks,
                         &mut noid_parent,
@@ -673,35 +673,40 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     let tag = tags.first();
                     let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
                     tracked(&mut changed, marks, name, tag, ids, inner, drawings);
-                    if let Some(parent) = parent {
-                        let (name, close) = if name == "w:ins" {
-                            ("w:del", "</w:del>")
-                        } else {
-                            ("w:ins", "</w:ins>")
-                        };
-                        let open = format!("<{}>", marks.mark(name, Some(&parent), 0));
-                        changed = format!("{open}{changed}{close}");
-                        wrapper = Some((open, close, true));
-                    } else if ids.len() == 1 {
+                    if ids.len() == 1 {
                         let close = if name == "w:ins" {
                             "</w:ins>"
                         } else {
                             "</w:del>"
                         };
                         if let Some(end) = changed.find('>') {
-                            wrapper = Some((changed[..=end].to_string(), close, anonymous_nest));
+                            wrappers.push((changed[..=end].to_string(), close, anonymous_nest));
                         }
                     }
+                    let mut name = name;
+                    for parent in &parents {
+                        let (parent_name, close) = if name == "w:ins" {
+                            ("w:del", "</w:del>")
+                        } else {
+                            ("w:ins", "</w:ins>")
+                        };
+                        let open = format!("<{}>", marks.mark(parent_name, Some(parent), 0));
+                        changed = format!("{open}{changed}{close}");
+                        wrappers.push((open, close, true));
+                        // Each `on` level alternates insertion and deletion.
+                        name = parent_name;
+                    }
+                    wrappers.reverse();
                 }
                 Change::Substitute(old, new) => {
-                    if parent.is_some() {
+                    if !parents.is_empty() {
                         let note = &notes[..notes.len() - after.len()];
                         marks
                             .error
                             .get_or_insert_with(|| substitution_parent_error(note));
                         return String::new();
                     }
-                    noid_parent = None;
+                    noid_parent.clear();
                     // One tag names both sides (`r5+6`, old first), or
                     // each side has its own.
                     let (old_tag, new_tag, (old_ids, new_ids)) = match tags.as_slice() {
@@ -729,13 +734,13 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     );
                 }
             }
-            append_revision(&mut out, &changed, wrapper, &mut last_revision);
+            append_revision(&mut out, &changed, wrappers, &mut last_revision);
             rest = after;
             continue;
         }
         if let Some((field, after)) = field(rest) {
-            last_revision = None;
-            noid_parent = None;
+            last_revision.clear();
+            noid_parent.clear();
             flush(&mut plain, &mut out, false);
             match field {
                 Field::Coded(code, result) => out.push_str(&format!(
@@ -775,45 +780,60 @@ struct NoidParent {
 fn number_noid_parent(
     name: &'static str,
     tags: &mut [super::view_notes::Tag],
-    parent: &mut Option<super::view_notes::Tag>,
+    parents: &mut [super::view_notes::Tag],
     after: &str,
     marks: &mut Marks<'_>,
-    current: &mut Option<NoidParent>,
+    current: &mut Vec<NoidParent>,
 ) -> bool {
-    let nested = parent.is_some();
-    let candidate = if let Some(tag) = parent.as_mut() {
-        (if name == "w:ins" { "w:del" } else { "w:ins" }, tag)
-    } else if let Some(tag) = tags.first_mut() {
-        (name, tag)
-    } else {
-        *current = None;
-        return false;
-    };
-    let (name, tag) = candidate;
-    if !tag.ids.is_empty() {
-        *current = None;
-        return false;
-    }
-    let same = current
-        .as_ref()
-        .filter(|last| last.name == name && last.tag == *tag);
-    let id = if let Some(last) = same {
-        last.id
-    } else if nested || names_noid_parent(after, name, tag) {
-        marks.next_id = marks.next_id.saturating_add(1);
-        let id = marks.next_id;
-        *current = Some(NoidParent {
-            name,
-            tag: tag.clone(),
-            id,
+    let mut names = vec![name];
+    for _ in 0..parents.len() {
+        names.push(if names.last() == Some(&"w:ins") {
+            "w:del"
+        } else {
+            "w:ins"
         });
-        id
-    } else {
-        *current = None;
-        return false;
-    };
-    tag.ids.push(id);
-    true
+    }
+    let parent_count = parents.len();
+    let mut anonymous_leaf = false;
+    let mut depth = 0;
+    for (tag, name) in parents
+        .iter_mut()
+        .rev()
+        .chain(tags.first_mut())
+        .zip(names.into_iter().rev())
+    {
+        let original = tag.clone();
+        let same = current
+            .get(depth)
+            .filter(|last| last.name == name && last.tag == original);
+        let id = if let Some(id) = tag.ids.first() {
+            *id
+        } else if let Some(last) = same {
+            anonymous_leaf = depth == parent_count;
+            last.id
+        } else if depth < parent_count || names_noid_parent(after, name, tag) {
+            marks.next_id = marks.next_id.saturating_add(1);
+            anonymous_leaf = depth == parent_count;
+            marks.next_id
+        } else {
+            current.truncate(depth);
+            return false;
+        };
+        if same.is_none() {
+            current.truncate(depth);
+            current.push(NoidParent {
+                name,
+                tag: original,
+                id,
+            });
+        }
+        if tag.ids.is_empty() {
+            tag.ids.push(id);
+        }
+        depth += 1;
+    }
+    current.truncate(depth);
+    anonymous_leaf
 }
 
 /// Only a contiguous nest shares an anonymous id. Plain adjacent changes
@@ -825,11 +845,19 @@ fn names_noid_parent(mut text: &str, name: &str, tag: &super::view_notes::Tag) -
             Change::Delete(_) => "w:del",
             Change::Substitute(_, _) => return false,
         };
-        let (tags, parent, after) = tags_after(after);
-        if parent.as_ref() == Some(tag) && piece_name != name {
-            return true;
+        let (tags, parents, after) = tags_after(after);
+        let mut parent_name = piece_name;
+        for parent in &parents {
+            parent_name = if parent_name == "w:ins" {
+                "w:del"
+            } else {
+                "w:ins"
+            };
+            if parent_name == name && parent == tag {
+                return true;
+            }
         }
-        if parent.is_some() || piece_name != name || tags.as_slice() != [tag.clone()] {
+        if !parents.is_empty() || piece_name != name || tags.as_slice() != [tag.clone()] {
             return false;
         }
         text = after;
@@ -866,42 +894,56 @@ type RevisionWrapper = (String, &'static str, bool);
 fn append_revision(
     out: &mut String,
     changed: &str,
-    wrapper: Option<RevisionWrapper>,
-    last: &mut Option<RevisionWrapper>,
+    mut wrappers: Vec<RevisionWrapper>,
+    last: &mut Vec<RevisionWrapper>,
 ) {
-    if let (Some((before, close, folded)), Some((open, end, nested))) =
-        (last.as_ref(), wrapper.as_ref())
-        && before == open
-        && close == end
-        && (*folded || *nested)
-        && out.ends_with(close)
-    {
+    // Adjacent pieces can share several ancestors. Reopen only their
+    // common prefix, so a split nest keeps each named revision id once.
+    let shared = last
+        .iter()
+        .zip(&wrappers)
+        .take_while(|((before, close, folded), (open, end, nested))| {
+            before == open && close == end && (*folded || *nested)
+        })
+        .count();
+    let close: String = last[..shared]
+        .iter()
+        .rev()
+        .map(|(_, end, _)| *end)
+        .collect();
+    if shared > 0 && out.ends_with(&close) {
+        let opened: usize = wrappers[..shared]
+            .iter()
+            .map(|(open, _, _)| open.len())
+            .sum();
         out.truncate(out.len() - close.len());
-        out.push_str(&changed[open.len()..]);
-        *last = Some((open.clone(), end, true));
+        out.push_str(&changed[opened..]);
+        for ((_, _, nested), (_, _, folded)) in wrappers.iter_mut().zip(last.iter()).take(shared) {
+            *nested |= *folded;
+        }
     } else {
         out.push_str(changed);
-        *last = wrapper;
     }
+    *last = wrappers;
 }
 
-/// Revision tags after a change, its first named parent, and the remaining text.
+/// Revision tags after a change, all named parents innermost first, and the rest.
 fn tags_after(
     mut text: &str,
 ) -> (
     Vec<super::view_notes::Tag>,
-    Option<super::view_notes::Tag>,
+    Vec<super::view_notes::Tag>,
     &str,
 ) {
     let mut tags = Vec::new();
-    let mut parent = None;
+    let mut parents = Vec::new();
     while let Some(after) = text.strip_prefix("{>>")
         && let Some(end) = after.find("<<}")
     {
         let note = &after[..end];
         if let Some(nested) = super::view_notes::nested_revision_tags(note) {
             tags.push(nested[0].clone());
-            parent = nested.get(1).cloned();
+            parents = nested.into_iter().skip(1).collect();
         } else if let Some(found) = super::view_notes::revision_tags(note) {
             tags.extend(found);
         } else {
@@ -909,7 +951,7 @@ fn tags_after(
         }
         text = &after[end + 3..];
     }
-    (tags, parent, text)
+    (tags, parents, text)
 }
 
 /// A field at the start of a story's text, and what follows it.
