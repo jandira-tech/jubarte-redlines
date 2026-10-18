@@ -75,8 +75,11 @@ inserted or deleted row.
 
 | Form | Meaning |
 | --- | --- |
-| `{>>r12 @AC<<}`, `{>>r1+2 @AC<<}` | revision `r12` (its `w:id` is 12); two marks of one change |
-| `{~~a~>b~~}{>>r1 @AC<<}{>>r2 @JD<<}` | substitution by two authors, deleted side first |
+| `{++x++}{r12 @AC}` | revision r12; attribution follows the closer |
+| `{~~a~>b~~}{r1+2 @AC re r0 @JD}` | same-author deletion then insertion; parent applies to old side only |
+| `{++a++}{r1 @AC}{++b++}{r2 @AC}` | different ids remain separate marks |
+| `¶{r3 @AC}` | inserted paragraph mark at the end of its text |
+| `\{r3 @C}` after a closer or `¶` | literal tag-like text |
 | `{>>c5 @AC: text<<}`, `re c5`, `resolved` | comment, reply, resolved thread |
 | `header1.r3 @AC`, `footnotes.r7 @AC` | change in another story |
 | `@??` | a mark with no author's name; written back as an empty `w:author` |
@@ -87,7 +90,7 @@ inserted or deleted row.
 `left|center|right|justify` · `first-line|hanging|left|right Xin` ·
 `num "1)"` | `bullet` · `level N` · `page-break` |
 `page-break-ins|page-break-del TAG` · `section-break` ·
-`break-ins|break-del TAGS` · `fmt TAGS` · `rev TAGS` · `comments cN` ·
+`break-del TAGS` · `fmt TAGS` · `rev TAGS` · `comments cN` ·
 `in cN` · `empty` (`<!-- p4-p7 empty -->`)
 
 Table: `<!-- tN [center|right] RxC, cells pA-pB by row, pN center, pN Style, header row repeats,

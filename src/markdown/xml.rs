@@ -353,11 +353,11 @@ pub(super) struct Document {
     /// Author and date of changes that name theirs, by serial.
     pub attributions: HashMap<u32, (String, String)>,
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
-    /// order (`{>>r5+6 @AB<<}` on a change of two runs).
+    /// order (`{r5+6 @AB}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
     /// A change that was another change's only content, by the serial of
-    /// the note's own change: the change it sits inside (`{--x--}{>>r3 @BO
-    /// on r1 @AL<<}` is a deletion inside an insertion), innermost first.
+    /// the note's own change: the change it sits inside (`{--x--}{r3 @BO
+    /// re r1 @AL}` is a deletion inside an insertion), innermost first.
     pub wraps: HashMap<u32, Change>,
     /// Named parents indexed by revision ids, then inner serial. Built after
     /// parsing, so rendering can find another piece without scanning wraps.
@@ -506,7 +506,7 @@ pub(super) struct Context<'d> {
     /// Each open paragraph's mark whose numbered change its runs share:
     /// its kind, its change and where in the output its `w:rPr` takes it.
     /// The mark is written at the paragraph's end, so its id follows the
-    /// runs' as the view reads them (`{--A\n\nB--}{>>r8+9+10<<}`: `A` 8,
+    /// runs' as the view reads them (`{--A\n\nB--}{r8+9+10}`: `A` 8,
     /// the mark 9, `B` 10), though Word's `w:pPr` comes first.
     pub pending_marks: Vec<Option<(Kind, Option<u32>, usize)>>,
     /// `w:numId` of each numbering instance.
@@ -639,7 +639,7 @@ pub(super) fn story(
     let mut tables: Vec<(TableFormats, usize, usize)> = Vec::new();
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
-    // (`{--plain _italic_--}{>>r43+44 @AL<<}` is two marks).
+    // (`{--plain _italic_--}{r43+44 @AL}` is two marks).
     let mut natural = natural_marks(context.document, items);
     // The open row's own change: its mark carries the text the view tags
     // with the row's id alone.
@@ -652,9 +652,8 @@ pub(super) fn story(
     let mut cell_change: Option<(Kind, u32)> = None;
     let mut row_own: Option<(Kind, u32)> = None;
     for (at, item) in items.iter().enumerate() {
-        // A range on just a substitution's inserted side starts inside the
-        // insertion as it ends there (`ends_inserted_side`): Word's shape,
-        // which keeps the two sides together.
+        // A range covering an insertion before a deletion starts inside
+        // the insertion when it ends there (`ends_inserted_side`).
         if let Item::RangeStart(_) = item
             && row_change.is_none()
             && cell_change.is_none()
@@ -672,9 +671,8 @@ pub(super) fn story(
         // A bookmark, a comment's range marks and its reference sit inside
         // a `w:ins`/`w:del` when the change goes on after them
         // (`{--cut {==by a==}{>>c0<<} comment--}`); between two changes
-        // they are in neither. A range that ends a substitution's inserted
-        // side, its deleted side next, ends inside the insertion, as Word
-        // writes it: between the two it would part them.
+        // they are in neither. A range that ends at an insertion before
+        // a deletion stays inside that insertion.
         let field = match item {
             Item::LinkStart(..) => field_link(&items[at + 1..], context.document),
             Item::LinkEnd => fields.last().copied().flatten(),
@@ -870,7 +868,7 @@ pub(super) fn story(
                 // row's mark is the change, and the text has none of its
                 // own. A change the view names no ids for is Word's shape,
                 // the row's mark and the text's.
-                // Each cell's text is its own change (`{++x1++}{>>r108<<}`
+                // Each cell's text is its own change (`{++x1++}{r108}`
                 // twice): one that names only the row's ids is carried too.
                 let carried = match (row_change, run.change) {
                     (Some((row_kind, row_by)), Some((kind, by))) if row_kind == kind => {
@@ -971,7 +969,7 @@ pub(super) fn story(
                             .iter()
                             .any(|outer| continues_change(context.document, (kind, by), *outer))
                     {
-                        // A change whose note names, after ` on `, a change
+                        // A change whose note names, after ` re `, a change
                         // whose mark sits suspended in `marks` opens inside
                         // it: the outer holds several changes, and its mark
                         // stays open around each of them.
@@ -983,10 +981,10 @@ pub(super) fn story(
                     } else {
                         close_marks(context, &natural, &mut out, &mut open, &mut marks);
                         // A change that was another's only content sits
-                        // inside it again: the note names it after ` on `
-                        // (`{--x--}{>>r3 @BO on r1 @AL<<}`), so the outer
+                        // inside it again: the note names it after ` re `
+                        // (`{--x--}{r3 @BO re r1 @AL}`), so the outer
                         // mark wraps the inner one, with nothing else in
-                        // it. Deeper notes chain (`r5 @CD on r3 @BO on
+                        // it. Deeper notes chain (`r5 @CD re r3 @BO re
                         // r1 @AL`), outermost last.
                         if let Some(change) = run.change {
                             let chain = wrapping_chain(context.document, change);
@@ -1463,7 +1461,7 @@ fn wrapping_chain(document: &Document, change: Change) -> Vec<Change> {
 }
 
 /// Whether `inner` is another piece of `outer`'s change: the view names
-/// its `rN` ids (`{++a++}{>>r1 @AL<<}…{++b++}{>>r1 @AL<<}`), which `outer`
+/// its `rN` ids (`{++a++}{r1 @AL}…{++b++}{r1 @AL}`), which `outer`
 /// shares. Word marks a nested change inside the mark it splits, so the
 /// pieces are the only same-kind changes that can name spent ids.
 fn continues_change(document: &Document, inner: Change, outer: Change) -> bool {
@@ -1540,7 +1538,7 @@ fn resumes_later(document: &Document, rest: &[Item], outer: Change) -> bool {
 }
 
 /// Ends the open mark. A change the view gives more ids than it has pieces
-/// left writes the rest as empty marks after it: `{++a++}{>>r4+5+6 @AL<<}`
+/// left writes the rest as empty marks after it: `{++a++}{r4+5+6 @AL}`
 /// is `a` in mark 4, then empty marks 5 and 6.
 /// The insertion `rest` starts with, when its runs are all a comment range
 /// holds before it ends (`ends_inserted_side`) and a deleted run follows.
@@ -1701,7 +1699,7 @@ fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
 }
 
 /// `items` with text runs split until each change has a piece for every id
-/// the view names it: `{++one two++}{>>r70+71 @AL<<}` is two marks, `one `
+/// the view names it: `{++one two++}{r70+71 @AL}` is two marks, `one `
 /// and `two`. A piece is a run, a paragraph mark or a row; a run splits
 /// after its last inner space, else before its last character.
 fn split_for_ids<'i>(context: &Context<'_>, items: &'i [Item]) -> Cow<'i, [Item]> {

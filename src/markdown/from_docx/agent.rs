@@ -333,13 +333,12 @@ pub(crate) fn format_tags(tags: &[String]) -> String {
         .join("; ")
 }
 
-/// The revisions among a paragraph's direct children, in order, as the
-/// renderer shows them: neighbouring marks of one kind by one author join
-/// (`7+8@AC`), then an insertion directly followed by a deletion pairs as
-/// a substitution, greedily left to right. A run breaks adjacency, and so
-/// does a comment range or a bookmark the text prints
-/// ([`Handles::shown_ranges`]); proofing marks and the rest do not.
-/// Revisions inside links, content controls and simple fields count.
+/// The revisions among a paragraph's direct children, in order. Distinct
+/// ids remain separate. Only a deletion followed by a live insertion by
+/// the same author pairs as a substitution, greedily left to right.
+/// A run, comment range or printed bookmark breaks adjacency; proofing
+/// markers, unprinted bookmarks and empty runs do not. Revisions inside
+/// links, content controls and simple fields count.
 pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
     // One slot per child: a revision, or `None` for anything else that
     // breaks adjacency.
@@ -815,7 +814,7 @@ pub(crate) struct LineFacts<'a> {
     /// hidden: `in c5`.
     pub spans: &'a [String],
     /// The paragraph has no text but keeps its own line for its marks,
-    /// revisions or comments: `<!-- p4 empty, break-ins r3 @AC -->`.
+    /// revisions or comments: `<!-- p4 -->` followed by `¶{r3 @AC}`.
     pub empty: bool,
     /// Tracked view: the paragraph's changes its text prints no tag for,
     /// `true` for an insertion (see [`unshown_tags`]).
@@ -827,7 +826,7 @@ pub(crate) struct LineFacts<'a> {
 /// object, break, field character or empty mark has no text to wrap. The
 /// tracked view's id line names them (`rev r12 @AC`, a deletion `rev-del
 /// r13 @AC`), so every change reads from the view. The paragraph mark's
-/// own changes (`break-ins`, `break-del`) and formatting (`fmt`) have
+/// own changes (`¶{rN @X}`, `break-del`) and formatting (`fmt`) have
 /// their own clauses; a text box renders its own blocks, and Word's
 /// Fallback copy is the Choice's twin. Each entry's `bool` says the mark
 /// inserts (`ins`, `moveTo`) rather than deletes (`del`, `moveFrom`).
@@ -2163,8 +2162,9 @@ pub(crate) fn comment_head(
 
 /// The changes the body actually prints, after nesting, neighbouring marks,
 /// substitutions and selection have been rendered. Each attributed span is
-/// one change; ids joined by `+` and parents named by `on` add no changes.
-/// Structural marks are counted where their id-line clauses print them.
+/// one change; ids joined by `+` and parents named by `re` add no changes.
+/// Inserted paragraph marks count inline; other structural marks count
+/// where their id-line clauses print them.
 pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
     use crate::markdown::view_notes;
 

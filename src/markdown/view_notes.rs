@@ -411,7 +411,7 @@ pub(super) struct PlainRevision {
     pub date: String,
 }
 
-/// The tags of a nested revision note, its own change first: `r3 @BO on
+/// The tags of a nested revision note, its own change first: `r3 @BO re
 /// r1 @AL` is Ben's deletion inside Ana's insertion, each tag with its
 /// own date as [`revision_tags`] reads it. `None` for any other comment
 /// text.
@@ -420,7 +420,7 @@ pub(super) fn nested_revision_tags(text: &str) -> Option<Vec<Tag>> {
     (tags.len() > 1).then_some(tags)
 }
 
-/// One tag, exactly: a note names one change per ` on ` part.
+/// One tag, exactly: a note names one change per ` re ` part.
 fn one_tag(part: &str) -> Option<Tag> {
     match revision_tags(part)?.as_slice() {
         [tag] => Some(tag.clone()),
@@ -429,7 +429,7 @@ fn one_tag(part: &str) -> Option<Tag> {
 }
 
 /// The parts of a plain nested revision note, its own change first: `r3
-/// Ben Ode (2026-…) on r1 Ana Lima (2026-…)`. `None` for any other
+/// Ben Ode (2026-…) re r1 Ana Lima (2026-…)`. `None` for any other
 /// comment text.
 pub(super) fn nested_plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
     let parts = nested_parts(text, plain_part)?;
@@ -487,11 +487,11 @@ pub(super) fn trailing_bare_group(text: &str) -> Option<usize> {
     None
 }
 
-/// The parts of a note joined by ` on `, each parsed by `one`: the first
+/// The parts of a note joined by ` re `, each parsed by `one`: the first
 /// part is the note's own change, and each part after it names the change
-/// the one before sits inside. The last ` on ` that splits the note wins:
-/// the left side must parse as one part — its author may hold ` on ` of
-/// its own (`Bo on r1 Kim`) — and the right side all the way down.
+/// the one before sits inside. The last ` re ` that splits the note wins:
+/// the left side must parse as one part — its author may hold ` re ` of
+/// its own (`Bo re r1 Kim`) — and the right side all the way down.
 /// Earlier boundaries are tried only when these fail.
 fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
     let text = text.trim();
@@ -1838,7 +1838,7 @@ mod tests {
                 plain(&[1], "Ana Lima", "2026-01-01T09:00:00Z").unwrap()
             ])
         );
-        // An author's own name may hold ` on `: the ids still part the
+        // An author's own name may hold ` re `: the ids still part the
         // changes only where both sides parse.
         assert_eq!(
             nested_plain_revisions(

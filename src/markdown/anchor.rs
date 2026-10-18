@@ -234,7 +234,7 @@ fn without_emphasis(text: &str) -> String {
 
 /// The document text an agent-view fragment stands for:
 ///
-/// - attribution notes and comment text dropped (`{>>r0 @AC<<}` etc.);
+/// - attribution notes and comment text dropped (`{r0 @AC}` etc.);
 /// - insertions unwrapped (`{++x++}` → `x`) and comment scopes too
 ///   (`{==x==}`);
 /// - deletions removed (`{--x--}`);
