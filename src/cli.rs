@@ -59,11 +59,12 @@ pub struct Cli {
 #[group(id = "read_options", multiple = true)]
 pub struct ReadArgs {
     /// Tracked changes inline (all, the default), or the text with every
-    /// change accepted or rejected; the id lines then list what changed.
+    /// change accepted or rejected; the id lines then list what changed;
+    /// not with --json, --tables or --for-edit.
     #[arg(long, value_enum, value_name = "CHOICE", help_heading = "Read options")]
     pub track_changes: Option<TrackChanges>,
     /// Comments inline (default) or hidden, with their ids on the id line
-    /// of the paragraph that holds them.
+    /// of the paragraph that holds them; not with --json, --tables or --for-edit.
     #[arg(
         long,
         value_enum,
@@ -73,11 +74,13 @@ pub struct ReadArgs {
     )]
     pub comments: CommentsArg,
     /// Timestamps on the notes of an author whose changes do not all share
-    /// one (the header shows an author's single timestamp).
+    /// one (the header shows an author's single timestamp);
+    /// not with --json, --tables or --for-edit.
     #[arg(long, help_heading = "Read options")]
     pub dates: bool,
     /// Skip the layout pass; page count from Word's cached breaks, no
-    /// `<!-- page N of M -->` lines.
+    /// `<!-- page N of M -->` lines; no effect with --json, --tables,
+    /// --for-edit or -o FILE.json.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
     /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
@@ -128,7 +131,7 @@ pub struct ReadArgs {
     /// snapshot stays whole.
     #[arg(
         long,
-        conflicts_with_all = ["track_changes", "comments", "dates", "no_page_markers"],
+        conflicts_with_all = ["track_changes", "comments", "dates"],
         help_heading = "Read options"
     )]
     pub json: bool,
@@ -138,7 +141,7 @@ pub struct ReadArgs {
     #[arg(
         long,
         conflicts_with_all = [
-            "json", "track_changes", "comments", "dates", "no_page_markers",
+            "json", "track_changes", "comments", "dates",
             "paragraphs", "head", "tail", "changed", "by",
         ],
         help_heading = "Read options"
@@ -155,7 +158,7 @@ pub struct ReadArgs {
     #[arg(
         long,
         conflicts_with_all = [
-            "json", "tables", "track_changes", "comments", "dates", "no_page_markers",
+            "json", "tables", "track_changes", "comments", "dates",
         ],
         help_heading = "Read options"
     )]
@@ -582,14 +585,30 @@ fn swallowed_file(flag: &str, value: &Path) -> String {
     )
 }
 
-/// `edit --plan a.docx -p p1 …`: clap reads the document as the plan and
-/// then misses FILE. The raw tokens show it, so that error says so instead;
-/// any other error (help, an unknown flag, …) is clap's own.
-fn swallowed_file_error(
-    command: &clap::Command,
-    tokens: &[String],
-    error: clap::Error,
-) -> clap::Error {
+/// Rewrite known usage traps through clap's own error formatter. A read
+/// view conflict teaches the valid invocation; `edit --plan a.docx -p p1 …`
+/// identifies the swallowed FILE from the raw tokens. Other errors stay
+/// clap's own (including help, unknown options and invalid values).
+fn usage_error(command: &clap::Command, tokens: &[String], error: clap::Error) -> clap::Error {
+    if error.kind() == clap::error::ErrorKind::ArgumentConflict {
+        use clap::error::ContextKind;
+        // Use clap's identified arguments, not option-looking values in
+        // the raw tokens, so unrelated conflicts retain their diagnosis.
+        let conflicts = [ContextKind::InvalidArg, ContextKind::PriorArg]
+            .into_iter()
+            .filter_map(|kind| error.get(kind))
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let names = |flag: &&str| conflicts.split_whitespace().any(|word| word == *flag);
+        if let Some(flag) = ["--track-changes", "--comments", "--dates"]
+            .into_iter()
+            .find(names)
+            && let Some(output) = ["--json", "--tables", "--for-edit"].into_iter().find(names)
+        {
+            return read_usage_error(command, read_view_conflict(flag, output));
+        }
+    }
     if error.kind() != clap::error::ErrorKind::MissingRequiredArgument {
         return error;
     }
@@ -2774,6 +2793,34 @@ fn compare_output(
     Ok(kind)
 }
 
+/// One diagnosis for the view-only flags, whether clap found the conflict
+/// or the output extension supplied it.
+fn read_view_conflict(flag: &str, output: &str) -> String {
+    let action = match output {
+        "--tables" => "prints a table inventory",
+        "--for-edit" => "prints the working document JSON",
+        "-o FILE.json" => "writes the snapshot",
+        _ => "prints the snapshot",
+    };
+    format!(
+        "{flag} shapes the Markdown view, and {output} {action}, which has no view; \
+         drop {flag}, or drop {output} to read the view"
+    )
+}
+
+/// As in the swallowed-FILE diagnosis, rebuild a task error through clap.
+/// A generic usage line gives a valid invocation instead of repeating the
+/// conflicting flags. The same model serves native and binding parsers.
+fn read_usage_error(command: &clap::Command, message: String) -> clap::Error {
+    let mut task = command
+        .find_subcommand("read")
+        .unwrap_or(command)
+        .clone()
+        .override_usage(format!("{} read [OPTIONS] <FILE>", command.get_name()));
+    task.set_bin_name(format!("{} read", command.get_name()));
+    task.error(clap::error::ErrorKind::ArgumentConflict, message)
+}
+
 /// What `read -o PATH` (and the one-document shorthand's -o) writes: `.md`
 /// the view, `.json` the snapshot. `given` says which argument ids the
 /// command line spells out.
@@ -2789,13 +2836,13 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
         return Err("--json writes the snapshot: name the file FILE.json".to_string());
     }
     if kind == Format::Json
-        && let Some(id) = ["track_changes", "comments", "dates", "no_page_markers"]
+        && let Some(id) = ["track_changes", "comments", "dates"]
             .into_iter()
             .find(|id| given(id))
     {
-        return Err(format!(
-            "--{} shapes the view; a .json snapshot has none",
-            id.replace('_', "-")
+        return Err(read_view_conflict(
+            &format!("--{}", id.replace('_', "-")),
+            "-o FILE.json",
         ));
     }
     Ok(kind)
@@ -2837,7 +2884,7 @@ fn validate_matches(
             // One document: `read`, whose -o writes the view or the snapshot.
             if let Some(output) = output {
                 read_output(output, &given)
-                    .map_err(|message| command.error(ErrorKind::ArgumentConflict, message))?;
+                    .map_err(|message| read_usage_error(command, message))?;
             }
             // Compare's own options and the rendering ones mean nothing to
             // read.
@@ -2952,7 +2999,7 @@ fn validate_matches(
     if name == "read"
         && let Some(output) = args.get_one::<PathBuf>("output")
     {
-        read_output(output, &given).map_err(|message| error(&mut task, &message))?;
+        read_output(output, &given).map_err(|message| read_usage_error(command, message))?;
     }
     if name == "compare" {
         compare_output(
@@ -3241,7 +3288,7 @@ impl Cli {
                     .iter()
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect();
-                swallowed_file_error(&command, &tokens, e)
+                usage_error(&command, &tokens, e)
             })?;
         validate_matches(&matches, &mut command)?;
         let mut cli = Self::from_arg_matches(&matches)?;
@@ -3440,7 +3487,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         .collect();
         let matches = command
             .try_get_matches_from_mut(tokens.clone())
-            .map_err(|e| swallowed_file_error(&command, &tokens, e))?;
+            .map_err(|e| usage_error(&command, &tokens, e))?;
         validate_matches(&matches, &mut command)?;
         quiet = matches.get_flag("quiet");
         if matches.subcommand().is_some() {

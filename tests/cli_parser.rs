@@ -1680,7 +1680,7 @@ fn every_writing_task_takes_the_formats_its_output_names() {
         ),
         (
             vec!["read", "a.docx", "-o", "v.json", "--dates"],
-            "--dates shapes the view",
+            "--dates shapes the Markdown view",
         ),
         (
             vec!["read", "a.docx", "-o", "v.md", "--tables"],
@@ -2261,18 +2261,17 @@ fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
             (
                 "v.json",
                 vec!["--track-changes", "all"],
-                "--track-changes shapes the view",
+                "--track-changes shapes the Markdown view",
             ),
             (
                 "v.json",
                 vec!["--comments", "inline"],
-                "--comments shapes the view",
+                "--comments shapes the Markdown view",
             ),
-            ("v.json", vec!["--dates"], "--dates shapes the view"),
             (
                 "v.json",
-                vec!["--no-page-markers"],
-                "--no-page-markers shapes the view",
+                vec!["--dates"],
+                "--dates shapes the Markdown view",
             ),
             ("v.json", vec!["--tables"], "--tables prints the grids"),
             ("v.md", vec!["--tables"], "--tables prints the grids"),
@@ -2617,4 +2616,82 @@ fn edit_template_help_names_the_public_route_and_preserves_legacy_filenames() {
         ])
         .is_ok()
     );
+}
+
+#[test]
+fn read_no_page_markers_accepts_structured_outputs_in_the_shared_parser() {
+    for prefix in [
+        &["read", "source.docx"][..],
+        &["text", "source.docx"],
+        &["source.docx"],
+    ] {
+        for output in [
+            vec!["--json"],
+            vec!["--tables"],
+            vec!["--for-edit"],
+            vec!["-o", "snap.json"],
+        ] {
+            let args = [prefix, &output, &["--no-page-markers"]].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(
+                result["args"]["no_page_markers"], true,
+                "{args:?}: {result}"
+            );
+            assert!(Cli::try_parse_from([vec!["jubarte"], args].concat()).is_ok());
+        }
+    }
+}
+
+#[test]
+fn read_view_conflict_usage_is_shared_with_bindings() {
+    for flags in [
+        vec!["--comments=inline", "--json"],
+        vec!["--dates", "-o", "snap.json"],
+    ] {
+        let result = parse(&[vec!["source.docx"], flags].concat(), &["compare"]);
+        assert_eq!(result["exit_code"], 2, "{result}");
+        assert_eq!(result["stream"], "stderr", "{result}");
+    }
+    for prefix in [
+        &["read", "source.docx"][..],
+        &["text", "source.docx"],
+        &["source.docx"],
+    ] {
+        for flags in [
+            vec!["--comments=inline"],
+            vec!["--track-changes=all"],
+            vec!["--dates"],
+        ] {
+            for output in [
+                vec!["--json"],
+                vec!["--tables"],
+                vec!["--for-edit"],
+                vec!["-o", "snap.json"],
+            ] {
+                // Both argument orders, including flags before FILE for shorthand.
+                for args in [
+                    [prefix, &flags, &output].concat(),
+                    [&flags, &output, prefix].concat(),
+                ] {
+                    if args.last() == Some(&"source.docx") && prefix.len() > 1 {
+                        continue;
+                    }
+                    let result = parse(&args, &[]);
+                    assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
+                    assert_eq!(result["stream"], "stderr", "{result}");
+                    let text = result["text"].as_str().unwrap();
+                    assert!(
+                        text.contains("shapes the Markdown view"),
+                        "{args:?}: {text}"
+                    );
+                    assert!(text.contains("has no view; drop"), "{args:?}: {text}");
+                    assert_eq!(
+                        text.lines().find(|line| line.starts_with("Usage:")),
+                        Some("Usage: jubarte-python read [OPTIONS] <FILE>")
+                    );
+                }
+            }
+        }
+    }
 }

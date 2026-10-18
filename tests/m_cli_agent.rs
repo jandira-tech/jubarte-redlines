@@ -285,12 +285,16 @@ fn read_tables_and_the_json_refusals() {
         &["read", RECEIVED, "--json", "--dates"][..],
         &["read", RECEIVED, "--json", "--comments", "none"],
         &["read", RECEIVED, "--json", "--track-changes", "accept"],
-        &["read", RECEIVED, "--json", "--no-page-markers"],
         &["read", RECEIVED, "--tables", "--head", "2"],
         &[RECEIVED, RECEIVED, "--tables"],
     ] {
         assert_eq!(run(args).0, 2, "{args:?}");
     }
+    // Suppressing page markers also holds for a snapshot.
+    assert_eq!(
+        json(&["read", RECEIVED, "--json", "--no-page-markers"]),
+        json(&["read", RECEIVED, "--json"])
+    );
     // The one-file shorthand reads like `read`.
     assert_eq!(
         json(&[RECEIVED, "--json"]),
@@ -906,4 +910,238 @@ fn read_json_changed_keeps_a_headers_changes() {
     // A paragraph pick names body paragraphs only.
     let one = json(&["read", path, "--json", "-p", "p1"]);
     assert_eq!(ids(&one), ["r1"], "{one}");
+}
+
+// These are process-level integration tests: the filesystem and entrypoint
+// are the boundaries under test, using only a synthetic DOCX.
+fn read_json_fixture(dir: &Path) {
+    let body = para("Alice agrees with Bob.")
+        + "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>Carol Diaz</w:t></w:r></w:p>\
+           </w:tc></w:tr></w:tbl>";
+    std::fs::write(dir.join("source.docx"), docx(&body)).unwrap();
+}
+
+fn no_page_markers_output_is_identical(shorthand: bool, output: &[&str]) {
+    let dir = tempfile::tempdir().unwrap();
+    read_json_fixture(dir.path());
+    let prefix = if shorthand {
+        vec!["source.docx"]
+    } else {
+        vec!["read", "source.docx"]
+    };
+    let args = [prefix.as_slice(), output].concat();
+    let plain = run_in(dir.path(), &args);
+    assert_eq!(plain.0, 0, "{args:?}: {}", plain.2);
+    let file = output
+        .contains(&"-o")
+        .then(|| std::fs::read(dir.path().join("snap.json")).unwrap());
+    let fast_args = [args.as_slice(), &["--no-page-markers", "--force"]].concat();
+    let fast = run_in(dir.path(), &fast_args);
+    assert_eq!(fast.0, 0, "{fast_args:?}: {}", fast.2);
+    assert_eq!(fast.1, plain.1, "{fast_args:?}");
+    assert_eq!(fast.2, plain.2, "{fast_args:?}");
+    if let Some(file) = file {
+        assert_eq!(
+            std::fs::read(dir.path().join("snap.json")).unwrap(),
+            file,
+            "{fast_args:?}"
+        );
+    }
+}
+
+macro_rules! no_page_markers_case {
+    ($name:ident, $shorthand:expr, [$($output:expr),*]) => {
+        #[test]
+        fn $name() {
+            no_page_markers_output_is_identical($shorthand, &[$($output),*]);
+        }
+    };
+}
+
+no_page_markers_case!(no_page_markers_json, false, ["--json"]);
+no_page_markers_case!(no_page_markers_tables, false, ["--tables"]);
+no_page_markers_case!(no_page_markers_for_edit, false, ["--for-edit"]);
+no_page_markers_case!(no_page_markers_json_shorthand, true, ["--json"]);
+no_page_markers_case!(no_page_markers_tables_shorthand, true, ["--tables"]);
+no_page_markers_case!(no_page_markers_for_edit_shorthand, true, ["--for-edit"]);
+no_page_markers_case!(no_page_markers_json_file, false, ["-o", "snap.json", "-q"]);
+no_page_markers_case!(
+    no_page_markers_json_file_shorthand,
+    true,
+    ["-o", "snap.json", "-q"]
+);
+no_page_markers_case!(
+    no_page_markers_explicit_json_file,
+    false,
+    ["--json", "-o", "snap.json", "-q"]
+);
+no_page_markers_case!(
+    no_page_markers_explicit_json_file_shorthand,
+    true,
+    ["--json", "-o", "snap.json", "-q"]
+);
+no_page_markers_case!(
+    no_page_markers_for_edit_file,
+    false,
+    ["--for-edit", "-o", "snap.json", "-q"]
+);
+no_page_markers_case!(
+    no_page_markers_for_edit_file_shorthand,
+    true,
+    ["--for-edit", "-o", "snap.json", "-q"]
+);
+
+fn read_view_conflict_teaches(flags: &[&str], output: &[&str], output_name: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    read_json_fixture(dir.path());
+    for prefix in [
+        &["read", "source.docx"][..],
+        &["source.docx"],
+        &["text", "source.docx"],
+    ] {
+        let args = [prefix, flags, output].concat();
+        let (code, stdout, stderr) = run_in(dir.path(), &args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stdout.is_empty(), "{args:?}: {stdout}");
+        assert!(stderr.contains("error: "), "{args:?}: {stderr}");
+        for expected in [
+            flags[0],
+            output_name,
+            "shapes the Markdown view",
+            "has no view",
+            "drop",
+        ] {
+            assert!(
+                stderr.contains(expected),
+                "missing {expected:?}: {args:?}: {stderr}"
+            );
+        }
+        let usage = stderr
+            .lines()
+            .find(|line| line.starts_with("Usage:"))
+            .unwrap();
+        assert_eq!(usage, "Usage: jubarte read [OPTIONS] <FILE>", "{args:?}");
+        assert!(!usage.contains(flags[0]), "{args:?}: {usage}");
+        assert!(!dir.path().join("snap.json").exists());
+    }
+}
+
+macro_rules! read_view_conflict_case {
+    ($name:ident, [$($flag:expr),*], [$($output:expr),*], $label:expr) => {
+        #[test]
+        fn $name() {
+            read_view_conflict_teaches(&[$($flag),*], &[$($output),*], $label);
+        }
+    };
+}
+
+read_view_conflict_case!(
+    read_view_conflict_comments_json,
+    ["--comments", "inline"],
+    ["--json"],
+    "--json"
+);
+read_view_conflict_case!(
+    read_view_conflict_comments_tables,
+    ["--comments", "inline"],
+    ["--tables"],
+    "--tables"
+);
+read_view_conflict_case!(
+    read_view_conflict_comments_for_edit,
+    ["--comments", "inline"],
+    ["--for-edit"],
+    "--for-edit"
+);
+read_view_conflict_case!(
+    read_view_conflict_comments_file,
+    ["--comments", "inline"],
+    ["-o", "snap.json"],
+    "-o FILE.json"
+);
+read_view_conflict_case!(
+    read_view_conflict_track_changes_json,
+    ["--track-changes", "all"],
+    ["--json"],
+    "--json"
+);
+read_view_conflict_case!(
+    read_view_conflict_track_changes_tables,
+    ["--track-changes", "all"],
+    ["--tables"],
+    "--tables"
+);
+read_view_conflict_case!(
+    read_view_conflict_track_changes_for_edit,
+    ["--track-changes", "all"],
+    ["--for-edit"],
+    "--for-edit"
+);
+read_view_conflict_case!(
+    read_view_conflict_track_changes_file,
+    ["--track-changes", "all"],
+    ["-o", "snap.json"],
+    "-o FILE.json"
+);
+read_view_conflict_case!(
+    read_view_conflict_dates_json,
+    ["--dates"],
+    ["--json"],
+    "--json"
+);
+read_view_conflict_case!(
+    read_view_conflict_dates_tables,
+    ["--dates"],
+    ["--tables"],
+    "--tables"
+);
+read_view_conflict_case!(
+    read_view_conflict_dates_for_edit,
+    ["--dates"],
+    ["--for-edit"],
+    "--for-edit"
+);
+read_view_conflict_case!(
+    read_view_conflict_dates_file,
+    ["--dates"],
+    ["-o", "snap.json"],
+    "-o FILE.json"
+);
+
+fn read_option_help(option: &str, clause: &str) {
+    let (code, stdout, stderr) = run(&["read", "--help"]);
+    assert_eq!(code, 0, "{stderr}");
+    let block = stdout
+        .split(&format!("      {option}"))
+        .nth(1)
+        .unwrap()
+        .split("\n      --")
+        .next()
+        .unwrap();
+    let words = block.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains(clause), "{option}: {words}");
+}
+
+#[test]
+fn read_help_track_changes_exclusion() {
+    read_option_help("--track-changes", "not with --json, --tables or --for-edit");
+}
+
+#[test]
+fn read_help_comments_exclusion() {
+    read_option_help("--comments", "not with --json, --tables or --for-edit");
+}
+
+#[test]
+fn read_help_dates_exclusion() {
+    read_option_help("--dates", "not with --json, --tables or --for-edit");
+}
+
+#[test]
+fn read_help_no_page_markers_structured_outputs() {
+    read_option_help(
+        "--no-page-markers",
+        "no effect with --json, --tables, --for-edit or -o FILE.json",
+    );
 }
