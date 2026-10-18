@@ -12438,6 +12438,24 @@ pub(crate) fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
     Some((seconds, fraction))
 }
 
+/// Format an instant in a fixed offset, retaining its fractional seconds.
+pub(crate) fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -> String {
+    let mut value = iso8601(civil_from_unix_secs(seconds + offset));
+    value.pop();
+    if !fraction.is_empty() {
+        value.push('.');
+        value.push_str(fraction);
+    }
+    if offset == 0 {
+        value.push('Z');
+    } else {
+        let sign = if offset < 0 { '-' } else { '+' };
+        let minutes = offset.abs() / 60;
+        value.push_str(&format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60));
+    }
+    value
+}
+
 /// `docProps/core.xml` dates, read as elements (a title that merely
 /// contains "created" is text, not a tag).
 fn core_dates_from_xml(xml: &str) -> CoreDates {

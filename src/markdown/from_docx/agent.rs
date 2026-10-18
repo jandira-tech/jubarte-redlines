@@ -52,15 +52,21 @@ impl Handles {
     /// The one timestamp all of the author's marks and comments share.
     pub(crate) fn unique_date(&self, author: &str) -> Option<&str> {
         let dates = self.dates.get(author)?;
-        (dates.len() == 1)
-            .then(|| dates.iter().next().map(String::as_str))
-            .flatten()
+        let first = dates.iter().next()?;
+        dates
+            .iter()
+            .all(|date| {
+                date == first
+                    || crate::convert::timestamp_order_key(date)
+                        .is_some_and(|key| Some(key) == crate::convert::timestamp_order_key(first))
+            })
+            .then_some(first.as_str())
     }
 
     /// The latest whole timestamp of an author with several timestamps.
     pub(crate) fn latest_date(&self, author: &str) -> Option<&str> {
         let dates = self.dates.get(author)?;
-        (dates.len() > 1)
+        (self.unique_date(author).is_none())
             .then(|| {
                 dates
                     .iter()
@@ -72,7 +78,7 @@ impl Handles {
 
     /// Whether a note of this author needs its timestamp inline (`--dates`).
     pub(crate) fn needs_date(&self, author: Option<&str>) -> bool {
-        author.is_some_and(|a| self.dates.get(a).is_some_and(|d| d.len() > 1))
+        author.is_some_and(|a| self.dates.contains_key(a) && self.unique_date(a).is_none())
     }
 }
 
@@ -412,7 +418,7 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
             kind,
             tag: tag_of(e, handles),
             author: e.attr("author").map(str::to_string),
-            date: e.revision_date().map(str::to_string),
+            date: e.revision_date(),
         }));
         if opens {
             slots.push(None);
@@ -684,10 +690,7 @@ fn walk_revision_authors(
             out.push(author.to_string());
         }
         if let Some(date) = e.revision_date() {
-            dates
-                .entry(author.to_string())
-                .or_default()
-                .insert(date.to_string());
+            dates.entry(author.to_string()).or_default().insert(date);
         }
     }
     // Every child, a text box's `mc:Fallback` copy too: `jubarte changes`
@@ -2181,12 +2184,7 @@ pub(crate) fn collect_revisions(body: &Element, handles: &Handles) -> Vec<RevTag
 }
 
 fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
-    let attribution = |m: &Element| {
-        (
-            m.attr("author").map(str::to_string),
-            m.revision_date().map(str::to_string),
-        )
-    };
+    let attribution = |m: &Element| (m.attr("author").map(str::to_string), m.revision_date());
     if e.is("p") {
         out.extend(revision_tags(e, handles));
         if let Some(rpr) = e.path(&["pPr", "rPr"]) {

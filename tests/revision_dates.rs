@@ -14,6 +14,7 @@ use std::process::Command;
 
 const LOCAL: &str = "2026-10-17T16:59:00Z";
 const UTC: &str = "2026-10-17T20:59:00Z";
+const REPORTED: &str = "2026-10-17T16:59:00-04:00";
 const LEGACY: &str = "2026-10-17T15:00:00Z";
 
 fn revisions(prefix: &str) -> Vec<u8> {
@@ -66,10 +67,10 @@ fn revision_date_inventory_prefers_utc_with_any_prefix() {
         assert_eq!(
             dates,
             [
-                ("r1", Some(UTC)),
-                ("r2", Some(UTC)),
+                ("r1", Some(REPORTED)),
+                ("r2", Some(REPORTED)),
                 ("r3", Some(LEGACY)),
-                ("r4", Some(UTC))
+                ("r4", Some(REPORTED))
             ]
         );
         assert_eq!(changes[1].inside.as_deref(), Some("r1"));
@@ -81,12 +82,12 @@ fn revision_dates_in_md_authors_and_plain_attributions_prefer_utc() {
     for prefix in ["w16du", "utc"] {
         let bytes = revisions(prefix);
         let md = view(&bytes, true, false);
-        assert!(md.contains(&format!("latest {UTC}")), "{md}");
-        assert!(md.contains(&format!("1 revision, {UTC}")), "{md}");
+        assert!(md.contains(&format!("latest {REPORTED}")), "{md}");
+        assert!(md.contains(&format!("1 revision, {REPORTED}")), "{md}");
         assert!(!md.contains(LOCAL), "{md}");
         let plain = view(&bytes, false, false);
-        assert!(plain.contains(&format!("Editor ({UTC})")), "{plain}");
-        assert!(plain.contains(&format!("Reviewer ({UTC})")), "{plain}");
+        assert!(plain.contains(&format!("Editor ({REPORTED})")), "{plain}");
+        assert!(plain.contains(&format!("Reviewer ({REPORTED})")), "{plain}");
         assert!(plain.contains(&format!("Editor ({LEGACY})")), "{plain}");
         assert!(!plain.contains(LOCAL), "{plain}");
     }
@@ -100,7 +101,7 @@ fn revision_dates_flag_uses_utc_and_legacy_fallback() {
         &["read", "dates.docx", "--dates", "--no-page-markers"],
         directory.path(),
     );
-    assert!(md.contains(&format!("@E {UTC}<<")), "{md}");
+    assert!(md.contains(&format!("@E {REPORTED}<<")), "{md}");
     assert!(md.contains(&format!("@E {LEGACY}<<")), "{md}");
     assert!(!md.contains(LOCAL), "{md}");
 }
@@ -132,7 +133,11 @@ fn revision_dates_changes_json_uses_utc_and_the_listing_keeps_its_columns() {
     for change in changes {
         assert_eq!(
             change["date"],
-            if change["id"] == "r3" { LEGACY } else { UTC }
+            if change["id"] == "r3" {
+                LEGACY
+            } else {
+                REPORTED
+            }
         );
     }
 }
@@ -143,11 +148,7 @@ fn revision_date_selection_accepts_and_rejects_utc_instants() {
     let selected: Vec<String> = list_changes(&bytes)
         .unwrap()
         .into_iter()
-        .filter(|c| {
-            c.date
-                .as_deref()
-                .is_some_and(|date| date >= "2026-10-17T19:00:00Z")
-        })
+        .filter(|c| c.date.as_deref().is_some_and(|date| date == REPORTED))
         .map(|c| c.id)
         .collect();
     assert_eq!(selected, ["r1", "r2", "r4"]);
@@ -210,7 +211,7 @@ fn revision_date_readers_leave_original_attributes_in_unselected_changes() {
             list_changes(&result)
                 .unwrap()
                 .iter()
-                .all(|c| c.date.as_deref() == Some(UTC))
+                .all(|c| c.date.as_deref() == Some(REPORTED))
         );
     }
 }
@@ -257,8 +258,105 @@ fn revision_dates_public_revision_list_uses_utc_in_body_notes_and_formatting() {
             .unwrap();
         assert_eq!(
             revision.date.as_deref(),
-            Some(if author == "Legacy" { LEGACY } else { UTC }),
+            Some(if author == "Legacy" { LEGACY } else { REPORTED }),
             "{author}"
         );
+    }
+}
+
+#[test]
+fn malformed_utc_dates_fall_back_to_stored_date() {
+    for utc in ["", " ", "not-a-date", "2026-02-30T00:00:00Z"] {
+        let bytes = docx(&format!(
+            r#"<w:p xmlns:utc="http://schemas.microsoft.com/office/word/2023/wordml/word16du"><w:ins w:id="1" w:author="Alice" w:date="{LEGACY}" utc:dateUtc="{utc}"><w:r><w:t>text</w:t></w:r></w:ins></w:p>"#
+        ));
+        assert_eq!(
+            list_changes(&bytes).unwrap()[0].date.as_deref(),
+            Some(LEGACY),
+            "{utc:?}"
+        );
+    }
+}
+
+#[test]
+fn reported_date_offset_bounds_and_fractions() {
+    for (local, utc, expected) in [
+        (
+            "2026-09-25T20:04:00Z",
+            "2026-09-26T00:04:00Z",
+            "2026-09-25T20:04:00-04:00",
+        ),
+        (
+            "2026-09-26T14:04:00Z",
+            "2026-09-26T00:04:00Z",
+            "2026-09-26T14:04:00+14:00",
+        ),
+        (
+            "2026-09-25T10:04:00Z",
+            "2026-09-26T00:04:00Z",
+            "2026-09-25T10:04:00-14:00",
+        ),
+        (
+            "2026-09-26T14:05:00Z",
+            "2026-09-26T00:04:00Z",
+            "2026-09-26T00:04:00Z",
+        ),
+        (
+            "2026-09-25T10:03:00Z",
+            "2026-09-26T00:04:00Z",
+            "2026-09-26T00:04:00Z",
+        ),
+        (
+            "2026-09-25T20:04:01Z",
+            "2026-09-26T00:04:00Z",
+            "2026-09-26T00:04:00Z",
+        ),
+        (
+            "2026-09-26T00:04:00Z",
+            "2026-09-26T00:04:00Z",
+            "2026-09-26T00:04:00Z",
+        ),
+        ("bad", "2026-09-26T00:04:00Z", "2026-09-26T00:04:00Z"),
+        (
+            "2026-09-25T20:04:00.5Z",
+            "2026-09-26T00:04:00.500Z",
+            "2026-09-25T20:04:00.500-04:00",
+        ),
+        (
+            "2026-09-25T20:04:00.1Z",
+            "2026-09-26T00:04:00.5Z",
+            "2026-09-26T00:04:00.5Z",
+        ),
+    ] {
+        let bytes = docx(&format!(
+            r#"<w:p xmlns:utc="http://schemas.microsoft.com/office/word/2023/wordml/word16du"><w:ins w:id="1" w:author="Alice" w:date="{local}" utc:dateUtc="{utc}"><w:r><w:t>text</w:t></w:r></w:ins></w:p>"#
+        ));
+        assert_eq!(
+            list_changes(&bytes).unwrap()[0].date.as_deref(),
+            Some(expected),
+            "{local} / {utc}"
+        );
+    }
+}
+
+#[test]
+fn shared_and_latest_dates_compare_instants_across_offsets() {
+    for (second_local, second_utc, expected) in [
+        (
+            "2026-09-26T02:04:00Z",
+            "2026-09-26T00:04:00Z",
+            "2 revisions, 2026-09-25T20:04:00-04:00",
+        ),
+        (
+            "2026-09-25T19:05:00Z",
+            "2026-09-26T00:05:00Z",
+            "latest 2026-09-25T19:05:00-05:00",
+        ),
+    ] {
+        let bytes = docx(&format!(
+            r#"<w:p xmlns:utc="http://schemas.microsoft.com/office/word/2023/wordml/word16du"><w:ins w:id="1" w:author="Alice" w:date="2026-09-25T20:04:00Z" utc:dateUtc="2026-09-26T00:04:00Z"><w:r><w:t>first</w:t></w:r></w:ins><w:r><w:t> separator </w:t></w:r><w:ins w:id="2" w:author="Alice" w:date="{second_local}" utc:dateUtc="{second_utc}"><w:r><w:t>second</w:t></w:r></w:ins></w:p>"#
+        ));
+        let md = view(&bytes, true, true);
+        assert!(md.contains(expected), "{md}");
     }
 }

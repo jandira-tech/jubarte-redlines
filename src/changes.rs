@@ -437,15 +437,44 @@ const FORMATTING: &[&str] = &[
     "cellMerge",
 ];
 
-/// Word's UTC revision instant, or the legacy date when it is absent.
+/// The recorded instant with the author's offset, else the stored legacy date.
 pub(crate) fn revision_date<'a>(
     mut attribute: impl FnMut(&str, &str) -> Option<&'a str>,
-) -> Option<&'a str> {
-    attribute(
+) -> Option<String> {
+    let utc = attribute(
         "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
         "dateUtc",
-    )
-    .or_else(|| attribute(W::URI, "date"))
+    );
+    reported_date(attribute(W::URI, "date"), utc)
+}
+
+/// Revisions and comments share Word's wall-clock/UTC pair encoding.
+pub(crate) fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<String> {
+    let Some((utc, (instant, fraction))) =
+        utc.and_then(|utc| crate::convert::timestamp_order_key(utc).map(|key| (utc, key)))
+    else {
+        return local.map(str::to_string);
+    };
+    let offset = local
+        .and_then(crate::convert::timestamp_order_key)
+        .filter(|(wall, digits)| {
+            digits == &fraction && (wall - instant) % 60 == 0 && (wall - instant).abs() <= 14 * 3600
+        })
+        .map_or(0, |(wall, _)| wall - instant);
+    if offset == 0 && utc.ends_with('Z') {
+        return Some(utc.to_string());
+    }
+    let display_fraction = utc[19..]
+        .strip_prefix('.')
+        .unwrap_or_default()
+        .split(['Z', '+', '-'])
+        .next()
+        .unwrap_or_default();
+    Some(crate::convert::timestamp_with_offset(
+        instant,
+        display_fraction,
+        offset,
+    ))
 }
 
 /// The revision elements under `root`, in document order.
@@ -535,8 +564,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
                 kind,
                 target,
                 author: dom.attribute(e, &W::name("author")).map(str::to_string),
-                date: revision_date(|ns, local| dom.attribute(e, &XName::get(local, ns)))
-                    .map(str::to_string),
+                date: revision_date(|ns, local| dom.attribute(e, &XName::get(local, ns))),
                 text,
                 paragraph: None,
                 move_name,

@@ -2199,7 +2199,7 @@ fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
     let author = element
         .attr("author")
         .map(|a| a.trim_start_matches(['\u{E000}', '\u{E001}']));
-    let note = comment_note(author, element.revision_date(), "");
+    let note = comment_note(author, element.revision_date().as_deref(), "");
     // A mark with no id, author or date (only a malformed file has one)
     // names nothing.
     if note.is_empty() && element.attr("id").is_none() {
@@ -3776,7 +3776,7 @@ impl Writer<'_> {
             && let Some(date) = element.revision_date()
         {
             tagged.push(' ');
-            tagged.push_str(date);
+            tagged.push_str(&date);
         }
         tagged
     }
