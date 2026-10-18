@@ -335,7 +335,7 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
 /// listed change; [`ChangeError::Package`] when
 /// the package cannot be read or rewritten.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
-    resolve(docx, filter, Resolution::Accept)
+    resolve(docx, filter, Resolution::Accept).map(|(document, _)| document)
 }
 
 /// Reject the changes `filter` selects; the others stay tracked. A Strict
@@ -345,21 +345,74 @@ pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, Cha
 ///
 /// As [`accept_changes`].
 pub fn reject_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
-    resolve(docx, filter, Resolution::Reject)
+    resolve(docx, filter, Resolution::Reject).map(|(document, _)| document)
+}
+
+/// A resolved document and the comments removed with its revisions.
+#[derive(Clone, Debug)]
+pub struct ResolvedChanges {
+    /// The document after resolving the selected changes.
+    pub document: Vec<u8>,
+    /// Removed comments, including replies, with their original ids and text.
+    /// Surviving comments may be renumbered in `document`.
+    pub removed_comments: Vec<crate::comments::CommentRecord>,
+}
+
+/// Accept selected changes and report comments that disappeared with them.
+///
+/// # Errors
+/// As [`accept_changes`], or when the removed comments cannot be read.
+pub fn accept_changes_with_report(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_with_report(docx, filter, Resolution::Accept)
+}
+
+/// Reject selected changes and report comments that disappeared with them.
+///
+/// # Errors
+/// As [`reject_changes`], or when the removed comments cannot be read.
+pub fn reject_changes_with_report(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_with_report(docx, filter, Resolution::Reject)
+}
+
+fn resolve_with_report(
+    docx: &[u8],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+) -> Result<ResolvedChanges, ChangeError> {
+    let (document, removed) = resolve(docx, filter, resolution)?;
+    let removed_comments = if removed.is_empty() {
+        Vec::new()
+    } else {
+        crate::comments::list_comments(docx)
+            .map_err(|e| ChangeError::Package(e.to_string()))?
+            .into_iter()
+            .filter(|c| removed.contains(&c.id.to_string()))
+            .collect()
+    };
+    Ok(ResolvedChanges {
+        document,
+        removed_comments,
+    })
 }
 
 fn resolve(
     docx: &[u8],
     filter: &ChangeFilter,
     resolution: Resolution,
-) -> Result<Vec<u8>, ChangeError> {
+) -> Result<(Vec<u8>, Vec<String>), ChangeError> {
     let filter = &filter.normalized()?;
     let mut pkg = open(docx)?;
     let listed = changes_in(&pkg);
     filter.check(&listed)?;
     // Nothing selected: nothing to resolve, and nothing else to touch.
     if !listed.iter().any(|c| filter.matches(c)) {
-        return Ok(docx.to_vec());
+        return Ok((docx.to_vec(), Vec::new()));
     }
     let main = main_part(&pkg);
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
@@ -384,9 +437,11 @@ fn resolve(
             }
         }
     };
-    resolve_package(&mut pkg, resolution, Some(&freeze));
-    pkg.to_zip()
-        .map_err(|e| ChangeError::Package(e.to_string()))
+    let removed = resolve_package(&mut pkg, resolution, Some(&freeze));
+    let document = pkg
+        .to_zip()
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    Ok((document, removed))
 }
 
 /// The package, Strict normalized to transitional as `inspect` reads it.
