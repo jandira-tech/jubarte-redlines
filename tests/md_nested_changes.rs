@@ -1924,3 +1924,173 @@ fn review_1129_repeated_parents_stop_the_chain() {
         }
     }
 }
+
+fn review_1129_fixed_story_view(kind: &str, text: &str) -> String {
+    review_1129_story_view(kind, text).replace("2026-09-29..2026-09-30", "2026-09-29T14:05:00Z")
+}
+
+fn review_1129_four_level_source() -> &'static str {
+    r#"<w:ins w:id="1" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:t>live</w:t></w:r><w:del w:id="3" w:author="Bob" w:date="2026-09-29T14:05:00Z"><w:ins w:id="5" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:delText>head</w:delText></w:r><w:del w:id="7" w:author="Bob" w:date="2026-09-29T14:05:00Z"><w:r><w:delText>x</w:delText></w:r></w:del><w:r><w:delText>tail</w:delText></w:r></w:ins></w:del><w:r><w:t>end</w:t></w:r></w:ins>"#
+}
+
+#[test]
+fn review_1129_four_level_chain_keeps_metadata() {
+    for kind in ["header", "footer"] {
+        let view = review_1129_fixed_story_view(
+            kind,
+            "{++live++}{>>PART.r1 @A<<}{++head++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{--x--}{>>PART.r7 @B on PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{++tail++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{++end++}{>>PART.r1 @A<<}",
+        );
+        let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+        assert_revision_tree(
+            &xml,
+            &[
+                ("w:ins", "1", None),
+                ("w:del", "3", Some("1")),
+                ("w:ins", "5", Some("3")),
+                ("w:del", "7", Some("5")),
+            ],
+            &revision_attributes(review_1129_four_level_source()),
+        );
+        for payload in [">live<", ">head<", ">x<", ">tail<", ">end<"] {
+            assert_eq!(xml.matches(payload).count(), 1, "{xml}");
+        }
+    }
+}
+
+#[test]
+fn review_1129_tree_checks_metadata_at_every_level() {
+    let source = review_1129_four_level_source();
+    let expected = [
+        ("w:ins", "1", None),
+        ("w:del", "3", Some("1")),
+        ("w:ins", "5", Some("3")),
+        ("w:del", "7", Some("5")),
+    ];
+    let attributes = revision_attributes(source);
+    assert_revision_tree(source, &expected, &attributes);
+    for id in ["1", "3", "5", "7"] {
+        for (attribute, wrong) in [("w:author", "changed"), ("w:date", "2026-09-30T14:05:00Z")] {
+            let prefix = format!("w:id=\"{id}\"");
+            let start = source.find(&prefix).unwrap();
+            let target = format!("{attribute}=\"");
+            let value_start = start + source[start..].find(&target).unwrap() + target.len();
+            let value_end = value_start + source[value_start..].find('"').unwrap();
+            let mut changed = source.to_string();
+            changed.replace_range(value_start..value_end, wrong);
+            assert!(
+                std::panic::catch_unwind(|| assert_revision_tree(&changed, &expected, &attributes))
+                    .is_err(),
+                "tree check accepted {attribute} corruption at r{id}"
+            );
+        }
+    }
+}
+
+#[test]
+fn issue_1134_pins_body_and_story_sole_intermediate_difference() {
+    // #1134 owns the depth decision. The same note grammar currently rebuilds
+    // only the nearest parent in the body and the whole chain in a story.
+    let text = "{++x++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{++tail++}{>>PART.r1 @A<<}";
+    let story_tree = [
+        ("w:ins", "1", None),
+        ("w:del", "3", Some("1")),
+        ("w:ins", "5", Some("3")),
+    ];
+    let body_tree = [
+        ("w:del", "3", None),
+        ("w:ins", "5", Some("3")),
+        ("w:ins", "1", None),
+    ];
+    let a = revision_by("Alice", Some("2026-09-29T14:05:00Z"));
+    let b = revision_by("Bob", Some("2026-09-29T14:05:00Z"));
+    for kind in ["header", "footer"] {
+        let view = review_1129_fixed_story_view(kind, text);
+        let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+        assert_revision_tree(&xml, &story_tree, &[a.clone(), b.clone(), a.clone()]);
+    }
+    let view = format!(
+        "---\nauthors:\n  A: Alice # 2 revisions, 2026-09-29T14:05:00Z\n  B: Bob # 1 revision, 2026-09-29T14:05:00Z\n---\n{}\n",
+        text.replace("PART.", "")
+    );
+    let xml = part_string(&written(&view), "word/document.xml").unwrap();
+    assert_revision_tree(&xml, &body_tree, &[b, a.clone(), a]);
+}
+
+#[test]
+fn review_1129_field_and_substitution_between_chains() {
+    for kind in ["header", "footer"] {
+        for separator in [
+            "{PAGE}1{/}",
+            "{~~old~>new~~}{>>PART.r10 @B<<}{>>PART.r11 @A<<}",
+        ] {
+            let first = "{--x--}{>>PART.r7 @B on PART.r5 @A on PART.r3 @B on PART.r1 @A<<}";
+            let second = first
+                .replace("r7", "r27")
+                .replace("r5", "r25")
+                .replace("r3", "r23")
+                .replace("r1", "r21");
+            let view = review_1129_fixed_story_view(kind, &format!("{first}{separator}{second}"));
+            let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+            let mut expected = vec![
+                ("w:ins", "1", None),
+                ("w:del", "3", Some("1")),
+                ("w:ins", "5", Some("3")),
+                ("w:del", "7", Some("5")),
+            ];
+            let mut attributes = revision_attributes(review_1129_four_level_source());
+            if separator.starts_with("{~~") {
+                expected.extend([("w:ins", "11", None), ("w:del", "10", None)]);
+                attributes.extend([
+                    revision_by("Alice", Some("2026-09-29T14:05:00Z")),
+                    revision_by("Bob", Some("2026-09-29T14:05:00Z")),
+                ]);
+                assert!(xml.contains(">new<") && xml.contains(">old<"), "{xml}");
+                let end = xml.find("</w:ins>").unwrap();
+                assert!(xml[end..].contains("<w:ins w:id=\"11\""), "{xml}");
+            } else {
+                assert!(xml.contains("<w:fldSimple w:instr=\" PAGE \""), "{xml}");
+                assert!(
+                    xml.find("</w:ins>").unwrap() < xml.find("<w:fldSimple").unwrap(),
+                    "{xml}"
+                );
+                assert!(
+                    xml.find("</w:fldSimple>").unwrap() < xml.find("<w:ins w:id=\"21\"").unwrap(),
+                    "{xml}"
+                );
+            }
+            expected.extend([
+                ("w:ins", "21", None),
+                ("w:del", "23", Some("21")),
+                ("w:ins", "25", Some("23")),
+                ("w:del", "27", Some("25")),
+            ]);
+            attributes.extend(revision_attributes(review_1129_four_level_source()));
+            assert_revision_tree(&xml, &expected, &attributes);
+        }
+    }
+}
+
+#[test]
+fn review_1129_substitution_refuses_any_parent_chain() {
+    for parents in ["PART.r3 @B", "PART.r3 @B on PART.r1 @A"] {
+        let text = format!("{{~~old~>new~~}}{{>>PART.r5 @A on {parents}<<}}");
+        for kind in ["header", "footer"] {
+            let result = markdown_to_docx(
+                &review_1129_fixed_story_view(kind, &text),
+                &DocxOptions::default(),
+            );
+            let error = result
+                .expect_err("substitution parent chain was silently discarded")
+                .to_string();
+            assert!(
+                error.contains(&parents.replace("PART", &format!("{kind}1"))),
+                "{error}"
+            );
+        }
+        let result = markdown_to_docx(&text.replace("PART.", ""), &DocxOptions::default());
+        let error = result
+            .expect_err("body substitution parent chain was silently discarded")
+            .to_string();
+        assert!(error.contains(&parents.replace("PART.", "")), "{error}");
+    }
+}
