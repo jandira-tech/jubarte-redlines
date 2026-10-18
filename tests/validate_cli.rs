@@ -398,7 +398,7 @@ fn foreign_history_alices_new_revision_exits_two_with_one_finding() {
         foreign[0]["message"]
             .as_str()
             .unwrap()
-            .ends_with(" by Alice")
+            .ends_with(" by Alice is new")
     );
 }
 
@@ -432,6 +432,56 @@ fn foreign_history_carols_new_revision_exits_two_with_one_finding() {
         foreign[0]["message"]
             .as_str()
             .unwrap()
-            .ends_with(" by Carol Diaz")
+            .ends_with(" by Carol Diaz is new")
+    );
+}
+
+#[test]
+fn foreign_swapped_deletions_exit_two() {
+    let carrier = |id, text| {
+        format!(
+            r#"<w:del w:id="{id}" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>{text}</w:delText></w:r></w:del>"#
+        )
+    };
+    let body = |left, right| {
+        format!(
+            r#"<w:p>{}<w:ins w:id="2" w:author="Carol Diaz"><w:r><w:t>new rate</w:t></w:r></w:ins>{}</w:p>"#,
+            carrier(1, left),
+            carrier(3, right)
+        )
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("original.docx"),
+        docx(&body("penalty", "bonus")),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("edited.docx"),
+        docx(&body("bonus", "penalty")),
+    )
+    .unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "edited.docx",
+            "--rules",
+            "edits",
+            "--original",
+            "original.docx",
+            "--author",
+            "Bob",
+            "--json",
+        ],
+    );
+    assert!(err.is_empty(), "{err}");
+    assert_eq!(code, 2, "{out}");
+    assert!(
+        out.lines().any(
+            |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["code"]
+                == "FOREIGN_AUTHOR"
+        ),
+        "{out}"
     );
 }

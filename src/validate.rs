@@ -76,7 +76,7 @@ use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 
 use crate::admission::{AdmissionError, InputLimits};
-use crate::changes::{Change, ChangeError, ChangeFilter, list_changes, reject_changes};
+use crate::changes::{Change, ChangeError, ChangeFilter, reject_changes};
 use crate::inspect::InspectError;
 use crate::namespaces::{MC, R, VML, W, W14, WP};
 use crate::opc::PartFs;
@@ -2197,9 +2197,13 @@ fn story_part(id: &str) -> String {
 /// text, body and stories alike; any residue is an `UNTRACKED_EDIT` finding
 /// at its paragraph id. Foreign revisions already in `original` may remain:
 /// only added, altered or removed foreign history is a `FOREIGN_AUTHOR`
-/// finding. Adjacent pieces with the same author, kind and date are compared
-/// together within their paragraph, ignoring revision ids. Missing original
-/// permission endpoints are reported as
+/// finding. Paragraphs are aligned by full text (including deleted text), story
+/// by story. Within each paragraph or non-paragraph owner, matching author,
+/// kind, target, date and move-side groups are compared in document order,
+/// ignoring revision ids. Split carriers combine only when they touch with
+/// no visible content or still-present revision between them; a boundary
+/// explained solely by a missing separator revision is not another change.
+/// Missing original permission endpoints are reported as
 /// `PERMISSION_RANGE_DROPPED`, including in headers, footers and notes.
 ///
 /// # Errors
@@ -2251,37 +2255,294 @@ pub fn audit_tracked(
     Ok(as_edits(out))
 }
 
-/// A revision's content identity, independent of ids (including move names).
-/// Keep targets and move sides distinct: empty paragraph marks and the two
-/// sides of a move must not mask one another.
-fn same_foreign_group(a: &Change, b: &Change) -> bool {
-    a.paragraph == b.paragraph
-        && story_part(&a.id) == story_part(&b.id)
-        && a.author == b.author
-        && a.kind == b.kind
-        && a.target == b.target
-        && a.date == b.date
-        && a.move_side == b.move_side
-}
-
-/// Rejecting the editor's changes leaves the original author's insertion
-/// split into adjacent carriers. Compare their combined text, not their ids
-/// or the number of carriers the editor needed to write.
-fn foreign_revisions(docx: &[u8], author: &str) -> Result<Vec<Change>, ValidateError> {
-    let mut out: Vec<Change> = Vec::new();
-    for c in list_changes(docx)? {
-        if c.author.as_deref() == Some(author) {
-            continue;
-        }
-        if let Some(last) = out.last_mut()
-            && same_foreign_group(last, &c)
-        {
-            last.text.push_str(&c.text);
-        } else {
-            out.push(c);
+/// Exact sequence alignment by Hunt--Szymanski: keys are hashed once and
+/// matching positions are consumed through indices. Unlike a multiset this
+/// cannot match both sides of a swap. Common ends avoid duplicate-text work.
+fn ordered_pairs<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
+    let prefix = a.iter().zip(b).take_while(|(a, b)| a == b).count();
+    let suffix = a[prefix..]
+        .iter()
+        .rev()
+        .zip(b[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut positions: HashMap<&T, Vec<usize>> = HashMap::new();
+    for (j, value) in b.iter().enumerate().take(b.len() - suffix).skip(prefix) {
+        positions.entry(value).or_default().push(j);
+    }
+    let mut links: Vec<(usize, usize, Option<usize>)> = Vec::new();
+    let mut tails: Vec<usize> = Vec::new();
+    for (i, value) in a.iter().enumerate().take(a.len() - suffix).skip(prefix) {
+        for &j in positions.get(value).into_iter().flatten().rev() {
+            let at = tails.partition_point(|&link| links[link].1 < j);
+            let previous = at.checked_sub(1).map(|at| tails[at]);
+            let link = links.len();
+            links.push((i, j, previous));
+            if at == tails.len() {
+                tails.push(link);
+            } else {
+                tails[at] = link;
+            }
         }
     }
-    Ok(out)
+    let mut middle = Vec::new();
+    let mut link = tails.last().copied();
+    while let Some(at) = link {
+        let (i, j, previous) = links[at];
+        middle.push((i, j));
+        link = previous;
+    }
+    let mut pairs: Vec<_> = (0..prefix).map(|i| (i, i)).collect();
+    pairs.extend(middle.into_iter().rev());
+    pairs.extend((0..suffix).map(|i| (a.len() - suffix + i, b.len() - suffix + i)));
+    pairs
+}
+
+/// Pair replacement gaps between the LCS anchors. Inserted/deleted tails
+/// have no counterpart; a changed paragraph between anchors still has one.
+fn aligned_pairs<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
+    let exact = ordered_pairs(a, b);
+    let mut pairs = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    for (x, y) in exact.into_iter().chain(std::iter::once((a.len(), b.len()))) {
+        pairs.extend((i..x).zip(j..y));
+        if x < a.len() {
+            pairs.push((x, y));
+        }
+        i = x + 1;
+        j = y + 1;
+    }
+    pairs
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ForeignKey {
+    part: String,
+    paragraph: Option<(bool, usize)>,
+    owner: String,
+    author: Option<String>,
+    kind: crate::changes::ChangeKind,
+    target: &'static str,
+    date: Option<String>,
+    move_side: Option<crate::changes::MoveSide>,
+}
+
+struct ForeignGroup<'a> {
+    key: ForeignKey,
+    change: &'a Change,
+    text: String,
+    start: usize,
+    end: usize,
+    relaxed_start: usize,
+    relaxed_end: usize,
+}
+
+/// Story-local paragraph identities. Full text includes deleted text, so a
+/// deletion-only paragraph participates in the alignment too.
+fn foreign_paragraphs(
+    before: &[crate::changes::AuditStory],
+    after: &[crate::changes::AuditStory],
+) -> HashMap<(String, String), usize> {
+    let mut identities = HashMap::new();
+    for original in before {
+        let Some(edited) = after.iter().find(|s| s.part == original.part) else {
+            continue;
+        };
+        let a: Vec<_> = original.paragraphs.iter().map(|(_, text)| text).collect();
+        let b: Vec<_> = edited.paragraphs.iter().map(|(_, text)| text).collect();
+        // An LCS alone can choose the moved paragraph as an anchor in a
+        // swap. Crossing unique text counterparts establish relocation;
+        // inserting a new paragraph above history creates no such crossing.
+        let mut old_positions: HashMap<&String, Vec<usize>> = HashMap::new();
+        let mut new_positions: HashMap<&String, Vec<usize>> = HashMap::new();
+        for (i, text) in a.iter().enumerate() {
+            old_positions.entry(text).or_default().push(i);
+        }
+        for (j, text) in b.iter().enumerate() {
+            new_positions.entry(text).or_default().push(j);
+        }
+        let unique: Vec<_> = a
+            .iter()
+            .map(|text| {
+                let old = old_positions.get(text)?;
+                let new = new_positions.get(text)?;
+                (old.len() == 1 && new.len() == 1).then_some(new[0])
+            })
+            .collect();
+        let mut crossed = vec![false; a.len()];
+        let mut maximum = None;
+        for (i, position) in unique.iter().enumerate() {
+            if let Some(j) = position {
+                crossed[i] |= maximum.is_some_and(|max| max > *j);
+                maximum = Some(maximum.map_or(*j, |max: usize| max.max(*j)));
+            }
+        }
+        let mut minimum = None;
+        for (i, position) in unique.iter().enumerate().rev() {
+            if let Some(j) = position {
+                crossed[i] |= minimum.is_some_and(|min| min < *j);
+                minimum = Some(minimum.map_or(*j, |min: usize| min.min(*j)));
+            }
+        }
+        for (i, j) in aligned_pairs(&a, &b) {
+            if !crossed[i] {
+                identities.insert((edited.part.clone(), edited.paragraphs[j].0.clone()), i);
+            }
+        }
+    }
+    identities
+}
+
+/// Coalesce only touching carriers. Visible atoms and any intervening
+/// revision advance the document cursor even when list_changes omits them.
+fn foreign_revisions<'a>(
+    stories: &'a [crate::changes::AuditStory],
+    author: &str,
+    paragraphs: &HashMap<(String, String), usize>,
+    edited: bool,
+) -> Vec<ForeignGroup<'a>> {
+    let mut out: Vec<ForeignGroup<'a>> = Vec::new();
+    for story in stories {
+        let paragraph_indices: HashMap<_, _> = story
+            .paragraphs
+            .iter()
+            .enumerate()
+            .map(|(i, (id, _))| (id.as_str(), i))
+            .collect();
+        for located in &story.changes {
+            let c = &located.change;
+            if c.author.as_deref() == Some(author) {
+                continue;
+            }
+            let paragraph = c.paragraph.as_ref().map(|id| {
+                if edited && let Some(&i) = paragraphs.get(&(story.part.clone(), id.clone())) {
+                    (false, i)
+                } else {
+                    (
+                        edited,
+                        paragraph_indices
+                            .get(id.as_str())
+                            .copied()
+                            .unwrap_or(usize::MAX),
+                    )
+                }
+            });
+            let key = ForeignKey {
+                part: story.part.clone(),
+                paragraph,
+                owner: located.owner.clone(),
+                author: c.author.clone(),
+                kind: c.kind,
+                target: c.target,
+                date: c.date.clone(),
+                move_side: c.move_side,
+            };
+            if let Some(last) = out.last_mut()
+                && last.key == key
+                && last.end == located.start
+            {
+                last.text.push_str(&c.text);
+                last.end = located.end;
+                last.relaxed_end = located.end;
+            } else {
+                out.push(ForeignGroup {
+                    key,
+                    change: c,
+                    text: c.text.clone(),
+                    start: located.start,
+                    end: located.end,
+                    relaxed_start: located.start,
+                    relaxed_end: located.end,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Remove only the document spans of revisions with no sequence counterpart.
+/// A still-present separator, even with changed text, remains a boundary.
+fn relax_foreign_boundaries(groups: &mut [ForeignGroup<'_>], present: &[bool]) {
+    let mut missing: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    for (group, &present) in groups.iter().zip(present) {
+        if !present {
+            missing
+                .entry(&group.key.part)
+                .or_default()
+                .push((group.start, group.end));
+        }
+    }
+    let mut ranges: HashMap<String, Vec<(usize, usize, usize)>> = HashMap::new();
+    for (part, mut spans) in missing {
+        spans.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in spans {
+            if let Some(last) = merged.last_mut()
+                && start <= last.1
+            {
+                last.1 = last.1.max(end);
+            } else {
+                merged.push((start, end));
+            }
+        }
+        let mut removed = 0;
+        ranges.insert(
+            part.to_string(),
+            merged
+                .into_iter()
+                .map(|(start, end)| {
+                    let prior = removed;
+                    removed += end - start;
+                    (start, end, prior)
+                })
+                .collect(),
+        );
+    }
+    for group in groups {
+        let Some(spans) = ranges.get(&group.key.part) else {
+            continue;
+        };
+        let position = |pos: usize| {
+            let index = spans.partition_point(|&(start, _, _)| start < pos);
+            if index == 0 {
+                return pos;
+            }
+            let (start, end, prior) = spans[index - 1];
+            pos - prior - (pos.min(end) - start)
+        };
+        group.relaxed_start = position(group.start);
+        group.relaxed_end = position(group.end);
+    }
+}
+
+/// A comparison window may lose boundaries only where a missing separator
+/// explains them. Keep the first carrier's id for a combined group.
+fn foreign_window(groups: &[ForeignGroup<'_>], indices: &[usize]) -> Vec<(usize, String)> {
+    let mut out: Vec<(usize, String)> = Vec::new();
+    let mut previous = None;
+    for &index in indices {
+        let group = &groups[index];
+        if previous.is_some_and(|p: usize| groups[p].relaxed_end == group.relaxed_start)
+            && let Some((_, text)) = out.last_mut()
+        {
+            text.push_str(&group.text);
+        } else {
+            out.push((index, group.text.clone()));
+        }
+        previous = Some(index);
+    }
+    out
+}
+
+fn foreign_finding(group: &ForeignGroup<'_>, state: &str) -> Finding {
+    let c = group.change;
+    let author = c.author.as_deref().unwrap_or("<no author>");
+    let message = if state == "gone" {
+        format!("{author}'s {} in the original is gone", c.id)
+    } else {
+        format!("{} by {author} {state}", c.id)
+    };
+    Finding::new("FOREIGN_AUTHOR", &group.key.part, "", message)
 }
 
 fn check_foreign_revisions(
@@ -2290,49 +2551,69 @@ fn check_foreign_revisions(
     author: &str,
     out: &mut Vec<Finding>,
 ) -> Result<(), ValidateError> {
-    let mut before = foreign_revisions(original, author)?;
-    let mut changed = Vec::new();
-    // Reserve exact content matches first, consuming each once. Otherwise an
-    // altered early carrier could steal a later carrier's unchanged match.
-    for c in foreign_revisions(reverted, author)? {
-        if let Some(at) = before
-            .iter()
-            .position(|b| same_foreign_group(b, &c) && b.text == c.text)
+    let original = crate::changes::audit_stories(original)?;
+    let reverted = crate::changes::audit_stories(reverted)?;
+    let paragraphs = foreign_paragraphs(&original, &reverted);
+    let mut before = foreign_revisions(&original, author, &paragraphs, false);
+    let mut after = foreign_revisions(&reverted, author, &paragraphs, true);
+    let mut by_key: HashMap<ForeignKey, (Vec<usize>, Vec<usize>)> = HashMap::new();
+    for (i, group) in before.iter().enumerate() {
+        by_key.entry(group.key.clone()).or_default().0.push(i);
+    }
+    for (i, group) in after.iter().enumerate() {
+        by_key.entry(group.key.clone()).or_default().1.push(i);
+    }
+    let mut before_present = vec![false; before.len()];
+    let mut after_present = vec![false; after.len()];
+    for (old, new) in by_key.values() {
+        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
+        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+        for (i, j) in aligned_pairs(&a, &b) {
+            before_present[old[i]] = true;
+            after_present[new[j]] = true;
+        }
+    }
+    relax_foreign_boundaries(&mut before, &before_present);
+    relax_foreign_boundaries(&mut after, &after_present);
+    let mut findings = Vec::new();
+    for (old, new) in by_key.values() {
+        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
+        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+        let (mut i, mut j) = (0, 0);
+        for (x, y) in ordered_pairs(&a, &b)
+            .into_iter()
+            .chain(std::iter::once((a.len(), b.len())))
         {
-            before.remove(at);
-        } else {
-            changed.push(c);
+            let left = foreign_window(&before, &old[i..x]);
+            let right = foreign_window(&after, &new[j..y]);
+            let left_text: Vec<_> = left.iter().map(|(_, text)| text).collect();
+            let right_text: Vec<_> = right.iter().map(|(_, text)| text).collect();
+            let (mut p, mut q) = (0, 0);
+            for (u, v) in ordered_pairs(&left_text, &right_text)
+                .into_iter()
+                .chain(std::iter::once((left.len(), right.len())))
+            {
+                let paired = (u - p).min(v - q);
+                for (offset, &(index, _)) in right[q..v].iter().enumerate() {
+                    let state = if offset < paired {
+                        "differs from the original"
+                    } else {
+                        "is new"
+                    };
+                    findings.push((false, index, foreign_finding(&after[index], state)));
+                }
+                for &(index, _) in &left[p + paired..u] {
+                    findings.push((true, index, foreign_finding(&before[index], "gone")));
+                }
+                p = u + 1;
+                q = v + 1;
+            }
+            i = x + 1;
+            j = y + 1;
         }
     }
-    for c in changed {
-        // Different text in an existing group is one altered revision,
-        // rather than both an addition and a disappearance.
-        if let Some(at) = before.iter().position(|b| same_foreign_group(b, &c)) {
-            before.remove(at);
-        }
-        out.push(Finding::new(
-            "FOREIGN_AUTHOR",
-            &story_part(&c.id),
-            "",
-            format!(
-                "{} by {}",
-                c.id,
-                c.author.as_deref().unwrap_or("<no author>")
-            ),
-        ));
-    }
-    for c in before {
-        out.push(Finding::new(
-            "FOREIGN_AUTHOR",
-            &story_part(&c.id),
-            "",
-            format!(
-                "{}'s {} in the original is gone",
-                c.author.as_deref().unwrap_or("<no author>"),
-                c.id
-            ),
-        ));
-    }
+    findings.sort_by_key(|(original, index, _)| (*original, *index));
+    out.extend(findings.into_iter().map(|(_, _, finding)| finding));
     Ok(())
 }
 

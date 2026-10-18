@@ -637,7 +637,7 @@ fn foreign_history_a_plan_under_alices_name_reports_only_the_new_revision() {
         .unwrap();
     assert_eq!(
         foreign_messages(&original, &edited),
-        [format!("{} by Alice", added.id)]
+        [format!("{} by Alice is new", added.id)]
     );
 }
 
@@ -670,7 +670,7 @@ fn foreign_history_carols_new_revision_reports_only_carol() {
         .unwrap();
     assert_eq!(
         foreign_messages(&original, &edited),
-        [format!("{} by Carol Diaz", added.id)]
+        [format!("{} by Carol Diaz is new", added.id)]
     );
 }
 
@@ -689,7 +689,10 @@ fn foreign_history_ids_do_not_define_identity() {
 fn foreign_history_changed_deletion_text_is_one_foreign_revision() {
     let original = docx(FOREIGN_HISTORY);
     let edited = docx(&FOREIGN_HISTORY.replace(">old<", ">different<"));
-    assert_eq!(foreign_messages(&original, &edited), ["r2 by Alice"]);
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["r2 by Alice differs from the original"]
+    );
 }
 
 #[test]
@@ -699,8 +702,8 @@ fn foreign_history_is_compared_per_paragraph() {
     assert_eq!(
         foreign_messages(&original, &edited),
         [
-            "r1 by Alice",
-            "r2 by Alice",
+            "r1 by Alice is new",
+            "r2 by Alice is new",
             "Alice's r1 in the original is gone",
             "Alice's r2 in the original is gone"
         ]
@@ -835,7 +838,10 @@ fn foreign_history_different_dates_are_not_coalesced() {
     );
     assert_eq!(
         foreign_messages(&original, &edited),
-        ["r91 by Alice", "Alice's r2 in the original is gone"]
+        [
+            "r91 by Alice differs from the original",
+            "Alice's r2 in the original is gone"
+        ]
     );
 }
 
@@ -852,4 +858,317 @@ fn foreign_history_exact_matches_are_consumed_before_changed_text() {
         foreign_messages(&original, &edited),
         ["Alice's r1 in the original is gone"]
     );
+}
+
+fn foreign_carrier(kind: &str, id: usize, author: &str, text: &str) -> String {
+    let tag = if kind == "del" { "delText" } else { "t" };
+    format!(
+        r#"<w:{kind} w:id="{id}" w:author="{author}" w:date="2026-01-01T00:00:00Z"><w:r><w:{tag} xml:space="preserve">{text}</w:{tag}></w:r></w:{kind}>"#
+    )
+}
+
+#[test]
+fn foreign_separator_settlement_reports_only_r2() {
+    let original = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        foreign_carrier("ins", 1, "Alice", "Hello "),
+        foreign_carrier("del", 2, "Alice", "old"),
+        foreign_carrier("ins", 3, "Alice", "World")
+    ));
+    let edited =
+        jubarte::changes::accept_changes(&original, &jubarte::changes::ChangeFilter::ids(["r2"]))
+            .unwrap();
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["Alice's r2 in the original is gone"]
+    );
+}
+
+#[test]
+fn foreign_visible_separator_prevents_deletion_redistribution() {
+    let make = |left, right| {
+        docx(&format!(
+            "<w:p>{}<w:r><w:t> X </w:t></w:r>{}</w:p>",
+            foreign_carrier("del", 1, "Alice", left),
+            foreign_carrier("del", 3, "Alice", right)
+        ))
+    };
+    assert!(!foreign_messages(&make("penalty", "bonus"), &make("penaltyb", "onus")).is_empty());
+}
+
+#[test]
+fn foreign_visible_separator_prevents_move_redistribution() {
+    let make = |left, right| {
+        docx(&format!(
+            "<w:p>{}<w:r><w:t> X </w:t></w:r>{}</w:p>",
+            foreign_carrier("moveFrom", 1, "Alice", left),
+            foreign_carrier("moveFrom", 3, "Alice", right)
+        ))
+    };
+    assert!(!foreign_messages(&make("penalty", "bonus"), &make("penaltyb", "onus")).is_empty());
+}
+
+#[test]
+fn foreign_deletion_swap_preserves_order() {
+    let make = |left, right| {
+        docx(&format!(
+            "<w:p>{}{}{}</w:p>",
+            foreign_carrier("del", 1, "Alice", left),
+            foreign_carrier("ins", 2, "Carol Diaz", "new rate"),
+            foreign_carrier("del", 3, "Alice", right)
+        ))
+    };
+    assert!(!foreign_messages(&make("penalty", "bonus"), &make("bonus", "penalty")).is_empty());
+}
+
+fn foreign_owner_revisions(part: &str, owners: &str) -> Vec<u8> {
+    let (root, kind) = if part == "styles" {
+        ("styles", "styles")
+    } else {
+        ("numbering", "numbering")
+    };
+    let xml = format!(
+        r#"<w:{root} xmlns:w="{}">{owners}</w:{root}>"#,
+        common::docx::W_NS
+    );
+    common::docx::docx_with(
+        &para("body"),
+        &[Part {
+            name: &format!("word/{part}.xml"),
+            content_type: &format!(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"
+            ),
+            rel_type: &format!("{}/{kind}", common::docx::R_NS),
+            xml: &xml,
+        }],
+    )
+}
+
+fn foreign_style(id: usize, name: &str) -> String {
+    format!(
+        r#"<w:style w:type="paragraph" w:styleId="{name}"><w:name w:val="{name}"/><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style>"#
+    )
+}
+
+#[test]
+fn foreign_style_x_owner_survives_y_settlement() {
+    let original =
+        foreign_owner_revisions("styles", &(foreign_style(1, "X") + &foreign_style(2, "Y")));
+    let edited = jubarte::changes::accept_changes(
+        &original,
+        &jubarte::changes::ChangeFilter::ids(["styles.r2"]),
+    )
+    .unwrap();
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["Alice's styles.r2 in the original is gone"]
+    );
+}
+
+#[test]
+fn foreign_style_y_owner_survives_x_settlement() {
+    let original =
+        foreign_owner_revisions("styles", &(foreign_style(1, "X") + &foreign_style(2, "Y")));
+    let edited = jubarte::changes::accept_changes(
+        &original,
+        &jubarte::changes::ChangeFilter::ids(["styles.r1"]),
+    )
+    .unwrap();
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["Alice's styles.r1 in the original is gone"]
+    );
+}
+
+#[test]
+fn foreign_numbering_part_is_outside_change_listing() {
+    let owner = |id| {
+        format!(
+            r#"<w:abstractNum w:abstractNumId="{id}"><w:lvl w:ilvl="0"><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Alice"><w:rPr/></w:rPrChange></w:rPr></w:lvl></w:abstractNum>"#
+        )
+    };
+    let original = foreign_owner_revisions("numbering", &(owner(1) + &owner(2)));
+    assert!(
+        jubarte::changes::list_changes(&original)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(foreign_messages(&original, &original).is_empty());
+}
+
+#[test]
+fn foreign_paragraph_inserted_above_history_only_reports_structure() {
+    let body = format!(
+        "{}<w:p>{}</w:p>",
+        para("a"),
+        foreign_carrier("ins", 1, "Alice", "x")
+    );
+    let findings = audit_tracked(&docx(&body), &docx(&(para("new") + &body)), "Bob").unwrap();
+    assert!(
+        findings.iter().all(|f| f.code != "FOREIGN_AUTHOR"),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == "UNTRACKED_EDIT"
+                && f.message.contains("2 paragraphs before, 3 after")),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn foreign_insertion_moved_to_another_paragraph_is_reported() {
+    let revision = foreign_carrier("ins", 1, "Alice", "x");
+    let original = docx(&format!(
+        "<w:p><w:r><w:t>a</w:t></w:r>{revision}</w:p>{}",
+        para("b")
+    ));
+    let edited = docx(&format!(
+        "{}<w:p><w:r><w:t>b</w:t></w:r>{revision}</w:p>",
+        para("a")
+    ));
+    assert!(!foreign_messages(&original, &edited).is_empty());
+}
+
+#[test]
+fn foreign_changed_and_new_messages_are_distinct_and_do_not_quote_text() {
+    let original = docx(FOREIGN_HISTORY);
+    let changed = docx(&FOREIGN_HISTORY.replace(">old<", ">confidential<"));
+    assert_eq!(
+        foreign_messages(&original, &changed),
+        ["r2 by Alice differs from the original"]
+    );
+    let added = docx(&FOREIGN_HISTORY.replace(
+        "</w:p>",
+        &(foreign_carrier("ins", 8, "Carol Diaz", "confidential") + "</w:p>"),
+    ));
+    assert_eq!(
+        foreign_messages(&original, &added),
+        ["r8 by Carol Diaz is new"]
+    );
+}
+
+#[test]
+fn foreign_reverse_ten_thousand_revisions_is_fast() {
+    let make = |reverse: bool| {
+        let mut body = String::from("<w:p>");
+        for n in 0..10_000 {
+            let id = if reverse { 10_000 - n } else { n + 1 };
+            let date = format!(
+                "2026-01-01T{:02}:{:02}:{:02}Z",
+                id / 3600,
+                id / 60 % 60,
+                id % 60
+            );
+            body.push_str(
+                &foreign_carrier("del", id, "Alice", &format!("text {id}"))
+                    .replace("2026-01-01T00:00:00Z", &date),
+            );
+        }
+        body.push_str("</w:p>");
+        docx(&body)
+    };
+    let original = make(false);
+    let edited = make(true);
+    let start = std::time::Instant::now();
+    let _findings = foreign_messages(&original, &edited);
+    let elapsed = start.elapsed();
+    eprintln!("10,000 reversed revisions took {elapsed:?}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(6),
+        "10,000 reversed revisions took {elapsed:?}"
+    );
+}
+
+#[test]
+fn foreign_change_json_keeps_its_exact_public_shape() {
+    let changes = jubarte::changes::list_changes(&docx(&format!(
+        "<w:p>{}</w:p>",
+        foreign_carrier("del", 1, "Alice", "old")
+    )))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_string(&changes[0]).unwrap(),
+        r#"{"id":"r1","ref":"r1","kind":"deletion","target":"text","author":"Alice","date":"2026-01-01T00:00:00Z","text":"old","paragraph":"p0"}"#
+    );
+}
+
+#[test]
+fn foreign_new_revision_message_is_explicit() {
+    let original = docx(FOREIGN_HISTORY);
+    let edited = docx(&FOREIGN_HISTORY.replace(
+        "</w:p>",
+        &(foreign_carrier("ins", 8, "Carol Diaz", "confidential") + "</w:p>"),
+    ));
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["r8 by Carol Diaz is new"]
+    );
+}
+
+#[test]
+fn foreign_accepted_insertion_separator_reports_only_it() {
+    let original = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        foreign_carrier("del", 1, "Alice", "penalty"),
+        foreign_carrier("ins", 2, "Carol Diaz", "new rate"),
+        foreign_carrier("del", 3, "Alice", "bonus")
+    ));
+    let edited =
+        jubarte::changes::accept_changes(&original, &jubarte::changes::ChangeFilter::ids(["r2"]))
+            .unwrap();
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["Carol Diaz's r2 in the original is gone"]
+    );
+}
+
+#[test]
+fn foreign_story_paragraph_alignment_includes_deleted_text() {
+    for story in ["header1", "footer1", "footnotes", "endnotes"] {
+        let body = format!(
+            "{}<w:p>{}</w:p>",
+            para("a"),
+            foreign_carrier("del", 1, "Alice", "deleted")
+        );
+        let original = foreign_story(story, &body);
+        let edited = foreign_story(story, &(para("new") + &body));
+        let findings = audit_tracked(&original, &edited, "Bob").unwrap();
+        assert!(
+            findings.iter().all(|f| f.code != "FOREIGN_AUTHOR"),
+            "{story}: {findings:?}"
+        );
+        assert!(findings.iter().any(|f| f.code == "UNTRACKED_EDIT"));
+    }
+}
+
+#[test]
+fn foreign_whole_paragraph_relocation_is_reported_in_both_directions() {
+    for (original, edited) in [
+        (
+            FOREIGN_HISTORY.to_string() + &para("tail"),
+            para("tail") + FOREIGN_HISTORY,
+        ),
+        (
+            para("tail") + FOREIGN_HISTORY,
+            FOREIGN_HISTORY.to_string() + &para("tail"),
+        ),
+    ] {
+        assert!(!foreign_messages(&docx(&original), &docx(&edited)).is_empty());
+    }
+}
+
+#[test]
+fn foreign_empty_runs_do_not_separate_adjacent_splits() {
+    let original = docx(&format!(
+        "<w:p>{}</w:p>",
+        foreign_carrier("ins", 1, "Alice", "Hello World")
+    ));
+    let edited = docx(&format!(
+        "<w:p>{}<w:r><w:t/></w:r>{}</w:p>",
+        foreign_carrier("ins", 1, "Alice", "Hello "),
+        foreign_carrier("ins", 3, "Alice", "World")
+    ));
+    assert!(foreign_messages(&original, &edited).is_empty());
 }

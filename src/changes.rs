@@ -95,6 +95,145 @@ pub struct Change {
     pub inside: Option<String>,
 }
 
+/// Private audit view: public `Change` serialization stays unchanged.
+pub(crate) struct AuditStory {
+    pub part: String,
+    pub paragraphs: Vec<(String, String)>,
+    pub changes: Vec<AuditChange>,
+}
+
+pub(crate) struct AuditChange {
+    pub change: Change,
+    pub owner: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Read paragraph text including deletions, and document positions for the
+/// same carriers as `list_changes`. Positions count visible atoms and every
+/// revision, including carriers omitted from the public listing.
+pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError> {
+    let pkg = open(docx)?;
+    let main = main_part(&pkg);
+    let mut stories = Vec::new();
+    for (part, _) in revision_bearing_parts(&pkg) {
+        let Some(xml) = pkg.part_string(&part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(document) else {
+            continue;
+        };
+        let story = story_id(&main, &part);
+        let found = carriers(&dom, root, &story);
+        let revision_nodes: HashSet<_> = found.iter().map(|c| c.node).collect();
+        let mut spans = HashMap::new();
+        let mut cursor = 0;
+        let mut pending = vec![(root, false)];
+        while let Some((node, closing)) = pending.pop() {
+            if closing {
+                if let Some(span) = spans.get_mut(&node) {
+                    let (_, end): &mut (usize, usize) = span;
+                    *end = cursor;
+                }
+                continue;
+            }
+            spans.insert(node, (cursor, cursor));
+            let visible = dom.name(node).is_some_and(|name| {
+                name.namespace_name() == W::URI
+                    && matches!(
+                        name.local_name(),
+                        "t" | "delText"
+                            | "instrText"
+                            | "delInstrText"
+                            | "tab"
+                            | "br"
+                            | "cr"
+                            | "drawing"
+                            | "pict"
+                            | "object"
+                            | "sym"
+                            | "noBreakHyphen"
+                            | "softHyphen"
+                            | "footnoteReference"
+                            | "endnoteReference"
+                    )
+            });
+            let empty_text = dom.name(node).is_some_and(|name| {
+                matches!(
+                    name.local_name(),
+                    "t" | "delText" | "instrText" | "delInstrText"
+                )
+            }) && dom.value(node).is_empty();
+            if revision_nodes.contains(&node) || (visible && !empty_text) {
+                cursor += 1;
+            }
+            pending.push((node, true));
+            for index in (0..dom.child_count(node)).rev() {
+                pending.push((dom.child_at(node, index), false));
+            }
+        }
+        let paragraphs = crate::inspect::story_paragraph_nodes(&dom, root)
+            .into_iter()
+            .enumerate()
+            .map(|(index, node)| (crate::ids::paragraph_id(&story, index), text_of(&dom, node)))
+            .collect();
+        let changes = found
+            .into_iter()
+            .filter_map(|carrier| {
+                let change = carrier.change?;
+                let owner = if change.paragraph.is_none() {
+                    audit_owner(&dom, carrier.node)
+                } else {
+                    String::new()
+                };
+                let (start, end) = spans[&carrier.node];
+                Some(AuditChange {
+                    change,
+                    owner,
+                    start,
+                    end,
+                })
+            })
+            .collect();
+        stories.push(AuditStory {
+            part,
+            paragraphs,
+            changes,
+        });
+    }
+    Ok(stories)
+}
+
+/// Owner paths use semantic ids where OOXML defines them, otherwise the
+/// element's ordinal among same-named siblings. Revision ids never enter it.
+fn audit_owner(dom: &Dom, node: NodeId) -> String {
+    let mut path = Vec::new();
+    for ancestor in dom.ancestors(node, None).into_iter().rev() {
+        let Some(name) = dom.name(ancestor) else {
+            continue;
+        };
+        let local = name.local_name();
+        let identity = ["styleId", "abstractNumId", "numId", "ilvl", "id"]
+            .into_iter()
+            .find_map(|attr| {
+                dom.attribute(ancestor, &W::name(attr))
+                    .map(|id| format!("{attr}={id}"))
+            })
+            .unwrap_or_else(|| {
+                let ordinal = dom
+                    .nodes_before_self(ancestor)
+                    .into_iter()
+                    .filter(|&sibling| dom.name(sibling).as_ref() == Some(&name))
+                    .count();
+                ordinal.to_string()
+            });
+        path.push(format!("{local}[{identity}]"));
+    }
+    path.join("/")
+}
+
 /// Which changes to resolve. A change is selected when it matches every
 /// list given; a list left out matches any change, so the default filter
 /// selects every change, and an empty list selects none.
