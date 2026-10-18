@@ -6416,7 +6416,16 @@ pub fn compare_documents_with_settings(
     modified: &[u8],
     settings: &WmlComparerSettings,
 ) -> Result<Vec<u8>, OpcError> {
-    compare_documents_impl(original, modified, settings, true)
+    compare_documents_impl(original, modified, settings, true, true)
+}
+
+/// Edit restores permissions under its own revised-by-id policy (#1176).
+pub(crate) fn compare_documents_for_edit(
+    original: &[u8],
+    modified: &[u8],
+    settings: &WmlComparerSettings,
+) -> Result<Vec<u8>, OpcError> {
+    compare_documents_impl(original, modified, settings, true, false)
 }
 
 /// `WmlComparer.CompareInternal` (:152). `pre_process_original` mirrors C#'s
@@ -6434,7 +6443,7 @@ pub fn compare_documents_internal(
         date_time_for_revisions: date.to_string(),
         ..WmlComparerSettings::default()
     };
-    compare_documents_impl(original, modified, &settings, pre_process_original)
+    compare_documents_impl(original, modified, &settings, pre_process_original, true)
 }
 
 /// Resolve the footnotes/endnotes part names via the main-document rels,
@@ -6503,6 +6512,7 @@ fn compare_documents_impl(
     modified: &[u8],
     settings: &WmlComparerSettings,
     pre_process_original: bool,
+    union_permissions: bool,
 ) -> Result<Vec<u8>, OpcError> {
     // Admit both packages before anything inflates them: the central
     // directory's sizes are untrusted, and an unbounded inflate aborts the
@@ -6792,6 +6802,15 @@ fn compare_documents_impl(
         (&pkg2, &main2),
         &settings.author_for_revisions,
     );
+    if union_permissions {
+        crate::comparer::bookmarks::carry_permission_union(
+            &mut dom,
+            result_root,
+            (&pkg1, &main1),
+            (&pkg2, &main2),
+            &settings.author_for_revisions,
+        );
+    }
 
     // Final drawing/shape id renumber immediately before serialize — package
     // post-steps (reconcile, header/footer adopt, comments) can clone/graft
@@ -7667,6 +7686,15 @@ fn compare_documents_impl(
         (en1.as_str(), notes_ctx.en_with_revisions, false),
     ] {
         if let Some(r) = root {
+            if union_permissions {
+                crate::comparer::bookmarks::carry_permission_union(
+                    &mut dom,
+                    r,
+                    (&pkg1, part),
+                    (&pkg2, if is_fn { &fn2 } else { &en2 }),
+                    &settings.author_for_revisions,
+                );
+            }
             let def = if is_fn { W::footnote() } else { W::endnote() };
             let ids: std::collections::HashSet<String> = dom
                 .elements(r, Some(&def))
@@ -7812,6 +7840,15 @@ fn compare_documents_impl(
                     }
                     if b_ends_with_table {
                         delete_story_closing_mark(&mut hd, container, settings);
+                    }
+                    if union_permissions {
+                        crate::comparer::bookmarks::carry_permission_union(
+                            &mut hd,
+                            container,
+                            (&pkg1, &part_a),
+                            (&pkg2, part_b),
+                            &settings.author_for_revisions,
+                        );
                     }
                     // M-PAG mech 1 guard: the diff must never leave a slot A
                     // populates with B's wholesale content. When B's matched

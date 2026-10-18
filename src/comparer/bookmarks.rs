@@ -313,6 +313,7 @@ fn inject_side(
     b_side: bool,
     author: &str,
     next_id: &mut u32,
+    mut placed: impl FnMut(usize, NodeId, NodeId),
 ) {
     if markers.is_empty() {
         return;
@@ -325,7 +326,7 @@ fn inject_side(
     let merged: Vec<char> = merged_text.chars().collect();
     let identical = merged == src;
     let mut hint = 0usize;
-    for m in markers {
+    for (index, m) in markers.iter().enumerate() {
         let (s, e) = if identical {
             (m.start, m.end)
         } else {
@@ -391,6 +392,7 @@ fn inject_side(
                 }
             }
         }
+        placed(index, start, end);
     }
 }
 
@@ -513,6 +515,7 @@ pub fn carry_matching_bookmarks(
         true,
         author,
         &mut next_id,
+        |_, _, _| {},
     );
     inject_side(
         dom,
@@ -521,7 +524,177 @@ pub fn carry_matching_bookmarks(
         false,
         author,
         &mut next_id,
+        |_, _, _| {},
     );
+}
+
+/// A placed permission pair. Coordinates count both live and deleted text;
+/// document order breaks ties at paragraph and inline revision boundaries.
+struct PermissionSpan {
+    start: NodeId,
+    end: NodeId,
+    first: (usize, usize),
+    last: (usize, usize),
+    editor: [Option<String>; 4],
+    note: Option<u32>,
+    id: String,
+    original: bool,
+}
+
+/// A boundary of a whole changed run belongs outside its revision. An
+/// endpoint inside deleted/inserted text must retain its source offset.
+fn leave_permission_revision_boundary(dom: &mut Dom, endpoint: NodeId, after: bool) {
+    let revision = dom
+        .ancestors(endpoint, None)
+        .into_iter()
+        .take_while(|&n| !dom.name_is(n, &W::p()))
+        .filter(|&n| {
+            [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")]
+                .iter()
+                .any(|name| dom.name_is(n, name))
+        })
+        .last();
+    let Some(revision) = revision else { return };
+    let nodes = dom.descendants(revision, None);
+    let Some(at) = nodes.iter().position(|&n| n == endpoint) else {
+        return;
+    };
+    let adjacent = if after {
+        &nodes[at + 1..]
+    } else {
+        &nodes[..at]
+    };
+    if adjacent.iter().any(|&n| {
+        (dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text())) && !dom.value(n).is_empty()
+    }) {
+        return;
+    }
+    leave_inline_revision(dom, endpoint, after);
+}
+
+/// Word Compare unions permissions by editor and column scope, independently
+/// of source ids. Keep this separate from edit's revised-by-id policy below.
+/// The string check avoids extraction, projection and traversal on range-free
+/// parts (including the usual range-free document pair).
+pub(crate) fn carry_permission_union(
+    dom: &mut Dom,
+    root: NodeId,
+    original: (&PartFs, &str),
+    revised: (&PartFs, &str),
+    author: &str,
+) {
+    let has_permissions = |(pkg, part): (&PartFs, &str)| {
+        pkg.part_bytes(part).is_some_and(|bytes| {
+            let xml = String::from_utf8_lossy(bytes);
+            xml.contains("permStart") || xml.contains("permEnd")
+        })
+    };
+    if !has_permissions(original) && !has_permissions(revised) {
+        return;
+    }
+    let a = extract(original.0, original.1, true);
+    let b = extract(revised.0, revised.1, true);
+    let mut reserved: HashSet<String> = a.1.iter().chain(&b.1).map(|m| m.name.clone()).collect();
+    for n in dom.descendants(root, None) {
+        if let Some(id) = dom.attribute(n, &W::id()) {
+            reserved.insert(id.to_string());
+        }
+        // Opaque content may already carry endpoints: rebuild exactly once
+        // from both source projections, rather than duplicating those copies.
+        if [W::name("permStart"), W::name("permEnd")]
+            .iter()
+            .any(|name| dom.name_is(n, name))
+        {
+            dom.remove(n);
+        }
+    }
+    let mut pairs = Vec::new();
+    for ((text, markers), original) in [(&a, true), (&b, false)] {
+        let refs: Vec<_> = markers.iter().collect();
+        inject_side(
+            dom,
+            root,
+            (text, &refs),
+            !original,
+            author,
+            &mut 0,
+            |i, start, end| pairs.push((start, end, markers[i].name.clone(), original)),
+        );
+    }
+    for &(start, end, _, _) in &pairs {
+        leave_permission_revision_boundary(dom, start, false);
+        leave_permission_revision_boundary(dom, end, true);
+    }
+    let mut positions = HashMap::new();
+    let mut offset = 0;
+    for (order, n) in dom.descendants(root, None).into_iter().enumerate() {
+        positions.insert(n, (offset, order));
+        if dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()) {
+            offset += dom.value(n).chars().count();
+        }
+    }
+    let mut spans: Vec<_> = pairs
+        .into_iter()
+        .map(|(start, end, id, original)| PermissionSpan {
+            start,
+            end,
+            first: positions[&start],
+            last: positions[&end],
+            editor: ["edGrp", "ed", "colFirst", "colLast"]
+                .map(|name| dom.attribute(start, &W::name(name)).map(str::to_string)),
+            note: dom
+                .ancestors(start, None)
+                .into_iter()
+                .find(|&n| dom.name_is(n, &W::footnote()) || dom.name_is(n, &W::endnote()))
+                .map(|n| n.0),
+            id,
+            original,
+        })
+        .collect();
+    spans.sort_by(|a, b| (&a.editor, a.note, a.first).cmp(&(&b.editor, b.note, b.first)));
+    let mut union: Vec<PermissionSpan> = Vec::new();
+    for span in spans {
+        if let Some(previous) = union.last_mut()
+            && previous.editor == span.editor
+            && previous.note == span.note
+            && span.first.0 <= previous.last.0
+        {
+            // Starts are already sorted in redline order. Retain the latest
+            // end, including its source-side placement and all attributes.
+            dom.remove(span.start);
+            if span.last > previous.last {
+                dom.remove(previous.end);
+                previous.end = span.end;
+                previous.last = span.last;
+            } else {
+                dom.remove(span.end);
+            }
+            if span.original && !previous.original {
+                previous.id = span.id;
+                previous.original = true;
+            }
+        } else {
+            union.push(span);
+        }
+    }
+    // Resolve clashes in text order, so the earliest source occurrence keeps
+    // its id. Reserve *all* source ids before allocating a fresh one.
+    union.sort_by_key(|m| m.first);
+    let mut used = HashSet::new();
+    let mut next_id = 0u64;
+    for mut span in union {
+        if !used.insert(span.id.clone()) {
+            while reserved.contains(&next_id.to_string()) {
+                next_id += 1;
+            }
+            span.id = next_id.to_string();
+            reserved.insert(span.id.clone());
+            used.insert(span.id.clone());
+        }
+        for endpoint in [span.start, span.end] {
+            dom.set_attribute_value(endpoint, &W::id(), Some(&span.id));
+        }
+    }
 }
 
 /// Edit-only permission carry-over. Reuse bookmark projection and content-control
@@ -564,8 +737,24 @@ pub(crate) fn carry_permissions(
         .iter()
         .filter(|m| !b_ids.contains(&(m.name.as_str(), m.ordinal)))
         .collect();
-    inject_side(dom, root, (&b_text, &b_new), true, author, &mut 0);
-    inject_side(dom, root, (&a_text, &a_only), false, author, &mut 0);
+    inject_side(
+        dom,
+        root,
+        (&b_text, &b_new),
+        true,
+        author,
+        &mut 0,
+        |_, _, _| {},
+    );
+    inject_side(
+        dom,
+        root,
+        (&a_text, &a_only),
+        false,
+        author,
+        &mut 0,
+        |_, _, _| {},
+    );
     for node in dom.descendants(root, None) {
         if !existing.contains(&node)
             && let Some(key) = dom
@@ -634,6 +823,7 @@ mod tests {
                 b_side,
                 "Editor",
                 &mut 10,
+                |_, _, _| {},
             );
             let name = if trailing_start {
                 W::bookmark_start()

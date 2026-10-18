@@ -828,7 +828,7 @@ fn produce(
     let revised = marked.as_deref().unwrap_or(&clean);
     let base = tx.commented_base()?;
     let mut redline =
-        crate::document_comparer::compare_documents_with_settings(&base, revised, &settings)
+        crate::document_comparer::compare_documents_for_edit(&base, revised, &settings)
             .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
     if tx
         .resolved
