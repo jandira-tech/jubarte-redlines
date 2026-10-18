@@ -387,7 +387,7 @@ fn run_resolution(
     apply: fn(
         &[u8],
         &jubarte::changes::ChangeFilter,
-    ) -> Result<Vec<u8>, jubarte::changes::ChangeError>,
+    ) -> Result<jubarte::changes::ResolvedChanges, jubarte::changes::ChangeError>,
     what: &str,
 ) -> ExitCode {
     use jubarte::changes::ChangeError;
@@ -406,8 +406,16 @@ fn run_resolution(
             }
             e => failed(format!("{what} failed: {e}")),
         })?;
-        write_output(out, Produced::Docx(&resolved))
-            .map_err(|f| (ExitCode::from(f.code), f.message))
+        write_output(out, Produced::Docx(&resolved.document))
+            .map_err(|f| (ExitCode::from(f.code), f.message))?;
+        for comment in &resolved.removed_comments {
+            let preview: String = comment.text.chars().take(60).collect();
+            eprintln!(
+                "warning: {what} removed comment c{} ({}: {preview:?}): its whole range was deleted",
+                comment.id, comment.author,
+            );
+        }
+        Ok(())
     };
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -3134,7 +3142,7 @@ fn cli_main() -> ExitCode {
                 &file,
                 &out,
                 &selection.filter(),
-                jubarte::changes::accept_changes,
+                jubarte::changes::accept_changes_with_report,
                 "accept",
             );
         }
@@ -3153,7 +3161,7 @@ fn cli_main() -> ExitCode {
                 &file,
                 &out,
                 &selection.filter(),
-                jubarte::changes::reject_changes,
+                jubarte::changes::reject_changes_with_report,
                 "reject",
             );
         }

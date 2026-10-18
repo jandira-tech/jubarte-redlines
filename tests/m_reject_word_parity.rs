@@ -1279,3 +1279,33 @@ fn reject_of_a_numbered_style_record_reads_the_level_word_numbers_with() {
     .collect();
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+#[path = "common/dead_comments.rs"]
+mod dead_comments;
+
+#[test]
+fn reject_dead_comment_probe_d_inserted_range() {
+    let source = dead_comments::probe('d');
+    let rejected = reject_revisions(&source).unwrap();
+    dead_comments::assert_state(&rejected, false, &[]);
+    assert_eq!(paragraphs(&rejected), [""]);
+    let accepted = accept_revisions(&source).unwrap();
+    dead_comments::assert_state(&accepted, false, &[(0, "Existing range", None)]);
+    assert_eq!(paragraphs(&accepted), ["beta"]);
+}
+
+#[test]
+fn reject_dead_comment_probe_e_keeps_surviving_thread_replies() {
+    let source = dead_comments::probe('e');
+    let rejected = reject_revisions(&source).unwrap();
+    dead_comments::assert_state(
+        &rejected,
+        true,
+        &[
+            (0, "Existing range", None),
+            (1, "Reply to range", Some(0)),
+            (2, "Kept range", None),
+        ],
+    );
+    assert_eq!(paragraphs(&rejected), ["beta", "kept"]);
+}
