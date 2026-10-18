@@ -85,6 +85,14 @@ inserted or deleted row.
 | `@??` | a mark with no author's name; written back as an empty `w:author` |
 | no tag | new, by the plan author |
 
+The reader refuses the old attribution form `{>>r1 @ASR<<}` immediately
+after a `++}`, `--}` or `~~}` closer, including intervening `*`, `_` or
+backtick emphasis markers. The error gives the line, old tag and replacement
+`{r1 @ASR}`; an old ` on ` parent chain becomes ` re `. This includes
+story-prefixed and substitution ids. To comment with that text, write
+`{>>c1 @X: r1 @ASR<<}`. Free comments, explicit comment tags and old-looking
+text away from that position remain comments.
+
 **Id lines**: `<!-- pN[ Style][, clause…] -->` above every body paragraph
 
 `left|center|right|justify` · `first-line|hanging|left|right Xin` ·
