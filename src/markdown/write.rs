@@ -1312,7 +1312,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
     }
 }
 
-/// A `{>>…<<}` in a header's or footer's text that is no change's tag.
+/// Every `{>>…<<}` in a header's or footer's text is a comment.
 fn has_comment(text: &str) -> bool {
     text.contains("{>>")
 }
@@ -3036,7 +3036,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         // A view's cell or note says its paragraph marks by its `<br>`s,
         // in a change or not: a paragraph changed whole keeps its mark.
         let says_marks = self.view && (self.cell.is_some() || self.target.is_some());
-        // A change that names another after ` on ` (a fold) is not the
+        // A change that names another after ` re ` (a fold) is not the
         // paragraph's own mark: the writer nests it back inside the one it
         // names, and the row or cell it sits in keeps its own.
         let folded = |serial: u32| self.document.wraps.contains_key(&serial);
@@ -3406,14 +3406,8 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.run_after_close = false;
     }
 
-    /// `{~~old~>new~~}` is Word's substitution: the inserted text, then
-    /// the deleted text, as Word's Compare writes them. The view reads a
-    /// deletion before an insertion as two changes, so they keep that
-    /// order. Each side moves whole with its links, bookmarks and comments;
-    /// a side holding more (a paragraph's end, half a link or comment range)
-    /// stays where it is. A scope that ends inside a side
-    /// (`{~~old~>{==new==}~~}{>>c0 …<<}`) still has its range open: the side
-    /// moves, and its range ends where the side does.
+    /// A substitution writes its deletion then insertion. Each side keeps
+    /// its links, bookmarks and comments; the parser does not reorder it.
     fn token(&mut self, token: Token) {
         if self.comment.is_some() {
             match token {
@@ -3508,7 +3502,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         match self.anchor.take() {
             // Anchored when it ends, unless it names the change's author.
             Some(anchor) if self.attribution_open && anchor.takes_attribution() => {
-                self.comment_anchor = Some(anchor)
+                self.comment_anchor = Some(anchor);
             }
             Some(anchor) => self.anchor_comment(anchor, id),
             None => self.anchor_here(id),
@@ -3600,7 +3594,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         if let Some(mut anchor) = self.comment_anchor.take().filter(|_| is_attribution) {
             let whole = comment.paragraphs.join("\n");
-            // A note that names another change after ` on `: the change it
+            // A note that names another change after ` re `: the change it
             // follows sits inside that one (`A` inserted what `B` deleted),
             // so it goes back inside it, outermost last. #1134: Word
             // refuses w:t under a deletion, not same-kind nesting. It opens
@@ -3677,8 +3671,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let ([_], [deleted, inserted]) = (tags.as_slice(), serials.as_slice()) {
                     self.shared_tags.push((*deleted, *inserted));
                 }
-                // A substitution is written insertion first: a dated range's
-                // last day goes on the mark that comes last, its deletion.
+                // Preserve the established range-date assignment to revision
+                // serials when one author has several dates.
                 let mut ranged = Vec::new();
                 for (i, serial) in serials.iter().enumerate() {
                     let tag = if tags.len() == 1 {
@@ -3707,8 +3701,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.ranged.entry(handle).or_default().push(serial);
                 }
                 // One number after a substitution names its deleted side:
-                // the inserted side's tag may follow (`{>>r0 @AC<<}{>>r1
-                // @AS<<}` when two authors made them).
+                // the inserted side's tag may follow (`{r0 @AC}{r1
+                // @AS}` in reader-compatible multi-tag input).
                 let numbers: usize = tags.iter().map(|tag| tag.ids.len()).sum();
                 anchor.attributed += 1;
                 if serials.len() == 2 && numbers <= 1 {
@@ -4492,7 +4486,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         // Word lets no one comment in a header or footer, and shows no
         // comment from one: the text stays, the comment goes. A change's
-        // tag (`{>>header1.r3 @AC<<}`) is no comment.
+        // tag (`{header1.r3 @AC}`) is no comment.
         let mut dropped: Vec<String> = self
             .document
             .stories
@@ -4550,7 +4544,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// The paragraph's id line names a change a note rebuilt as unshown
-    /// (`rev r1 @AL` after `{--x--}{>>r3 @BO on r1 @AL<<}`): its mark is
+    /// (`rev r1 @AL` after `{--x--}{r3 @BO re r1 @AL}`): its mark is
     /// written, so an empty one must not follow it.
     fn unshown_rebuilt(&mut self, nested: &[u32]) {
         let ids: Vec<u32> = nested
@@ -5411,7 +5405,7 @@ fn mark_ids(tags: &[view_notes::Tag], serials: usize) -> Vec<Vec<u32>> {
 impl Writer<'_, '_> {
     /// A substitution's one tag (`r5+6+7`) lists the deleted side's ids,
     /// then the inserted side's. Word numbers marks in document order and
-    /// writes the insertion first, so where the numbers drop (`r3+4+1+2`)
+    /// may number the insertion first, so where the numbers drop (`r3+4+1+2`)
     /// the inserted side's begin; with no drop the deleted side takes one
     /// id per run it has (`plain _italic_` is two). Either side keeps one
     /// at least.

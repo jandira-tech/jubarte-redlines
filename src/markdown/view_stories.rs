@@ -610,9 +610,9 @@ pub(super) fn section(entry: &str) -> Stories {
 /// result, and a bare `{PAGE}` or other `{NAME}` one with the result `1`;
 /// a line break is a `w:br`. The tracked view's changes come back as
 /// Word's marks: `{++…++}` a `w:ins`, `{--…--}` a `w:del`, and
-/// `{~~old~>new~~}` the insertion then the deletion, as Word's Compare
-/// writes them, each with the author, date and `w:id` its `{>>…<<}` tag
-/// names. Any other `{>>…<<}` is a comment, which Word does not take in a
+/// `{~~old~>new~~}` the deletion then insertion, each with the author,
+/// date and `w:id` its brace tag names. Every `{>>…<<}` is a comment,
+/// which Word does not take in a
 /// header or footer. A `![…][dN]` or `![…][imageK]` token (or an older
 /// view's `![…](drawing:…)`) splices its materialized drawing from
 /// `drawings`.
@@ -709,7 +709,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         let open = format!("<{}>", marks.mark(parent_name, Some(parent), 0));
                         changed = format!("{open}{changed}{close}");
                         wrappers.push((open, close, true));
-                        // Each `on` level alternates insertion and deletion.
+                        // Each `re` level alternates insertion and deletion.
                         name = parent_name;
                     }
                     wrappers.reverse();
@@ -781,9 +781,6 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
     flush(&mut plain, &mut out, false);
     out
 }
-
-/// Substitutions have two sides and no unambiguous named parent. The
-/// writer never emits such a note; refuse it instead of losing its nest.
 
 /// The anonymous parent of a contiguous nest. Its tag keeps the author
 /// and explicit date as well as the fresh id shared by its pieces.
@@ -1800,7 +1797,7 @@ mod tests {
              <w:del w:id=\"4\" w:author=\"Ann Counsel\" w:date=\"2026-10-01T09:00:00Z\">\
              <w:r><w:delText xml:space=\"preserve\">old</w:delText></w:r></w:del>"
         );
-        // A substitution is Word's: the insertion, then the deletion; a
+        // A substitution writes the deletion then insertion; a
         // field inside a mark is a complex one; a comment is dropped.
         assert_eq!(
             written("{~~a~>{PAGE}2{/}~~}{header1.r5+6 @AC 2026-10-02T00:00:00Z}{>>note<<}"),

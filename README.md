@@ -556,7 +556,7 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 ## 1. Services
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r1+2 @AC<<} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r0 @AC} route-cost reports and a {~~weekly~>monthly~~}{r1+2 @AC} review call.
 ```
 
 See [docs/MARKDOWN.md](docs/MARKDOWN.md#agent-view) for the grammar.

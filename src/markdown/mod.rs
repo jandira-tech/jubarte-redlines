@@ -743,7 +743,7 @@ pub struct ReadView {
 ///
 /// let docx = markdown_to_docx("Due in {~~30~>45~~} days.", &DocxOptions::default())?.docx;
 /// let view = read(&docx, &ReadOptions { page_markers: false, ..ReadOptions::default() })?;
-/// assert!(view.markdown.contains("<!-- p0 -->\nDue in {~~30~>45~~}{>>r"), "{}", view.markdown);
+/// assert!(view.markdown.contains("<!-- p0 -->\nDue in {~~30~>45~~}{r"), "{}", view.markdown);
 /// # Ok::<(), jubarte::markdown::MarkdownError>(())
 /// ```
 pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownError> {
