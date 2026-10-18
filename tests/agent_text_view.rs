@@ -1042,11 +1042,11 @@ fn changes_printed_nowhere_else_are_unplaced() {
 #[test]
 fn a_textless_change_in_a_printed_row_prints_its_own_tag() {
     let body_xml = format!(
-        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
         ins(3, "Ann Counsel", "Cell")
     );
     let out = agent(&docx(&body_xml));
-    // The deleted drawing and the following insertion by the same author
+    // The deleted drawing and the following insertion by the same author/date
     // form a substitution whose tag preserves both ids.
     assert!(
         body(&out).contains("{~~![][d1]~>Cell~~}{r2+3 @AC}"),
