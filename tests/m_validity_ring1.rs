@@ -18,6 +18,137 @@ use zip::write::SimpleFileOptions;
 const ORIG: &[u8] = include_bytes!("fixtures/redline/original.docx");
 const MOD: &[u8] = include_bytes!("fixtures/redline/modified.docx");
 
+// Synthetic versions of the A–H shapes probed in Word on 2026-10-18.
+fn nested_box_probe(probe: char) -> String {
+    let story = |inner: &str| {
+        format!("<w:txbxContent><w:p><w:r><w:t>Alice</w:t>{inner}</w:r></w:p></w:txbxContent>")
+    };
+    let drawing = |inner: &str, frame: &str| {
+        format!(
+            "<w:drawing><wp:{frame}><wps:wsp><wps:txbx>{}</wps:txbx></wps:wsp></wp:{frame}></w:drawing>",
+            story(inner)
+        )
+    };
+    let vml = |inner: &str| {
+        format!(
+            "<w:pict><v:shape><v:textbox>{}</v:textbox></v:shape></w:pict>",
+            story(inner)
+        )
+    };
+    let inner_drawing = drawing("", if probe == 'E' { "inline" } else { "anchor" });
+    let inner_fallback = vml("");
+    let inner = format!(
+        "<mc:AlternateContent><mc:Choice Requires=\"wps\">{inner_drawing}</mc:Choice><mc:Fallback>{inner_fallback}</mc:Fallback></mc:AlternateContent>"
+    );
+    match probe {
+        'F' => vml(&vml("")),
+        'G' => vml(""),
+        'H' => drawing(&vml(""), "anchor"),
+        'I' => drawing(&inner_drawing, "anchor"),
+        _ => {
+            let choice = drawing(
+                if matches!(probe, 'A' | 'C' | 'E') {
+                    &inner
+                } else {
+                    ""
+                },
+                "anchor",
+            );
+            let inner_vml = vml("");
+            let fallback = vml(if matches!(probe, 'A' | 'D') {
+                &inner_vml
+            } else {
+                ""
+            });
+            format!(
+                "<mc:AlternateContent><mc:Choice Requires=\"wps\">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"
+            )
+        }
+    }
+}
+
+fn nested_box_findings(probe: char, part: &str) -> Vec<jubarte::validate::Finding> {
+    let content = nested_box_probe(probe);
+    let (root, content) = match part {
+        "word/header1.xml" => ("hdr", format!("<w:p><w:r>{content}</w:r></w:p>")),
+        "word/footer1.xml" => ("ftr", format!("<w:p><w:r>{content}</w:r></w:p>")),
+        "word/footnotes.xml" => (
+            "footnotes",
+            format!("<w:footnote w:id=\"1\"><w:p><w:r>{content}</w:r></w:p></w:footnote>"),
+        ),
+        "word/endnotes.xml" => (
+            "endnotes",
+            format!("<w:endnote w:id=\"1\"><w:p><w:r>{content}</w:r></w:p></w:endnote>"),
+        ),
+        "word/comments.xml" => (
+            "comments",
+            format!(
+                "<w:comment w:id=\"0\" w:author=\"Alice\"><w:p><w:r>{content}</w:r></w:p></w:comment>"
+            ),
+        ),
+        _ => (
+            "document",
+            format!("<w:body><w:p><w:r>{content}</w:r></w:p></w:body>"),
+        ),
+    };
+    let xml = format!(
+        r#"<w:{root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:v="urn:schemas-microsoft-com:vml">{content}</w:{root}>"#
+    );
+    let bytes = zip_with_parts(&[(part, &xml)]);
+    jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "NESTED_TEXT_BOX")
+        .collect()
+}
+
+macro_rules! fatal_nested_box_probe {
+    ($name:ident, $probe:literal, $part:literal) => {
+        #[test]
+        fn $name() {
+            let findings = nested_box_findings($probe, $part);
+            assert_eq!(
+                findings.len(),
+                1,
+                "probe {} in {}: {findings:?}",
+                $probe,
+                $part
+            );
+            let finding = &findings[0];
+            assert!(finding.word_fatal && !finding.repairable, "{finding:?}");
+            assert_eq!(finding.severity, "error");
+            assert_eq!(finding.part, $part);
+            assert!(finding.location.contains("w:txbxContent[0]"), "{finding:?}");
+            assert_eq!(finding.r#ref, finding.location);
+        }
+    };
+}
+
+fatal_nested_box_probe!(nested_box_a_anchor_is_word_fatal, 'A', "word/document.xml");
+fatal_nested_box_probe!(nested_box_c_choice_is_word_fatal, 'C', "word/document.xml");
+fatal_nested_box_probe!(nested_box_e_inline_is_word_fatal, 'E', "word/document.xml");
+fatal_nested_box_probe!(nested_box_f_vml_is_word_fatal, 'F', "word/document.xml");
+fatal_nested_box_probe!(nested_box_h_mixed_is_word_fatal, 'H', "word/document.xml");
+fatal_nested_box_probe!(
+    nested_box_bare_drawing_is_word_fatal,
+    'I',
+    "word/document.xml"
+);
+fatal_nested_box_probe!(nested_box_header_is_word_fatal, 'A', "word/header1.xml");
+fatal_nested_box_probe!(nested_box_footer_is_word_fatal, 'A', "word/footer1.xml");
+fatal_nested_box_probe!(nested_box_footnote_is_word_fatal, 'A', "word/footnotes.xml");
+fatal_nested_box_probe!(nested_box_endnote_is_word_fatal, 'A', "word/endnotes.xml");
+fatal_nested_box_probe!(nested_box_comment_is_word_fatal, 'A', "word/comments.xml");
+
+#[test]
+fn nested_box_b_d_g_are_not_word_fatal() {
+    for probe in ['B', 'D', 'G'] {
+        assert!(
+            nested_box_findings(probe, "word/document.xml").is_empty(),
+            "probe {probe}"
+        );
+    }
+}
+
 fn zip_with_parts(parts: &[(&str, &str)]) -> Vec<u8> {
     let mut buf = Cursor::new(Vec::new());
     {

@@ -44,6 +44,7 @@
 //! | `NESTED_SAME_REVISION` | no: Word opens direct same-kind nests faithfully (info); alternating nests misread reject-all (warning); probe 2026-10-17, #1134 | no |
 //! | `CELL_WITHOUT_PARAGRAPH` | yes | yes: an empty paragraph is appended |
 //! | `NOTE_REFERENCE_DANGLING` | yes | no |
+//! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
@@ -69,7 +70,7 @@ use serde::{Deserialize, Serialize};
 use crate::admission::{AdmissionError, InputLimits};
 use crate::changes::{ChangeError, ChangeFilter, list_changes, reject_changes};
 use crate::inspect::InspectError;
-use crate::namespaces::{MC, R, W, W14};
+use crate::namespaces::{MC, R, VML, W, W14, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::serialize::{well_known_namespace, well_known_prefix};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -167,6 +168,7 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "EMPTY_FIELD_CODE"
         | "ROW_WITHOUT_CELL"
         | "SECTPR_NOT_LAST"
+        | "NESTED_TEXT_BOX"
         | "NOTE_REFERENCE_DANGLING" => (true, false),
         "DUPLICATE_REVISION_ID"
         | "DUPLICATE_DOCPR_ID"
@@ -179,7 +181,8 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 24] = [
+const RING1_CODES: [&str; 25] = [
+    "NESTED_TEXT_BOX",
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
     "MALFORMED_XML",
@@ -458,7 +461,76 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_namespace_qname_contexts(pkg, &mut out);
     check_runs_inside_paragraphs(pkg, &mut out);
     check_style_names(pkg, &mut out);
+    check_nested_text_boxes(pkg, &mut out);
     out
+}
+
+/// Word crashes or refuses a box in another box's readable content, even
+/// though OpenXmlValidator passes it. The 2026-10-18 A–H probes (#1132)
+/// establish that a nest only in an ignored MC Fallback is harmless.
+fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let dml_box = XName::get(
+        "txbx",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    );
+    let vml_box = VML::name("textbox");
+    for part in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        for node in dom.descendants(root, None) {
+            if !dom
+                .name(node)
+                .is_some_and(|name| name == dml_box || name == vml_box)
+            {
+                continue;
+            }
+            let ancestors = dom.ancestors(node, None);
+            if ancestors
+                .iter()
+                .any(|&a| dom.name(a).is_some_and(|n| n == MC::name("Fallback")))
+            {
+                continue;
+            }
+            if let Some(&outer) = ancestors
+                .iter()
+                .find(|&&a| dom.name(a).is_some_and(|n| n == W::name("txbxContent")))
+            {
+                out.push(Finding::new(
+                    "NESTED_TEXT_BOX",
+                    &part,
+                    element_path(&dom, node),
+                    format!(
+                        "text box {} holds another text box ({}); Word cannot open this document",
+                        text_box_name(&dom, outer),
+                        text_box_name(&dom, node)
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Prefer the shape's own name, with its stable element path as a fallback.
+fn text_box_name(dom: &Dom, node: NodeId) -> String {
+    for ancestor in dom.ancestors(node, None) {
+        if dom.name(ancestor).is_some_and(|n| n == W::name("drawing")) {
+            if let Some(name) = dom
+                .descendants(ancestor, Some(&WP::name("docPr")))
+                .into_iter()
+                .find_map(|id| dom.attribute(id, &XName::get("name", "")))
+                .filter(|name| !name.is_empty())
+            {
+                return name.to_string();
+            }
+        } else if dom.name(ancestor).is_some_and(|n| n == VML::name("shape"))
+            && let Some(name) = dom.attribute(ancestor, &XName::get("id", ""))
+            && !name.is_empty()
+        {
+            return name.to_string();
+        }
+    }
+    element_path(dom, node)
 }
 
 /// A style's `w:name` holds no comma: the schema's pattern is `[^,]*`
