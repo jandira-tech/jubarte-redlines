@@ -3559,9 +3559,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             // A note that names another change after ` on `: the change it
             // follows sits inside that one (`A` inserted what `B` deleted),
-            // so it goes back inside it, outermost last. Deeper
-            // chains name what Word refuses to hold (a revision nested in
-            // its own kind), so only the first outer is rebuilt.
+            // so it goes back inside it, outermost last. #1134: Word
+            // refuses w:t under a deletion, not same-kind nesting. It opens
+            // ins > del > ins with delText but misreads reject-all. Keep
+            // rebuilding only the first outer pending the chain decision.
             let sole = self.sole_change(&anchor);
             if let Some((kind, inner)) = sole
                 && let Some(tags) = view_notes::nested_revision_tags(&whole)
