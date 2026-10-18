@@ -33,7 +33,7 @@ jobs:
       # No checkout: the action reads the diff and rules through the GitHub API,
       # so no token is persisted to disk in the workspace.
       - name: Jules review
-        uses: arthrod/jules-pr-reviewer@de95c2cb6820df8b0e562d77f1f758d71b14b974
+        uses: arthrod/jules-pr-reviewer@8972cac9a5a8d3f389abbfb4b13f0b4a2c0dc650
         with:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
