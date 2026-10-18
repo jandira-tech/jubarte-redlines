@@ -52,7 +52,9 @@ pub struct CommentRecord {
     /// `w:initials`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initials: Option<String>,
-    /// `w:date`.
+    /// The linked UTC instant, written in the author's local offset when both
+    /// times record a whole-minute difference within ±14:00; otherwise `Z`.
+    /// Without a valid `w16cex:dateUtc`, `w:date` as stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     /// Comment text, paragraphs (and line breaks) joined by `\n`.

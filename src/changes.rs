@@ -67,7 +67,9 @@ pub struct Change {
     /// Revision author.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
-    /// Revision date.
+    /// The valid UTC instant, written in the author's local offset when both
+    /// times record a whole-minute difference within ±14:00; otherwise `Z`.
+    /// Without a valid `w16du:dateUtc`, `w:date` as stored.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     /// The text the change covers: inserted, deleted or moved text, or the

@@ -576,6 +576,10 @@ List the tracked revisions in a DOCX as a JSON array string, grouped as
 Docxodus's `GetRevisions` groups them; each object has
 (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 
+Revision `date` prefers the valid `w16du:dateUtc` instant, written in the author's local
+offset when the document records both times (a whole-minute difference within ±14:00;
+otherwise `Z`). Without a valid UTC date it is `w:date` as stored.
+
 Mirrors `jubarte::document_comparer::get_revisions` with default settings,
 serialized by the shared `revisions_to_json`. `inputLimitsJson` as in
 `compareDocuments`.
@@ -611,6 +615,10 @@ id `acceptChanges` / `rejectChanges` select by (the same objects as
 `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
 `text`, `move_name`, `move_side`, `inside`).
 
+Revision `date` prefers the valid `w16du:dateUtc` instant, written in the author's local
+offset when the document records both times (a whole-minute difference within ±14:00;
+otherwise `Z`). Without a valid UTC date it is `w:date` as stored.
+
 Mirrors `jubarte::changes::list_changes`.
 
 ### `listComments`
@@ -624,6 +632,10 @@ List every comment as a JSON array string (the objects `jubarte comments
 `done`, `paragraph`, `last_paragraph` when the range ends in a later
 paragraph, `anchor_text`, `before`, `after`). `author` keeps one
 author's comments; `latest` keeps the newest comment of each thread.
+
+Comment `date` follows the same rule, using the `w16cex:dateUtc` instant linked through
+the comment extensions and the author's local offset when both times are recorded;
+without a valid UTC date it is `w:date` as stored.
 
 Mirrors `jubarte::comments::list_comments` and `select_comments`.
 

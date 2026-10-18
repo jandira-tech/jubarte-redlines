@@ -587,6 +587,13 @@ the same way, innermost first (`r5 @CD on r3 @BO on r1 @AL`); Word
 refuses a revision nested in its own kind, so the writer rebuilds only
 the first outer a chain names.
 
+Revision `date` prefers the valid `w16du:dateUtc` instant, written in the author's local
+offset when the document records both times (a whole-minute difference within ±14:00;
+otherwise `Z`). Without a valid UTC date it is `w:date` as stored. Comment `date`
+follows the same rule, using the `w16cex:dateUtc` instant linked through the comment
+extensions and the author's local offset when both times are recorded; without a valid
+UTC date it is `w:date` as stored.
+
 A plain note's grammar is exact about where the name ends and the date
 begins: the date is the last parenthesised group, so a name may hold
 parentheses of its own (`r1 Ana (consultant) (2026-09-29T14:05:00Z)`
@@ -634,10 +641,15 @@ A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
 header's `authors:` line gives each handle's name, counts and its
 shared timestamp, or `latest 2026-10-17T16:59:00Z` when the author has
-several timestamps. Revisions and comments both count. Converting back,
+several timestamps. Revisions and comments both count. These dates report
+an instant in the author's local offset when both times are recorded, for
+example `2026-09-25T20:04:00-04:00`; otherwise they keep `w:date` as stored.
+Shared and latest dates compare instants across offsets. Converting back,
 undated marks and comments take that latest timestamp; explicit inline
 `--dates` timestamps keep their own dates. If every mark then shares one
-timestamp, reading the result prints it bare.
+timestamp, reading the result prints it bare. A view date with an offset
+writes its wall clock followed by `Z` into `w:date`, Word's encoding;
+conversion does not emit `w16du:dateUtc`.
 
 Older views with a day range (`2026-03-02..2026-03-04`) still convert as
 before: undated marks and comments take the first day at `00:00:00Z`, and

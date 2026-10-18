@@ -1433,6 +1433,10 @@ get_revisions(docx: 'bytes') -> 'list[dict[str, Any]]'
 
 List the tracked revisions in a DOCX as parsed objects.
 
+Revision `date` prefers the valid `w16du:dateUtc` instant, written in the author's local
+offset when the document records both times (a whole-minute difference within ±14:00;
+otherwise `Z`). Without a valid UTC date it is `w:date` as stored.
+
 Grouped as Docxodus's ``GetRevisions`` groups them; each item has
 (``type``/``author``/``date``/``part``/``moveGroupId``/``isMoveSource``/
 ``formatChange``/``text``).
@@ -1547,6 +1551,10 @@ Document.changes(self) -> 'tuple[Change, ...]'
 
 Every tracked change, each with the id ``accept`` / ``reject`` select by.
 
+Revision `date` prefers the valid `w16du:dateUtc` instant, written in the author's local
+offset when the document records both times (a whole-minute difference within ±14:00;
+otherwise `Z`). Without a valid UTC date it is `w:date` as stored.
+
 #### `Document.comments`
 
 ```python
@@ -1554,6 +1562,10 @@ Document.comments(self, *, author: 'str | None' = None, latest: 'bool' = False) 
 ```
 
 Every comment with its thread and anchored text, in document part order.
+
+Comment `date` follows the same rule, using the `w16cex:dateUtc` instant linked through
+the comment extensions and the author's local offset when both times are recorded;
+without a valid UTC date it is `w:date` as stored.
 
 ``author`` keeps one author's comments (exact match); ``latest`` keeps
 the newest comment of each thread.
@@ -1565,6 +1577,10 @@ Document.revisions(self) -> 'tuple[Revision, ...]'
 ```
 
 Return immutable metadata for the revisions listed by the engine.
+
+Revision `date` prefers the valid `w16du:dateUtc` instant, written in the author's local
+offset when the document records both times (a whole-minute difference within ±14:00;
+otherwise `Z`). Without a valid UTC date it is `w:date` as stored.
 
 #### `Document.to_pdf`
 
@@ -1863,6 +1879,10 @@ Comment(
 ```
 
 One comment with its thread position and the text it is anchored to.
+
+Comment `date` follows the same rule, using the `w16cex:dateUtc` instant linked through
+the comment extensions and the author's local offset when both times are recorded;
+without a valid UTC date it is `w:date` as stored.
 
     ``id`` is the comment's ``w:id``, which ``EditPlan.reply_comment``,
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
