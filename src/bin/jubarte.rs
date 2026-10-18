@@ -418,6 +418,19 @@ fn check_side_file(
     ensure_writable(side, force)
 }
 
+/// The note a selection prints when it leaves tracked changes inside
+/// comment bodies, which no `--id` can name (#1223).
+fn comment_changes_note(left: usize) -> String {
+    let (s, were, them) = if left == 1 {
+        ("", "was", "it")
+    } else {
+        ("s", "were", "them")
+    };
+    format!(
+        "note: {left} tracked change{s} inside comments {were} left; accept or reject all to settle {them}"
+    )
+}
+
 /// Shared body for `accept` / `reject`: read the redline, apply the package-wide
 /// resolution, and write the result under the compare path's no-clobber
 /// contract. Generic over the resolver's error so neither `OpcError`'s path nor
@@ -460,15 +473,7 @@ fn run_resolution(
         // #1223: --id cannot name a comment-body change, so a selection can
         // leave some; say how many (an empty selection resolves them all).
         if resolved.comment_changes_left > 0 {
-            eprintln!(
-                "note: {} tracked change{} inside comments were left; accept or reject all to settle them",
-                resolved.comment_changes_left,
-                if resolved.comment_changes_left == 1 {
-                    ""
-                } else {
-                    "s"
-                },
-            );
+            eprintln!("{}", comment_changes_note(resolved.comment_changes_left));
         }
         Ok(())
     };
@@ -3939,6 +3944,18 @@ mod tests {
                 "warning: cleaning staging: injected cleanup\n"
             );
         }
+    }
+
+    #[test]
+    fn comment_changes_note_agrees_with_its_count() {
+        assert_eq!(
+            comment_changes_note(1),
+            "note: 1 tracked change inside comments was left; accept or reject all to settle it"
+        );
+        assert_eq!(
+            comment_changes_note(2),
+            "note: 2 tracked changes inside comments were left; accept or reject all to settle them"
+        );
     }
 
     fn bundle_restore_failure(recheck_fails: bool, restore_fails: bool) {
