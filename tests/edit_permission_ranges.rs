@@ -525,3 +525,95 @@ fn empty_paragraph_does_not_restore_go_back() {
     let actual = markers(&output, "word/document.xml", "bookmark");
     assert_eq!(actual.len(), 2, "_GoBack endpoint resurrected: {actual:?}");
 }
+
+fn delete_paragraph(source: &[u8], paragraph: &str) -> EditResult {
+    let plan = EditPlan::from_json(&format!(r#"{{"schema_version":1,"author":"Alice","date":"2026-10-18T12:00:00Z","operations":[{{"kind":"delete_paragraph","paragraph":"{paragraph}"}}]}}"#)).unwrap();
+    apply_plan(source, &plan).unwrap()
+}
+
+fn s3_source(bookmark: bool) -> Vec<u8> {
+    let (start, end) = if bookmark {
+        (
+            r#"<w:bookmarkStart w:id="5" w:name="Clause"/>"#,
+            r#"<w:bookmarkEnd w:id="5"/>"#,
+        )
+    } else {
+        (START, END)
+    };
+    docx(&format!(
+        "<w:p>{}{start}{}</w:p><w:p>{}{end}{}</w:p>{}",
+        run("Intro ", false, false, None),
+        run("text.", false, false, None),
+        run("Gone", false, false, None),
+        run(" words.", false, false, None),
+        para("Last.")
+    ))
+}
+
+fn deleted_end_stays_at_source(bookmark: bool) {
+    let source = s3_source(bookmark);
+    let result = delete_paragraph(&source, "p1");
+    let family = if bookmark { "bookmark" } else { "perm" };
+    save(
+        if bookmark {
+            "s3-bookmark"
+        } else {
+            "s3-permission"
+        },
+        &source,
+        &result.redline,
+    );
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(&xml);
+    let root = dom.root(d).unwrap();
+    let ends = dom.descendants(root, Some(&W::name(&format!("{family}End"))));
+    assert_eq!(ends.len(), 1, "{xml}");
+    let end = ends[0];
+    assert!(
+        !dom.ancestors(end, Some(&W::del())).is_empty(),
+        "end must stay in deletion: {xml}"
+    );
+    let deletion = dom.ancestors(end, Some(&W::del()))[0];
+    let before: String = dom
+        .descendant_nodes(deletion)
+        .into_iter()
+        .take_while(|&n| n != end)
+        .filter(|&n| dom.name_is(n, &W::del_text()))
+        .map(|n| dom.value(n))
+        .collect();
+    assert_eq!(before, "Gone", "{xml}");
+    let rejected = jubarte::document_comparer::reject_revisions(&result.redline).unwrap();
+    let actual: Vec<_> = markers(&rejected, "word/document.xml", family)
+        .into_iter()
+        .map(|m| (m.0, m.1, m.2))
+        .collect();
+    let expected: Vec<_> = markers(&source, "word/document.xml", family)
+        .into_iter()
+        .map(|m| (m.0, m.1, m.2))
+        .collect();
+    assert_eq!(actual, expected, "Reject must restore source places");
+}
+
+#[test]
+fn deleted_permission_end_stays_at_source_offset() {
+    deleted_end_stays_at_source(false);
+}
+#[test]
+fn deleted_bookmark_end_stays_at_source_offset() {
+    deleted_end_stays_at_source(true);
+}
+
+#[test]
+fn bookmark_endpoint_in_deleted_text_is_not_a_revision_crossing() {
+    let source = docx(
+        r#"<w:p><w:r><w:t>Intro </w:t></w:r><w:bookmarkStart w:id="5" w:name="Clause"/><w:r><w:t>text.</w:t></w:r></w:p><w:p><w:del w:id="1" w:author="Alice"><w:r><w:delText>Gone</w:delText></w:r><w:bookmarkEnd w:id="5"/><w:r><w:delText> words.</w:delText></w:r></w:del></w:p>"#,
+    );
+    let findings = jubarte::validate::validate(&source).unwrap();
+    assert!(
+        !findings
+            .iter()
+            .any(|f| f.code == "BOOKMARK_CROSSES_REVISION"),
+        "{findings:?}"
+    );
+}

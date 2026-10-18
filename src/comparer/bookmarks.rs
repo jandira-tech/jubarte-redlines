@@ -49,6 +49,8 @@ struct Marker {
     permission: Option<(EndpointAttributes, EndpointAttributes)>,
     start: usize,
     end: usize,
+    /// The source contains an actual closing endpoint, rather than an orphan.
+    paired: bool,
     /// No text precedes the start in its paragraph. An empty bookmark there
     /// belongs to the paragraph that follows it, not to the text before it.
     leads: bool,
@@ -153,6 +155,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                 permission: permission.then(|| (dom.attributes(n), Vec::new())),
                 start: text.len(),
                 end: text.len(),
+                paired: false,
                 leads,
                 start_trails,
                 end_leads: false,
@@ -169,6 +172,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                 *attrs = dom.attributes(n);
             }
             marker.end = text.len();
+            marker.paired = true;
             marker.end_leads = paragraph_of(&dom, n).is_some_and(|p| !with_text.contains(&p));
             marker.end_in_body = dom.parent(n) == Some(body) && dom.name_is(body, &W::body());
             markers.push(marker);
@@ -475,6 +479,9 @@ pub fn carry_matching_bookmarks(
     let (b_text, mut b_marks) = extract(pkg2, main2, false);
     a_marks.retain(|m| keep(&m.name));
     b_marks.retain(|m| keep(&m.name));
+    // A surviving start is not an empty range when its original end was
+    // deleted. Keep the original pair on the projection containing that text.
+    b_marks.retain(|b| b.paired || !a_marks.iter().any(|a| a.name == b.name && a.paired));
     let (present, mut next_id) = settle_present_bookmarks(dom, result_root);
     if a_marks.is_empty() && b_marks.is_empty() {
         return;
@@ -517,7 +524,8 @@ pub(crate) fn carry_permissions(
     author: &str,
 ) {
     let (a_text, a_marks) = extract(original.0, original.1, true);
-    let (b_text, b_marks) = extract(revised.0, revised.1, true);
+    let (b_text, mut b_marks) = extract(revised.0, revised.1, true);
+    b_marks.retain(|b| b.paired || !a_marks.iter().any(|a| a.name == b.name && a.paired));
     let b_ids: HashSet<&str> = b_marks.iter().map(|m| m.name.as_str()).collect();
     let present: HashSet<String> = dom
         .descendants(root, Some(&W::name("permStart")))
@@ -571,6 +579,7 @@ mod tests {
             let marker = Marker {
                 name: "Clause".into(),
                 permission: None,
+                paired: true,
                 start: if trailing_start { 3 } else { 0 },
                 end: if trailing_start { 6 } else { 3 },
                 leads: !trailing_start,

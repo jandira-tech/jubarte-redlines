@@ -592,7 +592,9 @@ fn check_bookmarks(
             ("sdt", &["sdtContent"][..]),
             ("cell", &["tc"][..]),
             ("textbox", &["txbxContent"][..]),
-            ("revision", &REVISIONS[..]),
+            // A range can end in deleted text: Accept hoists the endpoint,
+            // Reject restores its source position (Word-confirmed #1176).
+            ("revision", &["ins", "moveFrom", "moveTo"][..]),
         ] {
             if within(s, set) != within(e, set) {
                 f.add(
