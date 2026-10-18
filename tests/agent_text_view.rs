@@ -3165,6 +3165,35 @@ fn escaped_text_reads_back_as_the_characters() {
     );
 }
 
+/// Assert the publication protocol, then inspect only the after-side lines
+/// (added or retained context). Removed text must not satisfy content checks.
+fn confirmation_after(stdout: &str) -> String {
+    assert!(stdout.contains("SUCCESS:\n~~~~diff\n"), "{stdout}");
+    assert!(
+        stdout.contains("\n--- before ") && stdout.contains("\n+++ after "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\n@@ ") && stdout.ends_with("~~~~\n"),
+        "{stdout}"
+    );
+    let mut after = String::new();
+    for line in stdout.lines() {
+        if line.starts_with("+++") {
+            continue;
+        }
+        if let Some(line) = line.strip_prefix('+').or_else(|| line.strip_prefix(' ')) {
+            after.push_str(line);
+            after.push('\n');
+        }
+    }
+    after
+}
+
+fn confirmed(args: &[&str], dir: &Path) -> String {
+    confirmation_after(&ok(args, dir))
+}
+
 #[test]
 fn cli_edit_says_when_an_anchor_was_read_without_its_marks() {
     let dir = tempfile::tempdir().unwrap();
@@ -3195,7 +3224,7 @@ fn cli_edit_says_when_an_anchor_was_read_without_its_marks() {
 fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "base.docx",
@@ -3226,9 +3255,9 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
             "--out-dir's default holds {name}"
         );
     }
-    assert!(out.contains("\nsource: base.edit/redline.docx\n"), "{out}");
+    assert!(out.contains("\nsource: redline.docx\n"), "{out}");
     assert!(
-        out.contains("\nrange: changed by @R (p0, p1, p2) of p0-p2\n"),
+        out.contains("<!-- p0 -->") && out.contains("<!-- p1 -->") && out.contains("<!-- p2 -->"),
         "{out}"
     );
     assert!(
@@ -3247,7 +3276,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         &out,
         r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{r\d+ @R\} ?\.\n",
     );
-    assert!(!out.contains("\n@@ "), "the patch is not printed: {out}");
+    // confirmation_after already asserted unified hunks on the raw stdout.
     let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
     assert!(
         report.contains(r#""op":"replace""#)
@@ -3338,7 +3367,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         "--datetime",
         "2026-10-01T09:00:00Z",
     ];
-    let out = ok(
+    let out = confirmed(
         &[
             &[
                 "edit",
@@ -3371,7 +3400,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
     assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
 
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "one/redline.docx",
@@ -3391,7 +3420,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         dir.path(),
     );
     assert!(
-        out.contains("\nrange: changed by @JD (p1) of p0-p2\n"),
+        out.contains("source: redline.docx") && out.contains("<!-- p1 -->"),
         "{out}"
     );
     captures(
@@ -3427,7 +3456,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
 fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
-    let out = ok(
+    let out = confirmed(
         &[
             "add",
             "base.docx",
@@ -3447,7 +3476,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(out.contains("{==one percent==}{>>c0 @AC: Cap?<<}"), "{out}");
-    let out = ok(
+    let out = confirmed(
         &[
             "add",
             "one/redline.docx",
@@ -3468,7 +3497,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         out.contains("{>>c0 @AC: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware.<<}"),
         "{out}"
     );
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "two/redline.docx",
@@ -3487,8 +3516,8 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        out.contains("\nrange: changed (p2) of p0-p2\n"),
-        "nothing is by Cy Young, so the view falls back to every changed block: {out}"
+        out.contains("source: redline.docx") && out.contains("<!-- p2 -->"),
+        "the diff confirms the changed thread: {out}"
     );
     assert!(
         out.contains(
@@ -3496,7 +3525,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         ),
         "{out}"
     );
-    let out = ok(
+    let out = confirmed(
         &[
             "add",
             "three/redline.docx",
@@ -3514,7 +3543,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
         "{out}"
     );
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "four/redline.docx",
@@ -3530,8 +3559,21 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     let gone = regex::Regex::new(r"\bc[01]\b").unwrap();
     assert!(!gone.is_match(&out), "the thread is gone: {out}");
     assert!(
-        out.contains("\nrange: changed by @R (p0) of p0-p2\n") && out.contains("c2 @R"),
+        out.contains("source: redline.docx")
+            && out.contains("<!-- p2 -->")
+            && out.contains("1 comment: c2"),
         "{out}"
+    );
+    // The surviving p0 note is unchanged and outside the three context
+    // lines of the p2 deletion hunk; retain its content check via read.
+    let remaining = ok(&["read", "five/redline.docx"], dir.path());
+    assert!(
+        remaining.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
+        "{remaining}"
+    );
+    assert!(
+        !gone.is_match(&remaining),
+        "the thread is gone: {remaining}"
     );
     for bad in [
         &["add", "base.docx", "-p", "p1"][..],
@@ -3571,7 +3613,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         common::docx::docx_with(BASE, &[styles]),
     )
     .unwrap();
-    let after = ok(
+    let after = confirmed(
         &[
             "add",
             "base.docx",
@@ -3585,14 +3627,14 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         dir.path(),
     );
     assert!(
-        after.contains("range: changed by @R (") && after.contains("p2"),
+        after.contains("source: redline.docx") && after.contains("<!-- p2"),
         "{after}"
     );
     captures(
         &after,
         r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
     );
-    let before = ok(
+    let before = confirmed(
         &[
             "add",
             "base.docx",
@@ -3626,7 +3668,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         "{xml}"
     );
 
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "base.docx",
@@ -3650,12 +3692,12 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         "editing mode writes no redline"
     );
     assert!(
-        out.contains("\nrange: changed by @R (p1) of p0-p2\n"),
+        out.contains("source: clean.docx") && out.contains("<!-- p1 -->"),
         "{out}"
     );
     captures(
         &out,
-        r"<!-- p1 rev r\d+ @R; r\d+ @R -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
     );
 
     let (noted, noted_err) = ok_both(
@@ -3675,7 +3717,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     assert!(noted_err.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted_err}");
     captures(
-        &noted,
+        &confirmation_after(&noted),
         r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{r\d+ @R\}\n",
     );
     let (_, marks) = ok_both(
@@ -3759,7 +3801,21 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         dir.path(),
     );
     assert!(written.status.success());
-    assert!(written.stdout.is_empty());
+    let confirmation = String::from_utf8_lossy(&written.stdout);
+    assert!(
+        confirmation.starts_with("SUCCESS:\n~~~~diff\n"),
+        "{confirmation}"
+    );
+    assert!(
+        confirmation.contains("+++ after r.docx\n"),
+        "{confirmation}"
+    );
+    assert!(
+        confirmation
+            .lines()
+            .any(|line| line.starts_with('+') && line.contains("forty-five")),
+        "{confirmation}"
+    );
     let stderr = String::from_utf8_lossy(&written.stderr);
     assert!(stderr.starts_with("wrote r.docx (docx, "), "{stderr}");
     assert!(dir.path().join("r.docx").is_file());

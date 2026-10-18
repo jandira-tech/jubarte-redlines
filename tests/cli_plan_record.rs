@@ -1920,17 +1920,30 @@ fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
         ],
     );
     assert_eq!(code, 0, "{out} {err}");
-    assert_eq!(
-        out,
-        format!(
-            "edit replace: changed; wrote {}\n",
-            dir.path()
-                .join("out.docx")
-                .canonicalize()
-                .unwrap()
-                .display()
-        )
+    let summary = format!(
+        "edit replace: changed; wrote {}\n",
+        dir.path()
+            .join("out.docx")
+            .canonicalize()
+            .unwrap()
+            .display()
     );
+    assert!(
+        out.starts_with(&format!("{summary}SUCCESS:\n~~~~diff\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains("--- before letter.docx\n+++ after out.docx\n@@ "),
+        "{out}"
+    );
+    assert!(
+        out.contains("\n-fee\n")
+            && out
+                .lines()
+                .any(|line| line.starts_with('+') && line.contains("{~~fee~>cost~~}")),
+        "{out}"
+    );
+    assert!(out.ends_with("~~~~\n"), "{out}");
     assert!(err.is_empty(), "{err}");
 }
 

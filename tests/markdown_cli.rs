@@ -146,10 +146,20 @@ fn ok(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// A run that wrote a file: stdout empty, the `wrote …` line on stderr.
+/// A file write: DOCX gets a confirmation; status stays on stderr.
 fn wrote(out: &Output) -> String {
-    assert!(ok(out).is_empty(), "stdout carries no status line");
-    String::from_utf8_lossy(&out.stderr).into_owned()
+    let stdout = ok(out);
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    if stderr.contains(" (docx, ") {
+        assert!(stdout.starts_with("SUCCESS:\n~~~~diff\n"), "{stdout}");
+        assert!(
+            stdout.contains("\n@@ ") && stdout.ends_with("~~~~\n"),
+            "{stdout}"
+        );
+    } else {
+        assert!(stdout.is_empty(), "stdout carries no status line: {stdout}");
+    }
+    stderr
 }
 
 fn failed(out: &Output) -> String {

@@ -838,6 +838,44 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
         );
         return ExitCode::from(1);
     }
+    if code == 0
+        && !quiet
+        && !delivery.json
+        && !delivery.jsonl
+        && receipt
+            .data
+            .as_ref()
+            .is_some_and(|d| d.phase == Some(Phase::Committed))
+        && let Ok(source) = &source
+    {
+        let path = delivery
+            .output
+            .clone()
+            .or_else(|| delivery.out_dir.as_ref().map(|d| d.join("document.docx")));
+        if let Some(path) = path {
+            // Read the committed artifact, not the prepared transaction.
+            let published = std::fs::read(&path);
+            match published {
+                Ok(bytes) => {
+                    if let Err(error) = print_success(
+                        action.file(),
+                        confirmation_view(action.file(), source),
+                        &path,
+                        &bytes,
+                    ) {
+                        eprintln!(
+                            "error: committed {}, but reporting the result failed: {error}",
+                            path.display()
+                        );
+                        return ExitCode::from(1);
+                    }
+                }
+                Err(error) => edit_status(format_args!(
+                    "warning: the published document cannot be read: {error}"
+                )),
+            }
+        }
+    }
     ExitCode::from(code)
 }
 

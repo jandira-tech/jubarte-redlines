@@ -61,7 +61,7 @@ const EDIT: [&str; 6] = [
 ];
 
 #[test]
-fn edit_writes_file_modified_docx_and_prints_its_view() {
+fn edit_writes_file_modified_docx_and_confirms_its_view() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     letter(dir);
@@ -70,7 +70,7 @@ fn edit_writes_file_modified_docx_and_prints_its_view() {
     assert_eq!(written(dir), ["a_modified.docx"]);
     let xml = document_xml(&dir.join("a_modified.docx"));
     assert!(xml.contains("<w:ins "), "a redline by default: {xml}");
-    assert!(out.contains("\nsource: a_modified.docx\n"), "{out}");
+    assert!(out.contains("\n+source: a_modified.docx\n"), "{out}");
     assert!(err.contains("wrote a_modified.docx (docx, "), "{err}");
 
     let (code, _, err) = run(dir, &EDIT);
@@ -109,7 +109,12 @@ fn a_modified_file_is_edited_in_place_with_force() {
     forced.push("--force");
     let (code, out, err) = run(dir, &forced);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("\nsource: a_modified.docx\n"), "{out}");
+    assert!(out.contains("+++ after a_modified.docx\n"), "{out}");
+    assert!(
+        out.lines()
+            .any(|line| line.starts_with('+') && line.contains("New line.")),
+        "{out}"
+    );
     assert_eq!(written(dir), ["a_modified.docx"]);
     assert!(document_xml(&dir.join("a_modified.docx")).contains("New line."));
     assert_eq!(std::fs::read(dir.join("a.docx")).unwrap(), before);
@@ -158,7 +163,7 @@ fn out_dir_writes_the_bundle() {
             "a.edit holds {name}"
         );
     }
-    assert!(out.contains("\nsource: a.edit/redline.docx\n"), "{out}");
+    assert!(out.contains("\n+source: redline.docx\n"), "{out}");
 
     let mut named = EDIT.to_vec();
     named.extend(["--out-dir", "r"]);
@@ -189,7 +194,7 @@ fn o_names_the_one_document_and_refuses_the_rest() {
     let (code, out, err) = run(dir, &args);
     assert_eq!(code, 0, "{err}");
     assert_eq!(written(dir), ["b.docx"]);
-    assert!(out.contains("\nsource: b.docx\n"), "{out}");
+    assert!(out.contains("\n+source: b.docx\n"), "{out}");
 }
 
 #[test]
@@ -269,7 +274,7 @@ fn the_bundle_says_wrote_on_stderr() {
     assert_eq!(code, 0, "{err}");
     assert!(err.starts_with("wrote r (4 files: "), "{err}");
     assert!(
-        out.starts_with("{") && out.contains("\nsource: r/redline.docx\n"),
+        out.starts_with("{") && out.contains("\n+source: redline.docx\n"),
         "{out}"
     );
     assert!(!out.contains("\nwrote "), "{out}");
@@ -280,7 +285,7 @@ fn the_bundle_says_wrote_on_stderr() {
 /// whatever spelling FILE was given in. `d\a.docx` is a Windows path;
 /// on a Unix it is one odd file name, so the test runs on both.
 #[test]
-fn the_views_source_line_spells_paths_with_forward_slashes() {
+fn diff_labels_spell_paths_with_forward_slashes() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     letter(dir);
@@ -289,12 +294,12 @@ fn the_views_source_line_spells_paths_with_forward_slashes() {
     let edit = ["edit", "d\\a.docx", "-p", "p1", "--content", "New line."];
     let (code, out, err) = run(dir, &edit);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("\nsource: d/a_modified.docx\n"), "{out}");
+    assert!(out.contains("+++ after d/a_modified.docx\n"), "{out}");
     let mut bundle = edit.to_vec();
     bundle.push("--out-dir");
     let (code, out, err) = run(dir, &bundle);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("\nsource: d/a.edit/redline.docx\n"), "{out}");
+    assert!(out.contains("\n+source: redline.docx\n"), "{out}");
     let report = std::fs::read_to_string(dir.join("d\\a.edit").join("report.jsonl")).unwrap();
     assert!(report.contains("\"dir\":\"d/a.edit\""), "{report}");
 }
