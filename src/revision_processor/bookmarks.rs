@@ -22,11 +22,36 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// only deleted characters.
 pub(super) fn drop_wholly_deleted_bookmarks(dom: &mut Dom, root: NodeId) {
     let (start, end) = (W::name("bookmarkStart"), W::name("bookmarkEnd"));
+    let dropped = wholly_deleted_ranges(dom, root, &start, &end);
+    if dropped.is_empty() {
+        return;
+    }
+    for marker in [start, end] {
+        for b in dom.descendants(root, Some(&marker)) {
+            if dom
+                .attribute(b, &W::id())
+                .is_some_and(|v| dropped.contains(v))
+            {
+                dom.remove(b);
+            }
+        }
+    }
+}
+
+/// Nonempty annotation ranges whose characters all disappear when accepting.
+/// Reject uses this same scan after reversing its revisions. Paragraph marks
+/// and inline objects count, while originally empty ranges have nothing to lose.
+pub(super) fn wholly_deleted_ranges(
+    dom: &Dom,
+    root: NodeId,
+    start: &XName,
+    end: &XName,
+) -> HashSet<String> {
     if dom
-        .find_descendant_element(root, Some(&start), |_| true)
+        .find_descendant_element(root, Some(start), |_| true)
         .is_none()
     {
-        return;
+        return HashSet::new();
     }
     let range_deleted = super::move_from_range_deleted_elements(dom, root);
     let removed_by_range = |node| {
@@ -37,7 +62,7 @@ pub(super) fn drop_wholly_deleted_bookmarks(dom: &mut Dom, root: NodeId) {
                 .any(|a| range_deleted.contains(&a))
     };
     let id = W::id();
-    // Open bookmark id → (characters, deleted characters).
+    // Open range id → (characters, deleted characters).
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
     let mut dropped: HashSet<String> = HashSet::new();
     for tag in descendant_and_self_tags(dom, root) {
@@ -52,12 +77,12 @@ pub(super) fn drop_wholly_deleted_bookmarks(dom: &mut Dom, root: NodeId) {
             paragraph_mark_is_deleted_or_moved_from(dom, e)
                 || in_deleted_row(dom, e)
                 || removed_by_range(e)
-        } else if name == start {
+        } else if name == *start {
             if let Some(b) = dom.attribute(e, &id) {
                 open.insert(b.to_string(), (0, 0));
             }
             continue;
-        } else if name == end {
+        } else if name == *end {
             if let Some(b) = dom.attribute(e, &id)
                 && let Some((chars, gone)) = open.remove(b)
                 && chars > 0
@@ -76,16 +101,7 @@ pub(super) fn drop_wholly_deleted_bookmarks(dom: &mut Dom, root: NodeId) {
             *gone += usize::from(deleted);
         }
     }
-    if dropped.is_empty() {
-        return;
-    }
-    for marker in [start, end] {
-        for b in dom.descendants(root, Some(&marker)) {
-            if dom.attribute(b, &id).is_some_and(|v| dropped.contains(v)) {
-                dom.remove(b);
-            }
-        }
-    }
+    dropped
 }
 
 /// Does `e` stand for at least one character of the story?
