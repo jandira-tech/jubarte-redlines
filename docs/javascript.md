@@ -359,7 +359,10 @@ auditTracked(original: Uint8Array, edited: Uint8Array, author: string): string
 
 Every text change from `original` to `edited` must be a revision by
 `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
-array.
+array. Existing foreign revisions may remain: `FOREIGN_AUTHOR` reports
+foreign history added, changed or removed against `original`. Revision ids
+and adjacent splits with the same author, kind and date do not count as
+new history.
 
 Mirrors `jubarte::validate::audit_tracked`.
 

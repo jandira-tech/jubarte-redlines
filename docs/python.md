@@ -1905,9 +1905,11 @@ Document.audit_tracked(self, original: 'Document | bytes', *, author: 'str') -> 
 Every text change against ``original`` must be a revision by ``author``.
 
 Rejecting that author's changes must give ``original``'s text back;
-a paragraph that still differs is an ``UNTRACKED_EDIT`` finding and
-another author's change a ``FOREIGN_AUTHOR`` one. An empty tuple
-means every edit is tracked.
+a paragraph that still differs is an ``UNTRACKED_EDIT`` finding.
+A foreign revision added, changed or removed against ``original`` is a
+``FOREIGN_AUTHOR`` finding. Existing foreign revisions may remain;
+revision ids and adjacent splits with the same author, kind and date
+do not count as new history. An empty tuple means every edit is tracked.
 
 #### `Document.append`
 
