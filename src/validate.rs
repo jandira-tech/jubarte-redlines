@@ -76,7 +76,7 @@ use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 
 use crate::admission::{AdmissionError, InputLimits};
-use crate::changes::{ChangeError, ChangeFilter, list_changes, reject_changes};
+use crate::changes::{Change, ChangeError, ChangeFilter, list_changes, reject_changes};
 use crate::inspect::InspectError;
 use crate::namespaces::{MC, R, VML, W, W14, WP};
 use crate::opc::PartFs;
@@ -2195,8 +2195,11 @@ fn story_part(id: &str) -> String {
 /// difference between `original` and `edited` must sit in a revision by
 /// `author`. Rejecting that author's changes must give back `original`'s
 /// text, body and stories alike; any residue is an `UNTRACKED_EDIT` finding
-/// at its paragraph id, and a change by anyone else is a `FOREIGN_AUTHOR`
-/// finding. Missing original permission endpoints are reported as
+/// at its paragraph id. Foreign revisions already in `original` may remain:
+/// only added, altered or removed foreign history is a `FOREIGN_AUTHOR`
+/// finding. Adjacent pieces with the same author, kind and date are compared
+/// together within their paragraph, ignoring revision ids. Missing original
+/// permission endpoints are reported as
 /// `PERMISSION_RANGE_DROPPED`, including in headers, footers and notes.
 ///
 /// # Errors
@@ -2209,29 +2212,12 @@ pub fn audit_tracked(
 ) -> Result<Vec<Finding>, ValidateError> {
     let mut out = Vec::new();
     check_dropped_permissions(&PartFs::open(original)?, &PartFs::open(edited)?, &mut out);
-    let listed = list_changes(edited)?;
-    for c in listed
-        .iter()
-        .filter(|c| c.author.as_deref() != Some(author))
-    {
-        out.push(Finding::new(
-            "FOREIGN_AUTHOR",
-            &story_part(&c.id),
-            "",
-            format!(
-                "{} by {}",
-                c.id,
-                c.author
-                    .clone()
-                    .unwrap_or_else(|| "<no author>".to_string())
-            ),
-        ));
-    }
     let filter = ChangeFilter {
         authors: Some(vec![author.to_string()]),
         ..ChangeFilter::default()
     };
     let reverted = reject_changes(edited, &filter)?;
+    check_foreign_revisions(original, &reverted, author, &mut out)?;
     // Paragraph-by-paragraph text: the same projection `jubarte text` prints,
     // body first, then every header, footer and notes story.
     let before = all_paragraphs(original)?;
@@ -2263,6 +2249,91 @@ pub fn audit_tracked(
         }
     }
     Ok(as_edits(out))
+}
+
+/// A revision's content identity, independent of ids (including move names).
+/// Keep targets and move sides distinct: empty paragraph marks and the two
+/// sides of a move must not mask one another.
+fn same_foreign_group(a: &Change, b: &Change) -> bool {
+    a.paragraph == b.paragraph
+        && story_part(&a.id) == story_part(&b.id)
+        && a.author == b.author
+        && a.kind == b.kind
+        && a.target == b.target
+        && a.date == b.date
+        && a.move_side == b.move_side
+}
+
+/// Rejecting the editor's changes leaves the original author's insertion
+/// split into adjacent carriers. Compare their combined text, not their ids
+/// or the number of carriers the editor needed to write.
+fn foreign_revisions(docx: &[u8], author: &str) -> Result<Vec<Change>, ValidateError> {
+    let mut out: Vec<Change> = Vec::new();
+    for c in list_changes(docx)? {
+        if c.author.as_deref() == Some(author) {
+            continue;
+        }
+        if let Some(last) = out.last_mut()
+            && same_foreign_group(last, &c)
+        {
+            last.text.push_str(&c.text);
+        } else {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+fn check_foreign_revisions(
+    original: &[u8],
+    reverted: &[u8],
+    author: &str,
+    out: &mut Vec<Finding>,
+) -> Result<(), ValidateError> {
+    let mut before = foreign_revisions(original, author)?;
+    let mut changed = Vec::new();
+    // Reserve exact content matches first, consuming each once. Otherwise an
+    // altered early carrier could steal a later carrier's unchanged match.
+    for c in foreign_revisions(reverted, author)? {
+        if let Some(at) = before
+            .iter()
+            .position(|b| same_foreign_group(b, &c) && b.text == c.text)
+        {
+            before.remove(at);
+        } else {
+            changed.push(c);
+        }
+    }
+    for c in changed {
+        // Different text in an existing group is one altered revision,
+        // rather than both an addition and a disappearance.
+        if let Some(at) = before.iter().position(|b| same_foreign_group(b, &c)) {
+            before.remove(at);
+        }
+        out.push(Finding::new(
+            "FOREIGN_AUTHOR",
+            &story_part(&c.id),
+            "",
+            format!(
+                "{} by {}",
+                c.id,
+                c.author.as_deref().unwrap_or("<no author>")
+            ),
+        ));
+    }
+    for c in before {
+        out.push(Finding::new(
+            "FOREIGN_AUTHOR",
+            &story_part(&c.id),
+            "",
+            format!(
+                "{}'s {} in the original is gone",
+                c.author.as_deref().unwrap_or("<no author>"),
+                c.id
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Permission exceptions are edit fidelity, not Word validity. Check both

@@ -325,3 +325,113 @@ fn strict_help_explains_the_additional_warning_threshold() {
         "--strict Also fail (exit 2) on warnings from other rule sets; word and edits findings fail without it"
     ), "{out}");
 }
+
+const FOREIGN_HISTORY: &str = r#"<w:p><w:ins w:id="1" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>alpha beta gamma</w:t></w:r></w:ins><w:del w:id="2" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#;
+
+fn foreign_audit(edited: &[u8]) -> (i32, Vec<serde_json::Value>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("original.docx"), docx(FOREIGN_HISTORY)).unwrap();
+    std::fs::write(dir.path().join("edited.docx"), edited).unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "edited.docx",
+            "--rules",
+            "edits",
+            "--original",
+            "original.docx",
+            "--author",
+            "Bob",
+            "--json",
+        ],
+    );
+    assert!(err.is_empty(), "{err}");
+    let findings = out
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    (code, findings)
+}
+
+fn foreign_plan(author: &str, kind: &str) -> Vec<u8> {
+    let operation = if kind == "replace" {
+        serde_json::json!({"kind":"replace", "paragraph":"p0", "find":"beta", "replacement":"new"})
+    } else {
+        serde_json::json!({"kind":"insert", "paragraph":"p0", "after":"tail", "text":" extra"})
+    };
+    let plan = jubarte::edit::EditPlan::from_json(
+        &serde_json::json!({
+            "schema_version":1, "author":author, "date":"2026-02-01T00:00:00Z",
+            "existing_revisions":"keep", "operations":[operation]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    jubarte::edit::apply_plan(&docx(FOREIGN_HISTORY), &plan)
+        .unwrap()
+        .redline
+}
+
+#[test]
+fn foreign_history_self_audit_exits_zero() {
+    let (code, findings) = foreign_audit(&docx(FOREIGN_HISTORY));
+    assert_eq!((code, findings), (0, vec![]));
+}
+
+#[test]
+fn foreign_history_bobs_split_insertion_exits_zero() {
+    let (code, findings) = foreign_audit(&foreign_plan("Bob", "replace"));
+    assert_eq!((code, findings), (0, vec![]));
+}
+
+#[test]
+fn foreign_history_alices_new_revision_exits_two_with_one_finding() {
+    let (code, findings) = foreign_audit(&foreign_plan("Alice", "insert"));
+    assert_eq!(code, 2);
+    let foreign: Vec<_> = findings
+        .iter()
+        .filter(|f| f["code"] == "FOREIGN_AUTHOR")
+        .collect();
+    assert_eq!(foreign.len(), 1, "{findings:?}");
+    assert!(
+        foreign[0]["message"]
+            .as_str()
+            .unwrap()
+            .ends_with(" by Alice")
+    );
+}
+
+#[test]
+fn foreign_history_rejected_insertion_exits_two_and_names_the_gone_revision() {
+    let edited = jubarte::changes::reject_changes(
+        &docx(FOREIGN_HISTORY),
+        &jubarte::changes::ChangeFilter::ids(["r1"]),
+    )
+    .unwrap();
+    let (code, findings) = foreign_audit(&edited);
+    assert_eq!(code, 2);
+    let foreign: Vec<_> = findings
+        .iter()
+        .filter(|f| f["code"] == "FOREIGN_AUTHOR")
+        .collect();
+    assert_eq!(foreign.len(), 1, "{findings:?}");
+    assert_eq!(foreign[0]["message"], "Alice's r1 in the original is gone");
+}
+
+#[test]
+fn foreign_history_carols_new_revision_exits_two_with_one_finding() {
+    let (code, findings) = foreign_audit(&foreign_plan("Carol Diaz", "insert"));
+    assert_eq!(code, 2);
+    let foreign: Vec<_> = findings
+        .iter()
+        .filter(|f| f["code"] == "FOREIGN_AUTHOR")
+        .collect();
+    assert_eq!(foreign.len(), 1, "{findings:?}");
+    assert!(
+        foreign[0]["message"]
+            .as_str()
+            .unwrap()
+            .ends_with(" by Carol Diaz")
+    );
+}
