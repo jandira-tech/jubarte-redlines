@@ -1862,15 +1862,15 @@ pub(crate) fn story_text_with(
     if matches!(view, StoryView::Tagged(..)) {
         s.flush();
         let mut text = s.critic.into_story().trim().to_string();
-        if let StoryView::Tagged(handles, story) = view {
-            if let Some(pr) = p.path(&["pPr", "rPr"]) {
-                for mark in pr.elements().filter(|mark| mark.is("ins")) {
-                    let tag = super::agent::format_tag(&format!(
-                        "{story}#{}",
-                        super::agent::tag_of(mark, handles)
-                    ));
-                    text.push_str(&format!("¶{{{tag}}}"));
-                }
+        if let StoryView::Tagged(handles, story) = view
+            && let Some(pr) = p.path(&["pPr", "rPr"])
+        {
+            for mark in pr.elements().filter(|mark| mark.is("ins")) {
+                let tag = super::agent::format_tag(&format!(
+                    "{story}#{}",
+                    super::agent::tag_of(mark, handles)
+                ));
+                text.push_str(&format!("¶{{{tag}}}"));
             }
         }
         text

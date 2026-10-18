@@ -1294,11 +1294,11 @@ pub(crate) fn attributed_notes(source: &str) -> Vec<(Token, String)> {
     let mut note = None;
     Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
         Piece::Token(token @ (Token::InsertEnd | Token::DeleteEnd | Token::SubstituteEnd)) => {
-            closer = token
+            closer = token;
         }
         Piece::Token(Token::AttributionStart) => note = Some((closer, String::new())),
         Piece::Token(Token::ParagraphInsertion) => {
-            note = Some((Token::ParagraphInsertion, String::new()))
+            note = Some((Token::ParagraphInsertion, String::new()));
         }
         Piece::Token(Token::AttributionEnd) => {
             if let Some(note) = note.take() {
@@ -1879,7 +1879,7 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
     resolve_with_policy(markdown, accept, false)
 }
 
-/// Whether `note` names, after ` on `, a change the one it follows sits
+/// Whether `note` names, after ` re `, a change the one it follows sits
 /// inside (either view's grammar): resolving that change removes its text
 /// either way, for rejecting the outer removes what it holds and accepting
 /// the inner removes the text.
@@ -1914,7 +1914,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
     // The change span just closed, where its note would sit: a note that
-    // names the change it sits inside (` on `) folds it, and resolving
+    // names the change it sits inside (` re `) folds it, and resolving
     // removes its text either way — rejecting the outer removes what it
     // holds, accepting the inner removes the text.
     let mut folded_at: Option<usize> = None;
@@ -2029,7 +2029,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 Token::CommentEnd | Token::AttributionEnd => {
                     state = outer.pop().unwrap_or(In::Text);
                     // The note folds the change it follows, naming the one
-                    // it sits inside after ` on `: its text goes, either
+                    // it sits inside after ` re `: its text goes, either
                     // way it resolves — rejecting the outer removes what it
                     // holds, accepting the inner removes the text.
                     if state == In::Text

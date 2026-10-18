@@ -6,6 +6,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Node and browser guide
 
+Revision tags use the [settled Markdown dialect](MARKDOWN.md#tags): separate ids,
+same-author deletion-first substitutions, old-side `re` parents and inline `¶` marks.
+
 Using jubarte from JavaScript/TypeScript. Two npm packages share the engine
 (both WebAssembly builds of the Rust crate, running in-process — no binary
 download, no server round-trip):
@@ -1655,8 +1658,8 @@ $ jubarte-redlines read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
 A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
-tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12
-@AC<<}`) and comments with theirs (`{>>c5 @AC: …<<}`).
+tracked changes as CriticMarkup followed by their ids (`{++text++}{r12
+@AC}`) and comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte-redlines read [OPTIONS] <FILE>
 

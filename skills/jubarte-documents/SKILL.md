@@ -44,12 +44,19 @@ an id line:
 
 ```text
 <!-- p12 num "(a)" -->
-**Confidentiality.** You will {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days ...
+**Confidentiality.** You will {~~thirty~>forty-five~~}{r3+4 @AC} days ...
 ```
 
 `p12` is the coordinate an edit uses. A bare `12` is refused, with
 the settled spelling named (`p12`, `r12` or `c12`, by what the option takes).
-A tracked change carries its id: `{++…++}{>>r12 @AC<<}` is `r12` for
+Attribution follows the closer in braces. Distinct ids stay separate:
+`{++a++}{r1 @AC}{++b++}{r2 @AC}`. A same-author deletion then insertion
+pairs as `{~~old~>new~~}{r3+4 @AC re r1 @JD}`; `re` binds the old side only.
+An inserted paragraph mark ends the text as `¶{r5 @AC}`. Literal tag-like
+text after a closer or pilcrow escapes its brace: `\{r3 @C}`.
+See [Tags](../../docs/MARKDOWN.md#tags) for the complete grammar.
+
+A tracked change carries its id: `{++…++}{r12 @AC}` is `r12` for
 `accept --id`, `reject --id` and `edit -p r12 --accept`, and `r3+4` is two
 Word marks of one change. A header's change reads `header1.r1`, a
 footnote's `footnotes.r3`. A comment reads `{==anchor==}{>>c5 @AC: text<<}`,

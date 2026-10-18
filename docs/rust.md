@@ -6,6 +6,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Rust guide
 
+Revision tags use the [settled Markdown dialect](MARKDOWN.md#tags): separate ids,
+same-author deletion-first substitutions, old-side `re` parents and inline `¶` marks.
+
 Using jubarte from Rust: the library crate and the `jubarte` CLI. For the
 other surfaces see [docs/python.md](python.md) (Python and `uvx`) and
 [docs/javascript.md](javascript.md) (Node, browser and `npx`); the
@@ -890,7 +893,7 @@ $ jubarte read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
 A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
-tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12 @AC<<}`) and
+tracked changes as CriticMarkup followed by their ids (`{++text++}{r12 @AC}`) and
 comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte read [OPTIONS] <FILE>

@@ -28,9 +28,8 @@ All or Reject All.
 
 `--commonmark` writes plain CommonMark instead, for readers outside this
 dialect: each tracked change and comment as CriticMarkup, a change
-followed by its number, author and date (`{++new++}{>>r5 Ana Lima
-(2026-09-29T14:05:00Z)<<}`; the number tells the writer the note names who
-made the change, not a comment on it). Fields print as their text, and
+followed by its number, author and date (`{++new++}{r5 Ana Lima
+(2026-09-29T14:05:00Z)}`; the brace tag attributes the change; `{>>…<<}` denotes a comment). Fields print as their text, and
 underline, highlight and strike are left out. Pictures become their alt
 text. Hidden text (`w:vanish` on the run, or on its character style
 directly or through `basedOn`) prints nothing, in the body, table cells,
@@ -313,7 +312,7 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 ## 1. Services
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r0 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r2+1 @AC<<} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r0 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+1 @AC} review call.
 ```
 
 `--track-changes accept|reject` prints the document with every change
@@ -330,7 +329,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}][ outline {n}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-ins {tags} · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -395,7 +394,7 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   line pitch is plain `char grid`), then `char space N` when a character
   grid sets one. A pitch with no grid type is not printed:
   Word does not snap to it.
-- `break-ins`/`break-del`: a tracked paragraph mark. `fmt`: a formatting
+- `¶{rN @X}`: an inserted paragraph mark; `break-del`: a deleted paragraph mark. `fmt`: a formatting
   change (`w:rPrChange`, `w:pPrChange`).
 - `rev`: in the accept and reject views, every revision the paragraph
   held before resolution, formatting changes and paragraph marks included.
@@ -412,7 +411,7 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - Empty paragraphs: `<!-- p19 empty -->`, consecutive ones
   `<!-- p19-p23 empty -->`. An empty paragraph that holds a tracked mark, a
   formatting change, a resolved revision, a hidden comment or a stated
-  style keeps its own line: `<!-- p4 empty, break-ins r3 @AC -->`,
+  style keeps its own line: `<!-- p4 -->` followed by `¶{r3 @AC}`,
   `<!-- p19 TitlePage empty -->`; a range of styled ones
   (`<!-- p19-p23 TitlePage empty -->`) stands for every paragraph it
   numbers, each with what the line says.
@@ -496,7 +495,7 @@ there as a line break (for a note, with a warning). A `<br>` prints inside a cha
 mark is tracked: `this<br>{++added++}` is an inserted paragraph after an
 untracked mark, `{++A<br>B++}` an insertion that takes the mark with it. `edit -p footnotes.p0` edits that
 note's text. A note Word inserted or deleted whole, its reference with it,
-reads `{++[^1]: text++}{>>r10 @AL<<}`, and the marks its own text holds
+reads `{++[^1]: text++}{r10 @AL}`, and the marks its own text holds
 close the definition: `<!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->`.
 A label defined once and referenced twice is one note; a label defined
 twice is two (see the table above).
@@ -567,24 +566,25 @@ unambiguous, so a pair sharing one `w:id` prints `r0+1` — but the change is
 staged in the contract's plan, not landed.
 
 ```text
-{++quarterly++}{>>r0 @AC<<}
-{--ninety days--}{>>r7 @AC<<}
-{~~weekly~>monthly~~}{>>r2+1 @AC<<}          one author: one note, deleted ids first
-{~~old~>new~~}{>>r2 @JD; r1 @AC<<}            two authors: deleted side first
-{++bold words++}{>>r7+8 @AC<<}                 neighbouring marks by one author
-{++quarterly++}{>>r0 @AC 2026-10-03T14:05:00Z<<}   with --dates
-{--deleted--}{>>r3 @BO on r1 @AL<<}         a change that was another's only content
+{++quarterly++}{r0 @AC}
+{--ninety days--}{r7 @AC}
+{~~weekly~>monthly~~}{r2+1 @AC}       one author, deleted id first
+{--old--}{r2 @JD}{++new++}{r1 @AC}    different authors stay separate
+{++bold ++}{r7 @AC}{++words++}{r8 @AC}  distinct ids stay separate
+{++quarterly++}{r0 @AC 2026-10-03T14:05:00Z}  with --dates
+{--deleted--}{r3 @BO re r1 @AL}        deletion inside insertion r1
+Text¶{r9 @AC}                        inserted paragraph mark
 ```
 
 A change that was the only content of another — `A` inserted text, `B`
 later deleted it — has nothing of the outer change left to split around
-it, so its note names the outer one after ` on ` and the outer change's
-own tag, each with its own timestamp as notes print them: `r3 @BO on
-r1 @AL`, or `r3 Ben Ode (2026-09-30T09:00:00Z) on r1 Ana Lima
+it, so its note names the outer one after ` re ` and the outer change's
+own tag, each with its own timestamp as notes print them: `r3 @BO re
+r1 @AL`, or `r3 Ben Ode (2026-09-30T09:00:00Z) re r1 Ana Lima
 (2026-09-29T14:05:00Z)` in the plain view. The writer puts the change
 back inside the one it names. A row's or cell's own mark is never
 named: the writer rebuilds those where they stand. Deeper nests chain
-the same way, innermost first (`r5 @CD on r3 @BO on r1 @AL`). The body
+the same way, innermost first (`r5 @CD re r3 @BO re r1 @AL`). The body
 writer currently rebuilds only the first outer a chain names; headers and
 footers rebuild the full chain. Word opens `ins > del > ins` but misreads
 reject-all; the chain-writing choice remains open in #1134.
@@ -604,35 +604,37 @@ A plain note's grammar is exact about where the name ends and the date
 begins: the date is the last parenthesised group, so a name may hold
 parentheses of its own (`r1 Ana (consultant) (2026-09-29T14:05:00Z)`
 names `Ana (consultant)`). In a note that names another change after
-` on `, each name spells its own parentheses percent-wise — `(` as `%28`,
-`)` as `%29`, `%` itself as `%25` (`r3 Ben Ode (…) on r1 Ana %28consultant%29
+` re `, each name spells its own parentheses percent-wise — `(` as `%28`,
+`)` as `%29`, `%` itself as `%25` (`r3 Ben Ode (…) re r1 Ana %28consultant%29
 (…)`) — so only the dates' parentheses are bare and the parts of the
-note split without doubt: the last ` on ` whose left side parses as one
+note split without doubt: the last ` re ` whose left side parses as one
 part and whose right side as the chain the rest names wins, so a name
-holding ` on r1 Kim` of its own stays one name. A part with a bare
+holding ` re r1 Kim` of its own stays one name. A part with a bare
 parenthesis in its name makes the note no fold: it reads as the change's
 plain attribution, or as a comment.
 
-Neighbouring marks of one kind by one author join, then an insertion
-directly followed by a deletion pairs as a substitution, left to right:
-Word's Compare writes the insertion first. A deletion followed by an
-insertion stays two changes. A bookmark the view prints (`<a id>`) and a
-comment range it prints (`{==…==}`) break adjacency; proofing marks, other
-bookmarks and comment markers, and runs that print nothing (empty,
-hidden, a lone soft hyphen or `w:sym`, a page break) do not. A comment
-range on one side only, ending inside the insertion as Word writes it,
-keeps the pair one substitution both ways:
-`{~~old~>{==new==}~~}{>>c0 …<<}`. Changes inside links, content controls and
-simple fields count, and headers and footers pair the same way
-(`{~~old~>new~~}{>>header1.r91+90 @AL<<}`). The text inside the delimiters
-is the document's text exactly.
+Distinct revision ids always stay separate, including adjacent insertions or
+adjacent deletions by the same author. One id may appear on several marks.
+Only a deletion directly followed by a live insertion by the same author
+pairs as a substitution. Proofing markers, bookmarks that print nothing,
+and empty runs may intervene; visible text and rendered content interrupt
+adjacency. An insertion followed by a deletion stays in document order.
+In `{~~old~>new~~}{r4+5 @B re r3 @A}`, `re` applies only to the old side;
+the new side follows the parent insertion. Story prefixes remain intact.
 
-Converting back, a substitution writes its insertion, then its deletion.
-Its one tag lists the deleted side's ids, then the inserted side's: where
-the numbers drop (`r94+95+92+93`) the inserted side begins, else the
-deleted side takes one id per run it has. A side naming more ids than it
-has runs splits its text, after its last space or before its last
-character, so every id comes back on its own side.
+Converting back writes the deleted side before the inserted side. The
+writer uses `+` only across a substitution's `~>`; the reader also accepts
+joined ids on other marks. Existing rules for splitting a side with
+several ids remain in place. A three-level `re` chain is a spelling
+change only: the rebuilding limit and the open #1134 decision are unchanged.
+
+An inserted paragraph mark is `¶{rN @X}` at the end of its paragraph's text;
+it has no `break-ins` clause on the id line. Deleted paragraph marks keep
+the `break-del rN @X` clause. Formatting, page-break and row/cell clauses
+keep their existing forms. Literal text that could read as a tag after a
+closer or a pilcrow escapes its brace: `\{r3 @C}`. The reader restores
+it as text. Attribution tags use braces; `{>>…<<}` always denotes a comment.
+Saved views must migrate in one step; old wrappers no longer attribute revisions.
 
 `@??` is the handle of a mark with no author's name (the attribute missing
 or empty); it is a tag, not a comment, and converts back to an empty
@@ -682,11 +684,11 @@ block.
 ### Reading back
 
 `convert` reads an agent view back into Word. A change followed by a
-tagged note (`{>>r12 @AC<<}`) keeps its id, `r12`
+tagged note (`{r12 @AC}`) keeps its id, `r12`
 (`footnotes.r12` under a footnote id line), the name the `authors:`
 line gives its handle, and its date: the note's own timestamp, else the
-handle's from `authors:`. A note that names another change after ` on `
-(`{--x--}{>>r3 @BO on r1 @AL<<}`, the plain view the same by author and
+handle's from `authors:`. A note that names another change after ` re `
+(`{--x--}{r3 @BO re r1 @AL}`, the plain view the same by author and
 date) puts the change it follows back inside that one: `w:ins r1`
 wrapping `w:del r3`, each with its own id, author and date, resolved
 through `authors:` like any tag. A tagged comment note keeps its id,
@@ -855,10 +857,9 @@ note.
   (a page break added after Word last saved turns no page) and does not
   add the blank page an odd- or even-page section start can need.
 - A table is one block for `-p`, `--head` and `--tail`.
-- With comments inline, a comment range between two changes by one author
-  splits their note (`{>>r7 @AC<<}` … `{>>r8 @AC<<}`): CriticMarkup cannot
-  nest a comment's scope inside a change. The resolved views say `rev r7+8 @AC`;
-  both ids name the same revisions.
+- Distinct revision ids keep separate attribution tags, including when a
+  comment range lies between them. Resolved views preserve them as separate
+  clauses: `rev r7 @AC; r8 @AC`.
 
 ## Diffs
 

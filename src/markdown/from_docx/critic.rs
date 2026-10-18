@@ -14,14 +14,14 @@
 //! - a span inside another of the same kind is merged into it (`{--{--x--}--}`
 //!   would end at the first `--}`);
 //! - spans with no text are dropped, keeping any comments they held;
-//! - neighbouring spans of the same kind are joined;
+//! - untagged neighbouring spans of the same kind are joined;
 //! - comments inside a highlight move to right after it (`{==text==}{>>note<<}`);
 //! - a deletion next to an insertion becomes a substitution (`{~~old~>new~~}`).
 //!
-//! An insertion or deletion can carry who made it and when. That attribution
-//! follows the change as a comment, which is how the CriticMarkup spec tracks
-//! several authors: `{++new++}{>>Ana Lima (2026-09-29T14:05:00Z)<<}`. Neighbours
-//! join only when their attributions match.
+//! An insertion or deletion carries its attribution after the closer in
+//! braces: `{++new++}{r1 Alice (2026-09-29T14:05:00Z)}`. Distinct revision
+//! ids keep separate marks. Only a deletion then a live insertion by the
+//! same author becomes a substitution, with old ids before new ids.
 //!
 //! Document text that happens to contain a CriticMarkup delimiter is escaped
 //! with a Markdown backslash (`{\++`), which renders as the original characters
@@ -54,7 +54,7 @@ impl Mark {
 }
 
 /// A tracked change: its kind and who made it when, as the inside of its
-/// `{>>…<<}` note (`Ana Lima (2026-09-29T14:05:00Z)`), already escaped.
+/// brace tag (`r1 Alice (2026-09-29T14:05:00Z)`), already escaped.
 pub(crate) type Change = (Mark, Option<String>);
 
 /// Agent-view attribution: an internal tag (`0@AC`, `1+2@AC`,
@@ -66,7 +66,7 @@ pub(crate) const TAG: &str = "\u{E000}";
 
 /// Plain-view attribution: the change's ids and its `Author (date)` note
 /// as an internal tag (`agent::plain_tag_of`) behind this sentinel, so that
-/// neighbours join their ids as the agent view's do. Printed through
+/// distinct neighbouring ids remain separate. Printed through
 /// `agent::format_plain_tag`: `r1+2 Ana Lima (2026-09-29T14:05:00Z)`.
 pub(crate) const PLAIN: &str = "\u{E001}";
 
@@ -75,7 +75,7 @@ fn tag(by: Option<&str>) -> Option<&str> {
     let by = bare(by?);
     by.strip_prefix(TAG)
         .or_else(|| by.strip_prefix(PLAIN))
-        // A note that names the change it sits inside (`3@BO` on `1@AL`)
+        // A note that names the change it sits inside (`3@BO` re `1@AL`)
         // carries that one after [`ON`]: the tag is the change's own.
         .map(|tagged| tagged.split_once(ON).map_or(tagged, |(own, _)| own))
 }
@@ -92,7 +92,7 @@ fn outer_of(by: Option<&str>) -> Option<&str> {
 
 /// The changes a note names sit behind this sentinel after the change's
 /// own tag (`\u{E000}3@BO\u{E002}1@AL`), with each tag's optional
-/// timestamp before it, exactly as [`display`] prints them: `r3 @BO on
+/// timestamp before it, exactly as [`display`] prints them: `r3 @BO re
 /// r1 @AL`.
 const ON: &str = "\u{E002}";
 
@@ -125,7 +125,7 @@ fn tag_parts(tagged: &str) -> (&str, Option<&str>) {
 }
 
 /// A note's text: the formatted tag, or the plain attribution. A note
-/// that names the changes it sits inside prints ` on ` between them,
+/// that names the changes it sits inside prints ` re ` between them,
 /// one part per level, its own change first. Each plain part's author
 /// spells its parentheses percent-wise (`Ana %28consultant%29`), so its
 /// date's are the only bare ones and the writer's parser can split the
@@ -876,11 +876,9 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
     let mut index = 0;
     while index < nodes.len() {
         match (&nodes[index], nodes.get(index + 1)) {
-            // The new text, then the old it replaces: Word's Compare
-            // writes a substitution so, and so the writer puts
-            // `{~~old~>new~~}` back. A deletion before an insertion stays
-            // two changes, in their order. A change that names the one it
-            // sits inside never pairs: the pair would lose the nest.
+            // Pair a deletion then a live insertion by the same author.
+            // The old side keeps its parent; a parent on the new side
+            // prevents pairing. Insertion then deletion stays in order.
             (
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
@@ -1583,7 +1581,7 @@ mod tests {
     #[test]
     fn a_change_that_is_another_s_only_content_names_it_in_the_note() {
         // `A` inserted what `B` deleted: nothing of the insertion is left
-        // to split around the deletion, so the note names it after ` on `.
+        // to split around the deletion, so the note names it after ` re `.
         let nested = [
             ("by+", "\u{E000}1@AL"),
             ("by-", "\u{E000}3@BO"),
