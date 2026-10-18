@@ -681,7 +681,15 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     );
                     let tag = tags.first();
                     let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
-                    tracked(&mut changed, marks, name, tag, ids, inner, drawings);
+                    tracked(
+                        &mut changed,
+                        marks,
+                        (name, name == "w:del" || !parents.is_empty()),
+                        tag,
+                        ids,
+                        inner,
+                        drawings,
+                    );
                     if ids.len() == 1 {
                         let close = if name == "w:ins" {
                             "</w:ins>"
@@ -726,7 +734,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     tracked(
                         &mut changed,
                         marks,
-                        "w:ins",
+                        ("w:ins", false),
                         new_tag,
                         new_ids,
                         new,
@@ -735,7 +743,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     tracked(
                         &mut changed,
                         marks,
-                        "w:del",
+                        ("w:del", true),
                         old_tag,
                         old_ids,
                         old,
@@ -1055,7 +1063,7 @@ fn substitution_ids(ids: &[u32]) -> (&[u32], &[u32]) {
 fn tracked(
     out: &mut String,
     marks: &mut Marks<'_>,
-    name: &str,
+    (name, deleted): (&str, bool),
     tag: Option<&super::view_notes::Tag>,
     ids: &[u32],
     inner: &str,
@@ -1082,7 +1090,15 @@ fn tracked(
         pieces.splice(at..=at, [head, tail]);
     }
     for (n, piece) in pieces.into_iter().enumerate() {
-        tracked_piece(out, marks, name, tag, ids.get(n).copied(), piece, drawings);
+        tracked_piece(
+            out,
+            marks,
+            (name, deleted),
+            tag,
+            ids.get(n).copied(),
+            piece,
+            drawings,
+        );
     }
 }
 
@@ -1091,13 +1107,12 @@ fn tracked(
 fn tracked_piece(
     out: &mut String,
     marks: &mut Marks<'_>,
-    name: &str,
+    (name, deleted): (&str, bool),
     tag: Option<&super::view_notes::Tag>,
     id: Option<u32>,
     inner: &str,
     drawings: &HashMap<String, String>,
 ) {
-    let deleted = name == "w:del";
     let _ = write!(out, "<{}>", marks.mark_id(name, tag, id));
     let mut plain = String::new();
     let mut rest = inner;

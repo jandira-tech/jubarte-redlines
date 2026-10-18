@@ -1716,7 +1716,10 @@ pub(crate) fn story_text_with(
                         );
                         s.critic.open(mark, Some(&by));
                     }
-                    let deleting = std::mem::replace(&mut s.deleting, !inserted);
+                    // #1134: an insertion inside a deletion still carries
+                    // delText. Keep that enclosing deletion while reading it.
+                    let deleting = s.deleting;
+                    s.deleting |= !inserted;
                     walk(run, s, draw);
                     s.deleting = deleting;
                     if tagged.is_some() {
