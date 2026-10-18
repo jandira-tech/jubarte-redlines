@@ -87,35 +87,37 @@ pub(super) fn emits_all(tx: &Transaction<'_>) -> bool {
         .all(|(op, _)| untracked_kind(tx, *op).is_none())
 }
 
-/// Whether a run holding `[start, end)` of `paragraph` has a tracked
-/// formatting change.
-fn formatting_tracked(dom: &Dom, paragraph: NodeId, start: usize, end: usize) -> bool {
+/// Run-property changes covering the requested range, in projection order.
+fn formatting_revisions(dom: &Dom, paragraph: NodeId, start: usize, end: usize) -> Vec<NodeId> {
     project_paragraph(dom, paragraph)
         .segments
         .iter()
         .filter(|s| s.start < end && start < s.end)
-        .any(|s| {
+        .filter_map(|s| {
             let (Piece::Text { run, .. } | Piece::Glyph { run, .. }) = &s.piece;
             dom.element(*run, &W::r_pr())
                 .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
-                .is_some()
         })
+        .collect()
 }
 
-/// Refusals that only `keep` needs, checked on the untouched source after
-/// resolution: an operation the emitter cannot track, and a paragraph- or
-/// run-level change on top of another revision of the same paragraph mark
-/// or properties.
+/// Refusals that only `keep` needs, checked on the untouched working source.
+/// Each revision conflict retains its actual carriers for caller-specific advice.
 pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
     if tx.plan.existing_revisions != ExistingRevisions::Keep {
         return Ok(());
     }
+    tx.revision_refusal.take();
     let dom = &tx.opened.dom;
     let refuse = |op: usize, message: &str| {
         let mut error = tx.conflict(op, message);
         error.code = "UNSUPPORTED_STRUCTURE".into();
         error.outcomes[op].code = Some(error.code.clone());
-        error
+        tx.attach_revision_refusal(error)
+    };
+    let paragraph_change = |para: usize| {
+        dom.element(tx.paragraph_nodes[para], &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
     };
     for (op, resolved) in &tx.resolved {
         if let Some(kind) = untracked_kind(tx, *op) {
@@ -126,21 +128,22 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                 ),
             ));
         }
-        let message = match resolved {
+        let blocked = match resolved {
             Resolved::DeleteParagraph { para } => {
                 let node = tx.paragraph_nodes[*para];
                 if holds_revision(dom, node) {
-                    Some(
-                        "under keep, a paragraph that holds tracked changes cannot be deleted; resolve them first with resolve_revisions",
-                    )
-                } else if dom
-                    .next_element(node)
-                    .is_none_or(|n| !dom.name_is(n, &W::p()))
-                    && previous_paragraph(dom, node).is_some_and(|p| mark_has(dom, p, &DELETED))
+                    Some((
+                        "under keep, a paragraph that holds tracked changes cannot be deleted",
+                        tx.revision_nodes(node),
+                    ))
+                } else if dom.next_element(node).is_none_or(|n| !dom.name_is(n, &W::p()))
+                    && let Some(previous) = previous_paragraph(dom, node)
+                    && mark_has(dom, previous, &DELETED)
                 {
-                    Some(
-                        "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark; resolve that change first",
-                    )
+                    Some((
+                        "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark",
+                        mark_revisions(dom, previous, &DELETED),
+                    ))
                 } else {
                     None
                 }
@@ -148,40 +151,33 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
             Resolved::MergeParagraphs { para, .. }
                 if mark_has(dom, tx.paragraph_nodes[*para], &TRACKED) =>
             {
-                Some(
-                    "under keep, a paragraph whose mark is already tracked cannot be merged; resolve that change first with resolve_revisions",
-                )
+                Some((
+                    "under keep, a paragraph whose mark is already tracked cannot be merged",
+                    mark_revisions(dom, tx.paragraph_nodes[*para], &TRACKED),
+                ))
             }
-            Resolved::FormatParagraph { para, .. }
-                if dom
-                    .element(tx.paragraph_nodes[*para], &W::p_pr())
-                    .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
-                    .is_some() =>
-            {
-                Some(
-                    "under keep, a paragraph whose formatting change is still tracked cannot be formatted again; resolve that change first with resolve_revisions",
-                )
+            Resolved::FormatParagraph { para, .. } => paragraph_change(*para).map(|node| (
+                "under keep, a paragraph whose formatting change is still tracked cannot be formatted again",
+                vec![node],
+            )),
+            Resolved::List { paras, .. } => {
+                let nodes: Vec<_> = paras.iter().filter_map(|&p| paragraph_change(p)).collect();
+                (!nodes.is_empty()).then_some((
+                    "under keep, a paragraph whose formatting change is still tracked cannot be numbered",
+                    nodes,
+                ))
             }
-            Resolved::List { paras, .. }
-                if paras.iter().any(|&para| {
-                    dom.element(tx.paragraph_nodes[para], &W::p_pr())
-                        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
-                        .is_some()
-                }) =>
-            {
-                Some(
-                    "under keep, a paragraph whose formatting change is still tracked cannot be numbered; resolve that change first with resolve_revisions",
-                )
+            Resolved::FormatRun { para, start, end, .. } => {
+                let nodes = formatting_revisions(dom, tx.paragraph_nodes[*para], *start, *end);
+                (!nodes.is_empty()).then_some((
+                    "under keep, text whose formatting change is still tracked cannot be formatted again",
+                    nodes,
+                ))
             }
-            Resolved::FormatRun {
-                para, start, end, ..
-            } if formatting_tracked(dom, tx.paragraph_nodes[*para], *start, *end) => Some(
-                "under keep, text whose formatting change is still tracked cannot be formatted again; resolve that change first with resolve_revisions",
-            ),
             _ => None,
         };
-        if let Some(message) = message {
-            return Err(refuse(*op, message));
+        if let Some((reason, nodes)) = blocked {
+            return Err(refuse(*op, &tx.revision_refusal_message(reason, &nodes)));
         }
     }
     Ok(())
@@ -1303,7 +1299,7 @@ fn wrap_deleted(dom: &mut Dom, group: Vec<NodeId>, stamp: &mut Stamp<'_>) {
 /// Revision elements of a paragraph mark that delete it.
 const DELETED: [&str; 2] = ["del", "moveFrom"];
 /// Every revision element a paragraph mark can carry.
-const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"];
+pub(super) const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"];
 
 /// Whether `paragraph`'s mark (`w:pPr/w:rPr`) carries one of `locals`.
 fn mark_has(dom: &Dom, paragraph: NodeId, locals: &[&str]) -> bool {
@@ -1316,6 +1312,23 @@ fn mark_has(dom: &Dom, paragraph: NodeId, locals: &[&str]) -> bool {
                 })
             })
         })
+}
+
+/// The actual revision carriers of a paragraph mark, on a refusal path only.
+fn mark_revisions(dom: &Dom, paragraph: NodeId, locals: &[&str]) -> Vec<NodeId> {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .map(|rpr| {
+            dom.elements(rpr, None)
+                .into_iter()
+                .filter(|&node| {
+                    dom.name(node).is_some_and(|name| {
+                        name.namespace_name() == W::URI && locals.contains(&name.local_name())
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Whether `paragraph` holds an inserted, deleted or moved run or mark.

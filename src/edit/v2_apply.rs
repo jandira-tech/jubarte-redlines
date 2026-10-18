@@ -78,6 +78,10 @@ pub struct V2EditResult {
 /// requests return original bytes. Serialized integrity/publication gates
 /// belong to the preparation/publication layer, not to this adapter.
 pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
+    apply(source, plan).map_err(|e| e.with_revision_syntax(super::refusal::RevisionSyntax::V2Plan))
+}
+
+fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     plan.validate()?;
     if source_sha256(source) != plan.source.sha256 {
         return Err(err(
@@ -1649,7 +1653,9 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
     let mut rewrite_owners = BTreeMap::new();
     for (i, (operation, m)) in plan.operations.iter().zip(mapped).enumerate() {
         let mut o = outcome(i, &m.legacy.kind);
-        let resolved = resolve_operation(tx, operation, m, &mut o).map_err(|mut e| {
+        tx.revision_refusal.take();
+        let resolved = resolve_operation(tx, operation, m, &mut o).map_err(|e| {
+            let mut e = tx.attach_revision_refusal(e);
             e.operation = Some(pointer(i));
             e.outcomes = tx.outcomes.clone();
             e
