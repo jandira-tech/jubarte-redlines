@@ -1714,7 +1714,7 @@ pub(crate) fn story_text_with(
                             super::critic::TAG,
                             super::agent::tag_of(run, handles)
                         );
-                        s.critic.open(mark, Some(&by));
+                        s.critic.open_dated(mark, Some(&by), run.revision_date());
                     }
                     // #1134: an insertion inside a deletion still carries
                     // delText. Keep that enclosing deletion while reading it.

@@ -313,6 +313,8 @@ pub(crate) struct Critic {
     /// spaces kept and its CriticMarkup delimiters escaped for the writer
     /// to unwind there.
     code_block: bool,
+    /// Source dates, kept separately from the optional printed timestamps.
+    source_dates: std::collections::HashMap<String, Option<String>>,
 }
 
 impl Critic {
@@ -410,6 +412,14 @@ impl Critic {
         self.tokens.push(Token::Open(mark, by.map(str::to_string)));
     }
 
+    /// Open a source revision without letting timestamp elision affect pairing.
+    pub(crate) fn open_dated(&mut self, mark: Mark, by: Option<&str>, date: Option<String>) {
+        if let Some(by) = by {
+            self.source_dates.insert(by.to_string(), date);
+        }
+        self.open(mark, by);
+    }
+
     pub(crate) fn close(&mut self, mark: Mark) {
         self.tokens.push(Token::Close(mark));
     }
@@ -467,6 +477,7 @@ impl Critic {
             Escaping {
                 code_block: false,
                 story: true,
+                source_dates: &self.source_dates,
             },
             &mut 0,
         );
@@ -481,6 +492,7 @@ impl Critic {
         let escaping = Escaping {
             code_block: self.code_block,
             story: false,
+            source_dates: &self.source_dates,
         };
         let mut pieces = Vec::new();
         render(&nodes, &mut pieces, escaping, &mut 0);
@@ -836,16 +848,31 @@ struct Piece {
 
 /// How [`render`] escapes document text.
 #[derive(Clone, Copy)]
-struct Escaping {
+struct Escaping<'a> {
     /// A code block: its delimiters are broken the way its fence unwinds
     /// ([`escape_code`]), and nothing else is, since a fence holds the rest
     /// of the text as written.
     code_block: bool,
     /// Story pieces are already escaped and carry complete field/drawing syntax.
     story: bool,
+    source_dates: &'a std::collections::HashMap<String, Option<String>>,
 }
 
-impl Escaping {
+impl Escaping<'_> {
+    fn pairable(self, a: Option<&str>, b: Option<&str>) -> bool {
+        let date = |by: Option<&str>| {
+            by.and_then(|by| {
+                self.source_dates
+                    .get(bare(by).split(ON).next().unwrap_or_default())
+            })
+        };
+        pairable_attribution(a, b)
+            && match (date(a), date(b)) {
+                (Some(a), Some(b)) => a == b,
+                _ => true,
+            }
+    }
+
     /// `text` escaped: Markdown's marks and CriticMarkup's delimiters both,
     /// so nothing reads back as what it is not. A code span's text is
     /// written as is, since a backslash shows there, and a code block's
@@ -861,7 +888,7 @@ impl Escaping {
     }
 }
 
-fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut usize) {
+fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping<'_>, ids: &mut usize) {
     fn flatten(nodes: &[Node], out: &mut Vec<Node>) {
         for node in nodes {
             if let Node::Split(.., pieces) = node {
@@ -887,7 +914,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
             ) if outer_of(new_by.as_deref()).is_none()
-                && pairable_attribution(old_by.as_deref(), new_by.as_deref())
+                && escaping.pairable(old_by.as_deref(), new_by.as_deref())
                 && new.iter().any(Node::has_content) =>
             {
                 *ids += 1;
@@ -900,7 +927,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 match (old_by.as_deref(), new_by.as_deref()) {
                     (Some(a), Some(b))
                         if tag(Some(a)).is_some()
-                            && pairable_attribution(old_by.as_deref(), new_by.as_deref()) =>
+                            && escaping.pairable(old_by.as_deref(), new_by.as_deref()) =>
                     {
                         let joined = join_tagged(a, b);
                         attribution(out, Some(&joined), id);
@@ -1328,7 +1355,7 @@ pub(crate) fn splice(
     }
 }
 
-/// `{--gone--}{Ana}` is `(Deletion, Some("Ana"))`. Document text is
+/// `{--gone--}{r1 @A}` is `(Deletion, Some("r1 @A"))`. Document text is
 /// escaped, so the first closer after the opener is the span's own.
 pub(crate) fn whole_change(part: &str) -> Option<Change> {
     [Mark::Insertion, Mark::Deletion]
@@ -1340,8 +1367,8 @@ pub(crate) fn whole_change(part: &str) -> Option<Change> {
             match after {
                 "" => Some((mark, None)),
                 _ => {
-                    let by = after.strip_prefix("{")?.strip_suffix("}")?;
-                    (!by.contains("<<}")).then(|| (mark, Some(by.to_string())))
+                    let (by, width) = crate::markdown::critic::attribution_tag(after)?;
+                    (width == after.len()).then(|| (mark, Some(by.to_string())))
                 }
             }
         })
@@ -2092,9 +2119,12 @@ mod tests {
         let bare = (false, false);
         let parts = vec![
             ("Para".to_string(), None, bare),
-            ("{++Added para++}{Ana}".to_string(), None, bare),
+            ("{++Added para++}{noid Alice}".to_string(), None, bare),
         ];
-        assert_eq!(join_marked(parts, "<br>"), "Para{++<br>Added para++}{Ana}");
+        assert_eq!(
+            join_marked(parts, "<br>"),
+            "Para{++<br>Added para++}{noid Alice}"
+        );
         let parts = vec![
             ("{--Gone--}".to_string(), None, bare),
             ("Kept".to_string(), None, bare),
@@ -2284,8 +2314,23 @@ mod tests {
     }
 
     #[test]
+    fn review_5_literal_braces_are_not_whole_change_attributions() {
+        for literal in ["{X Y}", "{>>c0 @A: note<<}", "{r1 @A}{literal}"] {
+            assert_eq!(
+                whole_change(&format!("{{--a--}}{literal}")),
+                None,
+                "{literal}"
+            );
+        }
+        assert_eq!(
+            whole_change("{--a--}{r1 @A}"),
+            Some((Del, Some("r1 @A".into())))
+        );
+    }
+
+    #[test]
     fn a_separator_next_to_a_wholly_changed_part_joins_its_change() {
-        let by = "{Ana}";
+        let by = "{noid Alice}";
         let joined = |parts: &[&str]| {
             join_changed(parts.iter().map(|part| part.to_string()).collect(), "; ")
         };

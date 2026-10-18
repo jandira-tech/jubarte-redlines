@@ -441,7 +441,7 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
         let pair = matches!((current.kind, next_kind), ("del", Some("ins")))
             && joined[i + 1]
                 .as_ref()
-                .is_some_and(|next| current.author == next.author);
+                .is_some_and(|next| current.author == next.author && current.date == next.date);
         if pair {
             let next = joined[i + 1].take().expect("checked above");
             let (old, new) = if current.kind == "del" {
@@ -2856,6 +2856,22 @@ mod tests {
         all_tables(&body, &mut all);
         let numbered: Vec<Option<&str>> = all.iter().map(|t| t.attr(TABLE)).collect();
         assert_eq!(numbered, [Some("0"), None, Some("1")]);
+    }
+
+    #[test]
+    fn review_3_revision_tags_keep_unequal_source_dates_separate() {
+        for new_date in ["", r#" w:date="2026-10-02T10:00:00Z""#] {
+            let d = doc(&format!(
+                r#"<w:p><w:del w:id="1" w:author="Alice" w:date="2026-10-01T09:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="Alice"{new_date}><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#
+            ));
+            let handles = handles(&d, &[], None, None);
+            let p = d.child("body").unwrap().child("p").unwrap();
+            let tags = revision_tags(p, &handles)
+                .into_iter()
+                .map(|tag| format!("{}:{}", tag.kind, tag.tag))
+                .collect::<Vec<_>>();
+            assert_eq!(tags, ["del:1@A", "ins:2@A"]);
+        }
     }
 
     #[test]

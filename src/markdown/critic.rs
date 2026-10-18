@@ -1164,11 +1164,15 @@ fn encode_range(
         // metadata. Backslash-escaped braces remain ordinary Markdown text.
         let paragraph = rest.starts_with("¶{") && !escaped(source, at);
         let tag_at = at + if paragraph { "¶".len() } else { 0 };
-        let before = source[..at].trim_end_matches(['*', '_', '`']);
-        let follows = out.ends_with(stand_in(Token::AttributionEnd))
-            || ["++}", "--}", "~~}"]
-                .iter()
-                .any(|close| before.ends_with(close));
+        let before = out.trim_end_matches(['*', '_', '`']);
+        let follows = [
+            Token::AttributionEnd,
+            Token::InsertEnd,
+            Token::DeleteEnd,
+            Token::SubstituteEnd,
+        ]
+        .into_iter()
+        .any(|token| before.ends_with(stand_in(token)));
         if (paragraph || follows)
             && !escaped(source, tag_at)
             && let Some((note, width)) = attribution_tag(&source[tag_at..range.end])
@@ -1989,6 +1993,27 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
             .count();
         ((1..=6).contains(&hashes) && spaces > 0).then_some(hashes + spaces)
     };
+    let list_prefix = |text: &str| {
+        let indent = text.bytes().take_while(|&b| b == b' ').take(4).count();
+        if indent > 3 {
+            return None;
+        }
+        let rest = &text[indent..];
+        let marker = if rest.starts_with(['-', '+', '*']) {
+            1
+        } else {
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).take(10).count();
+            if !(1..=9).contains(&digits) || !rest[digits..].starts_with(['.', ')']) {
+                return None;
+            }
+            digits + 1
+        };
+        let spaces = rest[marker..]
+            .bytes()
+            .take_while(|&b| matches!(b, b' ' | b'\t'))
+            .count();
+        (spaces > 0).then_some(indent + marker + spaces)
+    };
     Pieces::default().feed(&encode_spans_kept(markdown), |piece| match piece {
         Piece::Text(text) => {
             if state == In::Comment {
@@ -2003,13 +2028,17 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
             if shown {
                 let mut text = text;
                 if let Some(mut consumed) = joining_separator {
-                    let newlines = text
-                        .bytes()
-                        .take_while(|&byte| byte == b'\n')
-                        .take(2 - consumed)
-                        .count();
-                    text = &text[newlines..];
-                    consumed += newlines;
+                    while consumed < 2 {
+                        if let Some(rest) = text
+                            .strip_prefix("\r\n")
+                            .or_else(|| text.strip_prefix('\n'))
+                        {
+                            text = rest;
+                            consumed += 1;
+                        } else {
+                            break;
+                        }
+                    }
                     if consumed == 2 || !text.is_empty() {
                         joining_separator = None;
                         strip_joined_heading = consumed > 0;
@@ -2018,7 +2047,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     }
                 }
                 if strip_joined_heading && !text.is_empty() {
-                    if let Some(prefix) = heading_prefix(text) {
+                    if let Some(prefix) = heading_prefix(text).or_else(|| list_prefix(text)) {
                         text = &text[prefix..];
                     }
                     strip_joined_heading = false;
@@ -2099,7 +2128,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     }
                 }
                 Token::SubstituteStart => {
-                    folded_at = None;
+                    folded_at = Some(out.len());
                     Some(In::Old)
                 }
                 Token::CommentStart | Token::AttributionStart => Some(In::Comment),
@@ -2119,6 +2148,9 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 // A highlight shows its text as the text around it does.
                 Token::HighlightStart => Some(state),
                 Token::SubstituteSeparator => {
+                    if accept {
+                        folded_at = None;
+                    }
                     state = In::New;
                     None
                 }

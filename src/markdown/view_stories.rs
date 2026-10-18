@@ -1504,23 +1504,27 @@ fn story_part(
     let mut body = String::new();
     let last = texts.len() - 1;
     for (index, text) in texts.iter().enumerate() {
-        let (text, inline_mark) = text
-            .rsplit_once("¶")
-            .and_then(|(body, tail)| {
-                let (note, width) = super::critic::attribution_tag(tail)?;
-                if width != tail.len() {
-                    return None;
-                }
-                let tag = super::view_notes::revision_tags(note)?.into_iter().next()?;
-                Some((body, tag))
-            })
-            .map_or((*text, None), |(text, tag)| (text, Some(tag)));
-        if let Some(tag) = inline_mark {
-            paragraph_marks
-                .entry(index)
-                .or_default()
-                .push(("w:ins", tag));
+        let mut text = *text;
+        let mut inline_marks = Vec::new();
+        while let Some((body, tail)) = text.rsplit_once('¶') {
+            let Some((note, width)) = super::critic::attribution_tag(tail) else {
+                break;
+            };
+            if width != tail.len() {
+                break;
+            }
+            let Some(tag) =
+                super::view_notes::revision_tags(note).and_then(|tags| tags.into_iter().next())
+            else {
+                break;
+            };
+            inline_marks.push(("w:ins", tag));
+            text = body;
         }
+        paragraph_marks
+            .entry(index)
+            .or_default()
+            .extend(inline_marks.into_iter().rev());
         let style = match story.styles.as_slice() {
             [one] => one.as_str(),
             many => many.get(index).map_or(style, String::as_str),

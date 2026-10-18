@@ -268,9 +268,9 @@ pub fn patch_markdown(old: &str, new: &str, options: &PatchOptions) -> Patch {
 ///
 /// # Attribution rules
 ///
-/// - `{>>Name (date)<<}` immediately after a change is that change's
-///   author and date. After a substitution, a second one is the
-///   insertion's: the deletion and the insertion become two changes.
+/// - `{r1 Name (date)}` immediately after a change is its author and date.
+///   A substitution tag names its deletion then insertion. `¶{r1 Name}`
+///   attributes the following inserted paragraph separator.
 /// - `{>>Name (date): text<<}` is a comment by `Name`, attached to the
 ///   preceding change (or to a highlight, depending on the context).
 /// - Every other comment, and every change without an author, is the
@@ -624,10 +624,38 @@ fn segments(critic: &str) -> Vec<Segment> {
     let mut note: Option<String> = None;
     let mut attribution = false;
     let mut paragraph_note = false;
+    // A ¶ tag attributes the next paragraph separator, not the preceding text.
+    let mut paragraph_break: Option<(String, String)> = None;
     // Comments that end inside a change, written after it.
     let mut held: Vec<String> = Vec::new();
     critic::Pieces::default().feed(&critic::encode_spans_only(critic), |piece| match piece {
-        Piece::Text(text) => {
+        Piece::Text(mut text) => {
+            if let Some((tag, mut separator)) = paragraph_break.take() {
+                while separator.bytes().filter(|&b| b == b'\n').count() < 2 {
+                    let width = if text.starts_with("\r\n") {
+                        2
+                    } else if text.starts_with('\n') {
+                        1
+                    } else {
+                        break;
+                    };
+                    separator.push_str(&text[..width]);
+                    text = &text[width..];
+                }
+                if separator.bytes().filter(|&b| b == b'\n').count() == 2 {
+                    let mut boundary = Edit::default();
+                    boundary.push(Side::New, &separator, true);
+                    out.push(Segment::Edit(boundary));
+                    out.push(Segment::Note(tag, true));
+                } else if text.is_empty() {
+                    paragraph_break = Some((tag, separator));
+                } else {
+                    push_same(&mut out, &separator);
+                }
+                if text.is_empty() {
+                    return;
+                }
+            }
             if let Some(note) = &mut note {
                 note.push_str(text);
             } else if let Some(edit) = &mut edit {
@@ -691,9 +719,8 @@ fn segments(critic: &str) -> Vec<Segment> {
             }
             Token::CommentEnd | Token::AttributionEnd => {
                 let text = note.take().unwrap_or_default();
-                // A paragraph mark describes the boundary, never a text
-                // change's author or a comment on the patch.
                 if std::mem::take(&mut paragraph_note) {
+                    paragraph_break = Some((text, String::new()));
                     return;
                 }
                 if edit.is_some() {
@@ -704,6 +731,9 @@ fn segments(critic: &str) -> Vec<Segment> {
             }
         },
     });
+    if let Some((_, separator)) = paragraph_break {
+        push_same(&mut out, &separator);
+    }
     out
 }
 
@@ -1456,5 +1486,23 @@ mod literal_wrapping_boundary_tests {
             wrap(fenced, 3),
             "~~~rust\nowned very long source\n~~~\na b\nc"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod review_tests {
+    use super::*;
+
+    #[test]
+    fn review_paragraph_tag_keeps_an_incomplete_trailing_separator() {
+        let text = segments("A¶{r1 Alice}\n")
+            .into_iter()
+            .filter_map(|segment| match segment {
+                Segment::Same(text) => Some(text),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(text, "A\n");
     }
 }
