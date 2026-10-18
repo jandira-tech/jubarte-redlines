@@ -100,8 +100,10 @@ fn printed_failures(view: &str) -> (usize, Vec<String>) {
         if label.is_empty() || label.chars().any(char::is_whitespace) {
             return true;
         }
-        // The writer uses d + digits. Keep even malformed d-number labels
-        // (d9x, d01) in the strict ShortId audit, whether referenced or not.
+        // A payload comment's label is the writer's `imageK` media name
+        // (`src/markdown/from_docx/drawing.rs`). A d-number label (d1, d9x,
+        // d01) never names a payload there, so it stays in the strict
+        // ShortId audit, whether referenced or not, as before this check.
         if label
             .strip_prefix('d')
             .is_some_and(|tail| tail.starts_with(|c: char| c.is_ascii_digit()))
