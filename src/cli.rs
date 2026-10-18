@@ -1392,7 +1392,8 @@ pub enum Command {
         /// --original, word and edits].
         #[arg(long, value_name = "RULES", value_delimiter = ',', value_parser = parse_rule)]
         rules: Vec<String>,
-        /// Fail (exit 2) on warnings too, not only on errors.
+        /// Also fail (exit 2) on warnings from other rule sets; word and edits
+        /// findings fail without it.
         #[arg(long)]
         strict: bool,
         /// Write the repaired package here; remaining findings still fail.

@@ -636,7 +636,7 @@ Check Word validity, tracked edits, accessibility, style and structure; or repai
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) |
 | `--json` |  |  | false |  |  | JSON Lines: one object per finding, nothing when there is none |
 | `--rules` |  | <RULES> |  |  | append | Rule sets or audit codes, comma-separated [default: word; with --original, word and edits] |
-| `--strict` |  |  | false |  |  | Fail (exit 2) on warnings too, not only on errors |
+| `--strict` |  |  | false |  |  | Also fail (exit 2) on warnings from other rule sets; word and edits findings fail without it |
 | `--repair` |  | <FILE> |  |  |  | Write the repaired package here; remaining findings still fail |
 | `--original` |  | <FILE> |  |  |  | Check tracked edits: every text change against ORIGINAL must be a revision by --author |
 | `--author` |  | <NAME> |  |  |  | The author every change must carry (with --original) |

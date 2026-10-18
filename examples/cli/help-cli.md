@@ -1463,7 +1463,8 @@ Options:
           word and edits]
 
       --strict
-          Fail (exit 2) on warnings too, not only on errors
+          Also fail (exit 2) on warnings from other rule sets; word and edits findings
+          fail without it
 
       --repair <FILE>
           Write the repaired package here; remaining findings still fail
