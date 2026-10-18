@@ -581,6 +581,11 @@ findings (heading skips, images without alt text, tables without a header
 row, literal bullets, stale caches), each located by paragraph id;
 `--rules` also takes single rule codes.
 
+`NESTED_SAME_REVISION` is non-fatal: direct same-kind nesting is `info`
+(Word opens and reads it faithfully); alternating nesting such as
+`ins > del > ins` is a `warning` because Word opens it but misreads
+reject-all (#1134, Word probes 2026-10-17).
+
 Any `word` or `edits` finding exits 2, and so does any `error`; `--strict`
 fails on warnings too. A file that cannot be read exits 1.
 
