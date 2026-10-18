@@ -1392,3 +1392,109 @@ fn probe_comment_metadata_word_refuses_is_fatal() {
         );
     }
 }
+
+// Word verdicts: #1134, 2026-10-17. Live text is refused even through w:ins.
+fn nested_probe(kinds: &[&str], element: &str) -> Vec<u8> {
+    let mut xml = format!("<w:r><w:{element}>x</w:{element}></w:r>");
+    if element == "instrText" {
+        xml = format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>{xml}<w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        );
+    }
+    for (id, kind) in kinds.iter().enumerate().rev() {
+        xml = format!(r#"<w:{kind} w:id="{id}" w:author="Alice">{xml}</w:{kind}>"#);
+    }
+    common::docx::docx(&format!("<w:p>{xml}</w:p>"))
+}
+
+fn refused_nested_text(kinds: &[&str], element: &str, code: &str) {
+    let bytes = nested_probe(kinds, element);
+    let report = jubarte::validate::validate(&bytes).unwrap();
+    let matches: Vec<_> = report.iter().filter(|f| f.code == code).collect();
+    assert_eq!(matches.len(), 1, "{report:?}");
+    assert!(matches[0].repairable);
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert!(repaired.repaired.iter().any(|f| f.code == code));
+    assert!(!repaired.remaining.iter().any(|f| f.code == code));
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    let deleted = if element == "t" {
+        "delText"
+    } else {
+        "delInstrText"
+    };
+    assert!(
+        xml.contains(&format!("<w:{deleted}>x</w:{deleted}>")),
+        "{xml}"
+    );
+    assert_word_valid_package(&repaired.docx);
+}
+
+#[test]
+fn issue_1134_del_ins_text_is_refused_and_repaired() {
+    refused_nested_text(&["del", "ins"], "t", "TEXT_INSIDE_DELETION");
+}
+#[test]
+fn issue_1134_ins_del_ins_text_is_refused_and_repaired() {
+    refused_nested_text(&["ins", "del", "ins"], "t", "TEXT_INSIDE_DELETION");
+}
+#[test]
+fn issue_1134_del_ins_field_is_repaired() {
+    refused_nested_text(&["del", "ins"], "instrText", "INSTR_TEXT_INSIDE_DELETION");
+}
+#[test]
+fn issue_1134_ins_del_ins_field_is_repaired() {
+    refused_nested_text(
+        &["ins", "del", "ins"],
+        "instrText",
+        "INSTR_TEXT_INSIDE_DELETION",
+    );
+}
+#[test]
+fn issue_1134_opened_deleted_text_is_healthy() {
+    assert_word_valid_package(&nested_probe(&["del", "ins"], "delText"));
+}
+
+fn nesting_severity(kinds: &[&str], element: &str, severity: &str) {
+    let report = jubarte::validate::validate(&nested_probe(kinds, element)).unwrap();
+    let finding = report
+        .iter()
+        .find(|f| f.code == "NESTED_SAME_REVISION")
+        .unwrap();
+    assert_eq!(finding.severity, severity, "{finding:?}");
+    assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+    assert!(finding.message.contains("Word opens"), "{finding:?}");
+    if severity == "warning" {
+        assert!(
+            finding.message.contains("misreads reject-all"),
+            "{finding:?}"
+        );
+    }
+}
+#[test]
+fn issue_1134_direct_ins_is_info() {
+    nesting_severity(&["ins", "ins"], "t", "info");
+}
+#[test]
+fn issue_1134_direct_del_is_info() {
+    nesting_severity(&["del", "del"], "delText", "info");
+}
+#[test]
+fn issue_1134_ins_del_ins_is_warning() {
+    nesting_severity(&["ins", "del", "ins"], "delText", "warning");
+}
+#[test]
+fn issue_1134_del_ins_del_is_warning() {
+    nesting_severity(&["del", "ins", "del"], "delText", "warning");
+}
+
+#[test]
+fn issue_1134_textbox_is_a_separate_story() {
+    let bytes = common::docx::docx(
+        r#"<w:p><w:del w:id="1" w:author="Alice"><w:r><w:pict><w:txbxContent><w:p><w:r><w:t>x</w:t></w:r></w:p></w:txbxContent></w:pict></w:r></w:del></w:p>"#,
+    );
+    let report = jubarte::validate::validate(&bytes).unwrap();
+    assert!(
+        !report.iter().any(|f| f.code == "TEXT_INSIDE_DELETION"),
+        "{report:?}"
+    );
+}
