@@ -685,14 +685,25 @@ fn exact_insert_delete_and_rewrite_compose_with_scope() {
     );
 }
 #[test]
-fn unsupported_tracked_span_is_never_accepted_implicitly() {
+fn editing_a_tracked_span_preserves_pending_revisions() {
     let s = source();
     for track in ["on", "off"] {
         let mut q = plan(&s, json!([replace(0, "45", "60")]));
         q["policy"]["track"] = json!(track);
-        assert_eq!(run(&s, &q).unwrap_err().code, "UNSUPPORTED_STRUCTURE");
+        let out = run(&s, &q);
+        assert!(out.is_ok(), "edit must succeed: {:?}", out.err());
+        let out = out.unwrap();
+        assert_word_valid_package(&out.redline);
+        assert_eq!(texts(&out.clean)[0], "Pay 60 days, Delaware law.");
+        assert!(
+            list_changes(&out.redline)
+                .unwrap()
+                .iter()
+                .any(|c| c.author.as_deref() == Some("Other"))
+        );
     }
 }
+
 #[test]
 fn container_scope_is_distinct_from_a_paragraph_target() {
     let s = docx(&format!(
@@ -1727,19 +1738,32 @@ fn overlapping_literal_edits_refuse_without_primary() {
 }
 
 #[test]
-fn explicit_insert_never_flips_requested_tracked_side() {
+fn explicit_insert_preserves_requested_side_inside_tracked_text() {
     let s = source();
     for track in ["on", "off"] {
-        for anchor in ["after_text", "before_text"] {
+        for (anchor, expected) in [
+            ("after_text", "Pay 45X days, Delaware law."),
+            ("before_text", "Pay X45 days, Delaware law."),
+        ] {
             let mut op = json!({"kind":"insert","target":p(0),"text":"X"});
-            // Both requested sides touch Other's insertion; the opposite side is direct.
             op[anchor] = json!("45");
             let mut q = plan(&s, json!([op]));
             q["policy"]["track"] = json!(track);
-            let e = run(&s, &q).unwrap_err();
-            assert_eq!(e.code, "UNSUPPORTED_INSERTION_SIDE");
-            assert_eq!(e.operation.as_deref(), Some("/operations/0"));
-            assert!(e.message.contains("tracked"));
+            let out = run(&s, &q);
+            assert!(
+                out.is_ok(),
+                "requested side must be editable: {:?}",
+                out.err()
+            );
+            let out = out.unwrap();
+            assert_eq!(texts(&out.clean)[0], expected);
+            assert_word_valid_package(&out.redline);
+            if track == "on" {
+                assert_eq!(
+                    texts(&reject_changes(&out.redline, &mine()).unwrap()),
+                    texts(&s)
+                );
+            }
         }
     }
 }
@@ -2300,14 +2324,18 @@ mod generator {
         let mut q: Value = serde_json::from_slice(&std::fs::read(plan_path).unwrap()).unwrap();
         assert_eq!(q["operations"][0]["text"], "Pay 45 days, Delaware law.");
         q["operations"][0]["text"] = json!("Pay 60 days, Delaware law.");
-        let untampered = run(&s, &q).unwrap_err().code;
-        q["coverage"]["conditional_paragraphs"] = json!(0);
-        let refusal = run(&s, &q).unwrap_err();
-        assert_eq!(
-            refusal.code, untampered,
-            "coverage never frees a revision-blocked span"
+        let untampered = run(&s, &q);
+        assert!(
+            untampered.is_ok(),
+            "editing a pending insertion must succeed"
         );
-        assert_eq!(refusal.code, "UNSUPPORTED_STRUCTURE");
+        q["coverage"]["conditional_paragraphs"] = json!(0);
+        let out = run(&s, &q).unwrap();
+        assert_eq!(
+            texts(&out.clean),
+            texts(&untampered.unwrap().clean),
+            "coverage is observation only"
+        );
         let q = generate(&s, &["--select", "p0", "--accept-change", "r7"]);
         assert_eq!(q["resolve_revisions"]["accept"], json!([r(7)]));
         let mut q = q;
