@@ -962,6 +962,22 @@ Selective resolution can be part of the plan, for example:
 
 Conflicting selections are rejected instead of silently choosing a side.
 
+Settling a revision that removes a comment's whole anchor removes the thread
+and its replies, as Word does. Edit receipts report each removed thread as
+`removed_comments` (using `c0`, `c1`, etc.); legacy `edit --json` prints the
+JSONL report, and typed `edit apply --json` includes the same records in `data`.
+To preserve the thread, set `"removed_anchor_comments": "keep"` in a v1 or
+v2 plan. Its range markers and reference runs move together to an empty,
+untracked anchor where the removed text was. A reply in the same plan can
+then use that anchor. The receipt reports `kept_comments` with `anchor: "empty"`.
+This opt-in is a jubarte convention that Word opens with threaded balloons;
+the default `"remove"` follows Word's removal behavior. Partial overlaps
+keep the existing behavior. Unknown values are refused as `INVALID_PLAN`.
+The policy is available in plans; `accept`/`reject` keep their existing warnings.
+
+The v1 plan envelope is documented in `schemas/edit-plan-v1.schema.json`,
+and the typed v2 schema in `schemas/edit-plan-v2.schema.json`.
+
 ## Examples
 
 ### CLI
