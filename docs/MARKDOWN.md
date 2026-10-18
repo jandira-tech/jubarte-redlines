@@ -141,6 +141,10 @@ Both boxes' words are editable. Keep each inner token: conversion refuses
 a missing or repeated nested token and names the affected box. An unchanged
 round trip preserves the nested drawing's properties and nesting.
 
+Word cannot open a text box nested in another box's readable content;
+`jubarte validate` reports `NESTED_TEXT_BOX` (Word-fatal, no automatic repair).
+A nest only in an ignored `mc:Fallback` does not trigger this check.
+
 When the Choice and Fallback copies of a nested drawing do not correspond,
 the enclosing drawing stays opaque. Its nested words remain readable, but
 conversion refuses edits to that box and explains the Choice/Fallback
