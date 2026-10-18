@@ -110,6 +110,9 @@ struct BoxFrame {
     hash: String,
     text_hash: String,
     lengths: Vec<usize>,
+    /// Non-corresponding drawings stay wholly opaque, including their words.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    opaque: bool,
 }
 
 /// One relationship of the element's part or of a dependent part.
@@ -215,11 +218,11 @@ pub(crate) struct Pending {
     wrap: bool,
     /// The visible Markdown of each box in the shown branch.
     stories: Vec<String>,
+    source: *const Element,
 }
 
 impl Pending {
-    /// Queue `element`, printing its `![label][dN]` reference. `label` is
-    /// the drawing's `wp:docPr` description, title or name.
+    /// Header/footer captures remain opaque and share the same queue.
     pub(crate) fn push(
         list: &mut Vec<Pending>,
         element: &Element,
@@ -228,9 +231,23 @@ impl Pending {
         wrap: bool,
         stories: Vec<String>,
     ) -> String {
-        let label = label(element);
+        let Some((index, token)) = Self::reserve(list, element, part, scope, wrap) else {
+            return image(&label(element), "");
+        };
+        list[index].stories = stories;
+        token
+    }
+
+    /// Reserve the enclosing number before visiting its nested drawings.
+    pub(crate) fn reserve(
+        list: &mut Vec<Pending>,
+        element: &Element,
+        part: &str,
+        scope: Scope,
+        wrap: bool,
+    ) -> Option<(usize, String)> {
         if list.len() >= MAX_PENDING {
-            return image(&label, "");
+            return None;
         }
         let index = list.len();
         list.push(Pending {
@@ -238,10 +255,133 @@ impl Pending {
             part: part.to_string(),
             scope,
             wrap,
-            stories,
+            stories: Vec::new(),
+            source: element as *const Element,
         });
-        image(&label, &format!("d{}", index + 1))
+        Some((index, image(&label(element), &format!("d{}", index + 1))))
     }
+
+    /// Transfer accepted nested copies to their tokens after recursion.
+    pub(crate) fn attach(
+        list: &mut [Pending],
+        index: usize,
+        element: &Element,
+        stories: Vec<String>,
+    ) {
+        let mut replacements = HashMap::new();
+        if let Some(pairs) = nested_pairs(element) {
+            for (shown, copy, fallback) in pairs {
+                let Some(at) = list.iter().rposition(|p| std::ptr::eq(p.source, shown)) else {
+                    replacements.clear();
+                    break;
+                };
+                replacements.insert(copy as *const Element, (format!("d{}", at + 1), fallback));
+            }
+        }
+        fn transfer(
+            element: &Element,
+            replacements: &HashMap<*const Element, (String, bool)>,
+        ) -> Element {
+            if let Some((name, fallback)) = replacements.get(&(element as *const Element)) {
+                let mut slot = parse_xml(b"<jubarteNested/>").expect("static XML");
+                slot.attrs = vec![
+                    ("token".into(), name.clone()),
+                    ("fallback".into(), fallback.to_string()),
+                ];
+                return slot;
+            }
+            let mut copy = element.clone();
+            copy.children = element
+                .children
+                .iter()
+                .map(|node| match node {
+                    Node::Element(child) => Node::Element(transfer(child, replacements)),
+                    Node::Text(text) => Node::Text(text.clone()),
+                })
+                .collect();
+            copy
+        }
+        list[index].element = transfer(element, &replacements);
+        list[index].stories = stories;
+    }
+}
+
+/// Drawing roots directly owned by this story. Stop at drawings and at a
+/// different text-box owner, rather than collecting descendants of descendants.
+pub(crate) fn owned_drawings(story: &Element) -> Vec<&Element> {
+    fn walk<'a>(node: &'a Element, out: &mut Vec<&'a Element>) {
+        for child in node.elements() {
+            if child.is("txbxContent") {
+                continue;
+            }
+            if matches!(child.local(), "drawing" | "pict" | "object")
+                || (child.is("AlternateContent") && capturable_alternate(child))
+            {
+                out.push(child);
+            } else {
+                walk(child, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(story, &mut out);
+    out
+}
+
+fn shape_shell(element: &Element) -> String {
+    let mut element = element.clone();
+    let scope = element
+        .namespaces
+        .iter()
+        .map(|(p, u)| (p.clone(), u.clone()))
+        .collect();
+    declare(&mut element, &scope);
+    let mut dom = crate::xmllinq::Dom::new();
+    let document = dom.parse_xdocument(&serialize(&element));
+    let root = dom.elements(document, None)[0];
+    crate::comparer::textbox::shell(&mut dom, root)
+}
+
+/// Pair nearest-owned copies by box ordinal and drawing order. A Fallback
+/// must match the nested element's Fallback shell; Requires is never evaluated.
+fn nested_pairs(element: &Element) -> Option<Vec<(&Element, &Element, bool)>> {
+    let mut boxes = Vec::new();
+    element.find_all("txbxContent", &mut boxes);
+    let mut first = HashMap::<usize, Vec<&Element>>::new();
+    let mut pairs = Vec::new();
+    for (content, ordinal) in boxes.into_iter().zip(box_ordinals(element)) {
+        let copies = owned_drawings(content);
+        if let Some(shown) = first.get(&ordinal) {
+            if shown.len() != copies.len() {
+                return None;
+            }
+            for (&shown, copy) in shown.iter().zip(copies) {
+                let expected = if shown.is("AlternateContent") {
+                    let branch = shown.child("Fallback")?;
+                    let mut children = branch.elements();
+                    let expected = children.next()?;
+                    if children.next().is_some() {
+                        return None;
+                    }
+                    expected
+                } else {
+                    shown
+                };
+                if shape_shell(expected) != shape_shell(copy) {
+                    return None;
+                }
+                pairs.push((shown, copy, true));
+            }
+        } else {
+            pairs.extend(copies.iter().map(|&copy| (copy, copy, false)));
+            first.insert(ordinal, copies);
+        }
+    }
+    Some(pairs)
+}
+
+pub(crate) fn nested_editable(element: &Element) -> bool {
+    nested_pairs(element).is_some()
 }
 
 /// `![label][name]` with the label made a Markdown alt text: one line,
@@ -690,8 +830,8 @@ fn media_slot(root: &Element, rels: &[PayRel], deps: &Deps<'_>) -> Option<usize>
 /// visible paragraphs supply the words again on an unchanged write.
 fn strip_box_words(element: &mut Element, stories: &[String]) -> Vec<BoxFrame> {
     fn strip(element: &mut Element, lengths: &mut Vec<usize>, text: &mut String) {
-        // Nested drawings have no editable token in this story. Keep their
-        // content with the frame; edits to their containing story are refused.
+        // Opaque drawings are separate stories; accepted nested drawings
+        // have already transferred to token placeholders.
         if matches!(
             element.local(),
             "drawing" | "pict" | "object" | "AlternateContent"
@@ -720,6 +860,11 @@ fn strip_box_words(element: &mut Element, stories: &[String]) -> Vec<BoxFrame> {
                 hash: box_hash(markdown),
                 ..BoxFrame::default()
             };
+            frame.opaque = !owned_drawings(element).is_empty();
+            if frame.opaque {
+                boxes.push(frame);
+                return;
+            }
             let mut text = String::new();
             strip(element, &mut frame.lengths, &mut text);
             frame.text_hash = mermaid_hash(&text);
@@ -1398,6 +1543,25 @@ fn box_ordinals(root: &Element) -> Vec<usize> {
 }
 
 impl Drawing {
+    pub(crate) fn box_count(&self) -> usize {
+        parse_xml(self.xml.as_bytes())
+            .ok()
+            .and_then(|root| box_ordinals(&root).into_iter().max())
+            .map_or(0, |n| n + 1)
+    }
+
+    pub(crate) fn nested_tokens(&self) -> Vec<String> {
+        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
+            return Vec::new();
+        };
+        let mut slots = Vec::new();
+        root.find_all("jubarteNested", &mut slots);
+        slots
+            .into_iter()
+            .filter_map(|slot| slot.attr("token").map(str::to_string))
+            .collect()
+    }
+
     pub(crate) fn check_box_regions(
         &self,
         name: &str,
@@ -1423,7 +1587,11 @@ impl Drawing {
         for ((frame, ordinal), content) in self.boxes.iter().zip(box_ordinals(&root)).zip(contents)
         {
             let name = format!("{name}.{ordinal}");
-            if frame.lengths.iter().any(|&length| length != 0) && !regions.contains_key(&name) {
+            if (frame.opaque
+                || frame.lengths.iter().any(|&length| length != 0)
+                || content.find("jubarteNested").is_some())
+                && !regions.contains_key(&name)
+            {
                 return Err(format!("text-box {name}: missing matching marker region"));
             }
             if ["drawing", "pict", "object", "AlternateContent"]
@@ -1434,7 +1602,7 @@ impl Drawing {
                     .is_some_and(|region| frame.hash != box_hash(region))
             {
                 return Err(format!(
-                    "text-box {name}: editing a story containing a nested drawing is unsupported"
+                    "text-box {name}: editing is unsupported because nested Choice/Fallback copies do not correspond"
                 ));
             }
         }
@@ -1444,8 +1612,82 @@ impl Drawing {
 
 /// Refill the text-free templates. The exact path restores their text
 /// slots only when both the Markdown and its words match their hashes.
-pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, String)]) -> String {
+pub(crate) fn fill_boxes(
+    xml: &str,
+    drawing: &Drawing,
+    stories: &[(String, String)],
+    next_doc_pr: &mut u32,
+) -> String {
+    fn fallback(element: &Element, next: &mut u32) -> Vec<Node> {
+        let nodes = element
+            .child("Fallback")
+            .filter(|_| element.is("AlternateContent"))
+            .map_or_else(
+                || vec![Node::Element(element.clone())],
+                |branch| branch.children.clone(),
+            );
+        // A non-AlternateContent drawing is physically repeated in the outer
+        // fallback. Give that copy fresh ids, using the same story counter.
+        nodes
+            .into_iter()
+            .map(|node| match node {
+                Node::Element(element) => {
+                    let mut xml = serialize(&element);
+                    renumber_doc_pr(&mut xml, next);
+                    Node::Element(parse_xml(xml.as_bytes()).expect("serialized element"))
+                }
+                text => text,
+            })
+            .collect()
+    }
+    fn splice(element: &mut Element, nested: &HashMap<String, Element>, next: &mut u32) {
+        let mut children = Vec::new();
+        for node in std::mem::take(&mut element.children) {
+            if let Node::Element(mut child) = node {
+                if child.is("jubarteNested") {
+                    if let Some(drawing) = child.attr("token").and_then(|name| nested.get(name)) {
+                        if child.attr("fallback") == Some("true") {
+                            children.extend(fallback(drawing, next));
+                        } else {
+                            children.push(Node::Element(drawing.clone()));
+                        }
+                    }
+                } else {
+                    splice(&mut child, nested, next);
+                    children.push(Node::Element(child));
+                }
+            } else {
+                children.push(node);
+            }
+        }
+        element.children = children;
+    }
+    fn fallback_story(element: &mut Element, next: &mut u32) {
+        let mut children = Vec::new();
+        for node in std::mem::take(&mut element.children) {
+            if let Node::Element(mut child) = node {
+                if matches!(
+                    child.local(),
+                    "drawing" | "pict" | "object" | "AlternateContent"
+                ) {
+                    children.extend(fallback(&child, next));
+                } else {
+                    fallback_story(&mut child, next);
+                    children.push(Node::Element(child));
+                }
+            } else {
+                children.push(node);
+            }
+        }
+        element.children = children;
+    }
     fn words(element: &Element, text: &mut String) {
+        if matches!(
+            element.local(),
+            "drawing" | "pict" | "object" | "AlternateContent"
+        ) {
+            return;
+        }
         if matches!(element.local(), "t" | "delText") {
             text.push_str(&element.text());
         } else {
@@ -1485,6 +1727,8 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
         stories: &[(String, String)],
         at: &mut usize,
         ordinals: &[usize],
+        in_fallback: bool,
+        next: &mut u32,
     ) {
         if element.is("txbxContent") {
             let index = *at;
@@ -1492,11 +1736,18 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
             let Some((markdown, xml)) = stories.get(ordinals[index]) else {
                 return;
             };
-            let Ok(content) = parse_xml(format!("<story>{xml}</story>").as_bytes()) else {
+            let Ok(mut content) = parse_xml(format!("<story>{xml}</story>").as_bytes()) else {
                 return;
             };
             let mut text = String::new();
             words(&content, &mut text);
+            if drawing
+                .boxes
+                .get(index)
+                .is_some_and(|frame| frame.opaque && frame.hash == box_hash(markdown))
+            {
+                return;
+            }
             if let Some(frame) = drawing.boxes.get(index)
                 && frame.hash == box_hash(markdown)
                 && frame.text_hash == mermaid_hash(&text)
@@ -1509,16 +1760,29 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
                 )
                 .is_some()
                 {
+                    let mut slots = Vec::new();
+                    exact.find_all("jubarteNested", &mut slots);
+                    let nested: HashMap<String, Element> = slots
+                        .into_iter()
+                        .filter_map(|slot| slot.attr("token"))
+                        .zip(owned_drawings(&content))
+                        .map(|(name, drawing)| (name.to_string(), drawing.clone()))
+                        .collect();
+                    splice(&mut exact, &nested, next);
                     *element = exact;
                     return;
                 }
             }
+            if in_fallback {
+                fallback_story(&mut content, next);
+            }
             element.children = content.children;
             return;
         }
+        let in_fallback = in_fallback || element.is("Fallback");
         for child in &mut element.children {
             if let Node::Element(child) = child {
-                walk(child, drawing, stories, at, ordinals);
+                walk(child, drawing, stories, at, ordinals, in_fallback, next);
             }
         }
     }
@@ -1526,7 +1790,15 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
         return xml.to_string();
     };
     let ordinals = box_ordinals(&root);
-    walk(&mut root, drawing, stories, &mut 0, &ordinals);
+    walk(
+        &mut root,
+        drawing,
+        stories,
+        &mut 0,
+        &ordinals,
+        false,
+        next_doc_pr,
+    );
     serialize(&root)
 }
 

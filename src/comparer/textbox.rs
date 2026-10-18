@@ -165,7 +165,7 @@ fn lift_run(dom: &mut Dom, run: NodeId) {
 /// per copy left out (shape and drawing ids, and a VML shape's `#id`
 /// reference to its shapetype), so two boxes that differ only in text
 /// compare equal.
-fn shell(dom: &mut Dom, shape: NodeId) -> String {
+pub(crate) fn shell(dom: &mut Dom, shape: NodeId) -> String {
     let copy = dom.clone_subtree(shape);
     for b in dom.descendants(copy, Some(&W::name("txbxContent"))) {
         for c in dom.nodes(b) {
