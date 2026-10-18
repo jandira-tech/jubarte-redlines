@@ -31,7 +31,7 @@ fn ins_in_del() -> Vec<u8> {
         r#"<w:p><w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">\
            <w:r><w:delText xml:space="preserve">one </w:delText></w:r>\
            <w:ins w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">\
-           <w:r><w:t xml:space="preserve">two</w:t></w:r></w:ins>\
+           <w:r><w:delText xml:space="preserve">two</w:delText></w:r></w:ins>\
            <w:r><w:delText xml:space="preserve"> three</w:delText></w:r></w:del></w:p>"#,
     )
 }
@@ -51,7 +51,7 @@ fn sole_ins_in_del() -> Vec<u8> {
     docx(
         r#"<w:p><w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">\
            <w:ins w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">\
-           <w:r><w:t xml:space="preserve">two</w:t></w:r></w:ins></w:del></w:p>"#,
+           <w:r><w:delText xml:space="preserve">two</w:delText></w:r></w:ins></w:del></w:p>"#,
     )
 }
 
@@ -188,7 +188,7 @@ fn three_levels() -> Vec<u8> {
         r#"<w:p><w:ins w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
            <w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
            <w:ins w:id="5" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z">
-           <w:r><w:t>two</w:t></w:r></w:ins></w:del></w:ins></w:p>"#,
+           <w:r><w:delText>two</w:delText></w:r></w:ins></w:del></w:ins></w:p>"#,
     )
 }
 
@@ -335,10 +335,10 @@ fn a_sole_insertion_writes_back_inside_its_deletion() {
         )),
         "{document}"
     );
-    // The inner text is live: rejecting the deletion removes it, accepting
-    // the insertion keeps it.
+    // It belongs to the inner insertion, but Word requires delText under
+    // the enclosing deletion (#1134).
     assert!(
-        del.contains(r#"<w:t xml:space="preserve">two</w:t></w:r></w:ins></w:del>"#),
+        del.contains(r#"<w:delText xml:space="preserve">two</w:delText></w:r></w:ins></w:del>"#),
         "{document}"
     );
 }
@@ -511,8 +511,9 @@ fn two_sole_nests_side_by_side_keep_their_own_changes() {
 
 #[test]
 fn a_note_naming_two_outers_keeps_the_file_word_valid() {
-    // Word refuses a revision nested in its own kind (`ins > del > ins`),
-    // so a longer chain rebuilds only the first outer it names.
+    // #1134: Word refuses w:t under a deletion. It opens ins > del > ins
+    // with delText but misreads reject-all. Pending the chain-writing
+    // decision, the body still rebuilds only the first outer it names.
     let markdown = "{++two++}{>>r5 @CD on r3 @BO on r1 @AL<<}\n";
     let docx = written(markdown);
     assert!(
@@ -733,8 +734,8 @@ fn an_outer_continued_into_the_next_paragraph_keeps_its_id() {
     // Two paragraphs, the second's nest naming the id the first spent: one
     // revision across the paragraph mark, as Word writes it — the same
     // `w:id` twice, which the source carries too (Ring-1 warns of it and
-    // nothing else; a revision nested in its own kind is what the gate
-    // refuses).
+    // nothing else). #1134: Word refuses w:t under a deletion; it opens
+    // ins > del > ins with delText but misreads reject-all.
     assert_eq!(document.matches("<w:p>").count(), 2, "{document}");
     assert!(
         document.contains(r#"<w:ins w:id="1""#) && !document.contains(r#"<w:ins w:id="4""#),
@@ -859,8 +860,8 @@ fn resolving_a_fold_note_matches_the_source() {
 fn a_three_level_nest_keeps_the_innermost_text_live() {
     let source = three_levels();
     let markdown = plain(&source);
-    // The innermost run is live text inside Cy Dee's insertion, not
-    // deleted text: the note chains every level it names.
+    // The innermost run belongs to the insertion even though its XML text
+    // element is delText under the deletion (#1134); the note names each level.
     assert!(
         markdown.starts_with(
             "{++two++}{>>r5 Cy Dee (2026-09-30T11:00:00Z) \
@@ -876,7 +877,7 @@ fn a_three_level_nest_keeps_the_innermost_text_live() {
     );
     let document = part_string(&written(&markdown), "word/document.xml").unwrap();
     assert!(
-        document.contains(r#"<w:t xml:space="preserve">two</w:t>"#),
+        document.contains(r#"<w:delText xml:space="preserve">two</w:delText>"#),
         "{markdown}: {document}"
     );
     assert!(
@@ -898,9 +899,9 @@ fn a_three_level_nest_keeps_the_innermost_text_live() {
             if accept { "accept" } else { "reject" }
         );
     }
-    // Word refuses a revision nested in its own kind, so the writer
-    // rebuilds only the first outer the chain names; from there on the
-    // view is a fixed point.
+    // #1134: Word refuses w:t under a deletion; it opens ins > del > ins
+    // with delText but misreads reject-all. The body still rebuilds only
+    // the first outer pending that decision; its view is a fixed point.
     let round = written(&markdown);
     let second = plain(&round);
     assert_eq!(plain(&written(&second)), second, "{second}");
@@ -1157,9 +1158,9 @@ fn review_1111_split_names_every_full_parent_chain() {
         r#"<w:p><w:ins w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
      <w:r><w:t>liveA </w:t></w:r>
      <w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
-       <w:ins w:id="5" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z"><w:r><w:t>x</w:t></w:r></w:ins>
+       <w:ins w:id="5" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:ins>
        <w:r><w:delText> mid </w:delText></w:r>
-       <w:ins w:id="7" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z"><w:r><w:t>y</w:t></w:r></w:ins>
+       <w:ins w:id="7" w:author="Cy Dee" w:date="2026-09-30T11:00:00Z"><w:r><w:delText>y</w:delText></w:r></w:ins>
      </w:del>
      <w:r><w:t>tail</w:t></w:r></w:ins></w:p>"#,
     );
@@ -1876,8 +1877,8 @@ fn story_keeps_its_three_level_chain(kind: &str) {
      </w:del>
      <w:r><w:t>tail</w:t></w:r></w:ins></w:p>"#,
     );
-    // #1134: Word-safe delText inside an inserted child is currently omitted
-    // by the story reader. Feed its note grammar directly to pin the writer.
+    // Feed the note grammar directly to pin the writer's metadata; the
+    // reader's side of the same chain is `story_reads_its_three_level_chain`.
     let text = "{++liveA ++}{>>PART.r1 @A<<}{++x++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{-- mid --}{>>PART.r3 @B on PART.r1 @A<<}{++y++}{>>PART.r7 @A on PART.r3 @B on PART.r1 @A<<}{++tail++}{>>PART.r1 @A<<}".replace("PART", &format!("{kind}1"));
     let view = format!(
         "---\nauthors:\n  A: Alice # 3 revisions, 2026-09-29T14:05:00Z\n  B: Bob # 1 revision, 2026-09-30T09:00:00Z\n{kind}s:\n  default: {{id: {kind}1, text: \"{text}\"}}\n---\nBody.\n"
@@ -1903,6 +1904,47 @@ fn a_header_keeps_its_three_level_chain() {
 #[test]
 fn a_footer_keeps_its_three_level_chain() {
     story_keeps_its_three_level_chain("footer");
+}
+
+// #1134: the inner insertions hold `w:delText`, the shape Word opens. The
+// story reader must keep the enclosing deletion while it visits them.
+fn story_reads_its_three_level_chain(kind: &str) {
+    let source = docx(
+        r#"<w:p><w:ins w:id="1" w:author="Alpha Lambda" w:date="2026-09-29T14:05:00Z">
+     <w:r><w:t>liveA </w:t></w:r>
+     <w:del w:id="3" w:author="Beta Omicron" w:date="2026-09-30T09:00:00Z">
+       <w:ins w:id="5" w:author="Chi Delta" w:date="2026-09-30T11:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:ins>
+       <w:r><w:delText> mid </w:delText></w:r>
+       <w:ins w:id="7" w:author="Chi Delta" w:date="2026-09-30T11:00:00Z"><w:r><w:delText>y</w:delText></w:r></w:ins>
+     </w:del>
+     <w:r><w:t>tail</w:t></w:r></w:ins></w:p>"#,
+    );
+    let notes = [
+        format!("{{>>{kind}1.r5 @CD on {kind}1.r3 @BO on {kind}1.r1 @AL<<}}"),
+        format!("{{>>{kind}1.r3 @BO on {kind}1.r1 @AL<<}}"),
+        format!("{{>>{kind}1.r7 @CD on {kind}1.r3 @BO on {kind}1.r1 @AL<<}}"),
+    ];
+    assert_story_nested_round_trip(
+        &source,
+        kind,
+        &notes.iter().map(String::as_str).collect::<Vec<_>>(),
+        &[
+            ("w:ins", "1", None),
+            ("w:del", "3", Some("1")),
+            ("w:ins", "5", Some("3")),
+            ("w:ins", "7", Some("3")),
+        ],
+    );
+}
+
+#[test]
+fn a_header_reads_its_three_level_chain() {
+    story_reads_its_three_level_chain("header");
+}
+
+#[test]
+fn a_footer_reads_its_three_level_chain() {
+    story_reads_its_three_level_chain("footer");
 }
 
 fn review_1129_story_view(kind: &str, text: &str) -> String {
