@@ -214,7 +214,8 @@ fn join(items: &[String]) -> String {
 /// The `revisions:` line's comment: the body's marks and the changes the
 /// view shows them as, then formatting (body and styles) and each other
 /// story's count: `9 marks shown as 5 changes: 1 insertion, 4
-/// substitutions; 2 formatting; 1 in header1`. Empty for no change.
+/// substitutions; 2 formatting; 1 in header1`. Resolved views describe
+/// the raw marks by kind, without `shown as`. Empty for no change.
 fn revisions_comment(f: &Facts) -> String {
     use crate::changes::ChangeKind;
     let story = |c: &crate::changes::Change| {
@@ -269,7 +270,29 @@ fn revisions_comment(f: &Facts) -> String {
         .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
         .collect();
     let mut parts = Vec::new();
-    if marks > 0 || !f.tags.is_empty() {
+    let raw_kinds = if f.resolved.is_some() {
+        f.changes
+            .iter()
+            .filter(|c| story(c) == "body" && c.kind != ChangeKind::Formatting)
+            .map(|c| match (c.target, c.kind) {
+                ("paragraph_mark", _) => "mark",
+                ("table_row", _) => "row",
+                ("table_cell", _) => "cell",
+                (_, ChangeKind::Insertion) => "ins",
+                (_, ChangeKind::Deletion) => "del",
+                (_, ChangeKind::Move) => "move",
+                (_, ChangeKind::Formatting) => "fmt",
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let tags = if f.resolved.is_some() {
+        &raw_kinds
+    } else {
+        &f.tags
+    };
+    if marks > 0 || !tags.is_empty() {
         let mut kinds = Vec::new();
         for (kind, one, many) in [
             ("ins", "insertion", "insertions"),
@@ -278,19 +301,22 @@ fn revisions_comment(f: &Facts) -> String {
             ("mark", "paragraph mark", "paragraph marks"),
             ("row", "table row", "table rows"),
             ("cell", "table cell", "table cells"),
+            ("move", "move", "moves"),
         ] {
-            let n = f.tags.iter().filter(|&&t| t == kind).count();
+            let n = tags.iter().filter(|&&t| t == kind).count();
             if n > 0 {
                 kinds.push(plural(n, one, many));
             }
         }
         let marks = plural(marks, "mark", "marks");
-        parts.push(if f.tags.is_empty() {
+        parts.push(if tags.is_empty() {
             marks
+        } else if f.resolved.is_some() {
+            format!("{marks}: {}", join(&kinds))
         } else {
             format!(
                 "{marks} shown as {}: {}",
-                plural(f.tags.len(), "change", "changes"),
+                plural(tags.len(), "change", "changes"),
                 join(&kinds)
             )
         });
