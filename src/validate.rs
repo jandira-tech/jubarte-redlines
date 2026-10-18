@@ -897,6 +897,9 @@ fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// `w:del` must carry `w:delText` (never `w:t`).
 /// `w:moveFrom` must carry `w:t` (never `w:delText`) — Word-required contract
 /// settled by Ring-3 probe 2026-07-16 (delText-under-moveFrom failed open).
+/// The nearest deletion owns the text: an insertion inside the move source
+/// does not shelter `w:delText` (Word refuses it), a `w:del` inside it does
+/// (Word opens it; probes M1/M5, 2026-10-18).
 fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
     for name in xml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
@@ -920,7 +923,7 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
         let move_from = W::name("moveFrom");
         for mf in dom.descendants(root, Some(&move_from)) {
             for dt in dom.descendants(mf, Some(&W::name("delText"))) {
-                if ancestor_has(&dom, dt, mf, "ins") {
+                if ancestor_has(&dom, dt, mf, "del") {
                     continue;
                 }
                 out.push(Finding::new(
@@ -1808,7 +1811,7 @@ fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
     }
     for mf in dom.descendants(root, Some(&W::name("moveFrom"))) {
         for dt in dom.descendants(mf, Some(&W::name("delText"))) {
-            if !ancestor_has(dom, dt, mf, "ins") {
+            if !ancestor_has(dom, dt, mf, "del") {
                 renames.push((dt, W::t()));
             }
         }

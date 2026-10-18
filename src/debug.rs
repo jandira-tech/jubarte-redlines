@@ -911,6 +911,10 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
             {
                 f.add("row-without-cell", part, path(dom, n));
             }
+            // Only `ins`/`del` count as interleaving: Word's measured
+            // reject-all misreading (#1134, 2026-10-17) alternates the two. A
+            // move between two same-kind revisions is unmeasured, so it
+            // reports as nested.
             "ins" | "del"
                 if dom
                     .ancestors(n, None)

@@ -272,6 +272,56 @@ fn probe_deltext_under_movefrom_fails() {
     );
 }
 
+/// Word refuses `delText` in an insertion inside a move source too (probe M1,
+/// 2026-10-18, opened alone): the insertion does not make it deleted text.
+#[test]
+fn probe_deltext_in_an_insertion_under_movefrom_fails() {
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:moveFrom w:id="1" w:author="A"><w:ins w:id="2" w:author="B"><w:r><w:delText>moved text</w:delText></w:r></w:ins></w:moveFrom>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+    let bytes = zip_with_parts(&[("word/document.xml", doc)]);
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("w:delText under w:moveFrom")),
+        "expected delText-under-moveFrom error, got: {:?}",
+        report.errors
+    );
+}
+
+/// The nearest deletion owns the text: Word opens `delText` in a deletion
+/// inside a move source (probe M5, 2026-10-18, opened alone).
+#[test]
+fn probe_deltext_in_a_deletion_under_movefrom_passes_ring1() {
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:moveFrom w:id="1" w:author="A"><w:ins w:id="2" w:author="B"><w:del w:id="3" w:author="C"><w:r><w:delText>moved text</w:delText></w:r></w:del></w:ins></w:moveFrom>
+    </w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+    let bytes = zip_with_parts(&[("word/document.xml", doc)]);
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        !report
+            .errors
+            .iter()
+            .any(|e| e.contains("moveFrom") || e.contains("w:del")),
+        "delText in a deletion under moveFrom must be accepted: {:?}",
+        report.errors
+    );
+}
+
 #[test]
 fn probe_wt_under_movefrom_passes_ring1() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
