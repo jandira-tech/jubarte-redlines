@@ -5,6 +5,9 @@
 //! The comparer models Compare Documents; an edit models typing over text.
 //! Normalize only the edit's compared redline, after whole-span and range
 //! restoration. Retained-history edits already emit deletion then insertion.
+//! Every pair this pass meets is the edit's own: the compared base holds no
+//! received revisions, because `existing_revisions` refuses, accepts or
+//! rejects them first, and `keep` is emitted directly.
 
 use crate::comparer::finalize::{fields_complete, fix_up_revision_ids, revision_wrapper};
 use crate::inspect::Opened;
@@ -17,6 +20,10 @@ use super::{EditError, err};
 /// before its inserted pieces, preserving each side's formatting and order.
 /// Hyperlinks containing only one revision kind travel with that side, as in
 /// the comparer. Paragraph-mark properties stay in their schema order.
+/// Every element is visited as a parent, so a pair inside a content control,
+/// smart tag or simple field is reordered within it. Any other sibling (a
+/// plain run, a bookmark or comment mark, a move) ends the group, and so does
+/// a wrapper with no run or with an incomplete field.
 fn reorder(dom: &mut Dom, root: NodeId) -> bool {
     let mut changed = false;
     for parent in dom.descendants_and_self(root, None) {
