@@ -233,3 +233,60 @@ fn rules_usage_errors_exit_two() {
     assert!(err.contains("BOGUS"), "{err}");
     assert!(err.contains("word, edits, a11y, style, structure"), "{err}");
 }
+
+#[test]
+fn issue_1137_preexisting_duplicate_does_not_block_edit_publication() {
+    let source = docx(&format!(
+        "{}{}",
+        para("old words"),
+        r#"<w:p><w:ins w:id="5" w:author="Alice"><w:r><w:t>a</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> x </w:t></w:r><w:ins w:id="5" w:author="Alice"><w:r><w:t>b</w:t></w:r></w:ins></w:p>"#
+    ));
+    let baseline = jubarte::validate::validate(&source).unwrap();
+    let duplicate = baseline
+        .iter()
+        .find(|f| f.code == "DUPLICATE_REVISION_ID")
+        .unwrap();
+    assert_eq!(duplicate.severity, "error");
+    assert!(!duplicate.word_fatal);
+    let json = r#"{"schema_version":1,"author":"Carol Diaz","date":"2026-10-01T09:00:00Z","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"p0","find":"old","replacement":"new"}]}"#;
+    let plan = jubarte::edit::EditPlan::from_json(json).unwrap();
+    let prepared = jubarte::edit::prepare(
+        &source,
+        &plan,
+        &jubarte::edit::PrepareOptions {
+            role: jubarte::edit::PrimaryRole::Redline,
+            ..jubarte::edit::PrepareOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        prepared
+            .checks
+            .baseline
+            .iter()
+            .any(|f| f.code == "DUPLICATE_REVISION_ID")
+    );
+    assert!(
+        prepared
+            .checks
+            .introduced
+            .iter()
+            .all(|f| f.code != "DUPLICATE_REVISION_ID")
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("source.docx"), source).unwrap();
+    std::fs::write(dir.path().join("plan.json"), json).unwrap();
+    let (code, out, err) = run(dir.path(), &["edit", "source.docx", "--plan", "plan.json"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let published = std::fs::read(dir.path().join("source_modified.docx")).unwrap();
+    assert_eq!(
+        jubarte::inspect::paragraphs(&published).unwrap()[0].text,
+        "new words"
+    );
+    assert!(
+        jubarte::validate::validate(&published)
+            .unwrap()
+            .iter()
+            .any(|f| f.code == "DUPLICATE_REVISION_ID")
+    );
+}
