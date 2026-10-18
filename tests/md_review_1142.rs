@@ -125,3 +125,19 @@ fn review_inline_a_missing_date_does_not_share_a_dated_attribution() {
     assert!(!view.contains("{~~"), "{view}");
     assert!(view.contains("{--old--}{r1 @A}{++new++}{r2 @A}"), "{view}");
 }
+
+#[test]
+fn review_default_view_keeps_pairing_when_per_revision_dates_are_omitted() {
+    let xml = r#"<w:p><w:del w:id="1" w:author="Alice" w:date="2026-10-01T09:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="Alice" w:date="2026-10-02T09:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#;
+    let source = common::docx::docx(xml);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(view.contains("{~~old~>new~~}{r1+2 @A}"), "{view}");
+}
