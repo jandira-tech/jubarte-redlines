@@ -2310,3 +2310,33 @@ fn a_kept_part_whose_first_word_tag_is_a_child_keeps_its_root() {
         Some(item)
     );
 }
+
+#[test]
+fn a_kept_part_whose_w_prefix_is_custom_is_left_alone() {
+    let item = r#"<w:data xmlns:w="urn:custom" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"><w:x/></w:data>"#;
+    let docx = written_with_custom_part(item);
+    assert_eq!(
+        part_string(&docx, "customXml/item1.xml").as_deref(),
+        Some(item)
+    );
+}
+
+#[test]
+fn a_kept_part_whose_w_prefix_is_custom_and_date_is_on_a_child_is_left_alone() {
+    let item = r#"<w:data xmlns:w="urn:custom"><w:x xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"/></w:data>"#;
+    let docx = written_with_custom_part(item);
+    assert_eq!(
+        part_string(&docx, "customXml/item1.xml").as_deref(),
+        Some(item)
+    );
+}
+
+#[test]
+fn a_kept_part_whose_w_prefix_is_unbound_on_the_root_is_left_alone() {
+    let item = r#"<w:data><w:x xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"/></w:data>"#;
+    let docx = written_with_custom_part(item);
+    assert_eq!(
+        part_string(&docx, "customXml/item1.xml").as_deref(),
+        Some(item)
+    );
+}

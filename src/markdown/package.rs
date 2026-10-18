@@ -330,6 +330,16 @@ pub(super) fn assemble(
         if !source[start..].starts_with("<w:") || source[..end].ends_with('/') {
             continue;
         }
+        // Resolve only this start tag: a custom part may reuse `w`, or
+        // leave it unbound, regardless of declarations on its children.
+        let mut reader = quick_xml::NsReader::from_str(&source[start..=end]);
+        if !matches!(
+            reader.read_resolved_event(),
+            Ok((quick_xml::name::ResolveResult::Bound(namespace), _))
+                if namespace.as_ref() == W_NS
+        ) {
+            continue;
+        }
         if !source[start..end].contains("xmlns:w16du=") {
             source.insert_str(
                 end,
