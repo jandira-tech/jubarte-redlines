@@ -1472,6 +1472,7 @@ fn closes(token: Token) -> Option<Token> {
         Token::SubstituteEnd => Some(Token::SubstituteStart),
         Token::HighlightEnd => Some(Token::HighlightStart),
         Token::CommentEnd => Some(Token::CommentStart),
+        Token::AttributionEnd => Some(Token::AttributionStart),
         Token::MarkEnd => Some(Token::MarkStart),
         _ => None,
     }
@@ -1503,6 +1504,8 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
                 | Token::SubstituteStart
                 | Token::HighlightStart
                 | Token::CommentStart
+                | Token::AttributionStart
+                | Token::ParagraphInsertion
                 | Token::MarkStart
         ) {
             open.push((*token, at));
@@ -1535,6 +1538,8 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
                         | Token::SubstituteStart
                         | Token::HighlightStart
                         | Token::CommentStart
+                | Token::AttributionStart
+                | Token::ParagraphInsertion
                         | Token::MarkStart
                 ) {
                     open.push((token, at));
@@ -1793,6 +1798,8 @@ struct Writer<'o, 'a> {
     /// The change the open comment follows, while the comment may still
     /// turn out to be the change's attribution.
     comment_anchor: Option<Anchor>,
+    attribution_open: bool,
+    paragraph_attribution: bool,
     /// Scopes (`{==…==}`) with no comment yet and no text since them
     /// outside a scope: pieces of one range whose comment follows the last
     /// piece.
@@ -1918,6 +1925,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             substituted: None,
             substitution: None,
             comment_anchor: None,
+            attribution_open: false,
+            paragraph_attribution: false,
             pending_scopes: Vec::new(),
             range_end_at: None,
             shared_range: None,
@@ -3367,57 +3376,10 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// stays where it is. A scope that ends inside a side
     /// (`{~~old~>{==new==}~~}{>>c0 …<<}`) still has its range open: the side
     /// moves, and its range ends where the side does.
-    fn inserted_side_first(&mut self) {
-        /// The comment ranges a side leaves open, when it holds only runs,
-        /// bookmarks, links that close within, and ranges that close
-        /// within or are scopes awaiting their comment (`awaiting`).
-        fn whole(items: &[Item], awaiting: &[usize]) -> Option<usize> {
-            let mut links = 0usize;
-            let mut ranges = Vec::new();
-            for item in items {
-                match item {
-                    Item::Run(_) | Item::Bookmark(_) | Item::CommentReference(_) => {}
-                    Item::LinkStart(..) => links += 1,
-                    Item::LinkEnd if links > 0 => links -= 1,
-                    Item::RangeStart(slot) => ranges.push(*slot),
-                    Item::RangeEnd(_) if !ranges.is_empty() => {
-                        ranges.pop();
-                    }
-                    _ => return None,
-                }
-            }
-            (links == 0 && ranges.iter().all(|slot| awaiting.contains(slot)))
-                .then_some(ranges.len())
-        }
-        let Some((start, Some(split))) = self.substitution.take() else {
-            return;
-        };
-        let awaiting: Vec<usize> = self.pending_scopes.iter().map(|(slot, _)| *slot).collect();
-        let story = self.story();
-        let end = story.len();
-        if start > split || split > end {
-            return;
-        }
-        let (Some(deleted), Some(inserted)) = (
-            whole(&story[start..split], &awaiting),
-            whole(&story[split..end], &awaiting),
-        ) else {
-            return;
-        };
-        // One open range at most: its comment ends it.
-        if deleted + inserted > 1 {
-            return;
-        }
-        story[start..end].rotate_left(split - start);
-        if inserted == 1 {
-            self.range_end_at = Some(start + (end - split));
-        }
-    }
-
     fn token(&mut self, token: Token) {
         if self.comment.is_some() {
             match token {
-                Token::CommentEnd => self.end_comment(),
+                Token::CommentEnd | Token::AttributionEnd => self.end_comment(),
                 // A blank line inside `{>>…<<}`: another comment
                 // paragraph, as `<br>` gives one.
                 Token::CommentBreak => {
@@ -3449,7 +3411,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             Token::InsertEnd | Token::DeleteEnd => self.close(),
             Token::SubstituteEnd => {
                 self.close();
-                self.inserted_side_first();
             }
             Token::HighlightStart => {
                 self.ensure_paragraph();
@@ -3471,6 +3432,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                     });
                 }
             }
+            Token::AttributionStart | Token::ParagraphInsertion => {
+                self.attribution_open = true;
+                self.paragraph_attribution = token == Token::ParagraphInsertion;
+                self.begin_comment();
+            }
+            Token::AttributionEnd => {}
             Token::CommentStart => self.begin_comment(),
             Token::CommentEnd => {}
             Token::CommentBreak => {}
@@ -3488,11 +3455,20 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// A comment on the span that just closed, or on this point.
     fn begin_comment(&mut self) {
         let id = u32::try_from(self.document.comments.len()).unwrap_or(u32::MAX);
+        if self.paragraph_attribution {
+            self.ensure_paragraph();
+            self.comment = Some(Comment { id, paragraphs: vec![String::new()], ..Comment::default() });
+            return;
+        }
         match self.anchor.take() {
             // Anchored when it ends, unless it names the change's author.
-            Some(anchor) if anchor.takes_attribution() => self.comment_anchor = Some(anchor),
+            Some(anchor) if self.attribution_open && anchor.takes_attribution() => self.comment_anchor = Some(anchor),
             Some(anchor) => self.anchor_comment(anchor, id),
             None => self.anchor_here(id),
+        }
+        if self.paragraph_attribution {
+            self.comment_anchor = None;
+            self.ensure_paragraph();
         }
         self.comment = Some(Comment {
             id,
@@ -3549,30 +3525,50 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some(mut comment) = self.comment.take() else {
             return;
         };
-        if let Some(mut anchor) = self.comment_anchor.take() {
+        let is_attribution = std::mem::take(&mut self.attribution_open);
+        if std::mem::take(&mut self.paragraph_attribution) {
             let whole = comment.paragraphs.join("\n");
-            if anchor.serials[0].is_some() && view_notes::nested_revision_tags(&whole).is_some() {
-                self.document
-                    .revision_note_error
-                    .get_or_insert_with(|| view_stories::substitution_parent_error(&whole));
-                return;
+            let tag = view_notes::revision_tags(&whole).and_then(|tags| tags.into_iter().next());
+            let serial = if let Some(tag) = tag {
+                self.tag_serial(&tag)
+            } else if let Some(plain) = view_notes::plain_revision(&whole) {
+                self.serial += 1;
+                self.document.attributions.insert(self.serial, (plain.author, plain.date));
+                self.document.revision_ids.insert(self.serial, plain.ids);
+                self.serial
+            } else { return; };
+            self.ensure_paragraph();
+            if let Some(index) = self.paragraph
+                && let Item::Paragraph(p) = &mut self.story()[index] {
+                p.mark_fixed = true;
+                p.mark = Some(Kind::Insert);
+                p.mark_by = Some(serial);
             }
+            return;
+        }
+        if let Some(mut anchor) = self.comment_anchor.take().filter(|_| is_attribution) {
+            let whole = comment.paragraphs.join("\n");
             // A note that names another change after ` on `: the change it
             // follows sits inside that one (`A` inserted what `B` deleted),
             // so it goes back inside it, outermost last. #1134: Word
             // refuses w:t under a deletion, not same-kind nesting. It opens
             // ins > del > ins with delText but misreads reject-all. Keep
             // rebuilding only the first outer pending the chain decision.
-            let sole = self.sole_change(&anchor);
+            let sole = self.sole_change(&anchor).or_else(|| anchor.serials[0].map(|old| (Kind::Delete, old)));
             if let Some((kind, inner)) = sole
                 && let Some(tags) = view_notes::nested_revision_tags(&whole)
             {
                 let (author, date) = self.view_author(&tags[0].handle, tags[0].date.as_deref());
-                self.document.attributions.insert(inner, (author, date));
-                if !tags[0].ids.is_empty() {
-                    self.document
-                        .revision_ids
-                        .insert(inner, tags[0].ids.clone());
+                self.document.attributions.insert(inner, (author.clone(), date.clone()));
+                let mut old_ids = tags[0].ids.clone();
+                if let Some(new) = anchor.serials[0].and(anchor.serials[1]) {
+                    let (old, inserted) = view_stories::substitution_ids(&tags[0].ids);
+                    old_ids = old.to_vec();
+                    self.document.revision_ids.insert(new, inserted.to_vec());
+                    self.document.attributions.insert(new, (author, date));
+                }
+                if !old_ids.is_empty() {
+                    self.document.revision_ids.insert(inner, old_ids);
                 }
                 if let Some(tag) = tags.get(1) {
                     let outer = (other(kind), self.tag_serial(tag));
@@ -3588,8 +3584,15 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.document
                     .attributions
                     .insert(inner, (first.author.clone(), first.date.clone()));
-                if !first.ids.is_empty() {
-                    self.document.revision_ids.insert(inner, first.ids.clone());
+                let mut old_ids = first.ids.clone();
+                if let Some(new) = anchor.serials[0].and(anchor.serials[1]) {
+                    let (old, inserted) = view_stories::substitution_ids(&first.ids);
+                    old_ids = old.to_vec();
+                    self.document.revision_ids.insert(new, inserted.to_vec());
+                    self.document.attributions.insert(new, (first.author.clone(), first.date.clone()));
+                }
+                if !old_ids.is_empty() {
+                    self.document.revision_ids.insert(inner, old_ids);
                 }
                 if let Some(part) = parts.get(1) {
                     self.serial += 1;

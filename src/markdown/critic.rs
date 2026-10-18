@@ -43,6 +43,12 @@ pub(crate) enum Token {
     CommentStart,
     /// `<<}`
     CommentEnd,
+    /// The attribution after a change closer.
+    AttributionStart,
+    /// The attribution of an inserted paragraph mark.
+    ParagraphInsertion,
+    /// `}` ending an attribution.
+    AttributionEnd,
     /// A blank line inside a comment's body: a comment paragraph break.
     CommentBreak,
     /// `==` opening a highlight run (`==x==`), not CriticMarkup
@@ -58,7 +64,7 @@ pub(crate) enum Token {
 }
 
 /// Every delimiter with its stand-in (Supplemental Punctuation, all Po).
-const STAND_INS: [(Token, char); 17] = [
+const STAND_INS: [(Token, char); 20] = [
     (Token::InsertStart, '\u{2E0E}'),
     (Token::InsertEnd, '\u{2E0F}'),
     (Token::DeleteStart, '\u{2E10}'),
@@ -70,6 +76,9 @@ const STAND_INS: [(Token, char); 17] = [
     (Token::HighlightEnd, '\u{2E16}'),
     (Token::CommentStart, '\u{2E18}'),
     (Token::CommentEnd, '\u{2E19}'),
+    (Token::AttributionStart, '\u{2E2F}'),
+    (Token::ParagraphInsertion, '\u{2E30}'),
+    (Token::AttributionEnd, '\u{2E31}'),
     (Token::CommentBreak, '\u{2E2E}'),
     (Token::MarkStart, '\u{2E1B}'),
     (Token::MarkEnd, '\u{2E1E}'),
@@ -1095,6 +1104,21 @@ fn encode_range(
             at += len;
             continue;
         }
+        // Only a complete tag immediately following a closer (or ¶) is
+        // metadata. Backslash-escaped braces remain ordinary Markdown text.
+        let paragraph = rest.starts_with("¶{") && !escaped(source, at);
+        let tag_at = at + if paragraph { "¶".len() } else { 0 };
+        let before = source[..at].trim_end_matches(['*', '_', '`']);
+        let follows = ["++}", "--}", "~~}"].iter().any(|close| before.ends_with(close));
+        if (paragraph || follows) && !escaped(source, tag_at)
+            && let Some((note, width)) = attribution_tag(&source[tag_at..range.end])
+        {
+            out.push(stand_in(if paragraph { Token::ParagraphInsertion } else { Token::AttributionStart }));
+            encode_comment(source, closers, tag_at + 1..tag_at + 1 + note.len(), out);
+            out.push(stand_in(Token::AttributionEnd));
+            at = tag_at + width;
+            continue;
+        }
         let span = SPANS
             .iter()
             .find(|(open, ..)| rest.starts_with(open))
@@ -1231,6 +1255,19 @@ fn encode_range(
             }
         }
     }
+}
+
+/// A complete attribution brace and its byte length. Comments never use
+/// this grammar; callers also check the preceding closer or pilcrow.
+pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
+    let after = text.strip_prefix('{')?;
+    let end = after.find('}')?;
+    let note = &after[..end];
+    (super::view_notes::revision_tags(note).is_some()
+        || super::view_notes::nested_revision_tags(note).is_some()
+        || super::view_notes::plain_revision(note).is_some()
+        || super::view_notes::nested_plain_revisions(note).is_some())
+        .then_some((note, end + 2))
 }
 
 /// A comment's body: text, with every run of blank or whitespace-only
@@ -1681,6 +1718,9 @@ pub(crate) fn delimiter(token: Token) -> &'static str {
         Token::SubstituteEnd => "~~}",
         Token::HighlightStart => "{==",
         Token::HighlightEnd => "==}",
+        Token::AttributionStart => "{",
+        Token::ParagraphInsertion => "¶{",
+        Token::AttributionEnd => "}",
         Token::CommentStart => "{>>",
         Token::CommentEnd => "<<}",
         Token::CommentBreak => "\n\n",
@@ -1893,7 +1933,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     folded_at = None;
                     Some(In::Old)
                 }
-                Token::CommentStart => Some(In::Comment),
+                Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => Some(In::Comment),
                 // A highlight shows its text as the text around it does.
                 Token::HighlightStart => Some(state),
                 Token::SubstituteSeparator => {
@@ -1910,7 +1950,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 // A comment paragraph break: comments resolve to nothing,
                 // so the break is dropped with the comment's text.
                 Token::CommentBreak => None,
-                Token::CommentEnd => {
+                Token::CommentEnd | Token::AttributionEnd => {
                     state = outer.pop().unwrap_or(In::Text);
                     // The note folds the change it follows, naming the one
                     // it sits inside after ` on `: its text goes, either
@@ -1918,6 +1958,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     // holds, accepting the inner removes the text.
                     if state == In::Text
                         && let Some(at) = folded_at.take()
+                        && token == Token::AttributionEnd
                         && names_outer(&comment)
                     {
                         out.truncate(at);

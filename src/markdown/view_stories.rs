@@ -954,19 +954,14 @@ fn tags_after(
 ) {
     let mut tags = Vec::new();
     let mut parents = Vec::new();
-    while let Some(after) = text.strip_prefix("{>>")
-        && let Some(end) = after.find("<<}")
-    {
-        let note = &after[..end];
+    while let Some((note, width)) = super::critic::attribution_tag(text) {
         if let Some(nested) = super::view_notes::nested_revision_tags(note) {
             tags.push(nested[0].clone());
             parents = nested.into_iter().skip(1).collect();
         } else if let Some(found) = super::view_notes::revision_tags(note) {
             tags.extend(found);
-        } else {
-            break;
-        }
-        text = &after[end + 3..];
+        } else { break; }
+        text = &text[width..];
     }
     (tags, parents, text)
 }
@@ -1047,7 +1042,7 @@ fn unescape(text: &str) -> String {
 /// writes the insertion first, so the inserted side begins where the
 /// numbers drop. With no drop the deleted side takes one id, as in the
 /// body.
-fn substitution_ids(ids: &[u32]) -> (&[u32], &[u32]) {
+pub(super) fn substitution_ids(ids: &[u32]) -> (&[u32], &[u32]) {
     let cut = ids
         .windows(2)
         .position(|pair| pair[1] < pair[0])

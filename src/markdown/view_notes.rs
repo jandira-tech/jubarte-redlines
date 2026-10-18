@@ -496,10 +496,10 @@ pub(super) fn trailing_bare_group(text: &str) -> Option<usize> {
 fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
     let text = text.trim();
     let mut from = text.len();
-    while let Some(at) = text[..from].rfind(" on ") {
+    while let Some(at) = text[..from].rfind(" re ") {
         from = at;
         if let Some(head) = one(text[..at].trim())
-            && let Some(rest) = nested_parts(&text[at + " on ".len()..], one)
+            && let Some(rest) = nested_parts(&text[at + " re ".len()..], one)
         {
             return Some([head].into_iter().chain(rest).collect());
         }
