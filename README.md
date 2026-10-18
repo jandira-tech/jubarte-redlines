@@ -804,7 +804,7 @@ supports):
 | `page_setup` | Page size, orientation and margins |
 | `watermark` | Word's diagonal text watermark in every default header (untracked) |
 | `fill_control` | Fill a content control (text, choice, checkbox or date) by id, tag or alias |
-| `redact` | Replace text with `█` blocks in both copies, untracked; refused if the text still occurs anywhere |
+| `redact` | Replace text with `█` blocks in both copies, untracked; refused if the text still occurs anywhere. No report, refusal or confirmation repeats the text or the document's copy of it: a plan with a redaction confirms with the published view, not the before/after diff |
 | `settings` | `trackRevisions`, `updateFields` and document protection in `word/settings.xml` |
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
