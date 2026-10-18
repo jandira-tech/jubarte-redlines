@@ -1090,7 +1090,16 @@ pub(super) fn story(
                 let Some((kind, by)) = field else {
                     continue;
                 };
-                if open != field {
+                if open != field
+                    && !open.is_some_and(|outer| {
+                        context
+                            .document
+                            .revision_ids
+                            .get(&outer.1)
+                            .is_some_and(|ids| ids.len() == 1)
+                            && continues_change(context.document, (kind, by), outer)
+                    })
+                {
                     close_mark(context, &natural, &mut out, &mut open);
                     spend(&mut natural, by);
                     let wrap = context.revision(kind, Some(by));
@@ -1433,10 +1442,14 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
     }) else {
         return false;
     };
-    let Some(Item::Run(run)) = rest.get(at) else {
-        return false;
+    let change = match rest.get(at) {
+        Some(Item::Run(run)) => run.change,
+        // An unprinted anchor before a separately tagged link must not
+        // close the same revision that holds all of the link's runs.
+        Some(Item::LinkStart(..)) => field_link(&rest[at + 1..], document),
+        _ => None,
     };
-    let Some(change) = run.change else {
+    let Some(change) = change else {
         return false;
     };
     if Some(change) == open
