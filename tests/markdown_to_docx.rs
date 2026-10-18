@@ -2265,3 +2265,48 @@ fn converting_the_same_markdown_is_deterministic() {
         assert_eq!(first, docx, "the same Markdown wrote a different docx");
     }
 }
+
+/// A reference whose kept custom XML part carries `w16du:dateUtc`: the
+/// namespace pass rewrites only WordprocessingML roots, so the writer
+/// neither panics nor touches a part it did not write (PR #1127 review).
+fn written_with_custom_part(item: &str) -> Vec<u8> {
+    let template = std::fs::read("tests/fixtures/redline-inpi/original-new.docx").unwrap();
+    let reference = common::docx::replace_entry(&template, "customXml/item1.xml", item.as_bytes());
+    let docx = markdown_to_docx(
+        "Body {++text++}{noid Ana (2026-10-01T09:00:00-04:00)}.\n",
+        &DocxOptions {
+            reference: Some(&reference),
+            ..DocxOptions::default()
+        },
+    )
+    .expect("the writer accepts a reference with any custom XML part")
+    .docx;
+    assert_word_valid_package(&docx);
+    assert!(
+        document_xml(&docx).contains(
+            r#"xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du""#
+        ),
+        "the main part still declares the extension it uses"
+    );
+    docx
+}
+
+#[test]
+fn a_kept_part_with_no_word_element_is_left_alone() {
+    let item = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><data xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"/>"#;
+    let docx = written_with_custom_part(item);
+    assert_eq!(
+        part_string(&docx, "customXml/item1.xml").as_deref(),
+        Some(item)
+    );
+}
+
+#[test]
+fn a_kept_part_whose_first_word_tag_is_a_child_keeps_its_root() {
+    let item = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><!-- <w:note/> --><data xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du"><w:p w16du:dateUtc="2026-10-01T13:00:00Z"/></data>"#;
+    let docx = written_with_custom_part(item);
+    assert_eq!(
+        part_string(&docx, "customXml/item1.xml").as_deref(),
+        Some(item)
+    );
+}

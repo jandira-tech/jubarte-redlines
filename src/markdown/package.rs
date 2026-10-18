@@ -322,8 +322,14 @@ pub(super) fn assemble(
         else {
             continue;
         };
-        let start = source.find("<w:").expect("a Word part root");
-        let end = start + source[start..].find('>').expect("a root start tag");
+        // Only a WordprocessingML root takes the declaration. A part kept
+        // from the reference with another root (custom XML) stays as it is.
+        let Some((start, end)) = root_start_tag(&source) else {
+            continue;
+        };
+        if !source[start..].starts_with("<w:") || source[..end].ends_with('/') {
+            continue;
+        }
         if !source[start..end].contains("xmlns:w16du=") {
             source.insert_str(
                 end,
@@ -416,6 +422,26 @@ fn unique_revision_ids(package: &mut PartFs, markdown: &str, warnings: &mut Vec<
             &part,
             crate::xmllinq::serialize::serialize_document(&dom, document).into_bytes(),
         );
+    }
+}
+
+/// The byte range of the root element's start tag, `<` up to its `>`: the
+/// first tag after the declaration, comments and doctype.
+fn root_start_tag(source: &str) -> Option<(usize, usize)> {
+    let mut at = 0;
+    loop {
+        let start = at + source[at..].find('<')?;
+        let rest = &source[start..];
+        let close = if rest.starts_with("<!--") {
+            "-->"
+        } else if rest.starts_with("<?") {
+            "?>"
+        } else if rest.starts_with("<!") {
+            ">"
+        } else {
+            return Some((start, start + rest.find('>')?));
+        };
+        at = start + rest.find(close)? + close.len();
     }
 }
 
