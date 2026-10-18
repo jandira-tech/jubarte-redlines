@@ -60,6 +60,11 @@ pub fn markdown_to_docx(
     markdown: &str,
     options: &DocxOptions<'_>,
 ) -> Result<WrittenDocx, MarkdownError> {
+    if options.critic
+        && let Some(error) = critic::legacy_attribution_error(markdown)
+    {
+        return Err(MarkdownError::Package(error));
+    }
     // A comment or change that names no author or date takes the file's
     // own (`author:`, `last_modified:`), before the options' defaults.
     let defaults = view_notes::file_defaults(markdown);

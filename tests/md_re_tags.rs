@@ -39,15 +39,12 @@ fn inserted_paragraph_mark_is_not_text() {
 }
 
 #[test]
-fn old_attribution_wrapper_is_a_comment() {
-    let bytes = package("{++new++}{>>r7 @AL<<}");
-    let xml = part_string(&bytes, "word/document.xml").unwrap();
-    assert!(xml.contains("commentReference"), "{xml}");
-    assert!(
-        part_string(&bytes, "word/comments.xml")
-            .unwrap()
-            .contains("r7 @AL")
-    );
+fn old_attribution_wrapper_is_refused() {
+    let error = markdown_to_docx("{++new++}{>>r7 @AL<<}", &DocxOptions::default())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("{>>r7 @AL<<}"), "{error}");
+    assert!(error.contains("{r7 @AL}"), "{error}");
 }
 
 #[test]

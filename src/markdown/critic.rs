@@ -277,6 +277,64 @@ pub(crate) fn change_regions(source: &str) -> Vec<ChangeRegion> {
     regions
 }
 
+/// Refuse a legacy attribution only at a change's attribution position.
+/// Complete comments, escaped openers and verbatim Markdown stay opaque.
+pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
+    let closers = Closers::new(source);
+    for (at, _) in source.match_indices("{>>") {
+        if escaped(source, at)
+            || closers.literal.verbatim_end(at).is_some()
+            || closers
+                .comments
+                .iter()
+                .any(|range| range.0 < at && at < range.1)
+        {
+            continue;
+        }
+        let before = source[..at].trim_end_matches(['*', '_', '`']);
+        let Some(close) = ["++}", "--}", "~~}"]
+            .into_iter()
+            .find(|close| before.ends_with(close))
+        else {
+            continue;
+        };
+        if escaped(source, before.len() - close.len()) {
+            continue;
+        }
+        let Some((payload, _)) = source[at + 3..].split_once("<<}") else {
+            continue;
+        };
+        let legacy_part = |part: &str| {
+            let id = part.split(' ').next().unwrap_or("");
+            let (story, id) = id
+                .rsplit_once('.')
+                .map_or((None, id), |(story, id)| (Some(story), id));
+            let numeric = id.strip_prefix('r').is_some_and(|ids| {
+                ids.split('+')
+                    .all(|id| !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit()))
+            });
+            numeric
+                && story.is_none_or(|story| {
+                    !story.is_empty()
+                        && story
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+                })
+                && super::view_notes::revision_tags(part).is_some_and(|tags| tags.len() == 1)
+        };
+        if !payload.split(" on ").all(legacy_part) {
+            continue;
+        }
+        let old = &source[at..at + 3 + payload.len() + 3];
+        let new = format!("{{{}}}", payload.replace(" on ", " re "));
+        let line = source[..at].bytes().filter(|&c| c == b'\n').count() + 1;
+        return Some(format!(
+            "line {line}: old attribution `{old}` is no longer supported; write `{new}`. A comment with that text is written `{{>>c1 @X: r1 @ASR<<}}`."
+        ));
+    }
+    None
+}
+
 /// [`encode`], plus a warning for every malformed delimiter that comes
 /// out text: an opener without its closer or separator, a closer that
 /// closed nothing.
