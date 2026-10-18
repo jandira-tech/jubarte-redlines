@@ -35,15 +35,18 @@ use std::collections::{HashMap, HashSet};
 use super::comments::{Seg, collect_segments, place_after_offset, place_before_offset};
 use crate::namespaces::W;
 use crate::opc::PartFs;
-use crate::xmllinq::{Dom, NodeId};
+use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Word's hidden last-edit bookmark: its Compare never writes one.
 const GO_BACK: &str = "_GoBack";
 
-/// One source bookmark: its name and `[start, end)` character interval in
-/// the source's text projection.
+type EndpointAttributes = Vec<(XName, String)>;
+
+/// One source range and its character interval in the source projection.
 struct Marker {
     name: String,
+    /// Permission endpoints retain every source attribute, including their ids.
+    permission: Option<(EndpointAttributes, EndpointAttributes)>,
     start: usize,
     end: usize,
     /// No text precedes the start in its paragraph. An empty bookmark there
@@ -82,7 +85,7 @@ fn paragraph_of(dom: &Dom, mut node: NodeId) -> Option<NodeId> {
 /// A name's second definition is left out. A start whose end is gone (it sat
 /// in tracked-deleted text, removed when revisions were accepted) closes
 /// where it starts, as Docxodus closes such an orphan.
-fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
+fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker>) {
     let Some(xml) = pkg.part_string(main) else {
         return (Vec::new(), Vec::new());
     };
@@ -92,7 +95,12 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
     let Some(body) = dom.root(d).map(|r| dom.element(r, &W::body()).unwrap_or(r)) else {
         return (Vec::new(), Vec::new());
     };
-    let (start, end, t) = (W::name("bookmarkStart"), W::name("bookmarkEnd"), W::t());
+    let (start, end) = if permission {
+        (W::name("permStart"), W::name("permEnd"))
+    } else {
+        (W::name("bookmarkStart"), W::name("bookmarkEnd"))
+    };
+    let t = W::t();
     let (id_attr, name_attr) = (W::name("id"), W::name("name"));
     let (col_first, col_last) = (W::name("colFirst"), W::name("colLast"));
     let mut text: Vec<char> = Vec::new();
@@ -115,7 +123,12 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
             continue;
         };
         if name == start {
-            let Some(bm) = dom.attribute(n, &name_attr).filter(|s| !s.is_empty()) else {
+            let Some(bm) = (if permission {
+                Some(id)
+            } else {
+                dom.attribute(n, &name_attr)
+            })
+            .filter(|s| !s.is_empty()) else {
                 continue;
             };
             if bm == GO_BACK || !names.insert(bm.to_string()) {
@@ -137,6 +150,7 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
                 });
             let marker = Marker {
                 name: bm.to_string(),
+                permission: permission.then(|| (dom.attributes(n), Vec::new())),
                 start: text.len(),
                 end: text.len(),
                 leads,
@@ -151,6 +165,9 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
         } else if name == end
             && let Some(mut marker) = open.remove(id)
         {
+            if let Some((_, attrs)) = &mut marker.permission {
+                *attrs = dom.attributes(n);
+            }
             marker.end = text.len();
             marker.end_leads = paragraph_of(&dom, n).is_some_and(|p| !with_text.contains(&p));
             marker.end_in_body = dom.parent(n) == Some(body) && dom.name_is(body, &W::body());
@@ -235,6 +252,16 @@ fn leave_foreign_controls(dom: &mut Dom, m: &Marker, start: NodeId, end: NodeId,
 
 /// The `w:bookmarkStart`/`w:bookmarkEnd` pair for `m` under `id`.
 fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
+    if let Some((start_attrs, end_attrs)) = &m.permission {
+        let start = dom.new_element(W::name("permStart"));
+        dom.set_attributes(start, start_attrs.clone());
+        let end = dom.new_element(W::name("permEnd"));
+        dom.set_attributes(end, end_attrs.clone());
+        if end_attrs.is_empty() {
+            dom.set_attribute_value(end, &W::id(), Some(&m.name));
+        }
+        return (start, end);
+    }
     let id = id.to_string();
     let start = dom.new_element(W::name("bookmarkStart"));
     dom.set_attribute_value(start, &W::name("id"), Some(&id));
@@ -444,8 +471,8 @@ pub fn carry_matching_bookmarks(
     author: &str,
     keep: impl Fn(&str) -> bool,
 ) {
-    let (a_text, mut a_marks) = extract(pkg1, main1);
-    let (b_text, mut b_marks) = extract(pkg2, main2);
+    let (a_text, mut a_marks) = extract(pkg1, main1, false);
+    let (b_text, mut b_marks) = extract(pkg2, main2, false);
     a_marks.retain(|m| keep(&m.name));
     b_marks.retain(|m| keep(&m.name));
     let (present, mut next_id) = settle_present_bookmarks(dom, result_root);
@@ -477,6 +504,36 @@ pub fn carry_matching_bookmarks(
         author,
         &mut next_id,
     );
+}
+
+/// Edit-only permission carry-over. Reuse bookmark projection and content-control
+/// boundaries, preferring the revised pair by id and retaining original-only
+/// pairs on the deleted side. Compare deliberately does not call this.
+pub(crate) fn carry_permissions(
+    dom: &mut Dom,
+    root: NodeId,
+    original: (&PartFs, &str),
+    revised: (&PartFs, &str),
+    author: &str,
+) {
+    let (a_text, a_marks) = extract(original.0, original.1, true);
+    let (b_text, b_marks) = extract(revised.0, revised.1, true);
+    let b_ids: HashSet<&str> = b_marks.iter().map(|m| m.name.as_str()).collect();
+    let present: HashSet<String> = dom
+        .descendants(root, Some(&W::name("permStart")))
+        .into_iter()
+        .filter_map(|n| dom.attribute(n, &W::id()).map(str::to_string))
+        .collect();
+    let b_new: Vec<&Marker> = b_marks
+        .iter()
+        .filter(|m| !present.contains(&m.name))
+        .collect();
+    let a_only: Vec<&Marker> = a_marks
+        .iter()
+        .filter(|m| !b_ids.contains(m.name.as_str()) && !present.contains(&m.name))
+        .collect();
+    inject_side(dom, root, (&b_text, &b_new), true, author, &mut 0);
+    inject_side(dom, root, (&a_text, &a_only), false, author, &mut 0);
 }
 
 #[cfg(test)]
@@ -513,6 +570,7 @@ mod tests {
             let container = dom.elements(owner, None)[0];
             let marker = Marker {
                 name: "Clause".into(),
+                permission: None,
                 start: if trailing_start { 3 } else { 0 },
                 end: if trailing_start { 6 } else { 3 },
                 leads: !trailing_start,

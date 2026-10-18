@@ -837,6 +837,7 @@ fn produce(
     {
         redline = sections::record_mid_changes(&redline, &base, &plan.author, &tx.date)?;
     }
+    redline = super::ranges::restore(&redline, &base, revised, &plan.author)?;
     if marked.is_some() {
         let (rewritten, fallbacks) = whole::rewrite(
             &redline,

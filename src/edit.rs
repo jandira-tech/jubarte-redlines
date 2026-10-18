@@ -46,6 +46,7 @@ mod origin;
 /// One preparation path for dry run and apply: the chosen primary bytes
 /// and the checks the serialized candidate passes (V2-08).
 pub mod prepared;
+mod ranges;
 pub mod record;
 /// Caller-specific, neutral review choices for revision-blocked edits.
 pub mod refusal;

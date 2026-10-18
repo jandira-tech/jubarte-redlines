@@ -616,6 +616,8 @@ it is Word-fatal), or one JSON object each with `--json`. `--repair` writes
 a copy with every repairable finding fixed and lists what remains;
 `--original` with `--author` audits that every text change against the
 original is a revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`).
+The `edits` rules also report permission endpoints lost from any part
+(`PERMISSION_RANGE_DROPPED`); losing an editable region is not Word-invalid.
 `--rules a11y,style,structure` adds accessibility, style and structure
 findings (heading skips, images without alt text, tables without a header
 row, literal bullets, stale caches), each located by paragraph id;

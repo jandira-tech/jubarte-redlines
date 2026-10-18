@@ -2196,7 +2196,8 @@ fn story_part(id: &str) -> String {
 /// `author`. Rejecting that author's changes must give back `original`'s
 /// text, body and stories alike; any residue is an `UNTRACKED_EDIT` finding
 /// at its paragraph id, and a change by anyone else is a `FOREIGN_AUTHOR`
-/// finding.
+/// finding. Missing original permission endpoints are reported as
+/// `PERMISSION_RANGE_DROPPED`, including in headers, footers and notes.
 ///
 /// # Errors
 ///
@@ -2207,6 +2208,7 @@ pub fn audit_tracked(
     author: &str,
 ) -> Result<Vec<Finding>, ValidateError> {
     let mut out = Vec::new();
+    check_dropped_permissions(&PartFs::open(original)?, &PartFs::open(edited)?, &mut out);
     let listed = list_changes(edited)?;
     for c in listed
         .iter()
@@ -2261,6 +2263,51 @@ pub fn audit_tracked(
         }
     }
     Ok(as_edits(out))
+}
+
+/// Permission exceptions are edit fidelity, not Word validity. Check both
+/// endpoints by id in every XML part, so dropping only one is visible too.
+fn check_dropped_permissions(original: &PartFs, edited: &PartFs, out: &mut Vec<Finding>) {
+    for part in xml_parts(original) {
+        if original
+            .part_string(&part)
+            .is_none_or(|xml| !xml.contains("permStart") && !xml.contains("permEnd"))
+        {
+            continue;
+        }
+        let Some((before, root)) = parse_part(original, &part) else {
+            continue;
+        };
+        let after = parse_part(edited, &part);
+        for kind in ["permStart", "permEnd"] {
+            let name = W::name(kind);
+            let mut remaining: HashMap<String, usize> = HashMap::new();
+            if let Some((dom, root)) = &after {
+                for n in dom.descendants(*root, Some(&name)) {
+                    if let Some(id) = dom.attribute(n, &W::id()) {
+                        *remaining.entry(id.to_string()).or_default() += 1;
+                    }
+                }
+            }
+            for n in before.descendants(root, Some(&name)) {
+                let Some(id) = before.attribute(n, &W::id()) else {
+                    continue;
+                };
+                if let Some(count) = remaining.get_mut(id)
+                    && *count > 0
+                {
+                    *count -= 1;
+                    continue;
+                }
+                out.push(Finding::new(
+                    "PERMISSION_RANGE_DROPPED",
+                    &part,
+                    element_path(&before, n),
+                    format!("original w:{kind} with w:id={id} is missing from the edited file"),
+                ));
+            }
+        }
+    }
 }
 
 /// [`audit_tracked`]'s findings belong to the `edits` set and fail a run.
