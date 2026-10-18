@@ -724,6 +724,9 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
     let action = &typed.action;
     let command = format!("edit {}", action.name());
     let source = read(action.file());
+    if let Ok(source) = &source {
+        super::warn_nested_text_boxes(source);
+    }
     let receipt = match source.as_ref() {
         Ok(source) => prepare_and_publish(action, source, &command).unwrap_or_else(|error| {
             let operational = matches!(

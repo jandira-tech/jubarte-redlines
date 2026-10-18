@@ -804,6 +804,7 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
 /// `read --tables`: each body table as a grid.
 fn run_read_tables(file: &Path) -> Result<(), String> {
     let bytes = read_word(file)?;
+    warn_nested_text_boxes(&bytes);
     let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
     write_stdout(jubarte::inspect::tables_text(&tables))
 }
@@ -860,6 +861,7 @@ fn run_for_edit(
         }
     };
     let bytes = read_word(file).map_err(ConvertFailure::from)?;
+    warn_nested_text_boxes(&bytes);
     let result = for_edit(&bytes, &request).map_err(refused)?;
     let json =
         serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
@@ -907,9 +909,11 @@ fn run_text(
         };
         check_output(&out)?;
         let bytes = read_word(file)?;
+        warn_nested_text_boxes(&bytes);
         return write_output(&out, Produced::Docx(&bytes));
     }
     let bytes = read_word(file)?;
+    warn_nested_text_boxes(&bytes);
     if args.json {
         let snapshot = jubarte::markdown::read_snapshot(
             &bytes,
@@ -935,6 +939,20 @@ fn selection(args: &ReadArgs) -> Result<Option<jubarte::markdown::Select>, Strin
         args.changed,
         args.by.as_deref(),
     )
+}
+
+/// Report the first Word-fatal nest once per invocation, before editing or
+/// selecting content. Ring-1 owns branch selection, names and the diagnosis.
+fn warn_nested_text_boxes(bytes: &[u8]) {
+    let Ok(package) = jubarte::opc::PartFs::open(bytes) else {
+        return;
+    };
+    if let Some(finding) = jubarte::validate::ring1(&package)
+        .into_iter()
+        .find(|finding| finding.code == "NESTED_TEXT_BOX")
+    {
+        eprintln!("warning: {}", finding.message);
+    }
 }
 
 /// The agent view of `bytes`, its warnings said on stderr; `source` is the
@@ -1929,6 +1947,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         }
         (1u8, message)
     })?;
+    warn_nested_text_boxes(&source);
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
@@ -2658,6 +2677,9 @@ fn run_convert_any(
         }
     }
     let converted = legacy.then_some(bytes.as_slice());
+    if from == Format::Docx && to == Format::Md {
+        warn_nested_text_boxes(&bytes);
+    }
     let render = RenderArgs::default();
     // Where a Word, Markdown or JSON output goes: -o, else FILE.<ext>.
     let output_at = |kind: Format| {

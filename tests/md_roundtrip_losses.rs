@@ -1601,6 +1601,213 @@ fn nested_box_docx(mismatch: bool) -> Vec<u8> {
     )
 }
 
+fn nested_warning_run(args: &[&str], probe: char) -> std::process::Output {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = if probe == 'B' {
+        text_box_docx()
+    } else {
+        nested_box_docx(false)
+    };
+    let bytes = if probe == 'D' {
+        use jubarte::{
+            namespaces::{MC, W},
+            xmllinq::Dom,
+        };
+        let mut dom = Dom::new();
+        let root = dom.parse_xdocument(&part(&bytes, "word/document.xml"));
+        let outer = dom.descendants(root, Some(&W::name("txbxContent")))[0];
+        let inner = dom.descendants(outer, Some(&MC::name("AlternateContent")))[0];
+        dom.remove(inner);
+        replace_entry(
+            &bytes,
+            "word/document.xml",
+            dom.serialize_document(root).as_bytes(),
+        )
+    } else {
+        bytes
+    };
+    let xml = part(&bytes, "word/document.xml").replace(
+        "<w:body>",
+        "<w:body><w:p><w:r><w:t>Alice and Carol Diaz</w:t></w:r></w:p>",
+    );
+    std::fs::write(
+        dir.path().join("in.docx"),
+        replace_entry(&bytes, "word/document.xml", xml.as_bytes()),
+    )
+    .unwrap();
+    Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(args)
+        .current_dir(dir.path())
+        .output()
+        .unwrap()
+}
+
+fn assert_nested_warning(args: &[&str], code: i32) {
+    let output = nested_warning_run(args, 'A');
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(code), "{args:?}: {stderr}");
+    let warnings = stderr
+        .lines()
+        .filter(|line| line.contains("Word cannot open this document"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        warnings,
+        [
+            "warning: text box Text Box 7 holds another text box (Text Box 9); Word cannot open this document"
+        ],
+        "{args:?}: {stderr}"
+    );
+}
+
+#[test]
+fn nested_box_read_warns_once() {
+    assert_nested_warning(&["read", "in.docx", "--no-page-markers"], 0);
+}
+
+#[test]
+fn nested_box_convert_to_md_warns_once() {
+    assert_nested_warning(
+        &["convert", "in.docx", "--to", "md", "--no-page-markers"],
+        0,
+    );
+}
+
+#[test]
+fn nested_box_convert_to_commonmark_warns_once() {
+    assert_nested_warning(
+        &[
+            "convert",
+            "in.docx",
+            "--to",
+            "md",
+            "--commonmark",
+            "--no-page-markers",
+        ],
+        0,
+    );
+}
+
+#[test]
+fn nested_box_edit_warns_once() {
+    assert_nested_warning(
+        &[
+            "edit",
+            "in.docx",
+            "-p",
+            "p0",
+            "--content",
+            "Bob",
+            "--author",
+            "Alice",
+        ],
+        0,
+    );
+}
+
+#[test]
+fn nested_box_refused_edit_warns_once() {
+    assert_nested_warning(
+        &[
+            "edit",
+            "in.docx",
+            "-p",
+            "p999",
+            "--content",
+            "Bob",
+            "--author",
+            "Alice",
+        ],
+        3,
+    );
+}
+
+#[test]
+fn nested_box_dry_run_warns_once() {
+    assert_nested_warning(
+        &[
+            "edit",
+            "in.docx",
+            "-p",
+            "p0",
+            "--content",
+            "Bob",
+            "--author",
+            "Alice",
+            "--dry-run",
+        ],
+        0,
+    );
+}
+
+#[test]
+fn nested_box_typed_edit_warns_once() {
+    assert_nested_warning(
+        &[
+            "edit",
+            "replace",
+            "in.docx",
+            "--find",
+            "Alice and Carol Diaz",
+            "--text",
+            "Bob",
+            "--track",
+            "off",
+            "-o",
+            "out.docx",
+        ],
+        0,
+    );
+}
+
+#[test]
+fn nested_box_edit_template_warns_once() {
+    assert_nested_warning(&["edit", "template", "in.docx", "--dry-run", "--jsonl"], 0);
+}
+
+#[test]
+fn nested_box_read_output_warns_once() {
+    assert_nested_warning(&["read", "in.docx", "--no-page-markers", "-o", "out.md"], 0);
+}
+
+#[test]
+fn nested_box_read_for_edit_warns_once() {
+    assert_nested_warning(&["read", "in.docx", "--for-edit"], 0);
+}
+
+#[test]
+fn nested_box_read_tables_warns_once() {
+    assert_nested_warning(&["read", "in.docx", "--tables"], 0);
+}
+
+#[test]
+fn single_box_commands_do_not_warn_about_nesting() {
+    for args in [
+        vec!["read", "in.docx", "--no-page-markers"],
+        vec!["convert", "in.docx", "--to", "md", "--no-page-markers"],
+        vec![
+            "edit",
+            "in.docx",
+            "-p",
+            "p0",
+            "--content",
+            "Bob",
+            "--author",
+            "Alice",
+            "--dry-run",
+        ],
+    ] {
+        let output = nested_warning_run(&args, 'B');
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("Word cannot open this document")
+        );
+    }
+}
+
 fn directly_owned_box_words(xml: &str) -> Vec<String> {
     use jubarte::{namespaces::W, xmllinq::Dom};
     let mut dom = Dom::new();
@@ -1798,4 +2005,33 @@ fn nested_box_duplicate_token_refuses() {
         write_box_view(&view.replace("![Text Box 9][d2]", "![Text Box 9][d2]![Text Box 9][d2]"));
     assert!(result.is_err(), "a nested token has exactly one owner");
     assert!(result.unwrap_err().to_string().contains("d2"));
+}
+
+#[test]
+fn fallback_only_box_commands_do_not_warn_about_nesting() {
+    for args in [
+        vec!["read", "in.docx", "--no-page-markers"],
+        vec!["convert", "in.docx", "--to", "md", "--no-page-markers"],
+        vec![
+            "edit",
+            "in.docx",
+            "-p",
+            "p0",
+            "--content",
+            "Bob",
+            "--author",
+            "Alice",
+            "--dry-run",
+        ],
+    ] {
+        let output = nested_warning_run(&args, 'D');
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("Word cannot open this document")
+        );
+    }
 }
