@@ -182,37 +182,38 @@ fn escaped_author(part: &str) -> String {
     out
 }
 
-/// Two attributions join as neighbours: equal notes, or two tags of one
-/// author in one story (their ids differ by design).
-fn same_author(a: Option<&str>, b: Option<&str>) -> bool {
+/// Two attributions can pair: equal notes, or two tags of one author in
+/// one story with equal inline dates (their ids differ by design). A single
+/// substitution tag cannot represent two different timestamps.
+fn pairable_attribution(a: Option<&str>, b: Option<&str>) -> bool {
     use super::agent::{handle_of, split_tag};
     match (tag(a), tag(b)) {
         (Some(ta), Some(tb)) if a.map(sentinel) == b.map(sentinel) => {
             let (own_a, own_b) = (tag_parts(ta).0, tag_parts(tb).0);
             let same = if a.is_some_and(|by| sentinel(by) == PLAIN) {
-                let author = |tag| {
+                let attribution = |tag| {
                     crate::markdown::view_notes::plain_revision(&super::agent::format_plain_tag(
                         tag,
                     ))
-                    .map(|part| part.author)
+                    .map(|part| (part.author, part.date))
                 };
-                author(own_a)
-                    .zip(author(own_b))
+                attribution(own_a)
+                    .zip(attribution(own_b))
                     .is_some_and(|(a, b)| a == b)
             } else {
                 handle_of(own_a)
                     .zip(handle_of(own_b))
                     .is_some_and(|(a, b)| a == b)
             };
-            same && split_tag(own_a).0 == split_tag(own_b).0
+            same && tag_parts(ta).1 == tag_parts(tb).1 && split_tag(own_a).0 == split_tag(own_b).0
         }
         _ => a == b,
     }
 }
 
 /// The tags of two neighbours or of a substitution's two sides (whole
-/// attributions, sentinel and all), joined, keeping the first inline
-/// timestamp.
+/// attributions, sentinel and all), joined, keeping their shared inline
+/// timestamp. The pairing guard requires equal dates.
 fn join_tagged(a: &str, b: &str) -> String {
     let kind = sentinel(a);
     let (ta, da) = tag_parts(tag(Some(a)).unwrap_or(a));
@@ -883,7 +884,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
             ) if outer_of(new_by.as_deref()).is_none()
-                && same_author(old_by.as_deref(), new_by.as_deref())
+                && pairable_attribution(old_by.as_deref(), new_by.as_deref())
                 && new.iter().any(Node::has_content) =>
             {
                 *ids += 1;
@@ -896,7 +897,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 match (old_by.as_deref(), new_by.as_deref()) {
                     (Some(a), Some(b))
                         if tag(Some(a)).is_some()
-                            && same_author(old_by.as_deref(), new_by.as_deref()) =>
+                            && pairable_attribution(old_by.as_deref(), new_by.as_deref()) =>
                     {
                         let joined = join_tagged(a, b);
                         attribution(out, Some(&joined), id);

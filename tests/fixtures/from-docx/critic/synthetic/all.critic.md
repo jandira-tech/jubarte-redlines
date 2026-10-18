@@ -1,6 +1,6 @@
 # Heavy on everything
 
-{--_The_--}{r0 Ana Lima (2026-09-01T00:07:00Z)}{++notice++}{r1 Dev Patel (2026-09-01T00:14:00Z)} warranty {~~period~>supplier~~}{r2 Ana Lima (2026-09-01T00:21:00Z); r3 Ana Lima (2026-09-01T00:28:00Z)} is **twelve**{== months from delivery.==}{>>Ana Lima (2026-09-01T00:35:00Z): Legal to review.<<}
+{--_The_--}{r0 Ana Lima (2026-09-01T00:07:00Z)}{++notice++}{r1 Dev Patel (2026-09-01T00:14:00Z)} warranty {--period--}{r2 Ana Lima (2026-09-01T00:21:00Z)}{++supplier++}{r3 Ana Lima (2026-09-01T00:28:00Z)} is **twelve**{== months from delivery.==}{>>Ana Lima (2026-09-01T00:35:00Z): Legal to review.<<}
 
 Either party may end this agreement with ninety days{== written notice{++ without undue delay++}{r4 Bo Chen (2026-09-01T00:42:00Z)}.==}{>>Carla Duarte (2026-09-01T00:49:00Z): Client asked for this.<<}
 
@@ -28,7 +28,7 @@ Either party may{-- end--}{r38 Dev Patel (2026-09-01T07:00:00Z)}{-- --}{r39 Ana 
 
 The ¶{r46 Bo Chen (2026-09-01T08:38:00Z)}
 
-buyer may {~~inspect~>supplier~~}{r47 Ana Lima (2026-09-01T08:10:00Z); r48 Ana Lima (2026-09-01T08:17:00Z)}{== the==}{>>Ana Lima (2026-09-01T08:45:00Z): Check the defined term.<<} goods before accepting{++ at its own cost++}{r49 Ana Lima (2026-09-01T08:24:00Z)} them{++ unless agreed otherwise++}{r50 Ana Lima (2026-09-01T08:31:00Z)}.{>>Bo Chen (2026-09-01T08:52:00Z): Client asked for this.<<}
+buyer may {--inspect--}{r47 Ana Lima (2026-09-01T08:10:00Z)}{++supplier++}{r48 Ana Lima (2026-09-01T08:17:00Z)}{== the==}{>>Ana Lima (2026-09-01T08:45:00Z): Check the defined term.<<} goods before accepting{++ at its own cost++}{r49 Ana Lima (2026-09-01T08:24:00Z)} them{++ unless agreed otherwise++}{r50 Ana Lima (2026-09-01T08:31:00Z)}.{>>Bo Chen (2026-09-01T08:52:00Z): Client asked for this.<<}
 
 The supplier{++ at its own cost++}{r51 Carla Duarte (2026-09-01T08:59:00Z)}{== may subcontract only _with_==}{>>Ana Lima (2026-09-01T09:13:00Z): Client asked for this.<<} the buyer's prior{++ in good faith++}{r52 Dev Patel (2026-09-01T09:06:00Z)} consent.
 
