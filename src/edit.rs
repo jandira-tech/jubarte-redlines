@@ -1304,7 +1304,7 @@ fn resolve_selected(
             policy == RemovedAnchorComments::Keep,
         )
         .map_err(change_err)?;
-        comments.extend(removed, kept);
+        comments.extend(removed, kept, crate::revision_processor::Resolution::Accept);
         bytes = document;
         resolved.accepted = accept;
     }
@@ -1322,7 +1322,7 @@ fn resolve_selected(
             policy == RemovedAnchorComments::Keep,
         )
         .map_err(change_err)?;
-        comments.extend(removed, kept);
+        comments.extend(removed, kept, crate::revision_processor::Resolution::Reject);
         bytes = document;
         resolved.rejected = reject;
     }
@@ -1398,7 +1398,7 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
                 plan.removed_anchor_comments == RemovedAnchorComments::Keep,
             )
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-            comment_changes.extend(removed, kept);
+            comment_changes.extend(removed, kept, resolution);
             let reopened = Opened::open(&flattened).map_err(open_error)?;
             (flattened, reopened, true)
         }

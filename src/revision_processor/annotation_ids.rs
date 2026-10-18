@@ -20,6 +20,10 @@ use crate::opc::PartFs;
 
 /// Renumber the bookmarks and comments of `story_parts` (main first).
 pub(super) fn renumber(pkg: &mut PartFs, story_parts: &[String]) -> HashMap<String, String> {
+    renumber_with_map(pkg, story_parts).comments
+}
+
+pub(super) fn renumber_with_map(pkg: &mut PartFs, story_parts: &[String]) -> AnnotationIds {
     let id = W::id();
     let names = [
         "bookmarkStart",
@@ -32,6 +36,7 @@ pub(super) fn renumber(pkg: &mut PartFs, story_parts: &[String]) -> HashMap<Stri
     let [b_start, b_end, c_start, c_end, c_ref] = &names;
     let mut next = 0usize;
     let mut comment_ids: HashMap<String, String> = HashMap::new();
+    let mut bookmarks = HashMap::new();
     for part in story_parts {
         let Some(mut s) = Parsed::load(pkg, part) else {
             continue;
@@ -82,23 +87,114 @@ pub(super) fn renumber(pkg: &mut PartFs, story_parts: &[String]) -> HashMap<Stri
                 changed = true;
             }
         }
+        bookmarks.insert(part.clone(), bookmark_ids);
         if changed {
             s.store(pkg);
         }
     }
-    if comment_ids.iter().all(|(old, new)| old == new) {
-        return comment_ids;
+    let ids = AnnotationIds {
+        comments: comment_ids,
+        bookmarks,
+        next,
+    };
+    if ids.comments.iter().all(|(old, new)| old == new) {
+        return ids;
     }
     let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
-        return comment_ids;
+        return ids;
     };
     for c in comments.w("comment") {
         let old = comments.dom.attribute(c, &id).unwrap_or("");
-        if let Some(new) = comment_ids.get(old) {
+        if let Some(new) = ids.comments.get(old) {
             let new = new.clone();
             comments.dom.set_attribute_value(c, &id, Some(&new));
         }
     }
     comments.store(pkg);
-    comment_ids
+    ids
+}
+
+/// One allocation, shared by the edited document and its tracked replay.
+#[derive(Default)]
+pub(crate) struct AnnotationIds {
+    pub(crate) comments: HashMap<String, String>,
+    bookmarks: HashMap<String, HashMap<String, String>>,
+    next: usize,
+}
+
+impl AnnotationIds {
+    /// Reserve ids for annotations retained only in the replay's deleted
+    /// content. They must not collide with the working document's new ids.
+    pub(crate) fn include(&mut self, pkg: &PartFs) {
+        for (part, styles) in super::revision_bearing_parts(pkg) {
+            if styles {
+                continue;
+            }
+            let Some(s) = Parsed::load(pkg, &part) else {
+                continue;
+            };
+            for n in s.dom.descendants(s.root, None) {
+                let name = s.dom.name(n);
+                let map = if name == Some(W::name("bookmarkStart")) {
+                    self.bookmarks.entry(part.clone()).or_default()
+                } else if name == Some(W::name("commentRangeStart"))
+                    || name == Some(W::name("commentReference"))
+                {
+                    &mut self.comments
+                } else {
+                    continue;
+                };
+                let Some(old) = s.dom.attribute(n, &W::id()) else {
+                    continue;
+                };
+                map.entry(old.into()).or_insert_with(|| {
+                    let id = self.next.to_string();
+                    self.next += 1;
+                    id
+                });
+            }
+        }
+    }
+
+    /// Apply the allocation, without allocating or renumbering a second time.
+    pub(crate) fn apply(&self, pkg: &mut PartFs) {
+        let mut parts = super::revision_bearing_parts(pkg);
+        parts.push((FAMILY[0].0.into(), false));
+        for (part, styles) in parts {
+            if styles {
+                continue;
+            }
+            let Some(mut s) = Parsed::load(pkg, &part) else {
+                continue;
+            };
+            let mut changed = false;
+            for n in s.dom.descendants(s.root, None) {
+                let Some(name) = s.dom.name(n) else {
+                    continue;
+                };
+                let map = match name.local_name() {
+                    "bookmarkStart" | "bookmarkEnd" if name.namespace_name() == W::URI => {
+                        self.bookmarks.get(&part)
+                    }
+                    "commentRangeStart" | "commentRangeEnd" | "commentReference" | "comment"
+                        if name.namespace_name() == W::URI =>
+                    {
+                        Some(&self.comments)
+                    }
+                    _ => None,
+                };
+                let old = s.dom.attribute(n, &W::id()).unwrap_or("");
+                if let Some(new) = map.and_then(|map| map.get(old))
+                    && new != old
+                {
+                    let new = new.clone();
+                    s.dom.set_attribute_value(n, &W::id(), Some(&new));
+                    changed = true;
+                }
+            }
+            if changed {
+                s.store(pkg);
+            }
+        }
+    }
 }

@@ -101,6 +101,7 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
     );
     let order = dom.descendants(root, None);
     let mut groups: Vec<(NodeId, Vec<String>)> = Vec::new();
+    let mut destinations = Vec::new();
     for start in dom.descendants(root, Some(&W::name("commentRangeStart"))) {
         let Some(id) = dom
             .attribute(start, &W::id())
@@ -133,8 +134,56 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
             }
             boundary = parent;
         }
-        if dom.parent(boundary).is_none() {
+        let Some(paragraph) = dom.parent(boundary) else {
             continue;
+        };
+        // A row/table is dropped before its children are visited, and a
+        // deleted cell may be dropped or merged. Rescue outside the outermost
+        // such container, never into another paragraph that is going too.
+        let destination = removed_container(dom, paragraph).and_then(|container| {
+            let at = order.iter().position(|&n| n == container)?;
+            let survives =
+                |n: NodeId| dom.name(n) == Some(W::p()) && removed_container(dom, n).is_none();
+            order[..at]
+                .iter()
+                .rev()
+                .copied()
+                .find(|&n| survives(n))
+                .map(|p| (p, false))
+                .or_else(|| {
+                    order[at + 1..]
+                        .iter()
+                        .copied()
+                        .find(|&n| survives(n))
+                        .map(|p| (p, true))
+                })
+        });
+        if removed_container(dom, paragraph).is_some() && destination.is_none() {
+            continue;
+        }
+        if let Some((paragraph, at_start)) = destination {
+            // A temporary paragraph child provides the same insertion point
+            // used by an in-paragraph collapse. pPr must remain first.
+            if let Some((_, point)) = destinations
+                .iter()
+                .find(|(key, _)| *key == (paragraph, at_start))
+            {
+                boundary = *point;
+            } else {
+                let point = dom.new_element(W::r());
+                if at_start
+                    && let Some(first) = dom
+                        .elements(paragraph, None)
+                        .into_iter()
+                        .find(|&n| dom.name(n) != Some(W::p_pr()))
+                {
+                    dom.add_before_self(first, point);
+                } else {
+                    dom.add(paragraph, point);
+                }
+                destinations.push(((paragraph, at_start), point));
+                boundary = point;
+            }
         }
         if let Some((_, ids)) = groups.iter_mut().find(|(at, _)| *at == boundary) {
             ids.push(id);
@@ -179,7 +228,28 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
         dom.remove(point);
         kept.extend(ids);
     }
+    for (_, point) in destinations {
+        dom.remove(point);
+    }
     kept
+}
+
+/// The outermost container removed by the trailing accept pass. Rejection
+/// reverses ins/del (including row and cell marks) before this scan.
+fn removed_container(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    let mut removed = None;
+    let mut at = Some(node);
+    while let Some(n) = at {
+        let name = dom.name(n);
+        if (name == Some(W::tr()) && super::has_path(dom, n, &W::tr_pr(), &W::del()))
+            || (name == Some(W::tc()) && super::has_path(dom, n, &W::tc_pr(), &W::cell_del()))
+            || (name == Some(W::tbl()) && super::table_rows_all_deleted(dom, n))
+        {
+            removed = Some(n);
+        }
+        at = dom.parent(n);
+    }
+    removed
 }
 
 /// A reference-only run goes with its marker; a run containing other content

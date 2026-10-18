@@ -15,6 +15,9 @@ pub struct RemovedComment {
     pub author: String,
     /// Removed replies, in comment order.
     pub replies: Vec<String>,
+    /// The pass that removed this thread; presentation metadata, not a source id.
+    #[serde(skip)]
+    pub decision: Option<String>,
 }
 
 /// A thread rescued onto an empty anchor by an edit plan.
@@ -26,24 +29,46 @@ pub struct KeptComment {
     pub replies: Vec<String>,
     /// The new anchor kind (`empty`).
     pub anchor: String,
+    /// Published comment id, for resolving the anchor through the shared map.
+    #[serde(skip)]
+    pub written_id: Option<u32>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct AnchorChanges {
     pub removed: Vec<String>,
     pub kept: Vec<String>,
+    decisions: std::collections::HashMap<String, String>,
 }
 
 impl AnchorChanges {
-    pub fn extend(&mut self, removed: Vec<String>, kept: Vec<String>) {
+    pub fn extend(
+        &mut self,
+        removed: Vec<String>,
+        kept: Vec<String>,
+        resolution: crate::revision_processor::Resolution,
+    ) {
+        let decision = match resolution {
+            crate::revision_processor::Resolution::Accept => "acceptance",
+            crate::revision_processor::Resolution::Reject => "rejection",
+        };
+        for id in &removed {
+            self.decisions.insert(id.clone(), decision.into());
+        }
         self.removed.extend(removed);
         self.kept.extend(kept);
+        // Rescue is provisional until every selected and blanket pass finishes.
+        self.kept.retain(|id| !self.removed.contains(id));
     }
 
     pub fn records(
         &self,
         source: &[u8],
     ) -> Result<(Vec<RemovedComment>, Vec<KeptComment>), super::EditError> {
+        assert!(
+            self.removed.iter().all(|id| !self.kept.contains(id)),
+            "a comment cannot be both removed and kept"
+        );
         if self.removed.is_empty() && self.kept.is_empty() {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -87,6 +112,7 @@ impl AnchorChanges {
                 id: format!("c{}", c.id),
                 author: c.author.clone(),
                 replies,
+                decision: self.decisions.get(&c.id.to_string()).cloned(),
             })
             .collect();
         let kept = groups(&self.kept)
@@ -95,41 +121,52 @@ impl AnchorChanges {
                 id: format!("c{}", c.id),
                 replies,
                 anchor: "empty".into(),
+                written_id: None,
             })
             .collect();
         Ok((removed, kept))
     }
 }
 
-/// Settlement retains snapshot ids until all operations and tracked replays
-/// finish. Renumber only revision-free outputs, and report newly written ids.
-/// Thread settlement receipts always keep their source ids.
-pub(super) fn renumber_outputs(
+/// Renumber the revision-free working document once, before deriving outputs.
+/// Replay uses this allocation, never its own annotation walk.
+pub(super) fn renumber_working(
     clean: &mut Vec<u8>,
-    redline: &mut Vec<u8>,
-    report: &mut super::EditReport,
-) -> Result<(), super::EditError> {
-    fn renumber(
-        bytes: &mut Vec<u8>,
-    ) -> Result<std::collections::HashMap<String, String>, super::EditError> {
-        let mut pkg = crate::opc::PartFs::open(bytes)
-            .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
-        let Some(ids) = crate::revision_processor::renumber_settled_annotations(&mut pkg) else {
-            return Ok(std::collections::HashMap::new());
-        };
-        *bytes = pkg
-            .to_zip()
-            .map_err(|e| super::err("PACKAGE_WRITE", None, e.to_string()))?;
-        Ok(ids)
+    settled: bool,
+) -> Result<Option<crate::revision_processor::AnnotationIds>, super::EditError> {
+    if !settled {
+        return Ok(None);
     }
-    renumber(clean)?;
-    let ids = renumber(redline)?;
+    let mut pkg = crate::opc::PartFs::open(clean)
+        .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
+    let Some(ids) = crate::revision_processor::renumber_settled_annotations(&mut pkg) else {
+        return Ok(None);
+    };
+    *clean = pkg
+        .to_zip()
+        .map_err(|e| super::err("PACKAGE_WRITE", None, e.to_string()))?;
+    Ok(Some(ids))
+}
+
+pub(super) fn remap_report(
+    report: &mut super::EditReport,
+    ids: Option<&crate::revision_processor::AnnotationIds>,
+) {
+    let Some(ids) = ids else {
+        return;
+    };
     for outcome in &mut report.operations {
         if let Some(id) = outcome.comment_id
-            && let Some(new) = ids.get(&id.to_string())
+            && let Some(new) = ids.comments.get(&id.to_string())
         {
             outcome.comment_id = new.parse().ok();
         }
     }
-    Ok(())
+    for kept in &mut report.kept_comments {
+        kept.written_id = kept
+            .id
+            .strip_prefix('c')
+            .and_then(|id| ids.comments.get(id))
+            .and_then(|id| id.parse().ok());
+    }
 }

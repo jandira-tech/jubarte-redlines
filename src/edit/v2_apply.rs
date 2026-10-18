@@ -168,7 +168,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
                     == super::RemovedAnchorComments::Keep,
             )
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-            comment_changes.extend(removed, kept);
+            comment_changes.extend(removed, kept, resolution);
             if has_history(&bytes)? {
                 return Err(err(
                     "UNSUPPORTED_REVISIONS",
@@ -224,7 +224,10 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
             paragraphs.output_states,
         )
     } else {
-        let report = tx.report(true);
+        let mut clean = clean;
+        let ids = super::comment_settlement::renumber_working(&mut clean, tx.origin.is_some())?;
+        let mut report = tx.report(true);
+        super::comment_settlement::remap_report(&mut report, ids.as_ref());
         let base = tx.paragraph_nodes.clone();
         let output = tx.paragraph_walk();
         (
@@ -245,7 +248,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     // on, and pin that count at zero (#1087).
     #[cfg(test)]
     crate::inspect::reset_reopened_packages();
-    let (mut clean, mut redline, correspondence) = if effect {
+    let (clean, redline, correspondence) = if effect {
         // The primary's final-view dispositions are read off the DOM that
         // produced those bytes — the replay's own scan for a tracked
         // primary (its DOM dies with the emission), the transaction's own
@@ -302,9 +305,6 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
         &plan.author,
         &insertion_origins,
     )?;
-    if selected != source || working != selected {
-        super::comment_settlement::renumber_outputs(&mut clean, &mut redline, &mut report)?;
-    }
     Ok(V2EditResult {
         clean,
         redline,

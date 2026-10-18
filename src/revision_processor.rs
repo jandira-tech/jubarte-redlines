@@ -18,6 +18,7 @@
 //! accepted / rejected projections before correlating them.
 
 mod annotation_ids;
+pub(crate) use annotation_ids::AnnotationIds;
 mod bookmarks;
 pub(crate) mod comments;
 mod notes;
@@ -3715,9 +3716,7 @@ fn resolve_with_comments(
 
 /// Canonicalize annotation ids after every operation of an edit plan has run.
 /// Pending revisions keep their snapshot ids, just as selective settlement does.
-pub(crate) fn renumber_settled_annotations(
-    pkg: &mut crate::opc::PartFs,
-) -> Option<std::collections::HashMap<String, String>> {
+pub(crate) fn renumber_settled_annotations(pkg: &mut crate::opc::PartFs) -> Option<AnnotationIds> {
     let parts = revision_bearing_parts(pkg);
     if parts.iter().any(|(part, _)| {
         comments::Parsed::load(pkg, part)
@@ -3725,7 +3724,7 @@ pub(crate) fn renumber_settled_annotations(
     }) {
         return None;
     }
-    Some(annotation_ids::renumber(pkg, &story_parts(&parts)))
+    Some(annotation_ids::renumber_with_map(pkg, &story_parts(&parts)))
 }
 
 /// Rename every frozen revision element under `root` back into `w:`; true

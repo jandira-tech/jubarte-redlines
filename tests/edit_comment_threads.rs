@@ -1065,30 +1065,64 @@ fn settlement_preserves_annotation_ids_with_revisions_left() {
 // #1193: container rescue and receipts use the published document's identities.
 fn thread_in_body(body: &str) -> Vec<u8> {
     let mut pkg = jubarte::opc::PartFs::open(&anchor_variant("ins", false)).unwrap();
-    pkg.set_part("word/document.xml", format!(r#"<w:document xmlns:w="{}"><w:body>{body}<w:sectPr/></w:body></w:document>"#, common::docx::W_NS).into_bytes());
+    pkg.set_part(
+        "word/document.xml",
+        format!(
+            r#"<w:document xmlns:w="{}"><w:body>{body}<w:sectPr/></w:body></w:document>"#,
+            common::docx::W_NS
+        )
+        .into_bytes(),
+    );
     pkg.to_zip().unwrap()
 }
 
 fn revised_thread(kind: &str, id: u32) -> String {
     let text = if kind == "del" { "delText" } else { "t" };
-    format!(r#"<w:p><w:{kind} w:id="{id}" w:author="Bob" w:date="2026-10-18T12:00:00Z"><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:{text}>Bob added this sentence.</w:{text}></w:r><w:commentRangeEnd w:id="0"/><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="0"/></w:r><w:r><w:commentReference w:id="1"/></w:r></w:{kind}></w:p>"#)
+    format!(
+        r#"<w:p><w:{kind} w:id="{id}" w:author="Bob" w:date="2026-10-18T12:00:00Z"><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:{text}>Bob added this sentence.</w:{text}></w:r><w:commentRangeEnd w:id="0"/><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="0"/></w:r><w:r><w:commentReference w:id="1"/></w:r></w:{kind}></w:p>"#
+    )
 }
 
 fn container_thread(kind: &str, container: &str, before: bool) -> Vec<u8> {
-    let stamp = format!(r#"w:id="2" w:author="Bob" w:date="2026-10-18T12:00:00Z""#);
+    let stamp = r#"w:id="2" w:author="Bob" w:date="2026-10-18T12:00:00Z""#;
     let (row_pr, cell_pr) = if container == "cell" {
-        (String::new(), format!(r#"<w:tcPr><w:cellDel {stamp}/></w:tcPr>"#))
+        (
+            String::new(),
+            format!(r#"<w:tcPr><w:cellDel {stamp}/></w:tcPr>"#),
+        )
     } else {
-        (format!("<w:trPr><w:{kind} {stamp}/></w:trPr>"), "<w:tcPr/>".into())
+        (
+            format!("<w:trPr><w:{kind} {stamp}/></w:trPr>"),
+            "<w:tcPr/>".into(),
+        )
     };
     let previous_row = if container == "row" {
-        format!("<w:tr><w:tc><w:tcPr/>{}{}</w:tc></w:tr>", para("Previous row first."), para("Previous row last."))
-    } else { String::new() };
+        format!(
+            "<w:tr><w:tc><w:tcPr/>{}{}</w:tc></w:tr>",
+            para("Previous row first."),
+            para("Previous row last.")
+        )
+    } else {
+        String::new()
+    };
     let surviving_cell = if container == "cell" {
         format!("<w:tc><w:tcPr/>{}</w:tc>", para("Surviving cell."))
-    } else { String::new() };
-    let table = format!(r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{previous_row}<w:tr>{row_pr}<w:tc>{cell_pr}{}</w:tc>{surviving_cell}</w:tr></w:tbl>"#, revised_thread(kind, 1));
-    thread_in_body(&format!("{}{table}{}", if before { para("Before table.") } else { String::new() }, para("After table.")))
+    } else {
+        String::new()
+    };
+    let table = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{previous_row}<w:tr>{row_pr}<w:tc>{cell_pr}{}</w:tc>{surviving_cell}</w:tr></w:tbl>"#,
+        revised_thread(kind, 1)
+    );
+    thread_in_body(&format!(
+        "{}{table}{}",
+        if before {
+            para("Before table.")
+        } else {
+            String::new()
+        },
+        para("After table.")
+    ))
 }
 
 // CLI invocations and temp files here are integration tests; library probes stay in memory.
@@ -1100,11 +1134,27 @@ fn run_thread_cli(source: &[u8], plan: &EditPlan, editing: bool) -> (String, Vec
     std::fs::write(&input, source).unwrap();
     std::fs::write(&request, plan.to_json()).unwrap();
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"));
-    command.arg("edit").arg(&input).arg("--plan").arg(&request).arg("-o").arg(&output);
-    if editing { command.arg("--editing-mode"); }
+    command
+        .arg("edit")
+        .arg(&input)
+        .arg("--plan")
+        .arg(&request)
+        .arg("-o")
+        .arg(&output);
+    if editing {
+        command.arg("--editing-mode");
+    }
     let result = command.output().unwrap();
-    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
-    let text = format!("{}{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
     let bytes = std::fs::read(output).unwrap();
     (text, bytes)
 }
@@ -1117,41 +1167,83 @@ fn container_rescue_probe(kind: &str, container: &str, before: bool) {
     let plan = anchor_plan(extra, serde_json::json!([]));
     let (text, published) = run_thread_cli(&source, &plan, false);
     let listed = list_comments(&published).unwrap();
-    assert_eq!(listed.len(), 2, "both comments must survive {container} settlement; {text}");
-    let expected = if container == "row" { "Previous row last." } else if before { "Before table." } else { "After table." };
+    assert_eq!(
+        listed.len(),
+        2,
+        "both comments must survive {container} settlement; {text}"
+    );
+    let expected = if container == "row" {
+        "Previous row last."
+    } else if before {
+        "Before table."
+    } else {
+        "After table."
+    };
     let paragraphs = jubarte::inspect::paragraphs(&published).unwrap();
     let paragraph = paragraphs.iter().find(|p| p.text == expected).unwrap();
-    assert!(listed.iter().all(|c| c.paragraph.as_deref() == Some(paragraph.id.as_str())), "anchor must be in {expected}: {listed:?}");
+    assert!(
+        listed
+            .iter()
+            .all(|c| c.paragraph.as_deref() == Some(paragraph.id.as_str())),
+        "anchor must be in {expected}: {listed:?}"
+    );
     let out = apply_plan(&source, &plan).unwrap();
-    assert!(out.report.removed_comments.is_empty(), "a kept id must never be reported removed");
+    assert!(
+        out.report.removed_comments.is_empty(),
+        "a kept id must never be reported removed"
+    );
     assert_eq!(out.report.kept_comments.len(), 1);
     assert_empty_thread(&published);
     assert_empty_thread(&out.clean);
     let xml = part_string(&published, "word/document.xml").unwrap();
     if before || container == "row" {
-        assert!(xml.find(expected).unwrap() < xml.find("commentRangeStart").unwrap(), "anchor goes at the previous paragraph's end");
+        assert!(
+            xml.find(expected).unwrap() < xml.find("commentRangeStart").unwrap(),
+            "anchor goes at the previous paragraph's end"
+        );
     } else {
-        assert!(xml.find("commentReference").unwrap() < xml.find(expected).unwrap(), "anchor goes at the next paragraph's start");
+        assert!(
+            xml.find("commentReference").unwrap() < xml.find(expected).unwrap(),
+            "anchor goes at the next paragraph's start"
+        );
     }
     if let Ok(dir) = std::env::var("JUBARTE_WORD_OUTPUT") {
         let dir = std::path::Path::new(&dir);
         std::fs::create_dir_all(dir).unwrap();
         let name = format!("{container}-{decision}");
+        let inputs = dir.parent().unwrap().join("smoke-inputs");
+        std::fs::create_dir_all(&inputs).unwrap();
+        std::fs::write(inputs.join(format!("{name}.docx")), &source).unwrap();
+        std::fs::write(inputs.join(format!("{name}.json")), plan.to_json()).unwrap();
         std::fs::write(dir.join(format!("{name}.docx")), &published).unwrap();
-        std::fs::write(dir.join(format!("{name}.txt")), format!("both balloons, reply threaded; empty anchor in {expected}\n")).unwrap();
+        std::fs::write(
+            dir.join(format!("{name}.txt")),
+            format!("both balloons, reply threaded; empty anchor in {expected}\n"),
+        )
+        .unwrap();
     }
 }
 
 #[test]
-fn rescue_1193_rejected_row() { container_rescue_probe("ins", "row", true); }
+fn rescue_1193_rejected_row() {
+    container_rescue_probe("ins", "row", true);
+}
 #[test]
-fn rescue_1193_accepted_row() { container_rescue_probe("del", "row", true); }
+fn rescue_1193_accepted_row() {
+    container_rescue_probe("del", "row", true);
+}
 #[test]
-fn rescue_1193_whole_table() { container_rescue_probe("ins", "table", true); }
+fn rescue_1193_whole_table() {
+    container_rescue_probe("ins", "table", true);
+}
 #[test]
-fn rescue_1193_table_without_preceding_paragraph() { container_rescue_probe("ins", "table", false); }
+fn rescue_1193_table_without_preceding_paragraph() {
+    container_rescue_probe("ins", "table", false);
+}
 #[test]
-fn rescue_1193_deleted_cell() { container_rescue_probe("del", "cell", true); }
+fn rescue_1193_deleted_cell() {
+    container_rescue_probe("del", "cell", true);
+}
 
 #[test]
 fn receipt_1193_comparer_reply_id_matches_both_outputs() {
@@ -1166,7 +1258,11 @@ fn receipt_1193_comparer_reply_id_matches_both_outputs() {
     for bytes in [&out.clean, &out.redline, &published] {
         let listed = list_comments(bytes).unwrap();
         let reply = listed.iter().find(|c| c.text == "Alice replies.").unwrap();
-        assert_eq!(out.report.operations[0].comment_id, Some(reply.id), "reported reply id must name the reply in every published representation");
+        assert_eq!(
+            out.report.operations[0].comment_id,
+            Some(reply.id),
+            "reported reply id must name the reply in every published representation"
+        );
         let target = listed.iter().find(|c| c.text == "Target").unwrap();
         assert_eq!(reply.parent, Some(target.id));
         assert_word_valid_package(bytes);
@@ -1175,7 +1271,10 @@ fn receipt_1193_comparer_reply_id_matches_both_outputs() {
 
 #[test]
 fn receipt_1193_blanket_reject_says_rejection() {
-    let plan = anchor_plan(serde_json::json!({"existing_revisions":"reject"}), serde_json::json!([]));
+    let plan = anchor_plan(
+        serde_json::json!({"existing_revisions":"reject"}),
+        serde_json::json!([]),
+    );
     let (text, _) = run_thread_cli(&inserted_comment(), &plan, false);
     assert!(text.contains("the rejection removed"), "{text}");
 }
@@ -1189,11 +1288,21 @@ fn receipt_1193_mixed_decisions_name_each_removing_pass() {
     ).replace(r#"<w:t>First survivor</w:t>"#, r#"<w:delText>First survivor</w:delText>"#)
      .replace(r#"<w:commentReference w:id="1"/></w:r>"#, r#"<w:commentReference w:id="1"/></w:r></w:del>"#);
     pkg.set_part("word/document.xml", xml.into_bytes());
-    let plan = anchor_plan(serde_json::json!({"resolve_revisions":{"accept":{"ids":["r2"]},"reject":{"ids":["r1"]}}}), serde_json::json!([]));
+    let plan = anchor_plan(
+        serde_json::json!({"resolve_revisions":{"accept":{"ids":["r2"]},"reject":{"ids":["r1"]}}}),
+        serde_json::json!([]),
+    );
     let (text, _) = run_thread_cli(&pkg.to_zip().unwrap(), &plan, false);
     for (id, word) in [("c0", "rejection"), ("c1", "acceptance")] {
-        let line = text.lines().find(|l| l.contains(&format!("removed {id} "))).unwrap();
-        assert!(line.contains(&format!("the {word} removed")) || line.contains("the settlement removed"), "{line}");
+        let line = text
+            .lines()
+            .find(|l| l.contains(&format!("removed {id} ")))
+            .unwrap();
+        assert!(
+            line.contains(&format!("the {word} removed"))
+                || line.contains("the settlement removed"),
+            "{line}"
+        );
     }
 }
 
@@ -1206,14 +1315,21 @@ fn receipt_1193_kept_paragraph_after_ids_shift() {
     ).replace(r#"<w:commentReference w:id="2"/></w:r>"#, r#"<w:commentReference w:id="2"/></w:r></w:ins>"#);
     pkg.set_part("word/document.xml", xml.into_bytes());
     let source = pkg.to_zip().unwrap();
-    let plan = anchor_plan(serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep","resolve_revisions":{"reject":{"ids":["r2"]}}}), serde_json::json!([
-        {"kind":"delete_comment","comment_id":"c0"}
-    ]));
+    let plan = anchor_plan(
+        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep","resolve_revisions":{"reject":{"ids":["r2"]}}}),
+        serde_json::json!([
+            {"kind":"delete_comment","comment_id":"c0"}
+        ]),
+    );
     let (text, bytes) = run_thread_cli(&source, &plan, false);
     let comments = list_comments(&bytes).unwrap();
     let kept = comments.iter().find(|c| c.text == "Target").unwrap();
     let paragraph = kept.paragraph.as_deref().unwrap();
-    assert!(text.lines().any(|l| l == format!("kept c2 on an empty anchor in {paragraph}")), "kept receipt must name published {paragraph}: {text}");
+    assert!(
+        text.lines()
+            .any(|l| l == format!("kept c2 on an empty anchor in {paragraph}")),
+        "kept receipt must name published {paragraph}: {text}"
+    );
 }
 
 #[test]
@@ -1226,8 +1342,15 @@ fn receipt_1193_tracked_reply_id_matches_both_outputs() {
     let out = apply_plan(&source, &plan).unwrap();
     for bytes in [&out.clean, &out.redline] {
         let comments = list_comments(bytes).unwrap();
-        let reply = comments.iter().find(|c| c.text == "Alice replies.").unwrap();
-        assert_eq!(out.report.operations[0].comment_id, Some(reply.id), "one annotation map must serve clean and tracked replay");
+        let reply = comments
+            .iter()
+            .find(|c| c.text == "Alice replies.")
+            .unwrap();
+        assert_eq!(
+            out.report.operations[0].comment_id,
+            Some(reply.id),
+            "one annotation map must serve clean and tracked replay"
+        );
         assert_word_valid_package(bytes);
     }
 }

@@ -1954,6 +1954,7 @@ fn settlement_notes(
     };
     let mut lines = Vec::new();
     for c in removed {
+        let decision = c.decision.as_deref().unwrap_or(decision);
         lines.push(format!(
             "removed {} ({}){}: their anchor was text the {decision} removed",
             c.id,
@@ -1969,7 +1970,10 @@ fn settlement_notes(
     for c in kept {
         let paragraph = comments
             .iter()
-            .find(|r| format!("c{}", r.id) == c.id)
+            .find(|r| {
+                c.written_id
+                    .map_or_else(|| format!("c{}", r.id) == c.id, |id| r.id == id)
+            })
             .and_then(|r| r.paragraph.as_deref())
             .unwrap_or("the document");
         lines.push(format!(
