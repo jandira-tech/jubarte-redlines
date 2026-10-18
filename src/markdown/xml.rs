@@ -918,7 +918,13 @@ pub(super) fn story(
                             close_mark(context, &natural, &mut out, &mut open);
                         }
                         open = marks.pop();
-                        write_run(context, run, relate, &mut out);
+                        write_run(
+                            context,
+                            run,
+                            relate,
+                            &mut out,
+                            marks.iter().any(|mark| mark.0 == Kind::Delete),
+                        );
                         // The resumed mark ends here unless the change it
                         // holds another of resumes later: a piece of it is
                         // still ahead, past the inner change, and its mark
@@ -1016,9 +1022,21 @@ pub(super) fn story(
                         change: None,
                         ..run.clone()
                     };
-                    write_run(context, &plain, relate, &mut out);
+                    write_run(
+                        context,
+                        &plain,
+                        relate,
+                        &mut out,
+                        marks.iter().any(|mark| mark.0 == Kind::Delete),
+                    );
                 } else {
-                    write_run(context, run, relate, &mut out);
+                    write_run(
+                        context,
+                        run,
+                        relate,
+                        &mut out,
+                        marks.iter().any(|mark| mark.0 == Kind::Delete),
+                    );
                 }
             }
             Item::RangeStart(slot) => {
@@ -1060,10 +1078,12 @@ pub(super) fn story(
                 if let Some(title) = title {
                     let _ = write!(instruction, " \\o \"{}\"", field_argument(title));
                 }
-                let element = match kind {
-                    Kind::Insert => "instrText",
-                    Kind::Delete => "delInstrText",
-                };
+                let element =
+                    if kind == Kind::Delete || marks.iter().any(|mark| mark.0 == Kind::Delete) {
+                        "delInstrText"
+                    } else {
+                        "instrText"
+                    };
                 let _ = write!(
                     out,
                     "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
@@ -1921,9 +1941,15 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     }
 }
 
-fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out: &mut String) {
+fn write_run(
+    context: &mut Context<'_>,
+    run: &Run,
+    relate: &mut dyn Relate,
+    out: &mut String,
+    parent_deleted: bool,
+) {
     let properties = run_properties(context, run);
-    let deleted = matches!(run.change, Some((Kind::Delete, _)));
+    let deleted = parent_deleted || matches!(run.change, Some((Kind::Delete, _)));
     let _ = write!(out, "<w:r>{properties}");
     match &run.content {
         Content::Text(text) => {
@@ -2055,7 +2081,7 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                         open = Some(change);
                     }
                 }
-                write_run(context, run, relate, out);
+                write_run(context, run, relate, out, false);
             }
             Item::ParagraphEnd => {
                 // The mark `paragraph_properties` deferred until the
