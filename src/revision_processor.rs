@@ -2082,19 +2082,9 @@ fn is_inline_range_marker(name: &XName) -> bool {
 /// Originally empty ranges have nothing to lose and remain in place.
 fn drop_wholly_deleted_permissions(dom: &mut Dom, root: NodeId) {
     let (start, end) = (W::name("permStart"), W::name("permEnd"));
-    let dropped = bookmarks::wholly_deleted_ranges(dom, root, &start, &end);
-    if dropped.is_empty() {
-        return;
-    }
-    for name in [start, end] {
-        for node in dom.descendants(root, Some(&name)) {
-            if dom
-                .attribute(node, &W::id())
-                .is_some_and(|id| dropped.contains(id))
-            {
-                dom.remove(node);
-            }
-        }
+    let dropped = bookmarks::wholly_deleted_endpoints(dom, root, &start, &end);
+    for endpoint in dropped {
+        dom.remove(endpoint);
     }
 }
 

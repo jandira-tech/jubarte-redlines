@@ -737,3 +737,210 @@ fn bookmark_endpoint_in_deleted_text_is_not_a_revision_crossing() {
         "{findings:?}"
     );
 }
+
+fn deleted_duplicate_source(family: &str, nested: bool, distinct: bool) -> Vec<u8> {
+    let start = |id| {
+        if family == "perm" {
+            format!(r#"<w:permStart w:id="{id}" w:edGrp="everyone"/>"#)
+        } else {
+            format!(r#"<w:bookmarkStart w:id="{id}" w:name="Clause{id}"/>"#)
+        }
+    };
+    let end = |id| format!(r#"<w:{family}End w:id="{id}"/>"#);
+    let gone = r#"<w:del w:id="1" w:author="Alice"><w:r><w:delText>gone</w:delText></w:r></w:del>"#;
+    if nested {
+        docx(&format!(
+            "<w:p>{}{}{start}{gone}{end}{}</w:p>",
+            start(5),
+            run("kept", false, false, None),
+            end(5),
+            start = start(5),
+            end = end(5)
+        ))
+    } else {
+        docx(&format!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="2" w:author="Alice"/></w:rPr></w:pPr>{}{gone}{}</w:p><w:p>{}{}{}</w:p>{}"#,
+            start(5),
+            end(5),
+            start(if distinct { 6 } else { 5 }),
+            run("kept", false, false, None),
+            end(if distinct { 6 } else { 5 }),
+            para("Next.")
+        ))
+    }
+}
+fn check_deleted_duplicate(family: &str, nested: bool, distinct: bool) {
+    let source = deleted_duplicate_source(family, nested, distinct);
+    let accepted = jubarte::document_comparer::accept_revisions(&source).unwrap();
+    if family == "perm" && !nested && !distinct {
+        save("1195-f3b-accepted", &source, &accepted);
+    }
+    let actual = markers(&accepted, "word/document.xml", family);
+    assert_eq!(
+        actual
+            .iter()
+            .map(|m| (m.1.as_str(), m.2.as_str()))
+            .collect::<Vec<_>>(),
+        [("", "kept"), ("kept", "")],
+        "only the wholly deleted occurrence is removed"
+    );
+    let rejected = jubarte::document_comparer::reject_revisions(&source).unwrap();
+    assert_eq!(
+        markers(&rejected, "word/document.xml", family).len(),
+        4,
+        "Reject keeps both occurrences"
+    );
+}
+#[test]
+fn issue1195_f3b_permission_occurrences() {
+    check_deleted_duplicate("perm", false, false);
+}
+#[test]
+fn issue1195_f3a_distinct_ids_pin() {
+    check_deleted_duplicate("perm", false, true);
+}
+#[test]
+fn issue1195_f3_nested_permissions() {
+    check_deleted_duplicate("perm", true, false);
+}
+#[test]
+fn issue1195_f3_bookmark_occurrences() {
+    check_deleted_duplicate("bookmark", false, false);
+}
+#[test]
+fn issue1195_f3_nested_bookmarks() {
+    check_deleted_duplicate("bookmark", true, false);
+}
+
+fn revision_crossing(kind: &str) -> Vec<u8> {
+    let leaf = "t";
+    docx(&format!(
+        r#"<w:p><w:r><w:t>Lead </w:t></w:r><w:bookmarkStart w:id="5" w:name="Clause"/><w:r><w:t>live </w:t></w:r><w:{kind} w:id="1" w:author="Alice"><w:r><w:{leaf}>moved</w:{leaf}></w:r><w:bookmarkEnd w:id="5"/><w:r><w:{leaf}> words</w:{leaf}></w:r></w:{kind}><w:r><w:t> tail.</w:t></w:r></w:p>{}"#,
+        para("Next.")
+    ))
+}
+#[test]
+fn issue1195_f6_revision_crossing_validation() {
+    for kind in ["ins", "moveTo", "moveFrom"] {
+        let source = revision_crossing(kind);
+        let findings = jubarte::validate::validate(&source).unwrap();
+        assert_eq!(
+            findings
+                .iter()
+                .any(|f| f.code == "BOOKMARK_CROSSES_REVISION"),
+            kind != "moveFrom",
+            "{kind}: {findings:?}"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("source.docx"), source).unwrap();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .current_dir(dir.path())
+            .args(["validate", "source.docx"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).contains("BOOKMARK_CROSSES_REVISION"),
+            kind != "moveFrom"
+        );
+    }
+}
+#[test]
+fn issue1195_f6_edit_keeps_moved_away_endpoint() {
+    let source = revision_crossing("moveFrom");
+    let plan=EditPlan::from_json(r#"{"schema_version":1,"author":"Bob","existing_revisions":"keep","date":"2026-10-18T12:00:00Z","operations":[{"kind":"replace","paragraph":"p1","find":"Next","replacement":"Following"}]}"#).unwrap();
+    let result = apply_plan(&source, &plan).unwrap();
+    let findings = jubarte::validate::validate(&result.redline).unwrap();
+    assert!(
+        !findings
+            .iter()
+            .any(|f| f.code == "BOOKMARK_CROSSES_REVISION"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn issue1195_f6_edit_produces_moved_away_crossing() {
+    let source = docx(&format!(
+        r#"<w:p>{}<w:bookmarkStart w:id="5" w:name="Clause"/>{}</w:p>{}<w:p>{}<w:bookmarkEnd w:id="5"/>{}</w:p>"#,
+        run("Introduction stays put here. ", false, false, None),
+        run("Lead live text.", false, false, None),
+        para("Carol Diaz reviews the complete agreement with Alice and Bob before final approval."),
+        run("Closing section remains", false, false, None),
+        run(" last in the original agreement.", false, false, None),
+    ));
+    let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:00:00Z","operations":[{"kind":"delete_paragraph","paragraph":"p2"},{"kind":"insert_paragraph","paragraph":"p0","position":"after","runs":[{"text":"Closing section remains last in the original agreement."}]}]}"#).unwrap();
+    let result = apply_plan(&source, &plan);
+    assert!(
+        result.is_ok(),
+        "a source endpoint in moved-away text must not block the edit: {result:?}"
+    );
+    let result = result.unwrap();
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let root = dom.root(document).unwrap();
+    let ends = dom.descendants(root, Some(&W::bookmark_end()));
+    assert_eq!(ends.len(), 1);
+    assert!(
+        !dom.ancestors(ends[0], Some(&W::name("moveFrom")))
+            .is_empty(),
+        "the edit must actually produce the crossing: {xml}"
+    );
+    assert!(
+        !jubarte::validate::validate(&result.redline)
+            .unwrap()
+            .iter()
+            .any(|f| f.code == "BOOKMARK_CROSSES_REVISION")
+    );
+}
+
+fn nested_empty_range_keeps_only_inner(family: &str) {
+    let (outer, inner, end) = if family == "perm" {
+        (
+            r#"<w:permStart w:id="5" w:ed="Alice"/>"#,
+            r#"<w:permStart w:id="5" w:ed="Bob"/>"#,
+            r#"<w:permEnd w:id="5"/>"#,
+        )
+    } else {
+        (
+            r#"<w:bookmarkStart w:id="5" w:name="Clause"/>"#,
+            r#"<w:bookmarkStart w:id="5" w:name="EmptyClause"/>"#,
+            r#"<w:bookmarkEnd w:id="5"/>"#,
+        )
+    };
+    let source = docx(&format!(
+        r#"<w:p>{outer}<w:del w:id="1" w:author="Alice"><w:r><w:delText>gone</w:delText></w:r>{inner}{end}</w:del>{end}</w:p>{}"#,
+        para("Next.")
+    ));
+    let accepted = jubarte::document_comparer::accept_revisions(&source).unwrap();
+    let actual = markers(&accepted, "word/document.xml", family);
+    assert_eq!(
+        actual.len(),
+        2,
+        "the empty inner range survives; the nonempty deleted outer range goes: {actual:?}"
+    );
+    let identity = if family == "perm" {
+        ("ed", "Bob")
+    } else {
+        ("name", "EmptyClause")
+    };
+    assert!(
+        actual[0]
+            .3
+            .contains(&(identity.0.to_string(), identity.1.to_string())),
+        "the surviving pair must be the inner occurrence: {actual:?}"
+    );
+    assert!(actual.iter().all(|m| m.1.is_empty() && m.2.is_empty()));
+    let rejected = jubarte::document_comparer::reject_revisions(&source).unwrap();
+    assert_eq!(markers(&rejected, "word/document.xml", family).len(), 4);
+}
+
+#[test]
+fn issue1195_f3_nested_empty_permission_keeps_outer_counters() {
+    nested_empty_range_keeps_only_inner("perm");
+}
+
+#[test]
+fn issue1195_f3_nested_empty_bookmark_keeps_outer_counters() {
+    nested_empty_range_keeps_only_inner("bookmark");
+}

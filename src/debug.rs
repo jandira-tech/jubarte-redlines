@@ -592,9 +592,11 @@ fn check_bookmarks(
             ("sdt", &["sdtContent"][..]),
             ("cell", &["tc"][..]),
             ("textbox", &["txbxContent"][..]),
-            // A range can end in deleted text: Accept hoists the endpoint,
-            // Reject restores its source position (Word-confirmed #1176).
-            ("revision", &["ins", "moveFrom", "moveTo"][..]),
+            // Deleted and moved-away text can hold a source endpoint:
+            // Accept hoists it; Reject restores it (#1176, #1195).
+            // Insertions and move destinations remain placement guards
+            // for #827, though Word tolerates these crossings (#1195).
+            ("revision", &["ins", "moveTo"][..]),
         ] {
             if within(s, set) != within(e, set) {
                 f.add(

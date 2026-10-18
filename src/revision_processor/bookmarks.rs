@@ -22,31 +22,34 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// only deleted characters.
 pub(super) fn drop_wholly_deleted_bookmarks(dom: &mut Dom, root: NodeId) {
     let (start, end) = (W::name("bookmarkStart"), W::name("bookmarkEnd"));
-    let dropped = wholly_deleted_ranges(dom, root, &start, &end);
-    if dropped.is_empty() {
-        return;
-    }
-    for marker in [start, end] {
-        for b in dom.descendants(root, Some(&marker)) {
-            if dom
-                .attribute(b, &W::id())
-                .is_some_and(|v| dropped.contains(v))
-            {
-                dom.remove(b);
-            }
-        }
+    let dropped = wholly_deleted_endpoints(dom, root, &start, &end);
+    for endpoint in dropped {
+        dom.remove(endpoint);
     }
 }
 
-/// Nonempty annotation ranges whose characters all disappear when accepting.
-/// Reject uses this same scan after reversing its revisions. Paragraph marks
-/// and inline objects count, while originally empty ranges have nothing to lose.
+/// Comments also need the id to prune their separate reference and definition.
 pub(super) fn wholly_deleted_ranges(
     dom: &Dom,
     root: NodeId,
     start: &XName,
     end: &XName,
 ) -> HashSet<String> {
+    wholly_deleted_endpoints(dom, root, start, end)
+        .into_iter()
+        .filter_map(|node| dom.attribute(node, &W::id()).map(str::to_string))
+        .collect()
+}
+
+/// Nonempty annotation ranges whose characters all disappear when accepting.
+/// Reject uses this same scan after reversing its revisions. Paragraph marks
+/// and inline objects count, while originally empty ranges have nothing to lose.
+pub(super) fn wholly_deleted_endpoints(
+    dom: &Dom,
+    root: NodeId,
+    start: &XName,
+    end: &XName,
+) -> HashSet<NodeId> {
     if dom
         .find_descendant_element(root, Some(start), |_| true)
         .is_none()
@@ -62,9 +65,10 @@ pub(super) fn wholly_deleted_ranges(
                 .any(|a| range_deleted.contains(&a))
     };
     let id = W::id();
-    // Open range id → (characters, deleted characters).
-    let mut open: HashMap<String, (usize, usize)> = HashMap::new();
-    let mut dropped: HashSet<String> = HashSet::new();
+    // A repeated id can open sequential or nested occurrences. Each end
+    // closes the nearest start of its id; counters belong to that occurrence.
+    let mut open: HashMap<String, Vec<(NodeId, usize, usize)>> = HashMap::new();
+    let mut dropped = HashSet::new();
     for tag in descendant_and_self_tags(dom, root) {
         let e = tag.element;
         let Some(name) = dom.name(e) else {
@@ -79,16 +83,16 @@ pub(super) fn wholly_deleted_ranges(
                 || removed_by_range(e)
         } else if name == *start {
             if let Some(b) = dom.attribute(e, &id) {
-                open.insert(b.to_string(), (0, 0));
+                open.entry(b.to_string()).or_default().push((e, 0, 0));
             }
             continue;
         } else if name == *end {
             if let Some(b) = dom.attribute(e, &id)
-                && let Some((chars, gone)) = open.remove(b)
+                && let Some((first, chars, gone)) = open.get_mut(b).and_then(Vec::pop)
                 && chars > 0
                 && gone == chars
             {
-                dropped.insert(b.to_string());
+                dropped.extend([first, e]);
             }
             continue;
         } else if is_character(dom, e, &name) {
@@ -96,7 +100,7 @@ pub(super) fn wholly_deleted_ranges(
         } else {
             continue;
         };
-        for (chars, gone) in open.values_mut() {
+        for (_, chars, gone) in open.values_mut().flatten() {
             *chars += 1;
             *gone += usize::from(deleted);
         }
