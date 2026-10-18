@@ -605,3 +605,40 @@ fn json_tables_nest_recursively_with_parent_cell_paths_and_no_index() {
     assert_eq!(deepest["rows"][0][0]["text"], "Carol Diaz");
     assert_eq!(deepest["nested"], serde_json::json!([]));
 }
+
+// #1175 review: the view gives a table inside a text box no tN, so the
+// inventory must not count it either; otherwise `--tables -p t0` prints the
+// text box's grid above the body table's view.
+#[test]
+fn a_text_box_table_takes_no_inventory_index() {
+    let boxed = table(false, &[cell(&["In text box"])]);
+    let body_table = table(false, &[cell(&["Body table"]) + &cell(&["Next"])]);
+    let source = docx(&format!(
+        r##"{}<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="tb1" type="#_x0000_t202" style="width:200pt;height:60pt"><v:textbox><w:txbxContent>{boxed}<w:p/></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>{body_table}{}"##,
+        para("Intro."),
+        para("End.")
+    ));
+    let view = read_table_fixture(&source, false, &["-p", "t0"]);
+    assert!(view.status.success(), "{view:?}");
+    assert!(
+        String::from_utf8_lossy(&view.stdout).contains("|Body table|"),
+        "{view:?}"
+    );
+    let out = read_table_fixture(&source, false, &["--tables"]);
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let labels: Vec<_> = text
+        .lines()
+        .filter(|line| line.starts_with("table "))
+        .collect();
+    assert_eq!(labels.len(), 1, "{text}");
+    assert!(text.contains("=Body table\t"), "{text}");
+    assert!(!text.contains("In text box"), "{text}");
+    let selected = read_table_fixture(&source, false, &["--tables", "-p", "t0"]);
+    assert!(selected.status.success(), "{selected:?}");
+    let selected = String::from_utf8_lossy(&selected.stdout);
+    let (grid, rest) = selected.split_once("\n\n").unwrap();
+    assert!(grid.contains("=Body table\t"), "{selected}");
+    assert!(!grid.contains("In text box"), "{selected}");
+    assert!(rest.contains("|Body table|"), "{selected}");
+}
