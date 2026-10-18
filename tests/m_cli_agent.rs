@@ -802,7 +802,7 @@ fn edit_writes_the_patch_and_confirms_full_views_unless_quiet() {
         ),
         "{patch}"
     );
-    assert!(patch.contains("{+an+}[-his or her-]"), "{patch}");
+    assert!(patch.contains("[-his or her-]{+an+}"), "{patch}");
     // The comparer aligns the insertion as "c), 2(" after the old "2(";
     // the comment on it follows the change, never inside it.
     let unwrapped = patch.replace('\n', " ");
@@ -823,14 +823,14 @@ fn edit_writes_the_patch_and_confirms_full_views_unless_quiet() {
     assert!(stdout.contains("SUCCESS:\n~~~~diff\n"), "{stdout}");
     assert!(stdout.contains("\n@@ "), "{stdout}");
     assert!(
-        stdout.lines().any(|line| line.starts_with('+')
-            && line.contains("{++an++}")
-            && line.contains("{--his or her--}")),
+        stdout
+            .lines()
+            .any(|line| line.starts_with('+') && line.contains("{~~his or her~>an~~}")),
         "{stdout}"
     );
     assert!(
         stdout.lines().any(|line| line.starts_with('+')
-            && regex::Regex::new(r"\{\+\+an\+\+\}\{r[0-9]+ @C\}\{--his or her--\}\{r[0-9]+ @C\}")
+            && regex::Regex::new(r"\{~~his or her~>an~~\}\{r[0-9]+\+[0-9]+ @C\}")
                 .unwrap()
                 .is_match(line))
             && stdout

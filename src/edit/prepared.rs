@@ -869,6 +869,7 @@ fn produce(
         redline = crate::settings::apply_settings_to_docx(&redline, request)
             .map_err(|m| err("PACKAGE_WRITE", None, m))?;
     }
+    redline = super::replacement_order::typing_order(&redline)?;
     tx.check_redactions(&[&clean, &redline])?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)

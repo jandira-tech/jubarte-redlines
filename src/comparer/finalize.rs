@@ -6681,7 +6681,7 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
 
 /// Every field char under `node` belongs to a field that begins and ends
 /// under it: no `fldChar` at all, or begins and ends that nest and balance.
-fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
+pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
     let mut depth = 0i32;
     for fc in dom.descendants(node, Some(fld_char)) {
         match dom.attribute(fc, &W::name("fldCharType")) {
@@ -6704,7 +6704,7 @@ fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
 /// super_editor hyperlink_multiple_runs × diff_before10, corpus a098bd5ad9,
 /// writes "One two" inserted before the deleted "Click here now" link;
 /// the swap saw a hyperlink, not a deletion, and left the link first).
-fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
+pub(crate) fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
     if !dom.is_element(node) {
         return None;
     }

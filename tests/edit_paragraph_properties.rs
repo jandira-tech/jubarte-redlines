@@ -91,8 +91,8 @@ fn check_word_edit(properties: &str) {
             .map(|c| (c.kind, c.text.as_str()))
             .collect::<Vec<_>>(),
         [
-            (ChangeKind::Insertion, "thirty"),
-            (ChangeKind::Deletion, "sixty")
+            (ChangeKind::Deletion, "sixty"),
+            (ChangeKind::Insertion, "thirty")
         ]
     );
     let rejected = reject_revisions(&out.redline).unwrap();

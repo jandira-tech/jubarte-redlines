@@ -2518,13 +2518,13 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     let text = edited(dir.path(), plan, "review");
     let ids = captures(
         &text,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{r(\d+) @AC\}\{--thirty--\}\{r(\d+) @AC\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r(\d+)\+(\d+) @AC\} days of receipt\.\n",
     );
-    let (ins_id, del_id) = (ids[0], ids[1]);
+    let (del_id, ins_id) = (ids[0], ids[1]);
     assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
     assert!(
         text.contains(
-            "revisions: 2                       # 2 marks shown as 2 changes: 1 insertion, 1 deletion"
+            "revisions: 2                       # 2 marks shown as 1 change: 1 substitution"
         ),
         "{text}"
     );
@@ -2698,11 +2698,11 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
     let text = edited(dir.path(), second, "two");
     captures(
         &text,
-        r"\{\+\+forty-five\+\+\}\{r\d+ @AC\}\{--thirty--\}\{r\d+ @AC\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
+        r"\{~~thirty~>forty-five~~\}\{r\d+\+\d+ @AC\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
     );
     assert!(
         text.contains(
-            "revisions: 4                       # 4 marks shown as 3 changes: 1 insertion, 1 deletion, 1 substitution"
+            "revisions: 4                       # 4 marks shown as 2 changes: 2 substitutions"
         ),
         "{text}"
     );
@@ -3277,7 +3277,7 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{r\d+ @R\}\{--thirty--\}\{r\d+ @R\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r\d+\+\d+ @R\} days of receipt\.\n",
     );
     captures(
         &out,

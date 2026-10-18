@@ -50,6 +50,7 @@ mod ranges;
 pub mod record;
 /// Caller-specific, neutral review choices for revision-blocked edits.
 pub mod refusal;
+mod replacement_order;
 pub mod resolution;
 mod rewrite;
 mod runs;
@@ -1732,6 +1733,8 @@ pub fn apply_plan_json_with(
 }
 
 /// Resolve and apply the plan; compare source and copy into a redline.
+/// Text replacements use Word's typing order: deletion before insertion.
+/// The public document comparer retains Word Compare's insertion-first order.
 ///
 /// Nothing is written: the clean copy, the redline and the report are
 /// returned in memory for the caller (the CLI) to write.
