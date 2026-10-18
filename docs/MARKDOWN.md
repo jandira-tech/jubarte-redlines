@@ -897,8 +897,12 @@ note.
   `center`, `right`, or `left`/`justify` when the paragraph states it
   (`w:jc`), so a centred Header style does not centre it; no word means the
   paragraph names none.
-- Page markers need the layout pass; `--no-page-markers` skips it. When
-  the layout fails, the markers come from Word's cached page breaks, else
+- Page markers need the layout pass; `--no-page-markers` skips it. With
+  `--json`, `--tables`, `--for-edit` or `-o FILE.json`, it is accepted and
+  changes nothing: those outputs already have no layout pass or page markers.
+  `--track-changes`, `--comments` and `--dates` shape the Markdown view and
+  cannot be combined with those outputs.
+  When the layout fails, the markers come from Word's cached page breaks, else
   from hard breaks and section starts. That fallback does not mix the two
   (a page break added after Word last saved turns no page) and does not
   add the blank page an odd- or even-page section start can need.
