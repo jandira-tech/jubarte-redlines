@@ -1365,7 +1365,7 @@ fn an_unescaped_closer_ends_the_box_at_the_parser_boundary() {
 }
 
 #[test]
-fn editing_an_outer_box_refuses_to_drop_its_nested_shape() {
+fn editing_an_outer_box_keeps_its_nested_shape() {
     let view = box_view(&alternate_boxes(true));
     println!(
         "NESTED VIEW:\n{}",
@@ -1375,7 +1375,11 @@ fn editing_an_outer_box_refuses_to_drop_its_nested_shape() {
             .join("\n")
     );
     assert!(view.contains("Added box"), "{view}");
-    refuses_box(&view.replace("Added box", "Edited outer"), "d1.0");
+    let out = write_box_view(&view.replace("Added box", "Edited outer"));
+    assert!(out.is_ok(), "outer words must be editable: {}", out.unwrap_err());
+    let xml = part(&out.unwrap(), "word/document.xml");
+    assert_eq!(xml.matches("Other box").count(), 2, "{xml}");
+    assert_eq!(xml.matches("Edited outer").count(), 2, "{xml}");
 }
 
 #[test]
@@ -1549,4 +1553,149 @@ fn unedited_nested_box_keeps_the_nested_shape_and_words() {
             "{xml}"
         );
     }
+}
+
+// The nested story uses Word's run-level shape, in both outer branches.
+fn nested_box_docx(mismatch: bool) -> Vec<u8> {
+    let base = text_box_docx();
+    let xml = part(&base, "word/document.xml");
+    let drawing = xml_element(&xml, "w:drawing");
+    let inner = drawing.replace("Added box", "Bob")
+        .replace("Text Box 7", "Text Box 9").replace("id=\"7\"", "id=\"9\"")
+        .replace("2374265", "1500000").replace("<wp:posOffset>0", "<wp:posOffset>12345");
+    let vml = |words: &str, width: &str| format!(
+        r#"<w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="Inner" style="position:absolute;width:{width}pt;height:36pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>{words}</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict>"#);
+    let inner_fallback = vml("Bob", "118");
+    let inner_ac = format!(r#"<mc:AlternateContent><mc:Choice Requires="wps">{inner}</mc:Choice><mc:Fallback>{inner_fallback}</mc:Fallback></mc:AlternateContent>"#);
+    let story = |nested: &str| format!("<w:txbxContent><w:p><w:r><w:t>Alice</w:t></w:r><w:r>{nested}</w:r><w:r><w:t>Carol Diaz</w:t></w:r></w:p></w:txbxContent>");
+    let original = "<w:txbxContent><w:p><w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r></w:p></w:txbxContent>";
+    let outer = drawing.replace(original, &story(&inner_ac)).replace("cy=\"457200\"", "cy=\"3000000\"");
+    let fallback = vml("Alice", "400");
+    let fallback = fallback.replace("<w:txbxContent><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:txbxContent>", &story(&vml("Bob", if mismatch { "119" } else { "118" })));
+    docx_with(&format!(r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><mc:Choice Requires="wps">{outer}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#), &[])
+}
+
+fn directly_owned_box_words(xml: &str) -> Vec<String> {
+    use jubarte::{namespaces::W, xmllinq::Dom};
+    let mut dom = Dom::new();
+    let root = dom.parse_xdocument(xml);
+    dom.descendants(root, Some(&W::name("txbxContent"))).iter().map(|&story| {
+        dom.descendants(story, Some(&W::t())).into_iter().filter(|&t| {
+            dom.ancestors_and_self(t, Some(&W::name("txbxContent"))).first() == Some(&story)
+        }).map(|t| dom.value(t)).collect()
+    }).collect()
+}
+
+#[test]
+fn nested_box_tokens_and_flat_regions_are_visible_at_the_run_position() {
+    let view = box_view(&nested_box_docx(false));
+    let visible = view.lines().filter(|line| !line.contains(": drawing:")).collect::<Vec<_>>().join("\n");
+    println!("NESTED VIEW:\n{visible}");
+    assert!(view.contains("Alice![Text Box 9][d2]Carol Diaz"), "{visible}");
+    assert!(view.contains("<!-- text-box d2.0 -->\n\nBob\n"), "{visible}");
+    let outer_close = view.find("<!-- /text-box -->").unwrap();
+    assert!(outer_close < view.find("<!-- text-box d2.0 -->").unwrap());
+}
+
+#[test]
+fn nested_box_outer_words_can_be_edited() {
+    let view = box_view(&nested_box_docx(false)).replace("Alice", "Alice edited");
+    let out = write_box_view(&view);
+    assert!(out.is_ok(), "{}", out.unwrap_err());
+    let xml = part(&out.unwrap(), "word/document.xml");
+    assert_eq!(directly_owned_box_words(&xml), ["Alice editedCarol Diaz", "Bob", "Bob", "Alice editedCarol Diaz", "Bob"]);
+    assert_eq!(xml.matches("<wp:anchor ").count(), 2, "{xml}");
+}
+
+#[test]
+fn nested_box_inner_words_can_be_edited() {
+    let view = box_view(&nested_box_docx(false));
+    assert!(view.contains("\nBob\n"), "nested words must be editable");
+    let edited = view.replace("\nBob\n", "\nBob edited\n");
+    let out = write_box_view(&edited).unwrap();
+    let xml = part(&out, "word/document.xml");
+    assert_eq!(directly_owned_box_words(&xml), ["AliceCarol Diaz", "Bob edited", "Bob edited", "AliceCarol Diaz", "Bob edited"]);
+}
+
+#[test]
+fn nested_box_combined_edits_are_an_exact_markdown_fixed_point() {
+    let view = box_view(&nested_box_docx(false));
+    assert!(view.contains("\nBob\n"), "nested words must be editable");
+    let view = view.replace("Alice", "Alice edited").replace("\nBob\n", "\nBob edited\n");
+    let out = write_box_view(&view).unwrap();
+    let second = box_view(&out);
+    assert_eq!(view, second);
+    assert_eq!(directly_owned_box_words(&part(&out, "word/document.xml")), ["Alice editedCarol Diaz", "Bob edited", "Bob edited", "Alice editedCarol Diaz", "Bob edited"]);
+}
+
+#[test]
+fn nested_box_unedited_round_trip_keeps_both_anchors_and_nesting() {
+    let original = nested_box_docx(false);
+    let view = box_view(&original);
+    assert!(view.contains("[d2]"), "inner token missing");
+    let out = write_box_view(&view).unwrap();
+    assert_eq!(box_view(&out), view);
+    // Compare complete anchors with only generated docPr ids and namespace
+    // declaration placement normalized; all drawing properties and text stay.
+    let anchors = |bytes: &[u8]| {
+        use jubarte::xmllinq::Dom;
+        let mut dom = Dom::new();
+        let root = dom.parse_xdocument(&part(bytes, "word/document.xml"));
+        let anchors = dom.descendants(root, None).into_iter().filter(|&n| dom.name(n).is_some_and(|name| name.local_name() == "anchor")).collect::<Vec<_>>();
+        for n in dom.descendants(root, None) {
+            for (name, _) in dom.attributes(n) {
+                if dom.name(n).is_some_and(|name| name.local_name() == "docPr") && name.local_name() == "id" {
+                    dom.set_attribute_value(n, &name, Some("0"));
+                }
+            }
+        }
+        anchors.into_iter().map(|n| dom.serialize_element(n)).collect::<Vec<_>>()
+    };
+    let actual = anchors(&out);
+    let expected = anchors(&original);
+    assert_eq!(actual.len(), 2);
+    for (actual, expected) in actual.iter().zip(expected.iter()) {
+        common::assert_xml_structurally_eq(actual, expected, "nested anchor");
+    }
+}
+
+#[test]
+fn nested_box_token_deletion_refuses_with_the_inner_box_name() {
+    let view = box_view(&nested_box_docx(false));
+    assert!(view.contains("![Text Box 9][d2]"), "inner token missing");
+    let result = write_box_view(&view.replace("![Text Box 9][d2]", ""));
+    assert!(result.is_err(), "deleting d2 must refuse");
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("d2") && error.contains("token"), "{error}");
+}
+
+#[test]
+fn nested_box_mismatched_fallback_stays_readable_and_refuses_edits() {
+    let view = box_view(&nested_box_docx(true));
+    assert!(view.contains("Bob"), "nested words must remain readable");
+    assert!(!view.contains("[d2]"));
+    let result = write_box_view(&view.replace("Alice", "Alice edited"));
+    assert!(result.is_err());
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("d1.0") && error.contains("Choice/Fallback"), "{error}");
+}
+
+#[test]
+fn nested_box_regions_reject_undefined_tokens_and_out_of_range_ordinals() {
+    let view = box_view(&text_box_docx());
+    for name in ["d9.0", "d1.99"] {
+        let broken = format!("{view}\n\n<!-- text-box {name} -->\n\nBob\n\n<!-- /text-box -->\n");
+        let result = write_box_view(&broken);
+        assert!(result.is_err(), "region {name} must refuse");
+        assert!(result.unwrap_err().to_string().contains(name));
+    }
+}
+
+#[test]
+fn nested_box_duplicate_token_refuses() {
+    let view = box_view(&nested_box_docx(false));
+    assert!(view.contains("![Text Box 9][d2]"), "inner token missing");
+    let result = write_box_view(&view.replace("![Text Box 9][d2]", "![Text Box 9][d2]![Text Box 9][d2]"));
+    assert!(result.is_err(), "a nested token has exactly one owner");
+    assert!(result.unwrap_err().to_string().contains("d2"));
 }
