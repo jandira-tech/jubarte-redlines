@@ -662,7 +662,10 @@ fn diff_writes_the_patch_once_and_never_over_a_file() {
         &["diff", "old.md", "new.md", "-o", "fresh.patch"],
         dir.path(),
     ));
-    assert!(stderr.contains("wrote fresh.patch (md, "), "{stderr}");
+    assert!(
+        stderr.contains("wrote fresh.patch (patch diff, "),
+        "{stderr}"
+    );
     assert!(
         std::fs::read_to_string(dir.path().join("fresh.patch"))
             .unwrap()
