@@ -968,6 +968,8 @@ pub(crate) mod tests {
                 date: "2026-10-17T12:00:00Z".into(),
                 existing_revisions: ExistingRevisions::Refuse,
                 resolved_revisions: Default::default(),
+                removed_comments: Vec::new(),
+                kept_comments: Vec::new(),
                 paragraph_ids: Vec::new(),
                 paragraphs: ParagraphDelta::default(),
                 operations: Vec::new(),

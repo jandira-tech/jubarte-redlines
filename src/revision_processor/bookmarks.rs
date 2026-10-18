@@ -105,7 +105,7 @@ pub(super) fn wholly_deleted_ranges(
 }
 
 /// Does `e` stand for at least one character of the story?
-fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
+pub(super) fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
     if name.namespace_name() == M::URI {
         return name.local_name() == "t" && !dom.value_str(e).is_empty();
     }

@@ -620,6 +620,12 @@ pub struct ResultData {
     pub predicted_effect: Option<PredictedEffect>,
     /// Counts of operations, revisions and comments.
     pub counts: Counts,
+    /// Threads removed by revision settlement, in the source's ids.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_comments: Vec<crate::edit::RemovedComment>,
+    /// Threads rescued on empty anchors by an edit plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_comments: Vec<crate::edit::KeptComment>,
     /// Verification block.
     pub verification: Verification,
     /// Generator-only coverage and bounded working readiness; never plan authority.
@@ -694,6 +700,8 @@ impl ResultData {
             effect: Effect::NotApplied,
             predicted_effect: None,
             counts: Counts::default(),
+            removed_comments: Vec::new(),
+            kept_comments: Vec::new(),
             verification: Verification::default(),
             generation: None,
             expectations: None,
@@ -711,6 +719,8 @@ impl ResultData {
             effect,
             predicted_effect: None,
             counts: Counts::default(),
+            removed_comments: Vec::new(),
+            kept_comments: Vec::new(),
             verification: Verification::default(),
             generation: None,
             expectations: None,

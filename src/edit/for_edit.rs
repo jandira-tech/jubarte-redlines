@@ -1596,6 +1596,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
                     .then(|| ChangeFilter::ids(request.reject.iter().cloned())),
             }
         }),
+        removed_anchor_comments: Default::default(),
         existing_revisions: request.existing_revisions,
         operations: Vec::new(),
         update_fields: false,
@@ -1605,6 +1606,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         mut opened,
         resolved_revisions,
         changed,
+        ..
     } = settle(source, &plan, probe)?;
     let Loaded {
         stories,

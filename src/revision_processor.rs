@@ -720,6 +720,15 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
 /// path is identity; only `RemoveRsid` is needed (in-place). The return
 /// value is the same `root` `NodeId`.
 pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
+    reject_content(dom, root, false, &mut Vec::new())
+}
+
+fn reject_content(
+    dom: &mut Dom,
+    root: NodeId,
+    keep_comments: bool,
+    kept: &mut Vec<String>,
+) -> NodeId {
     if !element_has_tracked_revisions(dom, root) {
         return remove_rsid_transform(dom, root).expect("reject clean: root not dropped by rsid");
     }
@@ -727,7 +736,7 @@ pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
         reject_revisions_for_part_transform(dom, root).expect("reject: root must not be dropped");
     let reversed = reverse_revisions_transform(dom, reverted);
     let derssid = remove_rsid_transform(dom, reversed).expect("reject: root not dropped by rsid");
-    accept_revisions_for_part_content(dom, derssid)
+    accept_content(dom, derssid, keep_comments, kept)
 }
 
 // ───────────────────────────── A.0 — part-pipeline walkers ──────────────────
@@ -3283,9 +3292,21 @@ fn collect_empty_table_cells(
 /// deleted-cells, merge-adjacent). Still runs RemoveRsid, A.9 empty-cell
 /// fill (not revision-gated in C#), and UniqueId/numPr cleanup.
 pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId {
+    accept_content(dom, root, false, &mut Vec::new())
+}
+
+fn accept_content(
+    dom: &mut Dom,
+    root: NodeId,
+    keep_comments: bool,
+    kept: &mut Vec<String>,
+) -> NodeId {
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        if keep_comments {
+            kept.extend(comments::keep_wholly_deleted_comments(dom, e));
+        }
         comments::drop_wholly_deleted_comments(dom, e);
         bookmarks::drop_wholly_deleted_bookmarks(dom, e);
         drop_wholly_deleted_permissions(dom, e);
@@ -3615,6 +3636,30 @@ fn resolve(
     freeze: Option<Freeze<'_>>,
     renumber: bool,
 ) -> Vec<String> {
+    resolve_with_comments(pkg, resolution, freeze, renumber, false, &mut Vec::new())
+}
+
+/// Edit plans retain annotation ids so subsequent operations still address the
+/// snapshot they read. Only this entry point can rescue removed anchors.
+pub(crate) fn resolve_package_for_edit(
+    pkg: &mut crate::opc::PartFs,
+    resolution: Resolution,
+    freeze: Option<Freeze<'_>>,
+    keep_comments: bool,
+) -> (Vec<String>, Vec<String>) {
+    let mut kept = Vec::new();
+    let removed = resolve_with_comments(pkg, resolution, freeze, false, keep_comments, &mut kept);
+    (removed, kept)
+}
+
+fn resolve_with_comments(
+    pkg: &mut crate::opc::PartFs,
+    resolution: Resolution,
+    freeze: Option<Freeze<'_>>,
+    renumber: bool,
+    keep_comments: bool,
+    kept_comments: &mut Vec<String>,
+) -> Vec<String> {
     let parts = revision_bearing_parts(pkg);
     let mut next_id = RevisionIds::new(pkg);
     let levels = numbering_part(pkg)
@@ -3644,8 +3689,12 @@ fn resolve(
                 (false, _) => {
                     sections::carry_vanishing_section_references(dom, root, resolution);
                     Some(match resolution {
-                        Resolution::Accept => accept_revisions_for_part_content(dom, root),
-                        Resolution::Reject => reject_revisions_document(dom, root),
+                        Resolution::Accept => {
+                            accept_content(dom, root, keep_comments, kept_comments)
+                        }
+                        Resolution::Reject => {
+                            reject_content(dom, root, keep_comments, kept_comments)
+                        }
                     })
                 }
             }?;

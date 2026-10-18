@@ -44,6 +44,13 @@ pub struct PlanV2 {
     pub policy: Policy,
     /// Original-source decisions applied before the remaining-revision policy.
     pub resolve_revisions: RevisionDecisions,
+    /// Opt-in empty comment anchors when settled text disappears.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub removed_anchor_comments: Option<super::RemovedAnchorComments>,
     /// Attribution for new revisions and comments; contains a non-whitespace character.
     pub author: String,
     /// Timezone-bearing RFC 3339 timestamp, retaining its supplied offset.

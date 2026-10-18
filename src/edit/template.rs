@@ -256,6 +256,7 @@ pub fn generate(source: &[u8], request: &TemplateRequest) -> Result<GeneratedTem
             text_view: v2::TextView::Final,
         },
         resolve_revisions: v2::RevisionDecisions { accept, reject },
+        removed_anchor_comments: Default::default(),
         author: request.author.clone(),
         date: request.date.clone(),
         scope: if all_scope {

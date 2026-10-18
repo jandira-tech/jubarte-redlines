@@ -406,13 +406,37 @@ fn resolve(
     filter: &ChangeFilter,
     resolution: Resolution,
 ) -> Result<(Vec<u8>, Vec<String>), ChangeError> {
+    resolve_for_edit_or_cli(docx, filter, resolution, None)
+        .map(|(bytes, removed, _)| (bytes, removed))
+}
+
+/// Serialized document, pruned comment ids, and rescued comment ids.
+type CommentResolution = (Vec<u8>, Vec<String>, Vec<String>);
+
+/// Settlement driven by an edit plan, with stable comment ids and opt-in
+/// empty anchors. Removed ids come directly from package pruning.
+pub(crate) fn resolve_for_edit(
+    docx: &[u8],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+    keep_comments: bool,
+) -> Result<CommentResolution, ChangeError> {
+    resolve_for_edit_or_cli(docx, filter, resolution, Some(keep_comments))
+}
+
+fn resolve_for_edit_or_cli(
+    docx: &[u8],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+    edit: Option<bool>,
+) -> Result<CommentResolution, ChangeError> {
     let filter = &filter.normalized()?;
     let mut pkg = open(docx)?;
     let listed = changes_in(&pkg);
     filter.check(&listed)?;
     // Nothing selected: nothing to resolve, and nothing else to touch.
     if !listed.iter().any(|c| filter.matches(c)) {
-        return Ok((docx.to_vec(), Vec::new()));
+        return Ok((docx.to_vec(), Vec::new(), Vec::new()));
     }
     let main = main_part(&pkg);
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
@@ -437,11 +461,22 @@ fn resolve(
             }
         }
     };
-    let removed = resolve_package(&mut pkg, resolution, Some(&freeze));
+    let (removed, kept) = match edit {
+        Some(keep) => crate::revision_processor::resolve_package_for_edit(
+            &mut pkg,
+            resolution,
+            Some(&freeze),
+            keep,
+        ),
+        None => (
+            resolve_package(&mut pkg, resolution, Some(&freeze)),
+            Vec::new(),
+        ),
+    };
     let document = pkg
         .to_zip()
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    Ok((document, removed))
+    Ok((document, removed, kept))
 }
 
 /// The package, Strict normalized to transitional as `inspect` reads it.

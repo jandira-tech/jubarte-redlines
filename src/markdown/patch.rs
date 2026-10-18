@@ -178,6 +178,7 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
             author: "jubarte".to_string(),
             date: None,
             initials: None,
+            removed_anchor_comments: Default::default(),
             existing_revisions: ExistingRevisions::Accept,
             resolve_revisions: None,
             operations,

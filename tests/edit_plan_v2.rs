@@ -600,6 +600,7 @@ fn review_v2_01_schema_walk_pins_every_declared_property() {
             "through":t
         }));
     }
+    mixed["removed_anchor_comments"] = json!("keep");
     corpus.push(mixed);
 
     let pairs: &[(&str, &str)] = &[
@@ -607,6 +608,7 @@ fn review_v2_01_schema_walk_pins_every_declared_property() {
         ("", "source"),
         ("", "policy"),
         ("", "resolve_revisions"),
+        ("", "removed_anchor_comments"),
         ("", "author"),
         ("", "date"),
         ("", "scope"),
@@ -960,5 +962,35 @@ fn review_v2_01_before_sha256_hashes_the_final_logical_projection() {
     assert_eq!(
         before_sha256(&dom, p).unwrap(),
         jubarte::inspect::source_sha256(text.as_bytes())
+    );
+}
+
+#[test]
+fn removed_anchor_comments_schema_enum() {
+    for mode in ["remove", "keep"] {
+        let mut v = base();
+        v["removed_anchor_comments"] = json!(mode);
+        agrees(&v, true);
+    }
+    for mode in [json!("retain"), json!(null), json!(true)] {
+        let mut v = base();
+        v["removed_anchor_comments"] = mode;
+        agrees(&v, false);
+    }
+}
+
+#[test]
+fn removed_anchor_v1_schema_has_policy_enum() {
+    let schema = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/edit-plan-v1.schema.json"),
+    );
+    assert!(
+        schema.is_ok(),
+        "v1 schema must document removed_anchor_comments"
+    );
+    let schema: Value = serde_json::from_str(&schema.unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["removed_anchor_comments"]["enum"],
+        json!(["remove", "keep"])
     );
 }

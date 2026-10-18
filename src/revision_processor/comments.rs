@@ -89,6 +89,99 @@ pub(super) fn drop_wholly_deleted_comments(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Collapse wholly removed ranges at their original position before deletion.
+/// The scan also serves rejection, after its revisions have been reversed.
+/// Partial ranges are deliberately left to the ordinary settlement rules.
+pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<String> {
+    let dropped = super::bookmarks::wholly_deleted_ranges(
+        dom,
+        root,
+        &W::name("commentRangeStart"),
+        &W::name("commentRangeEnd"),
+    );
+    let order = dom.descendants(root, None);
+    let mut groups: Vec<(NodeId, Vec<String>)> = Vec::new();
+    for start in dom.descendants(root, Some(&W::name("commentRangeStart"))) {
+        let Some(id) = dom
+            .attribute(start, &W::id())
+            .filter(|id| dropped.contains(*id))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        // Place the empty range among paragraph children, outside every
+        // revision/hyperlink wrapper that is about to disappear.
+        let at = order
+            .iter()
+            .position(|&n| n == start)
+            .expect("range start in story");
+        let first_character = order[at + 1..]
+            .iter()
+            .copied()
+            .take_while(|&n| {
+                !(dom.name(n) == Some(W::name("commentRangeEnd"))
+                    && dom.attribute(n, &W::id()) == Some(id.as_str()))
+            })
+            .find(|&n| {
+                dom.name(n)
+                    .is_some_and(|name| super::bookmarks::is_character(dom, n, &name))
+            });
+        let mut boundary = first_character.unwrap_or(start);
+        while let Some(parent) = dom.parent(boundary) {
+            if dom.name(parent) == Some(W::p()) {
+                break;
+            }
+            boundary = parent;
+        }
+        if dom.parent(boundary).is_none() {
+            continue;
+        }
+        if let Some((_, ids)) = groups.iter_mut().find(|(at, _)| *at == boundary) {
+            ids.push(id);
+        } else {
+            groups.push((boundary, vec![id]));
+        }
+    }
+    let mut kept = Vec::new();
+    for (boundary, ids) in groups {
+        // A temporary sibling survives removing a boundary that is itself a
+        // marker; it is removed after all starts, ends and references move.
+        let point = dom.new_element(W::r());
+        dom.add_before_self(boundary, point);
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for marker in dom.descendants(root, Some(&W::name(local))) {
+                if !dom
+                    .attribute(marker, &W::id())
+                    .is_some_and(|id| ids.iter().any(|i| i == id))
+                {
+                    continue;
+                }
+                if local == "commentReference" {
+                    // Copy just the reference and its run properties: a
+                    // shared text run must never carry deleted text along.
+                    let run = dom.new_element(W::r());
+                    if let Some(parent) = dom.parent(marker)
+                        && let Some(pr) = dom.element(parent, &W::r_pr())
+                    {
+                        let pr = dom.clone_subtree(pr);
+                        dom.add(run, pr);
+                    }
+                    let reference = dom.clone_subtree(marker);
+                    dom.add(run, reference);
+                    remove_marker(dom, marker);
+                    dom.add_before_self(point, run);
+                } else {
+                    dom.remove(marker);
+                    dom.add_before_self(point, marker);
+                }
+            }
+        }
+        dom.remove(point);
+        kept.extend(ids);
+    }
+    kept
+}
+
 /// A reference-only run goes with its marker; a run containing other content
 /// keeps that content. Range markers normally are siblings of runs.
 fn remove_marker(dom: &mut Dom, marker: NodeId) {

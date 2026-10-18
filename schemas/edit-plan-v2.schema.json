@@ -12,6 +12,11 @@
     "operations"
   ],
   "properties": {
+    "removed_anchor_comments": {
+      "type": "string",
+      "enum": ["remove", "keep"],
+      "default": "remove"
+    },
     "schema_version": {
       "const": 2
     },

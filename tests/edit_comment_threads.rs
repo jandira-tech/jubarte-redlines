@@ -520,8 +520,9 @@ fn a_comment_the_plans_settling_removes_is_refused_with_the_reason() {
     let e = reply(r#","existing_revisions":"accept""#, id).unwrap_err();
     assert_eq!(e.code, "UNKNOWN_COMMENT");
     assert!(
-        e.message
-            .contains("gone once the plan's revisions are settled"),
+        e.message.contains(&format!(
+            "c{id} is gone once the plan's revisions are settled"
+        )) && e.message.contains("\"removed_anchor_comments\": \"keep\""),
         "{e}"
     );
     // Kept, the reply lands.
@@ -530,5 +531,339 @@ fn a_comment_the_plans_settling_removes_is_refused_with_the_reason() {
     assert_eq!(list_comments(&replied.redline).unwrap().len(), 2);
     // A comment that never existed keeps the plain refusal.
     let e = reply(r#","existing_revisions":"accept""#, 99).unwrap_err();
-    assert!(e.message.starts_with("no comment 99"), "{e}");
+    assert!(e.message.starts_with("no comment c99"), "{e}");
+}
+
+// #1159: all sources are synthetic in-memory packages; process probes live in
+// edit_refusal_wording. No wall clock is consulted by these plans.
+fn anchor_plan(extra: serde_json::Value, operations: serde_json::Value) -> EditPlan {
+    let mut value = serde_json::json!({"schema_version":1,"author":"Alice",
+        "date":"2026-10-18T12:05:00Z","existing_revisions":"keep","operations":[]});
+    value["operations"] = operations;
+    let serde_json::Value::Object(extra) = extra else {
+        panic!("plan fields must be an object")
+    };
+    value.as_object_mut().unwrap().extend(extra);
+    {
+        let parsed = EditPlan::from_json(&value.to_string());
+        assert!(parsed.is_ok(), "{parsed:?}");
+        parsed.unwrap()
+    }
+}
+
+fn inserted_comment() -> Vec<u8> {
+    let base = docx(
+        &(para("Services")
+            + &para("The Provider shall perform the Services.")
+            + &para("Next paragraph.")),
+    );
+    let bob = plan(
+        r#"{"schema_version":1,"author":"Bob","date":"2026-10-18T12:00:00Z","operations":[{"kind":"insert","paragraph":"p1","position":"end","text":" Bob added this sentence.","comment":"Bob's reason."}]}"#,
+    );
+    apply_plan(&base, &bob).unwrap().redline
+}
+
+fn anchor_reply() -> serde_json::Value {
+    serde_json::json!([{"kind":"reply_comment","comment_id":"c0","text":"Alice disagrees."}])
+}
+fn anchor_settle(mode: &str, decision: &str) -> serde_json::Value {
+    let mut v = serde_json::json!({"removed_anchor_comments":mode,"resolve_revisions":{}});
+    v["resolve_revisions"][decision] = serde_json::json!({"ids":["r1"]});
+    v
+}
+fn assert_empty_thread(bytes: &[u8]) {
+    assert_word_valid_package(bytes);
+    let listed = list_comments(bytes).unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[1].parent, Some(listed[0].id));
+    assert!(
+        listed.iter().all(|c| c.anchor_text.is_empty()),
+        "{listed:?}"
+    );
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let markers: Vec<_> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter(|&n| {
+            dom.name(n).is_some_and(|name| {
+                ["commentRangeStart", "commentRangeEnd", "commentReference"]
+                    .contains(&name.local_name())
+            })
+        })
+        .collect();
+    assert_eq!(markers.len(), 6, "{xml}");
+    let names: Vec<_> = markers
+        .iter()
+        .map(|&n| dom.name(n).unwrap().local_name().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "commentRangeStart",
+            "commentRangeStart",
+            "commentRangeEnd",
+            "commentRangeEnd",
+            "commentReference",
+            "commentReference"
+        ]
+    );
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let parents: Vec<_> = markers
+        .iter()
+        .map(|&n| {
+            let p = dom.parent(n).unwrap();
+            if dom.name(p).unwrap().local_name() == "r" {
+                dom.parent(p).unwrap()
+            } else {
+                p
+            }
+        })
+        .collect();
+    assert!(parents.iter().all(|&p| p == parents[0]));
+    assert_eq!(
+        dom.name(parents[0]),
+        Some(jubarte::xmllinq::XName::get("p", w))
+    );
+    let children = dom.elements(parents[0], None);
+    let first = children.iter().position(|&n| n == markers[0]).unwrap();
+    let adjacent: Vec<_> = children[first..first + 6]
+        .iter()
+        .map(|&n| dom.name(n).unwrap().local_name().to_string())
+        .collect();
+    assert_eq!(
+        adjacent,
+        [
+            "commentRangeStart",
+            "commentRangeStart",
+            "commentRangeEnd",
+            "commentRangeEnd",
+            "r",
+            "r"
+        ]
+    );
+}
+
+#[test]
+fn removed_anchor_keep_reply_and_reject_one_plan() {
+    let out = apply_plan(
+        &inserted_comment(),
+        &anchor_plan(anchor_settle("keep", "reject"), anchor_reply()),
+    )
+    .unwrap();
+    assert_empty_thread(&out.redline);
+    let report = serde_json::to_value(&out.report).unwrap();
+    assert_eq!(
+        report["kept_comments"],
+        serde_json::json!([{"id":"c0","replies":["c1"],"anchor":"empty"}])
+    );
+}
+#[test]
+fn removed_anchor_keep_two_plans() {
+    let a = apply_plan(
+        &inserted_comment(),
+        &anchor_plan(serde_json::json!({}), anchor_reply()),
+    )
+    .unwrap();
+    let b = apply_plan(
+        &a.redline,
+        &anchor_plan(anchor_settle("keep", "reject"), serde_json::json!([])),
+    )
+    .unwrap();
+    assert_empty_thread(&b.redline);
+    assert_eq!(
+        serde_json::to_value(&b.report).unwrap()["kept_comments"],
+        serde_json::json!([{"id":"c0","replies":["c1"],"anchor":"empty"}])
+    );
+    for part in [
+        "word/comments.xml",
+        "word/commentsExtended.xml",
+        "word/commentsIds.xml",
+        "word/commentsExtensible.xml",
+        "word/people.xml",
+    ] {
+        if let Some(before) = part_string(&a.redline, part) {
+            assert_eq!(
+                part_string(&b.redline, part).as_deref(),
+                Some(before.as_str()),
+                "{part}"
+            );
+        }
+    }
+}
+#[test]
+fn removed_anchor_default_reports_thread_and_still_removes_it() {
+    let a = apply_plan(
+        &inserted_comment(),
+        &anchor_plan(serde_json::json!({}), anchor_reply()),
+    )
+    .unwrap();
+    let out = apply_plan(
+        &a.redline,
+        &anchor_plan(
+            serde_json::json!({"resolve_revisions":{"reject":{"ids":["r1"]}}}),
+            serde_json::json!([]),
+        ),
+    )
+    .unwrap();
+    let expected = serde_json::json!([{"id":"c0","author":"Bob","replies":["c1"]}]);
+    assert_eq!(
+        serde_json::to_value(&out.report).unwrap()["removed_comments"],
+        expected
+    );
+    let summary: serde_json::Value =
+        serde_json::from_str(out.report.to_jsonl().lines().last().unwrap()).unwrap();
+    assert_eq!(summary["removed_comments"], expected);
+    assert!(list_comments(&out.redline).unwrap().is_empty());
+    assert_word_valid_package(&out.redline);
+}
+#[test]
+fn removed_anchor_unknown_comment_advice_preserves_reply_intent() {
+    let e = apply_plan(
+        &inserted_comment(),
+        &anchor_plan(
+            serde_json::json!({"resolve_revisions":{"reject":{"ids":["r1"]}}}),
+            anchor_reply(),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "UNKNOWN_COMMENT");
+    assert!(
+        e.message.contains("c0")
+            && e.message.contains("r1")
+            && e.message.contains("Word")
+            && e.message.contains("replies")
+            && e.message.contains("\"removed_anchor_comments\": \"keep\""),
+        "{}",
+        e.message
+    );
+    assert!(!e.message.contains("plan of its own"));
+}
+#[test]
+fn removed_anchor_unknown_policy_is_invalid_plan() {
+    let e = EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","removed_anchor_comments":"retain","operations":[]}"#).unwrap_err();
+    assert_eq!(e.code, "INVALID_PLAN");
+    assert!(
+        e.message.contains("retain") && e.message.contains("keep"),
+        "{}",
+        e.message
+    );
+}
+
+fn anchor_variant(kind: &str, partial: bool) -> Vec<u8> {
+    let a = apply_plan(
+        &inserted_comment(),
+        &anchor_plan(serde_json::json!({}), anchor_reply()),
+    )
+    .unwrap();
+    let mut pkg = jubarte::opc::PartFs::open(&a.redline).unwrap();
+    let tag = if kind == "del" { "delText" } else { "t" };
+    let start = r#"<w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/>"#;
+    let end = r#"<w:commentRangeEnd w:id="0"/><w:commentRangeEnd w:id="1"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r><w:r><w:commentReference w:id="1"/></w:r>"#;
+    let left = if partial { start } else { "" };
+    let inner = if partial { "" } else { start };
+    let body = format!(
+        r#"<w:p><w:r><w:t>Services</w:t></w:r></w:p><w:p>{left}<w:r><w:t>Before.</w:t></w:r><w:{kind} w:id="1" w:author="Bob" w:date="2026-10-18T12:00:00Z">{inner}<w:r><w:{tag}> Bob added this sentence.</w:{tag}></w:r>{end}</w:{kind}><w:r><w:t> After.</w:t></w:r></w:p>"#
+    );
+    let xml = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr/></w:body></w:document>"#
+    );
+    pkg.set_part("word/document.xml", xml.into_bytes());
+    pkg.to_zip().unwrap()
+}
+#[test]
+fn removed_anchor_keep_accept_deletion_and_mid_paragraph() {
+    for (kind, decision) in [("del", "accept"), ("ins", "reject")] {
+        let out = apply_plan(
+            &anchor_variant(kind, false),
+            &anchor_plan(anchor_settle("keep", decision), serde_json::json!([])),
+        )
+        .unwrap();
+        assert_empty_thread(&out.redline);
+        let xml = part_string(&out.redline, "word/document.xml").unwrap();
+        assert!(xml.find("Before.").unwrap() < xml.find("commentRangeStart").unwrap());
+        assert!(xml.find("commentReference").unwrap() < xml.find(" After.").unwrap());
+    }
+}
+#[test]
+fn removed_anchor_keep_partial_overlap_matches_remove() {
+    let source = anchor_variant("ins", true);
+    let remove = apply_plan(
+        &source,
+        &anchor_plan(anchor_settle("remove", "reject"), serde_json::json!([])),
+    )
+    .unwrap();
+    let keep = apply_plan(
+        &source,
+        &anchor_plan(anchor_settle("keep", "reject"), serde_json::json!([])),
+    )
+    .unwrap();
+    assert_eq!(
+        part_string(&remove.redline, "word/document.xml"),
+        part_string(&keep.redline, "word/document.xml")
+    );
+    assert_eq!(
+        list_comments(&remove.redline).unwrap(),
+        list_comments(&keep.redline).unwrap()
+    );
+}
+#[test]
+fn removed_anchor_typed_v2_keep_and_remove() {
+    let source = inserted_comment();
+    let mut value = serde_json::json!({"schema_version":2,"source":{"sha256":jubarte::inspect::source_sha256(&source)},"policy":{"track":"on","existing_revisions":"keep","text_view":"final"},"resolve_revisions":{"accept":[],"reject":[{"short_id":"r1","long_id":"document.w:ins.w:id.1"}]},"author":"Alice","date":"2026-10-18T12:06:00Z","scope":{"kind":"all"},"operations":[],"removed_anchor_comments":"keep"});
+    let typed = jubarte::edit::v2::PlanV2::from_json(&value.to_string());
+    assert!(typed.is_ok(), "{typed:?}");
+    let typed = typed.unwrap();
+    let result = jubarte::edit::v2_apply::apply_plan(&source, &typed).unwrap();
+    assert_eq!(list_comments(&result.redline).unwrap().len(), 1);
+    assert_eq!(list_comments(&result.redline).unwrap()[0].anchor_text, "");
+    assert_eq!(
+        serde_json::to_value(&result.report).unwrap()["kept_comments"][0]["id"],
+        "c0"
+    );
+    value["removed_anchor_comments"] = serde_json::json!("remove");
+    let typed = jubarte::edit::v2::PlanV2::from_json(&value.to_string());
+    assert!(typed.is_ok(), "{typed:?}");
+    let typed = typed.unwrap();
+    let result = jubarte::edit::v2_apply::apply_plan(&source, &typed).unwrap();
+    assert_eq!(
+        serde_json::to_value(&result.report).unwrap()["removed_comments"][0]["id"],
+        "c0"
+    );
+}
+
+#[test]
+fn removed_anchor_keep_outside_markers_have_one_empty_point() {
+    let source = anchor_variant("del", false);
+    let mut pkg = jubarte::opc::PartFs::open(&source).unwrap();
+    let xml = pkg.part_string("word/document.xml").unwrap();
+    let start = r#"<w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/>"#;
+    let xml = xml
+        .replace(start, "")
+        .replace("<w:del w:id=", &format!("{start}<w:del w:id="));
+    pkg.set_part("word/document.xml", xml.into_bytes());
+    let out = apply_plan(
+        &pkg.to_zip().unwrap(),
+        &anchor_plan(anchor_settle("keep", "accept"), serde_json::json!([])),
+    )
+    .unwrap();
+    assert_empty_thread(&out.redline);
+}
+#[test]
+fn removed_anchor_keep_moves_and_typed_reply() {
+    for (kind, decision) in [("moveFrom", "accept"), ("moveTo", "reject")] {
+        let out = apply_plan(
+            &anchor_variant(kind, false),
+            &anchor_plan(anchor_settle("keep", decision), serde_json::json!([])),
+        )
+        .unwrap();
+        assert_empty_thread(&out.redline);
+    }
+    let source = inserted_comment();
+    let value = serde_json::json!({"schema_version":2,"source":{"sha256":jubarte::inspect::source_sha256(&source)},"policy":{"track":"on","existing_revisions":"keep","text_view":"final"},"resolve_revisions":{"accept":[],"reject":[{"short_id":"r1","long_id":"document.w:ins.w:id.1"}]},"author":"Alice","date":"2026-10-18T12:06:00Z","scope":{"kind":"all"},"operations":[{"kind":"reply_comment","target":{"short_id":"c0","long_id":"comments.w:comment.w:id.0"},"text":"Alice disagrees."}],"removed_anchor_comments":"keep"});
+    let typed = jubarte::edit::v2::PlanV2::from_json(&value.to_string()).unwrap();
+    let result = jubarte::edit::v2_apply::apply_plan(&source, &typed).unwrap();
+    assert_empty_thread(&result.redline);
 }

@@ -59,11 +59,14 @@ mod tracked;
 mod watermark;
 mod whole;
 
+mod comment_settlement;
 #[cfg(feature = "cli")]
 /// Compile typed inline CLI actions into the same source-bound PlanV2 contract.
 pub mod inline;
 /// Source-bound PlanV2 text-and-review requests and exact logical text codec.
 pub mod v2;
+use comment_settlement::AnchorChanges;
+pub use comment_settlement::{KeptComment, RemovedComment};
 pub mod v2_apply;
 
 /// `read --for-edit`: the working document, hashes and readiness (V2-10).
@@ -114,6 +117,10 @@ pub struct EditPlan {
     /// changes it leaves follow `existing_revisions`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolve_revisions: Option<ResolveRevisions>,
+    /// Remove threads whose anchors disappear (default), or keep them on
+    /// empty, untracked anchors at the removed text's position.
+    #[serde(default, skip_serializing_if = "RemovedAnchorComments::is_remove")]
+    pub removed_anchor_comments: RemovedAnchorComments,
     /// What to do when the source already holds tracked changes.
     #[serde(default)]
     pub existing_revisions: ExistingRevisions,
@@ -124,6 +131,22 @@ pub struct EditPlan {
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
+}
+
+/// Treatment of comment anchors removed by a plan's revision settlement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemovedAnchorComments {
+    /// Follow Word: remove the thread and report it.
+    #[default]
+    Remove,
+    /// Keep the thread on an empty, untracked anchor.
+    Keep,
+}
+impl RemovedAnchorComments {
+    pub(crate) fn is_remove(&self) -> bool {
+        *self == Self::Remove
+    }
 }
 
 /// The tracked changes a plan accepts and rejects before it edits, as
@@ -1033,6 +1056,12 @@ pub struct EditReport {
     /// Changes `resolve_revisions` accepted and rejected.
     #[serde(default, skip_serializing_if = "ResolvedRevisions::is_empty")]
     pub resolved_revisions: ResolvedRevisions,
+    /// Threads removed with the settled text, in source comment ids.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_comments: Vec<RemovedComment>,
+    /// Threads moved onto empty anchors by opt-in settlement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_comments: Vec<KeptComment>,
     /// Source paragraph ids that name another paragraph once the plan's
     /// revisions are settled (`resolve_revisions`, `existing_revisions`
     /// accept or reject), in source order. Operations still address the
@@ -1137,6 +1166,8 @@ impl EditReport {
                       "d": self.paragraphs.to as i64 - self.paragraphs.from as i64},
             "revs": self.revisions,
             "comments": {"added": self.comments_added},
+            "removed_comments": self.removed_comments,
+            "kept_comments": self.kept_comments,
         }));
         out
     }
@@ -1213,10 +1244,12 @@ fn open_error(error: crate::inspect::InspectError) -> EditError {
 fn resolve_selected(
     source: &[u8],
     selection: Option<&ResolveRevisions>,
-) -> Result<(Option<Vec<u8>>, ResolvedRevisions), EditError> {
+    policy: RemovedAnchorComments,
+) -> Result<(Option<Vec<u8>>, ResolvedRevisions, AnchorChanges), EditError> {
+    let mut comments = AnchorChanges::default();
     let mut resolved = ResolvedRevisions::default();
     let Some(selection) = selection else {
-        return Ok((None, resolved));
+        return Ok((None, resolved, comments));
     };
     let change_err = |e: ChangeError| match e {
         ChangeError::UnknownChange(id) => err(
@@ -1260,12 +1293,19 @@ fn resolve_selected(
         ));
     }
     if accept.is_empty() && reject.is_empty() {
-        return Ok((None, resolved));
+        return Ok((None, resolved, comments));
     }
     let mut bytes = source.to_vec();
     if !accept.is_empty() {
-        bytes = crate::changes::accept_changes(&bytes, &ChangeFilter::ids(accept.clone()))
-            .map_err(change_err)?;
+        let (document, removed, kept) = crate::changes::resolve_for_edit(
+            &bytes,
+            &ChangeFilter::ids(accept.clone()),
+            crate::revision_processor::Resolution::Accept,
+            policy == RemovedAnchorComments::Keep,
+        )
+        .map_err(change_err)?;
+        comments.extend(removed, kept);
+        bytes = document;
         resolved.accepted = accept;
     }
     // A change the accepted ones took along is gone, not rejected.
@@ -1275,11 +1315,18 @@ fn resolve_selected(
         .filter(|id| left.iter().any(|c| &c.id == id))
         .collect();
     if !reject.is_empty() {
-        bytes = crate::changes::reject_changes(&bytes, &ChangeFilter::ids(reject.clone()))
-            .map_err(change_err)?;
+        let (document, removed, kept) = crate::changes::resolve_for_edit(
+            &bytes,
+            &ChangeFilter::ids(reject.clone()),
+            crate::revision_processor::Resolution::Reject,
+            policy == RemovedAnchorComments::Keep,
+        )
+        .map_err(change_err)?;
+        comments.extend(removed, kept);
+        bytes = document;
         resolved.rejected = reject;
     }
-    Ok((Some(bytes), resolved))
+    Ok((Some(bytes), resolved, comments))
 }
 
 /// Whether `source` still carries a tracked change of its text (body,
@@ -1288,9 +1335,13 @@ fn resolve_selected(
 /// A selection that does not resolve is the plan's error, reported when it
 /// runs; here it leaves every change in place.
 pub fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
-    let resolved = resolve_selected(source, plan.resolve_revisions.as_ref())
-        .ok()
-        .and_then(|(bytes, _)| bytes);
+    let resolved = resolve_selected(
+        source,
+        plan.resolve_revisions.as_ref(),
+        plan.removed_anchor_comments,
+    )
+    .ok()
+    .and_then(|(bytes, _, _)| bytes);
     crate::changes::list_changes(resolved.as_deref().unwrap_or(source))
         .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with("styles:")))
 }
@@ -1302,6 +1353,7 @@ struct Settled {
     base: Vec<u8>,
     opened: Opened,
     resolved_revisions: ResolvedRevisions,
+    comment_changes: AnchorChanges,
     /// Settling rewrote the document: paragraphs may have merged or gone.
     changed: bool,
 }
@@ -1310,8 +1362,11 @@ struct Settled {
 /// what `resolve_revisions` selects, then apply `existing_revisions` to the
 /// changes left.
 fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, EditError> {
-    let (resolved_source, resolved_revisions) =
-        resolve_selected(source, plan.resolve_revisions.as_ref())?;
+    let (resolved_source, resolved_revisions, mut comment_changes) = resolve_selected(
+        source,
+        plan.resolve_revisions.as_ref(),
+        plan.removed_anchor_comments,
+    )?;
     let (source, probe) = match &resolved_source {
         Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
         None => (source, probe),
@@ -1331,11 +1386,19 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
             ));
         }
         (true, policy) => {
-            let flattened = match policy {
-                ExistingRevisions::Accept => crate::document_comparer::accept_revisions(source),
-                _ => crate::document_comparer::reject_revisions(source),
-            }
+            let resolution = if policy == ExistingRevisions::Accept {
+                crate::revision_processor::Resolution::Accept
+            } else {
+                crate::revision_processor::Resolution::Reject
+            };
+            let (flattened, removed, kept) = crate::changes::resolve_for_edit(
+                source,
+                &ChangeFilter::default(),
+                resolution,
+                plan.removed_anchor_comments == RemovedAnchorComments::Keep,
+            )
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
+            comment_changes.extend(removed, kept);
             let reopened = Opened::open(&flattened).map_err(open_error)?;
             (flattened, reopened, true)
         }
@@ -1344,6 +1407,7 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
         base,
         opened,
         resolved_revisions,
+        comment_changes,
         changed: resolved_source.is_some() || flattened,
     })
 }
@@ -1936,6 +2000,8 @@ struct Transaction<'p> {
     base: Vec<u8>,
     base_sha256: String,
     resolved_revisions: ResolvedRevisions,
+    removed_comments: Vec<RemovedComment>,
+    kept_comments: Vec<KeptComment>,
     /// The plan's date, else the time it is applied.
     date: String,
     initials: String,
@@ -2039,8 +2105,10 @@ impl<'p> Transaction<'p> {
             base,
             mut opened,
             resolved_revisions,
+            comment_changes,
             changed,
         } = settle(source, plan, probe)?;
+        let (removed_comments, kept_comments) = comment_changes.records(source)?;
         let base_sha256 = source_sha256(&base);
         let Loaded {
             stories,
@@ -2087,6 +2155,8 @@ impl<'p> Transaction<'p> {
             base,
             base_sha256,
             resolved_revisions,
+            removed_comments,
+            kept_comments,
             date,
             initials,
             opened,
@@ -2386,6 +2456,25 @@ impl<'p> Transaction<'p> {
             date: self.date.clone(),
             existing_revisions: self.plan.existing_revisions,
             resolved_revisions: self.resolved_revisions.clone(),
+            removed_comments: self.removed_comments.clone(),
+            kept_comments: self
+                .kept_comments
+                .iter()
+                .cloned()
+                .map(|mut c| {
+                    let mut family: Vec<u32> = std::iter::once(c.id.as_str())
+                        .chain(c.replies.iter().map(String::as_str))
+                        .filter_map(|s| s.strip_prefix('c')?.parse().ok())
+                        .collect();
+                    for (&id, &parent) in &self.reply_parents {
+                        if family.contains(&parent) && !family.contains(&id) {
+                            family.push(id);
+                            c.replies.push(format!("c{id}"));
+                        }
+                    }
+                    c
+                })
+                .collect(),
             paragraph_ids: self
                 .origin
                 .as_ref()
@@ -3492,11 +3581,24 @@ impl<'p> Transaction<'p> {
         let family = self.family.as_ref().expect("loaded in start");
         if !family.contains(target) {
             let message = if self.origin.as_ref().is_some_and(|o| o.had_comment(target)) {
+                let revisions = self
+                    .resolved_revisions
+                    .accepted
+                    .iter()
+                    .chain(&self.resolved_revisions.rejected)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let revisions = if revisions.is_empty() {
+                    "the plan's revisions"
+                } else {
+                    &revisions
+                };
                 format!(
-                    "comment {target} is gone once the plan's revisions are settled: its anchor was text they removed; settle fewer revisions, or act on the comment in a plan of its own first"
+                    "c{target} is gone once the plan's revisions are settled ({revisions}): its anchor and replies are removed, as Word does; a reply, edit or resolve on that thread would be lost; settle fewer revisions, drop the thread operation, or set \"removed_anchor_comments\": \"keep\"",
                 )
             } else {
-                format!("no comment {target} in the document (jubarte comments lists them)")
+                format!("no comment c{target} in the document (jubarte comments lists them)")
             };
             return Err(fail("UNKNOWN_COMMENT", message, outcome));
         }
@@ -5198,6 +5300,7 @@ impl<'p> Transaction<'p> {
             date: Some(self.date.clone()),
             initials: Some(self.initials.clone()),
             resolve_revisions: None,
+            removed_anchor_comments: RemovedAnchorComments::default(),
             existing_revisions: ExistingRevisions::default(),
             operations,
             update_fields: false,
@@ -7012,15 +7115,16 @@ mod deeper_boundary_tests {
             },
         ] {
             assert_eq!(
-                resolve_selected(&source, Some(&selection)).unwrap(),
-                (None, ResolvedRevisions::default())
+                resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap(),
+                (None, ResolvedRevisions::default(), AnchorChanges::default())
             );
         }
         let selection = ResolveRevisions {
             accept: None,
             reject: Some(ChangeFilter::ids(["r1"])),
         };
-        let (bytes, resolved) = resolve_selected(&source, Some(&selection)).unwrap();
+        let (bytes, resolved, _) =
+            resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap();
         assert_eq!(
             resolved,
             ResolvedRevisions {

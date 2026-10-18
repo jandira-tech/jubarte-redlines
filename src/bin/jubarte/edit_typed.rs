@@ -569,6 +569,8 @@ fn prepare_and_publish(
     }
     let data = receipt.data.as_mut().expect("data");
     data.verification = prepared.checks.verification();
+    data.removed_comments = prepared.result.report.removed_comments.clone();
+    data.kept_comments = prepared.result.report.kept_comments.clone();
     if let Some(report) = &expectations {
         data.verification.expectations = "passed".to_string();
         data.expectations = Some(report.clone());
@@ -893,6 +895,15 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             let published = std::fs::read(&path);
             match published {
                 Ok(bytes) => {
+                    let data = receipt.data.as_ref().expect("success data");
+                    for line in super::settlement_notes(
+                        &data.removed_comments,
+                        &data.kept_comments,
+                        &bytes,
+                        "settlement",
+                    ) {
+                        edit_status(format_args!("{line}"));
+                    }
                     if let Err(error) =
                         print_edit_success(action.file(), source, &path, &bytes, redacted)
                     {

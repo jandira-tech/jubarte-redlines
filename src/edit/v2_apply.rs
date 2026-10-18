@@ -112,8 +112,11 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     let mut settlement = legacy(plan);
     settlement.resolve_revisions = Some(selection);
     // Reuse the original-source selection resolver before applying global policy.
-    let (selected, mut selected_report) =
-        super::resolve_selected(source, settlement.resolve_revisions.as_ref())?;
+    let (selected, mut selected_report, mut comment_changes) = super::resolve_selected(
+        source,
+        settlement.resolve_revisions.as_ref(),
+        plan.removed_anchor_comments.unwrap_or_default(),
+    )?;
     let selected = selected.as_deref().unwrap_or(source);
     let selected_left = changes(selected)?;
     let selected_left_ids: BTreeSet<_> = selected_left.iter().map(|c| c.id.as_str()).collect();
@@ -150,14 +153,22 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
             selected.to_vec()
         }
         policy => {
-            let bytes = if policy == ExistingRevisions::Accept {
+            let resolution = if policy == ExistingRevisions::Accept {
                 remaining_revisions.accepted = selected_left.iter().map(|c| c.id.clone()).collect();
-                crate::document_comparer::accept_revisions(selected)
+                crate::revision_processor::Resolution::Accept
             } else {
                 remaining_revisions.rejected = selected_left.iter().map(|c| c.id.clone()).collect();
-                crate::document_comparer::reject_revisions(selected)
-            }
+                crate::revision_processor::Resolution::Reject
+            };
+            let (bytes, removed, kept) = crate::changes::resolve_for_edit(
+                selected,
+                &ChangeFilter::default(),
+                resolution,
+                plan.removed_anchor_comments.unwrap_or_default()
+                    == super::RemovedAnchorComments::Keep,
+            )
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
+            comment_changes.extend(removed, kept);
             if has_history(&bytes)? {
                 return Err(err(
                     "UNSUPPORTED_REVISIONS",
@@ -186,6 +197,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     }
     tx.source_sha256 = plan.source.sha256.clone();
     tx.resolved_revisions = selected_report;
+    (tx.removed_comments, tx.kept_comments) = comment_changes.records(source)?;
     resolve(&mut tx, plan, &mapped)?;
     tracked::check(&tx)?;
     let effect = !tx.resolved.is_empty()
@@ -579,6 +591,7 @@ fn legacy(plan: &PlanV2) -> EditPlan {
         date: Some(plan.date.clone()),
         initials: None,
         resolve_revisions: None,
+        removed_anchor_comments: plan.removed_anchor_comments.unwrap_or_default(),
         existing_revisions: ExistingRevisions::Keep,
         operations: Vec::new(),
         update_fields: false,

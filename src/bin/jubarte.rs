@@ -1233,6 +1233,7 @@ struct EditJob<'a> {
     /// One document, or the bundle directory.
     target: &'a EditTarget,
     mode: Mode,
+    json: bool,
     dry_run: bool,
     /// `--require-change`: refuse when the primary has no document effect.
     require_change: bool,
@@ -1463,6 +1464,16 @@ fn run_edit(
         return Ok(());
     }
     // Preserve the existing summary contract for ordinary edits.
+    if job.json {
+        return write_stdout(
+            &outputs
+                .iter()
+                .find(|(name, _)| name == "report.jsonl")
+                .expect("report output")
+                .1,
+        )
+        .map_err(committed);
+    }
     if !is_pure_resolution(plan, &result) {
         write_stdout(format!("{summary}\n")).map_err(committed)?;
     }
@@ -1940,10 +1951,62 @@ fn publish_dir(
     Ok(())
 }
 
+/// One receipt line per thread, shared by legacy and typed edit publication.
+fn settlement_notes(
+    removed: &[jubarte::edit::RemovedComment],
+    kept: &[jubarte::edit::KeptComment],
+    document: &[u8],
+    decision: &str,
+) -> Vec<String> {
+    let reply_text = |replies: &[String]| match replies {
+        [] => String::new(),
+        [one] => format!(" and its reply {one}"),
+        many => format!(" and its replies {}", many.join(", ")),
+    };
+    let mut lines = Vec::new();
+    for c in removed {
+        lines.push(format!(
+            "removed {} ({}){}: their anchor was text the {decision} removed",
+            c.id,
+            c.author,
+            reply_text(&c.replies)
+        ));
+    }
+    let comments = if kept.is_empty() {
+        Vec::new()
+    } else {
+        jubarte::comments::list_comments(document).unwrap_or_default()
+    };
+    for c in kept {
+        let paragraph = comments
+            .iter()
+            .find(|r| format!("c{}", r.id) == c.id)
+            .and_then(|r| r.paragraph.as_deref())
+            .unwrap_or("the document");
+        lines.push(format!(
+            "kept {}{} on an empty anchor in {paragraph}",
+            c.id,
+            reply_text(&c.replies)
+        ));
+    }
+    lines
+}
+
 /// The `note:` lines of an applied edit: the flags' notes, then each
 /// anchor that matched as the paragraph reads rather than as typed.
 fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<String> {
     let mut lines: Vec<String> = notes.iter().map(|note| format!("note: {note}")).collect();
+    let decision = if result.report.resolved_revisions.rejected.is_empty() {
+        "acceptance"
+    } else {
+        "rejection"
+    };
+    lines.extend(settlement_notes(
+        &result.report.removed_comments,
+        &result.report.kept_comments,
+        &result.redline,
+        decision,
+    ));
     for outcome in &result.report.operations {
         if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
             let why = if jubarte::markdown::plain_anchor(given) == *read_as {
@@ -2050,6 +2113,14 @@ fn write_edited(
     )?;
     if job.quiet {
         return Ok(());
+    }
+    if job.json {
+        return write_stdout(result.report.to_jsonl()).map_err(|e| {
+            fail(format!(
+                "committed {}, but reporting the result failed: {e}",
+                comma_paths(&committed)
+            ))
+        });
     }
     edit_status(format_args!(
         "{}",
@@ -2171,6 +2242,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         } else {
             Mode::Suggesting
         },
+        json: flags.options.json,
         dry_run: flags.dry_run,
         require_change: flags.require_change,
         force: flags.options.force,

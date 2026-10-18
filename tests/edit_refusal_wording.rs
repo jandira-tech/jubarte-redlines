@@ -742,3 +742,132 @@ fn primary_nonrevision_error_has_no_secondary_review_choices() {
         "a secondary revision must not supply the primary error's review choices: {error}"
     );
 }
+
+fn loss_source() -> Vec<u8> {
+    let source = docx(
+        &(para("Services")
+            + &para("The Provider shall perform the Services.")
+            + &para("Next paragraph.")),
+    );
+    let bob = EditPlan::from_json(r#"{"schema_version":1,"author":"Bob","date":"2026-10-18T12:00:00Z","operations":[{"kind":"insert","paragraph":"p1","position":"end","text":" Bob added this sentence.","comment":"Bob's reason."}]}"#).unwrap();
+    let bob = apply_plan(&source, &bob).unwrap();
+    let alice = EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:05:00Z","existing_revisions":"keep","operations":[{"kind":"reply_comment","comment_id":"c0","text":"Alice disagrees."}]}"#).unwrap();
+    apply_plan(&bob.redline, &alice).unwrap().redline
+}
+fn loss_cli(flags: &[&str], json: bool) -> std::process::Output {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("source.docx"), loss_source()).unwrap();
+    std::fs::write(dir.path().join("plan.json"),r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:06:00Z","existing_revisions":"keep","resolve_revisions":{"reject":{"ids":["r1"]}},"operations":[]}"#).unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_jubarte"));
+    cmd.current_dir(dir.path())
+        .args(["edit", "source.docx"])
+        .args(flags)
+        .args(["-o", "out.docx"]);
+    if json {
+        cmd.arg("--json");
+    }
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let comments = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args(["comments", "out.docx"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&comments.stdout).contains("0 comment(s)"));
+    out
+}
+fn assert_loss_text(flags: &[&str]) {
+    let out = loss_cli(flags, false);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("removed c0 (Bob) and its reply c1:"),
+        "{text}"
+    );
+}
+fn assert_loss_json(flags: &[&str]) {
+    let out = loss_cli(flags, true);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let summary: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(
+        summary["removed_comments"],
+        json!([{"id":"c0","author":"Bob","replies":["c1"]}]),
+        "{text}"
+    );
+}
+#[test]
+fn removed_anchor_plan_discloses_loss_in_text() {
+    assert_loss_text(&["--plan", "plan.json"]);
+}
+#[test]
+fn removed_anchor_flags_disclose_loss_in_text() {
+    assert_loss_text(&["-p", "r1", "--reject"]);
+}
+#[test]
+fn removed_anchor_plan_discloses_loss_in_json() {
+    assert_loss_json(&["--plan", "plan.json"]);
+}
+#[test]
+fn removed_anchor_flags_disclose_loss_in_json() {
+    assert_loss_json(&["-p", "r1", "--reject"]);
+}
+
+#[test]
+fn removed_anchor_typed_envelope_and_text_disclose_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("source.docx"), loss_source()).unwrap();
+    for mode in ["remove", "keep"] {
+        let plan = json!({"schema_version":1,"author":"Alice","date":DATE,"existing_revisions":"keep","source_sha256":source_sha256(&loss_source()),"removed_anchor_comments":mode,"resolve_revisions":{"reject":{"ids":["r1"]}},"operations":[]});
+        std::fs::write(dir.path().join("plan.json"), plan.to_string()).unwrap();
+        for format in ["text", "json", "jsonl"] {
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_jubarte"));
+            cmd.current_dir(dir.path()).args([
+                "edit",
+                "apply",
+                "source.docx",
+                "--plan",
+                "plan.json",
+                "-o",
+                "out.docx",
+                "--force",
+            ]);
+            if format != "text" {
+                cmd.arg(format!("--{format}"));
+            }
+            let out = cmd.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let text = String::from_utf8_lossy(&out.stdout);
+            if format == "text" {
+                let text = format!("{text}{}", String::from_utf8_lossy(&out.stderr));
+                assert!(
+                    text.contains(&format!(
+                        "{} c0",
+                        if mode == "keep" { "kept" } else { "removed" }
+                    )) && text.contains("c1"),
+                    "{text}"
+                );
+            } else {
+                let envelope: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+                let data = &envelope["data"];
+                let key = if mode == "keep" {
+                    "kept_comments"
+                } else {
+                    "removed_comments"
+                };
+                assert_eq!(data[key][0]["id"], "c0", "{text}");
+                assert_eq!(data[key][0]["replies"], json!(["c1"]), "{text}");
+            }
+        }
+    }
+}
