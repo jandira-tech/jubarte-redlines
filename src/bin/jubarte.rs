@@ -1233,7 +1233,6 @@ struct EditJob<'a> {
     /// One document, or the bundle directory.
     target: &'a EditTarget,
     mode: Mode,
-    json: bool,
     dry_run: bool,
     /// `--require-change`: refuse when the primary has no document effect.
     require_change: bool,
@@ -1464,16 +1463,6 @@ fn run_edit(
         return Ok(());
     }
     // Preserve the existing summary contract for ordinary edits.
-    if job.json {
-        return write_stdout(
-            &outputs
-                .iter()
-                .find(|(name, _)| name == "report.jsonl")
-                .expect("report output")
-                .1,
-        )
-        .map_err(committed);
-    }
     if !is_pure_resolution(plan, &result) {
         write_stdout(format!("{summary}\n")).map_err(committed)?;
     }
@@ -2114,14 +2103,6 @@ fn write_edited(
     if job.quiet {
         return Ok(());
     }
-    if job.json {
-        return write_stdout(result.report.to_jsonl()).map_err(|e| {
-            fail(format!(
-                "committed {}, but reporting the result failed: {e}",
-                comma_paths(&committed)
-            ))
-        });
-    }
     edit_status(format_args!(
         "{}",
         wrote_line(path, Format::Docx, document.len(), None)
@@ -2242,7 +2223,6 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         } else {
             Mode::Suggesting
         },
-        json: flags.options.json,
         dry_run: flags.dry_run,
         require_change: flags.require_change,
         force: flags.options.force,

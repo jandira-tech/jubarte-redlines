@@ -299,10 +299,6 @@ pub enum TrackArg {
 /// Options `edit` and `add` share.
 #[derive(clap::Args, Debug, Serialize)]
 pub struct EditOptions {
-    /// Print the edit report as JSON lines, including settlement effects.
-    #[arg(long)]
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub json: bool,
     /// Author of the changes and comments (operation flags; a plan names
     /// its own).
     #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]

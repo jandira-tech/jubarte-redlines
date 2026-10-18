@@ -964,8 +964,9 @@ Conflicting selections are rejected instead of silently choosing a side.
 
 Settling a revision that removes a comment's whole anchor removes the thread
 and its replies, as Word does. Edit receipts report each removed thread as
-`removed_comments` (using `c0`, `c1`, etc.); legacy `edit --json` prints the
-JSONL report, and typed `edit apply --json` includes the same records in `data`.
+`removed_comments` (using source ids `c0`, `c1`, etc.). Legacy `edit --dry-run`
+prints the JSONL preview; `edit --out-dir` writes the summary event in
+`report.jsonl`. Typed `edit apply --json` includes the same records in `data`.
 To preserve the thread, set `"removed_anchor_comments": "keep"` in a v1 or
 v2 plan. Its range markers and reference runs move together to an empty,
 untracked anchor where the removed text was. A reply in the same plan can

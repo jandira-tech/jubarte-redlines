@@ -6,6 +6,7 @@
 //! Library cases use in-memory packages and fixed dates; process cases are integration tests.
 mod common;
 use common::docx::{docx, para};
+use jubarte::comments::list_comments;
 use jubarte::edit::{EditPlan, apply_plan, v2::PlanV2};
 use jubarte::inspect::source_sha256;
 use serde_json::{Value, json};
@@ -754,17 +755,26 @@ fn loss_source() -> Vec<u8> {
     let alice = EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:05:00Z","existing_revisions":"keep","operations":[{"kind":"reply_comment","comment_id":"c0","text":"Alice disagrees."}]}"#).unwrap();
     apply_plan(&bob.redline, &alice).unwrap().redline
 }
-fn loss_cli(flags: &[&str], json: bool) -> std::process::Output {
+fn loss_cli(flags: &[&str], channel: &str, mode: &str) -> (std::process::Output, Option<Value>) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("source.docx"), loss_source()).unwrap();
-    std::fs::write(dir.path().join("plan.json"),r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:06:00Z","existing_revisions":"keep","resolve_revisions":{"reject":{"ids":["r1"]}},"operations":[]}"#).unwrap();
+    let plan = json!({"schema_version":1,"author":"Alice","date":"2026-10-18T12:06:00Z","existing_revisions":"keep","removed_anchor_comments":mode,"resolve_revisions":{"reject":{"ids":["r1"]}},"operations":[]});
+    std::fs::write(dir.path().join("plan.json"), plan.to_string()).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jubarte"));
     cmd.current_dir(dir.path())
         .args(["edit", "source.docx"])
-        .args(flags)
-        .args(["-o", "out.docx"]);
-    if json {
-        cmd.arg("--json");
+        .args(flags);
+    match channel {
+        "bundle" => {
+            cmd.args(["--out-dir", "bundle"]);
+        }
+        "preview" => {
+            cmd.arg("--dry-run");
+        }
+        "single" => {
+            cmd.args(["-o", "out.docx"]);
+        }
+        _ => panic!("unknown report channel"),
     }
     let out = cmd.output().unwrap();
     assert!(
@@ -772,16 +782,33 @@ fn loss_cli(flags: &[&str], json: bool) -> std::process::Output {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let comments = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .current_dir(dir.path())
-        .args(["comments", "out.docx"])
-        .output()
-        .unwrap();
-    assert!(String::from_utf8_lossy(&comments.stdout).contains("0 comment(s)"));
-    out
+    let report = match channel {
+        "bundle" => Some(std::fs::read_to_string(dir.path().join("bundle/report.jsonl")).unwrap()),
+        "preview" => Some(String::from_utf8(out.stdout.clone()).unwrap()),
+        _ => None,
+    };
+    if channel != "preview" {
+        let path = if channel == "bundle" {
+            "bundle/redline.docx"
+        } else {
+            "out.docx"
+        };
+        let comments = list_comments(&std::fs::read(dir.path().join(path)).unwrap()).unwrap();
+        assert_eq!(comments.len(), if mode == "keep" { 2 } else { 0 });
+    } else {
+        assert!(!dir.path().join("out.docx").exists());
+        assert!(!dir.path().join("bundle").exists());
+    }
+    let summary = report.map(|text| {
+        text.lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|event| event["ev"] == "summary")
+            .expect("summary event")
+    });
+    (out, summary)
 }
 fn assert_loss_text(flags: &[&str]) {
-    let out = loss_cli(flags, false);
+    let (out, _) = loss_cli(flags, "single", "remove");
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -793,14 +820,28 @@ fn assert_loss_text(flags: &[&str]) {
     );
 }
 fn assert_loss_json(flags: &[&str]) {
-    let out = loss_cli(flags, true);
-    let text = String::from_utf8_lossy(&out.stdout);
-    let summary: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
-    assert_eq!(
-        summary["removed_comments"],
-        json!([{"id":"c0","author":"Bob","replies":["c1"]}]),
-        "{text}"
-    );
+    for channel in ["bundle", "preview"] {
+        let (_, summary) = loss_cli(flags, channel, "remove");
+        let summary = summary.unwrap();
+        assert_eq!(
+            summary["removed_comments"],
+            json!([{"id":"c0","author":"Bob","replies":["c1"]}]),
+            "{channel}: {summary}"
+        );
+        assert_eq!(summary["kept_comments"], json!([]));
+    }
+}
+#[test]
+fn removed_anchor_keep_reports_in_existing_json_channels() {
+    for channel in ["bundle", "preview"] {
+        let (_, summary) = loss_cli(&["--plan", "plan.json"], channel, "keep");
+        let summary = summary.unwrap();
+        assert_eq!(summary["removed_comments"], json!([]));
+        assert_eq!(
+            summary["kept_comments"],
+            json!([{"id":"c0","replies":["c1"],"anchor":"empty"}])
+        );
+    }
 }
 #[test]
 fn removed_anchor_plan_discloses_loss_in_text() {
@@ -869,5 +910,23 @@ fn removed_anchor_typed_envelope_and_text_disclose_threads() {
                 assert_eq!(data[key][0]["replies"], json!(["c1"]), "{text}");
             }
         }
+    }
+}
+
+#[test]
+fn legacy_edit_and_add_have_no_json_flag() {
+    for verb in ["edit", "add"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args([verb, "--help"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let help = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            !help
+                .lines()
+                .any(|line| line.trim_start().starts_with("--json")),
+            "{verb} must use --dry-run or --out-dir for JSONL: {help}"
+        );
     }
 }
