@@ -651,7 +651,7 @@ fn doc_default_ppr_delta(
     let (a_sp, b_sp, b_own_sp) = (sp(dom, a_dd), sp(dom, b_dd), sp(dom, b_own));
     let mut attrs: Vec<(String, String)> = Vec::new();
     for s in [a_sp, b_sp].into_iter().flatten() {
-        for (n, _) in dom.attributes(s) {
+        for (n, _) in dom.attributes_iter(s) {
             let local = n.local_name();
             if n.namespace_name() == W::URI
                 && matches!(local, "beforeLines" | "afterLines")
@@ -3878,7 +3878,7 @@ fn prune_normal_rpr_context_equal_attrs(dom: &mut Dom, out_root: NodeId) -> bool
                 changed = true;
             }
         }
-        if dom.attributes(fonts).is_empty() {
+        if !dom.has_attributes(fonts) {
             dom.remove(fonts);
             changed = true;
         }
@@ -4267,7 +4267,7 @@ fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: Node
                         changed = true;
                     }
                 }
-                if dom.attributes(rf).is_empty() {
+                if !dom.has_attributes(rf) {
                     dom.remove(rf);
                 }
             }
@@ -4333,7 +4333,7 @@ fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: Node
                 changed = true;
             }
         }
-        if dom.attributes(sp).is_empty() {
+        if !dom.has_attributes(sp) {
             dom.remove(sp);
         }
     }
@@ -8119,11 +8119,7 @@ mod tests {
         let d = dom.parse_xdocument(&restored);
         let root = dom.root(d).unwrap();
         let sp = dom.descendants(root, Some(&W::name("spacing")))[0];
-        let mut names: Vec<String> = dom
-            .attributes(sp)
-            .into_iter()
-            .map(|(n, _)| n.clark())
-            .collect();
+        let mut names: Vec<String> = dom.attributes_iter(sp).map(|(n, _)| n.clark()).collect();
         names.sort();
         let w = |l: &str| W::name(l).clark();
         assert_eq!(names, vec![w("line"), w("lineRule")], "{restored}");
@@ -8790,7 +8786,7 @@ mod tests {
                 (
                     dom.name(e).unwrap().local_name().to_string(),
                     dom.attribute(e, &W::val()).map(str::to_string),
-                    dom.attributes(e).len(),
+                    dom.attributes_iter(e).len(),
                 )
             })
             .collect();
@@ -11504,8 +11500,7 @@ mod coverage_package_source_matrix_tests {
     fn signature(dom: &Dom, node: NodeId) -> String {
         let name = dom.name(node).unwrap();
         let mut attrs: Vec<_> = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .map(|(n, v)| {
                 (
                     n.namespace_name().to_string(),
@@ -11543,7 +11538,7 @@ mod coverage_package_source_matrix_tests {
         // after the revision processor removes their last change child.
         for local in ["rPr", "pPr"] {
             for n in dom.descendants(r, Some(&W::name(local))) {
-                if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
+                if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
                     dom.remove(n);
                 }
             }
@@ -11569,7 +11564,7 @@ mod coverage_package_source_matrix_tests {
                     .copied()
                     .find(|&n| dom.name_is(n, &W::name(local)))
                     .and_then(|n| dom.element(n, &W::name(property)))
-                    .filter(|&n| !dom.elements(n, None).is_empty() || !dom.attributes(n).is_empty())
+                    .filter(|&n| !dom.elements(n, None).is_empty() || dom.has_attributes(n))
                     .map(|n| signature(&dom, n))
                     .unwrap_or_default()
             };
@@ -12293,8 +12288,7 @@ mod isolated_header_container_revision_boundary_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -12305,13 +12299,7 @@ mod isolated_header_container_revision_boundary_tests {
         {
             return String::new();
         }
-        attrs.sort_by_key(|(n, v)| {
-            (
-                n.namespace_name().to_owned(),
-                n.local_name().to_owned(),
-                v.clone(),
-            )
-        });
+        attrs.sort_by_key(|(n, v)| (n.namespace_name().to_owned(), n.local_name().to_owned(), *v));
         format!(
             "{:?}{attrs:?}[{}]",
             name,
@@ -12620,8 +12608,7 @@ mod adopted_story_relationship_owner_tests {
             return String::new();
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();
@@ -12798,8 +12785,7 @@ mod word_style_line_owned_boundary_tests {
     }
     fn semantic(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();
@@ -12891,15 +12877,14 @@ mod public_numbering_definition_source_owner_tests {
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attrs.sort_by_key(|(name, value)| {
             (
                 name.namespace_name().to_owned(),
                 name.local_name().to_owned(),
-                value.clone(),
+                *value,
             )
         });
         if attrs.is_empty()

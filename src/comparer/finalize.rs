@@ -954,8 +954,8 @@ pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
         if let Some(n) = dom.name(el) {
             mark(&mut used, n.namespace_name());
         }
-        for (a, _) in dom.attributes(el) {
-            if !dom.is_namespace_declaration(&a) {
+        for (a, _) in dom.attributes_iter(el) {
+            if !dom.is_namespace_declaration(a) {
                 mark(&mut used, a.namespace_name());
             }
         }
@@ -1031,8 +1031,7 @@ pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId) {
             continue;
         };
         let lists: Vec<String> = dom
-            .attributes(el)
-            .into_iter()
+            .attributes_iter(el)
             .filter(|(name, _)| is_namespace_prefix_list(&element, name))
             .map(|(_, value)| value.to_string())
             .collect();
@@ -3342,8 +3341,7 @@ fn paragraph_mark_properties_equal(
     }
     fn signature(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| {
                 !dom.is_namespace_declaration(name)
                     && name.namespace_name() != PT::URI
@@ -6089,7 +6087,7 @@ pub fn strip_propertyless_ppr(dom: &mut Dom, root: NodeId) {
 /// No `w:start` and no `w:chapStyle`. A start value (footnotes sample keeps
 /// `w:start="1"`) or any other format is a real property.
 pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
-    for (name, value) in dom.attributes(n) {
+    for (name, value) in dom.attributes_iter(n) {
         if name.local_name() == "fmt" && value == "decimal" {
             continue;
         }
@@ -24860,7 +24858,7 @@ mod coverage_real_revision_merge_matrix_tests {
         // no semantic formatting, unlike any actual property child.
         for local in ["rPr", "pPr"] {
             for n in dom.descendants(root, Some(&W::name(local))) {
-                if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
+                if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
                     dom.remove(n);
                 }
             }
@@ -25663,8 +25661,7 @@ mod coverage_real_revision_merge_matrix_tests {
     ) -> String {
         fn semantic(dom: &Dom, node: NodeId) -> String {
             let mut attrs = dom
-                .attributes(node)
-                .into_iter()
+                .attributes_iter(node)
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .collect::<Vec<_>>();
             attrs.sort_by(|a, b| {
@@ -25676,7 +25673,7 @@ mod coverage_real_revision_merge_matrix_tests {
                 .into_iter()
                 .filter(|&child| {
                     !((dom.name_is(child, &W::r_pr()) || dom.name_is(child, &W::p_pr()))
-                        && dom.attributes(child).is_empty()
+                        && !dom.has_attributes(child)
                         && dom.nodes(child).is_empty())
                 })
                 .map(|child| semantic(dom, child))
@@ -26199,7 +26196,7 @@ mod coverage_real_revision_merge_matrix_tests {
                         dom.name(node)
                             .is_none_or(|name| name.namespace_name() != PT::URI)
                             && dom
-                                .attributes(node)
+                                .attributes_iter(node)
                                 .into_iter()
                                 .all(|(name, _)| name.namespace_name() != PT::URI)
                     }),
@@ -28435,8 +28432,7 @@ mod consecutive_block_splice_tests {
     // text node and child position instead of comparing xmlns placement.
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -28573,7 +28569,7 @@ mod demo_title_pilcrow_history_tests {
             crate::revision_processor::reject_revisions_document(dom, copy)
         };
         for n in dom.descendants(copy, Some(&W::r_pr())) {
-            if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
+            if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
                 dom.remove(n);
             }
         }
@@ -28667,8 +28663,7 @@ mod demo_title_pilcrow_history_tests {
     fn effect_projection(dom: &mut Dom, root: NodeId, accept: bool) -> Vec<(String, String)> {
         fn canonical(dom: &Dom, n: NodeId) -> String {
             let mut attrs = dom
-                .attributes(n)
-                .into_iter()
+                .attributes_iter(n)
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .map(|(name, value)| {
                     (
@@ -28909,8 +28904,7 @@ mod paired_row_mark_ownership_tests {
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| !dom.is_namespace_declaration(n))
             .map(|(n, v)| {
                 (
@@ -29209,8 +29203,7 @@ mod closing_authored_section_boundary_tests {
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attributes = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attributes.sort_by(|a, b| {
@@ -29510,8 +29503,7 @@ mod finalizer_distinct_boundary_contract_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -30751,8 +30743,7 @@ mod finalizer_remaining_source_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31493,8 +31484,7 @@ mod finalizer_merge_source_guard_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31930,8 +31920,7 @@ mod finalizer_reached_predicate_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32282,8 +32271,7 @@ mod public_body_heuristic_story_scope_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32629,8 +32617,7 @@ mod default_source_property_carrier_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32812,8 +32799,7 @@ mod existing_mark_layout_ownership_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33140,8 +33126,7 @@ mod interleave_terminal_source_ownership_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33359,8 +33344,7 @@ mod whitespace_source_mark_carrier_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33529,8 +33513,7 @@ mod fragmented_source_label_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -34659,15 +34642,14 @@ mod deleted_carrier_echo_source_owner_tests {
     }
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attrs.sort_by_key(|(name, value)| {
             (
                 name.namespace_name().to_owned(),
                 name.local_name().to_owned(),
-                value.clone(),
+                *value,
             )
         });
         if attrs.is_empty()

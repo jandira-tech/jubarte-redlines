@@ -2567,8 +2567,8 @@ fn check_namespace_qname_context(pkg: &PartFs, part: &str, out: &mut Vec<Finding
         let Some(element_name) = dom.name(element) else {
             continue;
         };
-        for (name, value) in dom.attributes(element) {
-            if !is_namespace_qname_list(&element_name, &name) {
+        for (name, value) in dom.attributes_iter(element) {
+            if !is_namespace_qname_list(&element_name, name) {
                 continue;
             }
             for token in value.split_whitespace() {

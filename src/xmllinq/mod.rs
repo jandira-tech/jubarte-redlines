@@ -879,9 +879,23 @@ impl Dom {
             .map(|a| a.value.as_str())
     }
 
+    /// All attributes on `id`, in declaration order, as borrowed
+    /// `(name, value)` pairs. Allocation-free; prefer it to
+    /// [`Self::attributes`] unless the caller needs owned pairs, for example
+    /// to change the DOM while it walks them.
+    pub fn attributes_iter(
+        &self,
+        id: NodeId,
+    ) -> impl ExactSizeIterator<Item = (&XName, &str)> + '_ {
+        self.data(id)
+            .attrs
+            .iter()
+            .map(|a| (&a.name, a.value.as_str()))
+    }
+
     /// All attributes on `id`, in declaration order, as `(name, value)`
     /// owned pairs. For non-allocating iteration, use
-    /// [`Self::attr_count`] + [`Self::attr_at`].
+    /// [`Self::attributes_iter`].
     pub fn attributes(&self, id: NodeId) -> Vec<(XName, String)> {
         self.data(id)
             .attrs
@@ -1398,5 +1412,29 @@ mod intern_tests {
         // Interning must not change equality semantics.
         assert_eq!(a, b);
         assert_ne!(a, XName::get("r", ns));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod attribute_iter_tests {
+    use super::*;
+
+    /// `attributes_iter` walks the same pairs as `attributes`, in the same
+    /// declaration order, borrowing instead of cloning.
+    #[test]
+    fn attributes_iter_borrows_the_pairs_attributes_clones() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(r#"<a x="1" y="two" z=""><b/></a>"#);
+        let root = dom.root(doc).unwrap();
+        let borrowed: Vec<(XName, String)> = dom
+            .attributes_iter(root)
+            .map(|(name, value)| (name.clone(), value.to_string()))
+            .collect();
+        assert_eq!(borrowed, dom.attributes(root));
+        assert_eq!(dom.attributes_iter(root).len(), 3);
+        let leaf = dom.elements(root, None)[0];
+        assert_eq!(dom.attributes_iter(leaf).next(), None);
+        assert_eq!(dom.attributes_iter(leaf).len(), 0);
     }
 }

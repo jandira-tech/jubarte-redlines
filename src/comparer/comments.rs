@@ -1067,11 +1067,11 @@ fn preserve_cloned_namespace_context(
             used_uris.insert(name.namespace_name().to_string());
         }
         let element_name = dom.name(element);
-        for (name, value) in dom.attributes(element) {
-            if !dom.is_namespace_declaration(&name) && !name.namespace_name().is_empty() {
+        for (name, value) in dom.attributes_iter(element) {
+            if !dom.is_namespace_declaration(name) && !name.namespace_name().is_empty() {
                 used_uris.insert(name.namespace_name().to_string());
             }
-            if is_namespace_qname_list(element_name.as_ref(), &name) {
+            if is_namespace_qname_list(element_name.as_ref(), name) {
                 required_prefixes.extend(
                     value
                         .split_whitespace()
@@ -1362,7 +1362,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             d.elements(br, None)
                 .into_iter()
                 .filter_map(|e| {
-                    d.attributes(e)
+                    d.attributes_iter(e)
                         .into_iter()
                         .find(|(name, _)| name.local_name() == "durableId")
                         .map(|(_, value)| value.to_ascii_uppercase())
@@ -1442,7 +1442,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     let mut dead_para_ids: HashSet<String> = HashSet::new();
     for &c in &orphan {
         for p in dom.descendants(c, Some(&W::p())) {
-            for (n, v) in dom.attributes(p) {
+            for (n, v) in dom.attributes_iter(p) {
                 if n.local_name() == "paraId" {
                     dead_para_ids.insert(v.to_ascii_uppercase());
                 }

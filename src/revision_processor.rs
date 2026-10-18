@@ -4561,8 +4561,7 @@ mod revision_boundary_coverage_tests {
     fn internally_deleted_math_does_not_consume_independent_anchors_controls_or_empty_branches() {
         fn semantic(dom: &Dom, node: NodeId) -> String {
             let mut attributes = dom
-                .attributes(node)
-                .into_iter()
+                .attributes_iter(node)
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .collect::<Vec<_>>();
             attributes.sort_by(|a, b| {
@@ -5028,8 +5027,7 @@ mod body_equation_paragraph_mark_ownership_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -5038,7 +5036,7 @@ mod body_equation_paragraph_mark_ownership_tests {
             (
                 n.namespace_name().to_string(),
                 n.local_name().to_string(),
-                v.clone(),
+                *v,
             )
         });
         format!(
@@ -5282,8 +5280,7 @@ mod deleted_title_equation_barrier_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -5292,7 +5289,7 @@ mod deleted_title_equation_barrier_tests {
             (
                 n.namespace_name().to_string(),
                 n.local_name().to_string(),
-                v.clone(),
+                *v,
             )
         });
         format!(
@@ -5415,7 +5412,7 @@ mod complete_field_instruction_metadata_boundary_tests {
                 assert_eq!(dom.serialize_element(wrappers[0]), first);
                 assert_eq!(dom.serialize_element(wrappers[2]), last);
                 assert!(
-                    dom.attributes(wrappers[1]).is_empty(),
+                    !dom.has_attributes(wrappers[1]),
                     "A.1 generated field-code wrapper has no invented attribution"
                 );
                 let actual_codes = dom
@@ -5474,8 +5471,7 @@ mod alternate_content_paragraph_owner_tests {
         if dom.is_element(node) {
             let name = dom.name(node).unwrap();
             let mut attrs = dom
-                .attributes(node)
-                .into_iter()
+                .attributes_iter(node)
                 .filter(|(n, _)| !dom.is_namespace_declaration(n))
                 .map(|(n, v)| (n.clark(), v))
                 .collect::<Vec<_>>();
