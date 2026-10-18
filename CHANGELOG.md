@@ -41,6 +41,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **`accept`/`reject` settle tracked changes inside comment bodies**
+  (`word/comments.xml`), as Word's Accept/Reject All do. An `--author` or
+  `--kind` selection resolves them too; `--id` still cannot name one (they
+  carry no listed id), so a selection that leaves any prints a note with
+  the count. A comment whose revisions empty its paragraphs keeps one
+  `w:p`, the shape Word writes.
 - **Fractional plain values on table and frame geometry are rounded in
   redline output — a validity repair.** A gdocs-style fractional dxa
   (`w:tblpX="100.5"`, `w:framePr w:x="33.5"`) is schema-invalid on the
