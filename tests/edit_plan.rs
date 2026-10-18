@@ -1758,26 +1758,42 @@ fn whole_replace_across_runs_keeps_formatting_and_comment() {
     let source = docx(&format!(
         "<w:p>{}{}</w:p>",
         run("Notices. Send notices by ", false, false, None),
-        run("email to legal@acme.example", true, false, None)
-            + &run(" within two days.", false, false, None)
+        run("email to Alice", true, false, None) + &run(" within two days.", false, false, None)
     ));
     let result = apply_plan(
         &source,
         &plan(
             &source,
-            r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to legal","replacement":"by courier to legal","whole":true,"comment":"Courier only."}]"#,
+            r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to","replacement":"by courier to","whole":true,"comment":"Courier only."}]"#,
         ),
     )
     .unwrap();
     assert_eq!(
         marked_paragraphs(&result.redline),
-        [
-            "Notices. Send notices [-by email to legal-]{+by courier to legal+}@acme.example within two days."
-        ]
+        ["Notices. Send notices [-by email to-]{+by courier to+} Alice within two days."]
     );
     let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let root = dom.root(document).unwrap();
+    let mut seen = std::collections::HashSet::new();
+    let mut count = 0;
+    for node in dom.descendants(root, None) {
+        let Some(name) = dom.name(node) else { continue };
+        if name.namespace_name() == W::URI && matches!(name.local_name(), "rPrChange" | "pPrChange")
+        {
+            let id = dom.attribute(node, &W::id()).unwrap();
+            assert!(
+                seen.insert((name.local_name().to_string(), id.to_string())),
+                "duplicate {}:{id} in word/document.xml",
+                name.local_name()
+            );
+            count += 1;
+        }
+    }
+    assert!(count >= 2, "both sides retain their formatting history");
     assert_eq!(xml.matches("<w:commentReference ").count(), 1);
-    // "email to legal" was bold in the source; its deleted copy stays bold.
+    // "email to" was bold in the source; its deleted copy stays bold.
     let del = &xml[xml.find("<w:del ").unwrap()..xml.find("</w:del>").unwrap()];
     assert!(del.contains("<w:b/>") || del.contains("<w:b />"), "{del}");
     assert_word_valid_package(&result.redline);

@@ -232,6 +232,155 @@ fn bench() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench")
 }
 
+/// Owner, record type, id and payload (without id), in stylesheet order.
+fn style_histories(pkg: &[u8]) -> Vec<(String, String, String, String)> {
+    use jubarte::namespaces::W;
+    use jubarte::xmllinq::Dom;
+    let Some(xml) = part_string(pkg, "word/styles.xml") else {
+        return Vec::new();
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let mut out = Vec::new();
+    for style in dom.elements(root, Some(&W::name("style"))) {
+        let owner = dom
+            .attribute(style, &W::name("styleId"))
+            .unwrap()
+            .to_string();
+        for node in dom.descendants(style, None) {
+            let Some(name) = dom.name(node) else { continue };
+            if name.namespace_name() != W::URI
+                || !matches!(name.local_name(), "rPrChange" | "pPrChange")
+            {
+                continue;
+            }
+            let id = dom.attribute(node, &W::id()).unwrap().to_string();
+            let copy = dom.clone_subtree(node);
+            dom.set_attribute_value(copy, &W::id(), None);
+            out.push((
+                owner.clone(),
+                name.local_name().to_string(),
+                id,
+                dom.serialize_element(copy),
+            ));
+        }
+    }
+    out
+}
+
+/// A copied history is a new change; it must be fresh, preserve a retained
+/// source history's payload, and leave that source history's id intact.
+fn fresh_style_copies(before: &[u8], after: &[u8], selected: &ChangeFilter) -> HashSet<String> {
+    use jubarte::namespaces::W;
+    use jubarte::opc::PartFs;
+    use jubarte::xmllinq::Dom;
+    let old = style_histories(before);
+    let new = style_histories(after);
+    let pkg = PartFs::open(before).unwrap();
+    let max_id = pkg
+        .parts()
+        .into_iter()
+        .filter(|p| p.ends_with(".xml"))
+        .filter_map(|p| {
+            let xml = pkg.part_string(&p)?;
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let root = dom.root(doc)?;
+            dom.descendants(root, None)
+                .into_iter()
+                .filter_map(|n| dom.attribute(n, &W::id())?.parse::<u64>().ok())
+                .max()
+        })
+        .max()
+        .unwrap_or(0);
+    let selected_ids: HashSet<String> = list_changes(before)
+        .unwrap()
+        .into_iter()
+        .filter(|c| selected.matches(c))
+        .map(|c| c.id)
+        .collect();
+    let mut copies = HashSet::new();
+    for (owner, kind, id, payload) in &new {
+        if old
+            .iter()
+            .any(|r| &r.0 == owner && &r.1 == kind && &r.2 == id)
+        {
+            continue;
+        }
+        assert!(
+            id.parse::<u64>().unwrap() > max_id,
+            "copied {owner}/{kind}:{id} must be package-fresh (> {max_id})"
+        );
+        assert!(
+            old.iter().any(|source| {
+                &source.1 == kind
+                    && &source.3 == payload
+                    && !selected_ids.contains(&format!("styles.r{}", source.2))
+                    && new.contains(source)
+            }),
+            "copied {owner}/{kind}:{id} must keep a retained source history intact"
+        );
+        copies.insert(format!("styles.r{id}"));
+    }
+    copies
+}
+
+#[test]
+fn rejecting_alternate_changes_allocates_fresh_style_history_ids() {
+    // Smallest of the 11 failing redlines in the 200-input selection: 23,013 bytes.
+    let redline = std::fs::read(bench().join("corpus/word/tracking_without_comments/docx/83799a0610__vs__333bfe069a_redline_2a068b16e5.docx")).unwrap();
+    let assert_unique = |pkg: &[u8]| {
+        let records = style_histories(pkg);
+        let mut seen = HashSet::new();
+        for (owner, kind, id, _) in records {
+            assert!(
+                seen.insert((kind.clone(), id.clone())),
+                "duplicate {kind}:{id} in word/styles.xml at {owner}"
+            );
+        }
+    };
+    assert_unique(&redline);
+    let listed = list_changes(&redline).unwrap();
+    let half = ChangeFilter::ids(listed.iter().step_by(2).map(|c| c.id.clone()));
+    let partial = reject_changes(&redline, &half).unwrap();
+    assert_unique(&partial);
+    let copies = fresh_style_copies(&redline, &partial, &half);
+    assert_eq!(
+        copies.len(),
+        1,
+        "Heading7Char inherits Normal's kept run history"
+    );
+    let after = style_histories(&partial);
+    for record in style_histories(&redline) {
+        if !half.matches(
+            listed
+                .iter()
+                .find(|c| c.id == format!("styles.r{}", record.2))
+                .unwrap(),
+        ) {
+            assert!(
+                after.contains(&record),
+                "untouched history changed: {record:?}"
+            );
+        }
+    }
+    assert_word_valid_package(&partial);
+    let finished = reject_changes(&partial, &ChangeFilter::default()).unwrap();
+    assert!(list_changes(&finished).unwrap().is_empty());
+    let texts = |pkg: &[u8]| {
+        jubarte::inspect::paragraphs(pkg)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.text)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        texts(&finished),
+        texts(&reject_revisions(&redline).unwrap())
+    );
+}
+
 /// On Word's own redlines (the bench's `rejected_tracking` set): resolving every other change first and the rest after ends
 /// where resolving them all at once does, and the half-way document is
 /// Word-valid with every unselected id still listed.
@@ -321,6 +470,7 @@ fn resolving_in_two_halves_ends_where_resolving_all_does() {
                 .iter()
                 .filter(|c| !selected(c) && !swept(c))
                 .map(|c| c.id.clone())
+                .chain(fresh_style_copies(&redline, &partial, &first))
                 .collect();
             // A note goes with a reference its resolved change removed, a
             // header or footer with the section a resolved mark ended.

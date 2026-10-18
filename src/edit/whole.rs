@@ -163,12 +163,7 @@ pub(super) fn rewrite(
             parts.push((part.clone(), document, root));
         }
     }
-    let mut next_id = parts
-        .iter()
-        .flat_map(|&(_, _, root)| opened.dom.descendants(root, None))
-        .filter_map(|n| opened.dom.attribute(n, &W::id())?.parse::<u64>().ok())
-        .max()
-        .map_or(1, |max| max + 1);
+    let mut next_id = crate::revision_processor::next_revision_id(&opened.pkg);
     let mut fallbacks = Vec::new();
     for mark in marks {
         let stamp = Stamp {
@@ -292,7 +287,11 @@ fn rewrite_one(
         }
         match item.kind {
             Kind::Kept => {
-                let copy = dom.clone_subtree(item.node);
+                let copy = crate::revision_processor::clone_with_fresh_property_ids(
+                    dom,
+                    item.node,
+                    stamp.next_id,
+                );
                 for t in dom.descendants(copy, Some(&W::t())) {
                     dom.set_name(t, W::del_text());
                 }
