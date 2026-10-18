@@ -913,6 +913,26 @@ fn run_text(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
+    if args.no_page_markers {
+        // The structured outputs never run the layout pass: the flag has
+        // nothing to skip there, so it is dropped, and said so.
+        let json_file = output.is_some_and(|path| {
+            matches!(
+                output_format(Task::Read, Some(path), None),
+                Ok(Some(Format::Json))
+            )
+        });
+        let kind = if args.tables {
+            Some("--tables")
+        } else if args.for_edit || args.json || json_file {
+            Some("JSON")
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            eprintln!("warning: --no-page-markers dropped: no page markers in {kind}, proceeding");
+        }
+    }
     if args.for_edit {
         return run_for_edit(file, args, output, force, quiet);
     }

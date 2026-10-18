@@ -922,7 +922,9 @@ fn read_json_fixture(dir: &Path) {
     std::fs::write(dir.join("source.docx"), docx(&body)).unwrap();
 }
 
-fn no_page_markers_output_is_identical(shorthand: bool, output: &[&str]) {
+/// `--no-page-markers` with an output that has no page markers: dropped
+/// with one warning on stderr, the output itself unchanged.
+fn no_page_markers_is_dropped_with_a_warning(shorthand: bool, output: &[&str]) {
     let dir = tempfile::tempdir().unwrap();
     read_json_fixture(dir.path());
     let prefix = if shorthand {
@@ -940,7 +942,19 @@ fn no_page_markers_output_is_identical(shorthand: bool, output: &[&str]) {
     let fast = run_in(dir.path(), &fast_args);
     assert_eq!(fast.0, 0, "{fast_args:?}: {}", fast.2);
     assert_eq!(fast.1, plain.1, "{fast_args:?}");
-    assert_eq!(fast.2, plain.2, "{fast_args:?}");
+    let what = if output.contains(&"--tables") {
+        "--tables"
+    } else {
+        "JSON"
+    };
+    assert_eq!(
+        fast.2,
+        format!(
+            "warning: --no-page-markers dropped: no page markers in {what}, proceeding\n{}",
+            plain.2
+        ),
+        "{fast_args:?}"
+    );
     if let Some(file) = file {
         assert_eq!(
             std::fs::read(dir.path().join("snap.json")).unwrap(),
@@ -954,7 +968,7 @@ macro_rules! no_page_markers_case {
     ($name:ident, $shorthand:expr, [$($output:expr),*]) => {
         #[test]
         fn $name() {
-            no_page_markers_output_is_identical($shorthand, &[$($output),*]);
+            no_page_markers_is_dropped_with_a_warning($shorthand, &[$($output),*]);
         }
     };
 }
@@ -1142,6 +1156,6 @@ fn read_help_dates_exclusion() {
 fn read_help_no_page_markers_structured_outputs() {
     read_option_help(
         "--no-page-markers",
-        "no effect with --json, --tables, --for-edit or -o FILE.json",
+        "dropped with a warning with --json, --tables, --for-edit or -o FILE.json",
     );
 }

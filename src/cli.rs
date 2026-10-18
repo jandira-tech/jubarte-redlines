@@ -79,8 +79,8 @@ pub struct ReadArgs {
     #[arg(long, help_heading = "Read options")]
     pub dates: bool,
     /// Skip the layout pass; page count from Word's cached breaks, no
-    /// `<!-- page N of M -->` lines; no effect with --json, --tables,
-    /// --for-edit or -o FILE.json.
+    /// `<!-- page N of M -->` lines; dropped with a warning with --json,
+    /// --tables, --for-edit or -o FILE.json.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
     /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
