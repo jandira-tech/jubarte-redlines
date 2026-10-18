@@ -87,8 +87,8 @@ pub struct IdError {
     /// The token as it was given to the parser.
     pub given: String,
     /// Human-readable hint naming the form the token should have taken
-    /// (one of the [`CHANGE_EXPECTED`] / [`COMMENT_EXPECTED`] /
-    /// [`LOCATION_EXPECTED`] / [`TABLE_NEEDS_CELL`] / [`CELL_NEEDS_TABLE`]
+    /// (one of the `CHANGE_EXPECTED` / `COMMENT_EXPECTED` /
+    /// `LOCATION_EXPECTED` / `TABLE_NEEDS_CELL` / `CELL_NEEDS_TABLE`
     /// constants).
     pub expected: &'static str,
     /// The settled spelling of an expired one (`12` → `p12, r12 or c12`),

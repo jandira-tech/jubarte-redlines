@@ -87,7 +87,7 @@ use crate::xmllinq::{Dom, NodeId, XName};
 pub struct Finding {
     /// Stable code (`TEXT_INSIDE_DELETION`, `MC_UNBOUND_PREFIX`, ...).
     pub code: String,
-    /// The rule set it belongs to: one of [`RULE_SETS`].
+    /// The rule set it belongs to: one of `RULE_SETS`.
     pub set: String,
     /// `error`, `warning` or `info`. A `word` finding is an `error` when
     /// Word-fatal and a `warning` (a lead) otherwise.
