@@ -174,7 +174,7 @@ fn diff_escapes_literal_revision_tags() {
 }
 
 #[test]
-fn plain_view_pairs_the_same_author_across_timestamps() {
+fn plain_view_keeps_the_same_author_separate_across_timestamps() {
     use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
     let xml = r#"<w:p><w:del w:id="1" w:author="Alice" w:date="2026-10-17T10:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="Alice" w:date="2026-10-18T10:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#;
     let text = docx_to_markdown(&common::docx::docx(xml), &MarkdownOptions::default())
@@ -182,7 +182,7 @@ fn plain_view_pairs_the_same_author_across_timestamps() {
         .markdown;
     assert!(
         text.contains(
-            "{~~old~>new~~}{r1 Alice (2026-10-17T10:00:00Z); r2 Alice (2026-10-18T10:00:00Z)}"
+            "{--old--}{r1 Alice (2026-10-17T10:00:00Z)}{++new++}{r2 Alice (2026-10-18T10:00:00Z)}"
         ),
         "{text}"
     );
@@ -237,7 +237,7 @@ fn plain_inserted_paragraph_mark_is_inline_and_preserves_heading_rejection() {
 fn patch_reads_both_plain_substitution_timestamps_without_a_comment() {
     use jubarte::markdown::{Attribution, PatchOptions, patch_critic};
     let patch = patch_critic(
-        "{~~old~>new~~}{r1 Alice (2026-10-17T10:00:00Z); r2 Alice (2026-10-18T10:00:00Z)}¶{r3 Bob}",
+        "{--old--}{r1 Alice (2026-10-17T10:00:00Z)}{++new++}{r2 Alice (2026-10-18T10:00:00Z)}¶{r3 Bob}",
         &PatchOptions {
             old_name: "old.md".to_string(),
             new_name: "new.md".to_string(),

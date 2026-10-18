@@ -1,6 +1,6 @@
 # Changes in headings, lists and footnotes
 
-Either party may{++ at its own cost++}{r0 Carla Duarte (2026-09-01T00:07:00Z)} end this {~~agreement~>vendor~~}{r1 Dev Patel (2026-09-01T00:14:00Z); r2 Dev Patel (2026-09-01T00:21:00Z)}{-- --}{r3 Bo Chen (2026-09-01T00:28:00Z)}{--**with**--}{r4 Bo Chen (2026-09-01T00:28:00Z)} ninety ¶{r5 Carla Duarte (2026-09-01T00:35:00Z)}
+Either party may{++ at its own cost++}{r0 Carla Duarte (2026-09-01T00:07:00Z)} end this {--agreement--}{r1 Dev Patel (2026-09-01T00:14:00Z)}{++vendor++}{r2 Dev Patel (2026-09-01T00:21:00Z)}{-- --}{r3 Bo Chen (2026-09-01T00:28:00Z)}{--**with**--}{r4 Bo Chen (2026-09-01T00:28:00Z)} ninety ¶{r5 Carla Duarte (2026-09-01T00:35:00Z)}
 
 days _written_ notice.
 
