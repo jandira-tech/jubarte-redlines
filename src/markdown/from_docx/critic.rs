@@ -880,6 +880,9 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
             // Pair a deletion then a live insertion by the same author.
             // The old side keeps its parent; a parent on the new side
             // prevents pairing. Insertion then deletion stays in order.
+            // A rendered bookmark, comment range or field (w:fldChar)
+            // between the marks separates them; proofing, unreferenced
+            // bookmarks and empty runs are transparent.
             (
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
