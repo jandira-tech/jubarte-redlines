@@ -228,6 +228,42 @@ fn deleted_text_under_a_move_source_becomes_live_text() {
     );
 }
 
+/// An insertion inside a move source does not shelter `w:delText`: Word
+/// refuses `w:moveFrom > w:ins > w:r > w:delText` (probe M1, 2026-10-18) and
+/// opens it once the text is `w:t` (probe M2).
+#[test]
+fn deleted_text_of_an_insertion_inside_a_move_source_becomes_live_text() {
+    let body = r#"<w:p><w:moveFrom w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:ins w:id="2" w:author="B" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:ins></w:moveFrom></w:p>"#;
+    let out = assert_repairs(body, "MOVEFROM_WITH_DELTEXT");
+    assert!(
+        part_string(&out, "word/document.xml")
+            .unwrap()
+            .contains("<w:t>x</w:t>")
+    );
+}
+
+/// A deletion inside a move source owns its text: Word opens
+/// `w:moveFrom > w:ins > w:del > w:r > w:delText` (probe M5, 2026-10-18) and
+/// refuses it with `w:t` (probe M6), so neither check nor repair touches it.
+#[test]
+fn deleted_text_of_a_deletion_inside_a_move_source_stays_deleted() {
+    let body = r#"<w:p><w:moveFrom w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:ins w:id="2" w:author="B" w:date="2026-01-01T00:00:00Z"><w:del w:id="3" w:author="C" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:del></w:ins></w:moveFrom></w:p>"#;
+    let input = docx(body);
+    let findings = validate(&input).unwrap();
+    assert!(
+        !findings
+            .iter()
+            .any(|f| f.code.contains("DELTEXT") || f.code.contains("DELETION")),
+        "{findings:?}"
+    );
+    let fixed = repair(&input).unwrap();
+    assert!(
+        part_string(&fixed.docx, "word/document.xml")
+            .unwrap()
+            .contains("<w:delText>x</w:delText>")
+    );
+}
+
 #[test]
 fn a_field_code_inside_a_deletion_is_a_lead_with_a_repair() {
     let body = format!(
