@@ -3944,16 +3944,16 @@ impl<'p> Transaction<'p> {
         Ok((start, end))
     }
 
-    /// Every byte of `[start, end)` must come from a direct run: its text,
-    /// or a tab, break or non-breaking hyphen, which an edit over it
-    /// removes. A symbol is never edited: its run's font would draw the text.
+    /// Every byte of `[start, end)` must come from a direct run or an
+    /// editable insertion: text, a tab, break or non-breaking hyphen,
+    /// which an edit over it removes. A symbol is never edited: its run's font would draw the text.
     fn check_range(&self, projection: &Projection, start: usize, end: usize) -> Result<(), String> {
         let mut covered = start;
         for seg in &projection.segments {
             if seg.end <= covered || seg.start >= end {
                 continue;
             }
-            if !seg.direct {
+            if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
                 return Err(format!(
                     "the text sits inside {}",
                     self.opaque_structure(run_of(&seg.piece))
@@ -4056,7 +4056,7 @@ impl<'p> Transaction<'p> {
         }
         let seg = attach_segment(projection, pos, attach_before)
             .ok_or_else(|| "no run holds the insertion point".to_string())?;
-        if !seg.direct {
+        if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
             return Err(format!(
                 "the insertion point sits inside {}",
                 self.opaque_structure(run_of(&seg.piece))
@@ -5633,6 +5633,33 @@ fn locate(
         }
     };
     Ok((start, end))
+}
+
+/// A run directly inside a paragraph's pending insertion is editable.
+/// Other wrappers and complex field results retain their refusal: an
+/// insertion around a field does not make that field ordinary text.
+fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
+    let run = run_of(piece);
+    let ins = dom.parent(run).filter(|&n| dom.name_is(n, &W::ins()))?;
+    let paragraph = dom.parent(ins).filter(|&n| dom.name_is(n, &W::p()))?;
+    let target = match *piece {
+        Piece::Text { t, .. } => t,
+        Piece::Glyph { element, .. } => element,
+    };
+    let mut fields = 0usize;
+    for node in dom.descendants(paragraph, None) {
+        if node == target {
+            return (fields == 0).then_some(ins);
+        }
+        if dom.name_is(node, &W::name("fldChar")) {
+            match dom.attribute(node, &W::name("fldCharType")) {
+                Some("begin") => fields += 1,
+                Some("end") => fields = fields.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 /// `seg` is a `w:sym`, projected as U+FFFC.
