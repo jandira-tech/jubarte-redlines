@@ -1586,6 +1586,7 @@ fn outcome(i: usize, kind: &OperationKind) -> EditOutcome {
         message: None,
         anchor_given: None,
         anchor_read_as: None,
+        near: None,
     }
 }
 fn mapped_paragraph(tx: &Transaction<'_>, source: usize) -> Result<usize, EditError> {

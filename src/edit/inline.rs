@@ -19,6 +19,7 @@ fn refusal(code: &str, message: impl Into<String>) -> Box<Error> {
 fn edit_error(e: super::EditError) -> Box<Error> {
     let mut error = Error::new(e.code).with_message(e.message);
     error.operation = e.operation;
+    error.near = e.near.map(|near| *near);
     Box::new(error)
 }
 fn pair(p: &super::for_edit::TargetPair) -> Target {
@@ -134,9 +135,36 @@ pub fn compile(
                     }
                 }
             }
+            let with_near = |mut error: Box<Error>| {
+                if hits.is_empty() && error.code == "ANCHOR_NOT_FOUND" {
+                    let mut report = super::NearMatches {
+                        total: 0,
+                        occurrences: Vec::new(),
+                    };
+                    for row in &candidates {
+                        if let Some(text) =
+                            row.working.as_ref().and_then(|w| w.value.text.as_deref())
+                            && let Some(near) = super::anchor::near_matches(text, find)
+                        {
+                            report.total += near.total;
+                            let remaining = 5 - report.occurrences.len();
+                            report.occurrences.extend(
+                                near.occurrences.into_iter().take(remaining).map(|mut hit| {
+                                    hit.target = Some(row.target.short_id.clone());
+                                    hit
+                                }),
+                            );
+                        }
+                    }
+                    if report.total > 0 {
+                        error.near = Some(report);
+                    }
+                }
+                error
+            };
             if *all_matches {
                 if hits.len() != expect_count.unwrap_or_default() {
-                    return Err(refusal(
+                    return Err(with_near(refusal(
                         if hits.is_empty() {
                             "ANCHOR_NOT_FOUND"
                         } else {
@@ -147,7 +175,7 @@ pub fn compile(
                             expect_count.unwrap_or_default(),
                             hits.len()
                         ),
-                    ));
+                    )));
                 }
                 for row in &candidates {
                     if let Some(working) = &row.working {
@@ -182,25 +210,25 @@ pub fn compile(
                     Some(n) => n - 1,
                     None if hits.len() == 1 => 0,
                     None => {
-                        return Err(refusal(
+                        return Err(with_near(refusal(
                             if hits.is_empty() {
                                 "ANCHOR_NOT_FOUND"
                             } else {
                                 "AMBIGUOUS_ANCHOR"
                             },
                             format!("expected one exact match; found {}", hits.len()),
-                        ));
+                        )));
                     }
                 };
                 let hit = hits.get(index).copied().ok_or_else(|| {
-                    refusal(
+                    with_near(refusal(
                         if hits.is_empty() {
                             "ANCHOR_NOT_FOUND"
                         } else {
                             "AMBIGUOUS_ANCHOR"
                         },
                         format!("occurrence is outside {} exact matches", hits.len()),
-                    )
+                    ))
                 })?;
                 hits = vec![hit];
             }

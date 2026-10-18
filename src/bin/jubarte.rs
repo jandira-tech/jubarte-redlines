@@ -2152,6 +2152,9 @@ fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, Str
             if let Some(c) = &o.context {
                 m.insert("ctx".into(), c.clone().into());
             }
+            if let Some(near) = &o.near {
+                m.insert("near".into(), serde_json::to_value(near).expect("near serializes"));
+            }
             if let Some(c) = &o.code {
                 m.insert("code".into(), c.clone().into());
             }
@@ -2174,7 +2177,12 @@ fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, Str
         summary["next_actions"] = serde_json::to_value(actions).expect("actions serialize");
     }
     outln!("{report_lines}{summary}");
-    (EXIT_PLAN_REFUSED, format!("plan refused: {e}"))
+    let mut message = format!("plan refused: {e}");
+    for near in e.outcomes.iter().filter_map(|o| o.near.as_ref()) {
+        message.push('\n');
+        message.push_str(&near.copy_hint());
+    }
+    (EXIT_PLAN_REFUSED, message)
 }
 
 /// Insert `line` before the trailing `summary` line of a JSONL report.

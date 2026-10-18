@@ -318,6 +318,9 @@ pub struct Error {
     /// Bounded actual context around the failure point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Context>,
+    /// Whitespace-only diagnostic occurrences. They never authorize selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<crate::edit::NearMatches>,
     /// Human-readable detail.
     pub message: String,
     /// Structured argv next actions; never shell strings.
@@ -362,6 +365,7 @@ impl Error {
             target: None,
             matches: None,
             context: None,
+            near: None,
             message: String::new(),
             next_actions: Vec::new(),
             retryable: None,

@@ -24,6 +24,7 @@ fn failure(code: &str, message: impl Into<String>) -> Failure {
 fn edit_error(e: jubarte::edit::EditError) -> Failure {
     let mut error = failure(&e.code, e.message);
     error.operation = e.operation;
+    error.near = e.near.map(|near| *near);
     error
 }
 fn io_error(message: String) -> Failure {
@@ -783,6 +784,9 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
     if !delivery.json && !delivery.jsonl && receipt.status != Status::Ok {
         let error = receipt.error.as_ref().expect("failure error");
         eprintln!("error: {}: {}", error.code, error.message);
+        if let Some(near) = &error.near {
+            eprintln!("{}", near.copy_hint());
+        }
         return ExitCode::from(code);
     }
     let rendered = if delivery.jsonl {

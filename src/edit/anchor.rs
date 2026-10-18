@@ -110,6 +110,120 @@ pub(super) fn shown(text: &str) -> String {
     out
 }
 
+/// A diagnostic occurrence, never a selected range.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NearOccurrence {
+    /// The document's exact characters, suitable for copying into an anchor.
+    pub text: String,
+    /// The exact text quoted with the same escapes as anchor refusals.
+    pub shown: String,
+    /// UTF-8 byte offset in the searched logical paragraph text.
+    pub offset: usize,
+    /// Paragraph owning the offset, when a search spans several targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+/// Report-only whitespace matches accompanying `ANCHOR_NOT_FOUND`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NearMatches {
+    /// Complete occurrence count, including overlaps and entries beyond the cap.
+    pub total: usize,
+    /// At most five occurrences in source order. None authorizes an edit.
+    pub occurrences: Vec<NearOccurrence>,
+}
+
+impl NearMatches {
+    /// One extra refusal line. Exact text remains available in the JSON report;
+    /// the terminal uses visible escapes for invisible characters.
+    pub fn copy_hint(&self) -> String {
+        let shown: Vec<_> = self
+            .occurrences
+            .iter()
+            .map(|hit| hit.shown.as_str())
+            .collect();
+        format!(
+            "near: {} (whitespace or zero-width characters differ); copy the text exactly",
+            shown.join("; ")
+        )
+    }
+}
+
+/// Collapse nonempty Unicode whitespace runs, mapping each output byte back
+/// to its complete input span. Only the document skips zero-width formats;
+/// they are not whitespace and never disappear from the caller's anchor.
+fn whitespace_reading(text: &str, document: bool) -> (String, Vec<(usize, usize)>) {
+    let mut out = String::with_capacity(text.len());
+    let mut from: Vec<(usize, usize)> = Vec::with_capacity(text.len());
+    let mut in_space = false;
+    for (start, c) in text.char_indices() {
+        if document && matches!(c, '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}') {
+            continue;
+        }
+        let end = start + c.len_utf8();
+        if c.is_whitespace() {
+            if in_space {
+                from.last_mut()
+                    .expect("a whitespace run has a mapped byte")
+                    .1 = end;
+            } else {
+                out.push(' ');
+                from.push((start, end));
+            }
+            in_space = true;
+        } else {
+            out.push(c);
+            from.extend(std::iter::repeat_n((start, end), c.len_utf8()));
+            in_space = false;
+        }
+    }
+    (out, from)
+}
+
+/// Explain a literal miss without selecting or editing anything. One or more
+/// `char::is_whitespace` characters match one or more on the other side. All
+/// other characters remain distinct, apart from document-only skipped formats.
+/// Offsets map back to original UTF-8 bytes, never the collapsed text.
+pub(super) fn near_matches(text: &str, anchor: &str) -> Option<NearMatches> {
+    let (needle, _) = whitespace_reading(anchor, false);
+    if needle.is_empty() {
+        return None;
+    }
+    let (haystack, from) = whitespace_reading(text, true);
+    let hits = v2_candidates(&haystack, &needle);
+    if hits.is_empty() {
+        return None;
+    }
+    let occurrences = hits
+        .iter()
+        .take(5)
+        .map(|&(start, end)| {
+            let offset = from[start].0;
+            let exact = &text[offset..from[end - 1].1];
+            NearOccurrence {
+                text: exact.to_string(),
+                shown: shown(exact),
+                offset,
+                target: None,
+            }
+        })
+        .collect();
+    Some(NearMatches {
+        total: hits.len(),
+        occurrences,
+    })
+}
+
+fn missing(haystack: &str, anchor: &str) -> EditError {
+    let mut error = err(
+        "ANCHOR_NOT_FOUND",
+        None,
+        format!("{} occurs 0 times in the text", shown(anchor)),
+    );
+    error.near = near_matches(haystack, anchor).map(Box::new);
+    error
+}
+
 /// Every exact occurrence of `anchor` in `haystack`, including overlaps,
 /// as UTF-8 byte ranges in start order. Both ends are character boundaries.
 /// Matching preserves exact characters and whitespace, without normalization
@@ -192,14 +306,7 @@ pub fn v2_select(
     }
     let candidates = v2_candidates(haystack, anchor);
     match (candidates.as_slice(), occurrence) {
-        ([], _) => {
-            let shown = shown(anchor);
-            Err(err(
-                "ANCHOR_NOT_FOUND",
-                None,
-                format!("{shown} occurs 0 times in the text"),
-            ))
-        }
+        ([], _) => Err(missing(haystack, anchor)),
         ([one], None) => Ok(*one),
         (many, None) => {
             let shown = shown(anchor);
@@ -246,12 +353,7 @@ pub fn v2_select_all(
     let candidates = v2_candidates(haystack, anchor);
     let n = candidates.len();
     if candidates.is_empty() {
-        let shown = shown(anchor);
-        return Err(err(
-            "ANCHOR_NOT_FOUND",
-            None,
-            format!("{shown} occurs 0 times in the text"),
-        ));
+        return Err(missing(haystack, anchor));
     }
     if n != expected {
         let shown = shown(anchor);

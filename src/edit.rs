@@ -75,7 +75,7 @@ mod source_refs;
 pub mod template;
 
 /// Exact v2 literal-anchor candidates and selection; v1 retains its fallbacks.
-pub use anchor::{v2_candidates, v2_select, v2_select_all};
+pub use anchor::{NearMatches, NearOccurrence, v2_candidates, v2_select, v2_select_all};
 /// v2 anchor selection with structured, bounded, actionable refusals.
 pub use anchor_error::{AnchorRefusal, Working, v2_resolve, v2_resolve_all};
 /// Which content control a `fill_control` operation fills.
@@ -954,6 +954,9 @@ pub struct EditOutcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The paragraph's text actually matched in that case.
     pub anchor_read_as: Option<String>,
+    /// Report-only whitespace occurrences when the literal anchor was refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<NearMatches>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Error code when failed.
     pub code: Option<String>,
@@ -1105,6 +1108,12 @@ impl EditReport {
             if let Some(read_as) = &op.anchor_read_as {
                 map.insert("anchor_read_as".into(), read_as.clone().into());
             }
+            if let Some(near) = &op.near {
+                map.insert(
+                    "near".into(),
+                    serde_json::to_value(near).expect("near serializes"),
+                );
+            }
             if let Some(c) = &op.code {
                 map.insert("code".into(), c.clone().into());
             }
@@ -1165,9 +1174,15 @@ pub struct EditError {
     #[serde(default)]
     /// Status of every operation at the time of failure.
     pub outcomes: Vec<EditOutcome>,
+    /// Report-only whitespace occurrences; never used to resolve an operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<Box<NearMatches>>,
     /// Blocking revision identities and both review choices, when applicable.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub revision_refusals: Vec<refusal::RevisionRefusal>,
+    #[serde(
+        default,
+        skip_serializing_if = "<[refusal::RevisionRefusal]>::is_empty"
+    )]
+    pub revision_refusals: Box<[refusal::RevisionRefusal]>,
 }
 
 impl fmt::Display for EditError {
@@ -1440,7 +1455,8 @@ fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditE
         operation: operation.map(str::to_string),
         message: message.into(),
         outcomes: Vec::new(),
-        revision_refusals: Vec::new(),
+        near: None,
+        revision_refusals: Box::default(),
     }
 }
 
@@ -2439,6 +2455,7 @@ impl<'p> Transaction<'p> {
                         message: None,
                         anchor_given: None,
                         anchor_read_as: None,
+                        near: None,
                     };
                     match self.resolve_page_setup(
                         *section,
@@ -2522,6 +2539,7 @@ impl<'p> Transaction<'p> {
                     let (e, outcome) = *boxed;
                     let mut e = self.attach_revision_refusal(e);
                     e.operation = Some(id.clone());
+                    e.near = outcome.near.clone().map(Box::new);
                     self.outcomes.push(EditOutcome {
                         id,
                         kind,
@@ -2531,7 +2549,11 @@ impl<'p> Transaction<'p> {
                         ..outcome
                     });
                     if let Some(first) = &mut first_failure {
-                        first.revision_refusals.extend(e.revision_refusals);
+                        first.revision_refusals = std::mem::take(&mut first.revision_refusals)
+                            .into_vec()
+                            .into_iter()
+                            .chain(e.revision_refusals.into_vec())
+                            .collect();
                     } else {
                         first_failure = Some(e);
                     }
@@ -2563,6 +2585,7 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -3373,6 +3396,7 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -3502,6 +3526,7 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -3601,6 +3626,7 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -4464,6 +4490,7 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         };
         let fail = |code: &str, msg: &str, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -5597,6 +5624,9 @@ fn locate(
     let shown = anchor::shown(find);
     let (start, end) = match (hits.as_slice(), occurrence) {
         ([], _) => {
+            if window.is_none() {
+                outcome.near = anchor::near_matches(text, find);
+            }
             return Err((
                 "ANCHOR_NOT_FOUND".into(),
                 match window {
@@ -6826,6 +6856,7 @@ mod deeper_boundary_tests {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         }
     }
 

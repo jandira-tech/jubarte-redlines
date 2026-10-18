@@ -975,3 +975,172 @@ fn broken_stderr_keeps_the_committed_result_on_stdout() {
         );
     }
 }
+
+#[test]
+fn whitespace_near_cli_json_refuses_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = docx(&para("Alice services.  Such Bob"));
+    std::fs::write(dir.path().join("input.docx"), &source).unwrap();
+    for extra in [
+        vec!["--at", "p0"],
+        vec![],
+        vec!["--at", "p0", "--all-matches", "--expect-count", "1"],
+    ] {
+        let args = [
+            vec![
+                "edit",
+                "replace",
+                "input.docx",
+                "--find",
+                "services. Such",
+                "--text",
+                "Carol Diaz",
+                "-o",
+                "output.docx",
+                "--json",
+            ],
+            extra,
+        ]
+        .concat();
+        let out = run(dir.path(), &args);
+        assert_eq!(
+            out.status.code(),
+            Some(3),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["error"]["code"], "ANCHOR_NOT_FOUND");
+        assert_eq!(value["error"]["near"]["total"], 1, "{value}");
+        assert_eq!(
+            value["error"]["near"]["occurrences"][0]["text"],
+            "services.  Such"
+        );
+        assert_eq!(
+            value["error"]["near"]["occurrences"][0]["shown"],
+            r#""services.  Such""#
+        );
+        assert_eq!(value["error"]["near"]["occurrences"][0]["offset"], 6);
+        assert!(!dir.path().join("output.docx").exists());
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("input.docx")).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn whitespace_near_cli_text_and_legacy_flags_show_the_copy_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        docx(&para("Alice services.  Such Bob")),
+    )
+    .unwrap();
+    for args in [
+        vec![
+            "edit",
+            "replace",
+            "input.docx",
+            "--at",
+            "p0",
+            "--find",
+            "services. Such",
+            "--text",
+            "Carol Diaz",
+            "-o",
+            "output.docx",
+        ],
+        vec![
+            "edit",
+            "input.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "services. Such",
+            "--content",
+            "Carol Diaz",
+        ],
+    ] {
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(3));
+        let text = String::from_utf8(out.stderr).unwrap();
+        assert!(text.contains("ANCHOR_NOT_FOUND"), "{text}");
+        assert!(text.contains("near: \"services.  Such\""), "{text}");
+        assert!(text.contains("copy the text exactly"), "{text}");
+        assert!(!dir.path().join("output.docx").exists());
+        assert!(!dir.path().join("input_modified.docx").exists());
+    }
+}
+
+#[test]
+fn whitespace_near_legacy_operation_jsonl_carries_exact_text() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        docx(&para("Alice services.  Such Bob")),
+    )
+    .unwrap();
+    let out = run(
+        dir.path(),
+        &[
+            "edit",
+            "input.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "services. Such",
+            "--content",
+            "Carol Diaz",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let first = String::from_utf8(out.stdout).unwrap();
+    let value: serde_json::Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
+    assert_eq!(value["near"]["occurrences"][0]["text"], "services.  Such");
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("near: \"services.  Such\"")
+    );
+}
+
+#[test]
+fn whitespace_near_global_and_all_matches_refuse_with_report() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        docx(&para("Alice services.  Such Bob")),
+    )
+    .unwrap();
+    let mut failures = Vec::new();
+    for extra in [
+        vec![],
+        vec!["--at", "p0", "--all-matches", "--expect-count", "1"],
+        vec!["--all-matches", "--expect-count", "1"],
+    ] {
+        let args = [
+            vec![
+                "edit",
+                "replace",
+                "input.docx",
+                "--find",
+                "services. Such",
+                "--text",
+                "Carol Diaz",
+                "-o",
+                "output.docx",
+                "--json",
+            ],
+            extra,
+        ]
+        .concat();
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(3));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        if value["error"]["near"]["total"] != 1 {
+            failures.push(value);
+        }
+    }
+    assert!(failures.is_empty(), "missing reports: {failures:?}");
+}

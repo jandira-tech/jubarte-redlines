@@ -887,6 +887,30 @@ their summary line and print one block per DOCX; `-q` silences these outputs.
 Anchors match literally first, then without their Markdown marks, with a
 note.
 
+When an anchor is refused with `ANCHOR_NOT_FOUND`, a whitespace-only near
+occurrence can explain the miss. This is a report, never a selection: the
+refusal message and exit 3 stay unchanged. Copy the document's exact characters
+and submit a new request. For example, a single-space `services. Such` can
+report `near: "services.  Such" ...; copy the text exactly`.
+
+The optional `near` object accompanies the refused operation in the legacy
+JSONL report and `error` in the typed JSON envelope. `total` counts all near
+occurrences, including overlaps; `occurrences` contains at most five entries
+in source order. Each entry has `text` (the exact document substring), `shown`
+(the quoted text with visible escapes such as `\u{a0}`, `\t`, and `\n`) and
+`offset` (a UTF-8 byte offset in the searched logical paragraph). A search
+across paragraphs also includes each entry's `target` paragraph ID. There is
+no `near` when the diagnostic search finds nothing.
+
+The diagnostic search treats each nonempty run of `char::is_whitespace`
+characters as one class, including spaces, NBSP, tabs, figure spaces, narrow
+NBSP and soft breaks. It skips U+200B, U+200C, U+200D, U+2060 and U+FEFF only
+in document text, to expose invisible characters an agent may have omitted.
+They remain present in `text`; other characters, including punctuation and
+soft hyphens, stay distinct. Typed v2 edits still require literal anchors.
+The existing v1 Markdown/lookalike fallback keeps its versioned behavior;
+near reporting adds no new successful match.
+
 ### Limits of the agent view
 
 - Tracked paragraph marks inside comment bodies are not shown.

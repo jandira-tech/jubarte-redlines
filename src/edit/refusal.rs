@@ -202,7 +202,7 @@ impl EditError {
     /// Render all revision refusals, including operation outcomes, for a caller.
     #[must_use]
     pub fn with_revision_syntax(mut self, syntax: RevisionSyntax) -> Self {
-        for refusal in &mut self.revision_refusals {
+        for refusal in self.revision_refusals.iter_mut() {
             let old = refusal.message();
             refusal.syntax = syntax;
             let new = refusal.message();
@@ -252,7 +252,11 @@ impl Transaction<'_> {
     }
 
     pub(super) fn attach_revision_refusal(&self, mut error: EditError) -> EditError {
-        error.revision_refusals.extend(self.revision_refusal.take());
+        if let Some(refusal) = self.revision_refusal.take() {
+            let mut refusals = error.revision_refusals.into_vec();
+            refusals.push(refusal);
+            error.revision_refusals = refusals.into_boxed_slice();
+        }
         error
     }
 

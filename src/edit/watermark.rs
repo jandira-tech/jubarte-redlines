@@ -188,6 +188,7 @@ impl Transaction<'_> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))

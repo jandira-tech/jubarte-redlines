@@ -466,8 +466,14 @@ fn refused(
     let candidates = v2_candidates(working, refusal.anchor);
     let count = candidates.len();
     error = error.with_matches(count);
-    error = error.with_context(match candidates.first() {
-        Some(&(start, end)) => around(working, start, end),
+    error.near = edit.near.as_deref().cloned();
+    let near_range = error
+        .near
+        .as_ref()
+        .and_then(|near| near.occurrences.first())
+        .map(|hit| (hit.offset, hit.offset + hit.text.len()));
+    error = error.with_context(match candidates.first().copied().or(near_range) {
+        Some((start, end)) => around(working, start, end),
         None => Context::new(bounded_start(working), "", "")
             .with_truncated(working.chars().count() > WINDOW),
     });
