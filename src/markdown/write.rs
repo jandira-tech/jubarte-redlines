@@ -1276,7 +1276,10 @@ fn has_comment(text: &str) -> bool {
         let Some(end) = after.find("<<}") else {
             return false;
         };
-        if view_notes::revision_tags(&after[..end]).is_none() {
+        let note = &after[..end];
+        if view_notes::revision_tags(note).is_none()
+            && view_notes::nested_revision_tags(note).is_none()
+        {
             return true;
         }
         rest = &after[end + 3..];

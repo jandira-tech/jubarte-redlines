@@ -1837,3 +1837,30 @@ fn review_1128_body_same_author_substitution_still_keeps_only_the_old_date() {
         "{view}"
     );
 }
+
+#[test]
+fn review_1128_nested_story_notes_are_not_dropped_comments() {
+    for kind in ["header", "footer"] {
+        let nested = format!("{{--old--}}{{>>{kind}1.r4 @BO on {kind}1.r3 @AL<<}}");
+        let comment = "{>>c0 @AL: Please check this.<<}";
+        for (text, warns) in [
+            (comment.to_string(), true),
+            (format!("{nested}{comment}"), true),
+            (nested, false),
+        ] {
+            let view = format!(
+                "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29T14:05:00Z\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\n{kind}s:\n  default: {{id: {kind}1, text: \"{text}\"}}\n---\nBody.\n"
+            );
+            let result = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+            assert_eq!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("comment in")),
+                warns,
+                "{kind}: {text}: {:?}",
+                result.warnings
+            );
+        }
+    }
+}
