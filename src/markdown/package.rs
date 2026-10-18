@@ -209,7 +209,7 @@ pub(super) fn assemble(
             .iter()
             .find(|s| s.default)
             .map_or("Normal", |s| s.id.as_str()),
-    );
+    )?;
     let default_section = section.clone();
     let section = section_stories.apply(sections, &document.section(sections, &section));
     let text_width = text_width(&section);

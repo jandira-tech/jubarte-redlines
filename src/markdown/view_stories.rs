@@ -138,6 +138,7 @@ struct Marks<'p> {
     next_id: u32,
     /// One opening tag per element and id in the current story part.
     opens: HashMap<(String, u32), String>,
+    error: Option<String>,
 }
 
 impl Marks<'_> {
@@ -209,6 +210,7 @@ pub(super) fn format_changes(
         people,
         next_id: first_id,
         opens: HashMap::new(),
+        error: None,
     };
     let mut reserved: std::collections::HashSet<u32> =
         tags.iter().flat_map(|tag| &tag.ids).copied().collect();
@@ -649,6 +651,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                 noid_parent = None;
             }
             flush(&mut plain, &mut out, false);
+            let notes = after;
             let (mut tags, mut parent, after) = tags_after(after);
             let mut changed = String::new();
             let mut wrapper = None;
@@ -691,6 +694,13 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     }
                 }
                 Change::Substitute(old, new) => {
+                    if parent.is_some() {
+                        let note = &notes[..notes.len() - after.len()];
+                        marks
+                            .error
+                            .get_or_insert_with(|| substitution_parent_error(note));
+                        return String::new();
+                    }
                     noid_parent = None;
                     // One tag names both sides (`r5+6`, old first), or
                     // each side has its own.
@@ -746,6 +756,12 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
     }
     flush(&mut plain, &mut out, false);
     out
+}
+
+/// Substitutions have two sides and no unambiguous named parent. The
+/// writer never emits such a note; refuse it instead of losing its nest.
+pub(super) fn substitution_parent_error(note: &str) -> String {
+    format!("substitution cannot name a parent: {note}")
 }
 
 /// The anonymous parent of a contiguous nest. Its tag keeps the author
@@ -1192,12 +1208,12 @@ pub(super) fn write(
     people: &People,
     first_id: u32,
     default_style: &str,
-) -> SectionStories {
+) -> Result<SectionStories, super::MarkdownError> {
     if sections
         .values()
         .all(|s| s.stories.is_empty() && s.title_page.is_none())
     {
-        return SectionStories::default();
+        return Ok(SectionStories::default());
     }
     let old: Vec<String> = package
         .read_rels_for(main)
@@ -1218,6 +1234,7 @@ pub(super) fn write(
         people,
         next_id: first_id,
         opens: HashMap::new(),
+        error: None,
     };
     let mut next_doc_pr = super::package::max_drawing_id(package) + 1;
     let mut even = false;
@@ -1261,10 +1278,13 @@ pub(super) fn write(
     if even {
         even_and_odd_headers(package, main);
     }
-    SectionStories {
+    if let Some(error) = marks.error {
+        return Err(super::MarkdownError::Package(error));
+    }
+    Ok(SectionStories {
         by_section,
         named: true,
-    }
+    })
 }
 
 /// Where Word writes a `kind` reference of type `ty` in a `w:sectPr`: even
@@ -1683,6 +1703,7 @@ mod tests {
                 people: &people,
                 next_id: 100,
                 opens: HashMap::new(),
+                error: None,
             },
             &HashMap::new(),
         )

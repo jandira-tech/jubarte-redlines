@@ -1531,3 +1531,40 @@ fn review_1126_noid_ids_stop_at_nest_boundaries() {
         );
     }
 }
+
+#[test]
+fn review_1126_body_refuses_a_substitution_parent_note() {
+    let note = "r5 @BO on r3 @AL";
+    let result = markdown_to_docx(
+        &format!("{{~~old~>new~~}}{{>>{note}<<}}"),
+        &DocxOptions::default(),
+    );
+    assert!(
+        result.is_err(),
+        "substitution parent was silently discarded"
+    );
+    assert!(result.unwrap_err().to_string().contains(note));
+}
+
+#[test]
+fn review_1126_story_refuses_a_substitution_parent_note() {
+    for kind in ["header", "footer"] {
+        for paragraph in [0, 1] {
+            let note = format!("{kind}1.r5 @BO on {kind}1.r3 @AL");
+            let text = format!("{{~~old~>new~~}}{{>>{note}<<}}");
+            let text = if paragraph == 0 {
+                format!("\"{text}\"")
+            } else {
+                format!("[plain, \"{text}\"]")
+            };
+            let view =
+                format!("---\n{kind}s:\n  default: {{id: {kind}1, text: {text}}}\n---\nBody.\n");
+            let result = markdown_to_docx(&view, &DocxOptions::default());
+            assert!(
+                result.is_err(),
+                "{kind}: substitution parent was silently discarded"
+            );
+            assert!(result.unwrap_err().to_string().contains(&note));
+        }
+    }
+}

@@ -79,7 +79,11 @@ pub fn markdown_to_docx(
         )));
     }
     let document = read(markdown, options);
-    if let Some(error) = &document.box_error {
+    if let Some(error) = document
+        .revision_note_error
+        .as_ref()
+        .or(document.box_error.as_ref())
+    {
         return Err(MarkdownError::Package(error.clone()));
     }
     let mut warnings = document.warnings.clone();
@@ -3547,6 +3551,12 @@ impl<'o, 'a> Writer<'o, 'a> {
         };
         if let Some(mut anchor) = self.comment_anchor.take() {
             let whole = comment.paragraphs.join("\n");
+            if anchor.serials[0].is_some() && view_notes::nested_revision_tags(&whole).is_some() {
+                self.document
+                    .revision_note_error
+                    .get_or_insert_with(|| view_stories::substitution_parent_error(&whole));
+                return;
+            }
             // A note that names another change after ` on `: the change it
             // follows sits inside that one (`A` inserted what `B` deleted),
             // so it goes back inside it, outermost last. Deeper

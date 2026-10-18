@@ -348,6 +348,8 @@ pub(super) struct Document {
     /// The `track_changes:` key: Word's Track Changes switch.
     pub tracking: Option<bool>,
     pub warnings: Vec<String>,
+    /// A substitution's unsupported nested revision note, if any.
+    pub revision_note_error: Option<String>,
     /// Author and date of changes that name theirs, by serial.
     pub attributions: HashMap<u32, (String, String)>,
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
