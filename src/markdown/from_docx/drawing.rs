@@ -680,6 +680,14 @@ fn media_slot(root: &Element, rels: &[PayRel], deps: &Deps<'_>) -> Option<usize>
 /// visible paragraphs supply the words again on an unchanged write.
 fn strip_box_words(element: &mut Element, stories: &[String]) -> Vec<BoxFrame> {
     fn strip(element: &mut Element, lengths: &mut Vec<usize>, text: &mut String) {
+        // Nested drawings have no editable token in this story. Keep their
+        // content with the frame; edits to their containing story are refused.
+        if matches!(
+            element.local(),
+            "drawing" | "pict" | "object" | "AlternateContent"
+        ) {
+            return;
+        }
         if matches!(element.local(), "t" | "delText") {
             let value = element.text();
             lengths.push(value.len());
@@ -1391,10 +1399,33 @@ impl Drawing {
         let Ok(root) = parse_xml(self.xml.as_bytes()) else {
             return Ok(());
         };
-        for (frame, ordinal) in self.boxes.iter().zip(box_ordinals(&root)) {
+        fn templates<'a>(element: &'a Element, out: &mut Vec<&'a Element>) {
+            if element.is("txbxContent") {
+                out.push(element);
+            } else {
+                for child in element.elements() {
+                    templates(child, out);
+                }
+            }
+        }
+        let mut contents = Vec::new();
+        templates(&root, &mut contents);
+        for ((frame, ordinal), content) in self.boxes.iter().zip(box_ordinals(&root)).zip(contents)
+        {
             let name = format!("{name}.{ordinal}");
             if frame.lengths.iter().any(|&length| length != 0) && !regions.contains_key(&name) {
                 return Err(format!("text-box {name}: missing matching marker region"));
+            }
+            if ["drawing", "pict", "object", "AlternateContent"]
+                .iter()
+                .any(|kind| content.find(kind).is_some())
+                && regions
+                    .get(&name)
+                    .is_some_and(|region| frame.hash != mermaid_hash(region))
+            {
+                return Err(format!(
+                    "text-box {name}: editing a story containing a nested drawing is unsupported"
+                ));
             }
         }
         Ok(())
@@ -1418,6 +1449,12 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
         lengths: &mut impl Iterator<Item = usize>,
         text: &mut &str,
     ) -> Option<()> {
+        if matches!(
+            element.local(),
+            "drawing" | "pict" | "object" | "AlternateContent"
+        ) {
+            return Some(());
+        }
         if matches!(element.local(), "t" | "delText") {
             let end = lengths.next()?;
             let value = text.get(..end)?;

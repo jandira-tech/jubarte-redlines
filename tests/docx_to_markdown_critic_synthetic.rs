@@ -30,6 +30,8 @@
 //! - accepting (or rejecting) the CriticMarkup of the default output gives
 //!   that same Markdown too, so the markup says exactly what changed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
 use jubarte::markdown::{MarkdownOptions, TrackChanges, docx_to_markdown, unescape_markdown};
@@ -457,5 +459,32 @@ fn jubartes_reader_resolves_the_markup_as_the_converter_resolves_the_document() 
                 differ.and_then(|i| direct.get(i)),
             );
         }
+    }
+}
+
+fn box_payloads(markdown: &str) -> Vec<serde_json::Value> {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    markdown
+        .lines()
+        .filter_map(|line| line.split_once(": drawing:"))
+        .map(|(_, payload)| {
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn settled_box_templates_have_no_bare_deleted_text_slots() {
+    for revisions in [TrackChanges::Accept, TrackChanges::Reject] {
+        let view = markdown("hard-tables.docx", revisions);
+        for drawing in box_payloads(&view) {
+            let xml = drawing["xml"].as_str().unwrap();
+            assert!(!xml.contains("w:delText"), "{revisions:?}: {xml}");
+        }
+        let out =
+            jubarte::markdown::markdown_to_docx(&view, &jubarte::markdown::DocxOptions::default())
+                .unwrap();
+        let xml = common::docx::part_string(&out.docx, "word/document.xml").unwrap();
+        assert!(!xml.contains("w:delText"), "{revisions:?}: {xml}");
     }
 }

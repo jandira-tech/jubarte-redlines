@@ -138,6 +138,8 @@ marker region when the frame needs its words. The error names the box.
 Keep an empty marker region to remove all its words. Markers in code or
 escaped as text are ordinary words. Older payloads that still hold the box's
 words, including header and footer boxes, need no marker region.
+Conversion also refuses edits to a box story containing a nested drawing,
+because that drawing has no editable token in the story.
 
 Images are read relative to the Markdown file, or to `--resource-path`;
 URLs are not fetched.

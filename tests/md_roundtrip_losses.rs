@@ -1364,6 +1364,37 @@ fn an_unescaped_closer_ends_the_box_at_the_parser_boundary() {
 }
 
 #[test]
+fn editing_an_outer_box_refuses_to_drop_its_nested_shape() {
+    let view = box_view(&alternate_boxes(true));
+    println!(
+        "NESTED VIEW:\n{}",
+        view.lines()
+            .filter(|line| !line.contains(": drawing:"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(view.contains("Added box"), "{view}");
+    refuses_box(&view.replace("Added box", "Edited outer"), "d1.0");
+}
+
+#[test]
+fn an_edited_alternate_box_updates_both_branches_and_is_a_fixed_point() {
+    let view = box_view(&alternate_boxes(false))
+        .replace("Added box", "Edited first")
+        .replace("Other box", "Edited second");
+    let out = write_box_view(&view).unwrap();
+    let xml = part(&out, "word/document.xml");
+    for branch in ["mc:Choice", "mc:Fallback"] {
+        let branch = xml_element(&xml, branch);
+        assert_eq!(branch.matches("Edited first").count(), 1, "{xml}");
+        assert_eq!(branch.matches("Edited second").count(), 1, "{xml}");
+        assert!(!branch.contains("Added box") && !branch.contains("Other box"));
+    }
+    let second = box_view(&out);
+    assert_eq!(box_view(&write_box_view(&second).unwrap()), second);
+}
+
+#[test]
 fn cli_box_refusal_is_nonzero_and_names_the_box() {
     let dir = tempfile::tempdir().unwrap();
     let view = box_view(&text_box_docx())
@@ -1447,6 +1478,21 @@ fn header_and_footer_boxes_keep_their_payload_words_without_regions() {
             names
                 .iter()
                 .any(|name| part(&out, name).contains("Added box"))
+        );
+    }
+}
+
+#[test]
+fn unedited_nested_box_keeps_the_nested_shape_and_words() {
+    let view = box_view(&alternate_boxes(true));
+    let out = write_box_view(&view).unwrap();
+    let xml = part(&out, "word/document.xml");
+    for branch in ["mc:Choice", "mc:Fallback"] {
+        assert!(xml_element(&xml, branch).contains("Other box"), "{xml}");
+        assert_eq!(
+            xml_element(&xml, branch).matches("<w:drawing").count(),
+            2,
+            "{xml}"
         );
     }
 }
