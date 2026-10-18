@@ -216,10 +216,37 @@ fn ensure_writable(output: &Path, force: bool) -> Result<(), ConvertFailure> {
     Ok(())
 }
 
+fn report_publication(
+    result: Result<jubarte::publication::PublishReport, jubarte::publication::PublishError>,
+    stderr: &mut impl std::io::Write,
+) -> Result<(), jubarte::publication::PublishError> {
+    let warnings = match &result {
+        Ok(report) => &report.warnings,
+        Err(error) => &error.warnings,
+    };
+    write_publication_warnings(warnings, stderr);
+    result.map(|_| ())
+}
+
+fn write_publication_warnings(warnings: &[String], stderr: &mut impl std::io::Write) {
+    for warning in warnings {
+        let _ = writeln!(stderr, "warning: {warning}");
+    }
+}
+
+fn publish_paths(
+    files: &[(PathBuf, &[u8])],
+    force: bool,
+) -> Result<(), jubarte::publication::PublishError> {
+    report_publication(
+        jubarte::publication::publish_paths(files, force),
+        &mut std::io::stderr().lock(),
+    )
+}
+
 /// Stage complete bytes and atomically replace a single authorized output.
 fn publish_file(path: &Path, bytes: &[u8], force: bool) -> Result<(), String> {
-    jubarte::publication::publish_paths(&[(path.to_path_buf(), bytes)], force)
-        .map_err(|e| e.to_string())
+    publish_paths(&[(path.to_path_buf(), bytes)], force).map_err(|e| e.to_string())
 }
 
 /// One task's `-o`: where, as what, and how a Word result becomes it.
@@ -644,7 +671,7 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     if let (Some(path), Some(json)) = (job.report, &report_json) {
         outputs.push((path.to_path_buf(), json.as_bytes()));
     }
-    jubarte::publication::publish_paths(&outputs, job.force).map_err(|e| e.to_string())?;
+    publish_paths(&outputs, job.force).map_err(|e| e.to_string())?;
     if !job.quiet {
         if let Some(pdf) = &rendered.pdf {
             eprintln!(
@@ -794,7 +821,7 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, ConvertFailure> {
             ensure_writable(path, job.force)?;
         }
         std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
-        jubarte::publication::publish_paths(&files, job.force).map_err(|e| e.to_string())?;
+        publish_paths(&files, job.force).map_err(|e| e.to_string())?;
     }
     if job.json {
         outln!("{summary}");
@@ -1432,7 +1459,7 @@ fn run_edit(
         .iter()
         .map(|(name, bytes)| (stage.join(name), bytes.as_slice()))
         .collect();
-    if let Err(error) = jubarte::publication::publish_paths(&files, false) {
+    if let Err(error) = publish_paths(&files, false) {
         let _ = std::fs::remove_dir_all(&stage);
         return Err(fail(error.to_string()));
     }
@@ -1728,7 +1755,7 @@ fn publish_files(
                 (recheck.source)()?;
             }
             publication_test_hook("checked").map_err(|e| (1, e))?;
-            if let Err(error) = held.commit() {
+            if let Err(error) = report_publication(held.commit(), &mut std::io::stderr().lock()) {
                 committed.extend(error.committed.iter().cloned());
                 if error.source.kind() == std::io::ErrorKind::AlreadyExists {
                     return Err(taken_output(&path));
@@ -2302,8 +2329,16 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         }
     }
     if !flags.dry_run {
-        write_plan(path, &recorded.json())
-            .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
+        let warnings = write_plan(path, &recorded.json()).map_err(|error| {
+            if let Some(publish) = error
+                .get_ref()
+                .and_then(|source| source.downcast_ref::<jubarte::publication::PublishError>())
+            {
+                write_publication_warnings(&publish.warnings, &mut std::io::stderr().lock());
+            }
+            (1, format!("writing {}: {error}", path.display()))
+        })?;
+        write_publication_warnings(&warnings, &mut std::io::stderr().lock());
     }
     if !flags.quiet {
         outln!(
@@ -3102,8 +3137,7 @@ fn run_convert_any(
                 if let Some(report) = job.report {
                     outputs.push((report.to_path_buf(), report_json.as_bytes()));
                 }
-                jubarte::publication::publish_paths(&outputs, job.force)
-                    .map_err(|e| e.to_string())?;
+                publish_paths(&outputs, job.force).map_err(|e| e.to_string())?;
                 if !job.quiet {
                     for field in &updated.fields {
                         outln!(
@@ -3867,6 +3901,32 @@ fn refresh_fields(bytes: &[u8]) -> Result<(jubarte::fields::Updated, String), St
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
+
+    #[test]
+    fn publication_cleanup_warnings_reach_stderr_for_both_outcomes() {
+        use jubarte::publication::{PublishError, PublishReport};
+        let warnings = vec!["cleaning staging: injected cleanup".to_string()];
+        for result in [
+            Ok(PublishReport {
+                warnings: warnings.clone(),
+            }),
+            Err(PublishError {
+                committed: vec!["output".into()],
+                durability_uncertain: true,
+                source: std::io::Error::other("injected SyncParent"),
+                warnings: warnings.clone(),
+            }),
+        ] {
+            let failed = result.is_err();
+            let mut stderr = Vec::new();
+            let reported = report_publication(result, &mut stderr);
+            assert_eq!(reported.is_err(), failed);
+            assert_eq!(
+                String::from_utf8(stderr).unwrap(),
+                "warning: cleaning staging: injected cleanup\n"
+            );
+        }
+    }
 
     fn bundle_restore_failure(recheck_fails: bool, restore_fails: bool) {
         let temp = tempfile::tempdir().unwrap();
