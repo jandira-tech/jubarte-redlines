@@ -172,7 +172,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
         .output()
         .unwrap();
     assert!(first.status.success());
-    // second run without --force fails (exit 1) and does not clobber
+    // second run without --force fails (exit 2) and does not clobber
     let second = Command::new(BIN)
         .arg(&a)
         .arg(&b)
@@ -180,7 +180,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
         .arg(&out_path)
         .output()
         .unwrap();
-    assert_eq!(second.status.code(), Some(1));
+    assert_eq!(second.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&second.stderr).contains("already exists"));
     // third run with --force overwrites
     let third = Command::new(BIN)

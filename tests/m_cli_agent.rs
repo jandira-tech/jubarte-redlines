@@ -516,7 +516,7 @@ fn convert_checks_every_png_path_before_writing_one() {
         "--report",
         report.to_str().unwrap(),
     ]);
-    assert_eq!(code, 1);
+    assert_eq!(code, 2);
     assert!(stderr.contains("letter-page-01.png"), "{stderr}");
     assert!(!report.exists(), "a refused PNG leaves no partial bundle");
     assert_eq!(

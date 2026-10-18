@@ -141,7 +141,12 @@ fn generate(
     }
     for path in &paths {
         alias(path, &options.file)?;
-        ensure_writable(path, options.force).map_err(|m| failure("OUTPUT_EXISTS", m))?;
+        ensure_writable(path, options.force).map_err(|error| {
+            failure(
+                "OUTPUT_EXISTS",
+                error.message.trim_start_matches("OUTPUT_EXISTS: "),
+            )
+        })?;
     }
     if let Some(output) = output {
         if options
@@ -220,7 +225,7 @@ pub(super) fn run(options: &TemplateOptions, quiet: bool) -> ExitCode {
             (receipt, None)
         }
     };
-    let code: u8 = jubarte::result::exit_status_for_envelope(&receipt).into();
+    let code = edit_envelope_exit(&receipt);
     let rendered = if let Some(raw) = raw {
         String::from_utf8(raw).expect("JSON is UTF-8")
     } else if options.jsonl {

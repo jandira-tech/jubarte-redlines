@@ -657,6 +657,8 @@ Flags override environment/project/user presentation defaults. Ambient configura
 | 64 | Invalid CLI usage or malformed request/schema. |
 | 124 | Deadline exceeded before commit. |
 
+The current CLI refuses an existing output without `--force` as a usage error (exit 2); an I/O failure exits 1.
+
 Moving usage errors from existing code 2 to 64 is breaking and belongs to a declared protocol/release boundary. Keep detailed error codes and retry classification in JSON.
 
 An explicit repair command may commit a repaired output and still return 2 for remaining findings. A requested comparison report may exist with 5. Neither exception permits ordinary edit publication after a required check fails. Receipts state both condition and artifact state.
