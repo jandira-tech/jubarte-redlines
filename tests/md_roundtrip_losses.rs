@@ -1395,6 +1395,51 @@ fn an_edited_alternate_box_updates_both_branches_and_is_a_fixed_point() {
 }
 
 #[test]
+fn rebuilt_box_stories_end_in_a_paragraph_after_a_table() {
+    let input = text_box_docx();
+    let xml = part(&input, "word/document.xml");
+    let old = xml_element(&xml, "w:txbxContent");
+    let content = r#"<w:txbxContent><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p><w:p><w:r><w:t>Item</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:txbxContent>"#;
+    let input = replace_entry(
+        &input,
+        "word/document.xml",
+        xml.replace(old, content).as_bytes(),
+    );
+    let out = write_box_view(&box_view(&input).replace("Heading", "Head")).unwrap();
+    let xml = part(&out, "word/document.xml");
+    let boxed = xml_element(&xml, "w:txbxContent");
+    assert!(
+        boxed.ends_with("<w:p/></w:txbxContent>") || boxed.ends_with("</w:p></w:txbxContent>"),
+        "{boxed}"
+    );
+}
+
+#[test]
+fn crlf_and_trailing_spaces_restore_unprinted_box_properties() {
+    let input = text_box_docx();
+    let xml = part(&input, "word/document.xml").replace(
+        "<w:t xml:space=\"preserve\">Added box",
+        "<w:rPr><w:lang w:val=\"pt-BR\"/></w:rPr><w:t xml:space=\"preserve\">Added box",
+    );
+    let xml = xml.replace(
+        "</w:txbxContent>",
+        "<w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent>",
+    );
+    let input = replace_entry(&input, "word/document.xml", xml.as_bytes());
+    let view = box_view(&input);
+    for saved in [
+        view.replace('\n', "\r\n"),
+        view.replace("Added box\n", "Added box   \n"),
+    ] {
+        let out = write_box_view(&saved).unwrap();
+        assert_eq!(
+            xml_element(&part(&out, "word/document.xml"), "wp:anchor"),
+            xml_element(&xml, "wp:anchor").replace("id=\"7\"", "id=\"1\"")
+        );
+    }
+}
+
+#[test]
 fn cli_box_refusal_is_nonzero_and_names_the_box() {
     let dir = tempfile::tempdir().unwrap();
     let view = box_view(&text_box_docx())

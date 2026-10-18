@@ -630,6 +630,16 @@ fn mermaid_hash(text: &str) -> String {
         .collect()
 }
 
+/// Ignore line-ending and per-line trailing whitespace in editable box stories.
+fn box_hash(text: &str) -> String {
+    let lines = text
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    mermaid_hash(&lines)
+}
+
 /// The image part the readable layer carries for `root`, as a `deps` index:
 /// an `asvg:svgBlip`'s SVG source, else the `a:blip`'s PNG, JPEG, GIF, BMP
 /// or TIFF raster. `None` when the element is a picture of nothing the
@@ -707,7 +717,7 @@ fn strip_box_words(element: &mut Element, stories: &[String]) -> Vec<BoxFrame> {
                 return;
             };
             let mut frame = BoxFrame {
-                hash: mermaid_hash(markdown),
+                hash: box_hash(markdown),
                 ..BoxFrame::default()
             };
             let mut text = String::new();
@@ -1421,7 +1431,7 @@ impl Drawing {
                 .any(|kind| content.find(kind).is_some())
                 && regions
                     .get(&name)
-                    .is_some_and(|region| frame.hash != mermaid_hash(region))
+                    .is_some_and(|region| frame.hash != box_hash(region))
             {
                 return Err(format!(
                     "text-box {name}: editing a story containing a nested drawing is unsupported"
@@ -1488,7 +1498,7 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
             let mut text = String::new();
             words(&content, &mut text);
             if let Some(frame) = drawing.boxes.get(index)
-                && frame.hash == mermaid_hash(markdown)
+                && frame.hash == box_hash(markdown)
                 && frame.text_hash == mermaid_hash(&text)
             {
                 let mut exact = element.clone();

@@ -4607,7 +4607,8 @@ impl<'o, 'a> Writer<'o, 'a> {
             let Some(items) = items.filter(|items| end <= items.len() && start <= end) else {
                 continue;
             };
-            let items = items.drain(start..end).collect();
+            let mut items = items.drain(start..end).collect();
+            finish_story(&mut items);
             let stories = self.document.box_stories.entry(index).or_default();
             stories.resize_with(stories.len().max(ordinal + 1), Default::default);
             stories[ordinal] = (self.box_markdown.remove(&name).unwrap_or_default(), items);
