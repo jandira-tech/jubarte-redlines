@@ -559,6 +559,15 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r0 @AC} route-cost reports and a {~~weekly~>monthly~~}{r1+2 @AC} review call.
 ```
 
+Attribution uses braces after the change closer: `{++new++}{r1 @AL}`.
+`{>>c5 @AC: note<<}` remains a comment. A deletion inside another author's
+insertion names its parent with `{r3 @BO re r1 @AL}`. Distinct revision ids
+stay separate; only a deletion directly followed in the rendered stream by
+a live insertion from the same author forms `{~~old~>new~~}{r4+5 @AL}`.
+Different inline dates keep the two marks separate. An inserted paragraph
+mark is `¶{r7 @AL}`. To write literal attribution-shaped text after a closer,
+escape the opening brace: `{++new++}\{r1 @AL}`; write literal `¶\{` likewise.
+
 See [docs/MARKDOWN.md](docs/MARKDOWN.md#agent-view) for the grammar.
 
 ### Validate

@@ -15,6 +15,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Breaking
+
+- **Markdown revision attribution uses the settled brace dialect.** Update saved
+  views and consumers using this migration table. Comments keep `{>>…<<}`.
+
+  | Rule | Old | New |
+  | --- | --- | --- |
+  | Attribution tag | `{++new++}{>>r1 @AL<<}` | `{++new++}{r1 @AL}` |
+  | Parent chain | `{>>r3 @BO on r1 @AL<<}` | `{r3 @BO re r1 @AL}` |
+  | Merged ids | `{++a b++}{>>r1+2 @AL<<}` | `{++a++}{r1 @AL}{++ b++}{r2 @AL}`; merge only equal ids |
+  | Substitution pairing | Adjacent changes could merge regardless of direction | Only deletion then live insertion by the same author in the rendered stream; different inline dates stay separate; old id precedes new id in `{r1+2 @AL}` |
+  | Inserted paragraph mark | `<!-- p0 break-ins r7 @AL -->` on an id line | Inline `¶{r7 @AL}` at the paragraph end |
+  | Literal escape | Attribution-shaped text after a closer was unprotected | Escape the opening brace, as in `{++new++}\{r1 @AL}` and `¶\{` |
+
+
 ### Fixed
 
 - **Fractional plain values on table and frame geometry are rounded in
