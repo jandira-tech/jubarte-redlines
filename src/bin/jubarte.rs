@@ -233,6 +233,8 @@ struct Output<'a> {
     quiet: bool,
     /// The document the task read (named in a refusal).
     input: &'a Path,
+    /// The task actually read Markdown (an explicit --from can override its suffix).
+    markdown_input: bool,
     /// The view's options for a `.md` output and the selection for a `.json`
     /// one: `read`'s own, the defaults elsewhere.
     view: &'a ReadArgs,
@@ -260,6 +262,7 @@ impl<'a> Output<'a> {
             force,
             quiet,
             input,
+            markdown_input: false,
             view: &VIEW,
             // An identifier agents read back: `/` on every OS (#568).
             source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
@@ -320,9 +323,14 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
         }
         (Format::Docx, Produced::Docx(bytes)) => {
             ensure_writable(out.path, out.force)?;
+            let before =
+                (!out.quiet).then(|| input_confirmation_view(out.input, out.markdown_input));
             publish_file(out.path, bytes, out.force)?;
             if !out.quiet {
                 eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None));
+            }
+            if let Some(before) = before {
+                print_success(out.input, before, out.path, bytes)?;
             }
             return Ok(());
         }
@@ -901,6 +909,7 @@ fn run_text(
             force,
             quiet,
             input: file,
+            markdown_input: false,
             view: args,
             source: source.unwrap_or_default(),
             render: &render,
@@ -961,6 +970,49 @@ fn agent_view(
         eprintln!("warning: {warning}");
     }
     Ok(view)
+}
+
+/// Use the same default view and source basename as `read PATH`.
+fn confirmation_view(path: &Path, bytes: &[u8]) -> Result<String, String> {
+    let source = path.file_name().map(|n| n.to_string_lossy().into_owned());
+    agent_view(bytes, source, &ReadArgs::default()).map(|view| view.markdown)
+}
+
+/// Markdown inputs are compared exactly as supplied, without a view header.
+fn input_confirmation_view(path: &Path, markdown_input: bool) -> Result<String, String> {
+    let bytes = read_document(path)?;
+    if markdown_input {
+        return String::from_utf8(bytes).map_err(|e| e.to_string());
+    }
+    confirmation_view(path, &bytes)
+}
+
+/// Render the exact buffer that was published, never an edit plan. Failure
+/// to read a view cannot turn a completed write into a failed operation.
+fn print_success(
+    before_path: &Path,
+    before: Result<String, String>,
+    after_path: &Path,
+    published: &[u8],
+) -> Result<(), String> {
+    let views = before
+        .and_then(|before| confirmation_view(after_path, published).map(|after| (before, after)));
+    let (before, after) = match views {
+        Ok(views) => views,
+        Err(error) => {
+            edit_status(format_args!(
+                "warning: the before/after views cannot be shown: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    let block = jubarte::cli::success_block(
+        &slash_path(before_path),
+        &before,
+        &slash_path(after_path),
+        &after,
+    );
+    write_stdout(block)
 }
 
 /// The agent view of `bytes` on stdout.
@@ -1075,7 +1127,7 @@ fn run_edit(
         .map_err(|e| refused(&e))?
         .result;
     let dir = match job.target {
-        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source, plan),
+        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source),
         EditTarget::Bundle(dir) => dir,
     };
     let input_dir = job
@@ -1226,25 +1278,10 @@ fn run_edit(
     if job.quiet {
         return Ok(());
     }
-    // A pure accept/reject prints the resolved lines on stdout, nothing
-    // else; the bundle's report.jsonl still holds the summary.
-    if is_pure_resolution(plan, &result)
-        && let Ok(text) =
-            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
-    {
-        let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
-        edit_status(format_args!(
-            "wrote {} ({} files: {})",
-            out_dir.display(),
-            names.len(),
-            names.join(", ")
-        ));
-        for note in edit_notes(notes, &result) {
-            edit_status(format_args!("{note}"));
-        }
-        return write_stdout(&text).map_err(committed);
+    // Preserve the existing summary contract for ordinary edits.
+    if !is_pure_resolution(plan, &result) {
+        write_stdout(format!("{summary}\n")).map_err(committed)?;
     }
-    write_stdout(format!("{summary}\n")).map_err(committed)?;
     let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
     // The status lines on stderr (D6); the summary and the view are data.
     edit_status(format_args!(
@@ -1256,29 +1293,18 @@ fn run_edit(
     for note in edit_notes(notes, &result) {
         edit_status(format_args!("{note}"));
     }
-    // The changed blocks, as the agent view reads them back: the tracked
-    // redline, or in editing mode its accepted text.
-    let shown = match job.mode {
-        Mode::Suggesting => "redline.docx",
-        Mode::Editing => "clean.docx",
-    };
-    // The files are written and report.jsonl says so: a view that cannot be
-    // read back is a warning, not a failed edit.
-    match jubarte::markdown::changed_view(
-        &result.redline,
-        &result.report.author,
-        job.mode == Mode::Editing,
-        // An identifier agents read back: `/` on every OS (#568).
-        Some(&slash_path(&out_dir.join(shown))),
-    ) {
-        Ok(view) => write_stdout(&view).map_err(committed),
-        Err(e) => {
-            edit_status(format_args!(
-                "warning: the changed blocks cannot be shown: {e}"
-            ));
-            Ok(())
+    for (name, bytes) in &outputs {
+        if Path::new(name).extension().is_some_and(|ext| ext == "docx") {
+            print_success(
+                job.file,
+                confirmation_view(job.file, source),
+                &out_dir.join(name),
+                bytes,
+            )
+            .map_err(committed)?;
         }
     }
+    Ok(())
 }
 
 /// An existing output of `edit` or `add` without --force: exit 2.
@@ -1732,47 +1758,20 @@ fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<Strin
     lines
 }
 
-/// Whether `plan` resolved only revisions and `result` resolved some: an
-/// `edit -p rN --accept/--reject` with no content operation prints the
-/// resolved lines, not the view. Ordinary edits keep the view.
+/// A pure revision resolution keeps its existing absence of a bundle summary.
 fn is_pure_resolution(plan: &jubarte::edit::EditPlan, result: &jubarte::edit::EditResult) -> bool {
     plan.operations.is_empty()
         && plan.resolve_revisions.is_some()
         && !result.report.resolved_revisions.is_empty()
 }
 
-/// The resolved lines for a pure accept/reject, or the changed view
-/// otherwise. A view that cannot be read back is a warning, not a failed
-/// edit; lines that cannot be built fall back to the view the same way.
-fn resolved_or_view(
-    source: &[u8],
-    plan: &jubarte::edit::EditPlan,
-    result: &jubarte::edit::EditResult,
-    author: &str,
-    accepted: bool,
-    shown: Option<&str>,
-) -> Result<String, String> {
-    if is_pure_resolution(plan, result)
-        && let Ok(text) =
-            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
-    {
-        return Ok(text);
-    }
-    jubarte::markdown::changed_view(&result.redline, author, accepted, shown)
-        .map_err(|e| format!("the changed blocks cannot be shown: {e}"))
-}
-
-/// `edit` and `add` without --out-dir: the redline (in editing mode, the
-/// result) as one .docx at `path`, its PDF and PNG pages beside it, the
-/// `wrote` lines and notes on stderr, and the changed blocks' view of that
-/// file on stdout (a pure accept/reject prints the resolved lines).
+/// Publish edit/add outputs, then confirm the document with full agent views.
 fn write_edited(
     job: &EditJob<'_>,
     path: &Path,
     result: &jubarte::edit::EditResult,
     notes: &[String],
     source: &[u8],
-    plan: &jubarte::edit::EditPlan,
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
     let document = match job.mode {
@@ -1875,30 +1874,18 @@ fn write_edited(
     for note in edit_notes(notes, result) {
         edit_status(format_args!("{note}"));
     }
-    // The file is written: a view that cannot be read back is a warning,
-    // not a failed edit. A pure accept/reject prints the resolved lines.
-    match resolved_or_view(
-        source,
-        plan,
-        result,
-        &result.report.author,
-        job.mode == Mode::Editing,
-        // An identifier agents read back: `/` on every OS (#568).
-        Some(&slash_path(path)),
-    ) {
-        // V2-05: the commit stands when the report fails; say what it
-        // wrote.
-        Ok(text) => write_stdout(&text).map_err(|e| {
-            fail(format!(
-                "committed {}, but reporting the result failed: {e}",
-                comma_paths(&committed)
-            ))
-        }),
-        Err(e) => {
-            edit_status(format_args!("warning: {e}"));
-            Ok(())
-        }
-    }
+    print_success(
+        job.file,
+        confirmation_view(job.file, source),
+        path,
+        document,
+    )
+    .map_err(|e| {
+        fail(format!(
+            "committed {}, but reporting the result failed: {e}",
+            comma_paths(&committed)
+        ))
+    })
 }
 
 /// One `edit` or `add` invocation, parsed.
@@ -2226,12 +2213,13 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         // An identifier agents read back: `/` on every OS (#568).
         slash_path(&default_output(&job.original, &job.modified))
     );
-    let out = job.output.as_deref().map(|path| Output {
+    let mut out = job.output.as_deref().map(|path| Output {
         kind: kind.unwrap_or(Format::Docx),
         path,
         force: job.force,
         quiet: job.quiet,
         input: &job.original,
+        markdown_input: false,
         view: &job.read,
         source: source.clone(),
         render: &job.render,
@@ -2264,6 +2252,9 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
             "read options shape the view; two Markdown documents write CriticMarkup to a .md"
                 .to_string(),
         ));
+    }
+    if let Some(out) = &mut out {
+        out.markdown_input = old.markdown.is_some();
     }
     let word_pair = old.markdown.is_none() && new.markdown.is_none();
     if word_pair
@@ -2665,7 +2656,8 @@ fn run_convert_any(
             .map_or_else(|| job.file.with_extension(kind.name()), Path::to_path_buf)
     };
     let at = |kind: Format, path: &Path, produced: Option<Produced<'_>>| {
-        let out = Output::of_task(kind, path, job.file, &render, job.force, job.quiet);
+        let mut out = Output::of_task(kind, path, job.file, &render, job.force, job.quiet);
+        out.markdown_input = from == Format::Md;
         match produced {
             Some(produced) => write_output(&out, produced),
             None => Ok(check_output(&out)?),
@@ -2791,6 +2783,7 @@ fn run_convert_any(
                 check_side_file(report, "--report", others, job.force)?;
             }
             ensure_writable(&path, job.force)?;
+            let before = (!job.quiet).then(|| confirmation_view(job.file, &bytes));
             let out = match resolve {
                 Some(resolve) => resolve(&bytes).map_err(|e| {
                     refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
@@ -2806,22 +2799,25 @@ fn run_convert_any(
                 }
                 jubarte::publication::publish_paths(&outputs, job.force)
                     .map_err(|e| e.to_string())?;
-                for field in &updated.fields {
-                    outln!(
-                        "{}\t{}\t{:?} -> {:?}",
-                        field.paragraph,
-                        field.kind,
-                        field.old,
-                        field.new
-                    );
-                }
-                eprintln!(
-                    "{} field(s) written; {} page(s)",
-                    updated.fields.len(),
-                    updated.page_count
-                );
                 if !job.quiet {
+                    for field in &updated.fields {
+                        outln!(
+                            "{}\t{}\t{:?} -> {:?}",
+                            field.paragraph,
+                            field.kind,
+                            field.old,
+                            field.new
+                        );
+                    }
+                    eprintln!(
+                        "{} field(s) written; {} page(s)",
+                        updated.fields.len(),
+                        updated.page_count
+                    );
                     eprintln!("{}", wrote_line(&path, Format::Docx, docx.len(), None));
+                }
+                if let Some(before) = before {
+                    print_success(job.file, before, &path, docx)?;
                 }
                 return Ok(());
             }
