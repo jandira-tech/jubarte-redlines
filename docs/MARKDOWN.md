@@ -545,9 +545,13 @@ note's own changes its text cannot show close its definition line:
 prints as `first: {…, inactive}` when different-first-page is off.
 
 A style's two `style_changes` tags name its paragraph-property and
-run-property records, in that order. A single legacy tag writes both
-records; the writer assigns distinct ids and warns, so reading it back
-prints two tags. Further round trips keep those two records and ids.
+run-property records, in that order. A single tag writes both records
+with the same id, as Word does; reading them back prints one tag. Both
+forms keep their record count and ids on further round trips. Duplicate
+revision ids are checked and repaired within each record type in a part;
+the accepted paragraph-property/run-property pairing is preserved. Run
+revisions and row/paragraph-mark revisions also have separate id scopes,
+even when their XML element names are the same.
 
 A header's or footer's paragraphs take Word's Header or Footer style unless
 the entry names theirs: `style: Normal` for all, or `styles: [Footer,
