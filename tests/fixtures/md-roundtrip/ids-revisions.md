@@ -5,7 +5,7 @@ revisions: 1668                    # 1571 marks shown as 1549 changes: 660 inser
 comments: 0
 authors:
   document_owner: Jones, SA        # dc:creator
-  AB: Aliyu Bamidele               # 1667 revisions, latest 2026-09-26T01:07:00Z
+  AB: Aliyu Bamidele               # 1667 revisions, latest 2026-09-25T21:07:00-04:00
 body: p0-p737, 18 tables, 2 pages  # pages from Word's cached layout
 page: Letter portrait, margins top 0.945in, right 1.671in, bottom 2.416in, left 1.583in, header 0.5in, footer 1.878in; fmt r1667 @AB
 styles:

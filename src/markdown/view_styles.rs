@@ -44,7 +44,7 @@ pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMar
             let date = if mark.date.is_empty() {
                 String::new()
             } else {
-                format!(" w:date=\"{}\"", escape(&mark.date))
+                format!(" w:date=\"{}\"", escape(&super::xml::word_date(&mark.date)))
             };
             let id = mark
                 .id

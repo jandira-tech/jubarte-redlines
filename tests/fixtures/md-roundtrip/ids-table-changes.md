@@ -5,7 +5,7 @@ revisions: 435                     # 422 marks shown as 421 changes: 3 insertion
 comments: 4 threads open, style Normal  # 6 comments: c16 (+ reply c17), c76, c207 (+ reply c208), c267
 authors:
   document_owner: Un-named         # dc:creator
-  AS: Arthur Souza Rodrigues       # 435 revisions, 4 comments, latest 2026-09-26T18:55:00Z
+  AS: Arthur Souza Rodrigues       # 435 revisions, 4 comments, latest 2026-09-26T14:55:00-04:00
   U: User                          # 2 comments, 2026-03-05T19:41:00Z
 body: p0-p218, 12 tables, 7 pages  # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in; fmt r440 @AS

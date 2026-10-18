@@ -2549,11 +2549,24 @@ fn with_section_change(section: &str, mark: &FormatMark) -> String {
     )
 }
 
+/// A view's offset records an instant; Word stores its wall clock with Z.
+/// Only attributed view dates pass here, preserving caller-supplied defaults.
+pub(super) fn word_date(date: &str) -> std::borrow::Cow<'_, str> {
+    let zone = date.len().saturating_sub(6);
+    if matches!(date.as_bytes().get(zone), Some(b'+' | b'-'))
+        && crate::util::datetime::parse_datetime(date).is_ok()
+    {
+        std::borrow::Cow::Owned(format!("{}Z", &date[..zone]))
+    } else {
+        std::borrow::Cow::Borrowed(date)
+    }
+}
+
 fn date_attribute(date: &str) -> String {
     if date.is_empty() {
         String::new()
     } else {
-        format!(" w:date=\"{}\"", escape(date))
+        format!(" w:date=\"{}\"", escape(&word_date(date)))
     }
 }
 

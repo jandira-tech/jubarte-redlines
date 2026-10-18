@@ -5,7 +5,7 @@ revisions: 1651                    # 1383 marks shown as 1345 changes: 400 inser
 comments: 0
 authors:
   document_owner: Cuenta Microsoft  # dc:creator
-  LW: Lucy Wallis                  # 1647 revisions, latest 2026-09-25T23:59:00Z
+  LW: Lucy Wallis                  # 1647 revisions, latest 2026-09-25T19:59:00-04:00
 body: p0-p827, 8 tables, 2 pages   # pages from Word's cached layout
 page: A4 portrait, margins 1in, header/footer 0.492in
 styles:

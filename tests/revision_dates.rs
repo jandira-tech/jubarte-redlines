@@ -430,3 +430,47 @@ fn latest_comment_selection_compares_offsets_as_instants() {
     let selected = jubarte::comments::select_comments(vec![first, later], None, true);
     assert_eq!(selected[0].id, 1);
 }
+
+fn stored_dates(bytes: &[u8]) -> Vec<String> {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    dom.descendants(dom.root(doc).unwrap(), None)
+        .into_iter()
+        .filter_map(|n| {
+            dom.attribute(n, &jubarte::namespaces::W::date())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+#[test]
+fn corpus_round_trip_preserves_all_361_stored_dates() {
+    let bytes = std::fs::read(
+        "tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/791ca61933.docx",
+    )
+    .unwrap();
+    let original = stored_dates(&bytes);
+    assert_eq!(original.len(), 361);
+    let md = view(&bytes, true, true);
+    let output = jubarte::markdown::markdown_to_docx(&md, &Default::default()).unwrap();
+    assert_eq!(stored_dates(&output.docx), original);
+    assert!(
+        !part_string(&output.docx, "word/document.xml")
+            .unwrap()
+            .contains("dateUtc")
+    );
+}
+
+#[test]
+fn offset_view_writer_preserves_wall_clock_for_marks_and_comments() {
+    let md = "---\nauthors:\n  A: Alice # 1 revision, 2026-09-25T20:04:00-04:00\n---\n\n{++text++}{>>r1 @A<<} {==anchor==}{>>c0 @A 2026-09-25T20:04:00-04:00: note<<}\n";
+    let output = jubarte::markdown::markdown_to_docx(md, &Default::default()).unwrap();
+    assert_eq!(stored_dates(&output.docx), ["2026-09-25T20:04:00Z"]);
+    let comments = part_string(&output.docx, "word/comments.xml").unwrap();
+    assert!(
+        comments.contains(r#"w:date="2026-09-25T20:04:00Z""#),
+        "{comments}"
+    );
+    assert!(!comments.contains("dateUtc"));
+}

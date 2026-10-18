@@ -5,7 +5,7 @@ revisions: 361                     # 358 marks shown as 358 changes: 98 insertio
 comments: 0
 authors:
   document_owner: Frea Haandrikman  # dc:creator
-  SW: S Wheeler                    # 361 revisions, 2026-09-26T00:04:00Z
+  SW: S Wheeler                    # 361 revisions, 2026-09-25T20:04:00-04:00
 body: p0-p196, 1 table, 2 pages    # pages from Word's cached layout
 page: A4 landscape, margins 0.5in, header/footer 0.492in; fmt r360 @SW
 styles:

@@ -893,19 +893,44 @@ fn markdown_and_docx_round_trip_exactly() {
 /// (`views.txt` names them.)
 #[test]
 fn committed_views_match_the_view() {
+    let bless = std::env::var_os("JUBARTE_BLESS").is_some();
     let mut stale = Vec::new();
     let mut sources: Vec<(String, PathBuf)> = view_sources().into_iter().collect();
     sources.sort();
     for (md, docx) in &sources {
         let dir = tempfile::tempdir().unwrap();
         std::fs::copy(docx, dir.path().join("source.docx")).unwrap();
-        let got = view(dir.path(), "source.docx").unwrap();
+        let raw = jubarte(dir.path(), &["read", "source.docx", "--no-page-markers"]).unwrap();
+        let got = comparable(&raw);
+        if bless {
+            // Keep measured page facts; only source identity is fixture-local.
+            let mut header = false;
+            let fixture = raw
+                .lines()
+                .enumerate()
+                .filter_map(|(i, line)| {
+                    if line == "---" {
+                        header = i == 0;
+                    }
+                    (!header || !(line.starts_with("source: ") || line.starts_with("sha256: ")))
+                        .then_some(line)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            std::fs::write(Path::new(FIXTURES).join(md), fixture).unwrap();
+            continue;
+        }
         let want = comparable(&std::fs::read_to_string(Path::new(FIXTURES).join(md)).unwrap());
         if want != got {
             stale.push(format!("{md}: {}", difference(&want, &got)));
         }
     }
-    assert!(stale.is_empty(), "stale views:\n{}", stale.join("\n"));
+    assert!(
+        stale.is_empty(),
+        "stale views (regenerate with JUBARTE_BLESS=1 and committed_views_match_the_view):\n{}",
+        stale.join("\n")
+    );
 }
 
 #[test]

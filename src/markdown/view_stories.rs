@@ -184,7 +184,10 @@ impl Marks<'_> {
         let date = if date.is_empty() {
             String::new()
         } else {
-            format!(" w:date=\"{}\"", super::xml::escape(&date))
+            format!(
+                " w:date=\"{}\"",
+                super::xml::escape(&super::xml::word_date(&date))
+            )
         };
         format!(
             "{name} w:id=\"{id}\" w:author=\"{}\"{date}",
