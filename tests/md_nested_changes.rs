@@ -1853,3 +1853,28 @@ fn review_1129_anonymous_parents_at_every_level() {
         );
     }
 }
+
+#[test]
+fn review_1129_day_range_reuses_opens_at_every_level() {
+    for kind in ["header", "footer"] {
+        let view = review_1129_story_view(
+            kind,
+            "{++live++}{>>PART.r1 @A<<}{--mid--}{>>PART.r3 @B on PART.r1 @A<<}{++x++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{--tail--}{>>PART.r3 @B on PART.r1 @A<<}{++end++}{>>PART.r1 @A<<}",
+        );
+        let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+        assert_revision_tree(
+            &xml,
+            &[
+                ("w:ins", "1", None),
+                ("w:del", "3", Some("1")),
+                ("w:ins", "5", Some("3")),
+            ],
+            &[
+                revision_by("Alice", Some("2026-09-29T00:00:00Z")),
+                revision_by("Bob", Some("2026-09-29T00:00:00Z")),
+                revision_by("Alice", Some("2026-09-30T23:59:59Z")),
+            ],
+        );
+    }
+}
+
