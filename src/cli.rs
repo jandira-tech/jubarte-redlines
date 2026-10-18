@@ -1002,7 +1002,7 @@ pub enum Command {
     ///
     /// A YAML header, then Markdown with an `<!-- pN -->` id line before every
     /// paragraph, tracked changes as CriticMarkup
-    /// followed by their ids (`{++text++}{>>r12 @AC<<}`) and comments with
+    /// followed by their ids (`{++text++}{r12 @AC}`) and comments with
     /// theirs (`{>>c5 @AC: …<<}`).
     #[command(aliases = ["text", "inspect"])]
     Read {
