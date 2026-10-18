@@ -17,6 +17,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Breaking
 
+- `read --json` snapshot schema 2: `summary.tables` and `tables[]` count
+  top-level tables, with view-aligned `index`. Cell tables move into
+  recursive `nested` arrays with a `parent` cell path and no `index`.
+  `read --tables` uses the same top-level numbers and indents nested grids
+  under their cell rows. Python `Table` gains `parent` and `nested`; its
+  nested indices are `None`. Legacy edit-plan schemas are unchanged.
+
 - **Markdown revision attribution uses the settled brace dialect.** Update saved
   views and consumers using this migration table. Comments keep `{>>…<<}`.
 

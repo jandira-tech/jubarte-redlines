@@ -556,7 +556,7 @@ jubarte convert redline.docx \
 ```sh
 jubarte read contract.docx               # the agent view
 jubarte read contract.docx --json        # the snapshot: paragraphs, runs, tables, changes, comments
-jubarte read contract.docx --tables      # each table as a grid of `ids=text` cells
+jubarte read contract.docx --tables      # top-level tN grids, with nested cell paths
 jubarte read contract.docx --tables -p t0 # t0 and its nested tables: grid, then view
 jubarte read contract.docx -p p12,p40-p48 -o excerpt.md
 ```
@@ -576,6 +576,19 @@ tables, content controls, and the changes and comments with their short
 `ref`. The selection flags (`-p`, `--head`, `--tail`, `--changed`, `--by`)
 narrow it as they narrow the view. `-o FILE.md` or `-o FILE.json` writes
 either to a file.
+
+The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+count top-level body tables only; each `index` is the view's `tN`.
+Every table has a `nested` array (empty for a leaf), containing its cell tables.
+A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
+A deeper parent includes the cell-local table ordinal, for example
+`t0.row2.cell0.t0.row0.cell1`. Paragraph ids and edit-plan schemas are unchanged.
+
+`--tables` numbers only top-level tables as `table N`, matching `tN` in
+the view and `-p tN`. Nested tables follow their containing cell row,
+indented two spaces per nesting level and labelled `nested in CELL_PATH`.
+For example, `nested in t0.row2.cell0`; a further level uses
+`t0.row2.cell0.t0.row0.cell1`. `--tables -p t0` includes this whole tree.
 
 ```text
 <!-- p0 center -->

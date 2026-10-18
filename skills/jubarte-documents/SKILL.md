@@ -81,11 +81,16 @@ and `source_sha256`. `-p` and the other selection flags narrow it.
 (`parent`, `done`) and the anchored text with its surroundings
 (`anchor_text`, `before`, `after`, `paragraph`); `--author NAME` keeps one
 author's, `--latest` the newest of each thread.
-`tables` reads each body table as a grid: `rows` of cells, each cell with
+The schema-2 snapshot's `summary.tables` and `tables[]` count top-level
+body tables only, with `index` matching the view's `tN`. Every grid has a
+recursive `nested` array; nested entries have a `parent` cell path
+(`t0.row2.cell0`, then `t0.row2.cell0.t0.row0.cell1`) and no `index`.
+`tables` reads each top-level body table as a grid: `rows` of cells, each cell with
 its `paragraph_ids` and `text`, plus `header_rows` and `widths_dxa`. Edit a
 cell through its paragraph id, or as `t0.row1.cell2`.
 `jubarte read contract.docx --tables` prints the same grids with the same
-short ids (`p8`).
+short ids (`p8`). Top-level labels are `table N`; nested grids follow their
+cell row, indented two spaces per level and labelled `nested in CELL_PATH`.
 `read --json` also lists the body's content controls under `controls`: `id`
 (`cc0` for a block control, `p3.cc0` for one inside paragraph `p3`), `tag`, `alias`, `kind` (`text`, `rich_text`, `drop_down`,
 `combo_box`, `date`, `checkbox`, `picture`, ...), `text`, `paragraph_ids`,

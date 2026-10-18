@@ -119,6 +119,16 @@ doc.accept(ids=["r12"])           # or reject(...): resolve a selection,
 result = doc.render(pdf=True, png_dpi=144)  # Rendered: pdf, pngs, page report
 ```
 
+The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+count top-level body tables only; each `index` is the view's `tN`.
+Every table has a `nested` array (empty for a leaf), containing its cell tables.
+A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
+A deeper parent includes the cell-local table ordinal, for example
+`t0.row2.cell0.t0.row0.cell1`. Paragraph ids and edit-plan schemas are unchanged.
+
+Python nested grids are `Table(index=None, parent=CELL_PATH, nested=(...))`;
+top-level grids retain integer indices.
+
 `doc.compare(other, author=...)` is `compare_documents`; `doc.to_pdf()` and
 `doc.to_png(dpi=...)` are the one-shot renderers.
 

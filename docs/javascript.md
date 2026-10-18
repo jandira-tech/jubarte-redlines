@@ -67,18 +67,31 @@ fonts; redline output is identical. The size saving is now small: in
 
 ## API reference
 
+The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+count top-level body tables only; each `index` is the view's `tN`.
+Every table has a `nested` array (empty for a leaf), containing its cell tables.
+A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
+A deeper parent includes the cell-local table ordinal, for example
+`t0.row2.cell0.t0.row0.cell1`. Paragraph ids and edit-plan schemas are unchanged.
+
+`--tables` numbers only top-level tables as `table N`, matching `tN` in
+the view and `-p tN`. Nested tables follow their containing cell row,
+indented two spaces per nesting level and labelled `nested in CELL_PATH`.
+For example, `nested in t0.row2.cell0`; a further level uses
+`t0.row2.cell0.t0.row0.cell1`. `--tables -p t0` includes this whole tree.
+
 Generated from `jubarte-wasm/npm/node/jubarte_wasm.d.ts` — the exact
 signatures and doc comments the package ships.
 
-The identity fields the models carry are the schema-1 wire shape: `id` and
+The identity fields the models carry retain their existing wire shape: `id` and
 `ref` both hold the short id (`r12`, `header1.r1`, `c5` — the colon
 fallback `body:rev:007` only when no short spelling reads back; `9872a374`,
-`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 1`.
+`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 2` for the table-tree shape.
 The 17 October 2026 short-and-long-ID contract
 ([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
 staged in
 [superpowers/plans/2026-10-16-id-contract-implementation.md](superpowers/plans/2026-10-16-id-contract-implementation.md))
-replaces them with paired `short_id`/`long_id` references at the schema-2
+replaces them with paired `short_id`/`long_id` references at the planned identity-schema
 cutover and retires the transitional spellings — `noid`, colon ids
 (`body:rev:12`), nested `.pN` inside cells and text boxes
 (`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
@@ -863,8 +876,9 @@ tablesText(docx: Uint8Array): string
 ```
 
 The grids `jubarte read --tables` prints: a `table N: RxC …` line per
-body table, then a line per row of `ids=text` cells; `no tables` when
-there are none.
+top-level body table, then a line per row of `ids=text` cells; nested
+tables follow their cell row with two-space indentation per level and
+a `nested in CELL_PATH` label. `no tables` prints when there are none.
 
 Mirrors `jubarte::inspect::tables_text`.
 
@@ -1149,9 +1163,10 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          `ids=text` cells. N matches the view's tN. Nested grids follow their
+          cell row with two spaces per level and a `nested in CELL_PATH` label
 
 Examples:
   jubarte compare old.docx new.docx                 the redline's agent view
@@ -1735,9 +1750,10 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          `ids=text` cells. N matches the view's tN. Nested grids follow their
+          cell row with two spaces per level and a `nested in CELL_PATH` label
 ```
 
 #### `jubarte-redlines edit`

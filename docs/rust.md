@@ -14,6 +14,19 @@ other surfaces see [docs/python.md](python.md) (Python and `uvx`) and
 [docs/javascript.md](javascript.md) (Node, browser and `npx`); the
 [README](../README.md) covers the shared workflow and install options.
 
+The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+count top-level body tables only; each `index` is the view's `tN`.
+Every table has a `nested` array (empty for a leaf), containing its cell tables.
+A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
+A deeper parent includes the cell-local table ordinal, for example
+`t0.row2.cell0.t0.row0.cell1`. Paragraph ids and edit-plan schemas are unchanged.
+
+`--tables` numbers only top-level tables as `table N`, matching `tN` in
+the view and `-p tN`. Nested tables follow their containing cell row,
+indented two spaces per nesting level and labelled `nested in CELL_PATH`.
+For example, `nested in t0.row2.cell0`; a further level uses
+`t0.row2.cell0.t0.row0.cell1`. `--tables -p t0` includes this whole tree.
+
 ## Install
 
 The published crate is [`jubarte-redlines`](https://crates.io/crates/jubarte-redlines);
@@ -385,9 +398,10 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          `ids=text` cells. N matches the view's tN. Nested grids follow their
+          cell row with two spaces per level and a `nested in CELL_PATH` label
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -1044,9 +1058,10 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          `ids=text` cells. N matches the view's tN. Nested grids follow their
+          cell row with two spaces per level and a `nested in CELL_PATH` label
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired

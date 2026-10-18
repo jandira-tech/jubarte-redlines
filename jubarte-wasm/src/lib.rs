@@ -293,8 +293,10 @@ pub fn source_sha256(docx: &[u8]) -> String {
 }
 
 /// The inspection snapshot as JSON: `schema_version`, `source_sha256`,
-/// `summary` and `paragraphs` (ids, text, style, formatting spans,
-/// limitations). Oversized or malformed packages are refused before parsing.
+/// `summary`, `paragraphs` (ids, text, style, formatting spans,
+/// limitations) and top-level `tables` with recursive `nested` entries.
+/// Snapshot schema 2 counts top-level tables; nested entries have `parent`
+/// cell paths and no `index`. Oversized or malformed packages are refused before parsing.
 ///
 /// Mirrors `jubarte::inspect::inspect_json`.
 #[wasm_bindgen(js_name = inspectDocument)]
@@ -397,8 +399,9 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
 }
 
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
-/// body table, then a line per row of `ids=text` cells; `no tables` when
-/// there are none.
+/// top-level body table, then a line per row of `ids=text` cells; nested
+/// tables follow their cell row, indented two spaces per level and labelled
+/// `nested in CELL_PATH`. `no tables` prints when there are none.
 ///
 /// Mirrors `jubarte::inspect::tables_text`.
 #[wasm_bindgen(js_name = tablesText)]
