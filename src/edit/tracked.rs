@@ -1071,12 +1071,13 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
         isolate(dom, run, t);
         (Some(run), Some(run), before)
     };
-    // A deletion stays inside the source insertion. Everything following
-    // the edit moves to a separate insertion after the editor's new words.
+    // A deletion stays inside the source insertion. Range endpoints stay
+    // beside their words; the remaining children follow the editor's words.
     let split = anchor.and_then(|anchor| {
         let ins = dom.parent(anchor).filter(|&n| dom.name_is(n, &W::ins()))?;
         let children = dom.elements(ins, None);
         let at = children.iter().position(|&n| n == anchor)? + usize::from(!before);
+        let at = insertion_split_boundary(dom, &children, at, before);
         if at == 0 {
             // There is no first piece to keep. The complete source
             // insertion becomes the newly numbered trailing piece.
@@ -1142,6 +1143,47 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
         dom.remove(tail);
         dom.add_after_self(last.expect("a split has a first piece"), tail);
     }
+}
+
+/// Opening markers travel with the words to their right, closing markers
+/// with the words to their left. A comment reference stays with its end.
+fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, before: bool) -> usize {
+    if before {
+        while at > 0
+            && (dom.name_is(children[at - 1], &W::bookmark_start())
+                || dom.name_is(children[at - 1], &W::name("commentRangeStart")))
+        {
+            at -= 1;
+        }
+        return at;
+    }
+    let mut closed_comments = BTreeSet::new();
+    while let Some(&child) = children.get(at) {
+        if dom.name_is(child, &W::name("commentRangeEnd")) {
+            if let Some(id) = dom.attribute(child, &W::id()) {
+                closed_comments.insert(id);
+            }
+        } else if !dom.name_is(child, &W::bookmark_end()) {
+            if !dom.name_is(child, &W::r()) {
+                break;
+            }
+            let references = dom.elements(child, Some(&W::name("commentReference")));
+            if references.is_empty()
+                || references.iter().any(|&reference| {
+                    dom.attribute(reference, &W::id())
+                        .is_none_or(|id| !closed_comments.contains(id))
+                })
+                || dom.elements(child, None).iter().any(|&element| {
+                    !dom.name_is(element, &W::r_pr())
+                        && !dom.name_is(element, &W::name("commentReference"))
+                })
+            {
+                break;
+            }
+        }
+        at += 1;
+    }
+    at
 }
 
 /// Empty run shells must not keep an otherwise deleted own insertion alive.
