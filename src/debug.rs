@@ -170,6 +170,27 @@ struct Package {
 
 impl Package {
     fn open(bytes: &[u8]) -> Result<Self, String> {
+        Self::open_within(bytes, crate::admission::InputLimits::compare())
+    }
+
+    /// [`Package::open`] under an explicit budget, so the caps are provable
+    /// with budgets small enough for a test (#645). The compressed size and
+    /// the declared entry count run before the archive is indexed, each
+    /// entry inflates through a capped reader with a checked cumulative
+    /// total, and no allocation is sized from the central directory's
+    /// declared sizes: the initial capacity follows the Markdown reader's
+    /// `min(size, 16 MiB)` rule (`markdown::from_docx::ooxml`).
+    fn open_within(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<Self, String> {
+        // Preserve the diagnostic reader's malformed-ZIP prefix while keeping
+        // budget refusals identical to admission's INPUT_LIMIT wording.
+        let budget_error = |error: crate::admission::AdmissionError| {
+            if error.kind == crate::admission::AdmissionErrorKind::InputLimit {
+                error.to_string()
+            } else {
+                format!("not a zip: {error}")
+            }
+        };
+        crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
         // Read Strict packages as the Transitional the checks describe, as
         // the comparer does at load. The rewrite touches namespace
         // declarations and relationship types alone and hands a package
@@ -178,20 +199,37 @@ impl Package {
         // bytes it carries (#531), while a package whose subparts alone
         // are Strict is translated too, as before the main-part gate
         // (#561).
-        let translated = crate::strict_translation::strict_to_transitional_docx(bytes);
+        let translated =
+            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits);
         let bytes = translated.as_slice();
+        crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
         let mut zip =
             crate::opc::open_archive(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
         let mut entries = Vec::with_capacity(zip.len());
+        let mut total = 0u64;
         for i in 0..zip.len() {
             let mut f = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
             let name = f
                 .name()
                 .map_err(|e| format!("zip entry {i} name: {e}"))?
                 .into_owned();
-            let mut data = Vec::with_capacity(f.size() as usize);
-            f.read_to_end(&mut data)
+            if f.size() > limits.max_part_bytes {
+                return Err(
+                    crate::admission::part_declared_over(&name, f.size(), &limits).to_string(),
+                );
+            }
+            let cap = limits
+                .max_part_bytes
+                .min(limits.max_uncompressed_bytes.saturating_sub(total));
+            let mut data = Vec::with_capacity(
+                usize::try_from(f.size().min(cap).min(16 * 1024 * 1024)).unwrap_or(0),
+            );
+            let read = (&mut f)
+                .take(cap.saturating_add(1))
+                .read_to_end(&mut data)
                 .map_err(|e| format!("{name}: {e}"))?;
+            crate::admission::account_inflated(&mut total, read as u64, &name, cap, &limits)
+                .map_err(|e| e.to_string())?;
             entries.push(Entry {
                 name,
                 size: f.size(),
@@ -4393,5 +4431,42 @@ mod residual_byte_diagnostic_contract_tests {
         };
         assert_eq!(report(&bytes, None, &opts).unwrap(), "");
         assert_eq!(report(&bytes, Some(&bytes), &opts).unwrap(), "");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod bounded_input_tests {
+    use super::*;
+    use crate::admission::{InputLimits, limit_test_support as fixture};
+
+    fn refuses(limits: InputLimits, detail: &str) {
+        let bytes = fixture::package();
+        let text = Package::open_within(&bytes, limits)
+            .err()
+            .expect("over-budget package must be refused");
+        assert!(text.contains("INPUT_LIMIT"), "{text}");
+        assert!(text.contains(detail), "{text}");
+    }
+    #[test]
+    fn compressed_limit() {
+        refuses(fixture::compressed(), "input is");
+    }
+    #[test]
+    fn count_limit() {
+        refuses(fixture::count(), "3 ZIP entries; the limit is 2");
+    }
+    #[test]
+    fn part_limit() {
+        refuses(fixture::part(), "a.bin");
+    }
+    #[test]
+    fn aggregate_limit() {
+        refuses(fixture::total(), "the package limit is 160");
+    }
+    #[test]
+    fn exact_budget_control() {
+        let bytes = fixture::package();
+        assert!(Package::open_within(&bytes, fixture::limits()).is_ok());
     }
 }

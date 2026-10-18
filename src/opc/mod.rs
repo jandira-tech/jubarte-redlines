@@ -266,11 +266,21 @@ fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
 
 /// Populate parts and local relationships without invoking upstream's whole-package
 /// normalization and duplicate-refusal policies ahead of the adapter's repairs.
-fn read_package(bytes: &[u8]) -> Result<PartFs, OpcError> {
+///
+/// Bounded like [`crate::admission::admit`] (#645): each entry inflates
+/// through a reader capped at the smaller of `limits.max_part_bytes` and the
+/// package budget left, with a checked cumulative total, because the sizes
+/// the central directory declares are not trusted and no caller can be
+/// relied on to have admitted the bytes first. An entry that declares or
+/// inflates past its cap is refused with the admission `INPUT_LIMIT`
+/// wording.
+fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<PartFs, OpcError> {
+    crate::admission::preindex_budget(bytes, limits).map_err(refused)?;
     let mut archive = open_archive(Cursor::new(bytes))?;
     let mut parts = HashMap::new();
     let mut source_order = HashMap::new();
     let mut identities = HashSet::new();
+    let mut total = 0u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
         if entry.is_dir() {
@@ -292,8 +302,28 @@ fn read_package(bytes: &[u8]) -> Result<PartFs, OpcError> {
         if !identities.insert(name.to_ascii_lowercase()) {
             return Err(OpcError::DuplicatePartName(name));
         }
+        if entry.size() > limits.max_part_bytes {
+            return Err(refused(crate::admission::part_declared_over(
+                &name,
+                entry.size(),
+                &limits,
+            )));
+        }
+        let cap = limits
+            .max_part_bytes
+            .min(limits.max_uncompressed_bytes.saturating_sub(total));
         let mut data = Vec::new();
-        entry.read_to_end(&mut data)?;
+        let read = u64::try_from(
+            (&mut entry)
+                .take(cap.saturating_add(1))
+                .read_to_end(&mut data)?,
+        )
+        .unwrap_or(u64::MAX);
+        crate::admission::account_inflated(&mut total, read, &name, cap, &limits)
+            .map_err(refused)?;
+        if name == "[Content_Types].xml" || name.ends_with(".rels") {
+            check_opc_attributes(&data)?;
+        }
         parts.insert(name, data);
     }
     let mut package = PartFs {
@@ -390,27 +420,6 @@ fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
     }
 }
 
-fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
-    let mut archive = open_archive(Cursor::new(bytes))?;
-    for index in 0..archive.len() {
-        let entry = archive.by_index(index)?;
-        let name = entry.name()?;
-        if name != "[Content_Types].xml" && !name.ends_with(".rels") {
-            continue;
-        }
-        let mut xml = Vec::new();
-        entry.take(limit.saturating_add(1)).read_to_end(&mut xml)?;
-        if u64::try_from(xml.len()).unwrap_or(u64::MAX) > limit {
-            return Err(refused(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "OPC metadata exceeds part byte budget",
-            )));
-        }
-        check_opc_attributes(&xml)?;
-    }
-    Ok(())
-}
-
 /// Thin adapter over `oxml_opc::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
     // Only parts and content types live upstream; its relationship maps stay empty.
@@ -450,18 +459,34 @@ impl PartFs {
     /// XML entities that the underlying parser left raw, and keep one
     /// copy of any identical repeated relationship.
     ///
+    /// The package is read under [`crate::admission::InputLimits::compare`]
+    /// (#645): an input past the compressed-size or entry-count budget is
+    /// refused before the archive is indexed, and a part past the per-part
+    /// or package budget while it inflates, with the admission `INPUT_LIMIT`
+    /// wording. Callers that admit under their own budget open through
+    /// `open_within` so their limits keep governing.
+    ///
     /// # Errors
     ///
-    /// [`OpcError`] for an unreadable zip, an OPC metadata element
-    /// exceeding 256 attributes, two relationships under the same `Id` that
-    /// differ in any attribute, or two entries whose decoded part names
-    /// collide case-insensitively ([`OpcError::DuplicatePartName`]).
+    /// [`OpcError`] for an unreadable zip, a package past the input budget
+    /// (an [`crate::admission::AdmissionError`] with code `INPUT_LIMIT` as
+    /// the [`std::io::Error`] source), an OPC metadata element exceeding
+    /// 256 attributes, two relationships under the same `Id` that differ in
+    /// any attribute, or two entries whose decoded part names collide
+    /// case-insensitively ([`OpcError::DuplicatePartName`]).
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
-        check_package_metadata(
-            bytes,
-            crate::admission::InputLimits::compare().max_part_bytes,
-        )?;
-        let mut fs = read_package(bytes)?;
+        Self::open_within(bytes, crate::admission::InputLimits::compare())
+    }
+
+    /// [`PartFs::open`] under an explicit budget: the entry points that
+    /// admit an input under their own limits (the comparer's settings)
+    /// open it under the same budget here, so a looser caller budget still
+    /// governs and a tighter one has already refused the package.
+    pub(crate) fn open_within(
+        bytes: &[u8],
+        limits: crate::admission::InputLimits,
+    ) -> Result<Self, OpcError> {
+        let mut fs = read_package(bytes, limits)?;
         let mut repaired_duplicate_ids: Vec<(String, String)> =
             drop_repeated_relationships(&mut fs.package_rels)?
                 .into_iter()
@@ -864,8 +889,17 @@ mod tests {
             "<Relationship Id=\"rId1\" Type=\"test\" Target=\"a.xml\"/>",
         );
         assert!(PartFs::open(&bytes).is_ok());
-        assert!(check_package_metadata(&bytes, 32).is_err());
-        assert!(check_package_metadata(b"not a zip", 32).is_err());
+        assert!(
+            PartFs::open_within(
+                &bytes,
+                crate::admission::InputLimits {
+                    max_part_bytes: 32,
+                    ..crate::admission::InputLimits::compare()
+                }
+            )
+            .is_err()
+        );
+        assert!(PartFs::open(b"not a zip").is_err());
 
         // Content types are also parsed by upstream, before relationships.
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -874,7 +908,9 @@ mod tests {
             .unwrap();
         write!(writer, "<Types{}/>", attrs(257)).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
-        let err = check_package_metadata(&bytes, 4096).unwrap_err();
+        let err = PartFs::open(&bytes)
+            .err()
+            .expect("metadata attribute budget");
         assert!(err.to_string().contains("256 attributes"));
     }
 
@@ -1545,5 +1581,43 @@ mod tests {
                 .unicode_path(b"\xff\xfe"),
         );
         assert!(matches!(PartFs::open(&bytes), Err(OpcError::Zip(_))));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod bounded_input_tests {
+    use super::*;
+    use crate::admission::{InputLimits, limit_test_support as fixture};
+
+    fn refuses(limits: InputLimits, detail: &str) {
+        let bytes = fixture::package();
+        let text = PartFs::open_within(&bytes, limits)
+            .err()
+            .expect("over-budget package must be refused")
+            .to_string();
+        assert!(text.contains("INPUT_LIMIT"), "{text}");
+        assert!(text.contains(detail), "{text}");
+    }
+    #[test]
+    fn compressed_limit() {
+        refuses(fixture::compressed(), "input is");
+    }
+    #[test]
+    fn count_limit() {
+        refuses(fixture::count(), "3 ZIP entries; the limit is 2");
+    }
+    #[test]
+    fn part_limit() {
+        refuses(fixture::part(), "a.bin");
+    }
+    #[test]
+    fn aggregate_limit() {
+        refuses(fixture::total(), "the package limit is 160");
+    }
+    #[test]
+    fn exact_budget_control() {
+        let bytes = fixture::package();
+        assert!(PartFs::open_within(&bytes, fixture::limits()).is_ok());
     }
 }

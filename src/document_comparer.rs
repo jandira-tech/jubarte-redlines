@@ -4920,7 +4920,9 @@ fn admit_input(
 }
 
 /// Admit a single package under the compare budget before a public entry
-/// point opens it: `PartFs::open` inflates every entry without a bound.
+/// point opens it: the package constructor is bounded on its own (#645),
+/// and admission gives the typed refusal with the rules a budget alone
+/// does not check (part-name safety, encryption, XML depth, WML shape).
 pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), OpcError> {
     admit_input("input", bytes, crate::admission::InputLimits::compare())
 }
@@ -4965,8 +4967,13 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
 
 /// [`accept_revisions`] keeping bookmark and comment ids: a redline names
 /// its comments by the ids the documents gave them, as `edit` reports them.
-fn accept_source_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
-    let mut pkg = PartFs::open(docx)?;
+/// Opened under the caller's admission budget, which the compare flow
+/// already checked (#645).
+fn accept_source_revisions(
+    docx: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<Vec<u8>, OpcError> {
+    let mut pkg = PartFs::open_within(docx, limits)?;
     crate::revision_processor::accept_revisions_package_keeping_ids(&mut pkg);
     pkg.to_zip()
 }
@@ -6289,7 +6296,7 @@ pub fn get_revisions(
     use crate::comparer::{preprocess, revisions};
 
     admit_input("input", docx, settings.input_limits)?;
-    let pkg = PartFs::open(docx)?;
+    let pkg = PartFs::open_within(docx, settings.input_limits)?;
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -6472,9 +6479,11 @@ fn notes_part_names(pkg: &PartFs) -> (String, String) {
 }
 
 /// True when any package part's XML carries tracked-change markup that Word
-/// Compare would fold into the final view before diffing.
-fn main_part_xml(docx: &[u8]) -> Option<String> {
-    let pkg = PartFs::open(docx).ok()?;
+/// Compare would fold into the final view before diffing. Opened under the
+/// same budget the caller admitted the input with, so a settings budget
+/// looser than the constructor's still governs (#645).
+fn main_part_xml(docx: &[u8], limits: crate::admission::InputLimits) -> Option<String> {
+    let pkg = PartFs::open_within(docx, limits).ok()?;
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -6482,8 +6491,8 @@ fn main_part_xml(docx: &[u8]) -> Option<String> {
     Some(normalize_strict_namespaces(&xml).into_owned())
 }
 
-fn docx_has_tracked_changes(docx: &[u8]) -> bool {
-    let Ok(pkg) = PartFs::open(docx) else {
+fn docx_has_tracked_changes(docx: &[u8], limits: crate::admission::InputLimits) -> bool {
+    let Ok(pkg) = PartFs::open_within(docx, limits) else {
         return false;
     };
     for name in pkg.parts() {
@@ -6526,13 +6535,18 @@ fn compare_documents_impl(
             original,
             settings.input_limits,
         );
-        if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
-            owned = accept_source_revisions(&owned)?;
+        if settings.merge_replaced_paragraphs
+            && docx_has_tracked_changes(&owned, settings.input_limits)
+        {
+            owned = accept_source_revisions(&owned, settings.input_limits)?;
         }
         // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
         // may carry colliding wp:docPr/@id (strict01 corpus) that the full
         // produce path renumbers; skipping left S-dup-docpr-id regressions.
-        owned = crate::comparer::fixups::fix_up_drawing_ids_in_package(&owned)?;
+        owned = crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
+            &owned,
+            settings.input_limits,
+        )?;
         return Ok(owned);
     }
 
@@ -6555,8 +6569,8 @@ fn compare_documents_impl(
     // from this moment. Faithful mode never reads them.
     let ladder_sources = if settings.merge_replaced_paragraphs {
         match (
-            main_part_xml(&original_owned),
-            main_part_xml(&modified_owned),
+            main_part_xml(&original_owned, settings.input_limits),
+            main_part_xml(&modified_owned, settings.input_limits),
         ) {
             (Some(original_xml), Some(revised_xml)) => Some((original_xml, revised_xml)),
             _ => None,
@@ -6571,10 +6585,11 @@ fn compare_documents_impl(
     // file_8_file_9 37→56, file_27_file_28 38→61 with accept-then). PowerTools
     // faithful leaves inputs as-is.
     if settings.merge_replaced_paragraphs
-        && (docx_has_tracked_changes(&original_owned) || docx_has_tracked_changes(&modified_owned))
+        && (docx_has_tracked_changes(&original_owned, settings.input_limits)
+            || docx_has_tracked_changes(&modified_owned, settings.input_limits))
     {
-        original_owned = accept_source_revisions(&original_owned)?;
-        modified_owned = accept_source_revisions(&modified_owned)?;
+        original_owned = accept_source_revisions(&original_owned, settings.input_limits)?;
+        modified_owned = accept_source_revisions(&modified_owned, settings.input_limits)?;
     }
 
     // After prep, packages may still be byte-identical (rare non-self paths).
@@ -6585,8 +6600,8 @@ fn compare_documents_impl(
     let original: &[u8] = &original_owned;
     let modified: &[u8] = &modified_owned;
 
-    let mut pkg1 = PartFs::open(original)?;
-    let mut pkg2 = PartFs::open(modified)?;
+    let mut pkg1 = PartFs::open_within(original, settings.input_limits)?;
+    let mut pkg2 = PartFs::open_within(modified, settings.input_limits)?;
 
     // CompareInternal :154–:155 — disjoint footnote/endnote id spaces: doc A
     // gets starting_id+1000, doc B +2000 (block hashing ignores ref ids, so
@@ -6730,9 +6745,9 @@ fn compare_documents_impl(
     // preprocessed source1 (:197 comment: the renumbered/unid'd markup must be
     // the one appearing in the result). Note-free inputs keep the raw bytes.
     let mut out = if changed1.is_empty() {
-        PartFs::open(original)?
+        PartFs::open_within(original, settings.input_limits)?
     } else {
-        PartFs::open(&pkg1.to_zip()?)?
+        PartFs::open_within(&pkg1.to_zip()?, settings.input_limits)?
     };
     // M4.H.3: carry over / drop dangling relationship references from inserted
     // content so the output has no dangling rId (Word-repair preventer).
@@ -10118,8 +10133,14 @@ mod coverage_boundary_tests {
         assert!(admit_package(b"not a ZIP").is_err());
         let bytes = include_bytes!("../tests/fixtures/word_probes/tokens/cell_a.docx");
         assert!(admit_package(bytes).is_ok());
-        assert!(!docx_has_tracked_changes(b"not a ZIP"));
-        assert_eq!(main_part_xml(b"not a ZIP"), None);
+        assert!(!docx_has_tracked_changes(
+            b"not a ZIP",
+            crate::admission::InputLimits::compare()
+        ));
+        assert_eq!(
+            main_part_xml(b"not a ZIP", crate::admission::InputLimits::compare()),
+            None
+        );
     }
 
     #[test]
@@ -11366,7 +11387,10 @@ mod coverage_boundary_tests {
                     package("<w:body><w:p><w:r><w:t>Untracked body</w:t></w:r></w:p></w:body>");
                 pkg.set_part(story,xml("root",&format!("<w:{local} w:id='7' w:author='Prior' w:date='1999-01-01T00:00:00Z'>{carrier}</w:{local}>")).into_bytes());
                 let bytes = pkg.to_zip().unwrap();
-                assert!(docx_has_tracked_changes(&bytes), "{story}:{local}");
+                assert!(
+                    docx_has_tracked_changes(&bytes, crate::admission::InputLimits::compare()),
+                    "{story}:{local}"
+                );
                 assert_eq!(
                     PartFs::open(&bytes).unwrap().part_string(story),
                     pkg.part_string(story)
@@ -11377,7 +11401,10 @@ mod coverage_boundary_tests {
                     "word/media/source.bin",
                     format!("<w:{local}/>").into_bytes(),
                 );
-                assert!(!docx_has_tracked_changes(&pkg.to_zip().unwrap()));
+                assert!(!docx_has_tracked_changes(
+                    &pkg.to_zip().unwrap(),
+                    crate::admission::InputLimits::compare()
+                ));
             }
         }
     }
@@ -11703,7 +11730,10 @@ mod coverage_package_source_matrix_tests {
                             &settings,
                         )
                         .unwrap();
-                        assert!(docx_has_tracked_changes(&compared));
+                        assert!(docx_has_tracked_changes(
+                            &compared,
+                            crate::admission::InputLimits::compare()
+                        ));
                         let accepted = PartFs::open(&accept_revisions(&compared).unwrap()).unwrap();
                         let rejected = PartFs::open(&reject_revisions(&compared).unwrap()).unwrap();
                         let context = format!(
@@ -11914,9 +11944,17 @@ mod coverage_package_source_matrix_tests {
                 .replacen("</w:r>", "</w:r></w:ins>", 1);
             a.set_part(MAIN, source.into_bytes());
             let a_bytes = a.to_zip().unwrap();
-            assert!(docx_has_tracked_changes(&a_bytes));
-            let final_bytes = accept_source_revisions(&a_bytes).unwrap();
-            assert!(!docx_has_tracked_changes(&final_bytes));
+            assert!(docx_has_tracked_changes(
+                &a_bytes,
+                crate::admission::InputLimits::compare()
+            ));
+            let final_bytes =
+                accept_source_revisions(&a_bytes, crate::admission::InputLimits::compare())
+                    .unwrap();
+            assert!(!docx_has_tracked_changes(
+                &final_bytes,
+                crate::admission::InputLimits::compare()
+            ));
             let settings = WmlComparerSettings {
                 author_for_revisions: "Package matrix editor".into(),
                 date_time_for_revisions: "2001-02-03T04:05:06Z".into(),
@@ -11926,7 +11964,7 @@ mod coverage_package_source_matrix_tests {
             let result =
                 compare_documents_with_settings(&a_bytes, &final_bytes, &settings).unwrap();
             assert!(
-                !docx_has_tracked_changes(&result),
+                !docx_has_tracked_changes(&result, crate::admission::InputLimits::compare()),
                 "an accepted pre-existing revision is not a new edit"
             );
             let final_pkg = PartFs::open(&final_bytes).unwrap();

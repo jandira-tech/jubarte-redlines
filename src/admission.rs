@@ -297,6 +297,91 @@ const OFFICE_DOCUMENT_REL: &[&str] = &[
     "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument",
 ];
 
+/// `INPUT_LIMIT` for an input past the compressed-size budget: one wording
+/// shared by [`admit`] and the bounded package constructor in
+/// [`crate::opc`], so a refusal reads the same wherever it fires (#645).
+pub(crate) fn input_over_compressed(size: u64, limits: &InputLimits) -> AdmissionError {
+    AdmissionError::new(
+        AdmissionErrorKind::InputLimit,
+        format!(
+            "input is {size} bytes; the limit is {}",
+            limits.max_compressed_bytes
+        ),
+    )
+}
+
+/// `INPUT_LIMIT` for a declared entry count past the entry budget.
+pub(crate) fn input_over_entries(declared: u64, limits: &InputLimits) -> AdmissionError {
+    AdmissionError::new(
+        AdmissionErrorKind::InputLimit,
+        format!(
+            "{declared} ZIP entries; the limit is {}",
+            limits.max_entries
+        ),
+    )
+}
+
+/// `INPUT_LIMIT` for an entry whose declared inflated size already passes
+/// the per-part budget: refused before anything inflates.
+pub(crate) fn part_declared_over(
+    name: &str,
+    declared: u64,
+    limits: &InputLimits,
+) -> AdmissionError {
+    AdmissionError::new(
+        AdmissionErrorKind::InputLimit,
+        format!(
+            "{name} declares {declared} inflated bytes; the part limit is {}",
+            limits.max_part_bytes
+        ),
+    )
+}
+
+/// `INPUT_LIMIT` for an entry that inflated past `cap`, the smaller of the
+/// per-part budget and the package budget left.
+pub(crate) fn part_inflated_over(name: &str, cap: u64, limits: &InputLimits) -> AdmissionError {
+    let which = if cap == limits.max_part_bytes {
+        format!("the part limit is {}", limits.max_part_bytes)
+    } else {
+        format!("the package limit is {}", limits.max_uncompressed_bytes)
+    };
+    AdmissionError::new(
+        AdmissionErrorKind::InputLimit,
+        format!("{name} inflates past {cap} bytes; {which}"),
+    )
+}
+
+/// Check the input size and EOCD/ZIP64 entry count without building an index.
+/// Returns the declared count so admission can also detect lost duplicates.
+pub(crate) fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, AdmissionError> {
+    if bytes.len() as u64 > limits.max_compressed_bytes {
+        return Err(input_over_compressed(bytes.len() as u64, &limits));
+    }
+    let declared = declared_entry_count(bytes)?;
+    if declared > limits.max_entries as u64 {
+        return Err(input_over_entries(declared, &limits));
+    }
+    Ok(declared)
+}
+
+/// Account for actual inflation, with the same refusal wherever a reader stops.
+pub(crate) fn account_inflated(
+    total: &mut u64,
+    read: u64,
+    name: &str,
+    cap: u64,
+    limits: &InputLimits,
+) -> Result<(), AdmissionError> {
+    if read > cap {
+        return Err(part_inflated_over(name, cap, limits));
+    }
+    *total = total
+        .checked_add(read)
+        .filter(|sum| *sum <= limits.max_uncompressed_bytes)
+        .ok_or_else(|| part_inflated_over(name, cap, limits))?;
+    Ok(())
+}
+
 /// Admit `bytes` as a DOCX within `limits`, returning facts about it on
 /// success and a typed refusal on the first budget or rule the package
 /// breaks.
@@ -312,26 +397,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
 
     sniff(bytes)?;
 
-    if bytes.len() as u64 > limits.max_compressed_bytes {
-        return Err(AdmissionError::new(
-            K::InputLimit,
-            format!(
-                "input is {} bytes; the limit is {}",
-                bytes.len(),
-                limits.max_compressed_bytes
-            ),
-        ));
-    }
-    let declared = declared_entry_count(bytes)?;
-    if declared > limits.max_entries as u64 {
-        return Err(AdmissionError::new(
-            K::InputLimit,
-            format!(
-                "{declared} ZIP entries; the limit is {}",
-                limits.max_entries
-            ),
-        ));
-    }
+    let declared = preindex_budget(bytes, limits)?;
     let mut archive = crate::opc::open_archive(Cursor::new(bytes))
         .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("not a ZIP file: {e}")))?;
     // The reader keys entries by name, so exact duplicates collapse into one.
@@ -381,14 +447,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             ));
         }
         if entry.size() > limits.max_part_bytes {
-            return Err(AdmissionError::new(
-                K::InputLimit,
-                format!(
-                    "{name} declares {} inflated bytes; the part limit is {}",
-                    entry.size(),
-                    limits.max_part_bytes
-                ),
-            ));
+            return Err(part_declared_over(&name, entry.size(), &limits));
         }
     }
 
@@ -429,18 +488,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             std::io::copy(&mut limited, &mut std::io::sink())
                 .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{name}: {e}")))?
         };
-        if read > cap {
-            let which = if cap == limits.max_part_bytes {
-                format!("the part limit is {}", limits.max_part_bytes)
-            } else {
-                format!("the package limit is {}", limits.max_uncompressed_bytes)
-            };
-            return Err(AdmissionError::new(
-                K::InputLimit,
-                format!("{name} inflates past {cap} bytes; {which}"),
-            ));
-        }
-        total = total.saturating_add(read);
+        account_inflated(&mut total, read, &name, cap, &limits)?;
     }
 
     let main_part = main_part(&archive, &kept)?;
@@ -1720,5 +1768,61 @@ mod tests {
         let admitted = admit(&bytes, InputLimits::default())
             .expect("Word's o:gfxdata header must be admitted");
         assert!(admitted.entries >= 5);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+pub(crate) mod limit_test_support {
+    use super::InputLimits;
+    use std::io::{Cursor, Write};
+    use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+    pub fn package() -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for (name, data) in [
+            ("[Content_Types].xml", b"<Types/>" as &[u8]),
+            ("word/media/a.bin", &[b'a'; 80]),
+            ("word/media/b.bin", &[b'b'; 80]),
+        ] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    pub fn limits() -> InputLimits {
+        InputLimits {
+            max_part_bytes: 128,
+            max_uncompressed_bytes: 168,
+            max_entries: 3,
+            ..InputLimits::compare()
+        }
+    }
+
+    pub fn compressed() -> InputLimits {
+        InputLimits {
+            max_compressed_bytes: package().len() as u64 - 1,
+            ..limits()
+        }
+    }
+    pub fn count() -> InputLimits {
+        InputLimits {
+            max_entries: 2,
+            ..limits()
+        }
+    }
+    pub fn part() -> InputLimits {
+        InputLimits {
+            max_part_bytes: 64,
+            ..limits()
+        }
+    }
+    pub fn total() -> InputLimits {
+        InputLimits {
+            max_uncompressed_bytes: 160,
+            ..limits()
+        }
     }
 }

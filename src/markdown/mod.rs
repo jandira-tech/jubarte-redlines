@@ -627,7 +627,9 @@ pub struct ReadDocx {
 ///
 /// [`MarkdownError::Docx`] when the bytes are not a `.docx` (a `.doc`,
 /// an encrypted document, or RTF is named for what it is rather than
-/// read as a bad ZIP), or when the document cannot be read by
+/// read as a bad ZIP), when the package exceeds the input budget
+/// (`INPUT_LIMIT` for compressed size, entry count, per-part or total
+/// inflation), or when the document cannot be read by
 /// `from_docx` (an OPC read failure, a malformed part, or a missing
 /// main document part).
 ///
@@ -643,6 +645,11 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     // A `.doc`, an encrypted document or RTF is named for what it is
     // (`LEGACY_DOC`, `UNSUPPORTED_PACKAGE`), not reported as a bad ZIP.
     crate::admission::sniff(docx).map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
+    // Bound the whole package before the converter or its tolerant change
+    // listing can inflate it. Full admission also checks all XML syntax;
+    // this view intentionally tolerates parts it can skip (such as a broken
+    // styles part), so use the bounded OPC constructor here instead.
+    crate::opc::PartFs::open(docx).map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
     let revisions = match options.track_changes {
         TrackChanges::All => from_docx::Revisions::Markup,
         TrackChanges::Accept => from_docx::Revisions::Accept,
