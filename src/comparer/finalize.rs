@@ -13085,27 +13085,71 @@ fn paragraph_texts(dom: &Dom, block: NodeId) -> Vec<String> {
         .collect()
 }
 
-/// M452 (right_aligned_italic × right_alignment_2 ~84.3 residual):
-/// short **title** MIX free-mesh has no pPr; Word parks original `jc` into
-/// `pPrChange` only (no live jc). Abandoned M451 tried **live** jc on title
-/// and thrash'd right_align/center_bold. Park-only matches Word.
-///
-/// Gate: first MIX, short tokens (ins+del side words ≤5), no live jc, no
-/// pPrChange, and a later body para has live `jc` (source value).
-/// M452 — park a body live `w:jc` (typically right-aligned) into
-/// the first short-title MIX paragraph's `w:pPrChange`.
-///
-/// `right_aligned_italic × right_alignment_2` residual: Word keeps
-/// the title paragraph's body `jc` only as `pPrChange` history, not
-/// as live title `jc`. Live title `jc` thrashed (the M451 attempt
-/// was abandoned). Park-only: every body MIX's `jc` history moves
-/// onto the title MIX when the title is short.
+/// Paragraph-owned properties captured before atomization and layout peels.
+/// Text identifies a source paragraph only when it occurs exactly once on
+/// that side; ambiguous or merged paragraphs cannot supply formatting history.
+#[derive(Default)]
+pub struct ParagraphPropertySources {
+    original: HashMap<String, Vec<NodeId>>,
+    revised: HashMap<String, Vec<NodeId>>,
+}
+
+impl ParagraphPropertySources {
+    /// Save each input paragraph's own comparable properties, including an
+    /// empty `w:pPr` for a paragraph that has none.
+    pub fn capture(dom: &mut Dom, original: NodeId, revised: NodeId) -> Self {
+        let mut capture = |body| {
+            let mut by_text: HashMap<String, Vec<NodeId>> = HashMap::new();
+            for p in dom.descendants(body, Some(&W::p())) {
+                let text = revised_text(dom, p).trim().to_string();
+                let properties = match dom.element(p, &W::p_pr()) {
+                    Some(ppr) => formatchg::project_para_properties_for_change(dom, ppr),
+                    None => dom.new_element(W::p_pr()),
+                };
+                by_text.entry(text).or_default().push(properties);
+            }
+            by_text
+        };
+        Self {
+            original: capture(original),
+            revised: capture(revised),
+        }
+    }
+
+    fn for_mix(&self, dom: &Dom, p: NodeId) -> Option<(NodeId, NodeId)> {
+        let text = |excluded| {
+            text_leaves(dom, p)
+                .into_iter()
+                .filter(|&t| text_side(dom, t, p) != excluded)
+                .map(|t| dom.value(t))
+                .collect::<String>()
+                .trim()
+                .to_string()
+        };
+        let [old] = self.original.get(&text("ins"))?.as_slice() else {
+            return None;
+        };
+        let [new] = self.revised.get(&text("del"))?.as_slice() else {
+            return None;
+        };
+        Some((*old, *new))
+    }
+}
+
+/// M452: a short title MIX can lose its old alignment during layout peels.
+/// Record it only when its own original and revised properties differ.
+/// A text-only edit must not borrow alignment from another body paragraph
+/// (#1149); the history carries the source paragraph's complete comparable pPr.
 pub fn park_jc_on_first_short_title_mix_from_body(
     dom: &mut Dom,
     root: NodeId,
+    sources: &ParagraphPropertySources,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
+    if !settings.detect_format_changes {
+        return;
+    }
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -13136,59 +13180,32 @@ pub fn park_jc_on_first_short_title_mix_from_body(
     if ins_w + del_w == 0 || ins_w + del_w > 5 {
         return;
     }
+    let Some((old, new)) = sources.for_mix(dom, p) else {
+        return;
+    };
+    if formatchg::normalize_para_properties(dom, old)
+        == formatchg::normalize_para_properties(dom, new)
+    {
+        return;
+    }
+    let Some(jc) = dom.element(old, &W::jc_el()) else {
+        return;
+    };
+    if !matches!(dom.attribute(jc, &W::val()), Some("right" | "center")) {
+        return;
+    }
     let ppr = match dom.element(p, &W::p_pr()) {
         Some(ppr) => ppr,
         None => {
             let ppr = dom.new_element(W::p_pr());
-            // pPr must be first child of p for Word validity.
-            if let Some(first) = dom.elements(p, None).first().copied() {
-                dom.add_before_self(first, ppr);
-            } else {
-                dom.add(p, ppr);
-            }
+            dom.add_first(p, ppr);
             ppr
         }
     };
-    // Already live jc or any pPrChange — leave alone (right_align_bold title
-    // has live jc; center_bold title already park-only after other peels).
-    if dom.element(ppr, &W::jc_el()).is_some() {
+    if dom.element(ppr, &W::jc_el()).is_some() || dom.element(ppr, &W::p_pr_change()).is_some() {
         return;
     }
-    if dom.element(ppr, &W::p_pr_change()).is_some() {
-        return;
-    }
-    // Source live jc from a later body residual.
-    let mut jc_val: Option<String> = None;
-    for &k in &kids {
-        if k == p || !dom.name_is(k, &W::p()) {
-            continue;
-        }
-        let Some(kppr) = dom.element(k, &W::p_pr()) else {
-            continue;
-        };
-        let Some(jc) = dom.element(kppr, &W::jc_el()) else {
-            continue;
-        };
-        if let Some(v) = dom.attribute(jc, &W::val())
-            && !v.is_empty()
-        {
-            // M452b: justify thrash (−10) when parking jc=both onto title MIX.
-            // Word title park-only shapes are right/center free-mesh demos.
-            if v != "right" && v != "center" {
-                continue;
-            }
-            jc_val = Some(v.to_string());
-            break;
-        }
-    }
-    let Some(val) = jc_val else {
-        return;
-    };
-    // Park-only pPrChange(old jc).
-    let old_inner = dom.new_element(W::p_pr());
-    let old_jc = dom.new_element(W::jc_el());
-    dom.set_attribute_value(old_jc, &W::val(), Some(&val));
-    dom.add(old_inner, old_jc);
+    let old_inner = dom.clone_subtree(old);
     let chg = dom.new_element(W::p_pr_change());
     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
@@ -32444,7 +32461,15 @@ mod public_body_heuristic_story_scope_tests {
             ),
             (
                 "park_jc_on_first_short_title_mix_from_body",
-                park_jc_on_first_short_title_mix_from_body,
+                |d, r, s, id| {
+                    park_jc_on_first_short_title_mix_from_body(
+                        d,
+                        r,
+                        &ParagraphPropertySources::default(),
+                        s,
+                        id,
+                    );
+                },
             ),
             (
                 "ensure_empty_pprchange_on_live_heading_spacing",
