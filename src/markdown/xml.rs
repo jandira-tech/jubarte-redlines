@@ -659,7 +659,7 @@ pub(super) fn story(
             && row_change.is_none()
             && cell_change.is_none()
             && row_own.is_none()
-            && let Some(side) = starts_inserted_side(&items[at + 1..])
+            && let Some(side) = starts_inserted_side(context.document, &items[at + 1..])
             && open != Some(side)
         {
             close_mark(context, &natural, &mut out, &mut open);
@@ -693,7 +693,9 @@ pub(super) fn story(
             Item::Run(_) => true,
             _ if in_note.is_some() => true,
             Item::LinkStart(..) | Item::LinkEnd if field.is_some() => true,
-            Item::RangeEnd(_) if ends_inserted_side(&items[at + 1..], open) => true,
+            Item::RangeEnd(_) if ends_inserted_side(context.document, &items[at + 1..], open) => {
+                true
+            }
             // Inside a tracked link's field they stay in its mark, which
             // goes on to the field's end.
             Item::Bookmark(_)
@@ -1542,7 +1544,7 @@ fn resumes_later(document: &Document, rest: &[Item], outer: Change) -> bool {
 /// is `a` in mark 4, then empty marks 5 and 6.
 /// The insertion `rest` starts with, when its runs are all a comment range
 /// holds before it ends (`ends_inserted_side`) and a deleted run follows.
-fn starts_inserted_side(rest: &[Item]) -> Option<Change> {
+fn starts_inserted_side(document: &Document, rest: &[Item]) -> Option<Change> {
     let Some(Item::Run(Run {
         change: Some(side @ (Kind::Insert, _)),
         ..
@@ -1555,7 +1557,7 @@ fn starts_inserted_side(rest: &[Item]) -> Option<Change> {
         .take_while(|item| matches!(item, Item::Run(run) if run.change == Some(*side)))
         .count();
     (matches!(rest.get(runs), Some(Item::RangeEnd(_)))
-        && ends_inserted_side(&rest[runs + 1..], Some(*side)))
+        && ends_inserted_side(document, &rest[runs + 1..], Some(*side)))
     .then_some(*side)
 }
 
@@ -1566,10 +1568,17 @@ fn field_argument(text: &str) -> String {
 }
 
 /// Whether `open` is an insertion and the next item a deleted run.
-fn ends_inserted_side(rest: &[Item], open: Option<Change>) -> bool {
+fn ends_inserted_side(document: &Document, rest: &[Item], open: Option<Change>) -> bool {
+    // A separately tagged revision keeps an unused anchor slot before its
+    // first run. It emits no XML and does not separate these two sides.
+    let next = rest.iter().find(|item| {
+        !matches!(item, Item::RangeStart(slot)
+            if document.slots.get(*slot).is_none_or(Option::is_none)
+                && !document.shared.contains_key(slot))
+    });
     matches!(open, Some((Kind::Insert, _)))
         && matches!(
-            rest.first(),
+            next,
             Some(Item::Run(Run {
                 change: Some((Kind::Delete, _)),
                 ..

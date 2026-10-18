@@ -234,7 +234,8 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
 /// keeps its text, which the page paints.
 fn visible_text(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
-    let mut rest = line;
+    let line = super::critic::without_attributions(line);
+    let mut rest = line.as_str();
     while let Some(ch) = rest.chars().next() {
         let skip = if rest.starts_with("](") {
             out.push(']');

@@ -287,7 +287,12 @@ pub fn plain_anchor(text: &str) -> String {
     // (The plain critic view escapes nothing: a literal `1. ` at the start
     // of a line copied from it is read as a mark.)
     let blocks: Vec<&str> = hidden.split('\n').map(without_block_mark).collect();
-    let mut text = strip_between(&blocks.join("\n"), "{>>", "<<}", Keep::Nothing);
+    let mut text = strip_between(
+        &super::critic::without_attributions(&blocks.join("\n")),
+        "{>>",
+        "<<}",
+        Keep::Nothing,
+    );
     text = strip_between(&text, "{--", "--}", Keep::Nothing);
     text = strip_between(&text, "{~~", "~~}", Keep::NewSide);
     text = strip_between(&text, "{++", "++}", Keep::Inner);
@@ -316,20 +321,20 @@ mod tests {
             ("A <mark class=\"hl-cyan\">-</mark> B", "A - B"),
             ("<s>secret</s>", "secret"),
             ("{==keep it secret.==}{>>c5 @AC: Cap?<<}", "keep it secret."),
-            ("keep {++it++}{>>r0 @AC<<} secret", "keep it secret"),
-            ("keep {~~that~>it~~}{>>#0 @AC<<} secret", "keep it secret"),
-            ("keep it {--very --}{>>r1 @AC<<}secret", "keep it secret"),
+            ("keep {++it++}{r0 @AC} secret", "keep it secret"),
+            ("keep {~~that~>it~~}{r0 @AC} secret", "keep it secret"),
+            ("keep it {--very --}{r1 @AC}secret", "keep it secret"),
             ("\\*\\*stars\\*\\*", "**stars**"),
             ("1. one", "one"),
             // A block mark leads the line, outside the change marks: typed
             // `1. ` an insertion wraps is text (bench 1aff6b41d6).
-            ("{++1. one++}{>>r0 @AC<<}", "1. one"),
-            ("1. {++one++}{>>r0 @AC<<}", "one"),
-            ("{++\n\n1. item two++}{>>r0 @AC<<}", "item two"),
-            ("one{++\n\n## Two++}{>>r0 @AC<<}", "one\n\nTwo"),
+            ("{++1. one++}{r0 @AC}", "1. one"),
+            ("1. {++one++}{r0 @AC}", "one"),
+            ("{++\n\n1. item two++}{r0 @AC}", "item two"),
+            ("one{++\n\n## Two++}{r0 @AC}", "one\n\nTwo"),
             ("a\\\n1\\. b", "a\n1. b"),
             ("a\\\n", "a\n"),
-            ("# {~~Old~>New~~}{>>#1 @AC<<}", "New"),
+            ("# {~~Old~>New~~}{r1 @AC}", "New"),
             ("- item", "item"),
             ("a_b", "a_b"),
             ("*x*", "x"),
