@@ -67,10 +67,9 @@ Tasks:
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
-                prints the changed paragraphs as the agent view (refusal: exit 3)
+                prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
-                -p per command). Writes FILE_modified.docx, as edit does, and prints the
-                changed paragraphs as the agent view
+                -p per command). Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after diff of the full agent views
   capabilities  What this binary can do, for agents choosing an operation
   visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
@@ -79,10 +78,10 @@ Tasks:
   help          Print this message or the help of the given subcommand(s)
 
 Options:
-  -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
-                 `edit`/`add` changed. Files are still written; a reading task (`read`,
-                 `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-                 what it read, and warnings and errors still print
+  -q, --quiet    No status on success: no `wrote` lines, SUCCESS block or edit summary.
+                 Files are still written; a reading task (`read`, `changes`, `compare`
+                 without -o, `diff`, `capabilities`) still prints what it read, and
+                 warnings and errors still print
   -h, --help     Print help
   -V, --version  Print version
 
@@ -151,10 +150,10 @@ Options:
           [default: word]
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -288,10 +287,10 @@ Arguments:
 
 Options:
       --json   Emit one JSON object per line
-  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
-               `edit`/`add` changed. Files are still written; a reading task (`read`,
-               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-               what it read, and warnings and errors still print
+  -q, --quiet  No status on success: no `wrote` lines, SUCCESS block or edit summary.
+               Files are still written; a reading task (`read`, `changes`, `compare`
+               without -o, `diff`, `capabilities`) still prints what it read, and
+               warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -332,10 +331,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -417,10 +416,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -555,10 +554,10 @@ Options:
           - off: New edits in Word are not tracked
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
       --scholar
           Markdown to Word: set a manuscript as LaTeX's article class does (Latin Modern
@@ -680,10 +679,10 @@ Arguments:
 
 Options:
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -789,10 +788,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -860,8 +859,7 @@ Read options:
 $ jubarte-redlines edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject or --style (several -p per command), or a JSON plan. Writes
-FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
-agent view (refusal: exit 3)
+FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a fenced before/after diff of the full agent views (refusal: exit 3)
 
 Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
@@ -953,10 +951,10 @@ Options:
           `<FILE's directory>/<stem>.edit`)
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1019,8 +1017,7 @@ t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
 ```text
 $ jubarte-redlines add --help
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
-Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent
-view
+Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after diff of the full agent views
 
 Usage: jubarte-redlines add [OPTIONS] <FILE>
 
@@ -1106,10 +1103,10 @@ Options:
           Replace an existing output (the bundle directory's files)
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1136,10 +1133,10 @@ Usage: jubarte-redlines capabilities [OPTIONS]
 
 Options:
       --json   The manifest as JSON instead of the text summary
-  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
-               `edit`/`add` changed. Files are still written; a reading task (`read`,
-               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-               what it read, and warnings and errors still print
+  -q, --quiet  No status on success: no `wrote` lines, SUCCESS block or edit summary.
+               Files are still written; a reading task (`read`, `changes`, `compare`
+               without -o, `diff`, `capabilities`) still prints what it read, and
+               warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -1161,98 +1158,50 @@ Options:
       --json           Print diff.json to stdout instead of one line per changed page
       --no-overlay     Skip the diff-page-NN.png overlays
       --force          Overwrite files already in --out-dir
-  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
-                       what `edit`/`add` changed. Files are still written; a reading
-                       task (`read`, `changes`, `compare` without -o, `diff`,
+  -q, --quiet          No status on success: no `wrote` lines, SUCCESS block or edit
+                       summary. Files are still written; a reading task (`read`,
+                       `changes`, `compare` without -o, `diff`, `capabilities`) still
+                       prints what it read, and warnings and errors still print -h,
+                       --help Print help Rendering: --dpi <DPI> Raster resolution of
+                       both sides in dots per inch (1-1200) [default: 100] Examples:
+                       jubarte visual-diff before.docx after.docx changed pages on
+                       stdout jubarte visual-diff before.docx after.docx --out-dir diff
+                       PNGs of the changed pages and diff.json jubarte visual-diff
+                       a.docx b.docx --json the diff.json document on stdout With
+                       --out-dir, each page that differs is written as a-page-NN.png,
+                       b-page-NN.png and diff-page-NN.png (b's page with the changed
+                       pixels magenta and boxed); diff.json lists every page with its
+                       changed_ratio, bbox and, for a page only one side has, only_in.
+                       ``` #### `jubarte-redlines comments` ```text $ jubarte-redlines
+                       comments --help List comments, threads and the text they annotate
+                       Usage: jubarte-redlines comments [OPTIONS] <FILE> Arguments:
+                       <FILE> The document (.docx) Options: --json Emit one JSON object
+                       per line --author <NAME> Only this author's comments (exact
+                       match) --latest One comment per thread: the newest -q, --quiet No
+                       status on success: no `wrote` lines, SUCCESS block or edit
+                       summary. Files are still written; a reading task (`read`,
+                       `changes`, `compare` without -o, `diff`, `capabilities`) still
+                       prints what it read, and warnings and errors still print -h,
+                       --help Print help ``` #### `jubarte-redlines validate` ```text $
+                       jubarte-redlines validate --help Check Word validity, tracked
+                       edits, accessibility, style and structure; or repair Word
+                       validity. A word or edits finding fails the run (exit 2), and so
+                       does any error; --strict fails on warnings too. An unreadable
+                       file exits 1. Usage: jubarte-redlines validate [OPTIONS] <FILE>
+                       Arguments: <FILE> The document (.docx) Options: --json JSON
+                       Lines: one object per finding, nothing when there is none --rules
+                       <RULES> Rule sets or audit codes, comma-separated [default: word;
+                       with --original, word and edits] --strict Fail (exit 2) on
+                       warnings too, not only on errors --repair <FILE> Write the
+                       repaired package here; remaining findings still fail --original
+                       <FILE> Check tracked edits: every text change against ORIGINAL
+                       must be a revision by --author --author <NAME> The author every
+                       change must carry (with --original) --force Replace an existing
+                       --repair output -q, --quiet No status on success: no `wrote`
+                       lines, SUCCESS block or edit summary. Files are still written; a
+                       reading task (`read`, `changes`, `compare` without -o, `diff`,
                        `capabilities`) still prints what it read, and warnings and
                        errors still print
-  -h, --help           Print help
-
-Rendering:
-      --dpi <DPI>  Raster resolution of both sides in dots per inch (1-1200) [default:
-                   100]
-
-Examples:
-  jubarte visual-diff before.docx after.docx                  changed pages on stdout
-  jubarte visual-diff before.docx after.docx --out-dir diff   PNGs of the changed pages
-  and diff.json
-  jubarte visual-diff a.docx b.docx --json                    the diff.json document on
-  stdout
-
-With --out-dir, each page that differs is written as a-page-NN.png,
-b-page-NN.png and diff-page-NN.png (b's page with the changed pixels
-magenta and boxed); diff.json lists every page with its changed_ratio,
-bbox and, for a page only one side has, only_in.
-```
-
-#### `jubarte-redlines comments`
-
-```text
-$ jubarte-redlines comments --help
-List comments, threads and the text they annotate
-
-Usage: jubarte-redlines comments [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  The document (.docx)
-
-Options:
-      --json           Emit one JSON object per line
-      --author <NAME>  Only this author's comments (exact match)
-      --latest         One comment per thread: the newest
-  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
-                       what `edit`/`add` changed. Files are still written; a reading
-                       task (`read`, `changes`, `compare` without -o, `diff`,
-                       `capabilities`) still prints what it read, and warnings and
-                       errors still print
-  -h, --help           Print help
-```
-
-#### `jubarte-redlines validate`
-
-```text
-$ jubarte-redlines validate --help
-Check Word validity, tracked edits, accessibility, style and structure; or repair Word
-validity.
-
-A word or edits finding fails the run (exit 2), and so does any error; --strict fails on
-warnings too. An unreadable file exits 1.
-
-Usage: jubarte-redlines validate [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>
-          The document (.docx)
-
-Options:
-      --json
-          JSON Lines: one object per finding, nothing when there is none
-
-      --rules <RULES>
-          Rule sets or audit codes, comma-separated [default: word; with --original,
-          word and edits]
-
-      --strict
-          Fail (exit 2) on warnings too, not only on errors
-
-      --repair <FILE>
-          Write the repaired package here; remaining findings still fail
-
-      --original <FILE>
-          Check tracked edits: every text change against ORIGINAL must be a revision by
-          --author
-
-      --author <NAME>
-          The author every change must carry (with --original)
-
-      --force
-          Replace an existing --repair output
-
-  -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
 
   -h, --help
           Print help (see a summary with '-h')

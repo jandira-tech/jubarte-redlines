@@ -15,9 +15,9 @@ touch `word/document.xml`.
 | Task | Command |
 |---|---|
 | Read | `jubarte read file.docx`: header + Markdown with `<!-- pN -->` ids; ids are `p12`, `header1`, `footer2.p1`, `t0.row1.cell2`, `c5`, `r12`. `jubarte read file.docx --json` gives the same document as data |
-| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; writes `file_modified.docx` and prints the changed paragraphs, or the resolved lines for a pure `--accept`/`--reject`), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
+| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; writes `file_modified.docx` and prints SUCCESS and a fenced before/after diff of the full agent views), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
 | Add a paragraph, comment or reply | `jubarte add file.docx -p p12 --content "New clause."` (`--before`), `-p p5 --anchor "fee" --content "Cap?"` (a comment), `-p c5 --reply "Agreed."` (a reply) |
-| Resolve one change | `jubarte edit file.docx -p r12 --accept` (or `--reject`; `-p` repeats; prints `accepted r12 in p3: "from" > "to"`) |
+| Resolve one change | `jubarte edit file.docx -p r12 --accept` (or `--reject`; `-p` repeats; prints SUCCESS and a fenced diff containing the resolved text) |
 | Look at pages | `jubarte convert file.docx -o pages.png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx -o pages.png --report pages.json` |
 | Compare two versions | `jubarte a.docx b.docx` prints the redline as the agent view; `-o redline.docx --author "Name"` writes it (`-o redline.pdf` renders it). `jubarte compare a.docx b.docx` is the same |
@@ -469,6 +469,36 @@ comments go. Text and tracked changes stay. `--author-alias NAME`,
 `scrubDocument(docx, '{"author_alias":"Counsel","rsids":true}')`.
 Scrub refuses to write a package with a validity finding the input did not
 have. Text to hide inside the document is a plan's `redact` (§2).
+
+
+With human-readable CLI output, every command that writes a DOCX from a
+document prints a confirmation after publication (unless `-q`):
+
+````text
+SUCCESS:
+~~~~diff
+--- before in.docx
++++ after out.docx
+@@ -1,3 +1,3 @@
+ ---
+-source: in.docx
++source: out.docx
+ sha256: …
+~~~~
+````
+
+The diff compares the full input and output agent views, including `source:`
+and `sha256:`. It uses three context lines; the output view comes from the
+published bytes. Markdown conversion uses the original Markdown text as its
+before-view; comparison uses its first input. Identical views print
+`no differences` inside the fence. The fence grows past any leading tilde
+run in the diff. Edit's former changed-range view and resolved-lines output
+are replaced by this block; an existing bundle summary stays before it,
+with one block per DOCX. The `wrote …` lines and notes remain on stderr.
+`-q` silences the block, summary and status; warnings and errors still print.
+Dry runs, saved plans and non-DOCX outputs retain their existing output.
+Template generation writes a JSON plan; applying it writes the DOCX.
+Typed `--json`/`--jsonl` delivery retains its machine-readable receipt.
 
 ## Dependencies
 
