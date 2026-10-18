@@ -25,7 +25,8 @@
 //!   undeclared `mc:Ignorable` prefixes.
 //! - `structure`: empty field codes, cells that do not end in a paragraph,
 //!   rows without cells, a revision nested in one of its own kind, a body
-//!   `w:sectPr` that is not last.
+//!   `w:sectPr` that is not last, and unequal source/destination range counts
+//!   for a move name (Word opens it but misreads Reject All).
 //! - `ids`: revision and `wp:docPr` ids used twice in the package. Word opens
 //!   files that repeat them, so they are leads, not causes.
 //! - `styles`: `basedOn`/`next`/`link` and `pStyle`/`rStyle`/`tblStyle`
@@ -890,9 +891,21 @@ fn undeclared_ignorable_prefixes(xml: &str) -> Vec<String> {
 }
 
 fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
+    let mut moves: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for n in dom.descendants(root, None) {
         let name = local(dom, n);
         match name.as_str() {
+            "moveFromRangeStart" | "moveToRangeStart" => {
+                let move_name = attr(dom, n, "name");
+                if !move_name.is_empty() {
+                    let counts = moves.entry(move_name).or_default();
+                    if name == "moveFromRangeStart" {
+                        counts.0 += 1;
+                    } else {
+                        counts.1 += 1;
+                    }
+                }
+            }
             "instrText" | "delInstrText" if dom.value(n).is_empty() => {
                 f.add(&format!("{name}-empty"), part, path(dom, n));
             }
@@ -949,6 +962,15 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 }
             }
             _ => {}
+        }
+    }
+    for (name, (source, destination)) in moves {
+        if source != destination {
+            f.add(
+                "move-range-count-mismatch",
+                part,
+                format!("{name}: {source} source ranges, {destination} destination ranges; Word opens it but Reject All can duplicate moved text (#1214)"),
+            );
         }
     }
 }

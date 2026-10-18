@@ -1720,7 +1720,21 @@ fn issue_1137_duplicate_revision(element: &str) {
     let second = marked
         .replace("w:id=\"10\"", "w:id=\"11\"")
         .replace("w:name=\"probe\"", "w:name=\"second\"");
-    let bytes = common::docx::docx(&format!("{marked}{second}"));
+    // Pair the moves so duplicate wrapper ids are the only fault (#1214).
+    let mut counterparts = String::new();
+    if matches!(element, "moveFrom" | "moveTo") {
+        let opposite = if element == "moveFrom" {
+            "moveTo"
+        } else {
+            "moveFrom"
+        };
+        for (name, range, revision) in [("probe", 10, 2), ("second", 11, 3)] {
+            counterparts.push_str(&format!(
+                r#"<w:p><w:{opposite}RangeStart w:id="{range}" w:name="{name}"/><w:{opposite} w:id="{revision}" w:author="Alice"><w:r><w:t>a</w:t></w:r></w:{opposite}><w:{opposite}RangeEnd w:id="{range}"/></w:p>"#
+            ));
+        }
+    }
+    let bytes = common::docx::docx(&format!("{marked}{second}{counterparts}"));
     let package = PartFs::open(&bytes).unwrap();
     let findings = jubarte::validate::ring1(&package);
     let duplicates: Vec<_> = findings
@@ -1973,4 +1987,50 @@ issue_1137_context_probes! {
     issue_1137_del_row_and_paragraph_mark_ids_conflict: ("del", "row", "paragraph", true),
     issue_1137_move_from_paragraph_mark_ids_conflict: ("moveFrom", "paragraph", "paragraph", true),
     issue_1137_move_to_paragraph_mark_ids_conflict: ("moveTo", "paragraph", "paragraph", true),
+}
+
+/// #1214 is a settlement warning: Word opens these ranges without repair.
+#[test]
+fn split_move_ranges_are_a_ring1_warning_once() {
+    let first = r#"<w:moveFrom w:id="2" w:author="Alice"><w:r><w:t>Closing section remains</w:t></w:r></w:moveFrom>"#;
+    let last = r#"<w:moveFrom w:id="4" w:author="Alice"><w:r><w:t xml:space="preserve"> last in the original agreement.</w:t></w:r></w:moveFrom>"#;
+    for split in [true, false] {
+        let middle = if split {
+            r#"<w:moveFromRangeEnd w:id="1"/><w:moveFromRangeStart w:id="3" w:name="move1"/>"#
+        } else {
+            ""
+        };
+        let end = if split { 3 } else { 1 };
+        let body = format!(
+            r#"<w:p><w:moveFromRangeStart w:id="1" w:name="move1"/>{first}{middle}{last}<w:moveFromRangeEnd w:id="{end}"/></w:p><w:p><w:moveToRangeStart w:id="5" w:name="move1"/><w:moveTo w:id="6" w:author="Alice"><w:r><w:t>Closing section remains last in the original agreement.</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="5"/></w:p>"#
+        );
+        let bytes = common::docx::docx(&body);
+        let findings: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+            .into_iter()
+            .filter(|f| f.code == "MOVE_RANGE_COUNT_MISMATCH")
+            .collect();
+        assert_eq!(findings.len(), usize::from(split), "split={split}");
+        for finding in &findings {
+            assert_eq!(finding.severity, "warning");
+            assert!(!finding.word_fatal && !finding.repairable);
+            assert!(finding.location.contains("w:moveFromRangeStart[0]"));
+        }
+        let public: Vec<_> = jubarte::validate::validate(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|f| f.code == "MOVE_RANGE_COUNT_MISMATCH")
+            .collect();
+        assert_eq!(
+            public, findings,
+            "triage must not duplicate Ring-1 findings"
+        );
+        assert_eq!(
+            jubarte::debug::findings(&bytes)
+                .unwrap()
+                .iter()
+                .filter(|f| f.code == "MOVE_RANGE_COUNT_MISMATCH")
+                .count(),
+            usize::from(split)
+        );
+    }
 }
