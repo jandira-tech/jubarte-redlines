@@ -10,38 +10,110 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Every `.rs` file below `dir`, nested modules included.
+/// Every `.rs` file below `dir`, nested modules included. Symbolic links
+/// (`target` is one under mbx) and build or tool directories are skipped.
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        if path.is_dir() {
-            rust_files(&path, out);
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            let skip = matches!(
+                entry.file_name().to_str(),
+                Some("target" | ".git" | "node_modules" | ".venv")
+            );
+            if !skip {
+                rust_files(&path, out);
+            }
         } else if path.extension().is_some_and(|ext| ext == "rs") {
             out.push(path);
         }
     }
 }
 
-/// Line number and predicate of each `cfg_attr(PREDICATE, attribute)`.
+/// Line number and predicate of each `cfg_attr(PREDICATE, ATTRIBUTE)` whose
+/// attribute is `attribute`, however rustfmt splits it over lines.
 fn predicates<'a>(text: &'a str, attribute: &str) -> Vec<(usize, &'a str)> {
-    let tail = format!(", {attribute})");
-    text.lines()
-        .enumerate()
-        .filter_map(|(i, line)| {
-            let rest = &line[line.find("cfg_attr(")? + "cfg_attr(".len()..];
-            Some((i + 1, rest[..rest.rfind(&tail)?].trim()))
-        })
-        .collect()
+    let wanted = squeeze(attribute);
+    let mut found = Vec::new();
+    for (at, _) in text.match_indices("cfg_attr(") {
+        let start = at + "cfg_attr(".len();
+        let (mut depth, mut comma, mut end) = (1usize, None, None);
+        for (i, c) in text[start..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(start + i);
+                        break;
+                    }
+                }
+                ',' if depth == 1 => comma = Some(start + i),
+                _ => {}
+            }
+        }
+        let (Some(comma), Some(end)) = (comma, end) else {
+            continue;
+        };
+        if squeeze(&text[comma + 1..end]) == wanted {
+            let line = text[..at].matches('\n').count() + 1;
+            found.push((line, text[start..comma].trim()));
+        }
+    }
+    found
 }
 
-#[test]
-fn coverage_off_uses_the_feature_gate() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+/// `text` without whitespace.
+fn squeeze(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// A cfg predicate with the arguments of `all` and `any` sorted, so that
+/// the same conditions in another order compare equal.
+fn canonical(predicate: &str) -> String {
+    let squeezed = squeeze(predicate);
+    for head in ["all(", "any("] {
+        let Some(inner) = squeezed
+            .strip_prefix(head)
+            .and_then(|rest| rest.strip_suffix(')'))
+        else {
+            continue;
+        };
+        let (mut args, mut depth, mut from) = (Vec::new(), 0usize, 0);
+        for (i, c) in inner.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    args.push(canonical(&inner[from..i]));
+                    from = i + 1;
+                }
+                _ => {}
+            }
+        }
+        args.push(canonical(&inner[from..]));
+        args.sort();
+        return format!("{head}{})", args.join(","));
+    }
+    squeezed
+}
+
+/// The crate roots' feature gate, the number of `coverage(off)` sites in the
+/// whole repository, and each site that is not gated like the feature, as
+/// `FILE:LINE: PREDICATE`. Only `src/` enables the feature, so a site
+/// anywhere else (tests, benches, examples, the binding crates) is loose.
+fn audit(root: &Path) -> (String, usize, Vec<String>) {
     let gates: Vec<String> = ["src/lib.rs", "src/bin/jubarte.rs"]
         .iter()
+        .filter(|crate_root| root.join(crate_root).exists())
         .flat_map(|crate_root| {
             let text = fs::read_to_string(root.join(crate_root)).unwrap();
             predicates(&text, "feature(coverage_attribute)")
@@ -50,24 +122,65 @@ fn coverage_off_uses_the_feature_gate() {
                 .collect::<Vec<_>>()
         })
         .collect();
-    assert_eq!(gates.len(), 2, "one feature gate per crate root: {gates:?}");
-    assert_eq!(gates[0], gates[1], "the crate roots gate the feature alike");
-    let gate = &gates[0];
+    assert!(
+        !gates.is_empty(),
+        "no feature gate found in the crate roots"
+    );
+    assert!(
+        gates.iter().all(|g| canonical(g) == canonical(&gates[0])),
+        "the crate roots gate the feature alike: {gates:?}"
+    );
+    let gate = gates[0].clone();
     let mut files = Vec::new();
-    rust_files(&root.join("src"), &mut files);
+    rust_files(root, &mut files);
     files.sort();
     let mut sites = 0;
     let mut loose = Vec::new();
     for path in &files {
+        let relative = path.strip_prefix(root).unwrap();
+        // This file quotes loose gates as test data.
+        if relative == Path::new("tests/coverage_gates.rs") {
+            continue;
+        }
+        let in_src = relative.starts_with("src");
         let text = fs::read_to_string(path).unwrap();
         for (line, predicate) in predicates(&text, "coverage(off)") {
             sites += 1;
-            if predicate != gate {
-                let file = path.strip_prefix(&root).unwrap().display();
-                loose.push(format!("{file}:{line}: {predicate}"));
+            if !in_src || canonical(predicate) != canonical(&gate) {
+                let file = relative.display();
+                let place = if in_src {
+                    ""
+                } else {
+                    " (outside src/, where no crate enables the feature)"
+                };
+                loose.push(format!("{file}:{line}: {predicate}{place}"));
             }
         }
     }
+    (gate, sites, loose)
+}
+
+/// A throwaway crate: its `src/lib.rs` gates the feature as this crate does,
+/// and `files` adds `(PATH, TEXT)` beside it.
+fn sample_crate(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let mut all = vec![(
+        "src/lib.rs",
+        "#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]\n",
+    )];
+    all.extend_from_slice(files);
+    for (path, text) in all {
+        let path = dir.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn coverage_off_uses_the_feature_gate() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let (gate, sites, loose) = audit(&root);
     assert!(sites > 0, "no coverage(off) site found: the scan is broken");
     assert!(
         loose.is_empty(),
@@ -75,4 +188,39 @@ fn coverage_off_uses_the_feature_gate() {
         loose.len(),
         loose.join("\n")
     );
+}
+
+#[test]
+fn a_gate_rustfmt_splits_over_lines_is_still_a_site() {
+    let text =
+        "#[cfg_attr(\n    all(coverage_nightly, test),\n    coverage(off)\n)]\nmod tests {}\n";
+    assert_eq!(
+        predicates(text, "coverage(off)"),
+        [(1, "all(coverage_nightly, test)")],
+        "a multi-line coverage(off) must not escape the guard"
+    );
+}
+
+#[test]
+fn the_order_of_a_gates_conditions_does_not_loosen_it() {
+    let dir = sample_crate(&[(
+        "src/a.rs",
+        "#[cfg_attr(all(test, coverage_nightly), coverage(off))]\nmod tests {}\n",
+    )]);
+    let (_, sites, loose) = audit(dir.path());
+    assert_eq!((sites, loose), (1, Vec::<String>::new()));
+}
+
+#[test]
+fn a_loose_gate_outside_src_is_reported() {
+    // Integration tests, benches, examples and the binding crates do not
+    // enable the feature, so any coverage(off) there is E0658 on nightly.
+    let dir = sample_crate(&[(
+        "tests/t.rs",
+        "#[cfg_attr(coverage_nightly, coverage(off))]\nfn helper() {}\n",
+    )]);
+    let (_, sites, loose) = audit(dir.path());
+    assert_eq!(sites, 1, "{loose:?}");
+    assert_eq!(loose.len(), 1, "{loose:?}");
+    assert!(loose[0].starts_with("tests/t.rs:1: "), "{loose:?}");
 }
