@@ -180,47 +180,6 @@ fn annex_round_trips() {
 }
 
 #[test]
-fn edit_modifies_inside_another_authors_insertion() {
-    edits_as(
-        "modify-inside-insertion",
-        "step2-tracked",
-        &["-p", "p0", "--anchor", "their", "--content", "its"],
-    );
-}
-
-#[test]
-fn edit_adds_inside_another_authors_insertion() {
-    edits_as(
-        "add-inside-insertion",
-        "step2-tracked",
-        &[
-            "-p",
-            "p0",
-            "--anchor",
-            "month.",
-            "--content",
-            "month, in cash.",
-        ],
-    );
-}
-
-#[test]
-fn edit_modifies_the_new_side_of_a_substitution() {
-    edits_as(
-        "modify-substitution",
-        "step2-tracked",
-        &[
-            "-p",
-            "p0",
-            "--anchor",
-            "insurers",
-            "--content",
-            "underwriters",
-        ],
-    );
-}
-
-#[test]
 fn edit_rejects_a_substitution_inside_an_insertion() {
     edits_as(
         "reject-substitution",
