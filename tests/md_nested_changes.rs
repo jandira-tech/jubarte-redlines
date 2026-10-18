@@ -1316,3 +1316,130 @@ fn a_footnote_live_insertion_keeps_its_nested_deletion() {
         assert_eq!(plain(&round), plain(&source), "{markdown}");
     }
 }
+
+/// Move the body's probe paragraph into a single-paragraph header or footer.
+fn in_story(source: &[u8], kind: &str) -> Vec<u8> {
+    let document = part_string(source, "word/document.xml").unwrap();
+    let paragraph = document
+        .split("<w:body>")
+        .nth(1)
+        .unwrap()
+        .split("<w:sectPr>")
+        .next()
+        .unwrap();
+    let root = if kind == "header" { "hdr" } else { "ftr" };
+    let xml = format!(
+        r#"<w:{root} xmlns:w="{}">{paragraph}</w:{root}>"#,
+        common::docx::W_NS
+    );
+    common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[common::docx::Part {
+            name: &format!("word/{kind}1.xml"),
+            content_type: &format!(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"
+            ),
+            rel_type: &format!(
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}"
+            ),
+            xml: &xml,
+        }],
+        &format!(r#"<w:{kind}Reference w:type="default" r:id="rIdX0"/>"#),
+    )
+}
+
+/// The whole story map, independent of the package hash and body summary.
+fn story_block(view: &str, kind: &str) -> String {
+    view.split_once(&format!("\n{kind}s:\n"))
+        .unwrap()
+        .1
+        .lines()
+        .take_while(|line| line.starts_with(' '))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assert_story_nested_round_trip(
+    source: &[u8],
+    kind: &str,
+    notes: &[&str],
+    expected: &[(&str, &str, Option<&str>)],
+) {
+    let source = in_story(source, kind);
+    let view = agent(&source);
+    for note in notes {
+        assert!(view.contains(note), "missing {note}: {view}");
+    }
+    let round = written(&view);
+    let part = part_string(&round, &format!("word/{kind}1.xml")).unwrap();
+    assert_revision_tree(&part, expected);
+    assert!(check_word_valid_package(&round).ok(), "{part}");
+    let second = agent(&round);
+    for note in notes {
+        assert!(second.contains(note), "missing {note}: {second}");
+    }
+    assert_eq!(body(&second), body(&agent(&source)), "{view}");
+    assert_eq!(plain(&round), plain(&source), "{view}");
+    assert_eq!(
+        story_block(&second, kind),
+        story_block(&agent(&source), kind)
+    );
+    assert_eq!(
+        story_block(&agent(&written(&second)), kind),
+        story_block(&second, kind)
+    );
+    assert_eq!(plain(&written(&plain(&round))), plain(&round));
+    // CommonMark omits header/footer front matter; its body remains a fixed point.
+    let commonmark = plain(&source);
+    assert_eq!(plain(&written(&commonmark)), commonmark);
+}
+
+fn story_live_insertion_keeps_nested_deletions(kind: &str, shape: &str) {
+    let mut notes = vec![format!("{{>>{kind}1.r4 @BO on {kind}1.r3 @AL<<}}")];
+    let mut expected = vec![("w:ins", "3", None), ("w:del", "4", Some("3"))];
+    if shape == "two" {
+        notes.push(format!("{{>>{kind}1.r5 @BO on {kind}1.r3 @AL<<}}"));
+        expected.push(("w:del", "5", Some("3")));
+    }
+    assert_story_nested_round_trip(
+        &live_insertion_with_deletions(shape),
+        kind,
+        &notes.iter().map(String::as_str).collect::<Vec<_>>(),
+        &expected,
+    );
+}
+
+#[test]
+fn a_header_live_insertion_keeps_its_nested_deletion() {
+    story_live_insertion_keeps_nested_deletions("header", "tail");
+}
+
+#[test]
+fn a_footer_live_insertion_keeps_its_nested_deletion() {
+    story_live_insertion_keeps_nested_deletions("footer", "tail");
+}
+
+#[test]
+fn a_header_live_insertion_keeps_a_leading_deletion() {
+    story_live_insertion_keeps_nested_deletions("header", "head");
+}
+
+#[test]
+fn a_header_live_insertion_keeps_a_middle_deletion() {
+    story_live_insertion_keeps_nested_deletions("header", "middle");
+}
+
+#[test]
+fn a_header_live_insertion_keeps_two_deletions() {
+    story_live_insertion_keeps_nested_deletions("header", "two");
+}
+
+#[test]
+fn a_header_deletion_keeps_its_nested_insertion() {
+    assert_story_nested_round_trip(
+        &ins_in_del(),
+        "header",
+        &["{>>header1.r1 @AL on header1.r3 @BO<<}"],
+        &[("w:del", "3", None), ("w:ins", "1", Some("3"))],
+    );
+}

@@ -440,6 +440,23 @@ impl Critic {
         })
     }
 
+    /// A header/footer scalar: fold revisions as in the body, preserving
+    /// the story walker's escaped text, fields and drawings byte for byte.
+    pub(crate) fn into_story(self) -> String {
+        let nodes = tidy(unnest(tree(self.tokens)));
+        let mut pieces = Vec::new();
+        render(
+            &nodes,
+            &mut pieces,
+            Escaping {
+                code_block: false,
+                story: true,
+            },
+            &mut 0,
+        );
+        pieces.into_iter().map(|piece| piece.text).collect()
+    }
+
     pub(crate) fn into_inline(self) -> Inline {
         let mut nodes = tidy(unnest(tree(self.tokens)));
         if self.inline_end {
@@ -447,6 +464,7 @@ impl Critic {
         }
         let escaping = Escaping {
             code_block: self.code_block,
+            story: false,
         };
         let mut pieces = Vec::new();
         render(&nodes, &mut pieces, escaping, &mut 0);
@@ -812,6 +830,8 @@ struct Escaping {
     /// ([`escape_code`]), and nothing else is, since a fence holds the rest
     /// of the text as written.
     code_block: bool,
+    /// Story pieces are already escaped and carry complete field/drawing syntax.
+    story: bool,
 }
 
 impl Escaping {
@@ -853,7 +873,8 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 match (old_by.as_deref(), new_by.as_deref()) {
                     (Some(a), Some(b))
                         if tag(Some(a)).is_some()
-                            && same_author(old_by.as_deref(), new_by.as_deref()) =>
+                            && (escaping.story
+                                || same_author(old_by.as_deref(), new_by.as_deref())) =>
                     {
                         let joined = join_tagged(a, b);
                         attribution(out, Some(&joined), id);
@@ -893,11 +914,15 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping, ids: &mut us
                 });
             }
             (Node::Leaf(Leaf::Raw(markdown)), _) => out.push(Piece {
-                text: math_changes(&if escaping.code_block {
-                    escape_code(markdown)
+                text: if escaping.story {
+                    markdown.clone()
                 } else {
-                    defuse(markdown)
-                }),
+                    math_changes(&if escaping.code_block {
+                        escape_code(markdown)
+                    } else {
+                        defuse(markdown)
+                    })
+                },
                 marks: Marks::default(),
                 link: None,
                 marker: None,

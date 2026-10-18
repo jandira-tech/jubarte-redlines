@@ -608,6 +608,7 @@ pub(super) fn section(entry: &str) -> Stories {
 fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -> String {
     let mut out = String::new();
     let mut plain = String::new();
+    let mut last_revision = None;
     let mut rest = text;
     while let Some(c) = rest.chars().next() {
         if let Some(after) = rest.strip_prefix("{>>")
@@ -623,6 +624,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
             continue;
         }
         if let Some((dest, len)) = super::from_docx::drawing::at(rest) {
+            last_revision = None;
             flush(&mut plain, &mut out, false);
             if let Some(drawing) = drawings.get(dest) {
                 out.push_str(drawing);
@@ -631,8 +633,13 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
             continue;
         }
         if let Some((change, after)) = change(rest) {
+            if !plain.is_empty() {
+                last_revision = None;
+            }
             flush(&mut plain, &mut out, false);
-            let (tags, after) = tags_after(after);
+            let (tags, parent, after) = tags_after(after);
+            let mut changed = String::new();
+            let mut wrapper = None;
             match change {
                 Change::Insert(inner) | Change::Delete(inner) => {
                     let name = if matches!(change, Change::Insert(_)) {
@@ -642,7 +649,26 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     };
                     let tag = tags.first();
                     let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
-                    tracked(&mut out, marks, name, tag, ids, inner, drawings);
+                    tracked(&mut changed, marks, name, tag, ids, inner, drawings);
+                    if let Some(parent) = parent {
+                        let (name, close) = if name == "w:ins" {
+                            ("w:del", "</w:del>")
+                        } else {
+                            ("w:ins", "</w:ins>")
+                        };
+                        let open = format!("<{}>", marks.mark(name, Some(&parent), 0));
+                        changed = format!("{open}{changed}{close}");
+                        wrapper = Some((open, close, true));
+                    } else if ids.len() == 1 {
+                        let close = if name == "w:ins" {
+                            "</w:ins>"
+                        } else {
+                            "</w:del>"
+                        };
+                        if let Some(end) = changed.find('>') {
+                            wrapper = Some((changed[..=end].to_string(), close, false));
+                        }
+                    }
                 }
                 Change::Substitute(old, new) => {
                     // One tag names both sides (`r5+6`, old first), or
@@ -652,14 +678,32 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         [old, new, ..] => (Some(old), Some(new), (&old.ids[..], &new.ids[..])),
                         [] => (None, None, (&[][..], &[][..])),
                     };
-                    tracked(&mut out, marks, "w:ins", new_tag, new_ids, new, drawings);
-                    tracked(&mut out, marks, "w:del", old_tag, old_ids, old, drawings);
+                    tracked(
+                        &mut changed,
+                        marks,
+                        "w:ins",
+                        new_tag,
+                        new_ids,
+                        new,
+                        drawings,
+                    );
+                    tracked(
+                        &mut changed,
+                        marks,
+                        "w:del",
+                        old_tag,
+                        old_ids,
+                        old,
+                        drawings,
+                    );
                 }
             }
+            append_revision(&mut out, &changed, wrapper, &mut last_revision);
             rest = after;
             continue;
         }
         if let Some((field, after)) = field(rest) {
+            last_revision = None;
             flush(&mut plain, &mut out, false);
             match field {
                 Field::Coded(code, result) => out.push_str(&format!(
@@ -704,18 +748,57 @@ fn change(text: &str) -> Option<(Change<'_>, &str)> {
     Some((Change::Substitute(old, new), &after[end + 3..]))
 }
 
-/// The revision tags right after a change (`{>>r5 @AC<<}{>>r6 @JD<<}`),
-/// and what follows them.
-fn tags_after(mut text: &str) -> (Vec<super::view_notes::Tag>, &str) {
+/// A revision's complete opening tag, closing tag, and whether its note
+/// names a parent. Only pieces participating in a named nest coalesce.
+type RevisionWrapper = (String, &'static str, bool);
+
+fn append_revision(
+    out: &mut String,
+    changed: &str,
+    wrapper: Option<RevisionWrapper>,
+    last: &mut Option<RevisionWrapper>,
+) {
+    if let (Some((before, close, folded)), Some((open, end, nested))) =
+        (last.as_ref(), wrapper.as_ref())
+        && before == open
+        && close == end
+        && (*folded || *nested)
+        && out.ends_with(close)
+    {
+        out.truncate(out.len() - close.len());
+        out.push_str(&changed[open.len()..]);
+        *last = Some((open.clone(), end, true));
+    } else {
+        out.push_str(changed);
+        *last = wrapper;
+    }
+}
+
+/// Revision tags after a change, its first named parent, and the remaining text.
+fn tags_after(
+    mut text: &str,
+) -> (
+    Vec<super::view_notes::Tag>,
+    Option<super::view_notes::Tag>,
+    &str,
+) {
     let mut tags = Vec::new();
+    let mut parent = None;
     while let Some(after) = text.strip_prefix("{>>")
         && let Some(end) = after.find("<<}")
-        && let Some(found) = super::view_notes::revision_tags(&after[..end])
     {
-        tags.extend(found);
+        let note = &after[..end];
+        if let Some(nested) = super::view_notes::nested_revision_tags(note) {
+            tags.push(nested[0].clone());
+            parent = nested.get(1).cloned();
+        } else if let Some(found) = super::view_notes::revision_tags(note) {
+            tags.extend(found);
+        } else {
+            break;
+        }
         text = &after[end + 3..];
     }
-    (tags, text)
+    (tags, parent, text)
 }
 
 /// A field at the start of a story's text, and what follows it.
