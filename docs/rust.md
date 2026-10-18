@@ -97,6 +97,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `jubarte::update` | self-update (feature `self-update`) | `plan`, `preflight`, `run` |
 | lower-level | when you need the internals | `jubarte::opc::PartFs`, `jubarte::wml_document::WmlDocument`, `jubarte::strict_translation::strict_to_transitional_docx` |
 
+The OPC constructor enforces `InputLimits::compare()`:
+512 MiB compressed, 10,000 declared ZIP entries, 512 MiB per inflated part,
+and 2 GiB inflated in total. `scrub` and the maintainer `debug` command now
+refuse packages over those ceilings with `INPUT_LIMIT`; Markdown reads use
+the same bounded constructor. Entry counts are checked before indexing,
+and actual inflation is capped even when ZIP size declarations lie.
+`scrub` still applies its existing validation limits as well. A leak scan
+that exceeds a budget or cannot read a part reports a finding; editing a
+redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
+incomplete scan. Comparer settings continue to supply their own limits.
+
 Every Word-package argument and return is `&[u8]`/`Vec<u8>` holding the
 complete package — no temp files, no processes. Markdown text is `&str`/`String`
 instead, e.g. `markdown::diff_markdown(old: &str, new: &str) -> String`.
