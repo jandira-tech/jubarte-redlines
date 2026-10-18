@@ -247,26 +247,26 @@ def compute_preservation_defects(
                         )
                     )
 
+    def table_structure(table):
+        return {
+            **{
+                k: v
+                for k, v in table.items()
+                if k not in ("index", "rows", "nested")
+            },
+            "rows": [
+                [
+                    {k: v for k, v in cell.items() if k not in ("text", "paragraph_ids")}
+                    for cell in row
+                ]
+                for row in table.get("rows", [])
+            ],
+            "nested": [table_structure(child) for child in table.get("nested", [])],
+        }
+
     def structure(document):
         document = document or {}
-        tables = []
-        for table in document.get("tables", []):
-            tables.append(
-                {
-                    **{k: v for k, v in table.items() if k not in ("index", "rows")},
-                    "rows": [
-                        [
-                            {
-                                k: v
-                                for k, v in cell.items()
-                                if k not in ("text", "paragraph_ids")
-                            }
-                            for cell in row
-                        ]
-                        for row in table.get("rows", [])
-                    ],
-                }
-            )
+        tables = [table_structure(table) for table in document.get("tables", [])]
         summary = document.get("summary", {})
         return dict(
             tables=tables,

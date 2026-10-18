@@ -489,3 +489,47 @@ def test_margin_check_reports_preservation_axis_independently() -> None:
     )
     assert result.passed is False
     assert result.preservation_delta == 2
+
+
+def test_nested_table_text_is_not_a_structure_defect() -> None:
+    from copy import deepcopy
+
+    from harness.grading import compute_preservation_defects
+
+    # Three levels plus siblings: text and paragraph IDs are content at
+    # every depth; widths, parent paths and row/cell counts are structure.
+    def table(depth: int) -> dict:
+        return {
+            "parent": "t0.row0.cell0" + ".t0.row0.cell0" * depth,
+            "rows": [[{"text": "Alice", "paragraph_ids": [f"p{depth}"]}]],
+            "header_rows": 0,
+            "widths_dxa": [4000],
+            "nested": [table(depth + 1)] if depth < 2 else [],
+        }
+
+    original = {"schema_version": 2, "tables": [table(0)]}
+    original["tables"][0]["index"] = 0
+    original["tables"][0]["nested"].append(table(2))
+    changed = deepcopy(original)
+
+    def change_text(grid: dict) -> None:
+        grid["rows"][0][0].update(text="Bob", paragraph_ids=["p99"])
+        for nested in grid["nested"]:
+            change_text(nested)
+
+    change_text(changed["tables"][0])
+    source = Snapshot(ok=True, document=original)
+    artifact = Snapshot(ok=True, document=changed)
+    assert compute_preservation_defects(source, artifact) == []
+    assert source.document["tables"][0]["rows"][0][0]["text"] == "Alice"
+    for field, value in (
+        ("widths_dxa", [5000]),
+        ("header_rows", 1),
+        ("parent", "t0.row1.cell0"),
+        ("rows", [[{}, {}]]),
+        ("nested", []),
+    ):
+        geometry = deepcopy(changed)
+        geometry["tables"][0]["nested"][0][field] = value
+        defects = compute_preservation_defects(source, Snapshot(ok=True, document=geometry))
+        assert [(d.kind, d.id) for d in defects] == [("structure", "tables")], field
