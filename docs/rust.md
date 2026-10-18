@@ -345,7 +345,8 @@ Rendering (-o FILE.pdf or FILE.png):
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected; the id lines then list what changed; not with --json,
+          --tables or --for-edit
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -354,7 +355,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; not with --json, --tables or --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -364,16 +365,21 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); not with --json, --tables or
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; dropped with a warning with --json, --tables, --for-edit or -o
+          FILE.json
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, select top-level
+          tables (including their nested tables) by the same tN as the view, or by a pN
+          inside them; lists and paragraph ranges must contain only table paragraphs.
+          Print their grid, then a blank line and the same view as read -p SPEC
 
           [alias: --select]
 
@@ -398,10 +404,16 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each top-level body table as a grid: a `table N: ROWSxCOLS
-          header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells. N matches the view's tN. Nested grids follow their
-          cell row with two spaces per level and a `nested in CELL_PATH` label
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS header_rows=H
+          widths=W,...` line, then one line per row of tab-separated `ids=text` cells.
+          Use -p t0,t2 or -p pN (a cell paragraph) to select top-level tables and all
+          their nested tables, in document order, each once. tN is the view's top-level
+          index; nested entries follow their cell row, indented two spaces per level,
+          labelled `nested in t0.row2.cell0` (recursively, e.g.
+          `t0.row2.cell0.t0.row0.cell1`). Every selected paragraph must be inside a
+          table. With -p, follow the selected grids with a blank line and the same view
+          as read -p SPEC, including its YAML header. Without -p, print only the
+          inventory
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -1005,7 +1017,8 @@ Options:
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected; the id lines then list what changed; not with --json,
+          --tables or --for-edit
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -1014,7 +1027,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; not with --json, --tables or --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -1024,16 +1037,21 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); not with --json, --tables or
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; dropped with a warning with --json, --tables, --for-edit or -o
+          FILE.json
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, select top-level
+          tables (including their nested tables) by the same tN as the view, or by a pN
+          inside them; lists and paragraph ranges must contain only table paragraphs.
+          Print their grid, then a blank line and the same view as read -p SPEC
 
           [alias: --select]
 
@@ -1058,10 +1076,16 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each top-level body table as a grid: a `table N: ROWSxCOLS
-          header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells. N matches the view's tN. Nested grids follow their
-          cell row with two spaces per level and a `nested in CELL_PATH` label
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS header_rows=H
+          widths=W,...` line, then one line per row of tab-separated `ids=text` cells.
+          Use -p t0,t2 or -p pN (a cell paragraph) to select top-level tables and all
+          their nested tables, in document order, each once. tN is the view's top-level
+          index; nested entries follow their cell row, indented two spaces per level,
+          labelled `nested in t0.row2.cell0` (recursively, e.g.
+          `t0.row2.cell0.t0.row0.cell1`). Every selected paragraph must be inside a
+          table. With -p, follow the selected grids with a blank line and the same view
+          as read -p SPEC, including its YAML header. Without -p, print only the
+          inventory
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired

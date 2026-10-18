@@ -49,11 +49,11 @@ Tasks:
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
-                prints the changed paragraphs as the agent view (a pure
-                --accept/--reject prints the resolved changes; refusal: exit 3)
+                prints SUCCESS and a fenced before/after diff of the full agent views
+                (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
-                -p per command). Writes FILE_modified.docx, as edit does, and prints the
-                changed paragraphs as the agent view
+                -p per command). Writes FILE_modified.docx, as edit does, and prints
+                SUCCESS and a fenced before/after diff of the full agent views
   capabilities  What this binary can do, for agents choosing an operation
   visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
@@ -66,10 +66,10 @@ Tasks:
   self-update   Check or install a release from GitHub
 
 Options:
-  -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
-                 `edit`/`add` changed. Files are still written; a reading task (`read`,
-                 `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-                 what it read, and warnings and errors still print
+  -q, --quiet    No status on success: no `wrote` lines, SUCCESS block or edit summary.
+                 Files are still written; a reading task (`read`, `changes`, `compare`
+                 without -o, `diff`, `capabilities`) still prints what it read, and
+                 warnings and errors still print
   -h, --help     Print help
   -V, --version  Print version
 
@@ -139,10 +139,10 @@ Options:
           [default: word]
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -202,7 +202,8 @@ Rendering (-o FILE.pdf or FILE.png):
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected; the id lines then list what changed; not with --json,
+          --tables or --for-edit
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -211,7 +212,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; not with --json, --tables or --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -221,16 +222,21 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); not with --json, --tables or
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; dropped with a warning with --json, --tables, --for-edit or -o
+          FILE.json
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, select top-level
+          tables (including their nested tables) by the same tN as the view, or by a pN
+          inside them; lists and paragraph ranges must contain only table paragraphs.
+          Print their grid, then a blank line and the same view as read -p SPEC
 
           [alias: --select]
 
@@ -255,9 +261,16 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
-          header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS header_rows=H
+          widths=W,...` line, then one line per row of tab-separated `ids=text` cells.
+          Use -p t0,t2 or -p pN (a cell paragraph) to select top-level tables and all
+          their nested tables, in document order, each once. tN is the view's top-level
+          index; nested entries follow their cell row, indented two spaces per level,
+          labelled `nested in t0.row2.cell0` (recursively, e.g.
+          `t0.row2.cell0.t0.row0.cell1`). Every selected paragraph must be inside a
+          table. With -p, follow the selected grids with a blank line and the same view
+          as read -p SPEC, including its YAML header. Without -p, print only the
+          inventory
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -342,10 +355,10 @@ Arguments:
 
 Options:
       --json   Emit one JSON object per line
-  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
-               `edit`/`add` changed. Files are still written; a reading task (`read`,
-               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-               what it read, and warnings and errors still print
+  -q, --quiet  No status on success: no `wrote` lines, SUCCESS block or edit summary.
+               Files are still written; a reading task (`read`, `changes`, `compare`
+               without -o, `diff`, `capabilities`) still prints what it read, and
+               warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -385,10 +398,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -469,10 +482,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -622,10 +635,10 @@ Options:
           left out
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -736,10 +749,10 @@ Arguments:
 
 Options:
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -844,10 +857,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -855,7 +868,8 @@ Options:
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected; the id lines then list what changed; not with --json,
+          --tables or --for-edit
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -864,7 +878,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; not with --json, --tables or --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -874,16 +888,21 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); not with --json, --tables or
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; dropped with a warning with --json, --tables, --for-edit or -o
+          FILE.json
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, select top-level
+          tables (including their nested tables) by the same tN as the view, or by a pN
+          inside them; lists and paragraph ranges must contain only table paragraphs.
+          Print their grid, then a blank line and the same view as read -p SPEC
 
           [alias: --select]
 
@@ -908,9 +927,16 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
-          header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS header_rows=H
+          widths=W,...` line, then one line per row of tab-separated `ids=text` cells.
+          Use -p t0,t2 or -p pN (a cell paragraph) to select top-level tables and all
+          their nested tables, in document order, each once. tN is the view's top-level
+          index; nested entries follow their cell row, indented two spaces per level,
+          labelled `nested in t0.row2.cell0` (recursively, e.g.
+          `t0.row2.cell0.t0.row0.cell1`). Every selected paragraph must be inside a
+          table. With -p, follow the selected grids with a blank line and the same view
+          as read -p SPEC, including its YAML header. Without -p, print only the
+          inventory
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -981,8 +1007,8 @@ Read options:
 ```text
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject or --style (several -p per command), or a JSON plan. Writes
-FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
-agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
+FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a fenced
+before/after diff of the full agent views (refusal: exit 3)
 
 Usage: jubarte edit [OPTIONS] <FILE>
 
@@ -1082,10 +1108,10 @@ Options:
           Resolve and report only; write nothing
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
       --require-change
           Refuse when the edit would change nothing in the document
@@ -1154,8 +1180,8 @@ Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
 
 ```text
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
-Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent
-view
+Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after
+diff of the full agent views
 
 Usage: jubarte add [OPTIONS] <FILE>
 
@@ -1241,10 +1267,10 @@ Options:
           Replace an existing output (the bundle directory's files)
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1274,11 +1300,11 @@ Options:
                                execution conditions
       --field <FIELD>          Discover one field, optionally within --operation
       --matrix                 Publish operation × target × policy edit support
-  -q, --quiet                  No status on success: no `wrote` lines, and no summary or
-                               view of what `edit`/`add` changed. Files are still
-                               written; a reading task (`read`, `changes`, `compare`
-                               without -o, `diff`, `capabilities`) still prints what it
-                               read, and warnings and errors still print
+  -q, --quiet                  No status on success: no `wrote` lines, SUCCESS block or
+                               edit summary. Files are still written; a reading task
+                               (`read`, `changes`, `compare` without -o, `diff`,
+                               `capabilities`) still prints what it read, and warnings
+                               and errors still print
   -h, --help                   Print help
 ```
 
@@ -1299,11 +1325,10 @@ Options:
       --json           Print diff.json to stdout instead of one line per changed page
       --no-overlay     Skip the diff-page-NN.png overlays
       --force          Overwrite files already in --out-dir
-  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
-                       what `edit`/`add` changed. Files are still written; a reading
-                       task (`read`, `changes`, `compare` without -o, `diff`,
-                       `capabilities`) still prints what it read, and warnings and
-                       errors still print
+  -q, --quiet          No status on success: no `wrote` lines, SUCCESS block or edit
+                       summary. Files are still written; a reading task (`read`,
+                       `changes`, `compare` without -o, `diff`, `capabilities`) still
+                       prints what it read, and warnings and errors still print
   -h, --help           Print help
 
 Rendering:
@@ -1337,11 +1362,10 @@ Options:
       --json           Emit one JSON object per line
       --author <NAME>  Only this author's comments (exact match)
       --latest         One comment per thread: the newest
-  -q, --quiet          No status on success: no `wrote` lines, and no summary or view of
-                       what `edit`/`add` changed. Files are still written; a reading
-                       task (`read`, `changes`, `compare` without -o, `diff`,
-                       `capabilities`) still prints what it read, and warnings and
-                       errors still print
+  -q, --quiet          No status on success: no `wrote` lines, SUCCESS block or edit
+                       summary. Files are still written; a reading task (`read`,
+                       `changes`, `compare` without -o, `diff`, `capabilities`) still
+                       prints what it read, and warnings and errors still print
   -h, --help           Print help
 ```
 
@@ -1385,10 +1409,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1480,10 +1504,10 @@ Options:
           Replace an existing --repair output
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1531,10 +1555,10 @@ Options:
           One result envelope, including refusals
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1582,10 +1606,10 @@ Options:
           Remove every comment
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1647,11 +1671,11 @@ Options:
   -y, --yes                Install without asking (needed without a terminal)
       --version <VERSION>  Install this release instead of the latest, older ones
                            included
-  -q, --quiet              No status on success: no `wrote` lines, and no summary or
-                           view of what `edit`/`add` changed. Files are still written; a
-                           reading task (`read`, `changes`, `compare` without -o,
-                           `diff`, `capabilities`) still prints what it read, and
-                           warnings and errors still print
+  -q, --quiet              No status on success: no `wrote` lines, SUCCESS block or edit
+                           summary. Files are still written; a reading task (`read`,
+                           `changes`, `compare` without -o, `diff`, `capabilities`)
+                           still prints what it read, and warnings and errors still
+                           print
   -h, --help               Print help
 
 Examples:

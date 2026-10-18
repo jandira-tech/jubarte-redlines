@@ -139,7 +139,7 @@ pub struct ReadArgs {
         help_heading = "Read options"
     )]
     pub json: bool,
-    /// Print each body table as a grid: a `table N:
+    /// Print each top-level body table as a grid: a `table N:
     /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
     /// tab-separated `ids=text` cells. Use -p t0,t2 or -p pN (a cell
     /// paragraph) to select top-level tables and all their nested tables,

@@ -642,6 +642,11 @@ row, literal bullets, stale caches), each located by paragraph id;
 `ins > del > ins` is a `warning` because Word opens it but misreads
 reject-all (#1134, Word probes 2026-10-17).
 
+`NESTED_TEXT_BOX` is a Word-fatal Ring-1 error: a DrawingML or VML text box
+inside another box's readable content prevents Word from opening the file
+(#1132, Word probes 2026-10-18). The check covers every story part and ignores
+nesting only in `mc:Fallback`; `--repair` leaves it unchanged.
+
 Any `word` or `edits` finding exits 2, and so does any `error`; `--strict`
 fails on warnings too. A file that cannot be read exits 1.
 
@@ -815,7 +820,7 @@ supports):
 | `page_setup` | Page size, orientation and margins |
 | `watermark` | Word's diagonal text watermark in every default header (untracked) |
 | `fill_control` | Fill a content control (text, choice, checkbox or date) by id, tag or alias |
-| `redact` | Replace text with `█` blocks in both copies, untracked; refused if the text still occurs anywhere |
+| `redact` | Replace text with `█` blocks in both copies, untracked; refused if the text still occurs anywhere. No report, refusal or confirmation repeats the text or the document's copy of it: a plan with a redaction confirms with the published view, not the before/after diff |
 | `settings` | `trackRevisions`, `updateFields` and document protection in `word/settings.xml` |
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
@@ -969,6 +974,37 @@ Selective resolution can be part of the plan, for example:
 ```
 
 Conflicting selections are rejected instead of silently choosing a side.
+
+Settling a revision that removes a comment's whole anchor removes the thread
+and its replies, as Word does. Edit receipts report each removed thread as
+`removed_comments` (using source ids `c0`, `c1`, etc.). Legacy `edit --dry-run`
+prints the JSONL preview; `edit --out-dir` writes the summary event in
+`report.jsonl`. Typed `edit apply --json` includes the same records in `data`.
+To preserve the thread, set `"removed_anchor_comments": "keep"` in a v1 or
+v2 plan. Its range markers and reference runs move together to an empty,
+untracked anchor where the removed text was. A reply in the same plan can
+then use that anchor. The receipt reports `kept_comments` with `anchor: "empty"`.
+This opt-in is a jubarte convention that Word opens with threaded balloons;
+the default `"remove"` follows Word's removal behavior. Partial overlaps
+keep the existing behavior. Unknown values are refused as `INVALID_PLAN`.
+The policy is available in plans; `accept`/`reject` keep their existing warnings.
+Comment and bookmark ids stay stable while a plan runs, so later operations
+still address the source comments. After all operations finish, the preserving
+path numbers the revision-free working document once; its clean copy, tracked
+replay and operation receipts share that allocation. Pending source revisions
+retain their ids. The comparer path retains ids in both outputs: it unions
+comments from its original and edited inputs, so numbering only the edited
+input would change comment matching. Settlement receipts retain source comment
+ids; newly added comments report their written ids.
+
+If settlement removes a kept thread's row, cell or whole table, its empty
+anchor moves to the end of the last surviving paragraph before that container
+in the same story, or the start of the first paragraph after it. Removed and
+kept receipts never list the same comment. Removal text names the acceptance
+or rejection that removed the thread; kept text names its published paragraph.
+
+The v1 plan envelope is documented in `schemas/edit-plan-v1.schema.json`,
+and the typed v2 schema in `schemas/edit-plan-v2.schema.json`.
 
 ## Examples
 

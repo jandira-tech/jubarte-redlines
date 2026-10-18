@@ -1016,3 +1016,14 @@ diff_status_labels! {
     diff_label_patch: Some("patch") => "patch diff";
     diff_label_default: None => "patch diff";
 }
+
+#[test]
+fn tables_help_names_top_level_body_tables() {
+    let out = Command::new(BIN).args(["read", "--help"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let help = text(&out.stdout);
+    assert!(
+        help.contains("Print each top-level body table as a grid"),
+        "{help}"
+    );
+}
