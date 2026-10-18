@@ -47,6 +47,8 @@ mod origin;
 /// and the checks the serialized candidate passes (V2-08).
 pub mod prepared;
 pub mod record;
+/// Caller-specific, neutral review choices for revision-blocked edits.
+pub mod refusal;
 pub mod resolution;
 mod rewrite;
 mod runs;
@@ -1163,6 +1165,9 @@ pub struct EditError {
     #[serde(default)]
     /// Status of every operation at the time of failure.
     pub outcomes: Vec<EditOutcome>,
+    /// Blocking revision identities and both review choices, when applicable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revision_refusals: Vec<refusal::RevisionRefusal>,
 }
 
 impl fmt::Display for EditError {
@@ -1435,6 +1440,7 @@ fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditE
         operation: operation.map(str::to_string),
         message: message.into(),
         outcomes: Vec::new(),
+        revision_refusals: Vec::new(),
     }
 }
 
@@ -1908,6 +1914,7 @@ struct Covered {
 
 struct Transaction<'p> {
     plan: &'p EditPlan,
+    revision_refusal: std::cell::RefCell<Option<refusal::RevisionRefusal>>,
     source_sha256: String,
     base: Vec<u8>,
     base_sha256: String,
@@ -2058,6 +2065,7 @@ impl<'p> Transaction<'p> {
             .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
         Ok(Self {
             plan,
+            revision_refusal: std::cell::RefCell::new(None),
             source_sha256: source_hash,
             base,
             base_sha256,
@@ -2382,6 +2390,7 @@ impl<'p> Transaction<'p> {
     fn resolve(&mut self) -> Result<(), EditError> {
         let mut first_failure: Option<EditError> = None;
         for (i, op) in self.plan.operations.iter().enumerate() {
+            self.revision_refusal.take();
             let id = op.id.clone().unwrap_or_else(|| format!("op-{}", i + 1));
             let kind = kind_name(&op.kind).to_string();
             let window = selector_of(&op.kind)
@@ -2510,7 +2519,8 @@ impl<'p> Transaction<'p> {
                         .extend(resolved.into_iter().map(|resolved| (i, resolved)));
                 }
                 Err(boxed) => {
-                    let (mut e, outcome) = *boxed;
+                    let (e, outcome) = *boxed;
+                    let mut e = self.attach_revision_refusal(e);
                     e.operation = Some(id.clone());
                     self.outcomes.push(EditOutcome {
                         id,
@@ -2520,7 +2530,11 @@ impl<'p> Transaction<'p> {
                         message: Some(e.message.clone()),
                         ..outcome
                     });
-                    first_failure.get_or_insert(e);
+                    if let Some(first) = &mut first_failure {
+                        first.revision_refusals.extend(e.revision_refusals);
+                    } else {
+                        first_failure = Some(e);
+                    }
                 }
             }
         }
@@ -3954,10 +3968,7 @@ impl<'p> Transaction<'p> {
                 continue;
             }
             if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-                return Err(format!(
-                    "the text sits inside {}",
-                    self.opaque_structure(run_of(&seg.piece))
-                ));
+                return Err(self.opaque_structure(run_of(&seg.piece), "the text sits inside"));
             }
             if is_symbol(projection, seg) {
                 return Err("the text crosses a symbol".into());
@@ -3981,33 +3992,20 @@ impl<'p> Transaction<'p> {
     }
 
     /// What holds `run`, a run no edit may touch, and the way around it:
-    /// a revision by id and author first (settling it frees the text), else
+    /// a revision by id and author first, with both review choices, else
     /// the innermost hyperlink, field or content control.
-    fn opaque_structure(&self, run: NodeId) -> String {
+    fn opaque_structure(&self, run: NodeId, reason: &str) -> String {
         let dom = &self.opened.dom;
         let ancestors = dom.ancestors(run, None);
-        let story = self
-            .stories
-            .iter()
-            .find(|s| ancestors.contains(&s.root))
-            .map_or("body", |s| s.id.as_str());
         let mut inner: Option<String> = None;
         for &node in &ancestors {
             if dom.name_is(node, &W::p()) {
                 break;
             }
             let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
-            for (local, kind) in [
-                ("ins", "insertion"),
-                ("moveTo", "move"),
-                ("del", "deletion"),
-            ] {
+            for local in ["ins", "moveTo", "del"] {
                 if dom.name_is(node, &W::name(local)) {
-                    let id = crate::ids::ChangeId::new(story, attr("id")).short();
-                    return format!(
-                        "{id}, a tracked {kind} by {:?}; settle it first (\"resolve_revisions\": {{\"accept\": {{\"ids\": [\"{id}\"]}}}}, or reject), or comment on it",
-                        attr("author")
-                    );
+                    return self.revision_refusal_message(reason, &[node]);
                 }
             }
             if inner.is_some() {
@@ -4040,9 +4038,10 @@ impl<'p> Transaction<'p> {
                 ));
             }
         }
-        inner.unwrap_or_else(|| {
+        let structure = inner.unwrap_or_else(|| {
             "the result of a field; edit the text on either side of it, or comment on it".into()
-        })
+        });
+        format!("{reason} {structure}")
     }
 
     fn check_insert_position(
@@ -4057,10 +4056,9 @@ impl<'p> Transaction<'p> {
         let seg = attach_segment(projection, pos, attach_before)
             .ok_or_else(|| "no run holds the insertion point".to_string())?;
         if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-            return Err(format!(
-                "the insertion point sits inside {}",
-                self.opaque_structure(run_of(&seg.piece))
-            ));
+            return Err(
+                self.opaque_structure(run_of(&seg.piece), "the insertion point sits inside")
+            );
         }
         if is_symbol(projection, seg) {
             return Err("the insertion point touches a symbol".into());

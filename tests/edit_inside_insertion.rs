@@ -359,9 +359,9 @@ fn moves_and_deletions_stay_uneditable() {
             }
         );
         if kind == "moveTo" {
-            assert!(
-                e.message
-                    .contains("a tracked move by \"Alice\"; settle it first")
+            assert_eq!(
+                e.message,
+                r#"the text sits inside r6, a tracked move by "Alice"; {"resolve_revisions":{"accept":{"ids":["r6"]}}} keeps the moved content at its destination; {"resolve_revisions":{"reject":{"ids":["r6"]}}} restores the moved content at its origin; refresh the edit against the resulting document, or comment on the revision"#
             );
         }
     }

@@ -450,7 +450,22 @@ fn prepare_and_publish(
                 }
                 _ => None,
             };
+            let syntax = if action.inline().is_some() {
+                jubarte::edit::refusal::RevisionSyntax::TypedAction
+            } else if matches!(request, Request::V2(_)) {
+                jubarte::edit::refusal::RevisionSyntax::V2Plan
+            } else {
+                jubarte::edit::refusal::RevisionSyntax::V1Plan
+            };
+            let e = e.with_revision_syntax(syntax);
+            let actions = e.revision_next_actions(
+                &absolute(action.file()),
+                &jubarte::inspect::source_sha256(source),
+            );
             let mut error = edit_error(e);
+            for action in actions {
+                error.push_next_action(action);
+            }
             if let Some(next) = next {
                 error.push_next_action(next);
             }
