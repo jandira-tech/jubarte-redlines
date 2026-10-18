@@ -30,7 +30,9 @@ fn printed_counts(body: &str) -> [usize; 6] {
         .next()
         .unwrap();
     let mut counts = [0; 6];
-    let inline = Regex::new(r"(?s)(\+\+\}|--\}|~~\})[*_`]*(?:\{>>(.*?)<<\})+").unwrap();
+    // The first note after the closer names the change; a note after it
+    // (a two-author substitution's second id, a point comment) adds none.
+    let inline = Regex::new(r"(?s)(\+\+\}|--\}|~~\})[*_`]*\{>>(.*?)<<\}").unwrap();
     for cap in inline.captures_iter(body) {
         if !cap[2].starts_with('r') && !cap[2].starts_with("noid @") {
             continue;
@@ -502,4 +504,51 @@ fn every_fixture_reconstructed_view_header_matches_its_body() {
         .markdown;
         assert_summary(&shown);
     }
+}
+
+#[test]
+fn the_oracle_reads_the_note_that_follows_the_closer() {
+    // A point comment's note may follow a revision's note directly: the
+    // change is still the one the first note names (CodeRabbit, #1138).
+    assert_eq!(
+        printed_counts("{++new++}{>>r1 @AL<<}{>>c0 @B: note<<}\n"),
+        [1, 0, 0, 0, 0, 0]
+    );
+    // A two-author substitution's second note follows a note, not a closer.
+    assert_eq!(
+        printed_counts("{~~old~>new~~}{>>r4 @B on r3 @A<<}{>>r5 @B<<}\n"),
+        [0, 0, 1, 0, 0, 0]
+    );
+}
+
+#[test]
+fn a_point_comment_after_an_insertion_keeps_the_header_and_body_in_step() {
+    use common::docx::{Part, W_NS, docx_with};
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Bob" w:initials="B" w:date="2026-10-16T10:00:00Z"><w:p><w:r><w:t>note</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let body = format!(
+        r#"<w:p>{}<w:r><w:commentReference w:id="0"/></w:r></w:p>"#,
+        revision("ins", 1, "Alice", "new")
+    );
+    let docx = docx_with(
+        &body,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let view = docx_to_markdown(
+        &docx,
+        &MarkdownOptions {
+            ids: true,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(view.contains("++}{>>r1 @A<<}{>>c0"), "{view}");
+    assert_summary(&view);
 }
