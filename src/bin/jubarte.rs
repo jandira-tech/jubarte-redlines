@@ -3883,7 +3883,15 @@ mod tests {
                 return Ok(());
             }
             if restore_fails {
-                std::fs::write(&dir, b"obstruction").unwrap();
+                // Obstruct with a non-empty directory: every platform refuses
+                // to rename a directory onto one. Unix answers ENOTEMPTY;
+                // Windows answers ERROR_DIR_NOT_EMPTY (std's rename falls
+                // back to POSIX-semantics FileRenameInfoEx and maps that
+                // refusal). A plain file cannot obstruct: Windows
+                // MOVEFILE_REPLACE_EXISTING replaces it, so the restore
+                // would succeed and never reach the path under test.
+                std::fs::create_dir(&dir).unwrap();
+                std::fs::write(dir.join("obstruction"), b"blocked").unwrap();
                 *restore_error.borrow_mut() =
                     std::fs::rename(&aside, &dir).unwrap_err().to_string();
             }
@@ -3908,7 +3916,7 @@ mod tests {
                 std::fs::read(aside.join("original")).unwrap(),
                 b"old bundle"
             );
-            assert_eq!(std::fs::read(&dir).unwrap(), b"obstruction");
+            assert_eq!(std::fs::read(dir.join("obstruction")).unwrap(), b"blocked");
             assert!(error.1.contains(&*original_error.borrow()), "{}", error.1);
             assert!(
                 error.1.contains(&aside.display().to_string()),
