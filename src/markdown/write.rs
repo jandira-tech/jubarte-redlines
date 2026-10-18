@@ -79,6 +79,9 @@ pub fn markdown_to_docx(
         )));
     }
     let document = read(markdown, options);
+    if let Some(error) = &document.box_error {
+        return Err(MarkdownError::Package(error.clone()));
+    }
     let mut warnings = document.warnings.clone();
     // Only when no other date key gave the date.
     if let Some((key, value)) = defaults.unread.filter(|_| defaults.date.is_none()) {
@@ -139,7 +142,7 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     let source = page_commands(&source);
     let source = inline_math(table_pipes(&source));
     let mut writer = Writer::new(options);
-    writer.box_markdown = text_box_sources(markdown);
+    (writer.box_markdown, writer.document.box_error) = text_box_sources(markdown);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
     writer.item_levels = item_levels(&source);
@@ -250,24 +253,37 @@ fn inline_math_passes(mut source: String) -> (String, usize) {
 }
 
 /// The visible paragraphs bounded by each box's structural markers.
-fn text_box_sources(markdown: &str) -> HashMap<String, String> {
+fn text_box_sources(markdown: &str) -> (HashMap<String, String>, Option<String>) {
     let mut boxes = HashMap::new();
-    let mut rest = markdown;
-    while let Some(start) = rest.find("<!-- text-box ") {
-        rest = &rest[start + "<!-- text-box ".len()..];
-        let Some((name, content)) = rest.split_once("-->") else {
-            break;
+    let mut seen = HashSet::new();
+    let mut open = None;
+    let mut error = None;
+    for (event, range) in Parser::new_ext(markdown, parser_options()).into_offset_iter() {
+        let (Event::Html(html) | Event::InlineHtml(html)) = event else {
+            continue;
         };
-        let Some((content, after)) = content.split_once("<!-- /text-box -->") else {
-            break;
-        };
-        boxes.insert(
-            name.trim().to_string(),
-            content.trim().replace("<br>", "\n"),
-        );
-        rest = after;
+        let html = html.trim();
+        if let Some(name) = html
+            .strip_prefix("<!-- text-box ")
+            .and_then(|s| s.strip_suffix(" -->"))
+        {
+            if !seen.insert(name.to_string()) || open.is_some() {
+                error.get_or_insert_with(|| {
+                    format!("text-box {name}: duplicate or overlapping marker region")
+                });
+            }
+            // The parser consumes the HTML event, not a substring inside code or an escape.
+            open = Some((name.to_string(), range.end));
+        } else if html == "<!-- /text-box -->"
+            && let Some((name, start)) = open.take()
+        {
+            boxes.insert(
+                name,
+                markdown[start..range.start].trim().replace("<br>", "\n"),
+            );
+        }
     }
-    boxes
+    (boxes, error)
 }
 
 /// CriticMarkup changes that hold whole blocks, rewritten so the Markdown
@@ -4771,6 +4787,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             // An unclosed comment cannot happen with complete spans; keep
             // its text anyway.
             self.document.comments.push(comment);
+        }
+        for (name, &index) in &self.box_names {
+            if let Some(drawing) = self.document.drawings.get(index)
+                && let Err(error) = drawing.check_box_regions(name, &self.box_markdown)
+            {
+                self.document.box_error.get_or_insert(error);
+            }
         }
         self.box_frames();
         self.text_boxes();

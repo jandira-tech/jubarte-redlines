@@ -133,6 +133,11 @@ reference definition holds its frame and a text-free template. Matching
 Markdown and word hashes restore the template's original structure (apart
 from package relationship and drawing ids); edited paragraphs rebuild the
 box content inside the same frame. The payload cannot override edited words.
+Conversion refuses a missing, renamed, annotated, duplicated or overlapping
+marker region when the frame needs its words. The error names the box.
+Keep an empty marker region to remove all its words. Markers in code or
+escaped as text are ordinary words. Older payloads that still hold the box's
+words, including header and footer boxes, need no marker region.
 
 Images are read relative to the Markdown file, or to `--resource-path`;
 URLs are not fetched.

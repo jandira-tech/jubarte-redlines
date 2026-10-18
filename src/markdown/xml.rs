@@ -315,6 +315,7 @@ pub(super) struct Document {
     pub drawings: Vec<super::from_docx::drawing::Drawing>,
     /// Each drawing's visible box stories: their Markdown and parsed
     /// items refill the text-free templates when the view is written back.
+    pub box_error: Option<String>,
     pub box_stories: HashMap<usize, Vec<(String, Vec<Item>)>>,
     /// The view's drawing reference definitions, by name: a `dN` maps to
     /// its `drawing:` destination, an `imageK` to its `data:` one. The

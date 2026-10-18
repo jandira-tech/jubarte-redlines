@@ -1247,3 +1247,206 @@ fn google_docs_images_share_one_definition_per_payload() {
         3
     );
 }
+
+fn box_view(input: &[u8]) -> String {
+    jubarte::markdown::docx_to_markdown(input, &jubarte::markdown::MarkdownOptions::default())
+        .unwrap()
+        .markdown
+}
+
+fn write_box_view(view: &str) -> Result<Vec<u8>, jubarte::markdown::MarkdownError> {
+    jubarte::markdown::markdown_to_docx(view, &jubarte::markdown::DocxOptions::default())
+        .map(|written| written.docx)
+}
+
+fn refuses_box(view: &str, name: &str) {
+    let result = write_box_view(view);
+    assert!(result.is_err(), "must refuse ambiguous text-box {name}");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains(&format!("text-box {name}:"))
+    );
+}
+
+fn alternate_boxes(nested: bool) -> Vec<u8> {
+    let input = text_box_docx();
+    let xml = part(&input, "word/document.xml");
+    let drawing = xml_element(&xml, "w:drawing");
+    let second = drawing.replace("Added box", "Other box");
+    let choice = if nested {
+        drawing.replace(
+            "</w:txbxContent>",
+            &format!("<w:p><w:r>{second}</w:r></w:p></w:txbxContent>"),
+        )
+    } else {
+        format!("{drawing}{second}")
+    };
+    let body = format!(
+        r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="wps">{choice}</mc:Choice><mc:Fallback>{choice}</mc:Fallback></mc:AlternateContent></w:r></w:p>"#
+    );
+    docx_with(&body, &[])
+}
+
+#[test]
+fn missing_or_annotated_box_markers_refuse_conversion() {
+    let view = box_view(&text_box_docx());
+    for broken in [
+        view.replace("<!-- text-box d1.0 -->", "")
+            .replace("<!-- /text-box -->", ""),
+        view.replace("<!-- text-box d1.0 -->", "<!-- text-box d1.0 was here -->"),
+        view.replace("<!-- /text-box -->", ""),
+        view.replace("<!-- text-box d1.0 -->", "<!-- text-box renamed -->"),
+    ] {
+        refuses_box(&broken, "d1.0");
+    }
+}
+
+#[test]
+fn a_missing_second_box_never_borrows_the_first_story() {
+    let view = box_view(&alternate_boxes(false));
+    assert!(view.contains("<!-- text-box d1.1 -->"), "{view}");
+    let start = view.find("<!-- text-box d1.1 -->").unwrap();
+    let end =
+        start + view[start..].find("<!-- /text-box -->").unwrap() + "<!-- /text-box -->".len();
+    refuses_box(&format!("{}{}", &view[..start], &view[end..]), "d1.1");
+}
+
+#[test]
+fn duplicate_and_earlier_box_openers_refuse_conversion() {
+    let view = box_view(&text_box_docx());
+    let start = view.find("<!-- text-box d1.0 -->").unwrap();
+    let end =
+        start + view[start..].find("<!-- /text-box -->").unwrap() + "<!-- /text-box -->".len();
+    refuses_box(&format!("{}\n\n{view}", &view[start..end]), "d1.0");
+    refuses_box(
+        &format!("<!-- text-box d1.0 -->\n\nBody note\n\n{view}"),
+        "d1.0",
+    );
+}
+
+#[test]
+fn literal_box_markers_do_not_steal_the_real_region() {
+    let input = text_box_docx();
+    let xml = part(&input, "word/document.xml")
+        .replace("Added box", "Literal &lt;!-- /text-box --&gt; words");
+    let view = box_view(&replace_entry(&input, "word/document.xml", xml.as_bytes()));
+    let out = write_box_view(&view).unwrap();
+    assert_eq!(
+        xml_element(&part(&out, "word/document.xml"), "wp:anchor"),
+        xml_element(&xml, "wp:anchor").replace("id=\"7\"", "id=\"1\"")
+    );
+    for note in [
+        "`<!-- text-box d1.0 -->`",
+        "```\n<!-- text-box d1.0 -->\n<!-- /text-box -->\n```",
+    ] {
+        let view = format!("{note}\n\n{}", box_view(&input));
+        let out = write_box_view(&view).unwrap();
+        assert!(
+            xml_element(&part(&out, "word/document.xml"), "w:txbxContent").contains("Added box")
+        );
+    }
+}
+
+#[test]
+fn an_unescaped_closer_ends_the_box_at_the_parser_boundary() {
+    let view =
+        box_view(&text_box_docx()).replace("Added box", "First\n\n<!-- /text-box -->\n\nOutside");
+    let out = write_box_view(&view).unwrap();
+    let xml = part(&out, "word/document.xml");
+    let boxed = xml_element(&xml, "w:txbxContent");
+    assert!(
+        boxed.contains("First") && !boxed.contains("Outside"),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("Outside").count(), 1);
+}
+
+#[test]
+fn cli_box_refusal_is_nonzero_and_names_the_box() {
+    let dir = tempfile::tempdir().unwrap();
+    let view = box_view(&text_box_docx())
+        .replace("<!-- text-box d1.0 -->", "")
+        .replace("<!-- /text-box -->", "");
+    std::fs::write(dir.path().join("box.md"), view).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["convert", "box.md", "-o", "box.docx"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("text-box d1.0:"));
+    assert!(!dir.path().join("box.docx").exists());
+}
+
+#[test]
+fn legacy_payload_words_need_no_marker_region() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let view = box_view(&text_box_docx());
+    let mut drawing: serde_json::Value = serde_json::from_slice(
+        &URL_SAFE_NO_PAD
+            .decode(view.split_once("[d1]: drawing:").unwrap().1.trim())
+            .unwrap(),
+    )
+    .unwrap();
+    let xml = drawing["xml"].as_str().unwrap().replace(
+        "<w:t xml:space=\"preserve\"/>",
+        "<w:t xml:space=\"preserve\">Added box</w:t>",
+    );
+    drawing["xml"] = xml.into();
+    drawing.as_object_mut().unwrap().remove("boxes");
+    let legacy = format!(
+        "![Text Box][d1]\n\n[d1]: drawing:{}\n",
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&drawing).unwrap())
+    );
+    let out = write_box_view(&legacy).unwrap();
+    assert!(xml_element(&part(&out, "word/document.xml"), "w:txbxContent").contains("Added box"));
+}
+
+#[test]
+fn header_and_footer_boxes_keep_their_payload_words_without_regions() {
+    let xml = part(&text_box_docx(), "word/document.xml");
+    let drawing = xml_element(&xml, "w:drawing");
+    for (kind, root) in [("header", "hdr"), ("footer", "ftr")] {
+        let name = format!("word/{kind}1.xml");
+        let content_type =
+            format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml");
+        let rel_type = format!("{R_NS}/{kind}");
+        let story = format!(
+            r#"<w:{root} xmlns:w="{}"><w:p><w:r>{drawing}</w:r></w:p></w:{root}>"#,
+            common::docx::W_NS
+        );
+        let input = common::docx::docx_with_sect(
+            &para("Body"),
+            &[Part {
+                name: &name,
+                content_type: &content_type,
+                rel_type: &rel_type,
+                xml: &story,
+            }],
+            &format!(r#"<w:{kind}Reference w:type="default" r:id="rIdX0"/>"#),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("in.docx"), &input).unwrap();
+        let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
+        assert!(!view.contains("<!-- text-box"), "{view}");
+        let out = write_box_view(&view).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+        let names: Vec<String> = (0..zip.len())
+            .map(|i| zip.by_index(i).unwrap().name().unwrap().into_owned())
+            .filter(|n| n.starts_with(&format!("word/{kind}")) && n.ends_with(".xml"))
+            .collect();
+        assert!(!names.is_empty());
+        assert!(
+            names
+                .iter()
+                .any(|name| part(&out, name).contains("Added box"))
+        );
+    }
+}

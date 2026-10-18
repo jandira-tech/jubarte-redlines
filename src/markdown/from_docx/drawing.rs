@@ -1355,6 +1355,52 @@ pub(crate) fn capturable_alternate(element: &Element) -> bool {
     })
 }
 
+/// Box ordinals follow the selected branch; its fallback repeats those ordinals.
+fn box_ordinals(root: &Element) -> Vec<usize> {
+    fn walk(element: &Element, next: &mut usize, out: &mut Vec<usize>) {
+        if element.is("txbxContent") {
+            out.push(*next);
+            *next += 1;
+        } else if element.is("AlternateContent") {
+            let start = *next;
+            for branch in element.elements() {
+                let mut branch_next = start;
+                walk(branch, &mut branch_next, out);
+                *next = (*next).max(branch_next);
+            }
+        } else {
+            for child in element.elements() {
+                walk(child, next, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut 0, &mut out);
+    out
+}
+
+impl Drawing {
+    pub(crate) fn check_box_regions(
+        &self,
+        name: &str,
+        regions: &HashMap<String, String>,
+    ) -> Result<(), String> {
+        if self.boxes.is_empty() {
+            return Ok(());
+        }
+        let Ok(root) = parse_xml(self.xml.as_bytes()) else {
+            return Ok(());
+        };
+        for (frame, ordinal) in self.boxes.iter().zip(box_ordinals(&root)) {
+            let name = format!("{name}.{ordinal}");
+            if frame.lengths.iter().any(|&length| length != 0) && !regions.contains_key(&name) {
+                return Err(format!("text-box {name}: missing matching marker region"));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Refill the text-free templates. The exact path restores their text
 /// slots only when both the Markdown and its words match their hashes.
 pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, String)]) -> String {
@@ -1391,11 +1437,12 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
         drawing: &Drawing,
         stories: &[(String, String)],
         at: &mut usize,
+        ordinals: &[usize],
     ) {
         if element.is("txbxContent") {
             let index = *at;
             *at += 1;
-            let Some((markdown, xml)) = stories.get(index % stories.len().max(1)) else {
+            let Some((markdown, xml)) = stories.get(ordinals[index]) else {
                 return;
             };
             let Ok(content) = parse_xml(format!("<story>{xml}</story>").as_bytes()) else {
@@ -1424,14 +1471,15 @@ pub(crate) fn fill_boxes(xml: &str, drawing: &Drawing, stories: &[(String, Strin
         }
         for child in &mut element.children {
             if let Node::Element(child) = child {
-                walk(child, drawing, stories, at);
+                walk(child, drawing, stories, at, ordinals);
             }
         }
     }
     let Ok(mut root) = parse_xml(xml.as_bytes()) else {
         return xml.to_string();
     };
-    walk(&mut root, drawing, stories, &mut 0);
+    let ordinals = box_ordinals(&root);
+    walk(&mut root, drawing, stories, &mut 0, &ordinals);
     serialize(&root)
 }
 
