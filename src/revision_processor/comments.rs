@@ -274,8 +274,13 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
     let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
         return Vec::new();
     };
+    // The comments part itself is not an anchor story: a `commentReference`
+    // inside a comment body keeps no comment alive, and pruning this Parsed
+    // copy would race the `comments` one. Marker fix-ups reach it through
+    // `word_save::tidy` and `annotation_ids::renumber` instead.
     let stories: Vec<Parsed> = story_parts
         .iter()
+        .filter(|p| p.as_str() != FAMILY[0].0)
         .filter_map(|p| Parsed::load(pkg, p))
         .collect();
     let id = W::id();

@@ -1394,3 +1394,126 @@ fn cli_reject_resolves_inserted_final_mark() {
 fn cli_reject_resolves_inserted_final_mark_with_comment() {
     reject_inserted_final_mark_with_cli(true);
 }
+
+#[path = "common/comment_revisions.rs"]
+mod comment_revisions;
+
+/// #1223: Word's Reject All settles revisions inside comment bodies too
+/// (its probe drops `ZEBRAQUOKKA `, keeps `OKAPIWOMBAT ` as plain text, and
+/// leaves no `w:ins`/`w:del` in `comments.xml`).
+fn comment_body_probe() -> Vec<u8> {
+    let body = format!(
+        "<w:p>{}<w:r><w:t xml:space=\"preserve\"> tail</w:t></w:r><w:del w:id=\"10\" w:author=\"Alice\" w:date=\"2026-10-18T00:00:00Z\"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>",
+        comment_revisions::anchor(0, "anchor")
+    );
+    let comment = comment_revisions::comment(
+        0,
+        "Alice",
+        r#"<w:p w14:paraId="00000001"><w:ins w:id="20" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:t xml:space="preserve">ZEBRAQUOKKA </w:t></w:r></w:ins><w:del w:id="21" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:delText xml:space="preserve">OKAPIWOMBAT </w:delText></w:r></w:del><w:r><w:annotationRef/></w:r><w:r><w:t xml:space="preserve">Just like that!</w:t></w:r></w:p>"#,
+    );
+    comment_revisions::docx(&body, &[comment])
+}
+
+/// The text of comment `id` in `word/comments.xml` (w:t runs only).
+fn comment_text(pkg: &[u8], id: u32) -> String {
+    let xml = part_string(pkg, "word/comments.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let id = id.to_string();
+    let comment = dom
+        .descendants(root, Some(&W::name("comment")))
+        .into_iter()
+        .find(|&c| dom.attribute(c, &W::id()) == Some(id.as_str()))
+        .unwrap_or_else(|| panic!("no comment {id}: {xml}"));
+    dom.descendants(comment, Some(&W::t()))
+        .into_iter()
+        .map(|t| dom.value(t))
+        .collect()
+}
+
+/// #1223: Reject All resolves a comment body's insertion and deletion, the
+/// deleted text back as plain `w:t` runs.
+#[test]
+fn reject_resolves_comment_body_revisions() {
+    let rejected = reject_revisions(&comment_body_probe()).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/comments.xml").unwrap();
+    for mark in ["<w:ins", "<w:del", "delText"] {
+        assert!(!xml.contains(mark), "{mark} left in comments.xml: {xml}");
+    }
+    assert_eq!(comment_text(&rejected, 0), "OKAPIWOMBAT Just like that!");
+}
+
+/// #1223: rejecting an inserted paragraph mark merges inside its own
+/// comment, never across `w:comment` boundaries.
+#[test]
+fn reject_comment_revisions_never_cross_the_comment_boundary() {
+    let body = format!(
+        "<w:p>{}{}</w:p>",
+        comment_revisions::anchor(0, "first"),
+        comment_revisions::anchor(1, "second")
+    );
+    let first = comment_revisions::comment(
+        0,
+        "Alice",
+        r#"<w:p w14:paraId="00000001"><w:pPr><w:rPr><w:ins w:id="30" w:author="Bob" w:date="2026-10-18T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">one </w:t></w:r></w:p><w:p w14:paraId="00000002"><w:r><w:t>two</w:t></w:r></w:p>"#,
+    );
+    let second = comment_revisions::comment(
+        1,
+        "Alice",
+        r#"<w:p w14:paraId="00000003"><w:r><w:t>neighbour</w:t></w:r></w:p>"#,
+    );
+    let source = comment_revisions::docx(&body, &[first, second]);
+    let rejected = reject_revisions(&source).unwrap();
+    assert_word_valid_package(&rejected);
+    // Rejecting the split joins "one " and "two" inside comment 0 only:
+    // one `w:p` holds them both; the neighbouring comment keeps its own.
+    assert_eq!(comment_text(&rejected, 0), "one two");
+    assert_eq!(comment_text(&rejected, 1), "neighbour");
+    let xml = part_string(&rejected, "word/comments.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let comments = dom.descendants(root, Some(&W::name("comment")));
+    assert_eq!(comments.len(), 2, "{xml}");
+    assert_eq!(
+        dom.descendants(comments[0], Some(&W::p())).len(),
+        1,
+        "{xml}"
+    );
+    assert_eq!(
+        dom.descendants(comments[1], Some(&W::p())).len(),
+        1,
+        "{xml}"
+    );
+}
+
+/// #1223: rejecting a comment whose only content is one inserted run
+/// leaves a valid `w:comment`: Word keeps an empty `w:p` with the
+/// paragraph's own properties (its `cmt1223_rejected_tracking_byword`).
+#[test]
+fn reject_a_comment_holding_only_an_insertion_keeps_an_empty_paragraph() {
+    let body = format!("<w:p>{}</w:p>", comment_revisions::anchor(0, "anchor"));
+    let comment = comment_revisions::comment(
+        0,
+        "Alice",
+        r#"<w:p w14:paraId="00000001"><w:pPr><w:jc w:val="center"/></w:pPr><w:ins w:id="40" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:t>whole</w:t></w:r></w:ins></w:p>"#,
+    );
+    let source = comment_revisions::docx(&body, &[comment]);
+    let rejected = reject_revisions(&source).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/comments.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let comment = dom
+        .descendants(root, Some(&W::name("comment")))
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no comment: {xml}"));
+    let paras = dom.descendants(comment, Some(&W::p()));
+    assert_eq!(paras.len(), 1, "emptied comment keeps one paragraph: {xml}");
+    assert_eq!(comment_text(&rejected, 0), "");
+    assert!(xml.contains(r#"<w:jc w:val="center""#), "pPr kept: {xml}");
+}
