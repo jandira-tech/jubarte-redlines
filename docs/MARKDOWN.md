@@ -584,9 +584,14 @@ r1 @AL`, or `r3 Ben Ode (2026-09-30T09:00:00Z) on r1 Ana Lima
 (2026-09-29T14:05:00Z)` in the plain view. The writer puts the change
 back inside the one it names. A row's or cell's own mark is never
 named: the writer rebuilds those where they stand. Deeper nests chain
-the same way, innermost first (`r5 @CD on r3 @BO on r1 @AL`); Word
-refuses a revision nested in its own kind, so the writer rebuilds only
-the first outer a chain names.
+the same way, innermost first (`r5 @CD on r3 @BO on r1 @AL`). The body
+writer currently rebuilds only the first outer a chain names; headers and
+footers rebuild the full chain. Word opens `ins > del > ins` but misreads
+reject-all; the chain-writing choice remains open in #1134.
+
+Inside any `w:del` in the same story, at any depth, run text is
+`w:delText` and field code is `w:delInstrText`, including inside a nested
+`w:ins`. An insertion outside a deletion keeps `w:t` and `w:instrText`.
 
 Revision `date` prefers the valid `w16du:dateUtc` instant, written in the author's local
 offset when the document records both times (a whole-minute difference within ±14:00;
