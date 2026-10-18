@@ -252,8 +252,7 @@ fn slot_value(dom: &Dom, prop: NodeId, slot: &Slot, attrs: Vec<(String, String)>
 /// for the same property whatever the attribute or child order (tabs).
 fn signature(dom: &Dom, e: NodeId) -> String {
     let mut attrs: Vec<String> = dom
-        .attributes(e)
-        .into_iter()
+        .attributes_iter(e)
         .filter(|(a, _)| !dom.is_namespace_declaration(a))
         .map(|(a, v)| format!("{}={v}", a.local_name()))
         .collect();
@@ -772,7 +771,7 @@ fn drop_slot(dom: &mut Dom, block: NodeId, slot: &Slot) {
             dom.set_attribute_value(prop, &a, None);
         }
     }
-    if dom.attributes(prop).is_empty() {
+    if !dom.has_attributes(prop) {
         dom.remove(prop);
     }
 }

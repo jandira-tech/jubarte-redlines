@@ -862,8 +862,7 @@ mod horizontal_partition_tests {
     }
     fn prop(dom: &Dom, n: NodeId) -> String {
         let mut attrs: Vec<_> = dom
-            .attributes(n)
-            .into_iter()
+            .attributes_iter(n)
             .map(|(k, v)| format!("{}={v}", k.local_name()))
             .collect();
         attrs.sort();

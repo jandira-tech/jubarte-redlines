@@ -174,8 +174,7 @@ impl StyleBook {
                     };
                     book.default_fonts = descendant(dom, s, "rFonts").map(|f| {
                         let mut items: Vec<String> = dom
-                            .attributes(f)
-                            .into_iter()
+                            .attributes_iter(f)
                             .map(|(k, v)| format!("{}={v}", k.local_name()))
                             .collect();
                         items.sort();
@@ -851,8 +850,7 @@ fn font_slots(dom: &Dom, f: NodeId) -> Vec<(&'static str, String)> {
 
 /// An element's attributes as `(local name, value)`.
 fn attr_pairs(dom: &Dom, n: NodeId) -> Vec<(String, String)> {
-    dom.attributes(n)
-        .into_iter()
+    dom.attributes_iter(n)
         .map(|(k, v)| (k.local_name().to_string(), v.to_string()))
         .collect()
 }
@@ -921,8 +919,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     }
     if let Some(float) = tblpr.and_then(|x| child(dom, x, "tblpPr")) {
         let mut items: Vec<String> = dom
-            .attributes(float)
-            .into_iter()
+            .attributes_iter(float)
             .map(|(k, v)| format!("{}={v}", k.local_name()))
             .collect();
         items.sort();

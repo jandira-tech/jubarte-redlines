@@ -288,7 +288,7 @@ fn get_property_value(dom: &mut Dom, prop: NodeId) -> String {
     if let Some(v) = dom.attribute(prop, &W::val()) {
         return v.to_string();
     }
-    if !dom.has_elements(prop) && dom.attributes(prop).is_empty() {
+    if !dom.has_elements(prop) && !dom.has_attributes(prop) {
         return "true".to_string();
     }
     dom.serialize_element(prop)

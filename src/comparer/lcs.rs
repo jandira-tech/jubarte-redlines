@@ -19621,8 +19621,7 @@ mod coverage_real_source_route_matrix_tests {
     fn opaque_source_events(bytes: &[u8], faithful: bool) -> Vec<String> {
         fn canonical(dom: &Dom, node: NodeId) -> String {
             let mut attrs = dom
-                .attributes(node)
-                .into_iter()
+                .attributes_iter(node)
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .map(|(name, value)| {
                     (

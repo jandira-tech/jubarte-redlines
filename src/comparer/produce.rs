@@ -1579,8 +1579,7 @@ fn props_signature(dom: &Dom, n: NodeId) -> String {
         return String::new();
     };
     let mut attrs: Vec<String> = dom
-        .attributes(n)
-        .into_iter()
+        .attributes_iter(n)
         .filter(|(k, _)| k.namespace_name() != PT::URI && !k.local_name().starts_with("rsid"))
         .map(|(k, v)| {
             format!(
@@ -2507,8 +2506,7 @@ mod coverage_ruby_math_ownership {
             return format!("text:{:?}", dom.text_value(node));
         };
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| {
                 name.namespace_name() != PT::URI
                     && name.namespace_name() != "http://www.w3.org/2000/xmlns/"
@@ -2659,8 +2657,7 @@ mod nontext_run_format_history_tests {
 
     fn signature(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();

@@ -137,6 +137,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   with a Markdown document; anything else exits 2. Whether a `.md` is
   CriticMarkup is read from the documents' bytes when their names do not
   say, in the binary and in both hosts.
+- **`xmllinq::Dom::attributes_iter`** walks an element's attributes as
+  borrowed `(&XName, &str)` pairs, in declaration order, without the `Vec`
+  of cloned pairs `Dom::attributes` builds. The crate's own read-only
+  callers use it, and the emptiness checks use `Dom::has_attributes`.
 
 ### Changed
 
