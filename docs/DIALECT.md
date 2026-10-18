@@ -85,6 +85,12 @@ inserted or deleted row.
 | `@??` | a mark with no author's name; written back as an empty `w:author` |
 | no tag | new, by the plan author |
 
+Substitution pairing compares the stored dates, including an absent date,
+when printed tags omit timestamps. Different source dates stay separate.
+Rejecting `¶{tag}` removes its following paragraph separator; a list marker
+on the joined paragraph is removed with it. A patch records that separator
+as an insertion attributed to the paragraph mark.
+
 The reader refuses the old attribution form `{>>r1 @ASR<<}` immediately
 after a `++}`, `--}` or `~~}` closer, including intervening `*`, `_` or
 backtick emphasis markers. The error gives the line, old tag and replacement
