@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 64                      # 63 marks shown as 63 changes: 29 insertions, 30 deletions, 4 paragraph marks; 1 in footnotes
+revisions: 64                      # 63 marks shown as 61 changes: 27 insertions, 28 deletions, 2 substitutions, 4 paragraph marks; 1 in footnotes
 comments: 30 threads open, style Normal  # 30 comments: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -22,7 +22,7 @@ styles:
 # Heavy on everything
 
 <!-- p1 Normal left -->
-{--_The_--}{r0 @AL}{++notice++}{r1 @DP} warranty {--period--}{r2 @AL}{++supplier++}{r3 @AL} is **twelve**{== months from delivery.==}{>>c0 @AL: Legal to review.<<}
+{--_The_--}{r0 @AL}{++notice++}{r1 @DP} warranty {~~period~>supplier~~}{r2+3 @AL} is **twelve**{== months from delivery.==}{>>c0 @AL: Legal to review.<<}
 
 <!-- p2 Normal left -->
 Either party may end this agreement with ninety days{== written notice{++ without undue delay++}{r4 @BC}.==}{>>c1 @CD: Client asked for this.<<}
@@ -66,7 +66,7 @@ Either party may{-- end--}{r38 @DP}{-- --}{r39 @AL}{--_this_--}{r40 @AL}{== agre
 The ¶{r46 @BC}
 
 <!-- p28 Normal left -->
-buyer may {--inspect--}{r47 @AL}{++supplier++}{r48 @AL}{== the==}{>>c23 @AL: Check the defined term.<<} goods before accepting{++ at its own cost++}{r49 @AL} them{++ unless agreed otherwise++}{r50 @AL}.{>>c24 @BC: Client asked for this.<<}
+buyer may {~~inspect~>supplier~~}{r47+48 @AL}{== the==}{>>c23 @AL: Check the defined term.<<} goods before accepting{++ at its own cost++}{r49 @AL} them{++ unless agreed otherwise++}{r50 @AL}.{>>c24 @BC: Client asked for this.<<}
 
 <!-- p29 Normal left -->
 The supplier{++ at its own cost++}{r51 @CD}{== may subcontract only _with_==}{>>c25 @AL: Client asked for this.<<} the buyer's prior{++ in good faith++}{r52 @DP} consent.
