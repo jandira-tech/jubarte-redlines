@@ -361,7 +361,9 @@ Every text change from `original` to `edited` must be a revision by
 `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
 array. Existing foreign revisions may remain: `FOREIGN_AUTHOR` reports
 foreign history added, changed or removed against `original`. Paragraphs
-align by full text, including deleted text, within each story. Groups with
+align by full text, including deleted text, within each story. An untracked
+paragraph merge or split around another author's revisions reports those
+revisions as new and gone alongside `UNTRACKED_EDIT`. Groups with
 the same author, kind, target, date and move side are compared in document
 order within the aligned paragraph or non-paragraph owner (for example, a
 style id). Revision ids do not define identity. Split carriers combine only

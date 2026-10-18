@@ -433,6 +433,8 @@ class Document:
         A foreign revision added, changed or removed against ``original`` is a
         ``FOREIGN_AUTHOR`` finding. Existing foreign revisions may remain;
         paragraphs align by full text, including deleted text, within each story.
+        An untracked paragraph merge or split around another author's revisions
+        reports those revisions as new and gone alongside ``UNTRACKED_EDIT``.
         Groups with the same author, kind, target, date and move side are compared
         in document order within the aligned paragraph or non-paragraph owner
         (for example, a style id). Revision ids do not define identity. Split
