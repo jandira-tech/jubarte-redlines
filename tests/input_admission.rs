@@ -137,6 +137,74 @@ fn settings_default_to_the_compare_limits() {
     );
 }
 
+/// Change only the local name, locating the header through the writer's
+/// central record rather than searching payload bytes for a signature.
+fn rename_local_header(bytes: &mut [u8], from: &[u8], to: &[u8]) {
+    assert_eq!(from.len(), to.len(), "the local name must keep its length");
+    let at = {
+        let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+        archive
+            .by_name(std::str::from_utf8(from).unwrap())
+            .unwrap()
+            .header_start() as usize
+    };
+    assert_eq!(&bytes[at..at + 4], b"PK\x03\x04");
+    assert_eq!(&bytes[at + 30..at + 30 + from.len()], from);
+    bytes[at + 30..at + 30 + from.len()].copy_from_slice(to);
+}
+
+fn dual_header_package() -> Vec<u8> {
+    let mut bytes = package(|_, _| {});
+    jubarte::admission::admit(&bytes, small_limits()).expect("unmodified control is valid");
+    rename_local_header(&mut bytes, b"word/document.xml", b"w0rd/document.xml");
+    bytes
+}
+
+/// A package valid in every other way whose `word/document.xml` local
+/// header names the entry differently than the central directory: a tool
+/// that trusts the local header and a reader that trusts the central
+/// directory see two different packages, so a security review of one is
+/// not a review of the other. Admission must refuse the package with a
+/// typed code rather than pick a side.
+#[test]
+fn a_local_name_that_differs_from_the_central_directory_is_refused() {
+    let bytes = dual_header_package();
+    let err = jubarte::admission::admit(&bytes, small_limits())
+        .expect_err("a dual-header package must not be admitted");
+    assert_eq!(err.code(), "ZIP_HEADER_MISMATCH", "{err}");
+}
+
+#[test]
+fn document_loading_refuses_a_dual_header_package() {
+    let bytes = dual_header_package();
+    let Err(err) = WmlDocument::from_bytes(&bytes) else {
+        panic!("document loading must refuse a dual-header package through admission");
+    };
+    assert!(err.to_string().contains("ZIP_HEADER_MISMATCH"), "{err}");
+}
+
+#[test]
+fn markdown_conversion_refuses_a_dual_header_package() {
+    let bytes = dual_header_package();
+    let Err(err) = jubarte::markdown::docx_to_markdown(&bytes, &Default::default()) else {
+        panic!("Markdown conversion must refuse a dual-header package");
+    };
+    assert!(err.to_string().contains("ZIP_HEADER_MISMATCH"), "{err}");
+}
+
+#[test]
+fn reading_without_layout_refuses_a_dual_header_package() {
+    let bytes = dual_header_package();
+    let options = jubarte::markdown::ReadOptions {
+        page_markers: false,
+        ..Default::default()
+    };
+    let Err(err) = jubarte::markdown::read(&bytes, &options) else {
+        panic!("reading without layout must refuse a dual-header package");
+    };
+    assert!(err.to_string().contains("ZIP_HEADER_MISMATCH"), "{err}");
+}
+
 #[test]
 fn compare_refuses_a_part_that_inflates_past_the_part_budget() {
     let settings = WmlComparerSettings {
