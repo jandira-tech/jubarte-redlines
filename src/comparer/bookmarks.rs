@@ -572,6 +572,16 @@ fn leave_permission_revision_boundary(dom: &mut Dom, endpoint: NodeId, after: bo
     leave_inline_revision(dom, endpoint, after);
 }
 
+/// Allocate outside every source/output id reserved by the caller (#1190).
+pub(crate) fn fresh_permission_id(reserved: &mut HashSet<String>, next: &mut u64) -> String {
+    while reserved.contains(&next.to_string()) {
+        *next += 1;
+    }
+    let id = next.to_string();
+    reserved.insert(id.clone());
+    id
+}
+
 /// Word Compare unions permissions by editor and column scope, independently
 /// of source ids. Keep this separate from edit's revised-by-id policy below.
 /// The string check avoids extraction, projection and traversal on range-free
@@ -684,11 +694,7 @@ pub(crate) fn carry_permission_union(
     let mut next_id = 0u64;
     for mut span in union {
         if !used.insert(span.id.clone()) {
-            while reserved.contains(&next_id.to_string()) {
-                next_id += 1;
-            }
-            span.id = next_id.to_string();
-            reserved.insert(span.id.clone());
+            span.id = fresh_permission_id(&mut reserved, &mut next_id);
             used.insert(span.id.clone());
         }
         for endpoint in [span.start, span.end] {

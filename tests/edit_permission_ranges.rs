@@ -662,7 +662,7 @@ fn repeated_permission_id_keeps_both_positions() {
         para("Next.")
     ));
     let result = edit(&source, "p2", "Next", "Following");
-    assert_permissions(&source, &result, "word/document.xml", None);
+    assert_fresh_repeated_permissions(&source, &result);
 }
 
 #[test]
@@ -680,7 +680,7 @@ fn repeated_empty_ranges_keep_positions_and_bookmark_names() {
         para("Next.")
     ));
     let result = edit(&source, "p2", "Next", "Following");
-    assert_permissions(&source, &result, "word/document.xml", None);
+    assert_fresh_repeated_permissions(&source, &result);
     let actual = markers(&result.redline, "word/document.xml", "bookmark");
     assert_eq!(
         actual.iter().map(|m| m.0).collect::<Vec<_>>(),
@@ -735,6 +735,168 @@ fn bookmark_endpoint_in_deleted_text_is_not_a_revision_crossing() {
             .iter()
             .any(|f| f.code == "BOOKMARK_CROSSES_REVISION"),
         "{findings:?}"
+    );
+}
+
+// #1195: source occurrences remain distinct even when producer ids repeat.
+fn assert_fresh_repeated_permissions(source: &[u8], result: &EditResult) {
+    let mut expected = markers(source, "word/document.xml", "perm");
+    assert_eq!(expected.len(), 4);
+    for marker in &mut expected[2..] {
+        marker.3.iter_mut().find(|(key, _)| key == "id").unwrap().1 = "0".to_string();
+    }
+    for bytes in [&result.clean, &result.redline] {
+        assert_eq!(
+            markers(bytes, "word/document.xml", "perm"),
+            expected,
+            "only the second source occurrence's id changes"
+        );
+    }
+}
+
+fn repeated_permissions() -> Vec<u8> {
+    docx(&format!(
+        "<w:p>{START}{}{END}</w:p><w:p>{START}{}{END}</w:p>{}",
+        run("Alice.", false, false, None),
+        run("Bob.", false, false, None),
+        para("Next.")
+    ))
+}
+
+fn permission_ids(bytes: &[u8]) -> Vec<String> {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(&xml);
+    dom.descendants(dom.root(d).unwrap(), Some(&W::name("permStart")))
+        .iter()
+        .map(|&n| dom.attribute(n, &W::id()).unwrap().to_string())
+        .collect()
+}
+
+fn repeated_edit(deleted: Option<&str>) {
+    let source = repeated_permissions();
+    let result = match deleted {
+        Some(p) => delete_paragraph(&source, p),
+        None => edit(&source, "p2", "Next", "Following"),
+    };
+    if deleted == Some("p0") {
+        save("1195-f1", &source, &result.redline);
+    }
+    let rejected = jubarte::document_comparer::reject_revisions(&result.redline).unwrap();
+    let actual = markers(&rejected, "word/document.xml", "perm");
+    assert_eq!(
+        actual
+            .iter()
+            .map(|m| (m.0, m.1.as_str(), m.2.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (0, "", "Alice."),
+            (0, "Alice.", ""),
+            (1, "", "Bob."),
+            (1, "Bob.", "")
+        ],
+        "Reject restores both source occurrences"
+    );
+    let ids = permission_ids(&result.redline);
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], "5", "first source range keeps its id");
+    assert_ne!(
+        ids[0], ids[1],
+        "later source occurrence needs a fresh reserved id"
+    );
+    let accepted = jubarte::document_comparer::accept_revisions(&result.redline).unwrap();
+    let kept: Vec<_> = markers(&accepted, "word/document.xml", "perm")
+        .into_iter()
+        .map(|m| (m.1, m.2))
+        .collect();
+    let expected = match deleted {
+        Some("p0") => vec![("", "Bob."), ("Bob.", "")],
+        Some("p1") => vec![("", "Alice."), ("Alice.", "")],
+        _ => vec![("", "Alice."), ("Alice.", ""), ("", "Bob."), ("Bob.", "")],
+    };
+    assert_eq!(
+        kept,
+        expected
+            .into_iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect::<Vec<_>>()
+    );
+}
+#[test]
+fn issue1195_f1_delete_first() {
+    repeated_edit(Some("p0"));
+}
+#[test]
+fn issue1195_f1_delete_second() {
+    repeated_edit(Some("p1"));
+}
+#[test]
+fn issue1195_f1_edit_neither() {
+    repeated_edit(None);
+}
+
+#[test]
+fn issue1195_f2_textless_header_correspondence() {
+    let drawing = |id, color| {
+        format!(
+            r#"<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="457200"/><wp:docPr id="{id}" name="Shape {id}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+        )
+    };
+    let source = header_with(&format!(
+        "<w:p>{}</w:p><w:p>{START}{}{END}</w:p>",
+        drawing(1, "FF0000"),
+        drawing(2, "0000FF")
+    ));
+    let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:00:00Z","operations":[{"kind":"delete_paragraph","paragraph":"header1.p0"},{"kind":"format_paragraph","paragraph":"header1.p1","alignment":"center"}]}"#).unwrap();
+    let result = apply_plan(&source, &plan).unwrap();
+    save("1195-f2", &source, &result.redline);
+    let actual = markers(&result.redline, "word/header1.xml", "perm");
+    assert_eq!(
+        actual.iter().map(|m| m.0).collect::<Vec<_>>(),
+        [1, 1],
+        "both endpoints belong to the retained second drawing paragraph"
+    );
+    let xml = part_string(&result.redline, "word/header1.xml").unwrap();
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(&xml);
+    let root = dom.root(d).unwrap();
+    for p in dom.descendants(root, Some(&W::p())) {
+        let children = dom.elements(p, None);
+        if let Some(at) = children.iter().position(|&n| dom.name_is(n, &W::p_pr())) {
+            assert_eq!(at, 0, "pPr must precede range markers: {xml}");
+        }
+    }
+}
+
+#[test]
+fn issue1195_f4_math_only_bookmark_restored() {
+    let source = docx(&format!(
+        r#"<w:p><w:bookmarkStart w:id="7" w:name="Clause"/><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath><w:bookmarkEnd w:id="7"/></w:p>{}"#,
+        para("Next.")
+    ));
+    let result = edit(&source, "p1", "Next", "Following");
+    let actual = markers(&result.redline, "word/document.xml", "bookmark");
+    assert_eq!(
+        actual.iter().map(|m| m.0).collect::<Vec<_>>(),
+        [0, 0],
+        "math-only bookmark must return to its unchanged paragraph"
+    );
+}
+
+#[test]
+fn issue1195_f5_candidate_consumes_name_queue() {
+    let source = docx(&format!(
+        r#"<w:p><w:bookmarkStart w:id="7" w:name="Clause"/><w:bookmarkEnd w:id="7"/>{}</w:p><w:p><w:bookmarkStart w:id="8" w:name="Clause"/><w:bookmarkEnd w:id="8"/></w:p>{}"#,
+        run("Gone", false, false, None),
+        para("Next.")
+    ));
+    let result = delete_paragraph(&source, "p0");
+    save("1195-f5", &source, &result.redline);
+    let actual = markers(&result.redline, "word/document.xml", "bookmark");
+    assert_eq!(
+        actual.iter().map(|m| m.0).collect::<Vec<_>>(),
+        [1, 1],
+        "Clause belongs to the empty paragraph, not Next"
     );
 }
 

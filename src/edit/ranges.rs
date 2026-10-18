@@ -22,7 +22,10 @@ fn is_marker(dom: &Dom, node: NodeId) -> bool {
 /// Namespace/prefix-independent structural key, excluding carried markers and
 /// volatile producer ids. Revisions remain in the key: a changed paragraph is
 /// not an unchanged anchor. Empty property containers are immaterial.
-fn key(dom: &Dom, node: NodeId, keep_markers: bool) -> String {
+fn key(dom: &Dom, node: NodeId, keep_markers: bool, content_only: bool) -> String {
+    if content_only && dom.name_is(node, &W::p_pr()) {
+        return String::new();
+    }
     if !keep_markers && is_marker(dom, node) {
         return String::new();
     }
@@ -32,7 +35,7 @@ fn key(dom: &Dom, node: NodeId, keep_markers: bool) -> String {
     let children: String = dom
         .nodes(node)
         .into_iter()
-        .map(|n| key(dom, n, keep_markers))
+        .map(|n| key(dom, n, keep_markers, content_only))
         .collect();
     let mut attrs: Vec<_> = dom
         .attributes(node)
@@ -59,8 +62,24 @@ fn unchanged(
     to: &[NodeId],
     keep_markers: bool,
 ) -> HashMap<NodeId, NodeId> {
-    let a: Vec<_> = from.iter().map(|&p| key(dom, p, keep_markers)).collect();
-    let b: Vec<_> = to.iter().map(|&p| key(dom, p, keep_markers)).collect();
+    correspondence(dom, from, to, keep_markers, false)
+}
+
+fn correspondence(
+    dom: &Dom,
+    from: &[NodeId],
+    to: &[NodeId],
+    keep_markers: bool,
+    content_only: bool,
+) -> HashMap<NodeId, NodeId> {
+    let a: Vec<_> = from
+        .iter()
+        .map(|&p| key(dom, p, keep_markers, content_only))
+        .collect();
+    let b: Vec<_> = to
+        .iter()
+        .map(|&p| key(dom, p, keep_markers, content_only))
+        .collect();
     capture_diff_slices(Algorithm::Myers, &a, &b)
         .into_iter()
         .flat_map(|op| {
@@ -140,34 +159,45 @@ fn restore_empty(dom: &mut Dom, original: NodeId, revised: NodeId, output: NodeI
     let available: HashSet<_> = endpoints.keys().cloned().collect();
     let mut open: HashMap<String, VecDeque<NodeId>> = HashMap::new();
     let mut partners = HashMap::new();
-    let mut ids = HashMap::new();
+    let mut starts = Vec::new();
     for node in dom.descendants(original, None) {
         let Some(id) = dom.attribute(node, &W::id()) else {
             continue;
         };
         if dom.name_is(node, &W::bookmark_start()) {
-            let Some(name) = dom.attribute(node, &W::name("name")) else {
-                continue;
-            };
-            if name == "_GoBack" {
+            if dom
+                .attribute(node, &W::name("name"))
+                .is_none_or(|name| name == "_GoBack")
+            {
                 continue;
             }
-            let new = names
-                .get_mut(name)
-                .and_then(VecDeque::pop_front)
-                .unwrap_or_else(|| {
-                    next_id += 1;
-                    next_id.to_string()
-                });
-            ids.insert(node, new);
+            starts.push(node);
             open.entry(id.to_string()).or_default().push_back(node);
         } else if dom.name_is(node, &W::bookmark_end())
-            && let Some(start) = open.get_mut(id).and_then(VecDeque::pop_front)
+            && let Some(start) = open.get_mut(id).and_then(VecDeque::pop_back)
         {
-            ids.insert(node, ids[&start].clone());
             partners.insert(node, start);
             partners.insert(start, node);
         }
+    }
+    let mut ids = HashMap::new();
+    for start in starts {
+        let Some(&end) = partners.get(&start) else {
+            continue;
+        };
+        if !restoring.contains(&start) && !restoring.contains(&end) {
+            continue;
+        }
+        let name = dom.attribute(start, &W::name("name")).unwrap();
+        let new = names
+            .get_mut(name)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| {
+                next_id += 1;
+                next_id.to_string()
+            });
+        ids.insert(start, new.clone());
+        ids.insert(end, new);
     }
     let anchors: HashMap<_, Vec<_>> = candidates
         .iter()
@@ -232,12 +262,17 @@ fn needs_restore(xml: &str) -> bool {
         return false;
     }
     use quick_xml::events::Event;
-    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut reader = quick_xml::NsReader::from_str(xml);
     let mut paragraphs = Vec::new();
     let mut in_text = false;
     loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => match e.local_name().as_ref() {
+        let Ok((namespace, event)) = reader.read_resolved_event() else {
+            return true;
+        };
+        let word =
+            matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if ns.as_ref() == W::URI);
+        match event {
+            Event::Start(e) if word => match e.local_name().as_ref() {
                 "p" => paragraphs.push((false, false)),
                 "t" => in_text = true,
                 "bookmarkStart" | "bookmarkEnd" => {
@@ -247,14 +282,14 @@ fn needs_restore(xml: &str) -> bool {
                 }
                 _ => {}
             },
-            Ok(Event::Empty(e))
-                if matches!(e.local_name().as_ref(), "bookmarkStart" | "bookmarkEnd") =>
+            Event::Empty(e)
+                if word && matches!(e.local_name().as_ref(), "bookmarkStart" | "bookmarkEnd") =>
             {
                 if let Some(p) = paragraphs.last_mut() {
                     p.0 = true;
                 }
             }
-            Ok(Event::End(e)) => match e.local_name().as_ref() {
+            Event::End(e) if word => match e.local_name().as_ref() {
                 "p" => {
                     if paragraphs
                         .pop()
@@ -266,78 +301,130 @@ fn needs_restore(xml: &str) -> bool {
                 "t" => in_text = false,
                 _ => {}
             },
-            Ok(Event::Text(t)) if in_text && !t.is_empty() => {
+            Event::Text(t) if in_text && !t.is_empty() => {
                 for p in &mut paragraphs {
                     p.1 = true;
                 }
             }
-            Ok(Event::CData(t)) if in_text && !t.is_empty() => {
+            Event::CData(t) if in_text && !t.is_empty() => {
                 for p in &mut paragraphs {
                     p.1 = true;
                 }
             }
-            Ok(Event::Eof) => return false,
-            Err(_) => return true,
+            Event::Eof => return false,
             _ => {}
         }
     }
 }
 
-/// Text has no offset projection in an empty story. Index structural parent
-/// paths and gaps instead; the revised story supplies the current properties.
+/// Text has no offset projection in an empty story. Match retained content
+/// recursively, ignoring paragraph properties (which may have pPrChange).
+/// A revised path's index is never an output index after paragraph deletion.
 fn restore_textless_permissions(dom: &mut Dom, revised: NodeId, output: NodeId) {
-    fn index(dom: &Dom, node: NodeId, path: &[usize], out: &mut HashMap<Vec<usize>, Vec<NodeId>>) {
-        let children: Vec<_> = dom
-            .elements(node, None)
-            .into_iter()
-            .filter(|&n| !is_marker(dom, n))
-            .collect();
-        out.insert(path.to_vec(), children.clone());
-        for (i, child) in children.into_iter().enumerate() {
-            let mut path = path.to_vec();
-            path.push(i);
-            index(dom, child, &path, out);
-        }
-    }
-    let mut target = HashMap::new();
-    index(dom, output, &[], &mut target);
-    let mut parents = HashMap::from([(Vec::new(), output)]);
-    for (path, children) in &target {
-        for (i, &child) in children.iter().enumerate() {
-            let mut path = path.clone();
-            path.push(i);
-            parents.insert(path, child);
-        }
-    }
     for name in [W::name("permStart"), W::name("permEnd")] {
         for node in dom.descendants(output, Some(&name)) {
             dom.remove(node);
         }
     }
-    let mut stack = vec![(revised, Vec::new())];
-    while let Some((node, path)) = stack.pop() {
-        let mut gap = 0;
-        for child in dom.elements(node, None) {
-            if is_marker(dom, child) {
-                if dom
-                    .name(child)
-                    .is_some_and(|n| [W::name("permStart"), W::name("permEnd")].contains(&n))
-                    && let Some(&parent) = parents.get(&path)
-                {
-                    let copy = dom.clone_subtree(child);
-                    if let Some(&anchor) = target.get(&path).and_then(|c| c.get(gap)) {
-                        dom.add_before_self(anchor, copy);
-                    } else {
-                        dom.add(parent, copy);
-                    }
-                }
+    let mut stack = vec![(revised, output)];
+    while let Some((node, parent)) = stack.pop() {
+        let children = dom.elements(node, None);
+        let content: Vec<_> = children
+            .iter()
+            .copied()
+            .filter(|&n| !is_marker(dom, n))
+            .collect();
+        let target: Vec<_> = dom
+            .elements(parent, None)
+            .into_iter()
+            .filter(|&n| !is_marker(dom, n))
+            .collect();
+        let matched = correspondence(dom, &content, &target, false, true);
+        for (&source, &destination) in &matched {
+            stack.push((source, destination));
+        }
+        for (at, child) in children.iter().copied().enumerate() {
+            if ![W::name("permStart"), W::name("permEnd")]
+                .iter()
+                .any(|name| dom.name_is(child, name))
+            {
+                continue;
+            }
+            // Locate the following retained sibling; a new pPr always stays
+            // first, including when the source marker led its paragraph.
+            let anchor = children[at + 1..]
+                .iter()
+                .filter_map(|n| matched.get(n))
+                .copied()
+                .find(|&n| !dom.name_is(n, &W::p_pr()));
+            let copy = dom.clone_subtree(child);
+            if let Some(anchor) = anchor {
+                dom.add_before_self(anchor, copy);
             } else {
-                let mut child_path = path.clone();
-                child_path.push(gap);
-                stack.push((child, child_path));
-                gap += 1;
+                dom.add(parent, copy);
             }
         }
+    }
+}
+
+/// Give repeated source occurrences stable identities before any edit removes
+/// or moves nodes. Their copied endpoints then retain those identities through
+/// comparison; ordinals recounted after a deletion cannot identify a source range.
+/// The first start keeps its id, and nested starts close at the nearest end.
+pub(super) fn normalize_permission_ids(bytes: &[u8]) -> Result<Option<Vec<u8>>, EditError> {
+    let mut pkg = PartFs::open(bytes).map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
+    let mut changed = false;
+    for part in pkg.parts() {
+        let Some(xml) = pkg.part_string(&part).filter(|s| s.contains("permStart")) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(document) else {
+            continue;
+        };
+        let nodes = dom.descendants(root, None);
+        let mut reserved = nodes
+            .iter()
+            .filter_map(|&n| dom.attribute(n, &W::id()).map(str::to_string))
+            .collect();
+        let mut seen = HashSet::new();
+        let mut open: HashMap<String, Vec<String>> = HashMap::new();
+        let mut next = 0;
+        let mut part_changed = false;
+        for node in nodes {
+            let Some(id) = dom.attribute(node, &W::id()).map(str::to_string) else {
+                continue;
+            };
+            let new = if dom.name_is(node, &W::name("permStart")) {
+                let new = if seen.insert(id.clone()) {
+                    id.clone()
+                } else {
+                    crate::comparer::bookmarks::fresh_permission_id(&mut reserved, &mut next)
+                };
+                open.entry(id.clone()).or_default().push(new.clone());
+                Some(new)
+            } else if dom.name_is(node, &W::name("permEnd")) {
+                open.get_mut(&id).and_then(Vec::pop)
+            } else {
+                None
+            };
+            if let Some(new) = new.filter(|new| *new != id) {
+                dom.set_attribute_value(node, &W::id(), Some(&new));
+                part_changed = true;
+            }
+        }
+        if part_changed {
+            pkg.set_part(&part, dom.serialize_document(document).into_bytes());
+            changed = true;
+        }
+    }
+    if changed {
+        pkg.to_zip()
+            .map(Some)
+            .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
+    } else {
+        Ok(None)
     }
 }
 

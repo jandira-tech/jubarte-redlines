@@ -2103,12 +2103,16 @@ impl<'p> Transaction<'p> {
         }
         let source_bytes = source;
         let Settled {
-            base,
+            mut base,
             mut opened,
             resolved_revisions,
             comment_changes,
             changed,
         } = settle(source, plan, probe)?;
+        if let Some(normalized) = ranges::normalize_permission_ids(&base)? {
+            base = normalized;
+            opened = Opened::open(&base).map_err(open_error)?;
+        }
         let (removed_comments, kept_comments) = comment_changes.records(source)?;
         let base_sha256 = source_sha256(&base);
         let Loaded {
