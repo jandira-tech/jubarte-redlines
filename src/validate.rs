@@ -868,7 +868,7 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// same record type within a part (the SDK's `Sem_UniqueAttributeValue`).
 /// Different kinds can share an id: Word pairs a style's `pPrChange` and `rPrChange`.
 /// Range ends share their starts' ids and comment/bookmark ids have other scopes.
-fn has_unique_revision_id(name: &XName) -> bool {
+pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && (name.local_name().ends_with("PrChange")
             || matches!(

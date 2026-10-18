@@ -272,26 +272,12 @@ fn style_histories(pkg: &[u8]) -> Vec<(String, String, String, String)> {
 /// A copied history is a new change; it must be fresh, preserve a retained
 /// source history's payload, and leave that source history's id intact.
 fn fresh_style_copies(before: &[u8], after: &[u8], selected: &ChangeFilter) -> HashSet<String> {
-    use jubarte::namespaces::W;
-    use jubarte::opc::PartFs;
-    use jubarte::xmllinq::Dom;
     let old = style_histories(before);
     let new = style_histories(after);
-    let pkg = PartFs::open(before).unwrap();
-    let max_id = pkg
-        .parts()
-        .into_iter()
-        .filter(|p| p.ends_with(".xml"))
-        .filter_map(|p| {
-            let xml = pkg.part_string(&p)?;
-            let mut dom = Dom::new();
-            let doc = dom.parse_xdocument(&xml);
-            let root = dom.root(doc)?;
-            dom.descendants(root, None)
-                .into_iter()
-                .filter_map(|n| dom.attribute(n, &W::id())?.parse::<u64>().ok())
-                .max()
-        })
+    let max_id = list_changes(before)
+        .unwrap()
+        .iter()
+        .map(|c| c.id.rsplit('r').next().unwrap().parse::<u64>().unwrap())
         .max()
         .unwrap_or(0);
     let selected_ids: HashSet<String> = list_changes(before)
@@ -379,6 +365,122 @@ fn rejecting_alternate_changes_allocates_fresh_style_history_ids() {
         texts(&finished),
         texts(&reject_revisions(&redline).unwrap())
     );
+}
+
+#[test]
+fn half_way_style_reject_ignores_div_and_bookmark_ids() {
+    use jubarte::opc::PartFs;
+    let redline = std::fs::read(bench().join("corpus/word/tracking_without_comments/docx/83799a0610__vs__333bfe069a_redline_2a068b16e5.docx")).unwrap();
+    let mut pkg = PartFs::open(&redline).unwrap();
+    pkg.set_part("word/webSettings.xml", br#"<w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:divs><w:div w:id="2147483647"/></w:divs></w:webSettings>"#.to_vec());
+    let mut xml = pkg.part_string("word/document.xml").unwrap();
+    let first_p = xml.find("<w:p ").or_else(|| xml.find("<w:p>")).unwrap();
+    let at = first_p + xml[first_p..].find('>').unwrap() + 1;
+    xml.insert_str(
+        at,
+        r#"<w:bookmarkStart w:id="900000" w:name="Alice"/><w:bookmarkEnd w:id="900000"/>"#,
+    );
+    pkg.set_part("word/document.xml", xml.into_bytes());
+    let redline = pkg.to_zip().unwrap();
+    let listed = list_changes(&redline).unwrap();
+    let max_id = listed
+        .iter()
+        .map(|c| c.id.rsplit('r').next().unwrap().parse::<u64>().unwrap())
+        .max()
+        .unwrap();
+    let half = ChangeFilter::ids(listed.iter().step_by(2).map(|c| c.id.clone()));
+    let partial = reject_changes(&redline, &half).unwrap();
+    let old = style_histories(&redline);
+    let after = style_histories(&partial);
+    let copies: Vec<_> = after.iter().filter(|r| !old.contains(r)).collect();
+    assert_eq!(copies.len(), 1, "Heading7Char inherits Normal's history");
+    let bound = max_id + copies.len() as u64;
+    for (_, _, id, _) in &after {
+        let id = id.parse::<u64>().unwrap();
+        assert!(
+            id <= bound && id <= 2147483647,
+            "style revision id {id} exceeds input revision max {max_id} + {} new records (bound {bound}) or signed 32-bit range",
+            copies.len()
+        );
+    }
+    assert_eq!(fresh_style_copies(&redline, &partial, &half).len(), 1);
+    assert_word_valid_package(&partial);
+}
+
+/// The last signed id can be allocated once; subsequent copies use the
+/// lowest unused revision ids, reserving records in other parts as well.
+#[test]
+fn style_history_id_overflow_uses_lowest_unused_package_ids() {
+    check_style_history_id_limit(2147483647);
+}
+
+#[test]
+fn style_history_id_allocation_crosses_signed_limit_safely() {
+    check_style_history_id_limit(2147483646);
+}
+
+fn check_style_history_id_limit(max_id: u64) {
+    let styles = format!(
+        r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:b/><w:rPrChange w:id="{max_id}" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading7"><w:name w:val="heading 7"/><w:basedOn w:val="Normal"/><w:link w:val="AliceChar"/><w:rPr><w:i/><w:rPrChange w:id="1" w:author="Bob" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style>
+<w:style w:type="character" w:styleId="AliceChar"><w:name w:val="Alice"/><w:link w:val="Heading7"/></w:style>
+<w:style w:type="paragraph" w:styleId="CarolPara"><w:name w:val="Carol Diaz"/><w:basedOn w:val="Heading7"/><w:link w:val="CarolChar"/></w:style>
+<w:style w:type="character" w:styleId="CarolChar"><w:name w:val="Carol Diaz Char"/><w:basedOn w:val="AliceChar"/><w:link w:val="CarolPara"/></w:style>
+</w:styles>"#
+    );
+    let source = docx_with_sect(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading7"/></w:pPr><w:r><w:t>Alice and Bob</w:t></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/styles.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                xml: &styles,
+            },
+            Part {
+                name: "word/header1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:ins w:id="0" w:author="Carol Diaz" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Header</w:t></w:r></w:ins></w:p></w:hdr>"#,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let partial = reject_changes(&source, &filter_ids(&["styles.r1"])).unwrap();
+    let before = style_histories(&source);
+    let after = style_histories(&partial);
+    let mut copies: Vec<_> = after
+        .iter()
+        .filter(|r| !before.contains(r))
+        .map(|r| r.2.parse::<u64>().unwrap())
+        .collect();
+    copies.sort_unstable();
+    assert!(
+        copies.iter().all(|&id| id <= 2147483647),
+        "copied revision ids {copies:?} exceed signed 32-bit range with input max {max_id}"
+    );
+    let expected = if max_id == 2147483647 {
+        vec![2, 3]
+    } else {
+        vec![2, 2147483647]
+    };
+    assert_eq!(
+        copies, expected,
+        "use max + 1 until exhausted, then the lowest unused ids"
+    );
+    assert!(
+        after
+            .iter()
+            .any(|r| r.0 == "Normal" && r.2 == max_id.to_string()),
+        "retained history id must not change"
+    );
+    assert!(
+        part_string(&partial, "word/header1.xml")
+            .unwrap()
+            .contains(r#"w:id="0""#)
+    );
+    assert_word_valid_package(&partial);
 }
 
 /// On Word's own redlines (the bench's `rejected_tracking` set): resolving every other change first and the rest after ends

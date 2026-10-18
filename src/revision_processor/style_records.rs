@@ -401,7 +401,7 @@ pub(super) fn restore_against_built_ins(
     styles_root: NodeId,
     restored: &[(String, &'static str)],
     levels: &Levels,
-    next_id: &mut u64,
+    next_id: &mut super::RevisionIds,
 ) {
     let by_id: HashMap<String, NodeId> = dom
         .elements(styles_root, Some(&W::name("style")))
@@ -546,7 +546,7 @@ fn resync_linked_character_styles(
     styles_root: NodeId,
     by_id: &HashMap<String, NodeId>,
     recorded: &[NodeId],
-    next_id: &mut u64,
+    next_id: &mut super::RevisionIds,
 ) {
     let mut pending: Vec<(NodeId, NodeId)> = recorded
         .iter()
@@ -588,7 +588,7 @@ fn effective_rpr(
     styles_root: NodeId,
     by_id: &HashMap<String, NodeId>,
     style: NodeId,
-    next_id: &mut u64,
+    next_id: &mut super::RevisionIds,
 ) -> NodeId {
     let out = dom.new_element(W::name("rPr"));
     let mut chain = ancestors(dom, by_id, style);

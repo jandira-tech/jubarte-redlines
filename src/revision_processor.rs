@@ -3493,24 +3493,59 @@ pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
 /// come back unchanged ([`crate::changes`]).
 pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
 
-/// Start a writer's allocator above every existing `w:id` in the package,
-/// including records a selective resolution will freeze or remove.
-pub(crate) fn next_revision_id(pkg: &crate::opc::PartFs) -> u64 {
-    pkg.parts()
-        .into_iter()
-        .filter(|part| part.ends_with(".xml"))
-        .filter_map(|part| {
-            let xml = pkg.part_string(&part)?;
+/// Package-wide ids reserved before any revision is frozen or removed.
+/// Annotation ids and XML parts outside the revision pipeline have other scopes.
+pub(crate) struct RevisionIds {
+    next: u64,
+    used: HashSet<u64>,
+}
+
+impl RevisionIds {
+    pub(crate) fn new(pkg: &crate::opc::PartFs) -> Self {
+        let mut used = HashSet::new();
+        for (part, _) in revision_bearing_parts(pkg) {
+            let Some(xml) = pkg.part_string(&part) else {
+                continue;
+            };
             let mut dom = Dom::new();
             let doc = dom.parse_xdocument(&xml);
-            let root = dom.root(doc)?;
-            dom.descendants(root, None)
-                .into_iter()
-                .filter_map(|node| dom.attribute(node, &W::id())?.parse::<u64>().ok())
-                .max()
-        })
-        .max()
-        .map_or(0, |id| id + 1)
+            let Some(root) = dom.root(doc) else { continue };
+            for node in dom.descendants_and_self(root, None) {
+                if dom
+                    .name(node)
+                    .is_some_and(|name| crate::validate::has_unique_revision_id(&name))
+                    && let Some(id) = dom
+                        .attribute(node, &W::id())
+                        .and_then(|id| id.parse::<u64>().ok())
+                {
+                    used.insert(id);
+                }
+            }
+        }
+        Self::from_used(used)
+    }
+
+    pub(crate) fn from_used(used: HashSet<u64>) -> Self {
+        let next = used.iter().max().map_or(0, |id| id.saturating_add(1));
+        Self { next, used }
+    }
+
+    /// Keep max + 1 until Word's signed 32-bit range is exhausted, then
+    /// allocate the lowest unused id. Reserve copies immediately, too.
+    pub(crate) fn allocate(&mut self) -> u64 {
+        const MAX: u64 = i32::MAX as u64;
+        if self.next > MAX {
+            self.next = 0;
+        }
+        while self.used.contains(&self.next) {
+            self.next += 1;
+        }
+        assert!(self.next <= MAX, "revision id space exhausted");
+        let id = self.next;
+        self.used.insert(id);
+        self.next += 1;
+        id
+    }
 }
 
 /// A copied property history is a distinct record. Allocate at the copy
@@ -3518,7 +3553,7 @@ pub(crate) fn next_revision_id(pkg: &crate::opc::PartFs) -> u64 {
 pub(crate) fn clone_with_fresh_property_ids(
     dom: &mut Dom,
     source: NodeId,
-    next_id: &mut u64,
+    next_id: &mut RevisionIds,
 ) -> NodeId {
     let copy = dom.clone_subtree(source);
     for node in std::iter::once(copy).chain(dom.descendants(copy, None)) {
@@ -3526,8 +3561,7 @@ pub(crate) fn clone_with_fresh_property_ids(
             matches!(name.namespace_name(), W::URI | FROZEN_NS)
                 && matches!(name.local_name(), "rPrChange" | "pPrChange")
         }) {
-            dom.set_attribute_value(node, &W::id(), Some(&next_id.to_string()));
-            *next_id += 1;
+            dom.set_attribute_value(node, &W::id(), Some(&next_id.allocate().to_string()));
         }
     }
     copy
@@ -3555,7 +3589,7 @@ fn resolve(
     renumber: bool,
 ) -> Vec<String> {
     let parts = revision_bearing_parts(pkg);
-    let mut next_id = next_revision_id(pkg);
+    let mut next_id = RevisionIds::new(pkg);
     let levels = numbering_part(pkg)
         .and_then(|p| pkg.part_string(&p))
         .map(|xml| style_records::Levels::parse(&xml))
