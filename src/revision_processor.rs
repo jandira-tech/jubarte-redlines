@@ -238,6 +238,7 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     let name = dom.name(node).unwrap();
 
     // Accept inserted content: collapse w:ins.
+    // #1155: resolve even the final paragraph mark, unlike Word's Accept/Reject All.
     if name == W::ins() {
         let mut out = Vec::new();
         for c in dom.nodes(node) {
