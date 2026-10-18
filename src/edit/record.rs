@@ -257,7 +257,7 @@ pub(crate) struct RecordOptions {
 
 /// [`record`] over JSON, for the Python and npm CLIs: `verb` is `edit` or
 /// `add`, `operations` the parsed command's `operations` array, `held`
-/// PLAN.json's text, `options` a [`RecordOptions`] object. Returns `{plan,
+/// PLAN.json's text, `options` a `RecordOptions` object. Returns `{plan,
 /// json, notes, summary}`: `plan` to preview, `json` to write, `notes` and
 /// `summary` to print.
 ///

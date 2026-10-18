@@ -54,7 +54,7 @@ pub struct Capabilities {
     #[serde(default)]
     pub audit_rules: Vec<String>,
     /// Rule sets `validate --rules` accepts, with `word` (the default)
-    /// first ([`crate::validate::RULE_SETS`]).
+    /// first (`crate::validate::RULE_SETS`).
     #[serde(default)]
     pub validate_rules: Vec<String>,
     /// The file extensions each task's `-o` writes, indexed by task name
@@ -333,7 +333,7 @@ impl From<crate::admission::InputLimits> for InputBudget {
 
 /// The extensions each task's `-o` writes, by task name: Word, the agent
 /// view (`md`), a rendered PDF, PNG pages and the JSON snapshot. `diff -o`
-/// writes text under any of [`DIFF_EXTENSIONS`]. The CLI's `-o` rule reads this
+/// writes text under any of `DIFF_EXTENSIONS`. The CLI's `-o` rule reads this
 /// table, so its refusals and its help agree.
 pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
     ("compare", &["docx", "md", "pdf", "png", "json"]),

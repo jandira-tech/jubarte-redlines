@@ -779,7 +779,7 @@ impl ResultData {
 /// `std::result::Result` in function signatures.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Envelope {
-    /// Wire schema version; equals [`ENVELOPE_SCHEMA_VERSION`].
+    /// Wire schema version; equals `ENVELOPE_SCHEMA_VERSION`.
     pub schema_version: u32,
     /// Command identifier (`edit apply`, `edit template`, ...).
     pub command: String,
