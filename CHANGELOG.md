@@ -17,6 +17,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Breaking
 
+- Refresh saved edit anchors quoting the old in-code revision spelling (`` `w:del{++        ++}{r76 @AS}` ``): marks inside code are now literal, so those anchors can return `ANCHOR_NOT_FOUND`; quote a fresh view with marks outside the code fence.
+
 - `read --json` snapshot schema 2: `summary.tables` and `tables[]` count
   top-level tables, with view-aligned `index`. Cell tables move into
   recursive `nested` arrays with a `parent` cell path and no `index`.
