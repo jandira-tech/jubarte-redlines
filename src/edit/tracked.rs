@@ -1065,7 +1065,8 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
         };
         let (t, run) = chosen;
         isolate(dom, run, t);
-        (Some(run), Some(run), before)
+        let anchor = insertion_boundary_anchor(dom, run, before);
+        (Some(run), Some(anchor), before)
     };
     // A deletion stays inside the source insertion. Range endpoints stay
     // beside their words; the remaining children follow the editor's words.
@@ -1143,11 +1144,24 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
 
 /// Opening markers travel with the words to their right, closing markers
 /// with the words to their left. A comment reference stays with its end.
+pub(super) fn insertion_boundary_anchor(dom: &Dom, run: NodeId, before: bool) -> NodeId {
+    let Some(parent) = dom.parent(run) else {
+        return run;
+    };
+    let children = dom.elements(parent, None);
+    let Some(index) = children.iter().position(|&n| n == run) else {
+        return run;
+    };
+    let at = insertion_split_boundary(dom, &children, index + usize::from(!before), before);
+    children[if before { at } else { at - 1 }]
+}
+
 fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, before: bool) -> usize {
     if before {
         while at > 0
             && (dom.name_is(children[at - 1], &W::bookmark_start())
-                || dom.name_is(children[at - 1], &W::name("commentRangeStart")))
+                || dom.name_is(children[at - 1], &W::name("commentRangeStart"))
+                || dom.name_is(children[at - 1], &W::name("permStart")))
         {
             at -= 1;
         }
@@ -1159,7 +1173,9 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
             if let Some(id) = dom.attribute(child, &W::id()) {
                 closed_comments.insert(id);
             }
-        } else if !dom.name_is(child, &W::bookmark_end()) {
+        } else if !dom.name_is(child, &W::bookmark_end())
+            && !dom.name_is(child, &W::name("permEnd"))
+        {
             if !dom.name_is(child, &W::r()) {
                 break;
             }
@@ -1428,7 +1444,7 @@ fn mark(dom: &mut Dom, paragraph: NodeId, name: XName, stamp: &mut Stamp<'_>) {
 
 /// A copy of a run's `w:rPr` for new text: without another revision's
 /// format change or mark revisions, whose ids must stay unique.
-fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
+pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
     let copy = dom.clone_subtree(rpr);
     for child in dom.elements(copy, None) {
         if dom.name_is(child, &W::r_pr_change())

@@ -305,3 +305,356 @@ fn validator_still_reports_bookmark_crossing_revision() {
             .any(|f| f.code == "BOOKMARK_CROSSES_REVISION")
     );
 }
+
+const EDGE_TEXT: &str = "Clause one.";
+const EDGE_ADDED: &str = " Added.";
+
+fn edge_source(shape: &str) -> Vec<u8> {
+    let r = run(EDGE_TEXT, false, false, None);
+    let body = match shape {
+        "body_end" | "comment" => format!("<w:p>{START}{r}</w:p>{END}"),
+        "para_end" | "para_start" | "after" | "cli" | "before" => {
+            format!("<w:p>{START}{r}{END}</w:p>")
+        }
+        "span_end" => format!("<w:p>{START}{r}</w:p><w:p>{r}</w:p>{END}"),
+        "body_start" => format!("{START}<w:p>{r}</w:p>{END}"),
+        _ => unreachable!(),
+    };
+    docx(&(body + &para("Next.")))
+}
+
+/// Parent ownership and source-text coordinates, independently read from the
+/// serialized package. Body endpoints also record which paragraph gap owns
+/// them. New words are removed only when comparing source coordinates below.
+fn edge_endpoints(bytes: &[u8], family: &str) -> Vec<(String, String, String)> {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(&xml);
+    let root = dom.root(d).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let ps = dom.descendants(body, Some(&W::p()));
+    let names = match family {
+        "bookmark" => ["bookmarkStart", "bookmarkEnd"],
+        "comment" => ["commentRangeStart", "commentRangeEnd"],
+        "permission" => ["permStart", "permEnd"],
+        _ => unreachable!(),
+    };
+    let mut ids = Vec::new();
+    let locations = names
+        .into_iter()
+        .map(|name| {
+            let markers = dom.descendants(body, Some(&W::name(name)));
+            assert_eq!(markers.len(), 1, "{name}: {xml}");
+            let marker = markers[0];
+            ids.push(dom.attribute(marker, &W::id()).unwrap().to_owned());
+            assert!(
+                dom.ancestors(marker, Some(&W::ins())).is_empty(),
+                "pre-existing {name} swallowed: {xml}"
+            );
+            let parent = dom.parent(marker).unwrap();
+            let owner = if parent == body {
+                let gap = dom
+                    .elements(body, None)
+                    .into_iter()
+                    .take_while(|&n| n != marker)
+                    .filter(|n| ps.contains(n))
+                    .count();
+                format!("body:{gap}")
+            } else {
+                assert!(dom.name_is(parent, &W::p()), "{name} parent changed: {xml}");
+                format!("p{}", ps.iter().position(|&p| p == parent).unwrap())
+            };
+            let mut before = String::new();
+            let mut after = String::new();
+            let mut seen = false;
+            for n in dom.descendant_nodes(parent) {
+                if n == marker {
+                    seen = true;
+                } else if dom.name_is(n, &W::t()) {
+                    if seen {
+                        after.push_str(&dom.value(n));
+                    } else {
+                        before.push_str(&dom.value(n));
+                    }
+                }
+            }
+            assert!(seen);
+            (owner, before, after)
+        })
+        .collect();
+    assert_eq!(ids[0], ids[1], "range pair changed: {xml}");
+    locations
+}
+
+fn check_edge_output(
+    source: &[u8],
+    output: &[u8],
+    family: &str,
+    p: usize,
+    start: bool,
+    tracked: bool,
+) {
+    let expected = edge_endpoints(source, family);
+    let check_locations = |bytes: &[u8], inserted: bool| {
+        let actual = edge_endpoints(bytes, family);
+        for (i, ((owner, before, after), old)) in actual.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                (
+                    owner.clone(),
+                    before.replace(EDGE_ADDED, ""),
+                    after.replace(EDGE_ADDED, "")
+                ),
+                *old,
+                "source endpoint ownership changed"
+            );
+            if inserted && *owner == format!("p{p}") {
+                if start && i == 0 && old.1.is_empty() {
+                    assert_eq!(
+                        before, EDGE_ADDED,
+                        "opening marker must follow the new words"
+                    );
+                }
+                if !start && i == 1 && old.2.is_empty() {
+                    assert_eq!(
+                        after, EDGE_ADDED,
+                        "closing marker must precede the new words"
+                    );
+                }
+            }
+        }
+    };
+    let mut wanted = texts(source);
+    wanted[p] = if start {
+        format!("{EDGE_ADDED}{}", wanted[p])
+    } else {
+        format!("{}{EDGE_ADDED}", wanted[p])
+    };
+    assert_eq!(texts(output), wanted);
+    assert_no_bookmark_findings(&[("output", output)]);
+    check_locations(output, true);
+    assert_word_valid_package(output);
+    let xml = part_string(output, "word/document.xml").unwrap();
+    assert_eq!(xml.contains("<w:ins "), tracked, "{xml}");
+    let accepted = accept_revisions(output).unwrap();
+    let rejected = reject_revisions(output).unwrap();
+    assert_no_bookmark_findings(&[("accepted", &accepted), ("rejected", &rejected)]);
+    check_locations(&accepted, true);
+    check_locations(&rejected, !tracked);
+    assert_eq!(texts(&accepted), wanted);
+    assert_eq!(
+        texts(&rejected),
+        if tracked { texts(source) } else { wanted }
+    );
+}
+
+fn save_edge_output(shape: &str, source: &[u8], tracked: &[u8]) {
+    if let Some(path) = std::env::var_os("JUBARTE_EDGE_OUTPUT_DIR") {
+        let path = std::path::PathBuf::from(path);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join(format!("{shape}.docx")), tracked).unwrap();
+        std::fs::write(path.join(format!("{shape}-source.docx")), source).unwrap();
+        std::fs::write(path.join(format!("{shape}.txt")), "opens with no prompt; Reject All gives the source text with the bookmark where the source had it\n").unwrap();
+    }
+}
+
+fn check_run_edge(shape: &str, policy: &str) {
+    let source = edge_source(shape);
+    let p = usize::from(shape == "span_end");
+    let start = matches!(shape, "body_start" | "para_start" | "before");
+    let location = match shape {
+        "after" => format!(r#""after":"{EDGE_TEXT}""#),
+        "before" => format!(r#""before":"{EDGE_TEXT}""#),
+        _ => format!(r#""position":"{}""#, if start { "start" } else { "end" }),
+    };
+    let comment = if shape == "comment" {
+        r#", "comment":"Drafts for review.""#
+    } else {
+        ""
+    };
+    let plan = EditPlan::from_json(&format!(r#"{{"schema_version":1,"author":"Alice","date":"2026-10-18T12:00:00Z","existing_revisions":"{policy}","operations":[{{"kind":"insert","paragraph":"p{p}",{location},"text":"{EDGE_ADDED}"{comment}}}]}}"#)).unwrap();
+    let result = apply_plan(&source, &plan);
+    assert!(result.is_ok(), "edge insert refused: {result:?}");
+    let result = result.unwrap();
+    for (output, tracked) in [(&result.redline, true), (&result.clean, false)] {
+        check_edge_output(&source, output, "bookmark", p, start, tracked);
+    }
+    if shape == "comment" {
+        let comments = jubarte::comments::list_comments(&result.redline).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].anchor_text, EDGE_ADDED);
+        let xml = part_string(&result.redline, "word/document.xml").unwrap();
+        let mut dom = Dom::new();
+        let d = dom.parse_xdocument(&xml);
+        let root = dom.root(d).unwrap();
+        for name in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            let markers = dom.descendants(root, Some(&W::name(name)));
+            assert_eq!(markers.len(), 1, "{xml}");
+            assert_eq!(
+                dom.ancestors(markers[0], Some(&W::ins())).len(),
+                1,
+                "new comment belongs to new insertion: {xml}"
+            );
+        }
+    }
+    if policy == "refuse" {
+        save_edge_output(shape, &source, &result.redline);
+    }
+}
+
+#[test]
+fn run_edge_body_end() {
+    check_run_edge("body_end", "refuse");
+}
+#[test]
+fn run_edge_para_end() {
+    check_run_edge("para_end", "refuse");
+}
+#[test]
+fn run_edge_span_end() {
+    check_run_edge("span_end", "refuse");
+}
+#[test]
+fn run_edge_body_start() {
+    check_run_edge("body_start", "refuse");
+}
+#[test]
+fn run_edge_para_start() {
+    check_run_edge("para_start", "refuse");
+}
+#[test]
+fn run_edge_after() {
+    check_run_edge("after", "refuse");
+}
+#[test]
+fn run_edge_before() {
+    check_run_edge("before", "refuse");
+}
+#[test]
+fn run_edge_comment() {
+    check_run_edge("comment", "refuse");
+}
+#[test]
+fn run_edge_keep() {
+    for shape in [
+        "body_end",
+        "para_end",
+        "span_end",
+        "body_start",
+        "para_start",
+        "after",
+        "before",
+        "comment",
+    ] {
+        check_run_edge(shape, "keep");
+    }
+}
+
+#[test]
+fn run_edge_cli() {
+    let source = edge_source("cli");
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.docx");
+    let output = dir.path().join("tracked.docx");
+    std::fs::write(&input, &source).unwrap();
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .arg("edit")
+        .arg(&input)
+        .args(["-p", "p0", "--anchor", EDGE_TEXT, "--content"])
+        .arg(format!("{EDGE_TEXT}{EDGE_ADDED}"))
+        .args(["--author", "Alice", "-o"])
+        .arg(&output)
+        .args(["--force", "-q"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let tracked = std::fs::read(output).unwrap();
+    check_edge_output(&source, &tracked, "bookmark", 0, false, true);
+    let clean = accept_revisions(&tracked).unwrap();
+    check_edge_output(&source, &clean, "bookmark", 0, false, false);
+    save_edge_output("cli", &source, &tracked);
+}
+
+fn check_existing_edge_range(family: &str, start: bool, policy: &str) {
+    let (open, close) = match family {
+        "comment" => (
+            r#"<w:commentRangeStart w:id="7"/>"#,
+            r#"<w:commentRangeEnd w:id="7"/><w:r><w:commentReference w:id="7"/></w:r>"#,
+        ),
+        "permission" => (
+            r#"<w:permStart w:id="7" w:edGrp="everyone"/>"#,
+            r#"<w:permEnd w:id="7"/>"#,
+        ),
+        _ => unreachable!(),
+    };
+    let body = format!(
+        "<w:p>{open}{}{close}</w:p>{}",
+        run(EDGE_TEXT, false, false, None),
+        para("Next.")
+    );
+    let source = if family == "comment" {
+        common::docx::docx_with(
+            &body,
+            &[common::docx::Part {
+                name: "word/comments.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                xml: r#"<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="7" w:author="Carol Diaz" w:date="2026-10-18T12:00:00Z"><w:p><w:r><w:t>Original comment.</w:t></w:r></w:p></w:comment></w:comments>"#,
+            }],
+        )
+    } else {
+        docx(&body)
+    };
+    let position = if start { "start" } else { "end" };
+    let plan = EditPlan::from_json(&format!(r#"{{"schema_version":1,"author":"Alice","date":"2026-10-18T12:00:00Z","existing_revisions":"{policy}","operations":[{{"kind":"insert","paragraph":"p0","position":"{position}","text":"{EDGE_ADDED}"}}]}}"#)).unwrap();
+    let result = apply_plan(&source, &plan);
+    assert!(result.is_ok(), "edge insert refused: {result:?}");
+    let result = result.unwrap();
+    for (output, tracked) in [(&result.redline, true), (&result.clean, false)] {
+        check_edge_output(&source, output, family, 0, start, tracked);
+        if family == "comment" {
+            let comments = jubarte::comments::list_comments(output).unwrap();
+            assert_eq!(comments.len(), 1);
+            assert_eq!(comments[0].anchor_text, EDGE_TEXT);
+            let xml = part_string(output, "word/document.xml").unwrap();
+            let mut dom = Dom::new();
+            let d = dom.parse_xdocument(&xml);
+            let root = dom.root(d).unwrap();
+            let references = dom.descendants(root, Some(&W::name("commentReference")));
+            assert_eq!(references.len(), 1, "{xml}");
+            assert!(
+                dom.ancestors(references[0], Some(&W::ins())).is_empty(),
+                "pre-existing comment reference swallowed: {xml}"
+            );
+        }
+    }
+}
+
+#[test]
+fn run_edge_existing_comment_end() {
+    check_existing_edge_range("comment", false, "refuse");
+}
+#[test]
+fn run_edge_existing_comment_start() {
+    check_existing_edge_range("comment", true, "refuse");
+}
+#[test]
+fn run_edge_existing_permission_end() {
+    check_existing_edge_range("permission", false, "keep");
+}
+#[test]
+fn run_edge_existing_permission_start() {
+    check_existing_edge_range("permission", true, "keep");
+}
+#[test]
+fn run_edge_existing_ranges_keep() {
+    for family in ["comment", "permission"] {
+        for start in [false, true] {
+            check_existing_edge_range(family, start, "keep");
+        }
+    }
+}

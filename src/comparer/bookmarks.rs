@@ -55,6 +55,9 @@ struct Marker {
     /// An end at its paragraph's text start retains the following side,
     /// before the adjacent run's outermost inline revision, if any.
     end_leads: bool,
+    /// Text offsets cannot encode a body-level endpoint's paragraph gap.
+    start_in_body: bool,
+    end_in_body: bool,
     /// `w:colFirst`/`w:colLast`, kept verbatim as Word does (Google Docs
     /// writes them on plain paragraph bookmarks).
     cols: Option<(String, String)>,
@@ -139,6 +142,8 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
                 leads,
                 start_trails,
                 end_leads: false,
+                start_in_body: dom.parent(n) == Some(body) && dom.name_is(body, &W::body()),
+                end_in_body: false,
                 cols,
                 in_sdt: !dom.ancestors(n, Some(&W::name("sdt"))).is_empty(),
             };
@@ -148,6 +153,7 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
         {
             marker.end = text.len();
             marker.end_leads = paragraph_of(&dom, n).is_some_and(|p| !with_text.contains(&p));
+            marker.end_in_body = dom.parent(n) == Some(body) && dom.name_is(body, &W::body());
             markers.push(marker);
         }
     }
@@ -333,6 +339,21 @@ fn inject_side(
             dom.add_before_self(end, start);
         }
         leave_foreign_controls(dom, m, start, end, s >= e);
+        // A body endpoint belongs beside the paragraph, even when its
+        // adjacent text now sits in an inline insertion. Offset placement
+        // alone would pull it into that paragraph (and that revision).
+        for (endpoint, in_body, after) in
+            [(start, m.start_in_body, false), (end, m.end_in_body, true)]
+        {
+            if in_body && let Some(paragraph) = paragraph_of(dom, endpoint) {
+                dom.remove(endpoint);
+                if after {
+                    dom.add_after_self(paragraph, endpoint);
+                } else {
+                    dom.add_before_self(paragraph, endpoint);
+                }
+            }
+        }
     }
 }
 
@@ -497,6 +518,8 @@ mod tests {
                 leads: !trailing_start,
                 start_trails: trailing_start,
                 end_leads: !trailing_start,
+                start_in_body: false,
+                end_in_body: false,
                 cols: None,
                 in_sdt: false,
             };

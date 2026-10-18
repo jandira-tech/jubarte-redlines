@@ -5699,6 +5699,43 @@ fn apply_text_edit(
 ) {
     if start == end {
         let seg = attach_segment(projection, start, attach_before).expect("checked at resolution");
+        // At a run edge the source range endpoints keep their side of the
+        // words. A separate run lets both the clean copy and the comparer
+        // retain that boundary instead of extending the source range.
+        let (leaf, run) = match seg.piece {
+            Piece::Text { t, run } => (t, run),
+            Piece::Glyph { element, run } => (element, run),
+        };
+        let before = start == seg.start;
+        let content: Vec<_> = dom
+            .elements(run, None)
+            .into_iter()
+            .filter(|&n| !dom.name_is(n, &W::r_pr()))
+            .collect();
+        let at_run_edge = if before {
+            content.first() == Some(&leaf)
+        } else {
+            start == seg.end && content.last() == Some(&leaf)
+        };
+        if at_run_edge {
+            let anchor = tracked::insertion_boundary_anchor(dom, run, before);
+            if anchor != run {
+                let inserted = dom.new_element(W::r());
+                if let Some(rpr) = dom.element(run, &W::r_pr()) {
+                    let rpr = tracked::clean_rpr(dom, rpr);
+                    dom.add(inserted, rpr);
+                }
+                let t = dom.new_element(W::t());
+                dom.add(inserted, t);
+                write_text(dom, t, replacement);
+                if before {
+                    dom.add_before_self(anchor, inserted);
+                } else {
+                    dom.add_after_self(anchor, inserted);
+                }
+                return;
+            }
+        }
         match seg.piece {
             Piece::Text { t, .. } => {
                 let value = dom.value(t);
