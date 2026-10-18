@@ -315,7 +315,7 @@ fn probe_duplicate_rid_fails() {
 }
 
 #[test]
-fn probe_duplicate_revision_id_fails() {
+fn probe_cross_kind_revision_ids_are_valid() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
@@ -328,11 +328,7 @@ fn probe_duplicate_revision_id_fails() {
 </w:document>"#;
     let bytes = zip_with_parts(&[("word/document.xml", doc)]);
     let report = check_word_valid_package(&bytes);
-    assert!(
-        report.errors.iter().any(|e| e.contains("duplicate w:id")),
-        "expected duplicate w:id error, got: {:?}",
-        report.errors
-    );
+    assert!(report.ok(), "accepted ins/del pair: {:?}", report.errors);
 }
 
 #[test]
@@ -1802,4 +1798,179 @@ fn issue_1137_revision_id_scope_is_one_part() {
         ),
     ]);
     assert!(check_word_valid_package(&bytes).ok());
+}
+
+// SDK probes accept these cross-kind pairs, including Word's paired style records.
+fn issue_1137_accepted_pair(first: &str, second: &str, placement: &str) {
+    let mark = |kind: &str| {
+        let inner = match kind {
+            "del" => "<w:r><w:delText>a</w:delText></w:r>",
+            "pPrChange" => "<w:pPr/>",
+            "rPrChange" => "<w:rPr/>",
+            _ => "<w:r><w:t>a</w:t></w:r>",
+        };
+        format!("<w:{kind} w:id=\"1\" w:author=\"Alice\">{inner}</w:{kind}>")
+    };
+    let pair = if first == "pPrChange" {
+        format!(
+            "<w:pPr>{}</w:pPr><w:rPr>{}</w:rPr>",
+            mark(first),
+            mark(second)
+        )
+    } else if second == "rPrChange" {
+        format!(
+            "{}<w:r><w:rPr>{}</w:rPr><w:t>b</w:t></w:r>",
+            mark(first),
+            mark(second)
+        )
+    } else {
+        format!("{}{}", mark(first), mark(second))
+    };
+    let bytes = if placement == "style" {
+        common::docx::docx_with(
+            "<w:p/>",
+            &[common::docx::Part {
+                name: "word/styles.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                xml: &format!(
+                    "<w:styles xmlns:w=\"{}\"><w:style w:type=\"paragraph\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>{pair}</w:style></w:styles>",
+                    common::docx::W_NS
+                ),
+            }],
+        )
+    } else {
+        let pair = if first == "pPrChange" {
+            format!(
+                "<w:pPr>{}</w:pPr><w:r><w:rPr>{}</w:rPr><w:t>b</w:t></w:r>",
+                mark(first),
+                mark(second)
+            )
+        } else {
+            pair
+        };
+        common::docx::docx(&format!("<w:p>{pair}</w:p>"))
+    };
+    let findings = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap());
+    assert!(
+        findings.is_empty(),
+        "{first}/{second} in {placement}: {findings:?}"
+    );
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert!(repaired.repaired.is_empty(), "{:?}", repaired.repaired);
+    assert_eq!(
+        repaired.docx, bytes,
+        "an accepted pair must stay byte-identical"
+    );
+}
+
+#[test]
+fn issue_1137_cross_kind_ins_del_is_valid() {
+    issue_1137_accepted_pair("ins", "del", "body");
+}
+#[test]
+fn issue_1137_cross_kind_moves_are_valid() {
+    issue_1137_accepted_pair("moveFrom", "moveTo", "body");
+}
+#[test]
+fn issue_1137_cross_kind_ins_move_is_valid() {
+    issue_1137_accepted_pair("ins", "moveFrom", "body");
+}
+#[test]
+fn issue_1137_cross_kind_style_properties_are_valid() {
+    issue_1137_accepted_pair("pPrChange", "rPrChange", "style");
+}
+#[test]
+fn issue_1137_cross_kind_body_properties_are_valid() {
+    issue_1137_accepted_pair("pPrChange", "rPrChange", "body");
+}
+#[test]
+fn issue_1137_cross_kind_ins_run_properties_are_valid() {
+    issue_1137_accepted_pair("ins", "rPrChange", "body");
+}
+
+#[test]
+fn issue_1137_repair_renumbers_only_the_refused_pair() {
+    let bytes = common::docx::docx(
+        r#"<w:p><w:ins w:id="1" w:author="Alice"><w:r><w:t>a</w:t></w:r></w:ins><w:del w:id="1" w:author="Bob"><w:r><w:delText>b</w:delText></w:r></w:del><w:ins w:id="1" w:author="Alice"><w:r><w:t>c</w:t></w:r></w:ins></w:p>"#,
+    );
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(
+        repaired
+            .repaired
+            .iter()
+            .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+            .count(),
+        1
+    );
+    let before = common::docx::part_string(&bytes, "word/document.xml").unwrap();
+    let expected = before.replace(
+        r#"<w:ins w:id="1" w:author="Alice"><w:r><w:t>c"#,
+        r#"<w:ins w:id="2" w:author="Alice"><w:r><w:t>c"#,
+    );
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let document = dom.parse_xdocument(&expected);
+    assert_eq!(
+        common::docx::part_string(&repaired.docx, "word/document.xml").unwrap(),
+        dom.serialize_document(document)
+    );
+    assert_word_valid_package(&repaired.docx);
+}
+
+fn issue_1137_context_pair(kind: &str, left: &str, right: &str, duplicate: bool) {
+    let chunk = |context: &str| {
+        let attributes = r#" w:id="1" w:author="Alice""#;
+        if context == "run" {
+            let text = if kind == "del" { "delText" } else { "t" };
+            return format!(
+                "<w:p><w:{kind}{attributes}><w:r><w:{text}>a</w:{text}></w:r></w:{kind}></w:p>"
+            );
+        }
+        let mark = format!("<w:{kind}{attributes}/>");
+        if context == "paragraph" {
+            format!("<w:p><w:pPr><w:rPr>{mark}</w:rPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p>")
+        } else {
+            format!(
+                "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"1000\"/></w:tblGrid><w:tr><w:trPr>{mark}</w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl>"
+            )
+        }
+    };
+    let bytes = common::docx::docx(&format!("{}{}", chunk(left), chunk(right)));
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(
+        repaired
+            .repaired
+            .iter()
+            .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+            .count(),
+        usize::from(duplicate),
+        "{kind}: {left}/{right}"
+    );
+    assert_word_valid_package(&repaired.docx);
+    if !duplicate {
+        assert_eq!(
+            repaired.docx, bytes,
+            "accepted {kind}: {left}/{right} must stay byte-identical"
+        );
+    }
+}
+
+macro_rules! issue_1137_context_probes {
+    ($($test:ident: ($kind:literal, $left:literal, $right:literal, $duplicate:literal)),* $(,)?) => {$(
+        #[test]
+        fn $test() { issue_1137_context_pair($kind, $left, $right, $duplicate); }
+    )*};
+}
+
+issue_1137_context_probes! {
+    issue_1137_ins_run_and_row_ids_are_separate: ("ins", "run", "row", false),
+    issue_1137_ins_run_and_paragraph_mark_ids_are_separate: ("ins", "run", "paragraph", false),
+    issue_1137_del_run_and_row_ids_are_separate: ("del", "run", "row", false),
+    issue_1137_del_run_and_paragraph_mark_ids_are_separate: ("del", "run", "paragraph", false),
+    issue_1137_move_from_run_and_mark_ids_are_separate: ("moveFrom", "run", "paragraph", false),
+    issue_1137_move_to_run_and_mark_ids_are_separate: ("moveTo", "run", "paragraph", false),
+    issue_1137_ins_row_and_paragraph_mark_ids_conflict: ("ins", "row", "paragraph", true),
+    issue_1137_del_row_and_paragraph_mark_ids_conflict: ("del", "row", "paragraph", true),
+    issue_1137_move_from_paragraph_mark_ids_conflict: ("moveFrom", "paragraph", "paragraph", true),
+    issue_1137_move_to_paragraph_mark_ids_conflict: ("moveTo", "paragraph", "paragraph", true),
 }

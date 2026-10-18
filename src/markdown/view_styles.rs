@@ -34,8 +34,8 @@ use super::xml::{FormatMark, escape};
 
 /// `styles` with a tracked change on each holder the view's
 /// `style_changes:` names. A style's two tags name its `w:pPrChange` and
-/// `w:rPrChange` in document order; a legacy single tag names both, with
-/// package assembly assigning distinct ids. `docDefaults` takes only a
+/// `w:rPrChange` in document order; a single tag names both with their
+/// shared id, as Word writes them. `docDefaults` takes only a
 /// `w:rPrChange`. Each carries empty previous properties as the view names
 /// no payload. A holder the part has no style of is left out.
 pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMark>)]) -> String {

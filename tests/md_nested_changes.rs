@@ -2367,7 +2367,8 @@ fn issue_1134_footer_deletion_field() {
 }
 
 // #1137: one view id can name several marks, but each written element
-// needs a unique OOXML id. These are synthetic, in-memory packages.
+// needs an OOXML id unique within its element kind. These are synthetic,
+// in-memory packages.
 fn issue_1137_view(body: &str) -> String {
     format!("---\nauthors:\n  A: Alice\n  B: Bob\n---\n{body}\n")
 }
@@ -2417,7 +2418,10 @@ fn issue_1137_checked(
                 let id = dom
                     .attribute(node, &jubarte::namespaces::W::name("id"))
                     .unwrap();
-                assert!(ids.insert(id.to_string()), "duplicate {id} in {xml}");
+                assert!(
+                    ids.insert((name, id.to_string())),
+                    "duplicate {id} in {xml}"
+                );
             }
         }
     }
@@ -2722,7 +2726,7 @@ fn issue_1137_distinct_style_tags_name_distinct_property_records() {
 }
 
 #[test]
-fn issue_1137_renamed_style_records_reach_a_fixed_point() {
+fn issue_1137_paired_style_records_reach_a_fixed_point() {
     let first = issue_1137_checked(
         &issue_1137_style_view("styles.r1 @A"),
         "word/styles.xml",
@@ -2730,7 +2734,14 @@ fn issue_1137_renamed_style_records_reach_a_fixed_point() {
         0,
     );
     assert_eq!(issue_1137_style_records(&first.docx).len(), 2);
-    assert_eq!(first.warnings.len(), 1, "{:?}", first.warnings);
+    assert!(first.warnings.is_empty(), "{:?}", first.warnings);
+    assert_eq!(
+        issue_1137_style_records(&first.docx)
+            .iter()
+            .map(|(_, id, _)| id.as_str())
+            .collect::<Vec<_>>(),
+        ["1", "1"]
+    );
     let view = issue_1137_agent_without_hash(&first.docx);
     let second = issue_1137_checked(&view, "word/styles.xml", 0, 0);
     let records = issue_1137_style_records(&second.docx);
@@ -2751,4 +2762,48 @@ fn issue_1137_adjacent_hyperlink_pieces_merge() {
         let canonical = plain(&out.docx);
         assert_eq!(plain(&written(&canonical)), canonical);
     }
+}
+
+// Existing Word-saved fixture: both EvidenceQuote and Decision have paired ids.
+const ISSUE_1137_WORD_STYLES: &[u8] = include_bytes!(
+    "corpus/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx"
+);
+
+#[test]
+fn issue_1137_reference_keeps_word_style_records_byte_identical() {
+    let source = part_string(ISSUE_1137_WORD_STYLES, "word/styles.xml").unwrap();
+    let out = markdown_to_docx(
+        "Body.",
+        &DocxOptions {
+            reference: Some(ISSUE_1137_WORD_STYLES),
+            ..DocxOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        part_string(&out.docx, "word/styles.xml").unwrap() == source,
+        "reference stylesheet bytes changed"
+    );
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+}
+
+#[test]
+fn issue_1137_word_style_records_keep_their_shape() {
+    let expected = issue_1137_style_records(ISSUE_1137_WORD_STYLES);
+    assert_eq!(expected.len(), 4);
+    assert_eq!(
+        expected
+            .iter()
+            .map(|(_, id, _)| id.as_str())
+            .collect::<Vec<_>>(),
+        ["0", "0", "1", "1"]
+    );
+    let view = agent(ISSUE_1137_WORD_STYLES);
+    let out = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+    assert_eq!(issue_1137_style_records(&out.docx), expected);
+    assert!(
+        !out.warnings.iter().any(|w| w.contains("styles.r")),
+        "{:?}",
+        out.warnings
+    );
 }
