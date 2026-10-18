@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::docx::{docx, para};
+use jubarte::cli::slash_path;
 use jubarte::inspect::source_sha256;
 
 const BIN: &str = env!("CARGO_BIN_EXE_jubarte");
@@ -954,10 +955,17 @@ fn moved_source_applies_its_plan_and_still_refuses_output_aliases() {
         let receipt: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(receipt["status"], "ok");
         assert_eq!(receipt["source"]["sha256"], source_sha256(&before));
+        // #568: the receipt's path is the canonical one an agent reads
+        // back — compared as strings in the convention's spelling, since
+        // `Path` equality on Windows would equate a `//?/C:/…` string with
+        // the verbatim path while an agent could not use it as written.
+        let shown = receipt["source"]["path"].as_str().unwrap();
         assert_eq!(
-            Path::new(receipt["source"]["path"].as_str().unwrap()),
-            dir.join("moved/b.docx").canonicalize().unwrap()
+            shown,
+            slash_path(&dir.join("moved/b.docx").canonicalize().unwrap())
         );
+        // #1222: a verbatim prefix spelled out is `//?/` — not a path.
+        assert!(!shown.contains("//?"), "{shown}");
         assert_eq!(receipt["effective_options"]["source_binding"], "bound");
         assert_eq!(receipt["data"]["counts"]["body_operations_applied"], 1);
         if dry_run {
