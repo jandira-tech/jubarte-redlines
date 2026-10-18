@@ -25,6 +25,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+mod common;
+
 const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 
 /// The page count and its source at the end of the `body:` line.
@@ -115,8 +117,14 @@ fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
     Ok(docx)
 }
 
+/// Each author's mark and comment dates, as the reader reports them: Word's
+/// UTC instant (`w16du:dateUtc`) when the mark has one, else `w:date`.
 fn author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
     use jubarte::namespaces::W;
+    let date_utc = jubarte::xmllinq::XName::get(
+        "dateUtc",
+        "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
+    );
     let mut dates: HashMap<String, Vec<Option<String>>> = HashMap::new();
     let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(docx)) else {
         return dates;
@@ -134,10 +142,11 @@ fn author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
         let root = dom.root(doc).expect("a part root");
         for node in dom.descendants_and_self(root, None) {
             if let Some(author) = dom.attribute(node, &W::author()) {
-                dates
-                    .entry(author.to_string())
-                    .or_default()
-                    .push(dom.attribute(node, &W::date()).map(str::to_string));
+                dates.entry(author.to_string()).or_default().push(
+                    dom.attribute(node, &date_utc)
+                        .or_else(|| dom.attribute(node, &W::date()))
+                        .map(str::to_string),
+                );
             }
         }
     }
@@ -259,6 +268,35 @@ fn latest_collapse_requires_every_mark_and_comment_of_the_named_author() {
             "{body}"
         );
     }
+}
+
+#[test]
+fn latest_collapse_reads_the_utc_instant_the_reader_reports() {
+    // Word for Mac writes local wall-clock time in `w:date` and the instant
+    // in `w16du:dateUtc`; the reader reports the instant (#1118), so the
+    // guard compares the instant too.
+    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T20:59:00Z\n---\n";
+    let shared = latest.replace(", latest ", ", ");
+    let utc = r#" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-17T20:59:00Z""#;
+    let docx = common::docx::docx(&format!(
+        r#"<w:p><w:ins w:id="1" w:author="Ann Lee" w:date="2026-10-17T16:59:00Z"{utc}><w:r><w:t>one</w:t></w:r></w:ins><w:ins w:id="2" w:author="Ann Lee" w:date="2026-10-17T20:59:00Z"><w:r><w:t>two</w:t></w:r></w:ins></w:p>"#
+    ));
+    assert_eq!(
+        round_trip_comparable(latest, &docx),
+        round_trip_comparable(&shared, &docx)
+    );
+    let local = docx_without_utc(&docx);
+    assert_ne!(
+        round_trip_comparable(latest, &local),
+        round_trip_comparable(&shared, &local),
+        "without dateUtc the local w:date counts"
+    );
+}
+
+fn docx_without_utc(docx: &[u8]) -> Vec<u8> {
+    let xml = common::docx::part_string(docx, "word/document.xml").unwrap();
+    let xml = xml.replace(r#" w16du:dateUtc="2026-10-17T20:59:00Z""#, "");
+    common::docx::replace_entry(docx, "word/document.xml", xml.as_bytes())
 }
 
 /// The first lines that differ, numbered, for the failure report.
