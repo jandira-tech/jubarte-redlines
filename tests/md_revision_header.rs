@@ -4,7 +4,7 @@
 //! The revisions summary describes the printed changes, including nested ones.
 mod common;
 
-use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
+use jubarte::markdown::{MarkdownOptions, TrackChanges, docx_to_markdown};
 use regex::Regex;
 
 const KINDS: [&str; 6] = [
@@ -152,6 +152,158 @@ fn agent(xml: &str) -> String {
     )
     .unwrap()
     .markdown
+}
+
+fn revisions_line(view: &str) -> &str {
+    view.lines()
+        .find(|line| line.starts_with("revisions:"))
+        .unwrap()
+}
+
+/// The revision list is the source of truth once the body has been resolved.
+fn raw_summary(docx: &[u8]) -> String {
+    use jubarte::changes::{ChangeKind, list_changes};
+    let mut counts = [0; 6];
+    for change in list_changes(docx).unwrap() {
+        if change.id.contains('.') || change.kind == ChangeKind::Formatting {
+            continue;
+        }
+        let at = match change.target {
+            "paragraph_mark" => 2,
+            "table_row" => 3,
+            "table_cell" => 4,
+            _ => match change.kind {
+                ChangeKind::Insertion => 0,
+                ChangeKind::Deletion => 1,
+                ChangeKind::Move => 5,
+                ChangeKind::Formatting => unreachable!(),
+            },
+        };
+        counts[at] += 1;
+    }
+    let total: usize = counts.iter().sum();
+    let kinds = counts
+        .into_iter()
+        .zip([
+            "insertion",
+            "deletion",
+            "paragraph mark",
+            "table row",
+            "table cell",
+            "move",
+        ])
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, kind)| format!("{n} {kind}{}", if n == 1 { "" } else { "s" }))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{total} mark{}: {kinds}", if total == 1 { "" } else { "s" })
+}
+
+#[track_caller]
+fn assert_raw_summary(view: &str, expected: &str) {
+    let line = revisions_line(view);
+    let comment = line.split_once("# ").unwrap().1;
+    assert_eq!(comment.split(';').next().unwrap(), expected, "{line}");
+}
+
+#[test]
+fn resolved_received_headers_keep_the_raw_kinds() {
+    let dir = std::path::Path::new("tests/fixtures/agent-view");
+    let docx = std::fs::read(dir.join("received.docx")).unwrap();
+    let expected = raw_summary(&docx);
+    assert_eq!(expected, "9 marks: 5 insertions, 4 deletions");
+    for (mode, name) in [
+        (TrackChanges::Accept, "received.accept.md"),
+        (TrackChanges::Reject, "received.reject.md"),
+    ] {
+        let view = docx_to_markdown(
+            &docx,
+            &MarkdownOptions {
+                ids: true,
+                track_changes: mode,
+                ..MarkdownOptions::default()
+            },
+        )
+        .unwrap()
+        .markdown;
+        assert_raw_summary(&view, &expected);
+        let path = dir.join(name);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        if std::env::var_os("JUBARTE_BLESS").is_some() {
+            let blessed = saved.replacen(revisions_line(&saved), revisions_line(&view), 1);
+            std::fs::write(&path, blessed).unwrap();
+        }
+        assert_raw_summary(&std::fs::read_to_string(path).unwrap(), &expected);
+    }
+}
+
+#[test]
+fn resolved_headers_count_raw_paragraph_marks_and_unmerged_insertions() {
+    let docx = common::docx::docx_with_sect(
+        &format!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="0" w:author="Alice"/></w:rPr><w:pPrChange w:id="4" w:author="Alice"><w:pPr/></w:pPrChange></w:pPr>{}{}{}</w:p><w:p><w:r><w:t>next</w:t></w:r></w:p>"#,
+            revision("ins", 1, "Alice", "one"),
+            revision("ins", 2, "Alice", "two"),
+            revision("del", 3, "Bob", "old"),
+        ),
+        &[common::docx::Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &format!(
+                r#"<w:hdr xmlns:w="{}"><w:p>{}</w:p></w:hdr>"#,
+                common::docx::W_NS,
+                revision("ins", 5, "Alice", "header")
+            ),
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let expected = raw_summary(&docx);
+    assert_eq!(
+        expected,
+        "4 marks: 2 insertions, 1 deletion, 1 paragraph mark"
+    );
+    for mode in [TrackChanges::Accept, TrackChanges::Reject] {
+        let view = docx_to_markdown(
+            &docx,
+            &MarkdownOptions {
+                ids: true,
+                track_changes: mode,
+                ..MarkdownOptions::default()
+            },
+        )
+        .unwrap()
+        .markdown;
+        assert_raw_summary(&view, &expected);
+        assert!(
+            revisions_line(&view).ends_with("; 1 formatting; 1 in header1"),
+            "{view}"
+        );
+    }
+}
+
+#[test]
+fn resolved_headers_name_table_marks_and_moves_from_the_revision_list() {
+    let docx = common::docx::docx(&format!(
+        r#"<w:p>{}{}</w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="2" w:author="Alice"/></w:trPr><w:tc><w:tcPr><w:cellDel w:id="3" w:author="Bob"/></w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        revision("moveFrom", 0, "Alice", "before"),
+        revision("moveTo", 1, "Alice", "after"),
+    ));
+    let expected = raw_summary(&docx);
+    assert_eq!(expected, "4 marks: 1 table row, 1 table cell, 2 moves");
+    for mode in [TrackChanges::Accept, TrackChanges::Reject] {
+        let view = docx_to_markdown(
+            &docx,
+            &MarkdownOptions {
+                ids: true,
+                track_changes: mode,
+                ..MarkdownOptions::default()
+            },
+        )
+        .unwrap()
+        .markdown;
+        assert_raw_summary(&view, &expected);
+    }
 }
 
 #[test]
