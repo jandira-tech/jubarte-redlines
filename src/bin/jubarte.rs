@@ -381,9 +381,11 @@ fn check_side_file(
 ) -> Result<(), ConvertFailure> {
     for (other, name) in others {
         if same_path(side, other) {
-            return Err(
-                format!("{flag} '{}' is the same file as the {name}", side.display()).into(),
-            );
+            return Err(format!(
+                "{flag} '{}' is the same file as the {name}",
+                slash_path(side)
+            )
+            .into());
         }
     }
     ensure_writable(side, force)
@@ -614,7 +616,7 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
             if let Some(side) = side.filter(|side| same_path(side, path)) {
                 return Err(format!(
                     "{flag} '{}' is the same file as the PNG output",
-                    side.display()
+                    slash_path(side)
                 )
                 .into());
             }
@@ -1507,12 +1509,14 @@ fn edit_envelope_exit(receipt: &jubarte::result::Envelope) -> u8 {
 }
 
 /// An existing output without --force is a usage refusal: exit 2.
+/// Usage refusals name paths as identifiers an agent reads back, so they
+/// use `slash_path`'s `/` spelling on every OS (#568), not the native one.
 fn taken_output(path: &Path) -> (u8, String) {
     (
         EXIT_USAGE,
         format!(
             "OUTPUT_EXISTS: output '{}' already exists (use --force to overwrite)",
-            path.display()
+            slash_path(path)
         ),
     )
 }
@@ -1541,8 +1545,8 @@ fn refuse_output_alias(output: &Path, inputs: &[(&Path, &str)]) -> Result<(), (u
                 EXIT_USAGE,
                 format!(
                     "OUTPUT_ALIAS: the output '{}' is the same file as {what} '{}'",
-                    output.display(),
-                    input.display()
+                    slash_path(output),
+                    slash_path(input)
                 ),
             ));
         }
@@ -1571,7 +1575,7 @@ fn recheck_edit_source(file: &Path, source: &[u8]) -> Result<(), (u8, String)> {
             EXIT_PLAN_REFUSED,
             format!(
                 "SOURCE_CHANGED: '{}' changed since the edit was prepared; nothing was published",
-                file.display()
+                slash_path(file)
             ),
         ));
     }
@@ -1602,8 +1606,8 @@ fn refuse_bundle_input_containment(
                     EXIT_USAGE,
                     format!(
                         "OUTPUT_ALIAS: the output directory '{}' contains {what} '{}'",
-                        dir.display(),
-                        input.display()
+                        slash_path(dir),
+                        slash_path(input)
                     ),
                 ));
             }
