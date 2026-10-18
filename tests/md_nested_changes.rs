@@ -1004,7 +1004,11 @@ fn a_note_on_a_live_insertion_rebuilds_the_nested_deletion() {
         if shape == "two" {
             expected.push(("w:del", "5", Some("3")));
         }
-        assert_revision_tree(&document, &expected);
+        assert_revision_tree(
+            &document,
+            &expected,
+            &revision_attributes(&part_string(&source, "word/document.xml").unwrap()),
+        );
     }
 }
 
@@ -1026,7 +1030,11 @@ fn review_1111_paragraph_wrapping_insertion_keeps_text() {
     }
 }
 
-fn assert_revision_tree(xml: &str, expected: &[(&str, &str, Option<&str>)]) {
+fn assert_revision_tree(
+    xml: &str,
+    expected: &[(&str, &str, Option<&str>)],
+    attributes: &[(String, Option<String>)],
+) {
     use quick_xml::{Reader, events::Event};
     let mut reader = Reader::from_str(xml);
     let mut stack = Vec::new();
@@ -1069,6 +1077,11 @@ fn assert_revision_tree(xml: &str, expected: &[(&str, &str, Option<&str>)]) {
         .map(|(_, id, _)| id)
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(ids.len(), found.len(), "duplicate revision id: {xml}");
+    assert_eq!(
+        revision_attributes(xml),
+        attributes,
+        "revision author/date: {xml}"
+    );
 }
 
 fn assert_nested_round_trip(
@@ -1083,7 +1096,11 @@ fn assert_nested_round_trip(
     for markdown in [view, plain(source)] {
         let round = written(&markdown);
         let document = part_string(&round, "word/document.xml").unwrap();
-        assert_revision_tree(&document, expected);
+        assert_revision_tree(
+            &document,
+            expected,
+            &revision_attributes(&part_string(source, "word/document.xml").unwrap()),
+        );
         assert_eq!(body(&agent(&round)), body(&agent(source)), "{markdown}");
         assert_eq!(plain(&round), plain(source), "{markdown}");
     }
@@ -1203,15 +1220,21 @@ fn split_revision_parent_choice_is_deterministic() {
         for ((paragraph, outer_id), piece) in paragraphs.iter().zip(outer_ids).zip(order) {
             // Word repeats revision 3 across paragraphs. Check each tree
             // separately: the helper also rejects duplicate ids within it.
-            assert_revision_tree(
-                &format!("<w:p>{paragraph}</w:p>"),
-                &[("w:ins", outer_id, None), ("w:del", "3", Some(outer_id))],
-            );
             let parent = match piece {
                 0 => "Ana Lima",
                 1 => bare_parent,
                 _ => "Cy Dee",
             };
+            let parent_piece = if piece == 1 {
+                if name == "after" { 2 } else { 0 }
+            } else {
+                piece
+            };
+            assert_revision_tree(
+                &format!("<w:p>{paragraph}</w:p>"),
+                &[("w:ins", outer_id, None), ("w:del", "3", Some(outer_id))],
+                &revision_attributes(pieces[parent_piece]),
+            );
             assert!(
                 paragraph.contains(&format!(r#"w:author="{parent}""#)),
                 "{name}: {paragraph}"
@@ -1309,7 +1332,11 @@ fn a_footnote_live_insertion_keeps_its_nested_deletion() {
     for markdown in [view, plain(&source)] {
         let round = written(&markdown);
         let notes = part_string(&round, "word/footnotes.xml").unwrap();
-        assert_revision_tree(&notes, &[("w:ins", "3", None), ("w:del", "4", Some("3"))]);
+        assert_revision_tree(
+            &notes,
+            &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+            &revision_attributes(&part_string(&source, "word/footnotes.xml").unwrap()),
+        );
         let second = agent(&round);
         assert!(second.contains(note), "{second}");
         assert_eq!(body(&second), body(&agent(&source)), "{markdown}");
@@ -1372,7 +1399,11 @@ fn assert_story_nested_round_trip(
     }
     let round = written(&view);
     let part = part_string(&round, &format!("word/{kind}1.xml")).unwrap();
-    assert_revision_tree(&part, expected);
+    assert_revision_tree(
+        &part,
+        expected,
+        &revision_attributes(&part_string(&source, &format!("word/{kind}1.xml")).unwrap()),
+    );
     assert!(check_word_valid_package(&round).ok(), "{part}");
     let second = agent(&round);
     for note in notes {
@@ -1458,7 +1489,14 @@ fn review_1126_day_range_story_reuses_one_open_tag() {
             let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
             println!("{kind}: {xml}");
             assert_eq!(xml.matches("<w:ins ").count(), 1, "{xml}");
-            assert_revision_tree(&xml, &[("w:ins", "3", None), ("w:del", "4", Some("3"))]);
+            assert_revision_tree(
+                &xml,
+                &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+                &[
+                    revision_by("Alice", Some("2026-09-29T00:00:00Z")),
+                    revision_by("Bob", Some("2026-09-30T09:00:00Z")),
+                ],
+            );
         }
     }
 }
@@ -1468,7 +1506,14 @@ fn review_1126_day_range_body_has_one_open_tag() {
     let view = "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29..2026-09-30\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\n---\nNotify the buyer{++ and the bank++}{>>r3 @AL<<}{-- and the broker--}{>>r4 @BO on r3 @AL<<}.\n";
     let xml = part_string(&written(view), "word/document.xml").unwrap();
     println!("body: {xml}");
-    assert_revision_tree(&xml, &[("w:ins", "3", None), ("w:del", "4", Some("3"))]);
+    assert_revision_tree(
+        &xml,
+        &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+        &[
+            revision_by("Alice", Some("2026-09-30T23:59:59Z")),
+            revision_by("Bob", Some("2026-09-30T09:00:00Z")),
+        ],
+    );
 }
 
 #[test]
@@ -1495,7 +1540,14 @@ fn review_1126_noid_parent_is_one_fresh_revision() {
                 .next()
                 .unwrap();
             assert_ne!(id, "4", "fresh parent id collides with child: {xml}");
-            assert_revision_tree(&xml, &[("w:ins", id, None), ("w:del", "4", Some(id))]);
+            assert_revision_tree(
+                &xml,
+                &[("w:ins", id, None), ("w:del", "4", Some(id))],
+                &[
+                    revision_by("Alice", Some("2026-09-29T14:05:00Z")),
+                    revision_by("Bob", Some("2026-09-30T09:00:00Z")),
+                ],
+            );
             assert!(check_word_valid_package(&round).ok(), "{xml}");
         }
     }
@@ -1566,5 +1618,160 @@ fn review_1126_story_refuses_a_substitution_parent_note() {
             );
             assert!(result.unwrap_err().to_string().contains(&note));
         }
+    }
+}
+
+fn revision_by(author: &str, date: Option<&str>) -> (String, Option<String>) {
+    (author.to_string(), date.map(str::to_string))
+}
+
+/// Expected attributions come from the source package, independently of
+/// the writer; move marks become insertions/deletions on the round trip.
+fn revision_attributes(xml: &str) -> Vec<(String, Option<String>)> {
+    use quick_xml::{Reader, events::Event};
+    let mut reader = Reader::from_str(xml);
+    let mut attributes = Vec::new();
+    loop {
+        match reader.read_event().unwrap() {
+            Event::Start(element)
+                if matches!(
+                    element.name().as_ref(),
+                    "w:ins" | "w:del" | "w:moveFrom" | "w:moveTo"
+                ) =>
+            {
+                let get = |name: &str| {
+                    element
+                        .attributes()
+                        .map(Result::unwrap)
+                        .find(|attr| attr.key.as_ref() == name)
+                        .map(|attr| attr.value.into_owned())
+                };
+                attributes.push((get("w:author").unwrap(), get("w:date")));
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    attributes
+}
+
+#[test]
+fn review_1126_tree_check_rejects_wrong_author_and_date() {
+    let original = r#"<w:ins w:id="3" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:t>live</w:t></w:r></w:ins>"#;
+    let expected = [("w:ins", "3", None)];
+    let attributes = revision_attributes(original);
+    for changed in [
+        original.replace("Alice", "Bob"),
+        original.replace("2026-09-29", "2026-09-30"),
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| assert_revision_tree(&changed, &expected, &attributes))
+                .is_err(),
+            "tree assertion accepted changed metadata: {changed}"
+        );
+    }
+}
+
+#[test]
+fn a_footer_live_insertion_keeps_a_leading_deletion() {
+    story_live_insertion_keeps_nested_deletions("footer", "head");
+}
+
+#[test]
+fn a_footer_live_insertion_keeps_a_middle_deletion() {
+    story_live_insertion_keeps_nested_deletions("footer", "middle");
+}
+
+/// A nested story probe with Alice's live runs around Bob's payload.
+fn review_1126_story_payload(payload: &str, beside: &str) -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:ins w:id="3" w:author="Alice" w:date="2026-09-29T14:05:00Z">
+      <w:r><w:t>live</w:t></w:r>
+      <w:del w:id="4" w:author="Bob" w:date="2026-09-30T09:00:00Z">{payload}</w:del>
+      <w:r><w:t>tail</w:t></w:r></w:ins>{beside}</w:p>"#
+    ))
+}
+
+#[test]
+fn review_1126_nested_story_keeps_a_page_field() {
+    let source = review_1126_story_payload(
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>
+      <w:r><w:delInstrText xml:space="preserve"> PAGE </w:delInstrText></w:r>
+      <w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        "",
+    );
+    for kind in ["header", "footer"] {
+        let story = in_story(&source, kind);
+        let view = agent(&story);
+        assert!(view.contains("{PAGE}"), "{view}");
+        let note = format!("{{>>{kind}1.r4 @B on {kind}1.r3 @A<<}}");
+        assert_story_nested_round_trip(
+            &source,
+            kind,
+            &[&note],
+            &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
+        );
+        let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+        let deletion = xml
+            .split("<w:del ")
+            .nth(1)
+            .unwrap()
+            .split("</w:del>")
+            .next()
+            .unwrap();
+        assert!(deletion.contains("w:delInstrText"), "{xml}");
+        assert!(deletion.contains(" PAGE "), "{xml}");
+        assert_eq!(
+            deletion.matches("w:fldCharType=\"begin\"").count(),
+            1,
+            "{xml}"
+        );
+        assert_eq!(
+            deletion.matches("w:fldCharType=\"end\"").count(),
+            1,
+            "{xml}"
+        );
+    }
+}
+
+#[test]
+fn review_1126_story_keeps_a_substitution_beside_a_nest() {
+    let source = review_1126_story_payload(
+        r#"<w:r><w:delText>x</w:delText></w:r>"#,
+        r#"<w:ins w:id="6" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:t>new</w:t></w:r></w:ins>
+      <w:del w:id="7" w:author="Bob" w:date="2026-09-30T09:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del>"#,
+    );
+    for kind in ["header", "footer"] {
+        let view = agent(&in_story(&source, kind));
+        assert!(view.contains("{~~old~>new~~}"), "{view}");
+        let note = format!("{{>>{kind}1.r4 @B on {kind}1.r3 @A<<}}");
+        assert_story_nested_round_trip(
+            &source,
+            kind,
+            &[&note],
+            &[
+                ("w:ins", "3", None),
+                ("w:del", "4", Some("3")),
+                ("w:ins", "6", None),
+                ("w:del", "7", None),
+            ],
+        );
+    }
+}
+
+#[test]
+fn review_1126_open_tag_identity_is_local_to_each_story_part() {
+    let view = "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29T14:05:00Z\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\nheaders:\n  default: {id: header1, text: \"{++a++}{>>header1.r3 @AL<<}\"}\nfooters:\n  default: {id: footer1, text: \"{++b++}{>>footer1.r3 @BO<<}\"}\n---\nBody.\n";
+    let round = written(view);
+    for (part, author, date) in [
+        ("header1", "Alice", "2026-09-29T14:05:00Z"),
+        ("footer1", "Bob", "2026-09-30T09:00:00Z"),
+    ] {
+        let xml = part_string(&round, &format!("word/{part}.xml")).unwrap();
+        assert_revision_tree(
+            &xml,
+            &[("w:ins", "3", None)],
+            &[revision_by(author, Some(date))],
+        );
     }
 }
