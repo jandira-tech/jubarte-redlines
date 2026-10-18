@@ -976,9 +976,19 @@ the default `"remove"` follows Word's removal behavior. Partial overlaps
 keep the existing behavior. Unknown values are refused as `INVALID_PLAN`.
 The policy is available in plans; `accept`/`reject` keep their existing warnings.
 Comment and bookmark ids stay stable while a plan runs, so later operations
-still address the source comments. Once all operations finish, each output
-with no revisions left gets Word's shared annotation numbering. The settlement
-receipts retain source comment ids; newly added comments report their written ids.
+still address the source comments. After all operations finish, the preserving
+path numbers the revision-free working document once; its clean copy, tracked
+replay and operation receipts share that allocation. Pending source revisions
+retain their ids. The comparer path retains ids in both outputs: it unions
+comments from its original and edited inputs, so numbering only the edited
+input would change comment matching. Settlement receipts retain source comment
+ids; newly added comments report their written ids.
+
+If settlement removes a kept thread's row, cell or whole table, its empty
+anchor moves to the end of the last surviving paragraph before that container
+in the same story, or the start of the first paragraph after it. Removed and
+kept receipts never list the same comment. Removal text names the acceptance
+or rejection that removed the thread; kept text names its published paragraph.
 
 The v1 plan envelope is documented in `schemas/edit-plan-v1.schema.json`,
 and the typed v2 schema in `schemas/edit-plan-v2.schema.json`.
