@@ -290,3 +290,38 @@ fn issue_1137_preexisting_duplicate_does_not_block_edit_publication() {
             .any(|f| f.code == "DUPLICATE_REVISION_ID")
     );
 }
+
+#[test]
+fn received_word_warnings_fail_with_and_without_strict() {
+    let dir = tempfile::tempdir().unwrap();
+    let received =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agent-view/received.docx");
+    std::fs::copy(received, dir.path().join("received.docx")).unwrap();
+    for strict in [false, true] {
+        let mut args = vec!["validate", "received.docx"];
+        if strict {
+            args.push("--strict");
+        }
+        let (code, out, err) = run(dir.path(), &args);
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        assert!(
+            out.contains("COMMENT_METADATA_MISMATCH\twarning\t"),
+            "{out}"
+        );
+        assert!(
+            out.ends_with("2 finding(s): 0 error, 2 warning, 0 info\n"),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn strict_help_explains_the_additional_warning_threshold() {
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out, err) = run(dir.path(), &["validate", "--help"]);
+    assert_eq!(code, 0, "{err}");
+    let normalized = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains(
+        "--strict Also fail (exit 2) on warnings from other rule sets; word and edits findings fail without it"
+    ), "{out}");
+}

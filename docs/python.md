@@ -1191,8 +1191,9 @@ Options:
                        Arguments: <FILE> The document (.docx) Options: --json JSON
                        Lines: one object per finding, nothing when there is none --rules
                        <RULES> Rule sets or audit codes, comma-separated [default: word;
-                       with --original, word and edits] --strict Fail (exit 2) on
-                       warnings too, not only on errors --repair <FILE> Write the
+                       with --original, word and edits] --strict Also fail (exit 2) on
+                       warnings from other rule sets; word and edits findings fail
+                       without it --repair <FILE> Write the
                        repaired package here; remaining findings still fail --original
                        <FILE> Check tracked edits: every text change against ORIGINAL
                        must be a revision by --author --author <NAME> The author every
