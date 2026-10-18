@@ -3589,13 +3589,14 @@ impl<'p> Transaction<'p> {
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(", ");
+                // A blanket settlement names no revision: no parenthesis.
                 let revisions = if revisions.is_empty() {
-                    "the plan's revisions"
+                    String::new()
                 } else {
-                    &revisions
+                    format!(" ({revisions})")
                 };
                 format!(
-                    "c{target} is gone once the plan's revisions are settled ({revisions}): its anchor and replies are removed, as Word does; a reply, edit or resolve on that thread would be lost; settle fewer revisions, drop the thread operation, or set \"removed_anchor_comments\": \"keep\"",
+                    "c{target} is gone once the plan's revisions are settled{revisions}: its anchor and replies are removed, as Word does; a reply, edit or resolve on that thread would be lost; settle fewer revisions, drop the thread operation, or set \"removed_anchor_comments\": \"keep\"",
                 )
             } else {
                 format!("no comment c{target} in the document (jubarte comments lists them)")

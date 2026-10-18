@@ -1474,7 +1474,11 @@ fn run_edit(
         names.len(),
         names.join(", ")
     ));
-    for note in edit_notes(notes, &result) {
+    let primary = match job.mode {
+        Mode::Suggesting => &result.redline,
+        Mode::Editing => &result.clean,
+    };
+    for note in edit_notes(notes, &result, primary) {
         edit_status(format_args!("{note}"));
     }
     for (name, bytes) in &outputs {
@@ -1986,8 +1990,13 @@ fn settlement_notes(
 }
 
 /// The `note:` lines of an applied edit: the flags' notes, then each
-/// anchor that matched as the paragraph reads rather than as typed.
-fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<String> {
+/// anchor that matched as the paragraph reads rather than as typed. A kept
+/// comment names its paragraph in `published`, the copy the mode writes.
+fn edit_notes(
+    notes: &[String],
+    result: &jubarte::edit::EditResult,
+    published: &[u8],
+) -> Vec<String> {
     let mut lines: Vec<String> = notes.iter().map(|note| format!("note: {note}")).collect();
     let decision = if result.report.resolved_revisions.rejected.is_empty() {
         "acceptance"
@@ -1997,7 +2006,7 @@ fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<Strin
     lines.extend(settlement_notes(
         &result.report.removed_comments,
         &result.report.kept_comments,
-        &result.redline,
+        published,
         decision,
     ));
     for outcome in &result.report.operations {
@@ -2129,7 +2138,7 @@ fn write_edited(
             wrote_png_line(&pattern, png_count, job.dpi)
         ));
     }
-    for note in edit_notes(notes, result) {
+    for note in edit_notes(notes, result, document) {
         edit_status(format_args!("{note}"));
     }
     print_edit_success(

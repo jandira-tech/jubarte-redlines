@@ -1354,3 +1354,96 @@ fn receipt_1193_tracked_reply_id_matches_both_outputs() {
         assert_word_valid_package(bytes);
     }
 }
+
+#[test]
+fn refusal_1191_lists_settled_revisions_only_when_the_plan_names_them() {
+    let named = apply_plan(
+        &inserted_comment(),
+        &anchor_plan(
+            serde_json::json!({"resolve_revisions":{"reject":{"ids":["r1"]}}}),
+            anchor_reply(),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(named.code, "UNKNOWN_COMMENT");
+    assert!(
+        named
+            .message
+            .contains("c0 is gone once the plan's revisions are settled (r1): its anchor"),
+        "{}",
+        named.message
+    );
+    // A blanket settlement names no revision, so no parenthesis repeats
+    // "the plan's revisions".
+    let blanket = apply_plan(
+        &inserted_comment(),
+        &anchor_plan(
+            serde_json::json!({"existing_revisions":"reject"}),
+            anchor_reply(),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(blanket.code, "UNKNOWN_COMMENT");
+    assert!(
+        blanket
+            .message
+            .contains("c0 is gone once the plan's revisions are settled: its anchor"),
+        "{}",
+        blanket.message
+    );
+    assert!(
+        !blanket.message.contains("(the plan's revisions)"),
+        "{}",
+        blanket.message
+    );
+}
+
+/// The kept receipt names the paragraph of the file the edit publishes:
+/// the clean copy under `--editing-mode`, where a paragraph the plan deletes
+/// is gone, and the redline otherwise, where it is still there, deleted.
+fn kept_receipt_after_a_deleted_paragraph(editing: bool) {
+    let mut pkg = jubarte::opc::PartFs::open(&settlement_identity_source()).unwrap();
+    let xml = pkg
+        .part_string("word/document.xml")
+        .unwrap()
+        .replace(
+            r#"<w:commentRangeStart w:id="2"/>"#,
+            r#"<w:ins w:id="2" w:author="Bob" w:date="2026-10-18T12:00:00Z"><w:commentRangeStart w:id="2"/>"#,
+        )
+        .replace(
+            r#"<w:commentReference w:id="2"/></w:r>"#,
+            r#"<w:commentReference w:id="2"/></w:r></w:ins>"#,
+        )
+        .replacen(
+            "<w:body>",
+            "<w:body><w:p><w:r><w:t>Lead</w:t></w:r></w:p>",
+            1,
+        );
+    pkg.set_part("word/document.xml", xml.into_bytes());
+    let plan = anchor_plan(
+        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep"}),
+        serde_json::json!([
+            {"kind":"delete_comment","comment_id":"c0"},
+            {"kind":"delete_paragraph","paragraph":"p0"}
+        ]),
+    );
+    let (text, bytes) = run_thread_cli(&pkg.to_zip().unwrap(), &plan, editing);
+    let comments = list_comments(&bytes).unwrap();
+    let kept = comments.iter().find(|c| c.text == "Target").unwrap();
+    let paragraph = kept.paragraph.as_deref().unwrap();
+    assert!(
+        text.lines()
+            .any(|l| l == format!("kept c2 on an empty anchor in {paragraph}")),
+        "kept receipt must name published {paragraph} (editing: {editing}): {text}"
+    );
+}
+
+#[test]
+fn receipt_1191_kept_paragraph_names_the_clean_copy_in_editing_mode() {
+    kept_receipt_after_a_deleted_paragraph(true);
+}
+
+#[test]
+fn receipt_1191_kept_paragraph_names_the_redline_in_suggesting_mode() {
+    kept_receipt_after_a_deleted_paragraph(false);
+}
