@@ -4,8 +4,10 @@
 
 //! Comments after Accept All / Reject All, as Word saves them.
 //!
-//! A comment whose `w:commentReference` went with the accepted deletion (or
-//! the rejected insertion) is gone: its range markers, its `comments.xml`
+//! A nonempty comment range whose characters all go with accepted deletions
+//! (or rejected insertions) is removed before resolving the story, even when
+//! its reference would survive. Originally empty and partially surviving ranges
+//! stay. A comment whose reference goes is also gone: its range markers, its `comments.xml`
 //! entry and its `commentsExtended` / `commentsIds` / `commentsExtensible`
 //! entries; with none left, the comment parts are not written. The comments
 //! left are renumbered with the bookmarks ([`super::annotation_ids`]). `people.xml` keeps the
@@ -61,11 +63,53 @@ impl Parsed {
     }
 }
 
-/// Drop the comments Accept / Reject All left without a reference, prune the
-/// comment family and `people.xml` (module docs).
-pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
-    let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
+/// Remove every comment range whose entire content is deleted, including
+/// its reference run. Replies have their own ranges beside the parent's in
+/// Word's shape; they go with the same content. Package pruning removes all
+/// corresponding definitions and metadata after story resolution.
+pub(super) fn drop_wholly_deleted_comments(dom: &mut Dom, root: NodeId) {
+    let dropped = super::bookmarks::wholly_deleted_ranges(
+        dom,
+        root,
+        &W::name("commentRangeStart"),
+        &W::name("commentRangeEnd"),
+    );
+    if dropped.is_empty() {
         return;
+    }
+    for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+        for marker in dom.descendants(root, Some(&W::name(local))) {
+            if dom
+                .attribute(marker, &W::id())
+                .is_some_and(|id| dropped.contains(id))
+            {
+                remove_marker(dom, marker);
+            }
+        }
+    }
+}
+
+/// A reference-only run goes with its marker; a run containing other content
+/// keeps that content. Range markers normally are siblings of runs.
+fn remove_marker(dom: &mut Dom, marker: NodeId) {
+    let run = dom.parent(marker).filter(|&p| dom.name(p) == Some(W::r()));
+    dom.remove(marker);
+    if let Some(run) = run
+        && dom
+            .elements(run, None)
+            .into_iter()
+            .all(|e| dom.name(e) == Some(W::r_pr()))
+    {
+        dom.remove(run);
+    }
+}
+
+/// Drop the comments Accept / Reject All left without a reference, prune the
+/// comment family and `people.xml` (module docs). Return their original ids,
+/// before annotation renumbering, so callers can report precisely what went.
+pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) -> Vec<String> {
+    let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
+        return Vec::new();
     };
     let stories: Vec<Parsed> = story_parts
         .iter()
@@ -84,6 +128,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
 
     let mut kept: HashSet<String> = HashSet::new();
     let mut dropped = false;
+    let mut removed = Vec::new();
     let mut dropped_paras: HashSet<String> = HashSet::new();
     let mut authors: HashSet<String> = HashSet::new();
     let para_id = W14::name("paraId");
@@ -95,6 +140,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
                 authors.insert(a.to_string());
             }
         } else {
+            removed.push(cid);
             for p in comments.dom.descendants(c, Some(&W::p())) {
                 if let Some(pid) = comments.dom.attribute(p, &para_id) {
                     dropped_paras.insert(pid.to_string());
@@ -111,7 +157,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
         for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
             for m in s.w(local) {
                 if !s.dom.attribute(m, &id).is_some_and(|v| kept.contains(v)) {
-                    s.dom.remove(m);
+                    remove_marker(&mut s.dom, m);
                     changed = true;
                 }
             }
@@ -135,6 +181,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
         prune_by_para(pkg, &dropped_paras);
     }
     prune_people(pkg, &main, &authors);
+    removed
 }
 
 /// A comment whose reference stayed while resolved content took one end of

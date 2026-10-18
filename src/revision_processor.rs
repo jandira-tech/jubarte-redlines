@@ -3260,6 +3260,7 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        comments::drop_wholly_deleted_comments(dom, e);
         bookmarks::drop_wholly_deleted_bookmarks(dom, e);
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
         let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
@@ -3498,13 +3499,13 @@ pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
 
 /// Accept or reject every revision `freeze` leaves in place. Annotation ids
 /// are renumbered only when no revision is left, so the ids of the ones kept
-/// still name them.
+/// still name them. Return the removed comments' original ids.
 pub(crate) fn resolve_package(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
-) {
-    resolve(pkg, resolution, freeze, true);
+) -> Vec<String> {
+    resolve(pkg, resolution, freeze, true)
 }
 
 fn resolve(
@@ -3512,7 +3513,7 @@ fn resolve(
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
     renumber: bool,
-) {
+) -> Vec<String> {
     let parts = revision_bearing_parts(pkg);
     let levels = numbering_part(pkg)
         .and_then(|p| pkg.part_string(&p))
@@ -3545,12 +3546,13 @@ fn resolve(
         });
     }
     let stories = story_parts(&parts);
-    comments::prune_orphan_comments(pkg, &stories);
+    let removed_comments = comments::prune_orphan_comments(pkg, &stories);
     notes::prune_orphan_notes(pkg, &stories);
     if renumber && !kept {
         annotation_ids::renumber(pkg, &stories);
     }
     word_save::tidy(pkg, &stories);
+    removed_comments
 }
 
 /// Rename every frozen revision element under `root` back into `w:`; true

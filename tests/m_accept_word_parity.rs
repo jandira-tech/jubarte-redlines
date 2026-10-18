@@ -594,3 +594,87 @@ fn accept_of_a_deleted_section_break_carries_its_header_on() {
         "header lost"
     );
 }
+
+#[path = "common/dead_comments.rs"]
+mod dead_comments;
+
+/// #1141(a): accepting a surrounding insertion must not keep a comment
+/// whose entire range disappears in a nested deletion.
+#[test]
+fn accept_dead_comment_probe_a_nested_deletion() {
+    let source = dead_comments::probe('a');
+    let accepted = accept_revisions(&source).unwrap();
+    dead_comments::assert_state(&accepted, false, &[]);
+    assert_eq!(paragraphs(&accepted), ["alpha NEW gamma"]);
+    let rejected = reject_revisions(&source).unwrap();
+    dead_comments::assert_state(&rejected, false, &[]);
+    assert_eq!(paragraphs(&rejected), [""]);
+}
+
+#[test]
+fn accept_dead_comment_probe_b_deleted_reference() {
+    let source = dead_comments::probe('b');
+    let accepted = accept_revisions(&source).unwrap();
+    dead_comments::assert_state(&accepted, false, &[]);
+    assert_eq!(paragraphs(&accepted), [""]);
+    let rejected = reject_revisions(&source).unwrap();
+    dead_comments::assert_state(&rejected, false, &[(0, "Existing range", None)]);
+    assert_eq!(paragraphs(&rejected), ["beta"]);
+}
+
+#[test]
+fn accept_dead_comment_probe_c_kept_character() {
+    let source = dead_comments::probe('c');
+    let accepted = accept_revisions(&source).unwrap();
+    dead_comments::assert_state(&accepted, false, &[(0, "Existing range", None)]);
+    assert_eq!(paragraphs(&accepted), ["x"]);
+    let rejected = reject_revisions(&source).unwrap();
+    dead_comments::assert_state(&rejected, false, &[(0, "Existing range", None)]);
+    assert_eq!(paragraphs(&rejected), ["betax"]);
+}
+
+#[test]
+fn accept_dead_comment_probe_e_removes_thread_metadata() {
+    let source = dead_comments::probe('e');
+    let accepted = accept_revisions(&source).unwrap();
+    dead_comments::assert_state(&accepted, true, &[(0, "Kept range", None)]);
+    assert_eq!(paragraphs(&accepted), ["", "kept"]);
+}
+
+#[test]
+fn accept_dead_comment_probe_f_deleted_paragraph_mark() {
+    let source = dead_comments::probe('f');
+    let accepted = accept_revisions(&source).unwrap();
+    dead_comments::assert_state(&accepted, false, &[]);
+    assert_eq!(paragraphs(&accepted), [""]);
+    let rejected = reject_revisions(&source).unwrap();
+    dead_comments::assert_state(&rejected, false, &[(0, "Existing range", None)]);
+    assert_eq!(paragraphs(&rejected), ["beta", "gamma"]);
+}
+
+/// Existing point comments have no characters to lose. Real inline content
+/// and an undeleted paragraph mark keep a nonempty range alive.
+#[test]
+fn accept_dead_comment_controls_keep_empty_and_nontext_ranges() {
+    for atom in [
+        "",
+        "<w:r><w:tab/></w:r>",
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>",
+        "</w:p><w:p>",
+    ] {
+        let deleted = if atom.is_empty() {
+            String::new()
+        } else {
+            dead_comments::deleted("gone", 7)
+        };
+        let body = format!(
+            "<w:p>{}{deleted}{atom}{}{}</w:p>",
+            dead_comments::start(0),
+            dead_comments::end(0),
+            dead_comments::reference(0)
+        );
+        let source = dead_comments::package(&body, false);
+        let accepted = accept_revisions(&source).unwrap();
+        dead_comments::assert_state(&accepted, false, &[(0, "Existing range", None)]);
+    }
+}
