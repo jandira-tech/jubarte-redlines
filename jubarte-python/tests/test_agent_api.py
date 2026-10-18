@@ -42,7 +42,7 @@ def letter() -> Document:
 def test_inspect_returns_typed_snapshot_with_ids_spans_and_summary() -> None:
     snap = letter().inspect()
     assert isinstance(snap, Snapshot)
-    assert snap.schema_version == 1
+    assert snap.schema_version == 2
     assert len(snap.source_sha256) == 64
     assert snap.summary.paragraphs == 4
     assert snap.summary.tables == 0

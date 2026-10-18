@@ -25,11 +25,14 @@ use crate::xmllinq::{Dom, NodeId, XName};
 
 mod tables;
 
-pub use tables::{Table, TableCell};
+pub use tables::{NestedTable, Table, TableCell};
 
-/// Wire schema version of [`inspect_json`] and of the [`crate::edit`]
-/// plan that consumes it.
+/// Wire schema version of legacy [`crate::edit`] plans and reports.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// Snapshot wire schema. Version 2 numbers top-level tables only and nests
+/// cell tables recursively, with a parent cell path rather than an index.
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 
 /// The story every document has; its paragraph ids are `pN`, and a
 /// selector without a `story` searches it.
@@ -94,7 +97,7 @@ pub struct Span {
 pub struct Summary {
     /// Body paragraphs, table cells included.
     pub paragraphs: usize,
-    /// Body tables, nested included.
+    /// Top-level body tables, numbered as the view's `tN`.
     pub tables: usize,
     /// `w:fldSimple` plus complex-field `begin` markers in the body.
     pub fields: usize,
@@ -136,7 +139,7 @@ pub struct Snapshot {
     pub paragraphs: Vec<Paragraph>,
     /// Header, footer and note stories, each with its own paragraphs.
     pub stories: Vec<Story>,
-    /// Body tables as grids of cells, nested tables included.
+    /// Top-level body tables as grids, with nested tables under their cells.
     pub tables: Vec<Table>,
     /// Content controls (`w:sdt`) in the body, in document order.
     pub controls: Vec<ContentControl>,
@@ -374,7 +377,7 @@ pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
         crate::comments::CommentError::Package(m) => InspectError::Package(m),
     })?;
     Ok(Snapshot {
-        schema_version: SCHEMA_VERSION,
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
         source_sha256: source_sha256(docx),
         summary,
         paragraphs,
@@ -402,49 +405,88 @@ pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
 /// tabs escaped), or `no tables`. Cell ids are short paragraph ids (`p1`),
 /// via [`crate::ids::short_paragraph`]; a cell of several paragraphs joins
 /// them with commas (`p3,p4`), a spelling only this listing prints. Every line
-/// ends with a newline.
+/// ends with a newline. Nested tables follow their containing cell row,
+/// indented two spaces per level and labelled `nested in CELL_PATH`.
 pub fn tables_text(tables: &[Table]) -> String {
-    use std::fmt::Write as _;
     let mut out = String::new();
     if tables.is_empty() {
         out.push_str("no tables\n");
     }
     for table in tables {
-        let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
-        let widths: Vec<String> = table.widths_dxa.iter().map(u32::to_string).collect();
-        let _ = writeln!(
-            out,
-            "table {}: {}x{columns} header_rows={} widths={}",
-            table.index,
-            table.rows.len(),
+        render_grid(
+            &mut out,
+            &format!("table {}", table.index),
+            &table.rows,
             table.header_rows,
-            widths.join(",")
+            &table.widths_dxa,
+            &table.nested,
+            0,
         );
-        for row in &table.rows {
-            let cells: Vec<String> = row
-                .iter()
-                .map(|cell| {
-                    let ids = if cell.paragraph_ids.is_empty() {
-                        "-".to_string()
-                    } else {
-                        cell.paragraph_ids
-                            .iter()
-                            .map(|id| crate::ids::short_paragraph(id))
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    };
-                    let text = cell
-                        .text
-                        .replace('\\', "\\\\")
-                        .replace('\n', "\\n")
-                        .replace('\t', "\\t");
-                    format!("{ids}={text}")
-                })
-                .collect();
-            let _ = writeln!(out, "{}", cells.join("\t"));
-        }
     }
     out
+}
+
+fn render_grid(
+    out: &mut String,
+    label: &str,
+    rows: &[Vec<TableCell>],
+    header_rows: usize,
+    widths_dxa: &[u32],
+    nested: &[NestedTable],
+    depth: usize,
+) {
+    use std::fmt::Write as _;
+    let indent = "  ".repeat(depth);
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<String> = widths_dxa.iter().map(u32::to_string).collect();
+    let _ = writeln!(
+        out,
+        "{indent}{label}: {}x{columns} header_rows={header_rows} widths={}",
+        rows.len(),
+        widths.join(",")
+    );
+    for (r, row) in rows.iter().enumerate() {
+        let cells: Vec<String> = row
+            .iter()
+            .map(|cell| {
+                let ids = if cell.paragraph_ids.is_empty() {
+                    "-".to_string()
+                } else {
+                    cell.paragraph_ids
+                        .iter()
+                        .map(|id| crate::ids::short_paragraph(id))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                let text = cell
+                    .text
+                    .replace('\\', "\\\\")
+                    .replace('\n', "\\n")
+                    .replace('\t', "\\t");
+                format!("{ids}={text}")
+            })
+            .collect();
+        let _ = writeln!(out, "{indent}{}", cells.join("\t"));
+        // The final row/cell segment is this table's own cell, even at
+        // several nesting levels. Emit its children directly below the row.
+        let row_prefix = format!("{r}.cell");
+        for child in nested.iter().filter(|child| {
+            child
+                .parent
+                .rsplit_once(".row")
+                .is_some_and(|(_, tail)| tail.starts_with(&row_prefix))
+        }) {
+            render_grid(
+                out,
+                &format!("nested in {}", child.parent),
+                &child.rows,
+                child.header_rows,
+                &child.widths_dxa,
+                &child.nested,
+                depth + 1,
+            );
+        }
+    }
 }
 
 /// Markdown rendering of already inspected paragraphs.
@@ -572,7 +614,7 @@ impl Opened {
         let (dom, body, pkg) = (&self.dom, self.body, &self.pkg);
         let mut summary = Summary {
             paragraphs: body_paragraphs(dom, body).len(),
-            tables: dom.descendants(body, Some(&W::tbl())).len(),
+            tables: tables::top_level_table_nodes(dom, body).len(),
             fields: dom.descendants(body, Some(&W::fld_simple())).len()
                 + dom
                     .descendants(body, Some(&W::fld_char()))

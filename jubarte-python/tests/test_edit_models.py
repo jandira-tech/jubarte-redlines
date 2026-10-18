@@ -283,7 +283,12 @@ def test_snapshot_tables_decode_to_immutable_grids():
         "header_rows": 1,
         "widths_dxa": [6000, 3360],
     }
-    snap = _decode_snapshot(json.dumps({"schema_version": 1, "source_sha256": "a" * 64, "summary": summary, "paragraphs": [], "tables": [table]}))
+    deepest = {**table, "rows": [[{"paragraph_ids": ["p3"], "text": "Carol Diaz"}]], "parent": "t0.row0.cell0.t0.row0.cell0", "nested": []}
+    del deepest["index"]
+    nested = {**table, "rows": [[{"paragraph_ids": ["p2"], "text": "Bob"}]], "parent": "t0.row0.cell0", "nested": [deepest]}
+    del nested["index"]
+    table["nested"] = [nested]
+    snap = _decode_snapshot(json.dumps({"schema_version": 2, "source_sha256": "a" * 64, "summary": summary, "paragraphs": [], "tables": [table]}))
     (decoded,) = snap.tables
     assert decoded.index == 0
     assert decoded.header_rows == 1
@@ -292,6 +297,16 @@ def test_snapshot_tables_decode_to_immutable_grids():
     assert decoded.rows[0][0].text == "Item"
     assert decoded.rows[0][1] == TableCell(paragraph_ids=(), text="")
     assert isinstance(decoded, Table)
+    assert hasattr(decoded, "nested"), "snapshot decoder dropped nested tables"
+    assert decoded.parent is None
+    assert len(decoded.nested) == 1
+    inner = decoded.nested[0]
+    assert inner.index is None
+    assert inner.parent == "t0.row0.cell0"
+    assert inner.rows[0][0].text == "Bob"
+    assert inner.nested[0].parent == "t0.row0.cell0.t0.row0.cell0"
+    assert inner.nested[0].rows[0][0].text == "Carol Diaz"
+    assert inner.nested[0].nested == ()
     with pytest.raises(FrozenInstanceError):
         decoded.index = 1
 

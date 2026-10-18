@@ -121,7 +121,7 @@ fn the_snapshot_carries_the_tables() {
 }
 
 #[test]
-fn a_nested_table_is_its_own_entry() {
+fn a_nested_table_belongs_to_its_parent_cell() {
     let inner = table(false, &[cell(&["Inner"]) + &cell(&["Cell"])]);
     let outer_cell = format!(
         "<w:tc><w:tcPr><w:tcW w:w=\"4680\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Outer</w:t></w:r></w:p>{inner}<w:p/></w:tc>"
@@ -130,7 +130,7 @@ fn a_nested_table_is_its_own_entry() {
     let source = docx(&(outer + &para("After.")));
     let found = tables(&source).unwrap();
     assert_eq!(found.len(), summary(&source).unwrap().tables);
-    assert_eq!(found.len(), 2);
+    assert_eq!(found.len(), 1);
     let outer = &found[0];
     assert_eq!(outer.header_rows, 0);
     // The outer cell keeps its own paragraphs; the nested ones are the
@@ -138,10 +138,15 @@ fn a_nested_table_is_its_own_entry() {
     assert_eq!(outer.rows[0][0].paragraph_ids, ["p0", "p3"]);
     assert_eq!(outer.rows[0][0].text, "Outer\n");
     assert_eq!(outer.rows[0][1].text, "Right");
-    let inner = &found[1];
-    assert_eq!(inner.index, 1);
-    assert_eq!(inner.rows[0][0].paragraph_ids, ["p1"]);
-    assert_eq!(inner.rows[0][1].text, "Cell");
+    let value = serde_json::to_value(outer).unwrap();
+    let inner = &value["nested"][0];
+    assert_eq!(inner["parent"], "t0.row0.cell0");
+    assert!(inner.get("index").is_none(), "{inner}");
+    assert_eq!(
+        inner["rows"][0][0]["paragraph_ids"],
+        serde_json::json!(["p1"])
+    );
+    assert_eq!(inner["rows"][0][1]["text"], "Cell");
 }
 
 #[test]
@@ -405,9 +410,15 @@ fn table_inventory_selects_a_top_level_table_and_its_nested_tables() {
     assert!(full.status.success(), "{full:?}");
     let text = String::from_utf8_lossy(&full.stdout);
     assert!(text.contains("table 0: 3x3"), "{text}");
-    assert!(text.contains("table 1:"), "{text}");
+    assert!(text.contains("  nested in t0.row2.cell0: 1x2"), "{text}");
+    assert!(!text.contains("table 1:"), "{text}");
     let out = read_table_fixture(&source, false, &["--tables", "-p", "t0"]);
     assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("  nested in t0.row2.cell0: 1x2"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     assert_summary_and_view(
         &source,
         "t0",
@@ -454,15 +465,15 @@ fn deeply_nested_tables() -> Vec<u8> {
 fn table_inventory_selection_follows_top_level_indices_at_any_depth() {
     let source = deeply_nested_tables();
     let found = tables(&source).unwrap();
-    assert_eq!(found.len(), 4);
+    assert_eq!(found.len(), 2);
     for spec in ["t0", "p2"] {
         let out = read_table_fixture(&source, false, &["--tables", "-p", spec]);
         assert!(out.status.success(), "{out:?}");
-        assert_summary_and_view(&source, spec, &tables_text(&found[..3]), &out);
+        assert_summary_and_view(&source, spec, &tables_text(&found[..1]), &out);
     }
     let out = read_table_fixture(&source, false, &["--tables", "-p", "t1"]);
     assert!(out.status.success(), "{out:?}");
-    assert_summary_and_view(&source, "t1", &tables_text(&found[3..]), &out);
+    assert_summary_and_view(&source, "t1", &tables_text(&found[1..]), &out);
     let view = read_table_fixture(&source, false, &["-p", "t1"]);
     assert!(view.status.success(), "{view:?}");
     assert!(String::from_utf8_lossy(&view.stdout).contains("|Alice|After|"));
@@ -503,4 +514,94 @@ fn table_inventory_still_refuses_other_selection_flags() {
             "{stderr}"
         );
     }
+}
+
+#[test]
+fn inventory_labels_match_the_tables_the_view_accepts() {
+    let source = deeply_nested_tables();
+    let out = read_table_fixture(&source, false, &["--tables"]);
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let labels: Vec<_> = text
+        .lines()
+        .filter(|line| line.starts_with("table "))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "table 0: 1x2 header_rows=0 widths=6000,3360",
+            "table 1: 1x2 header_rows=0 widths=6000,3360",
+        ],
+        "{text}"
+    );
+    for index in 0..2 {
+        let view = read_table_fixture(&source, false, &["-p", &format!("t{index}")]);
+        assert!(view.status.success(), "{view:?}");
+    }
+    let second = read_table_fixture(&source, false, &["--tables", "-p", "t1"]);
+    assert!(
+        String::from_utf8_lossy(&second.stdout).starts_with("table 1:"),
+        "{second:?}"
+    );
+}
+
+#[test]
+fn inventory_indents_nested_tables_beneath_their_cell_rows() {
+    let text = tables_text(&tables(&deeply_nested_tables()).unwrap());
+    assert_eq!(
+        text,
+        concat!(
+            "table 0: 1x2 header_rows=0 widths=6000,3360\n",
+            "p0,p6=Alice\\n\tp7=One\n",
+            "  nested in t0.row0.cell0: 1x2 header_rows=0 widths=6000,3360\n",
+            "  p1,p4=Bob\\n\tp5=Two\n",
+            "    nested in t0.row0.cell0.t0.row0.cell0: 1x2 header_rows=0 widths=6000,3360\n",
+            "    p2=Carol Diaz\tp3=Three\n",
+            "table 1: 1x2 header_rows=0 widths=6000,3360\n",
+            "p9=Alice\tp10=After\n",
+        )
+    );
+}
+
+#[test]
+fn selected_inventory_uses_nested_cell_paths() {
+    let source = hard_tables();
+    let out = read_table_fixture(&source, false, &["--tables", "-p", "t0"]);
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains(
+            "  nested in t0.row2.cell0: 1x2 header_rows=0 widths=1605,1607\n  p9=in nested\tp10=\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("table 1:"), "{text}");
+}
+
+#[test]
+fn json_tables_second_entry_is_the_second_top_level_table() {
+    let source = deeply_nested_tables();
+    let out = read_table_fixture(&source, false, &["--json"]);
+    assert!(out.status.success(), "{out:?}");
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["tables"][1]["rows"][0][1]["text"], "After");
+    assert_eq!(value["tables"][1]["index"], 1);
+    assert_eq!(value["tables"].as_array().unwrap().len(), 2);
+    assert_eq!(value["tables"][1]["nested"], serde_json::json!([]));
+    assert!(value["tables"][0].get("parent").is_none());
+}
+
+#[test]
+fn json_tables_nest_recursively_with_parent_cell_paths_and_no_index() {
+    let value: serde_json::Value =
+        serde_json::from_str(&inspect_json(&deeply_nested_tables()).unwrap()).unwrap();
+    let nested = &value["tables"][0]["nested"][0];
+    assert_eq!(nested["parent"], "t0.row0.cell0");
+    assert!(nested.get("index").is_none(), "{nested}");
+    assert_eq!(nested["rows"][0][0]["text"], "Bob\n");
+    let deepest = &nested["nested"][0];
+    assert_eq!(deepest["parent"], "t0.row0.cell0.t0.row0.cell0");
+    assert!(deepest.get("index").is_none(), "{deepest}");
+    assert_eq!(deepest["rows"][0][0]["text"], "Carol Diaz");
+    assert_eq!(deepest["nested"], serde_json::json!([]));
 }

@@ -53,7 +53,7 @@ fn retired_names_work_once_with_a_note() {
     assert_eq!(stderr, "note: text is now read; text is removed in 0.14\n");
     let (code, stdout, stderr) = run(&["inspect", file, "--json"]);
     assert_eq!(code, 0);
-    assert!(stdout.starts_with("{\"schema_version\":1"), "{stdout}");
+    assert!(stdout.starts_with("{\"schema_version\":2"), "{stdout}");
     assert_eq!(
         stderr,
         "note: inspect is now read; inspect is removed in 0.14\n"
@@ -110,7 +110,7 @@ fn json(args: &[&str]) -> serde_json::Value {
 #[test]
 fn read_json_prints_the_snapshot_with_changes_and_comments() {
     let snapshot = json(&["read", RECEIVED, "--json"]);
-    assert_eq!(snapshot["schema_version"], 1);
+    assert_eq!(snapshot["schema_version"], 2);
     assert_eq!(snapshot["paragraphs"][1]["id"], "p1");
     assert_eq!(snapshot["changes"][0]["ref"], "r0");
     assert_eq!(snapshot["comments"][0]["ref"], "c5");

@@ -307,9 +307,8 @@ fn comment(snap: &Snapshot, n: u32) -> Option<&CommentRecord> {
 
 /// The cell `tN.rowR.cellC[.pK]`: its first (or K-th) own paragraph, as the
 /// snapshot's grids hold it. Numbering follows the snapshot's table order; a
-/// document with a table nested inside a cell numbers its tables differently
-/// from `edit -p`, which V2-06's wiring resolves exactly through the edit
-/// engine.
+/// snapshot numbers top-level tables as `edit -p` does. Nested tables
+/// remain outside this helper's supported cell-target grammar.
 fn cell_paragraph<'s>(snap: &'s Snapshot, id: &str) -> Option<(String, &'s str)> {
     let Ok(ShortId::Block {
         story: Story::Body,

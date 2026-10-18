@@ -842,31 +842,24 @@ fn select_table_inventory(
     let Select::Picks(picks) = Select::parse(spec)? else {
         unreachable!("the -p parser returns picks");
     };
-    // Parents precede their descendants in the inventory. Map every entry
-    // to the view's top-level tN, without changing the inventory's labels.
-    let mut top_level_count = 0;
-    let mut view_indices = Vec::with_capacity(tables.len());
-    for table in tables.iter() {
-        let view_index = if let Some(parent) = table.parent_index {
-            view_indices[parent]
-        } else {
-            let index = top_level_count;
-            top_level_count += 1;
-            index
-        };
-        view_indices.push(view_index);
+    fn add_owners<'a>(
+        rows: &'a [Vec<jubarte::inspect::TableCell>],
+        nested: &'a [jubarte::inspect::NestedTable],
+        index: usize,
+        owners: &mut HashMap<&'a str, usize>,
+    ) {
+        for id in rows.iter().flatten().flat_map(|cell| &cell.paragraph_ids) {
+            owners.insert(id, index);
+        }
+        for child in nested {
+            add_owners(&child.rows, &child.nested, index, owners);
+        }
     }
-    let owners: HashMap<&str, usize> = tables
-        .iter()
-        .flat_map(|table| {
-            let view_index = view_indices[table.index];
-            table.rows.iter().flatten().flat_map(move |cell| {
-                cell.paragraph_ids
-                    .iter()
-                    .map(move |id| (id.as_str(), view_index))
-            })
-        })
-        .collect();
+    let top_level_count = tables.len();
+    let mut owners = HashMap::new();
+    for table in tables.iter() {
+        add_owners(&table.rows, &table.nested, table.index, &mut owners);
+    }
     let unreadable = |message| MarkdownError::Docx(message).to_string();
     let mut selected = BTreeSet::new();
     for pick in picks {
@@ -903,7 +896,7 @@ fn select_table_inventory(
             }
         }
     }
-    tables.retain(|table| selected.contains(&view_indices[table.index]));
+    tables.retain(|table| selected.contains(&table.index));
     Ok(())
 }
 

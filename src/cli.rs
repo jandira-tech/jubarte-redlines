@@ -144,7 +144,9 @@ pub struct ReadArgs {
     /// tab-separated `ids=text` cells. Use -p t0,t2 or -p pN (a cell
     /// paragraph) to select top-level tables and all their nested tables,
     /// in document order, each once. tN is the view's top-level index;
-    /// inventory labels stay unchanged. Every selected paragraph must be
+    /// nested entries follow their cell row, indented two spaces per level,
+    /// labelled `nested in t0.row2.cell0` (recursively, e.g.
+    /// `t0.row2.cell0.t0.row0.cell1`). Every selected paragraph must be
     /// inside a table. With -p, follow the selected grids with a blank
     /// line and the same view as read -p SPEC, including its YAML header.
     /// Without -p, print only the inventory.
