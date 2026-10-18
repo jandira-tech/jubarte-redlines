@@ -102,7 +102,7 @@ self-update = ["cli", "dep:self_update"]
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
 oxml-opc = { version = "0.14.2", default-features = false } # OPC types; encryption/signatures stay disabled
-zip = { version = "9.0.4", default-features = false, features = ["deflate"] } # deterministic package writer and direct ZIP access; pure-Rust Deflate
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] } # deterministic package writer and direct ZIP access; pure-Rust Deflate; >= 9.0.5 closes GHSA-m665-v7pm-7grj (zip cloaking, SECURITY.md)
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
@@ -190,7 +190,9 @@ tar = { version = "0.4", default-features = false }
 name = "redline"
 harness = false
 
-# Use zip 9 for RUSTSEC-2026-0367, -0368 and -0369 (jandira-tech/ooxmlsdk#1).
+# Use zip 9 for RUSTSEC-2026-0367, -0368 and -0369 (jandira-tech/ooxmlsdk#1),
+# and zip >= 9.0.5 for GHSA-m665-v7pm-7grj (zip cloaking; recorded in
+# SECURITY.md; admission refuses disagreeing headers, ZIP_HEADER_MISMATCH).
 # Remove this patch when an ooxmlsdk release requires zip >= 9 (#1092).
 [patch.crates-io]
 ooxmlsdk = { git = "https://github.com/jandira-tech/ooxmlsdk", rev = "d7c3ae016da8ef661d9a04e12c47003d8fe51eff" }
