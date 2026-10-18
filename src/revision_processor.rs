@@ -1203,7 +1203,7 @@ fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<Node
                 // Empty/partially surviving range anchors were hoisted from
                 // moveFrom after wholly deleted bookmarks were removed.
                 // The move range must not discard those anchors a second time.
-                && !dom.name(e).is_some_and(|name| is_comment_or_bookmark_range_marker(&name))
+                && !dom.name(e).is_some_and(|name| is_inline_range_marker(&name))
                 && !is_container_property(dom, e)
                 && !dom
                     .ancestors(e, None)
@@ -2054,15 +2054,41 @@ fn is_body_level_range_marker(name: &XName) -> bool {
         )
 }
 
-fn is_comment_or_bookmark_range_marker(name: &XName) -> bool {
+fn is_inline_range_marker(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && matches!(
             name.local_name(),
-            "commentRangeStart" | "commentRangeEnd" | "bookmarkStart" | "bookmarkEnd"
+            "commentRangeStart"
+                | "commentRangeEnd"
+                | "bookmarkStart"
+                | "bookmarkEnd"
+                | "permStart"
+                | "permEnd"
         )
 }
 
-/// Pull comment range and bookmark markers out of a subtree being discarded
+/// Permission ranges follow Word's character-range rule, including paragraph
+/// marks: discard both endpoints only when their nonempty span disappears.
+/// Originally empty ranges have nothing to lose and remain in place.
+fn drop_wholly_deleted_permissions(dom: &mut Dom, root: NodeId) {
+    let (start, end) = (W::name("permStart"), W::name("permEnd"));
+    let dropped = bookmarks::wholly_deleted_ranges(dom, root, &start, &end);
+    if dropped.is_empty() {
+        return;
+    }
+    for name in [start, end] {
+        for node in dom.descendants(root, Some(&name)) {
+            if dom
+                .attribute(node, &W::id())
+                .is_some_and(|id| dropped.contains(id))
+            {
+                dom.remove(node);
+            }
+        }
+    }
+}
+
+/// Pull comment, bookmark and permission markers out of a subtree being discarded
 /// (e.g. accepted `w:del`) so anchors between delText runs are not lost.
 fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
@@ -2070,7 +2096,7 @@ fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
         let Some(n) = dom.name(e) else {
             continue;
         };
-        if is_comment_or_bookmark_range_marker(&n) {
+        if is_inline_range_marker(&n) {
             out.push(dom.clone_subtree(e));
         }
     }
@@ -3262,6 +3288,7 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     let e = if has_rev {
         comments::drop_wholly_deleted_comments(dom, e);
         bookmarks::drop_wholly_deleted_bookmarks(dom, e);
+        drop_wholly_deleted_permissions(dom, e);
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
         let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
         let e = {

@@ -617,3 +617,57 @@ fn bookmark_endpoint_in_deleted_text_is_not_a_revision_crossing() {
         "{findings:?}"
     );
 }
+
+#[test]
+fn deleted_permission_redline_has_no_dropped_range_finding() {
+    let source = docx(&format!(
+        "<w:p>{}{START}{}</w:p><w:p>{END}</w:p>{}",
+        run("Clause ", false, false, None),
+        run("one text.", false, false, None),
+        para("Next.")
+    ));
+    let result = delete_paragraph(&source, "p0");
+    save("f1", &source, &result.redline);
+    let findings = jubarte::validate::audit_tracked(&source, &result.redline, "Alice").unwrap();
+    assert!(
+        !findings
+            .iter()
+            .any(|f| f.code == "PERMISSION_RANGE_DROPPED"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn deleted_permission_start_accepts_at_next_text() {
+    let source = docx(&format!(
+        "<w:p>{}{START}{}</w:p><w:p>{}{END}</w:p>{}",
+        run("Clause ", false, false, None),
+        run("one text.", false, false, None),
+        run("Next.", false, false, None),
+        para("Last.")
+    ));
+    let result = delete_paragraph(&source, "p0");
+    save("s2", &source, &result.redline);
+    let accepted = jubarte::document_comparer::accept_revisions(&result.redline).unwrap();
+    let actual = markers(&accepted, "word/document.xml", "perm");
+    assert_eq!(actual.len(), 2, "{actual:?}");
+    assert_eq!((actual[0].1.as_str(), actual[0].2.as_str()), ("", "Next."));
+    assert_eq!((actual[1].1.as_str(), actual[1].2.as_str()), ("Next.", ""));
+}
+
+#[test]
+fn deleted_permission_f1_accepts_without_either_endpoint() {
+    let source = docx(&format!(
+        "<w:p>{}{START}{}</w:p><w:p>{END}</w:p>{}",
+        run("Clause ", false, false, None),
+        run("one text.", false, false, None),
+        para("Next.")
+    ));
+    let result = delete_paragraph(&source, "p0");
+    let accepted = jubarte::document_comparer::accept_revisions(&result.redline).unwrap();
+    assert!(
+        markers(&accepted, "word/document.xml", "perm").is_empty(),
+        "{}",
+        part_string(&accepted, "word/document.xml").unwrap()
+    );
+}
