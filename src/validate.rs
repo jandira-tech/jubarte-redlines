@@ -28,7 +28,8 @@
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
 //! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
-//! | `DUPLICATE_REVISION_ID`, `DUPLICATE_DOCPR_ID` | no (leads) | yes: renumbered |
+//! | `DUPLICATE_REVISION_ID` | pending: OOXML validator refuses it (`Sem_UniqueAttributeValue`); error blocks publication | yes: renumbered |
+//! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
 //! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
 //! | `INSTR_TEXT_INSIDE_DELETION` | no (not probed in Word) | yes |
@@ -91,7 +92,8 @@ pub struct Finding {
     /// The rule set it belongs to: one of [`RULE_SETS`].
     pub set: String,
     /// `error`, `warning` or `info`. A `word` finding is an `error` when
-    /// Word-fatal; otherwise a `warning` (a lead), or `info` for direct
+    /// Word-fatal or OOXML-invalid (`DUPLICATE_REVISION_ID`); otherwise a
+    /// `warning` (a lead), or `info` for direct
     /// same-kind revision nesting that Word reads faithfully.
     pub severity: String,
     /// Package part the finding sits in.
@@ -116,7 +118,8 @@ pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
 
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
-    /// code's table ([`traits`]) and the severity from `word_fatal`.
+    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids
+    /// are errors even while their Word verdict is pending.
     pub fn new(
         code: &str,
         part: &str,
@@ -129,7 +132,12 @@ impl Finding {
         Finding {
             code: code.to_string(),
             set: "word".to_string(),
-            severity: if word_fatal { "error" } else { "warning" }.to_string(),
+            severity: if word_fatal || code == "DUPLICATE_REVISION_ID" {
+                "error"
+            } else {
+                "warning"
+            }
+            .to_string(),
             part: part.to_string(),
             location,
             r#ref,
@@ -777,15 +785,27 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
-/// Revision elements whose `w:id` must be unique within a part.
-const UNIQUE_REVISION_IDS: [&str; 6] = [
-    "ins",
-    "del",
-    "moveFrom",
-    "moveTo",
-    "moveFromRangeStart",
-    "moveToRangeStart",
-];
+/// Revision elements whose `w:id` must be unique within a part. Range
+/// ends share their starts' ids and comment/bookmark ids have other scopes.
+fn has_unique_revision_id(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && (name.local_name().ends_with("PrChange")
+            || matches!(
+                name.local_name(),
+                "ins"
+                    | "del"
+                    | "moveFrom"
+                    | "moveTo"
+                    | "moveFromRangeStart"
+                    | "moveToRangeStart"
+                    | "tblGridChange"
+                    | "tblPrExChange"
+                    | "numberingChange"
+                    | "cellIns"
+                    | "cellDel"
+                    | "cellMerge"
+            ))
+}
 
 fn collect_ids(
     dom: &Dom,
@@ -802,7 +822,7 @@ fn collect_ids(
         let local = name.local_name();
         // comment* share one id space (start/end/ref/entry); ins/del/move*
         // share another and are the ones enforced here.
-        if UNIQUE_REVISION_IDS.contains(&local)
+        if has_unique_revision_id(&name)
             && let Some(id) = dom.attribute(e, &W::name("id"))
             && !rev_ids.insert(format!("rev:{id}"))
         {
@@ -1743,7 +1763,9 @@ pub fn repair(docx: &[u8]) -> Result<Repaired, ValidateError> {
         });
     }
     for part in parts_with(&["DUPLICATE_REVISION_ID"]) {
-        edit_part(&mut pkg, &part, renumber_duplicate_revision_ids);
+        edit_part(&mut pkg, &part, |dom, root| {
+            renumber_duplicate_revision_ids(dom, root);
+        });
     }
     if has("PARA_ID_OUT_OF_RANGE") {
         renumber_out_of_range_para_ids(&mut pkg);
@@ -1894,7 +1916,10 @@ fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &Hash
 
 /// A second use of a revision id is renumbered from the part's highest
 /// `w:id` upwards; a move range start takes its end along.
-fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) {
+pub(crate) fn renumber_duplicate_revision_ids(
+    dom: &mut Dom,
+    root: NodeId,
+) -> Vec<(String, String)> {
     let id_name = W::name("id");
     let all: Vec<NodeId> = dom.descendants(root, None);
     let mut next: u64 = all
@@ -1906,10 +1931,11 @@ fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) {
         + 1;
     let mut seen: HashSet<String> = HashSet::new();
     let mut renames: Vec<(NodeId, String)> = Vec::new();
+    let mut revisions = Vec::new();
     for (i, &n) in all.iter().enumerate() {
         let Some(name) = dom.name(n) else { continue };
         let local = name.local_name();
-        if !UNIQUE_REVISION_IDS.contains(&local) {
+        if !has_unique_revision_id(&name) {
             continue;
         }
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
@@ -1920,6 +1946,7 @@ fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) {
         }
         let fresh = next.to_string();
         next += 1;
+        revisions.push((id.clone(), fresh.clone()));
         renames.push((n, fresh.clone()));
         let end_local = match local {
             "moveFromRangeStart" => Some("moveFromRangeEnd"),
@@ -1938,6 +1965,7 @@ fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) {
     for (n, id) in renames {
         dom.set_attribute_value(n, &id_name, Some(&id));
     }
+    revisions
 }
 
 /// Every `w14:paraId` / `w14:textId` at or above `0x80000000` is masked

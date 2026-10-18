@@ -1498,3 +1498,127 @@ fn issue_1134_textbox_is_a_separate_story() {
         "{report:?}"
     );
 }
+
+// #1137: OOXML refuses duplicate revision ids; Word has not been probed.
+fn issue_1137_duplicate_revision(element: &str) {
+    let content = match element {
+        "ins" | "moveFrom" | "moveTo" => "<w:r><w:t>a</w:t></w:r>".to_string(),
+        "del" => "<w:r><w:delText>a</w:delText></w:r>".to_string(),
+        _ if element.ends_with("Change") && element != "numberingChange" => {
+            format!("<w:{}/>", element.strip_suffix("Change").unwrap())
+        }
+        _ => String::new(),
+    };
+    let extra = if element == "numberingChange" {
+        " w:original=\"1\""
+    } else {
+        ""
+    };
+    let mark = format!(r#"<w:{element} w:id="1" w:author="Alice"{extra}>{content}</w:{element}>"#);
+    let cell = "<w:tc><w:p/></w:tc>";
+    let table = |properties: &str, grid: &str, row: &str| {
+        format!(
+            "<w:tbl><w:tblPr>{properties}</w:tblPr><w:tblGrid><w:gridCol w:w=\"1000\"/>{grid}</w:tblGrid><w:tr>{row}</w:tr></w:tbl>"
+        )
+    };
+    let marked = match element {
+        "rPrChange" => format!("<w:p><w:r><w:rPr>{mark}</w:rPr><w:t>a</w:t></w:r></w:p>"),
+        "pPrChange" => format!("<w:p><w:pPr>{mark}</w:pPr><w:r><w:t>a</w:t></w:r></w:p>"),
+        "sectPrChange" => format!("<w:p><w:pPr><w:sectPr>{mark}</w:sectPr></w:pPr></w:p>"),
+        "numberingChange" => format!("<w:p><w:pPr><w:numPr>{mark}</w:numPr></w:pPr></w:p>"),
+        "tblPrChange" => table(&mark, "", cell),
+        "tblGridChange" => table("", &mark, cell),
+        "tblPrExChange" => table("", "", &format!("<w:tblPrEx>{mark}</w:tblPrEx>{cell}")),
+        "trPrChange" => table("", "", &format!("<w:trPr>{mark}</w:trPr>{cell}")),
+        "tcPrChange" | "cellIns" | "cellDel" | "cellMerge" => table(
+            "",
+            "",
+            &format!("<w:tc><w:tcPr>{mark}</w:tcPr><w:p/></w:tc>"),
+        ),
+        "moveFrom" | "moveTo" => format!(
+            "<w:p><w:{element}RangeStart w:id=\"10\" w:name=\"probe\"/>{mark}<w:{element}RangeEnd w:id=\"10\"/></w:p>"
+        ),
+        _ => format!("<w:p>{mark}</w:p>"),
+    };
+    let second = marked
+        .replace("w:id=\"10\"", "w:id=\"11\"")
+        .replace("w:name=\"probe\"", "w:name=\"second\"");
+    let bytes = common::docx::docx(&format!("{marked}{second}"));
+    let package = PartFs::open(&bytes).unwrap();
+    let findings = jubarte::validate::ring1(&package);
+    let duplicates: Vec<_> = findings
+        .iter()
+        .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+        .collect();
+    assert_eq!(duplicates.len(), 1, "{element}: {findings:?}");
+    assert_eq!(
+        duplicates[0].severity, "error",
+        "{element}: {:?}",
+        duplicates[0]
+    );
+    assert!(!duplicates[0].word_fatal, "Word verdict is pending");
+    assert!(duplicates[0].repairable);
+    assert!(!check_word_valid_package(&bytes).ok());
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert!(
+        repaired
+            .remaining
+            .iter()
+            .all(|f| f.code != "DUPLICATE_REVISION_ID")
+    );
+    assert!(
+        check_word_valid_package(&repaired.docx).ok(),
+        "{:?}",
+        repaired.remaining
+    );
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("w:id=\"1\"").count(), 1, "{xml}");
+    let fresh = if element.starts_with("move") { 12 } else { 2 };
+    assert_eq!(
+        xml.matches(&format!("w:id=\"{fresh}\"")).count(),
+        1,
+        "{xml}"
+    );
+    assert_eq!(xml.matches(&format!("<w:{element} ")).count(), 2, "{xml}");
+}
+
+macro_rules! issue_1137_revision_probes {
+    ($($test:ident: $element:literal),* $(,)?) => {$(
+        #[test]
+        fn $test() { issue_1137_duplicate_revision($element); }
+    )*};
+}
+
+issue_1137_revision_probes! {
+    issue_1137_duplicate_ins: "ins",
+    issue_1137_duplicate_del: "del",
+    issue_1137_duplicate_move_from: "moveFrom",
+    issue_1137_duplicate_move_to: "moveTo",
+    issue_1137_duplicate_run_properties: "rPrChange",
+    issue_1137_duplicate_paragraph_properties: "pPrChange",
+    issue_1137_duplicate_section_properties: "sectPrChange",
+    issue_1137_duplicate_table_properties: "tblPrChange",
+    issue_1137_duplicate_table_property_exceptions: "tblPrExChange",
+    issue_1137_duplicate_grid: "tblGridChange",
+    issue_1137_duplicate_row_properties: "trPrChange",
+    issue_1137_duplicate_cell_properties: "tcPrChange",
+    issue_1137_duplicate_cell_ins: "cellIns",
+    issue_1137_duplicate_cell_del: "cellDel",
+    issue_1137_duplicate_cell_merge: "cellMerge",
+    issue_1137_duplicate_numbering: "numberingChange",
+}
+
+#[test]
+fn issue_1137_revision_id_scope_is_one_part() {
+    let bytes = zip_with_parts(&[
+        (
+            "word/document.xml",
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:ins w:id="1" w:author="Alice"><w:r><w:t>a</w:t></w:r></w:ins></w:p><w:sectPr/></w:body></w:document>"#,
+        ),
+        (
+            "word/header1.xml",
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:ins w:id="1" w:author="Alice"><w:r><w:t>b</w:t></w:r></w:ins></w:p></w:hdr>"#,
+        ),
+    ]);
+    assert!(check_word_valid_package(&bytes).ok());
+}

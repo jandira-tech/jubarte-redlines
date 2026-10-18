@@ -185,17 +185,14 @@ fn validate_audits_tracked_edits_against_an_original() {
 }
 
 #[test]
-fn a_word_lead_still_fails_but_audit_warnings_fail_only_under_strict() {
+fn an_ooxml_revision_error_fails_but_audit_warnings_fail_only_under_strict() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("lead.docx"), docx(SAME_ID)).unwrap();
     std::fs::write(dir.path().join("bullets.docx"), docx(&para("• item"))).unwrap();
 
     let (code, out, _) = run(dir.path(), &["validate", "lead.docx"]);
     assert_eq!(code, 2, "{out}");
-    assert!(
-        out.starts_with("  DUPLICATE_REVISION_ID\twarning\t"),
-        "{out}"
-    );
+    assert!(out.starts_with("  DUPLICATE_REVISION_ID\terror\t"), "{out}");
 
     let (code, out, _) = run(
         dir.path(),
