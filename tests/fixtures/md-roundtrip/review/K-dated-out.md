@@ -1,7 +1,7 @@
 ---
 view: tracked
 track_changes: off
-revisions: 2
+revisions: 2                       # 2 marks shown as 2 changes: 2 insertions
 comments: 0
 authors:
   document_owner: none

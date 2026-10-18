@@ -1,0 +1,353 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+//! The revisions summary describes the printed changes, including nested ones.
+mod common;
+
+use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
+use regex::Regex;
+
+const KINDS: [&str; 6] = [
+    "insertion",
+    "deletion",
+    "substitution",
+    "paragraph mark",
+    "table row",
+    "table cell",
+];
+
+/// Independent text oracle: count complete attributed marks, never ids in an
+/// `on` chain or the two ids joined by a substitution. Id-line clauses carry
+/// paragraph marks and table changes that have no inline delimiter.
+fn printed_counts(body: &str) -> [usize; 6] {
+    // The header reports note stories separately, including a note inserted
+    // with its body reference (whose attribution is repeated in its definition).
+    let body = body
+        .split("<!-- footnotes")
+        .next()
+        .unwrap()
+        .split("<!-- endnotes")
+        .next()
+        .unwrap();
+    let mut counts = [0; 6];
+    let inline = Regex::new(r"(?s)(\+\+\}|--\}|~~\})[*_`]*(?:\{>>(.*?)<<\})+").unwrap();
+    for cap in inline.captures_iter(body) {
+        if !cap[2].starts_with('r') && !cap[2].starts_with("noid @") {
+            continue;
+        }
+        counts[match &cap[1] {
+            "++}" => 0,
+            "--}" => 1,
+            _ => 2,
+        }] += 1;
+    }
+    let tag = Regex::new(
+        r"(?:^|; )((?:r[0-9]+(?:\+[0-9]+)*|noid) @[^ ;]+)(?:[^;]*?)(?: in ([^;]+))?(?:;|$)",
+    )
+    .unwrap();
+    for line in body
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("<!-- "))
+    {
+        for clause in line.trim_end_matches(" -->").split(", ") {
+            let words = clause.split_whitespace().collect::<Vec<_>>();
+            let Some(at) = words.iter().position(|word| {
+                matches!(
+                    *word,
+                    "break-ins"
+                        | "break-del"
+                        | "rev"
+                        | "rev-del"
+                        | "rev-merge"
+                        | "page-break-ins"
+                        | "page-break-del"
+                )
+            }) else {
+                continue;
+            };
+            let key = words[at];
+            let rest = words[at + 1..].join(" ");
+            // Each semicolon item is one printed tag, even when it joins ids.
+            for item in rest.split("; ") {
+                if !tag.is_match(item) {
+                    continue;
+                }
+                let kind = if key.starts_with("break-") {
+                    3
+                } else if item.contains(".cell") {
+                    5
+                } else if item.contains(".row") {
+                    4
+                } else {
+                    usize::from(key.ends_with("del"))
+                };
+                counts[kind] += 1;
+            }
+        }
+    }
+    counts
+}
+
+#[track_caller]
+fn assert_summary(view: &str) {
+    let (_, rest) = view.split_once("---\n").unwrap();
+    let (header, body) = rest.split_once("---\n").unwrap();
+    let counts = if header
+        .lines()
+        .any(|line| line.starts_with("view: accept-all") || line.starts_with("view: reject-all"))
+    {
+        [0; 6]
+    } else {
+        printed_counts(body)
+    };
+    let line = header
+        .lines()
+        .find(|line| line.starts_with("revisions:"))
+        .unwrap();
+    let mut stated = [0; 6];
+    let mut total = 0;
+    if let Some((_, summary)) = line.split_once(" shown as ") {
+        total = summary
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let kinds = summary
+            .split_once(": ")
+            .unwrap()
+            .1
+            .split(';')
+            .next()
+            .unwrap();
+        for entry in kinds.split(", ") {
+            let (n, kind) = entry.split_once(' ').unwrap();
+            let kind = kind.strip_suffix('s').unwrap_or(kind);
+            let at = KINDS.iter().position(|name| *name == kind).unwrap();
+            stated[at] = n.parse().unwrap();
+        }
+    }
+    assert_eq!(
+        (total, stated),
+        (counts.iter().sum::<usize>(), counts),
+        "{line}\n{body}"
+    );
+}
+
+fn revision(kind: &str, id: usize, author: &str, text: &str) -> String {
+    let node = if kind == "del" { "delText" } else { "t" };
+    format!(
+        r#"<w:{kind} w:id="{id}" w:author="{author}" w:date="2026-10-16T10:00:00Z"><w:r><w:{node}>{text}</w:{node}></w:r></w:{kind}>"#
+    )
+}
+
+fn agent(xml: &str) -> String {
+    docx_to_markdown(
+        &common::docx::docx(xml),
+        &MarkdownOptions {
+            ids: true,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown
+}
+
+#[test]
+fn revisions_header_counts_the_six_printed_nested_changes() {
+    let nested = format!(
+        r#"<w:ins w:id="2" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t> will pay the </w:t></w:r>{}</w:ins>"#,
+        revision("del", 3, "Bob", "insurers")
+    );
+    let view = agent(&format!(
+        "<w:p>{}{}{nested}{}{}</w:p>",
+        revision("ins", 0, "Alice", "The parties"),
+        revision("ins", 1, "Bob", " and affiliates"),
+        revision("ins", 4, "Bob", "bankers"),
+        revision("ins", 5, "Alice", " pro rata at the end of the month.")
+    ));
+    assert_eq!(
+        printed_counts(view.split("---\n").nth(2).unwrap()),
+        [5, 1, 0, 0, 0, 0]
+    );
+    assert!(view.contains("on r2 @A"), "{view}");
+    assert_summary(&view);
+}
+
+#[test]
+fn revisions_header_counts_sixteen_tags_from_eighteen_marks() {
+    let mut xml = String::new();
+    for id in [0, 2, 4] {
+        xml.push_str(&format!(r#"<w:p><w:ins w:id="{id}" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t>live</w:t></w:r>{}</w:ins></w:p>"#, revision("del", id + 1, "Bob", "nested")));
+    }
+    let plain = "<w:r><w:t> gap </w:t></w:r>";
+    // The deletion-before-insertion pair stays two changes, even by one author.
+    xml.push_str(&format!(
+        "<w:p>{}{}</w:p>",
+        revision("del", 6, "Bob", "old"),
+        revision("ins", 7, "Bob", "new")
+    ));
+    xml.push_str(&format!(
+        "<w:p>{}{}{plain}{}{plain}{}</w:p>",
+        revision("ins", 8, "Alice", "a"),
+        revision("ins", 9, "Alice", "b"),
+        revision("del", 10, "Bob", "c"),
+        revision("del", 11, "Bob", "d")
+    ));
+    xml.push_str(&format!(
+        "<w:p>{}{}{plain}{}</w:p>",
+        revision("ins", 12, "Alice", "e"),
+        revision("ins", 13, "Alice", "f"),
+        revision("del", 14, "Bob", "g")
+    ));
+    xml.push_str(&format!(
+        "<w:p>{}{plain}{}{plain}{}</w:p>",
+        revision("ins", 15, "Alice", "h"),
+        revision("ins", 16, "Bob", "i"),
+        revision("del", 17, "Bob", "j")
+    ));
+    let view = agent(&xml);
+    assert!(view.contains("revisions: 18"), "{view}");
+    assert_eq!(
+        printed_counts(view.split("---\n").nth(2).unwrap()),
+        [8, 8, 0, 0, 0, 0]
+    );
+    assert_summary(&view);
+}
+
+fn agent_fixtures(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            agent_fixtures(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "md") {
+            let text = std::fs::read_to_string(&path).unwrap();
+            if text.starts_with("---\n") && text.lines().any(|line| line.starts_with("revisions:"))
+            {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// The printed body is the source of truth. Bless only its descriptive
+/// `shown as` summary, preserving the raw revision, formatting and story counts.
+/// Regenerate with `JUBARTE_BLESS=1 ... every_blessed_agent_view_header_matches_its_body`.
+#[test]
+fn every_blessed_agent_view_header_matches_its_body() {
+    let mut paths = Vec::new();
+    agent_fixtures(std::path::Path::new("tests/fixtures"), &mut paths);
+    paths.sort();
+    assert!(paths.len() >= 52, "the gate must cover all agent views");
+    for path in paths {
+        let view = std::fs::read_to_string(&path).unwrap();
+        eprintln!("checking {}", path.display());
+        if std::env::var_os("JUBARTE_BLESS").is_some() {
+            let (_, rest) = view.split_once("---\n").unwrap();
+            let (header, body) = rest.split_once("---\n").unwrap();
+            let counts = if header.lines().any(|line| {
+                line.starts_with("view: accept-all") || line.starts_with("view: reject-all")
+            }) {
+                [0; 6]
+            } else {
+                printed_counts(body)
+            };
+            let line = header
+                .lines()
+                .find(|line| line.starts_with("revisions:"))
+                .unwrap();
+            let (key, comment) = line
+                .split_once("# ")
+                .map_or((line.trim_end(), ""), |(key, comment)| {
+                    (key.trim_end(), comment)
+                });
+            let mut parts = comment
+                .split("; ")
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let mut marks = if parts.first().is_some_and(|part| part.contains("mark")) {
+                parts
+                    .remove(0)
+                    .split(" shown as ")
+                    .next()
+                    .unwrap()
+                    .to_string()
+            } else {
+                String::new()
+            };
+            if marks.is_empty() || marks == "0 marks" {
+                let total = key
+                    .strip_prefix("revisions:")
+                    .unwrap()
+                    .trim()
+                    .parse::<usize>()
+                    .unwrap();
+                let other: usize = parts
+                    .iter()
+                    .filter_map(|part| part.split_whitespace().next()?.parse::<usize>().ok())
+                    .sum();
+                let raw = total.saturating_sub(other);
+                if raw > 0 {
+                    marks = format!("{raw} mark{}", if raw == 1 { "" } else { "s" });
+                }
+            }
+            let n: usize = counts.iter().sum();
+            if n > 0 {
+                let kinds = counts
+                    .iter()
+                    .zip(KINDS)
+                    .filter(|(n, _)| **n > 0)
+                    .map(|(n, kind)| format!("{n} {kind}{}", if *n == 1 { "" } else { "s" }))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                parts.insert(
+                    0,
+                    format!(
+                        "{} shown as {n} change{}: {kinds}",
+                        if marks.is_empty() { "0 marks" } else { &marks },
+                        if n == 1 { "" } else { "s" }
+                    ),
+                );
+            } else if !marks.is_empty() {
+                parts.insert(0, marks);
+            }
+            let replacement = if parts.is_empty() {
+                key.to_string()
+            } else {
+                format!("{key:<35}# {}", parts.join("; "))
+            };
+            let blessed = view.replacen(line, &replacement, 1);
+            assert_summary(&blessed);
+            if blessed != view {
+                std::fs::write(&path, blessed).unwrap();
+            }
+        } else {
+            assert_summary(&view);
+        }
+    }
+}
+
+#[test]
+fn every_fixture_reconstructed_view_header_matches_its_body() {
+    use jubarte::markdown::{DocxOptions, markdown_to_docx};
+    let mut paths = Vec::new();
+    agent_fixtures(std::path::Path::new("tests/fixtures"), &mut paths);
+    paths.sort();
+    for path in paths {
+        eprintln!("rendering {}", path.display());
+        let view = std::fs::read_to_string(&path).unwrap();
+        let document = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+        let shown = docx_to_markdown(
+            &document.docx,
+            &MarkdownOptions {
+                ids: true,
+                ..MarkdownOptions::default()
+            },
+        )
+        .unwrap()
+        .markdown;
+        assert_summary(&shown);
+    }
+}

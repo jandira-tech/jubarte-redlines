@@ -84,7 +84,7 @@ impl Handles {
     }
 }
 
-/// One logical revision as the id line and the header count it.
+/// One logical revision as the paragraph id line groups it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RevTag {
     /// `ins`, `del`, `sub`, `mark` (paragraph mark), `row`, `cell`.
@@ -2177,62 +2177,63 @@ pub(crate) fn comment_head(
     head
 }
 
-/// Every logical revision in the stamped body: inline tags per paragraph,
-/// tracked paragraph marks, tracked rows and cells.
-pub(crate) fn collect_revisions(body: &Element, handles: &Handles) -> Vec<RevTag> {
-    let mut out = Vec::new();
-    collect_in(body, handles, &mut out);
-    out
-}
+/// The changes the body actually prints, after nesting, neighbouring marks,
+/// substitutions and selection have been rendered. Each attributed span is
+/// one change; ids joined by `+` and parents named by `on` add no changes.
+/// Structural marks are counted where their id-line clauses print them.
+pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
+    use crate::markdown::view_notes;
 
-fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
-    let attribution = |m: &Element| (m.attr("author").map(str::to_string), m.revision_date());
-    if e.is("p") {
-        out.extend(revision_tags(e, handles));
-        if let Some(rpr) = e.path(&["pPr", "rPr"]) {
-            for m in rpr.elements().filter(|m| kind_of(m.local()).is_some()) {
-                let (author, date) = attribution(m);
-                out.push(RevTag {
-                    kind: "mark",
-                    tag: tag_of(m, handles),
-                    author,
-                    date,
-                });
+    let mut out = Vec::new();
+    for (at, _) in shown.match_indices("{>>") {
+        let note = &shown[at + 3..];
+        let Some(end) = note.find("<<}") else {
+            continue;
+        };
+        let own = note[..end].split(" on ").next().unwrap_or_default();
+        if view_notes::revision_tags(own).is_none()
+            || own.split("; ").any(|tag| {
+                tag.split_whitespace().next().is_none_or(|id| {
+                    id != "noid"
+                        && crate::ids::parse_change_ids(id)
+                            .map_or(true, |ids| ids.iter().any(|id| id.story != "body"))
+                })
+            })
+        {
+            continue;
+        }
+        // Emphasis may wrap a complete mark. A substitution with two
+        // authors has two notes, but only its first follows the closer.
+        let before = shown[..at].trim_end_matches(['*', '_', '`']);
+        for (close, kind) in [("++}", "ins"), ("--}", "del"), ("~~}", "sub")] {
+            if before.ends_with(close) {
+                out.push(kind);
+                break;
             }
         }
     }
-    if e.is("tr")
-        && let Some(trpr) = e.child("trPr")
-    {
-        for m in trpr.elements().filter(|m| kind_of(m.local()).is_some()) {
-            let (author, date) = attribution(m);
-            out.push(RevTag {
-                kind: "row",
-                tag: tag_of(m, handles),
-                author,
-                date,
-            });
+    for line in shown.lines() {
+        if let Some(p) = view_notes::id_line(line) {
+            out.extend(p.break_ins.iter().chain(p.break_del.iter()).map(|_| "mark"));
+            out.extend(
+                p.page_break_change
+                    .iter()
+                    .map(|(ins, _)| if *ins { "ins" } else { "del" }),
+            );
+            out.extend(p.rev.iter().map(|tag| {
+                if p.rev_del.contains(tag) {
+                    "del"
+                } else {
+                    "ins"
+                }
+            }));
+        } else if let Some(t) = view_notes::table_line(line) {
+            out.extend(t.marks.values().map(|_| "mark"));
+            out.extend(t.row_marks.values().map(|_| "row"));
+            out.extend(t.cell_marks.values().map(|_| "cell"));
         }
     }
-    if e.is("tc")
-        && let Some(tcpr) = e.child("tcPr")
-    {
-        for m in tcpr
-            .elements()
-            .filter(|m| matches!(m.local(), "cellIns" | "cellDel"))
-        {
-            let (author, date) = attribution(m);
-            out.push(RevTag {
-                kind: "cell",
-                tag: tag_of(m, handles),
-                author,
-                date,
-            });
-        }
-    }
-    for child in shown_children(e) {
-        collect_in(child, handles, out);
-    }
+    out
 }
 
 /// One block of the rendered body: its lines, the paragraph span it covers

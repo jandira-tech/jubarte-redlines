@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 7                       # 7 marks shown as 3 changes: 1 insertion, 1 deletion, 1 substitution
+revisions: 7                       # 7 marks shown as 5 changes: 3 insertions, 1 deletion, 1 substitution
 comments: 1 thread open            # 1 comment: c0
 authors:
   document_owner: none             # no docProps/core.xml

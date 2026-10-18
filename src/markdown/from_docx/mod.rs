@@ -694,7 +694,13 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     }
     if let Some(original) = &original {
         let body = original.child("body").unwrap_or(original);
-        let tags = agent::collect_revisions(body, &handles);
+        // Resolved views name original revisions with `rev` labels, but
+        // print no tracked changes. Count only what this view shows.
+        let tags = if accept.is_none() {
+            agent::collect_revisions(&markdown)
+        } else {
+            Vec::new()
+        };
         let (rendered, hard) = agent::page_counts(body);
         let settings = package.xml("word/settings.xml").ok().flatten();
         let core = package.xml("docProps/core.xml").ok().flatten();
