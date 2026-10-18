@@ -353,10 +353,19 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             );
         }
     };
+    write_text(out, &text, out.kind.name())
+}
+
+/// Publish text through the common writer, naming the representation written.
+fn write_text(out: &Output<'_>, text: &str, label: &str) -> Result<(), ConvertFailure> {
     ensure_writable(out.path, out.force)?;
     publish_file(out.path, text.as_bytes(), out.force)?;
     if !out.quiet {
-        eprintln!("{}", wrote_line(out.path, out.kind, text.len(), None));
+        eprintln!(
+            "wrote {} ({label}, {} bytes)",
+            out.path.display(),
+            text.len()
+        );
     }
     Ok(())
 }
@@ -2544,9 +2553,9 @@ fn diff_output<'a>(
 }
 
 /// `text` on stdout, or written to `out`.
-fn print_or_write(out: Option<&Output<'_>>, text: &str) -> Result<(), ConvertFailure> {
+fn print_or_write(out: Option<&Output<'_>>, text: &str, label: &str) -> Result<(), ConvertFailure> {
     match out {
-        Some(out) => write_output(out, Produced::Text(text)),
+        Some(out) => write_text(out, text, label),
         None => write_stdout(text).map_err(ConvertFailure::from),
     }
 }
@@ -2561,7 +2570,15 @@ fn run_text_diff(
     let out = diff_output(job.output, job.old, &render, job.force, job.quiet)?;
     let (old, new) = diff_inputs(job)?;
     let view = jubarte::text_diff::diff_documents_view(old.source(), new.source(), options)?;
-    print_or_write(out.as_ref(), &view)
+    use jubarte::text_diff::TextFormat;
+    let label = match options.format {
+        TextFormat::Github => "github diff",
+        TextFormat::Word => "word diff",
+        TextFormat::Normal => "normal diff",
+        TextFormat::Context => "context diff",
+        TextFormat::SideBySide => "side-by-side diff",
+    };
+    print_or_write(out.as_ref(), &view, label)
 }
 
 /// The two documents of a `diff`, each read as its name or bytes say.
@@ -2629,7 +2646,12 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
             }
         },
     };
-    print_or_write(out.as_ref(), &text)
+    let label = if job.patch.is_some() {
+        "patch diff"
+    } else {
+        "critic"
+    };
+    print_or_write(out.as_ref(), &text, label)
 }
 
 /// `convert`, for every pair of formats it takes.

@@ -959,3 +959,60 @@ output_refusals! {
     existing_font_report: "out.json" => ["convert", "in.docx", "-o", "new.pdf", "--font-report", "out.json"];
     existing_visual_diff: "pages/diff.json" => ["visual-diff", "in.docx", "in.docx", "--out-dir", "pages", "--dpi", "20"];
 }
+
+fn diff_status_label(format: Option<&str>, label: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("old.md"), "Alice pays Bob.\n").unwrap();
+    std::fs::write(dir.path().join("new.md"), "Alice pays Carol Diaz.\n").unwrap();
+    let mut base = vec!["diff", "old.md", "new.md"];
+    if format.is_none() || format == Some("patch") {
+        base.extend(["-d", "2026-01-01T00:00:00Z"]);
+    }
+    if let Some(format) = format {
+        base.extend(["--format", format]);
+    }
+    let stdout = jubarte(dir.path(), &base);
+    assert!(stdout.status.success(), "{}", text(&stdout.stderr));
+    assert!(!stdout.stdout.is_empty());
+    for (file, flags) in [
+        ("diff.txt", vec![]),
+        ("diff.md", vec![]),
+        ("diff.weird", vec!["--to", "md"]),
+    ] {
+        let args = [&base[..], &["-o", file], &flags].concat();
+        let out = jubarte(dir.path(), &args);
+        assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
+        let written = std::fs::read(dir.path().join(file)).unwrap();
+        assert_eq!(
+            text(&out.stderr),
+            format!("wrote {file} ({label}, {} bytes)\n", written.len())
+        );
+        assert!(out.stdout.is_empty());
+        assert_eq!(
+            written, stdout.stdout,
+            "status must describe the bytes actually written"
+        );
+        let quiet = jubarte(dir.path(), &[&args[..], &["--force", "-q"]].concat());
+        assert!(quiet.status.success(), "{}", text(&quiet.stderr));
+        assert!(quiet.stdout.is_empty() && quiet.stderr.is_empty());
+        assert_eq!(std::fs::read(dir.path().join(file)).unwrap(), written);
+    }
+}
+
+macro_rules! diff_status_labels {
+    ($($name:ident: $format:expr => $label:literal;)*) => {
+        $(#[test]
+        fn $name() { diff_status_label($format, $label); })*
+    };
+}
+
+diff_status_labels! {
+    diff_label_github: Some("github") => "github diff";
+    diff_label_word: Some("word") => "word diff";
+    diff_label_normal: Some("normal") => "normal diff";
+    diff_label_context: Some("context") => "context diff";
+    diff_label_side_by_side: Some("side-by-side") => "side-by-side diff";
+    diff_label_critic: Some("critic") => "critic";
+    diff_label_patch: Some("patch") => "patch diff";
+    diff_label_default: None => "patch diff";
+}
