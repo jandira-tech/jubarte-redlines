@@ -87,7 +87,7 @@ fn a_page_break_deleted_with_text_shares_the_texts_deletion() {
     let extra = r#"<w:r><w:delText>Gone.</w:delText></w:r>"#;
     let (first, again, second) = round_trip(&break_paragraph("del", extra));
     assert!(first.contains("page-break-del r5 @SW"), "{first}");
-    assert!(first.contains("{--Gone.--}{>>r5 @SW<<}"), "{first}");
+    assert!(first.contains("{--Gone.--}{r5 @SW}"), "{first}");
     let xml = document(&again);
     assert_eq!(xml.matches(r#"<w:del w:id="5""#).count(), 1, "{xml}");
     assert_eq!(second, first);

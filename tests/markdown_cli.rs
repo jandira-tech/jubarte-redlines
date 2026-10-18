@@ -319,8 +319,8 @@ fn convert_writes_word_back_as_critic_markup() {
         dir.path(),
     ));
     // The substitution's note names its deletion's id, then its
-    // insertion's: Word writes the insertion first.
-    let critic = "Payment is due in {~~30~>45~~}{>>r2+1 Redline (1970-01-01T00:00:00Z)<<} days.\
+    // insertion's, matching the order written to the package.
+    let critic = "Payment is due in {~~30~>45~~}{r1+2 Redline (1970-01-01T00:00:00Z)} days.\
                   {>>Redline (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
     // By default plain Markdown names its pages; the text after the marker
     // is exactly what --no-page-markers writes.
@@ -538,7 +538,7 @@ fn diff_with_a_word_side_prints_paragraph_ids_and_writes_nothing() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("@@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"),
+        stdout.contains("@@ [p1] @@\nPayment is due in {+45+}[-30-] days.\n"),
         "{stdout}"
     );
     assert!(!stdout.contains("{>>Arthur Rodrigues ("), "{stdout}");
@@ -676,7 +676,7 @@ fn diff_and_compare_take_word_against_markdown() {
     // diff prints the patch and writes nothing.
     let out = jubarte(&["diff", "contract.docx", "new.md"], dir.path());
     assert!(
-        ok(&out).contains("Payment is due in [-30-]{+45+} days."),
+        ok(&out).contains("Payment is due in {+45+}[-30-] days."),
         "{out:?}"
     );
     assert!(!dir.path().join("contract_v_new.docx").exists());

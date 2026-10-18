@@ -20,7 +20,12 @@ const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 /// not ids.
 static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""(?:[^"\\]|\\.)*""#).unwrap());
 /// A note, `{>>…<<}`.
-static NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{>>(.*?)<<\}").unwrap());
+static NOTE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b[^{}]*?)(?:<<)?\}",
+    )
+    .unwrap()
+});
 /// An HTML comment anywhere on a line: an id line, or the ` <!-- rev … -->`
 /// a note definition ends with (pi review of #464).
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!-- (.*?) -->").unwrap());
@@ -39,7 +44,7 @@ static ID_SHAPED: LazyLock<Regex> =
 /// `r389 @??`, `body: p0-p172` and the comment lists): the words of each id
 /// line and of the YAML header outside quoted text, and the heads of notes
 /// (`r1 @AC; r2 @JD`, `c6 @AS re c5:`), never a comment's own text. Notes
-/// inside quoted YAML values (`text: "{++x++}{>>footer2.r1660 @AB<<}"`) count.
+/// inside quoted YAML values (`text: "{++x++}{footer2.r1660 @AB}"`) count.
 fn printed_places(view: &str) -> Vec<String> {
     let mut places: Vec<String> = Vec::new();
     let mut lines = view.lines();
@@ -134,8 +139,8 @@ fn every_id_the_views_print_parses_and_prints_back() {
 
 #[test]
 fn places_include_trailing_comments_quoted_notes_and_expired_spellings() {
-    let view = "---\nfooter2:\n  text: \"{++x++}{>>footer2.r1660 @AB<<}\"\n---\n\
-                [^1]: Text.{>>r10 @AS<<} <!-- rev footnotes.r11 @AS -->\n\
+    let view = "---\nfooter2:\n  text: \"{++x++}{footer2.r1660 @AB}\"\n---\n\
+                [^1]: Text.{r10 @AS} <!-- rev footnotes.r11 @AS -->\n\
                 <!-- p3 rev #12 -->\n";
     let places = printed_places(view);
     let ids = printed_ids(&places);

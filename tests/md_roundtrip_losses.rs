@@ -68,8 +68,7 @@ fn part(docx: &[u8], name: &str) -> String {
 /// the mark in two (`r213` read back as `r213+361`).
 #[test]
 fn a_link_inside_a_change_stays_one_change() {
-    let line =
-        "{--Title: [Ida Greaves](https://eur.on.worldcat.org/oclc/1381732921)--}{>>r213 @SW<<}";
+    let line = "{--Title: [Ida Greaves](https://eur.on.worldcat.org/oclc/1381732921)--}{r213 @SW}";
     let (body, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
     assert!(body.contains(&format!("{line}\n")), "{body}");
     let document = part(&docx, "word/document.xml");
@@ -81,7 +80,7 @@ fn a_link_inside_a_change_stays_one_change() {
     );
     assert!(document.contains("<w:delInstrText"), "{document}");
     // An inserted link the same; a plain link stays a hyperlink element.
-    let inserted = "{++See [the site](https://example.com) now++}{>>r4 @SW<<}";
+    let inserted = "{++See [the site](https://example.com) now++}{r4 @SW}";
     let (body, docx) = round_trip(&format!(
         "<!-- p0 -->\n{inserted}\n\n<!-- p1 -->\n[plain](https://example.org)\n"
     ));
@@ -97,10 +96,10 @@ fn a_link_inside_a_change_stays_one_change() {
 /// (`## - Economics`); the bullet is the list's, not text to write.
 #[test]
 fn a_bulleted_heading_keeps_one_bullet() {
-    let body = "<!-- p0 bullet -->\n## - {--Economics & business--}{>>r211 @SW<<}\n";
+    let body = "<!-- p0 bullet -->\n## - {--Economics & business--}{r211 @SW}\n";
     let (got, docx) = round_trip(body);
     assert!(
-        got.contains("## - {--Economics & business--}{>>r211 @SW<<}\n"),
+        got.contains("## - {--Economics & business--}{r211 @SW}\n"),
         "{got}"
     );
     assert!(!got.contains("## - - "), "{got}");
@@ -238,24 +237,26 @@ fn fields_whole_in_marks(document: &str) {
     }
 }
 
-/// A change written as two marks (`r213+361`) keeps its link's field in
-/// one of them; the second mark goes after the field.
+/// Distinct deletion ids stay separate and keep the link's field whole;
+/// the second mark goes after the field.
 #[test]
 fn a_change_of_two_marks_keeps_its_link_field_in_one() {
-    let line =
-        "{--Title: [Ida Greaves](https://example.org/ida) and more words--}{>>r213+361 @SW<<}";
+    let line = "{--Title: [Ida Greaves](https://example.org/ida) and more words--}{r213+361 @SW}";
     let (body, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
     let document = part(&docx, "word/document.xml");
     assert_eq!(document.matches("<w:del ").count(), 2, "{document}");
     fields_whole_in_marks(&document);
-    assert!(body.contains(&format!("{line}\n")), "{body}");
+    assert!(
+        body.contains("{--Title: [Ida Greaves](https://example.org/ida)--}{r213 @SW}{-- and more words--}{r361 @SW}\n"),
+        "{body}"
+    );
 }
 
 /// A comment range or bookmark that ends a tracked link stays in the
 /// link's mark, which goes on to the field's end.
 #[test]
 fn a_range_ending_a_tracked_link_stays_in_its_mark() {
-    let line = "{--See [the {==site==}{>>c0 @SW: check<<}](https://example.org)--}{>>r7 @SW<<}";
+    let line = "{--See [the {==site==}{>>c0 @SW: check<<}](https://example.org)--}{r7 @SW}";
     let (body, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
     let document = part(&docx, "word/document.xml");
     assert_eq!(document.matches("<w:del ").count(), 1, "{document}\n{body}");
@@ -266,7 +267,7 @@ fn a_range_ending_a_tracked_link_stays_in_its_mark() {
 /// `\"` and a backslash `\\` in the code, and both read back as written.
 #[test]
 fn a_tracked_link_escapes_its_field_arguments() {
-    let line = "{++See [the site](https://example.org/a \"say \\\"hi\\\"\") now++}{>>r4 @SW<<}";
+    let line = "{++See [the site](https://example.org/a \"say \\\"hi\\\"\") now++}{r4 @SW}";
     let (body, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
     let document = part(&docx, "word/document.xml");
     assert!(
@@ -330,7 +331,7 @@ fn a_range_ending_before_its_notes_paragraph_stays_out_of_it() {
     }
     // The paragraph keeps its own mark when the range end goes before it.
     let body = "<!-- p0 in c0 -->\n{==Some text==}\n\n\
-                <!-- p1 break-ins r6 @SW -->\n{>>c0 @SW: Hi.<<}{++After.++}{>>r5 @SW<<}\n\n\
+                <!-- p1 -->\n{>>c0 @SW: Hi.<<}{++After.++}{r5 @SW}¶{r6 @SW}\n\n\
                 <!-- p2 -->\nEnd.\n";
     let (got, _) = round_trip(body);
     assert!(got.contains(body), "{got}");
@@ -348,13 +349,13 @@ fn a_range_ending_before_its_notes_paragraph_stays_out_of_it() {
 #[test]
 fn a_note_inside_a_change_stays_in_its_mark() {
     // A note numbered apart from its place (c7, the first comment) too.
-    let (got, _) = round_trip("<!-- p0 -->\nx {++{>>c7 @SW: New.<<}cap++}{>>r5 @SW<<}\n");
+    let (got, _) = round_trip("<!-- p0 -->\nx {++{>>c7 @SW: New.<<}cap++}{r5 @SW}\n");
     assert!(
-        got.contains("x {++{>>c7 @SW: New.<<}cap++}{>>r5 @SW<<}\n"),
+        got.contains("x {++{>>c7 @SW: New.<<}cap++}{r5 @SW}\n"),
         "{got}"
     );
     let line =
-        "{==Plan==}{>>c0 @SW: Root.<<} and {++{>>c1 @SW re c0: Reply.<<}more text++}{>>r4 @SW<<}";
+        "{==Plan==}{>>c0 @SW: Root.<<} and {++{>>c1 @SW re c0: Reply.<<}more text++}{r4 @SW}";
     let (got, docx) = round_trip(&format!("<!-- p0 -->\n{line}\n"));
     assert!(got.contains(&format!("{line}\n")), "{got}");
     let document = part(&docx, "word/document.xml");
@@ -436,7 +437,7 @@ fn a_comment_with_a_closer_or_separator_inside_a_change_reaches_a_fixed_point() 
 #[test]
 fn emphasis_prints_as_a_tag_where_its_delimiters_would_not_read() {
     for line in [
-        "{++0.081<b>\\*</b>++}{>>r1 @SW<<}",
+        "{++0.081<b>\\*</b>++}{r1 @SW}",
         "word<b>.</b> and x<b>,</b>y",
         "in<i>side</i>out and **bold** and _it_.",
         // `**` beside `_` is beside punctuation: it needs space or
@@ -471,7 +472,7 @@ fn a_raised_link_of_several_runs_stays_one_link() {
 #[test]
 fn a_comment_moved_out_of_a_note_leaves_its_change_there() {
     let (_, docx) = round_trip(
-        "<!-- p0 -->\nText[^1]\n\n[^1]: {++{==note text==}{>>c0 @SW: hi.<<}++}{>>r1 @SW<<}\n",
+        "<!-- p0 -->\nText[^1]\n\n[^1]: {++{==note text==}{>>c0 @SW: hi.<<}++}{r1 @SW}\n",
     );
     let document = part(&docx, "word/document.xml");
     assert!(document.contains("<w:commentReference"), "{document}");
