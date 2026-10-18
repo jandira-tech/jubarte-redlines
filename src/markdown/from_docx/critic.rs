@@ -1012,7 +1012,16 @@ fn marker(out: &mut Vec<Piece>, text: &str, id: usize) {
 /// Code spans are literal to the reader: their marks must stay outside.
 fn wrap_markers(pieces: &mut [Piece]) {
     type Format = (Marks, Option<String>);
-    let format = |piece: &Piece| -> Format { (piece.marks, piece.link.clone()) };
+    let format = |piece: &Piece| -> Format {
+        // A marker can remain inside the shared link, but never inside
+        // code: the label is parsed Markdown and code contents are literal.
+        let marks = if piece.marks.code {
+            Marks::default()
+        } else {
+            piece.marks
+        };
+        (marks, piece.link.clone())
+    };
     let mut joined: Vec<Option<Format>> = vec![None; pieces.len()];
     let mut start = 0;
     while start < pieces.len() {
@@ -1025,8 +1034,8 @@ fn wrap_markers(pieces: &mut [Piece]) {
             .unwrap_or(pieces.len());
         let before = start.checked_sub(1).map(|at| format(&pieces[at]));
         let after = pieces.get(end).map(format);
-        if let Some(around) = before
-            .filter(|f| !f.0.code && *f != (Marks::default(), None) && Some(f) == after.as_ref())
+        if let Some(around) =
+            before.filter(|f| *f != (Marks::default(), None) && Some(f) == after.as_ref())
         {
             joined[start..end].fill(Some(around));
         }

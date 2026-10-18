@@ -721,3 +721,196 @@ fn code_span_revision_anchor_has_no_attribution() {
         assert_eq!(jubarte::markdown::plain_anchor(body), expected, "{view}");
     }
 }
+
+fn default_code_space_round_trip(text: &str) {
+    use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
+    let source = common::docx::docx(&format!(
+        r#"<w:p>{}<w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t xml:space="preserve">{}</w:t></w:r>{}</w:p>"#,
+        common::docx::run("Run a", false, false, None),
+        common::docx::esc(text),
+        common::docx::run("b here.", false, false, None),
+    ));
+    let view = docx_to_markdown(&source, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    let back = markdown_to_docx(&view, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(
+        jubarte::inspect::paragraphs(&back).unwrap()[0].text,
+        format!("Run a{text}b here."),
+        "{view}"
+    );
+    assert_eq!(code_text(&back), text, "{view}");
+    let agent = undated_view(&source, false);
+    let fence = if text.chars().all(|c| c == ' ') || !(text.starts_with(' ') || text.ends_with(' '))
+    {
+        format!("`{text}`")
+    } else {
+        format!("` {text} `")
+    };
+    assert!(agent.contains(&format!("Run a{fence}b here.")), "{agent}");
+}
+
+fn code_text(docx: &[u8]) -> String {
+    use jubarte::namespaces::W;
+    let xml = common::docx::part_string(docx, "word/document.xml").unwrap();
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    dom.descendants(dom.root(document).unwrap(), Some(&W::r()))
+        .into_iter()
+        .filter(|&run| {
+            dom.descendants(run, Some(&W::name("rStyle")))
+                .into_iter()
+                .any(|style| dom.attribute(style, &W::val()) == Some("VerbatimChar"))
+                || dom
+                    .descendants(run, Some(&W::name("rFonts")))
+                    .into_iter()
+                    .any(|fonts| dom.attribute(fonts, &W::name("ascii")) == Some("Consolas"))
+        })
+        .map(|run| dom.value(run))
+        .collect()
+}
+
+#[test]
+fn default_code_leading_space_round_trip() {
+    default_code_space_round_trip(" x");
+}
+#[test]
+fn default_code_trailing_space_round_trip() {
+    default_code_space_round_trip("x ");
+}
+#[test]
+fn default_code_two_leading_spaces_round_trip() {
+    default_code_space_round_trip("  x");
+}
+#[test]
+fn default_code_internal_spaces_round_trip() {
+    default_code_space_round_trip("a  b");
+}
+#[test]
+fn default_code_all_spaces_round_trip() {
+    default_code_space_round_trip("        ");
+}
+#[test]
+fn default_code_inserted_spaces_round_trip() {
+    use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
+    let (source, _, _) = code_revision_probe("insert", "        ");
+    let view = docx_to_markdown(&source, &MarkdownOptions::default())
+        .unwrap()
+        .markdown;
+    let back = markdown_to_docx(&view, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    assert_eq!(changes(&back), changes(&source), "{view}");
+    assert_eq!(code_text(&back), "w:del         tail", "{view}");
+}
+
+#[test]
+fn code_comment_scope_ends_inside_code() {
+    let code = |text: &str| {
+        format!(r#"<w:r><w:rPr><w:rStyle w:val="VerbatimChar"/></w:rPr><w:t>{text}</w:t></w:r>"#)
+    };
+    let source = common::docx::docx_with(
+        &format!(
+            r#"<w:p>{}<w:commentRangeStart w:id="0"/>{}<w:commentRangeEnd w:id="0"/>{}<w:r><w:commentReference w:id="0"/></w:r></w:p>"#,
+            code("a"),
+            code("x"),
+            code("b")
+        ),
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: r#"<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="0" w:author="Alice"><w:p><w:r><w:t>Check this.</w:t></w:r></w:p></w:comment></w:comments>"#,
+        }],
+    );
+    let view = undated_view(&source, false);
+    assert!(view.contains("`a`{==`x`==}{>>"), "{view}");
+    assert!(view.contains("Check this.<<}`b`"), "{view}");
+    let back = markdown_to_docx(&view, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let notes = jubarte::comments::list_comments(&back).unwrap();
+    assert_eq!(notes.len(), 1, "{view}");
+    assert_eq!(notes[0].text, "Check this.");
+    assert_eq!(jubarte::inspect::paragraphs(&back).unwrap()[0].text, "axb");
+    assert_eq!(code_text(&back), "axb");
+}
+
+#[test]
+fn code_link_insertion_stays_in_one_hyperlink() {
+    use jubarte::namespaces::W;
+    let source = markdown_to_docx(
+        "[`a`{++`b`++}`c`](https://example.test/code)",
+        &DocxOptions {
+            author: "Alice".into(),
+            ..DocxOptions::default()
+        },
+    )
+    .unwrap()
+    .docx;
+    let view = undated_view(&source, false);
+    let back = markdown_to_docx(&view, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let links = |docx: &[u8]| {
+        let xml = common::docx::part_string(docx, "word/document.xml").unwrap();
+        let mut dom = jubarte::xmllinq::Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let links = dom.descendants(dom.root(document).unwrap(), Some(&W::name("hyperlink")));
+        let insertions = links
+            .iter()
+            .map(|&link| dom.descendants(link, Some(&W::name("ins"))).len())
+            .sum::<usize>();
+        (links.len(), insertions)
+    };
+    assert_eq!(links(&source), (1, 1));
+    assert_eq!(code_text(&source), "abc");
+    assert_eq!(links(&back), (1, 1), "{view}");
+    assert_eq!(changes(&back), changes(&source));
+    assert_eq!(code_text(&back), "abc");
+}
+
+#[test]
+fn code_inserted_spaces_use_the_issue_spelling() {
+    let (_, view, _) = code_revision_probe("insert", "        ");
+    assert!(view.contains("`w:del`{++`        `++}{r0 @A}"), "{view}");
+}
+
+fn anchor_matches_reader(source: &str, expected: &str) {
+    let docx = markdown_to_docx(source, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    use jubarte::namespaces::{M, W};
+    let xml = common::docx::part_string(&docx, "word/document.xml").unwrap();
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let text: String = dom
+        .descendants(dom.root(document).unwrap(), None)
+        .into_iter()
+        .filter(
+            |&node| matches!(dom.name(node), Some(name) if name == W::t() || name == M::name("t")),
+        )
+        .map(|node| dom.value(node))
+        .collect();
+    assert_eq!(text, expected);
+    assert_eq!(jubarte::markdown::plain_anchor(source), text, "{source}");
+}
+
+#[test]
+fn anchor_math_with_backticks_matches_reader() {
+    anchor_matches_reader("$a`b`c$", "a`b`c");
+}
+#[test]
+fn anchor_strikethrough_matches_reader() {
+    anchor_matches_reader("~~x~~", "x");
+}
+#[test]
+fn anchor_superscript_matches_reader() {
+    anchor_matches_reader("^x^", "x");
+}
+#[test]
+fn anchor_subscript_matches_reader() {
+    anchor_matches_reader("~x~", "x");
+}
