@@ -101,8 +101,8 @@ fn revision_dates_flag_uses_utc_and_legacy_fallback() {
         &["read", "dates.docx", "--dates", "--no-page-markers"],
         directory.path(),
     );
-    assert!(md.contains(&format!("@E {REPORTED}<<")), "{md}");
-    assert!(md.contains(&format!("@E {LEGACY}<<")), "{md}");
+    assert!(md.contains(&format!("@E {REPORTED}}}")), "{md}");
+    assert!(md.contains(&format!("@E {LEGACY}}}")), "{md}");
     assert!(!md.contains(LOCAL), "{md}");
 }
 
@@ -464,7 +464,7 @@ fn corpus_round_trip_preserves_all_361_stored_dates() {
 
 #[test]
 fn offset_view_writer_preserves_wall_clock_for_marks_and_comments() {
-    let md = "---\nauthors:\n  A: Alice # 1 revision, 2026-09-25T20:04:00-04:00\n---\n\n{++text++}{>>r1 @A<<} {==anchor==}{>>c0 @A 2026-09-25T20:04:00-04:00: note<<}\n";
+    let md = "---\nauthors:\n  A: Alice # 1 revision, 2026-09-25T20:04:00-04:00\n---\n\n{++text++}{r1 @A} {==anchor==}{>>c0 @A 2026-09-25T20:04:00-04:00: note<<}\n";
     let output = jubarte::markdown::markdown_to_docx(md, &Default::default()).unwrap();
     assert_eq!(stored_dates(&output.docx), ["2026-09-25T20:04:00Z"]);
     let comments = part_string(&output.docx, "word/comments.xml").unwrap();
@@ -489,7 +489,7 @@ fn offset_view_revision_writes_utc_and_root_compatibility() {
         ("2026-09-25T20:04:00+00:00", "2026-09-25T20:04:00Z"),
     ] {
         let md = format!(
-            "---\nauthors:\n  A: Alice # 1 revision, {date}\n---\n\n{{++text++}}{{>>r1 @A<<}}\n"
+            "---\nauthors:\n  A: Alice # 1 revision, {date}\n---\n\n{{++text++}}{{r1 @A}}\n"
         );
         let output = jubarte::markdown::markdown_to_docx(
             &md,
@@ -532,7 +532,8 @@ fn offset_view_revision_writes_utc_and_root_compatibility() {
 
 #[test]
 fn z_view_revision_keeps_legacy_attributes() {
-    let md = "---\nauthors:\n  A: Alice # 1 revision, 2026-09-25T20:04:00Z\n---\n\n{++text++}{>>r1 @A<<}\n";
+    let md =
+        "---\nauthors:\n  A: Alice # 1 revision, 2026-09-25T20:04:00Z\n---\n\n{++text++}{r1 @A}\n";
     let output = jubarte::markdown::markdown_to_docx(md, &Default::default()).unwrap();
     let xml = part_string(&output.docx, "word/document.xml").unwrap();
     assert!(xml.contains(r#"w:date="2026-09-25T20:04:00Z""#));

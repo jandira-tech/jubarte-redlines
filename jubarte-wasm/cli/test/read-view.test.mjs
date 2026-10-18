@@ -51,7 +51,7 @@ test("readView by resolves names, bare handles and prefixed handles for comment 
   assert.match(body(expected), /c6 @AS re c5: Disagree/);
   // Filtering keeps the complete block, including other authors' marks: a
   // deletion before its insertion is two changes (only ins then del pairs).
-  assert.match(body(expected), /\{--thirty--\}\{>>r3 @AC<<\}\{\+\+forty-five\+\+\}\{>>r4 @AC<<\}/);
+  assert.match(body(expected), /\{~~thirty~>forty-five~~\}\{r3\+4 @AC\}/);
   for (const by of ["AS", "@AS"]) {
     assert.equal(read(received, { changed: true, by }), expected);
   }

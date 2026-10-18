@@ -132,6 +132,11 @@ fn resolve(markdown: &str, accept: bool) -> String {
         }
     };
     let text = spans(markdown, "{>>", "<<}", |_| String::new());
+    let text =
+        regex::Regex::new(r"(?:¶)?\{(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|noid)\b[^{}]*\}")
+            .unwrap()
+            .replace_all(&text, "")
+            .into_owned();
     let text = spans(&text, "{==", "==}", str::to_string);
     let text = spans(&text, "{~~", "~~}", |inner| {
         let (old, new) = inner.split_once("~>").unwrap();
@@ -264,7 +269,10 @@ fn link_text(line: &str) -> String {
 #[test]
 fn every_document_is_heavy_on_what_its_name_says() {
     // A deletion, its note, then an insertion.
-    let replacement = regex::Regex::new(r"--\}(\{>>[^<]*<<\})?\{\+\+").unwrap();
+    let replacement = regex::Regex::new(
+        r"--\}(?:\{(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|noid)\b[^{}]*\})?\{\+\+",
+    )
+    .unwrap();
     for &name in &DOCUMENTS[..10] {
         let markup = markdown(&format!("{name}.docx"), TrackChanges::All);
         let count = |delimiter: &str| markup.matches(delimiter).count();
@@ -276,9 +284,8 @@ fn every_document_is_heavy_on_what_its_name_says() {
             "comments" => assert!(commented >= 10 && changes == 0, "{name}: {markup}"),
             "deletions" => assert!(deleted >= 10 && inserted == 0, "{name}: {markup}"),
             "additions" => assert!(inserted >= 10 && deleted == 0, "{name}: {markup}"),
-            // Writer writes a replacement as the deletion then the
-            // insertion: two changes side by side, not Word Compare's
-            // insertion-then-deletion substitution.
+            // Replacements pair only when the deleted and live inserted
+            // sides have the same author; other authors stay separate.
             "substitutions" => {
                 let replaced = replacement.find_iter(&markup).count();
                 assert!(substituted + replaced >= 5, "{name}: {markup}");

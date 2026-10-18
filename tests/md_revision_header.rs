@@ -17,7 +17,7 @@ const KINDS: [&str; 6] = [
 ];
 
 /// Independent text oracle: count complete attributed marks, never ids in an
-/// `on` chain or the two ids joined by a substitution. Id-line clauses carry
+/// `re` chain or the two ids joined by a substitution. Id-line clauses carry
 /// paragraph marks and table changes that have no inline delimiter.
 fn printed_counts(body: &str) -> [usize; 6] {
     // The header reports note stories separately, including a note inserted
@@ -30,9 +30,35 @@ fn printed_counts(body: &str) -> [usize; 6] {
         .next()
         .unwrap();
     let mut counts = [0; 6];
-    let inline = Regex::new(r"(?s)(\+\+\}|--\}|~~\})[*_`]*(?:\{>>(.*?)<<\})+").unwrap();
+    // An attribution is grammar, not arbitrary text after an @. In
+    // particular, a backslash before its closer makes it literal text.
+    let id =
+        r"(?:(?:[A-Za-z0-9_-]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|noid)|[A-Za-z0-9_-]+:rev:[^\s{}\\]+)";
+    let handle = r"(?:[\p{L}\p{N}]+|\?\?)";
+    let date = r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:[0-5][0-9])?";
+    let part = format!(r"{id} @{handle}(?: {date})?");
+    let attribution = format!(r"{part}(?: re {part})*");
+    let escaped = |at: usize| {
+        body[..at]
+            .bytes()
+            .rev()
+            .take_while(|&byte| byte == b'\\')
+            .count()
+            % 2
+            != 0
+    };
+    // Comment text is opaque, even if it quotes a complete attributed
+    // change. Old revision-note wrappers are ordinary comments too.
+    let comments = Regex::new(r"(?s)\{>>(?:\\.|[^\\])*?<<\}")
+        .unwrap()
+        .find_iter(body)
+        .filter(|found| !escaped(found.start()))
+        .map(|found| found.range())
+        .collect::<Vec<_>>();
+    let visible = |at: usize| !escaped(at) && !comments.iter().any(|range| range.contains(&at));
+    let inline = Regex::new(&format!(r"(\+\+\}}|--\}}|~~\}})[*_`]*\{{{attribution}\}}")).unwrap();
     for cap in inline.captures_iter(body) {
-        if !cap[2].starts_with('r') && !cap[2].starts_with("noid @") {
+        if !visible(cap.get(0).unwrap().start()) {
             continue;
         }
         counts[match &cap[1] {
@@ -41,10 +67,12 @@ fn printed_counts(body: &str) -> [usize; 6] {
             _ => 2,
         }] += 1;
     }
-    let tag = Regex::new(
-        r"(?:^|; )((?:r[0-9]+(?:\+[0-9]+)*|noid) @[^ ;]+)(?:[^;]*?)(?: in ([^;]+))?(?:;|$)",
-    )
-    .unwrap();
+    counts[3] += Regex::new(&format!(r"¶\{{{attribution}\}}"))
+        .unwrap()
+        .find_iter(body)
+        .filter(|found| visible(found.start()))
+        .count();
+    let tag = Regex::new(&format!(r"^{attribution}(?: in [A-Za-z0-9_.-]+)?$")).unwrap();
     for line in body
         .lines()
         .map(str::trim_start)
@@ -87,6 +115,27 @@ fn printed_counts(body: &str) -> [usize; 6] {
         }
     }
     counts
+}
+
+#[test]
+fn printed_counts_requires_complete_tags_and_keeps_comments_opaque() {
+    let body = concat!(
+        "{++live++}{r1 @A}\n",
+        "{--old--}{r2 @B 2026-10-01T09:00:00Z re r0 @A}\n",
+        "{~~before~>after~~}{r3+4 @B re header1.r0 @A}\n",
+        "text¶{noid @??}\n",
+        r"{++<br>++}{r33 @LW\}{--<br>--}{r78 @LW\}",
+        r"{++<br>++}{r407 @LW\}{++<br>++}{r414 @LW\}",
+        "\n{++bad handle++}{r5 @A!}\n",
+        "{++bad date++}{r6 @A yesterday}\n",
+        "{++bad parent++}{r7 @A re r8 @B!}\n",
+        r"{++literal++}\{r9 @A}",
+        "\n{++bad pilcrow attribution++}{r10 @A trailing}\n",
+        r"¶{r11 @A\}",
+        "\n{>>{++quoted++}{r12 @A} ¶{r13 @A}<<}\n",
+        "{>>r14 @A<<}\n",
+    );
+    assert_eq!(printed_counts(body), [1, 1, 1, 1, 0, 0]);
 }
 
 #[track_caller]
@@ -307,7 +356,7 @@ fn resolved_headers_name_table_marks_and_moves_from_the_revision_list() {
 }
 
 #[test]
-fn revisions_header_counts_the_six_printed_nested_changes() {
+fn revisions_header_counts_the_five_printed_nested_changes() {
     let nested = format!(
         r#"<w:ins w:id="2" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t> will pay the </w:t></w:r>{}</w:ins>"#,
         revision("del", 3, "Bob", "insurers")
@@ -321,20 +370,20 @@ fn revisions_header_counts_the_six_printed_nested_changes() {
     ));
     assert_eq!(
         printed_counts(view.split("---\n").nth(2).unwrap()),
-        [5, 1, 0, 0, 0, 0]
+        [4, 0, 1, 0, 0, 0]
     );
-    assert!(view.contains("on r2 @A"), "{view}");
+    assert!(view.contains("re r2 @A"), "{view}");
     assert_summary(&view);
 }
 
 #[test]
-fn revisions_header_counts_sixteen_tags_from_eighteen_marks() {
+fn revisions_header_counts_seventeen_tags_from_eighteen_marks() {
     let mut xml = String::new();
     for id in [0, 2, 4] {
         xml.push_str(&format!(r#"<w:p><w:ins w:id="{id}" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t>live</w:t></w:r>{}</w:ins></w:p>"#, revision("del", id + 1, "Bob", "nested")));
     }
     let plain = "<w:r><w:t> gap </w:t></w:r>";
-    // The deletion-before-insertion pair stays two changes, even by one author.
+    // A deletion directly followed by an insertion by one author is one change.
     xml.push_str(&format!(
         "<w:p>{}{}</w:p>",
         revision("del", 6, "Bob", "old"),
@@ -363,7 +412,7 @@ fn revisions_header_counts_sixteen_tags_from_eighteen_marks() {
     assert!(view.contains("revisions: 18"), "{view}");
     assert_eq!(
         printed_counts(view.split("---\n").nth(2).unwrap()),
-        [8, 8, 0, 0, 0, 0]
+        [9, 7, 1, 0, 0, 0]
     );
     assert_summary(&view);
 }
@@ -392,10 +441,23 @@ fn every_blessed_agent_view_header_matches_its_body() {
     agent_fixtures(std::path::Path::new("tests/fixtures"), &mut paths);
     paths.sort();
     assert!(paths.len() >= 52, "the gate must cover all agent views");
+    let old_tags = Regex::new(r"\{>>((?:(?:[a-z0-9_]+\.)?r[0-9]+|noid)[^{}]*?)<<\}").unwrap();
     for path in paths {
-        let view = std::fs::read_to_string(&path).unwrap();
+        let mut view = std::fs::read_to_string(&path).unwrap();
         eprintln!("checking {}", path.display());
-        if std::env::var_os("JUBARTE_BLESS").is_some() {
+        if std::env::var_os("JUBARTE_BLESS").is_some()
+            && !path
+                .components()
+                .any(|part| part.as_os_str() == "re-dialect")
+        {
+            // Hand-authored agent fixtures have no DOCX oracle to re-read.
+            // Migrate their attribution spelling through this blessing switch;
+            // comments and the approved re-dialect specifications stay intact.
+            view = old_tags
+                .replace_all(&view, |cap: &regex::Captures<'_>| {
+                    format!("{{{}}}", cap[1].replace(" on ", " re "))
+                })
+                .into_owned();
             let (_, rest) = view.split_once("---\n").unwrap();
             let (header, body) = rest.split_once("---\n").unwrap();
             let counts = if header.lines().any(|line| {

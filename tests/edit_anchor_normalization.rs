@@ -38,19 +38,19 @@ fn marks_are_dropped_when_the_literal_anchor_is_absent_and_the_report_says_so() 
         ),
         (
             "p1",
-            "keep {++it++}{>>r0 @AC<<} secret",
+            "keep {++it++}{r0 @AC} secret",
             "keep it secret",
             "keep secret",
         ),
         (
             "p1",
-            "keep {~~that~>it~~}{>>r0 @AC<<} secret",
+            "keep {~~that~>it~~}{r0 @AC} secret",
             "keep it secret",
             "keep secret",
         ),
         (
             "p1",
-            "keep it {--very --}{>>r1 @AC<<}secret",
+            "keep it {--very --}{r1 @AC}secret",
             "keep it secret",
             "keep secret",
         ),
