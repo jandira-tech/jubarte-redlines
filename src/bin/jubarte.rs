@@ -1142,15 +1142,22 @@ fn run_edit(
         require_change: job.require_change,
         ..jubarte::edit::PrepareOptions::default()
     };
+    let refuse = |e: jubarte::edit::EditError| {
+        let syntax = if job.plan.is_some() {
+            jubarte::edit::refusal::RevisionSyntax::V1Plan
+        } else {
+            jubarte::edit::refusal::RevisionSyntax::LegacyFlags
+        };
+        refused(&e.with_revision_syntax(syntax), job.file, source)
+    };
     if job.dry_run {
-        let report =
-            jubarte::edit::preview_plan_with(source, plan, &options).map_err(|e| refused(&e))?;
+        let report = jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
         return write_stdout(report.to_jsonl()).map_err(fail);
     }
     // The plan first: a refused plan prints its whole report, whatever the
     // outputs (D15).
     let result = jubarte::edit::prepare(source, plan, &options)
-        .map_err(|e| refused(&e))?
+        .map_err(refuse)?
         .result;
     let dir = match job.target {
         EditTarget::Single(path) => return write_edited(job, path, &result, notes, source),
@@ -2046,7 +2053,13 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Usage(m) => (EXIT_USAGE, m),
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
-    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| refused(&e))?;
+    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| {
+        refused(
+            &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
+            flags.file,
+            source,
+        )
+    })?;
     if !flags.quiet {
         for note in &recorded.notes {
             outln!("note: {note}");
@@ -2081,7 +2094,7 @@ fn edit_exit(result: Result<(), (u8, String)>) -> ExitCode {
 }
 
 /// A refused plan: its report goes to stdout, the error to stderr, exit 3.
-fn refused(e: &jubarte::edit::EditError) -> (u8, String) {
+fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, String) {
     let report_lines: String = e
         .outcomes
         .iter()
@@ -2104,13 +2117,18 @@ fn refused(e: &jubarte::edit::EditError) -> (u8, String) {
             v.to_string() + "\n"
         })
         .collect();
-    let summary = serde_json::json!({
+    let mut summary = serde_json::json!({
         "ev": "summary",
         "status": "failed",
         "code": e.code,
         "operation": e.operation,
         "message": e.message,
     });
+    let actions =
+        e.revision_next_actions(&absolute(file), &jubarte::inspect::source_sha256(source));
+    if !actions.is_empty() {
+        summary["next_actions"] = serde_json::to_value(actions).expect("actions serialize");
+    }
     outln!("{report_lines}{summary}");
     (EXIT_PLAN_REFUSED, format!("plan refused: {e}"))
 }
