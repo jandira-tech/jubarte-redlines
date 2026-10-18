@@ -227,6 +227,7 @@ test("errors read as the binary's: bad ids are usage, I/O as Rust words it, sort
 });
 
 test("read (alias text), inspect, capabilities and convert", () => {
+  assert.equal(JSON.parse(run("read", untracked, "--json").out).schema_version, 2);
   // `read` prints the agent view, as the binary and the Python CLI do.
   for (const command of ["read", "text"]) {
     const view = run(command, untracked, "--no-page-markers");
@@ -262,7 +263,7 @@ test("read (alias text), inspect, capabilities and convert", () => {
   assert.equal(retired.out, run("read", untracked).out);
   assert.equal(retired.err, "note: inspect is now read; inspect is removed in 0.14\n");
   const snapshot = JSON.parse(run("inspect", untracked, "--json").out);
-  assert.equal(snapshot.schema_version, 1);
+  assert.equal(snapshot.schema_version, 2);
   assert.ok(Array.isArray(snapshot.changes) && Array.isArray(snapshot.comments));
   assert.deepEqual(JSON.parse(run("read", untracked, "--json").out), snapshot);
   const wasm = createRequire(bin)("jubarte-wasm");
