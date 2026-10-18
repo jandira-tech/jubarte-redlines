@@ -689,6 +689,19 @@ fn repeated_empty_ranges_keep_positions_and_bookmark_names() {
     );
 }
 
+// #1174 review: a text paragraph's range and an empty paragraph's range share
+// one id. Restoring the empty one must not take the text range's endpoints.
+#[test]
+fn repeated_permission_id_text_and_empty_ranges_keep_positions() {
+    let source = docx(&format!(
+        "<w:p>{START}{}{END}</w:p><w:p>{START}{END}</w:p>{}",
+        run("Alice.", false, false, None),
+        para("Next.")
+    ));
+    let result = edit(&source, "p2", "Next", "Following");
+    assert_fresh_repeated_permissions(&source, &result);
+}
+
 #[test]
 fn deleted_permission_start_accepts_at_next_text() {
     let source = docx(&format!(
