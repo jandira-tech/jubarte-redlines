@@ -971,6 +971,8 @@ To preserve the thread, set `"removed_anchor_comments": "keep"` in a v1 or
 v2 plan. Its range markers and reference runs move together to an empty,
 untracked anchor where the removed text was. A reply in the same plan can
 then use that anchor. The receipt reports `kept_comments` with `anchor: "empty"`.
+Comments the plan subsequently deletes are not listed; deleted replies leave
+the kept thread's `replies`, while its surviving root stays listed.
 This opt-in is a jubarte convention that Word opens with threaded balloons;
 the default `"remove"` follows Word's removal behavior. Partial overlaps
 keep the existing behavior. Unknown values are refused as `INVALID_PLAN`.

@@ -1447,3 +1447,176 @@ fn receipt_1191_kept_paragraph_names_the_clean_copy_in_editing_mode() {
 fn receipt_1191_kept_paragraph_names_the_redline_in_suggesting_mode() {
     kept_receipt_after_a_deleted_paragraph(false);
 }
+
+/// A comment the settlement keeps on an empty anchor and the plan then
+/// deletes is gone from the output: no receipt may call it kept.
+fn deleted_kept_comment_receipt(editing: bool) {
+    let source = settlement_identity_source();
+    let plan = anchor_plan(
+        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep"}),
+        serde_json::json!([{"kind":"delete_comment","comment_id":"c0"}]),
+    );
+    let (text, bytes) = run_thread_cli(&source, &plan, editing);
+    assert!(
+        list_comments(&bytes)
+            .unwrap()
+            .iter()
+            .all(|c| c.text != "Removed"),
+        "the plan deleted c0"
+    );
+    assert!(
+        !text.lines().any(|l| l.starts_with("kept c0")),
+        "a deleted comment is not kept (editing: {editing}): {text}"
+    );
+}
+
+#[test]
+fn receipt_kept_then_deleted_comment_is_not_called_kept_in_suggesting_mode() {
+    deleted_kept_comment_receipt(false);
+}
+
+#[test]
+fn receipt_kept_then_deleted_comment_is_not_called_kept_in_editing_mode() {
+    deleted_kept_comment_receipt(true);
+}
+
+// #1206: settlement's provisional rescue must agree with the plan's deletions.
+fn kept_deletion_plan(source: &[u8], id: u32, track: Option<&str>) -> serde_json::Value {
+    if let Some(track) = track {
+        serde_json::json!({
+            "schema_version": 2,
+            "source": {"sha256": jubarte::inspect::source_sha256(source)},
+            "policy": {"track": track, "existing_revisions": "reject", "text_view": "final"},
+            "resolve_revisions": {"accept": [], "reject": []},
+            "author": "Alice", "date": "2026-10-18T12:06:00Z",
+            "scope": {"kind": "all"}, "removed_anchor_comments": "keep",
+            "operations": [{"kind": "delete_comment", "include_replies": true,
+                "target": {"short_id": format!("c{id}"), "long_id": format!("comments.w:comment.w:id.{id}")}}]
+        })
+    } else {
+        serde_json::json!({
+            "schema_version": 1, "author": "Alice", "date": "2026-10-18T12:06:00Z",
+            "existing_revisions": "reject", "removed_anchor_comments": "keep",
+            "operations": [{"kind": "delete_comment", "comment_id": format!("c{id}")}]
+        })
+    }
+}
+
+fn kept_deletion_report(id: u32, track: Option<&str>) {
+    let source = anchor_variant("ins", false);
+    let value = kept_deletion_plan(&source, id, track);
+    let (clean, redline, report) = if track.is_some() {
+        let plan = jubarte::edit::v2::PlanV2::from_json(&value.to_string()).unwrap();
+        let out = jubarte::edit::v2_apply::apply_plan(&source, &plan).unwrap();
+        (out.clean, out.redline, out.report)
+    } else {
+        let out = apply_plan(&source, &EditPlan::from_json(&value.to_string()).unwrap()).unwrap();
+        (out.clean, out.redline, out.report)
+    };
+    for bytes in [&clean, &redline] {
+        assert_word_valid_package(bytes);
+        let comments = list_comments(bytes).unwrap();
+        assert_eq!(comments.len(), usize::from(id == 1));
+        if id == 1 {
+            assert_eq!(comments[0].text, "Bob's reason.");
+            assert!(comments[0].parent.is_none());
+            assert!(comments[0].anchor_text.is_empty());
+        }
+    }
+    let json = serde_json::to_value(&report).unwrap();
+    let summary: serde_json::Value =
+        serde_json::from_str(report.to_jsonl().lines().last().unwrap()).unwrap();
+    assert_eq!(summary["ev"], "summary");
+    let expected = if id == 0 {
+        (serde_json::Value::Null, serde_json::json!([]))
+    } else {
+        let kept = serde_json::json!([{"id":"c0","replies":[],"anchor":"empty"}]);
+        (kept.clone(), kept)
+    };
+    assert_eq!(
+        (
+            json["kept_comments"].clone(),
+            summary["kept_comments"].clone()
+        ),
+        expected,
+        "JSON report and JSONL summary must describe only surviving kept comments"
+    );
+}
+
+#[test]
+fn report_1206_v1_kept_root_then_deleted() {
+    kept_deletion_report(0, None);
+}
+
+#[test]
+fn report_1206_v1_kept_root_with_deleted_reply() {
+    kept_deletion_report(1, None);
+}
+
+#[test]
+fn report_1206_v2_kept_root_then_deleted() {
+    kept_deletion_report(0, Some("on"));
+}
+
+#[test]
+fn report_1206_v2_kept_root_with_deleted_reply() {
+    kept_deletion_report(1, Some("on"));
+}
+
+#[test]
+fn report_1206_v2_untracked_kept_root_then_deleted() {
+    kept_deletion_report(0, Some("off"));
+}
+
+#[test]
+fn report_1206_v2_untracked_kept_root_with_deleted_reply() {
+    kept_deletion_report(1, Some("off"));
+}
+
+fn typed_deleted_kept_receipt(track: &str) {
+    let source = anchor_variant("ins", false);
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.docx");
+    let request = dir.path().join("plan.json");
+    let output = dir.path().join("result.docx");
+    std::fs::write(&input, &source).unwrap();
+    std::fs::write(
+        &request,
+        kept_deletion_plan(&source, 0, Some(track)).to_string(),
+    )
+    .unwrap();
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .args(["edit", "apply"])
+        .arg(&input)
+        .arg("--plan")
+        .arg(&request)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.status.success(), "{text}");
+    assert!(
+        list_comments(&std::fs::read(output).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !text.lines().any(|line| line.starts_with("kept c0")),
+        "a deleted comment is not kept (track: {track}): {text}"
+    );
+}
+
+#[test]
+fn receipt_1206_typed_kept_then_deleted_tracked() {
+    typed_deleted_kept_receipt("on");
+}
+
+#[test]
+fn receipt_1206_typed_kept_then_deleted_untracked() {
+    typed_deleted_kept_receipt("off");
+}

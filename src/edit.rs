@@ -1059,7 +1059,8 @@ pub struct EditReport {
     /// Threads removed with the settled text, in source comment ids.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed_comments: Vec<RemovedComment>,
-    /// Threads moved onto empty anchors by opt-in settlement.
+    /// Threads moved onto empty anchors by opt-in settlement, excluding
+    /// comments and replies subsequently deleted by the plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept_comments: Vec<KeptComment>,
     /// Source paragraph ids that name another paragraph once the plan's
@@ -5474,7 +5475,17 @@ impl<'p> Transaction<'p> {
         }
         for op in &ops {
             if let ThreadOp::Delete { id } = op {
-                family.remove(*id);
+                // Rescue at settlement is provisional: both plan schemas'
+                // reports must describe the family we actually publish.
+                let removed: Vec<_> = family
+                    .remove(*id)
+                    .into_iter()
+                    .map(|id| format!("c{id}"))
+                    .collect();
+                self.kept_comments.retain(|c| !removed.contains(&c.id));
+                for kept in &mut self.kept_comments {
+                    kept.replies.retain(|id| !removed.contains(id));
+                }
             }
         }
         family.store(&mut self.opened.pkg, &main);
