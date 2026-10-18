@@ -1050,6 +1050,10 @@ fn foreign_changed_and_new_messages_are_distinct_and_do_not_quote_text() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "wall-clock performance bound is for native execution, not Miri interpretation"
+)]
 fn foreign_reverse_ten_thousand_revisions_is_fast() {
     let make = |reverse: bool| {
         let mut body = String::from("<w:p>");
@@ -1174,4 +1178,131 @@ fn foreign_empty_runs_do_not_separate_adjacent_splits() {
         foreign_carrier("ins", 3, "Alice", "World")
     ));
     assert!(foreign_messages(&original, &edited).is_empty());
+}
+
+fn foreign_sandwich(separator: &str, left: &str, right: &str) -> Vec<u8> {
+    docx(&format!(
+        "<w:p>{}{separator}{}</w:p>",
+        foreign_carrier("ins", 1, "Alice", left),
+        foreign_carrier("ins", 3, "Alice", right)
+    ))
+}
+
+#[test]
+fn foreign_settled_move_does_not_name_untouched_neighbors() {
+    let separator = format!(
+        r#"<w:moveFromRangeStart w:id="20" w:name="move"/>{}<w:moveFromRangeEnd w:id="20"/>"#,
+        foreign_carrier("moveFrom", 2, "Alice", "X")
+    );
+    let original = foreign_sandwich(&separator, "A", "B");
+    let edited = foreign_sandwich("", "A", "B");
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["Alice's r2 in the original is gone"]
+    );
+}
+
+#[test]
+fn foreign_removed_empty_move_markers_are_transparent() {
+    for side in ["From", "To"] {
+        let markers = format!(
+            r#"<w:move{side}RangeStart w:id="20" w:name="move"/><w:move{side}RangeEnd w:id="20"/>"#
+        );
+        assert_eq!(
+            foreign_messages(
+                &foreign_sandwich(&markers, "A", "B"),
+                &foreign_sandwich("", "A", "B")
+            ),
+            Vec::<String>::new()
+        );
+    }
+}
+
+#[test]
+fn foreign_retained_empty_move_markers_keep_boundaries() {
+    let markers =
+        r#"<w:moveFromRangeStart w:id="20" w:name="move"/><w:moveFromRangeEnd w:id="20"/>"#;
+    let original = foreign_sandwich(markers, "A", "BC");
+    assert_eq!(foreign_messages(&original, &original), Vec::<String>::new());
+    assert_eq!(
+        foreign_messages(&original, &foreign_sandwich(markers, "AB", "C")),
+        [
+            "r1 by Alice differs from the original",
+            "r3 by Alice differs from the original"
+        ]
+    );
+}
+
+#[test]
+fn foreign_rejected_reviewer_carrier_is_transparent() {
+    let original = foreign_sandwich(&foreign_carrier("ins", 2, "Bob", "X"), "A", "B");
+    assert_eq!(foreign_messages(&original, &original), Vec::<String>::new());
+}
+
+#[test]
+fn foreign_settled_separator_names_the_changed_carrier() {
+    let original = foreign_sandwich(
+        &foreign_carrier("del", 2, "Alice", "old"),
+        "Hello ",
+        "World",
+    );
+    let edited = foreign_sandwich("", "Hello ", "Changed");
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        [
+            "r3 by Alice differs from the original",
+            "Alice's r2 in the original is gone"
+        ]
+    );
+}
+
+#[test]
+fn foreign_settled_adjacent_carol_carriers_are_each_gone() {
+    let original = docx(&format!(
+        "<w:p>{}{}{}{}</w:p>",
+        foreign_carrier("del", 1, "Alice", "left"),
+        foreign_carrier("ins", 2, "Carol Diaz", "one"),
+        foreign_carrier("ins", 3, "Carol Diaz", "two"),
+        foreign_carrier("del", 4, "Alice", "right")
+    ));
+    let edited = jubarte::changes::accept_changes(
+        &original,
+        &jubarte::changes::ChangeFilter::ids(["r2", "r3"]),
+    )
+    .unwrap();
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        [
+            "Carol Diaz's r2 in the original is gone",
+            "Carol Diaz's r3 in the original is gone"
+        ]
+    );
+}
+
+#[test]
+fn foreign_untracked_paragraph_merge_reports_new_gone_and_structure() {
+    let revision = foreign_carrier("ins", 1, "Alice", "history");
+    let original = docx(&format!("{}<w:p>{revision}</w:p>", para("lead")));
+    let edited = docx(&format!("<w:p><w:r><w:t>lead</w:t></w:r>{revision}</w:p>"));
+    let findings = audit_tracked(&original, &edited, "Bob").unwrap();
+    assert_eq!(
+        foreign_messages(&original, &edited),
+        ["r1 by Alice is new", "Alice's r1 in the original is gone"]
+    );
+    assert_eq!(
+        findings.iter().map(|f| f.code.as_str()).collect::<Vec<_>>(),
+        ["FOREIGN_AUTHOR", "FOREIGN_AUTHOR", "UNTRACKED_EDIT"]
+    );
+}
+
+#[test]
+fn foreign_removed_markers_allow_a_single_merged_carrier() {
+    let markers =
+        r#"<w:moveFromRangeStart w:id="20" w:name="move"/><w:moveFromRangeEnd w:id="20"/>"#;
+    let original = foreign_sandwich(markers, "A", "B");
+    let merged = docx(&format!(
+        "<w:p>{}</w:p>",
+        foreign_carrier("ins", 1, "Alice", "AB")
+    ));
+    assert_eq!(foreign_messages(&original, &merged), Vec::<String>::new());
 }

@@ -2198,7 +2198,9 @@ fn story_part(id: &str) -> String {
 /// at its paragraph id. Foreign revisions already in `original` may remain:
 /// only added, altered or removed foreign history is a `FOREIGN_AUTHOR`
 /// finding. Paragraphs are aligned by full text (including deleted text), story
-/// by story. Within each paragraph or non-paragraph owner, matching author,
+/// by story. An untracked paragraph merge or split around another author's
+/// revisions reports those revisions as new and gone alongside `UNTRACKED_EDIT`.
+/// Within each paragraph or non-paragraph owner, matching author,
 /// kind, target, date and move-side groups are compared in document order,
 /// ignoring revision ids. Split carriers combine only when they touch with
 /// no visible content or still-present revision between them; a boundary
@@ -2255,9 +2257,10 @@ pub fn audit_tracked(
     Ok(as_edits(out))
 }
 
-/// Exact sequence alignment by Hunt--Szymanski: keys are hashed once and
-/// matching positions are consumed through indices. Unlike a multiset this
-/// cannot match both sides of a swap. Common ends avoid duplicate-text work.
+/// Order-stable alignment. Sparse matches use Hunt--Szymanski with a linear
+/// link budget. Dense matches use Myers with at most 64 edits, then a
+/// deterministic forward-only fallback. Memory is O(N + 64²), even for
+/// repeated text; unlike a multiset no path can match both sides of a swap.
 fn ordered_pairs<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
     let prefix = a.iter().zip(b).take_while(|(a, b)| a == b).count();
     let suffix = a[prefix..]
@@ -2269,6 +2272,45 @@ fn ordered_pairs<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<(usize, usize
     let mut positions: HashMap<&T, Vec<usize>> = HashMap::new();
     for (j, value) in b.iter().enumerate().take(b.len() - suffix).skip(prefix) {
         positions.entry(value).or_default().push(j);
+    }
+    let budget = a.len().saturating_add(b.len()).saturating_mul(8);
+    let matches = a[prefix..a.len() - suffix]
+        .iter()
+        .fold(0usize, |count, value| {
+            count.saturating_add(positions.get(value).map_or(0, Vec::len))
+        });
+    if matches > budget {
+        let middle_a = &a[prefix..a.len() - suffix];
+        let middle_b = &b[prefix..b.len() - suffix];
+        let middle = bounded_myers_pairs(middle_a, middle_b).map_or_else(
+            || {
+                // Earliest available counterpart, with no backtracking. A
+                // bounded approximation can add findings, never reorder a
+                // match or invent an equality that hides altered text.
+                let mut next = prefix;
+                let mut pairs = Vec::new();
+                for (i, value) in a.iter().enumerate().take(a.len() - suffix).skip(prefix) {
+                    if let Some(indices) = positions.get(value) {
+                        let at = indices.partition_point(|&j| j < next);
+                        if let Some(&j) = indices.get(at) {
+                            pairs.push((i, j));
+                            next = j + 1;
+                        }
+                    }
+                }
+                pairs
+            },
+            |pairs| {
+                pairs
+                    .into_iter()
+                    .map(|(i, j)| (i + prefix, j + prefix))
+                    .collect()
+            },
+        );
+        let mut pairs: Vec<_> = (0..prefix).map(|i| (i, i)).collect();
+        pairs.extend(middle);
+        pairs.extend((0..suffix).map(|i| (a.len() - suffix + i, b.len() - suffix + i)));
+        return pairs;
     }
     let mut links: Vec<(usize, usize, Option<usize>)> = Vec::new();
     let mut tails: Vec<usize> = Vec::new();
@@ -2296,6 +2338,61 @@ fn ordered_pairs<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<(usize, usize
     pairs.extend(middle.into_iter().rev());
     pairs.extend((0..suffix).map(|i| (a.len() - suffix + i, b.len() - suffix + i)));
     pairs
+}
+
+/// Myers' shortest edit path, bounded independently of input length. Keeping
+/// only 65 narrow frontiers bounds both the search and its reconstruction.
+fn bounded_myers_pairs<T: Eq>(a: &[T], b: &[T]) -> Option<Vec<(usize, usize)>> {
+    const LIMIT: usize = 64;
+    const OFFSET: usize = LIMIT + 1;
+    let mut frontier = vec![0; 2 * LIMIT + 3];
+    let mut trace = Vec::new();
+    for depth in 0..=LIMIT {
+        trace.push(frontier.clone());
+        for diagonal in (OFFSET - depth..=OFFSET + depth).step_by(2) {
+            let down = diagonal == OFFSET - depth
+                || (diagonal != OFFSET + depth && frontier[diagonal - 1] < frontier[diagonal + 1]);
+            let mut x = if down {
+                frontier[diagonal + 1]
+            } else {
+                frontier[diagonal - 1] + 1
+            };
+            let mut y = x + OFFSET - diagonal;
+            while x < a.len() && y < b.len() && a[x] == b[y] {
+                x += 1;
+                y += 1;
+            }
+            frontier[diagonal] = x;
+            if x == a.len() && y == b.len() {
+                let mut pairs = Vec::new();
+                for d in (1..=depth).rev() {
+                    let diagonal = x + OFFSET - y;
+                    let previous = &trace[d];
+                    let down = diagonal == OFFSET - d
+                        || (diagonal != OFFSET + d
+                            && previous[diagonal - 1] < previous[diagonal + 1]);
+                    let prior_diagonal = if down { diagonal + 1 } else { diagonal - 1 };
+                    let prior_x = previous[prior_diagonal];
+                    let prior_y = prior_x + OFFSET - prior_diagonal;
+                    while x > prior_x && y > prior_y {
+                        x -= 1;
+                        y -= 1;
+                        pairs.push((x, y));
+                    }
+                    x = prior_x;
+                    y = prior_y;
+                }
+                while x > 0 && y > 0 {
+                    x -= 1;
+                    y -= 1;
+                    pairs.push((x, y));
+                }
+                pairs.reverse();
+                return Some(pairs);
+            }
+        }
+    }
+    None
 }
 
 /// Pair replacement gaps between the LCS anchors. Inserted/deleted tails
@@ -2393,11 +2490,10 @@ fn foreign_paragraphs(
     identities
 }
 
-/// Coalesce only touching carriers. Visible atoms and any intervening
-/// revision advance the document cursor even when list_changes omits them.
+/// Keep each carrier for attribution. Windows may combine touching text,
+/// but an altered window must still name the carrier that actually changed.
 fn foreign_revisions<'a>(
     stories: &'a [crate::changes::AuditStory],
-    author: &str,
     paragraphs: &HashMap<(String, String), usize>,
     edited: bool,
 ) -> Vec<ForeignGroup<'a>> {
@@ -2411,9 +2507,6 @@ fn foreign_revisions<'a>(
             .collect();
         for located in &story.changes {
             let c = &located.change;
-            if c.author.as_deref() == Some(author) {
-                continue;
-            }
             let paragraph = c.paragraph.as_ref().map(|id| {
                 if edited && let Some(&i) = paragraphs.get(&(story.part.clone(), id.clone())) {
                     (false, i)
@@ -2437,24 +2530,15 @@ fn foreign_revisions<'a>(
                 date: c.date.clone(),
                 move_side: c.move_side,
             };
-            if let Some(last) = out.last_mut()
-                && last.key == key
-                && last.end == located.start
-            {
-                last.text.push_str(&c.text);
-                last.end = located.end;
-                last.relaxed_end = located.end;
-            } else {
-                out.push(ForeignGroup {
-                    key,
-                    change: c,
-                    text: c.text.clone(),
-                    start: located.start,
-                    end: located.end,
-                    relaxed_start: located.start,
-                    relaxed_end: located.end,
-                });
-            }
+            out.push(ForeignGroup {
+                key,
+                change: c,
+                text: c.text.clone(),
+                start: located.start,
+                end: located.end,
+                relaxed_start: located.start,
+                relaxed_end: located.end,
+            });
         }
     }
     out
@@ -2462,12 +2546,15 @@ fn foreign_revisions<'a>(
 
 /// Remove only the document spans of revisions with no sequence counterpart.
 /// A still-present separator, even with changed text, remains a boundary.
-fn relax_foreign_boundaries(groups: &mut [ForeignGroup<'_>], present: &[bool]) {
-    let mut missing: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+fn relax_foreign_boundaries(
+    groups: &mut [ForeignGroup<'_>],
+    present: &[bool],
+    mut missing: HashMap<String, Vec<(usize, usize)>>,
+) {
     for (group, &present) in groups.iter().zip(present) {
         if !present {
             missing
-                .entry(&group.key.part)
+                .entry(group.key.part.clone())
                 .or_default()
                 .push((group.start, group.end));
         }
@@ -2516,18 +2603,19 @@ fn relax_foreign_boundaries(groups: &mut [ForeignGroup<'_>], present: &[bool]) {
 }
 
 /// A comparison window may lose boundaries only where a missing separator
-/// explains them. Keep the first carrier's id for a combined group.
-fn foreign_window(groups: &[ForeignGroup<'_>], indices: &[usize]) -> Vec<(usize, String)> {
-    let mut out: Vec<(usize, String)> = Vec::new();
+/// explains them. Retain every carrier for attribution if the text differs.
+fn foreign_window(groups: &[ForeignGroup<'_>], indices: &[usize]) -> Vec<(Vec<usize>, String)> {
+    let mut out: Vec<(Vec<usize>, String)> = Vec::new();
     let mut previous = None;
     for &index in indices {
         let group = &groups[index];
         if previous.is_some_and(|p: usize| groups[p].relaxed_end == group.relaxed_start)
-            && let Some((_, text)) = out.last_mut()
+            && let Some((carriers, text)) = out.last_mut()
         {
+            carriers.push(index);
             text.push_str(&group.text);
         } else {
-            out.push((index, group.text.clone()));
+            out.push((vec![index], group.text.clone()));
         }
         previous = Some(index);
     }
@@ -2545,6 +2633,98 @@ fn foreign_finding(group: &ForeignGroup<'_>, state: &str) -> Finding {
     Finding::new("FOREIGN_AUTHOR", &group.key.part, "", message)
 }
 
+type ForeignSpans = HashMap<String, Vec<(usize, usize)>>;
+type ForeignFindings = Vec<(bool, usize, Finding)>;
+
+/// Match omitted markers within aligned paragraphs, ignoring revision ids.
+/// Retained slots remain boundaries. Only absent slots enter the span union.
+fn missing_foreign_markers(
+    before: &[crate::changes::AuditStory],
+    after: &[crate::changes::AuditStory],
+    paragraphs: &HashMap<(String, String), usize>,
+) -> (ForeignSpans, ForeignSpans) {
+    let keys = |stories: &[crate::changes::AuditStory], edited: bool| {
+        stories
+            .iter()
+            .flat_map(|story| {
+                story.markers.iter().map(move |marker| {
+                    let paragraph = marker.paragraph.map(|i| {
+                        if edited
+                            && let Some(&index) =
+                                paragraphs.get(&(story.part.clone(), story.paragraphs[i].0.clone()))
+                        {
+                            (false, index)
+                        } else {
+                            (edited, i)
+                        }
+                    });
+                    (
+                        story.part.clone(),
+                        paragraph,
+                        marker.owner.clone(),
+                        marker.kind.clone(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let a = keys(before, false);
+    let b = keys(after, true);
+    let pairs = ordered_pairs(&a, &b);
+    let present_a: HashSet<_> = pairs.iter().map(|&(i, _)| i).collect();
+    let present_b: HashSet<_> = pairs.iter().map(|&(_, j)| j).collect();
+    let missing = |stories: &[crate::changes::AuditStory], present: &HashSet<usize>| {
+        let mut spans: ForeignSpans = HashMap::new();
+        for (i, (story, marker)) in stories
+            .iter()
+            .flat_map(|story| story.markers.iter().map(move |marker| (story, marker)))
+            .enumerate()
+        {
+            if !present.contains(&i) {
+                spans
+                    .entry(story.part.clone())
+                    .or_default()
+                    .push((marker.start, marker.start + 1));
+            }
+        }
+        spans
+    };
+    (missing(before, &present_a), missing(after, &present_b))
+}
+
+/// Exact carriers within an unequal combined window precede replacements.
+/// No finding is allowed to borrow an unchanged neighbor's id.
+fn report_foreign_carriers(
+    before: &[ForeignGroup<'_>],
+    after: &[ForeignGroup<'_>],
+    old: &[usize],
+    new: &[usize],
+    findings: &mut ForeignFindings,
+) {
+    let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
+    let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+    let (mut i, mut j) = (0, 0);
+    for (x, y) in ordered_pairs(&a, &b)
+        .into_iter()
+        .chain(std::iter::once((a.len(), b.len())))
+    {
+        let paired = (x - i).min(y - j);
+        for (offset, &index) in new[j..y].iter().enumerate() {
+            let state = if offset < paired {
+                "differs from the original"
+            } else {
+                "is new"
+            };
+            findings.push((false, index, foreign_finding(&after[index], state)));
+        }
+        for &index in &old[i + paired..x] {
+            findings.push((true, index, foreign_finding(&before[index], "gone")));
+        }
+        i = x + 1;
+        j = y + 1;
+    }
+}
+
 fn check_foreign_revisions(
     original: &[u8],
     reverted: &[u8],
@@ -2554,8 +2734,8 @@ fn check_foreign_revisions(
     let original = crate::changes::audit_stories(original)?;
     let reverted = crate::changes::audit_stories(reverted)?;
     let paragraphs = foreign_paragraphs(&original, &reverted);
-    let mut before = foreign_revisions(&original, author, &paragraphs, false);
-    let mut after = foreign_revisions(&reverted, author, &paragraphs, true);
+    let mut before = foreign_revisions(&original, &paragraphs, false);
+    let mut after = foreign_revisions(&reverted, &paragraphs, true);
     let mut by_key: HashMap<ForeignKey, (Vec<usize>, Vec<usize>)> = HashMap::new();
     for (i, group) in before.iter().enumerate() {
         by_key.entry(group.key.clone()).or_default().0.push(i);
@@ -2573,10 +2753,14 @@ fn check_foreign_revisions(
             after_present[new[j]] = true;
         }
     }
-    relax_foreign_boundaries(&mut before, &before_present);
-    relax_foreign_boundaries(&mut after, &after_present);
+    let (old_markers, new_markers) = missing_foreign_markers(&original, &reverted, &paragraphs);
+    relax_foreign_boundaries(&mut before, &before_present, old_markers);
+    relax_foreign_boundaries(&mut after, &after_present, new_markers);
     let mut findings = Vec::new();
-    for (old, new) in by_key.values() {
+    for (key, (old, new)) in &by_key {
+        if key.author.as_deref() == Some(author) {
+            continue;
+        }
         let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
         let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
         let (mut i, mut j) = (0, 0);
@@ -2593,18 +2777,21 @@ fn check_foreign_revisions(
                 .into_iter()
                 .chain(std::iter::once((left.len(), right.len())))
             {
-                let paired = (u - p).min(v - q);
-                for (offset, &(index, _)) in right[q..v].iter().enumerate() {
-                    let state = if offset < paired {
-                        "differs from the original"
-                    } else {
-                        "is new"
-                    };
-                    findings.push((false, index, foreign_finding(&after[index], state)));
-                }
-                for &(index, _) in &left[p + paired..u] {
-                    findings.push((true, index, foreign_finding(&before[index], "gone")));
-                }
+                let old_carriers: Vec<_> = left[p..u]
+                    .iter()
+                    .flat_map(|(indices, _)| indices.iter().copied())
+                    .collect();
+                let new_carriers: Vec<_> = right[q..v]
+                    .iter()
+                    .flat_map(|(indices, _)| indices.iter().copied())
+                    .collect();
+                report_foreign_carriers(
+                    &before,
+                    &after,
+                    &old_carriers,
+                    &new_carriers,
+                    &mut findings,
+                );
                 p = u + 1;
                 q = v + 1;
             }
@@ -3594,5 +3781,122 @@ mod duplicate_drawing_owned_repair_contract_tests {
         assert!(again.repaired.is_empty());
         assert!(again.remaining.is_empty());
         assert_eq!(again.docx, repaired.docx);
+    }
+}
+
+#[cfg(test)]
+mod foreign_alignment_budget_tests {
+    use super::ordered_pairs;
+    use std::{
+        cell::Cell,
+        hash::{Hash, Hasher},
+        rc::Rc,
+    };
+
+    struct Counted<'a> {
+        text: &'a str,
+        comparisons: Rc<Cell<usize>>,
+    }
+    impl PartialEq for Counted<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            let count = self.comparisons.get() + 1;
+            self.comparisons.set(count);
+            assert!(
+                count <= 1_000_000,
+                "alignment exceeded 1,000,000 equality comparisons"
+            );
+            self.text == other.text
+        }
+    }
+    impl Eq for Counted<'_> {}
+    impl Hash for Counted<'_> {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.text.hash(state);
+        }
+    }
+
+    fn bounded_alignment(a: &[&'static str], b: &[&'static str], expected: usize) {
+        let comparisons = Rc::new(Cell::new(0));
+        let wrap = |values: &[&'static str]| {
+            values
+                .iter()
+                .map(|&text| Counted {
+                    text,
+                    comparisons: comparisons.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        // The test values are static; keep the counting type independent of
+        // production code. The public audit tests separately bound allocation size.
+        let left = wrap(a);
+        let right = wrap(b);
+        let pairs = ordered_pairs(&left, &right);
+        assert_eq!(pairs.len(), expected);
+        assert!(pairs.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 < w[1].1));
+        assert!(pairs.iter().all(|&(i, j)| a[i] == b[j]));
+    }
+
+    #[test]
+    fn foreign_alignment_ten_thousand_empty_paragraphs_is_bounded() {
+        let mut a = vec![""; 10_002];
+        let mut b = a.clone();
+        a[0] = "old first";
+        a[10_001] = "old last";
+        b[0] = "new first";
+        b[10_001] = "new last";
+        bounded_alignment(&a, &b, 10_000);
+    }
+
+    #[test]
+    fn foreign_alignment_ten_thousand_same_key_deletions_is_bounded() {
+        let a = vec!["deleted"; 10_000];
+        let mut b = a.clone();
+        b[0] = "changed first";
+        b[9_999] = "changed last";
+        bounded_alignment(&a, &b, 9_998);
+    }
+
+    #[test]
+    fn foreign_alignment_ten_thousand_alternating_paragraphs_is_bounded() {
+        let a: Vec<_> = (0..10_000)
+            .map(|i| if i % 2 == 0 { "a" } else { "b" })
+            .collect();
+        let mut b = a.clone();
+        b[5_000] = "changed";
+        bounded_alignment(&a, &b, 9_999);
+    }
+    #[test]
+    fn foreign_alignment_dense_fallback_is_order_stable() {
+        let a = vec!["a"; 200];
+        let mut b = vec!["b"; 200];
+        b[32..168].fill("a");
+        bounded_alignment(&a, &b, 136);
+        assert_eq!(ordered_pairs(&a, &b), ordered_pairs(&a, &b));
+        // 66 edits exceed the Myers budget. The deterministic fallback can
+        // select fewer anchors, but must preserve order and exact equality.
+        let alternating: Vec<_> = (0..200)
+            .map(|i| if i % 2 == 0 { "a" } else { "b" })
+            .collect();
+        let mut changed = alternating.clone();
+        for i in 0..32 {
+            changed[i * 5] = "changed";
+        }
+        changed[199] = "changed";
+        bounded_alignment(&alternating, &changed, 135);
+    }
+
+    #[test]
+    fn foreign_alignment_dense_myers_matches_short_edit_lcs() {
+        for changed in [1, 8, 16, 31] {
+            let a: Vec<_> = (0..200)
+                .map(|i| if i % 2 == 0 { "a" } else { "b" })
+                .collect();
+            let mut b = a.clone();
+            for i in 0..changed {
+                b[i * 5] = "changed";
+            }
+            b[199] = "changed";
+            bounded_alignment(&a, &b, 199 - changed);
+        }
     }
 }

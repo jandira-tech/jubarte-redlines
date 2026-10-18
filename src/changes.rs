@@ -100,6 +100,16 @@ pub(crate) struct AuditStory {
     pub part: String,
     pub paragraphs: Vec<(String, String)>,
     pub changes: Vec<AuditChange>,
+    pub markers: Vec<AuditMarker>,
+}
+
+/// A carrier omitted from the change listing. Only its own cursor slot can
+/// disappear transparently; any visible descendants keep their positions.
+pub(crate) struct AuditMarker {
+    pub kind: String,
+    pub paragraph: Option<usize>,
+    pub owner: String,
+    pub start: usize,
 }
 
 pub(crate) struct AuditChange {
@@ -179,6 +189,24 @@ pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>
             .enumerate()
             .map(|(index, node)| (crate::ids::paragraph_id(&story, index), text_of(&dom, node)))
             .collect();
+        let paragraph_nodes = paragraph_index(&dom, root);
+        let markers = found
+            .iter()
+            .filter(|carrier| carrier.change.is_none())
+            .map(|carrier| {
+                let paragraph = paragraph_of(&dom, carrier.node, &paragraph_nodes);
+                AuditMarker {
+                    kind: dom.name(carrier.node).unwrap().local_name().to_string(),
+                    paragraph,
+                    owner: if paragraph.is_none() {
+                        audit_owner(&dom, carrier.node)
+                    } else {
+                        String::new()
+                    },
+                    start: spans[&carrier.node].0,
+                }
+            })
+            .collect();
         let changes = found
             .into_iter()
             .filter_map(|carrier| {
@@ -201,6 +229,7 @@ pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>
             part,
             paragraphs,
             changes,
+            markers,
         });
     }
     Ok(stories)
