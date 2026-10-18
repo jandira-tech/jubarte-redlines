@@ -626,6 +626,11 @@ row, literal bullets, stale caches), each located by paragraph id;
 `ins > del > ins` is a `warning` because Word opens it but misreads
 reject-all (#1134, Word probes 2026-10-17).
 
+`NESTED_TEXT_BOX` is a Word-fatal Ring-1 error: a DrawingML or VML text box
+inside another box's readable content prevents Word from opening the file
+(#1132, Word probes 2026-10-18). The check covers every story part and ignores
+nesting only in `mc:Fallback`; `--repair` leaves it unchanged.
+
 Any `word` or `edits` finding exits 2, and so does any `error`; `--strict`
 fails on warnings too. A file that cannot be read exits 1.
 
