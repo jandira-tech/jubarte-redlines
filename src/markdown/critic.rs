@@ -1109,11 +1109,19 @@ fn encode_range(
         let paragraph = rest.starts_with("¶{") && !escaped(source, at);
         let tag_at = at + if paragraph { "¶".len() } else { 0 };
         let before = source[..at].trim_end_matches(['*', '_', '`']);
-        let follows = ["++}", "--}", "~~}"].iter().any(|close| before.ends_with(close));
-        if (paragraph || follows) && !escaped(source, tag_at)
+        let follows = out.ends_with(stand_in(Token::AttributionEnd))
+            || ["++}", "--}", "~~}"]
+                .iter()
+                .any(|close| before.ends_with(close));
+        if (paragraph || follows)
+            && !escaped(source, tag_at)
             && let Some((note, width)) = attribution_tag(&source[tag_at..range.end])
         {
-            out.push(stand_in(if paragraph { Token::ParagraphInsertion } else { Token::AttributionStart }));
+            out.push(stand_in(if paragraph {
+                Token::ParagraphInsertion
+            } else {
+                Token::AttributionStart
+            }));
             encode_comment(source, closers, tag_at + 1..tag_at + 1 + note.len(), out);
             out.push(stand_in(Token::AttributionEnd));
             at = tag_at + width;
@@ -1261,13 +1269,64 @@ fn encode_range(
 /// this grammar; callers also check the preceding closer or pilcrow.
 pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
     let after = text.strip_prefix('{')?;
-    let end = after.find('}')?;
+    // An attribution is one flat line. Stopping at the next opener also
+    // bounds malformed-tag scans instead of rescanning an unclosed tail.
+    let end = after.char_indices().find_map(|(at, c)| {
+        (matches!(c, '}' | '{' | '\n') && !escaped(text, at + 1)).then_some((at, c))
+    })?;
+    if end.1 != '}' {
+        return None;
+    }
+    let end = end.0;
     let note = &after[..end];
     (super::view_notes::revision_tags(note).is_some()
         || super::view_notes::nested_revision_tags(note).is_some()
-        || super::view_notes::plain_revision(note).is_some()
+        || super::view_notes::plain_revisions(note).is_some()
         || super::view_notes::nested_plain_revisions(note).is_some())
-        .then_some((note, end + 2))
+    .then_some((note, end + 2))
+}
+
+/// Complete attribution payloads in rendered text, paired with their mark.
+/// The delimiter prepass keeps comments, escaped literals and code spans opaque.
+pub(crate) fn attributed_notes(source: &str) -> Vec<(Token, String)> {
+    let mut notes = Vec::new();
+    let mut closer = Token::InsertEnd;
+    let mut note = None;
+    Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
+        Piece::Token(token @ (Token::InsertEnd | Token::DeleteEnd | Token::SubstituteEnd)) => {
+            closer = token
+        }
+        Piece::Token(Token::AttributionStart) => note = Some((closer, String::new())),
+        Piece::Token(Token::ParagraphInsertion) => {
+            note = Some((Token::ParagraphInsertion, String::new()))
+        }
+        Piece::Token(Token::AttributionEnd) => {
+            if let Some(note) = note.take() {
+                notes.push(note);
+            }
+        }
+        Piece::Text(text) => {
+            if let Some((_, note)) = &mut note {
+                note.push_str(text);
+            }
+        }
+        _ => {}
+    });
+    notes
+}
+
+/// Rendered text without revision tags or inserted paragraph marks.
+pub(crate) fn without_attributions(source: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
+        Piece::Token(Token::AttributionStart | Token::ParagraphInsertion) => inside = true,
+        Piece::Token(Token::AttributionEnd) => inside = false,
+        Piece::Text(text) if !inside => out.push_str(text),
+        Piece::Token(token) if !inside => out.push_str(delimiter(token)),
+        _ => {}
+    });
+    out
 }
 
 /// A comment's body: text, with every run of blank or whitespace-only
@@ -1332,6 +1391,21 @@ fn fence_escape_at(source: &str, at: usize) -> Option<(String, usize)> {
     /// What can hold the run a closer escapes (`++` + run + `}`).
     const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="];
     let bytes = source.as_bytes();
+    if bytes.get(at) == Some(&b'\\') {
+        let run = bytes[at..].iter().take_while(|&&b| b == b'\\').count();
+        if let Some((_, width)) = attribution_tag(&source[at + run..]) {
+            let kept = if run % 2 == 1 { (run - 1) / 2 } else { run };
+            return Some((
+                format!(
+                    "{}{}",
+                    "\\".repeat(kept),
+                    &source[at + run..at + run + width]
+                ),
+                run + width,
+            ));
+        }
+    }
+
     let (head, run, tail) = {
         let shape = |head: usize, tails: &[&str]| {
             let mut run = at + head;
@@ -1845,6 +1919,20 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     // holds, accepting the inner removes the text.
     let mut folded_at: Option<usize> = None;
     let mut comment = String::new();
+    let mut paragraph_attribution = false;
+    // Rejecting an inserted paragraph mark removes its following boundary,
+    // not every blank line after it. The separator can span text pieces.
+    let mut joining_separator: Option<usize> = None;
+    let mut strip_joined_heading = false;
+    let mut empty_inserted_heading = false;
+    let heading_prefix = |text: &str| {
+        let hashes = text.bytes().take_while(|&byte| byte == b'#').count();
+        let spaces = text[hashes..]
+            .bytes()
+            .take_while(|&byte| matches!(byte, b' ' | b'\t'))
+            .count();
+        ((1..=6).contains(&hashes) && spaces > 0).then_some(hashes + spaces)
+    };
     Pieces::default().feed(&encode_spans_kept(markdown), |piece| match piece {
         Piece::Text(text) => {
             if state == In::Comment {
@@ -1857,6 +1945,31 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 In::Comment => false,
             };
             if shown {
+                let mut text = text;
+                if let Some(mut consumed) = joining_separator {
+                    let newlines = text
+                        .bytes()
+                        .take_while(|&byte| byte == b'\n')
+                        .take(2 - consumed)
+                        .count();
+                    text = &text[newlines..];
+                    consumed += newlines;
+                    if consumed == 2 || !text.is_empty() {
+                        joining_separator = None;
+                        strip_joined_heading = consumed > 0;
+                    } else {
+                        joining_separator = Some(consumed);
+                    }
+                }
+                if strip_joined_heading && !text.is_empty() {
+                    if let Some(prefix) = heading_prefix(text) {
+                        text = &text[prefix..];
+                    }
+                    strip_joined_heading = false;
+                }
+                if !text.is_empty() {
+                    empty_inserted_heading = false;
+                }
                 if state == In::Text {
                     // Text after the change ended: a note now is on this
                     // point, not on the change.
@@ -1933,7 +2046,20 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     folded_at = None;
                     Some(In::Old)
                 }
-                Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => Some(In::Comment),
+                Token::CommentStart | Token::AttributionStart => Some(In::Comment),
+                Token::ParagraphInsertion => {
+                    paragraph_attribution = true;
+                    folded_at = None;
+                    if !accept {
+                        let start = out.rfind('\n').map_or(0, |at| at + 1);
+                        let line = &out[start..];
+                        empty_inserted_heading = heading_prefix(line) == Some(line.len());
+                        if empty_inserted_heading {
+                            out.truncate(start);
+                        }
+                    }
+                    Some(In::Comment)
+                }
                 // A highlight shows its text as the text around it does.
                 Token::HighlightStart => Some(state),
                 Token::SubstituteSeparator => {
@@ -1952,6 +2078,10 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 Token::CommentBreak => None,
                 Token::CommentEnd | Token::AttributionEnd => {
                     state = outer.pop().unwrap_or(In::Text);
+                    if std::mem::take(&mut paragraph_attribution) && !accept {
+                        joining_separator = Some(0);
+                        strip_joined_heading = false;
+                    }
                     // The note folds the change it follows, naming the one
                     // it sits inside after ` on `: its text goes, either
                     // way it resolves — rejecting the outer removes what it
@@ -1978,6 +2108,9 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     });
     if remove_deleted_lines && removed_text && !visible_text {
         out.truncate(line_start);
+    }
+    if empty_inserted_heading {
+        out.truncate(out.trim_end_matches('\n').len());
     }
     out
 }
@@ -2636,6 +2769,52 @@ mod tests {
         let fence = "```\nfenced {\\++x++\\} code\n```\n";
         assert_eq!(resolve(fence, true), fence);
         assert_eq!(resolve(fence, false), fence);
+    }
+
+    #[test]
+    fn rejecting_inserted_paragraph_marks_joins_only_the_following_separator() {
+        for (source, accepted, rejected) in [
+            ("A¶{r1 @A}\n\nB", "A\n\nB", "AB"),
+            ("A¶{r1 @A}\n\n&#32;B", "A\n\n&#32;B", "A&#32;B"),
+            ("A¶{r1 @A}\n\n\n\nB", "A\n\n\n\nB", "A\n\nB"),
+            ("A¶{r1 @A}\n\n{--B--}{r2 @A}C", "A\n\nC", "ABC"),
+        ] {
+            assert_eq!(resolve(source, true), accepted, "accept {source:?}");
+            assert_eq!(resolve(source, false), rejected, "reject {source:?}");
+        }
+    }
+
+    #[test]
+    fn rejecting_a_whole_inserted_heading_leaves_no_empty_heading_prefix() {
+        for (source, accepted, rejected) in [
+            (
+                "Before.\n\n## {++Heading++}{r1 @A}¶{r2 @A}\n\nAfter.",
+                "Before.\n\n## Heading\n\nAfter.",
+                "Before.\n\nAfter.",
+            ),
+            (
+                "Before.¶{r0 @A}\n\n## {++Heading++}{r1 @A}¶{r2 @A}\n\nAfter.",
+                "Before.\n\n## Heading\n\nAfter.",
+                "Before.After.",
+            ),
+            (
+                "Before.\n\n## {++Heading++}{r1 @A}¶{r2 @A}",
+                "Before.\n\n## Heading",
+                "Before.",
+            ),
+        ] {
+            assert_eq!(resolve(source, true), accepted, "accept {source:?}");
+            assert_eq!(resolve(source, false), rejected, "reject {source:?}");
+        }
+    }
+
+    #[test]
+    fn resolving_literal_or_commented_paragraph_marks_keeps_real_boundaries() {
+        for accept in [true, false] {
+            let literal = "A¶\\{r1 @A}\n\nB";
+            assert_eq!(resolve(literal, accept), literal);
+            assert_eq!(resolve("A{>>¶{r1 @A}<<}\n\nB", accept), "A\n\nB");
+        }
     }
 
     #[test]

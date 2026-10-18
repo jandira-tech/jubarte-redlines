@@ -1244,6 +1244,18 @@ impl Blocks {
         self.trailing_space = trailing;
     }
 
+    /// Keeps an untracked empty paragraph after an explicitly inserted
+    /// paragraph mark. Its extra separator survives rejecting that mark.
+    pub(crate) fn empty_paragraph(&mut self) {
+        let previous = self.out.trim_end();
+        let inserted = previous.rsplit_once('¶').is_some_and(|(_, tag)| {
+            crate::markdown::critic::attribution_tag(tag).is_some_and(|(_, len)| len == tag.len())
+        });
+        if inserted && !self.last_was_list {
+            self.out.push_str("\n\n");
+        }
+    }
+
     /// Records that the paragraph mark ending the last block was inserted or
     /// deleted (`None` clears it).
     pub(crate) fn set_separator(&mut self, change: Option<Change>) {
