@@ -662,6 +662,15 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     } else {
                         "w:del"
                     };
+                    // As in the body's chain walk, stop before revisiting a
+                    // leaf or parent id, even if its next kind would differ.
+                    let mut seen: std::collections::HashSet<u32> =
+                        tags.iter().flat_map(|tag| &tag.ids).copied().collect();
+                    let distinct = parents
+                        .iter()
+                        .take_while(|parent| parent.ids.iter().all(|id| seen.insert(*id)))
+                        .count();
+                    parents.truncate(distinct);
                     let anonymous_nest = number_noid_parent(
                         name,
                         &mut tags,

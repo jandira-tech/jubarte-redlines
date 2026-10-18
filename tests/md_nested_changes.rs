@@ -1967,3 +1967,49 @@ fn review_1129_day_range_reuses_opens_at_every_level() {
     }
 }
 
+#[test]
+fn review_1129_repeated_parents_stop_the_chain() {
+    for kind in ["header", "footer"] {
+        for (note, expected) in [
+            (
+                "PART.r5 @A on PART.r3 @B on PART.r3 @B",
+                vec![("w:del", "3", None), ("w:ins", "5", Some("3"))],
+            ),
+            ("PART.r5 @A on PART.r5 @A", vec![("w:ins", "5", None)]),
+            (
+                "PART.r5 @A on PART.r3 @B on PART.r1 @A on PART.r3 @B",
+                vec![
+                    ("w:ins", "1", None),
+                    ("w:del", "3", Some("1")),
+                    ("w:ins", "5", Some("3")),
+                ],
+            ),
+            (
+                "PART.r5+6 @A on PART.r3 @B on PART.r6 @A",
+                vec![
+                    ("w:del", "3", None),
+                    ("w:ins", "5", Some("3")),
+                    ("w:ins", "6", Some("3")),
+                ],
+            ),
+        ] {
+            let view = review_1129_story_view(kind, &format!("{{++xy++}}{{>>{note}<<}}"))
+                .replace("2026-09-29..2026-09-30", "2026-09-29T14:05:00Z");
+            let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+            assert!(
+                !xml.contains("<w:ins w:id=\"3\""),
+                "repeated parent changed kind: {xml}"
+            );
+            let attributes = expected
+                .iter()
+                .map(|(_, id, _)| {
+                    revision_by(
+                        if *id == "3" { "Bob" } else { "Alice" },
+                        Some("2026-09-29T14:05:00Z"),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_revision_tree(&xml, &expected, &attributes);
+        }
+    }
+}
