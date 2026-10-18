@@ -265,9 +265,9 @@ fn dollar_amounts_in_adjacent_changes_stay_text() {
 
 #[test]
 fn dollar_amount_next_to_a_formula_keeps_both() {
-    let (view, xml) = round_trip("{++costs $5++} and $x^2$");
+    let (view, xml) = round_trip("{++costs $5++}and$x^2$");
     assert!(view.contains("{++costs $5++}"), "{view}");
-    assert!(view.ends_with(" and $x^2$"), "{view}");
+    assert!(view.ends_with("and$x^2$"), "{view}");
     assert_eq!(xml.matches("</m:oMath>").count(), 1, "{xml}");
 }
 
@@ -297,19 +297,26 @@ fn dollar_pairs_do_not_cross_critic_delimiters() {
         let (_, xml) = round_trip(source);
         assert!(!xml.contains("<m:oMath"), "{source}: {xml}");
     }
+    for source in ["{++$a+b$++}", "${--a--}{++b++}$"] {
+        let (_, xml) = round_trip(source);
+        assert_eq!(xml.matches("</m:oMath>").count(), 1, "{source}: {xml}");
+    }
 }
 
 #[test]
 fn dollar_followed_by_a_digit_does_not_close_math() {
-    for source in ["The price is $100 and $120.", "$x$5", "$5 and $7 and $x^2$"] {
+    let mut failures = Vec::new();
+    for source in ["US$100–$120.", "$x$5", "$5,$7 and $x^2$"] {
         let (view, xml) = round_trip(source);
-        assert_eq!(view, source);
-        assert_eq!(
-            xml.matches("</m:oMath>").count(),
-            usize::from(source.ends_with("$x^2$")),
-            "{xml}"
-        );
+        let equations = xml.matches("</m:oMath>").count();
+        let expected = usize::from(source.ends_with("$x^2$"));
+        if view != source || equations != expected {
+            failures.push(format!(
+                "{source}: view {view:?}, equations {equations}, expected {expected}"
+            ));
+        }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
@@ -322,4 +329,72 @@ fn dollar_formulas_keep_numeric_starts_and_literal_delimiters() {
             "{source}: {xml}"
         );
     }
+}
+
+#[test]
+fn display_dollars_do_not_cross_revisions_or_leak_comments() {
+    for annotation in ["r5 @A", "note"] {
+        let source = format!("The price is {{--$$100--}}{{>>{annotation}<<}}{{--$$120--}}.");
+        let (view, xml) = round_trip(&source);
+        assert!(!xml.contains("<m:oMath"), "{xml}");
+        assert_eq!(xml.matches("<w:del ").count(), 2, "{xml}");
+        assert!(view.contains("{--$$100--}"), "{view}");
+        assert!(view.contains("{--$$120--}"), "{view}");
+        if annotation == "r5 @A" {
+            // This note attributes the revision; it is not a comment body.
+            assert!(view.contains("{>>r5 @A<<}"), "{view}");
+            assert!(xml.contains("<w:del w:id=\"5\" w:author=\"A\""), "{xml}");
+        } else {
+            assert!(xml.contains("<w:commentReference "), "{xml}");
+        }
+        assert!(!xml.contains(annotation), "{xml}");
+    }
+}
+
+#[test]
+fn dollar_reparse_keeps_accepted_formulas() {
+    for (source, equation) in [
+        ("US$5–$6($x$)", "x"),
+        ("US$5–$6($2+2$)", "2+2"),
+        ("{++cost $q++}x$r($x$)", "x"),
+    ] {
+        let (view, xml) = round_trip(source);
+        assert_eq!(xml.matches("</m:oMath>").count(), 1, "{source}: {xml}");
+        assert_eq!(shapes(&xml), [equation], "{source}");
+        if source.starts_with("US") {
+            assert_eq!(view, source);
+        }
+    }
+}
+
+#[test]
+fn dollar_reparse_keeps_cjk_prose_out_of_accepted_formulas() {
+    let source = "費用は$5–$6、予算は$x$です。";
+    let (view, xml) = round_trip(source);
+    assert_eq!(xml.matches("</m:oMath>").count(), 1, "{xml}");
+    assert_eq!(shapes(&xml), ["x"]);
+    assert!(xml.contains("予算は</w:t>"), "{xml}");
+    assert_eq!(view, source);
+}
+
+#[test]
+fn dollar_reparse_can_reuse_a_refused_closer_as_a_formula_opener() {
+    for (source, equation) in [
+        ("{++cost $5++}{>>r1 @A<<}x$y$", "y"),
+        ("{++cost $5++}{>>r1 @A<<}x$2+2$", "2+2"),
+    ] {
+        let (_, xml) = round_trip(source);
+        assert_eq!(xml.matches("</m:oMath>").count(), 1, "{source}: {xml}");
+        assert_eq!(shapes(&xml), [equation], "{source}");
+    }
+}
+
+#[test]
+fn complete_substitutions_inside_dollars_stay_text_revisions() {
+    let (view, xml) = round_trip("$x{~~a~>b~~}y$");
+    assert!(!xml.contains("<m:oMath"), "{xml}");
+    assert_eq!(xml.matches("<w:del ").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<w:ins ").count(), 1, "{xml}");
+    assert!(view.contains("$x{~~a~>b~~}"), "{view}");
+    assert!(view.ends_with("y$"), "{view}");
 }

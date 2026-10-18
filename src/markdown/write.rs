@@ -160,27 +160,82 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
 }
 
 /// Keep rejected dollar pairs as text before any Markdown pass consumes them.
-fn inline_math(mut source: String) -> String {
+fn inline_math(source: String) -> String {
+    inline_math_passes(source).0
+}
+
+fn inline_math_passes(mut source: String) -> (String, usize) {
+    let mut passes = 0;
     if !source.contains('$') {
-        return source;
+        return (source, passes);
     }
+    // Keep the byte ranges of formulas accepted in any pass. A leftover
+    // dollar must never use one of their delimiters to make a new formula.
+    let mut accepted = BTreeMap::new();
     loop {
-        let rejected: Vec<_> = Parser::new_ext(&source, parser_options())
-            .into_offset_iter()
-            .filter_map(|(event, range)| match event {
-                Event::InlineMath(latex)
-                    if opens_amount(&source, range.end - 1)
-                        || critic::math_crosses_boundary(&latex) =>
-                {
-                    Some(range.start)
+        passes += 1;
+        let mut rejected = Vec::new();
+        for (event, range) in Parser::new_ext(&source, parser_options()).into_offset_iter() {
+            let (latex, display) = match event {
+                Event::InlineMath(latex) => (latex, false),
+                Event::DisplayMath(latex) => (latex, true),
+                _ => continue,
+            };
+            if accepted
+                .range(..=range.start)
+                .next_back()
+                .is_some_and(|(_, &end)| range.start < end)
+            {
+                // An earlier conflicting pair may have consumed this
+                // formula's opener. Its remaining delimiter stays intact
+                // until that conflicting pair has been escaped.
+                continue;
+            }
+            let steals_formula = accepted.range(range.start..range.end).next().is_some();
+            let closer = range.end - 1;
+            if steals_formula
+                || (!display && opens_amount(&source, closer))
+                || critic::math_crosses_boundary(&latex)
+            {
+                rejected.push(range.start);
+                if display {
+                    // Both bytes belong to the refused opening delimiter.
+                    rejected.push(range.start + 1);
+                } else if opens_amount(&source, closer) {
+                    // A tight numeric chain's next pair is already known
+                    // to fail the digit-after-closer rule. Settle it now,
+                    // rather than repeatedly halving the chain on reparses.
+                    // Leave other closers free to open a real formula.
+                    let next = source[closer + 1..].trim_start_matches(|c: char| {
+                        c.is_ascii_digit() || matches!(c, ',' | '.' | '-' | '–')
+                    });
+                    let protected = accepted
+                        .range(..=closer)
+                        .next_back()
+                        .is_some_and(|(_, &end)| closer < end);
+                    if !protected && opens_amount(next, 0) {
+                        rejected.push(closer);
+                    }
                 }
-                _ => None,
+            } else {
+                accepted.insert(range.start, range.end);
+            }
+        }
+        if rejected.is_empty() {
+            return (source, passes);
+        }
+        rejected.sort_unstable();
+        rejected.dedup();
+        // Escapes shift the ranges, but never change an accepted formula.
+        accepted = accepted
+            .into_iter()
+            .map(|(start, end)| {
+                (
+                    start + rejected.partition_point(|&at| at < start),
+                    end + rejected.partition_point(|&at| at < end),
+                )
             })
             .collect();
-        if rejected.is_empty() {
-            return source;
-        }
-        // Reconsider the closers: one can open a real formula that follows.
         let mut escaped = String::with_capacity(source.len() + rejected.len());
         let mut from = 0;
         for at in rejected {
@@ -5688,6 +5743,23 @@ pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tight_amount_lists_need_a_constant_number_of_math_passes() {
+        let source = (5..2005)
+            .map(|n| format!("${n}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let (escaped, passes) = inline_math_passes(source);
+        assert!(
+            passes <= 3,
+            "2,000 amounts took {passes} full parses (limit 3)"
+        );
+        assert!(
+            !Parser::new_ext(&escaped, parser_options())
+                .any(|event| { matches!(event, Event::InlineMath(_) | Event::DisplayMath(_)) })
+        );
+    }
 
     #[test]
     fn a_comment_body_holding_a_date_keeps_its_author() {

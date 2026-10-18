@@ -1738,7 +1738,8 @@ impl Pieces {
     }
 }
 
-/// An equation may hold complete run revisions, but cannot enter or leave one.
+/// An equation may hold complete insertions and deletions, but cannot enter
+/// or leave one.
 pub(super) fn math_crosses_boundary(latex: &str) -> bool {
     let mut open = Vec::new();
     let mut crosses = false;
