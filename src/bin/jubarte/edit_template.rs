@@ -193,6 +193,9 @@ fn generate(
 
 pub(super) fn run(options: &TemplateOptions, quiet: bool) -> ExitCode {
     let source = read(&options.file);
+    if let Ok(source) = &source {
+        super::warn_nested_text_boxes(source);
+    }
     let outcome = source
         .as_ref()
         .map_err(Clone::clone)
