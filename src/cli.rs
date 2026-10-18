@@ -539,8 +539,116 @@ fn fill_task_date(task: &mut Command) {
 /// keep the native path. A `\` inside a file name is replaced too: these
 /// outputs name files the CLI itself resolved or wrote, whose names hold
 /// none.
+///
+/// Canonicalizing on Windows returns a verbatim path (`\\?\C:\…`), which
+/// this spelling would show as `//?/C:/…` — a string that is no path at
+/// all (#1222). [`unverbatimed`] drops that prefix from the components
+/// first, so an agent-facing canonical path spells `C:/…`.
 pub fn slash_path(path: &Path) -> String {
+    let path = unverbatimed(path).unwrap_or_else(|| path.to_path_buf());
     path.to_string_lossy().replace('\\', "/")
+}
+
+/// `path` without the verbatim prefix `canonicalize` adds on Windows, or
+/// `None` when there is none to drop. Built on `Path::components()` so the
+/// head is the parsed prefix, never a string match: `\\?\C:\a` loses its
+/// `VerbatimDisk` head and comes back `C:\a`, and `\\?\UNC\server\share\x`
+/// comes back `\\server\share\x`, which [`slash_path`] spells
+/// `//server/share/x`. A `\\?\` path neither disk nor UNC keeps its head's
+/// text as the path's start.
+fn unverbatimed(path: &Path) -> Option<PathBuf> {
+    let mut components = path.components();
+    let head = verbatim_head(components.next())?;
+    let mut stripped = head;
+    // The head carries the root; the remainder's own RootDir component is
+    // skipped so `C:` + `\a` spells `C:\a`, not `C:\\a`.
+    for component in components {
+        if !matches!(component, std::path::Component::RootDir) {
+            stripped.push(component.as_os_str());
+        }
+    }
+    Some(stripped)
+}
+
+/// The path head a verbatim prefix becomes, or `None` for any other first
+/// component (`Prefix` is a Windows notion; off Windows this is always
+/// `None` and [`unverbatimed`] changes nothing).
+#[cfg(windows)]
+fn verbatim_head(component: Option<std::path::Component>) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+    match component {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(letter) => Some(PathBuf::from(format!(
+                "{}:",
+                (letter as char).to_ascii_uppercase()
+            ))),
+            Prefix::VerbatimUNC(server, share) => {
+                let mut head = PathBuf::from(r"\\");
+                head.push(server);
+                head.push(share);
+                Some(head)
+            }
+            Prefix::Verbatim(rest) => Some(PathBuf::from(rest)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Off Windows no component carries a prefix, so there is nothing to drop.
+#[cfg(not(windows))]
+fn verbatim_head(_component: Option<std::path::Component>) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(test)]
+mod slash_path_tests {
+    use super::{slash_path, unverbatimed};
+    use std::path::Path;
+
+    #[test]
+    fn slash_path_uses_forward_slashes() {
+        assert_eq!(slash_path(Path::new(r"dir\sub\name.md")), "dir/sub/name.md");
+        assert_eq!(slash_path(Path::new("plain")), "plain");
+    }
+
+    #[test]
+    fn unverbatimed_keeps_every_nonverbatim_path() {
+        // The parsed-component contract, portable: only a Windows verbatim
+        // prefix is ever stripped. (A `\\?\…` literal parses as an ordinary
+        // name off Windows, so it also stays.)
+        for path in ["plain", r"dir\sub", r"\\?\C:\a\b", r"\\?\UNC\s\sh\x"] {
+            assert_eq!(unverbatimed(Path::new(path)), None, "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unverbatimed_strips_every_verbatim_prefix_kind() {
+        for (path, stripped) in [
+            (r"\\?\C:\a\b", "C:/a/b"),
+            (r"\\?\c:\a", "C:/a"),
+            (r"\\?\C:", "C:"),
+            (r"\\?\UNC\server\share\x", "//server/share/x"),
+            (r"\\?\GLOBALROOT\Device\Foo", "GLOBALROOT/Device/Foo"),
+        ] {
+            assert_eq!(slash_path(Path::new(path)), stripped, "{path}");
+            assert!(!slash_path(Path::new(path)).contains("//?"), "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unverbatimed_returns_the_stripped_components() {
+        assert_eq!(
+            unverbatimed(Path::new(r"\\?\C:\a\b")).as_deref(),
+            Some(Path::new(r"C:\a\b"))
+        );
+        assert_eq!(
+            unverbatimed(Path::new(r"\\?\UNC\server\share\x")).as_deref(),
+            Some(Path::new(r"\\server\share\x"))
+        );
+    }
 }
 
 /// `--plan` without a value (D16) is `<FILE's dir>/<stem>_plan.json`.
