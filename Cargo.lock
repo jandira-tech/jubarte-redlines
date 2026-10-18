@@ -1289,7 +1289,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "similar",
  "tar",
  "tempfile",
@@ -1473,9 +1473,9 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "ooxmlsdk"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39cff8ba3db6e560afc37a25a6896680b51320f5afa32dd5f57a41cfd16c6cc5"
+checksum = "bc9dafcc14978977af84d39d63f2839b79556149ff8f86d62a61cafafb9a0ac2"
 dependencies = [
  "bytes",
  "itoa",
@@ -1490,9 +1490,9 @@ dependencies = [
 
 [[package]]
 name = "ooxmlsdk-derive"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d640cdb789085a4b80a82b4a9d29e612662a7429aacbd2813887947eacc2696"
+checksum = "16c9340a0d6e4f1ed0334adb80876a37d59b42db4f5ff795407a70c3a94f24f6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2104,7 +2104,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tar",
  "tempfile",
  "ureq",
@@ -2151,9 +2151,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
@@ -2186,9 +2186,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if 1.0.5",
  "cpufeatures 0.3.1",
