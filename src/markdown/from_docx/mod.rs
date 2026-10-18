@@ -3111,7 +3111,11 @@ impl Writer<'_> {
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
                     let (mark, by) = self.change_of(child);
-                    out.open_dated(mark, by.as_deref(), child.revision_date());
+                    if self.dates {
+                        out.open_dated(mark, by.as_deref(), child.revision_date());
+                    } else {
+                        out.open(mark, by.as_deref());
+                    }
                     self.revised((mark, by), |w| {
                         w.inline(child, link, base, fields, out, extra);
                     });
@@ -3155,7 +3159,11 @@ impl Writer<'_> {
                     match whole_math_change(child) {
                         Some(change) => {
                             let (mark, by) = self.change_of(change);
-                            out.open_dated(mark, by.as_deref(), change.revision_date());
+                            if self.dates {
+                                out.open_dated(mark, by.as_deref(), change.revision_date());
+                            } else {
+                                out.open(mark, by.as_deref());
+                            }
                             self.revised((mark, by), |_| out.raw(&strip_math_changes(&latex)));
                             out.close(mark);
                         }

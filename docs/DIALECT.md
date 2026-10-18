@@ -85,8 +85,9 @@ inserted or deleted row.
 | `@??` | a mark with no author's name; written back as an empty `w:author` |
 | no tag | new, by the plan author |
 
-Substitution pairing compares the stored dates, including an absent date,
-when printed tags omit timestamps. Different source dates stay separate.
+With `--dates`, substitution pairing compares the stored dates, including
+an absent date, even when the author header elides a shared timestamp.
+The default view omits per-revision dates and keeps its existing grouping.
 Rejecting `¶{tag}` removes its following paragraph separator; a list marker
 on the joined paragraph is removed with it. A patch records that separator
 as an insertion attributed to the paragraph mark.
