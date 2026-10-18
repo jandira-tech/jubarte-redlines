@@ -990,27 +990,51 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
         let mut prev_space = false;
-        let mut rest = line;
-        while !rest.is_empty() {
-            // A closed equation (`$…$`, `$$…$$`) is copied as it is: its
-            // spaces are the equation's, and Word draws each one.
-            let (text, math, next) = equation_split(rest);
-            for c in text.chars() {
-                let is_space = c == ' ' || c == '\u{a0}';
-                if is_space {
-                    if keep_spaces || !prev_space {
-                        out.push(' ');
+        // Parse code once per line, with the reader's options so backticks
+        // inside math stay in the equation. The agent and code-block paths
+        // already keep spaces and retain their existing normalization.
+        let code: Vec<_> = if keep_spaces || verbatim || !line.contains('`') {
+            Vec::new()
+        } else {
+            pulldown_cmark::Parser::new_ext(line, super::super::write::parser_options())
+                .into_offset_iter()
+                .filter_map(|(event, range)| {
+                    matches!(event, pulldown_cmark::Event::Code(_)).then_some(range)
+                })
+                .collect()
+        };
+        let mut at = 0;
+        for range in code
+            .into_iter()
+            .chain(std::iter::once(line.len()..line.len()))
+        {
+            let mut rest = &line[at..range.start];
+            while !rest.is_empty() {
+                // A closed equation (`$…$`, `$$…$$`) is copied as it is: its
+                // spaces are the equation's, and Word draws each one.
+                let (text, math, next) = equation_split(rest);
+                for c in text.chars() {
+                    let is_space = c == ' ' || c == '\u{a0}';
+                    if is_space {
+                        if keep_spaces || !prev_space {
+                            out.push(' ');
+                        }
+                    } else {
+                        out.push(c);
                     }
-                } else {
-                    out.push(c);
+                    prev_space = is_space;
                 }
-                prev_space = is_space;
+                if !math.is_empty() {
+                    out.push_str(math);
+                    prev_space = false;
+                }
+                rest = next;
             }
-            if !math.is_empty() {
-                out.push_str(math);
+            if !range.is_empty() {
+                out.push_str(&line[range.clone()]);
                 prev_space = false;
             }
-            rest = next;
+            at = range.end;
         }
         lines.push(finish_line(&out, keep_spaces, verbatim));
     }
@@ -1341,6 +1365,21 @@ mod tests {
         assert_eq!(resolve_target("word", "media/a.png"), "word/media/a.png");
         assert_eq!(resolve_target("word", "/word/x.xml"), "word/x.xml");
         assert_eq!(resolve_target("", "word/document.xml"), "word/document.xml");
+    }
+
+    #[test]
+    fn inline_code_keeps_spaces_while_surrounding_text_collapses() {
+        for (source, expected) in [
+            ("a  `  x `  b", "a `  x ` b"),
+            ("a  `` `a  b` ``  b", "a `` `a  b` `` b"),
+            ("a  `a  $ b`  $x  y$  b", "a `a  $ b` $x  y$ b"),
+            ("a  $a`b`  c$  `x  y`", "a $a`b`  c$ `x  y`"),
+            (r"a  \`x  y", r"a \`x y"),
+            ("a  `x  y", "a `x y"),
+        ] {
+            assert_eq!(tidy_inline(source, false, false), expected, "{source}");
+            assert_eq!(tidy_inline(source, true, false), source, "{source}");
+        }
     }
 
     #[test]

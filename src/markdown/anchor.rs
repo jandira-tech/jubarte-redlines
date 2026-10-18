@@ -253,11 +253,35 @@ pub fn plain_anchor(text: &str) -> String {
     // literal ASCII so the change and emphasis scanners cannot strip it.
     let mut literal = String::with_capacity(text.len());
     let mut at = 0;
-    for (event, range) in pulldown_cmark::Parser::new(text).into_offset_iter() {
-        if let pulldown_cmark::Event::Code(code) = event {
-            literal.push_str(&text[at..range.start]);
-            literal.extend(code.chars().map(|c| if c.is_ascii() { hide(c) } else { c }));
-            at = range.end;
+    for (event, range) in
+        pulldown_cmark::Parser::new_ext(text, super::write::parser_options()).into_offset_iter()
+    {
+        match event {
+            pulldown_cmark::Event::Code(code) => {
+                literal.push_str(&text[at..range.start]);
+                literal.extend(code.chars().map(|c| if c.is_ascii() { hide(c) } else { c }));
+                at = range.end;
+            }
+            pulldown_cmark::Event::InlineMath(math) | pulldown_cmark::Event::DisplayMath(math) => {
+                literal.push_str(&text[at..range.start]);
+                // Math keeps its backticks as text, and its CriticMarkup
+                // still reaches the change scanner below.
+                literal.push_str(&math);
+                at = range.end;
+            }
+            pulldown_cmark::Event::Start(
+                pulldown_cmark::Tag::Superscript | pulldown_cmark::Tag::Subscript,
+            ) => {
+                literal.push_str(&text[at..range.start]);
+                at = range.start + 1;
+            }
+            pulldown_cmark::Event::End(
+                pulldown_cmark::TagEnd::Superscript | pulldown_cmark::TagEnd::Subscript,
+            ) => {
+                literal.push_str(&text[at..range.end - 1]);
+                at = range.end;
+            }
+            _ => {}
         }
     }
     literal.push_str(&text[at..]);
@@ -398,9 +422,12 @@ mod tests {
 
     /// The text pulldown-cmark, the crate's Markdown reader, keeps of `s`.
     fn reader_text(s: &str) -> String {
-        pulldown_cmark::Parser::new(s)
+        pulldown_cmark::Parser::new_ext(s, super::super::write::parser_options())
             .filter_map(|event| match event {
-                pulldown_cmark::Event::Text(text) => Some(text.into_string()),
+                pulldown_cmark::Event::Text(text)
+                | pulldown_cmark::Event::Code(text)
+                | pulldown_cmark::Event::InlineMath(text)
+                | pulldown_cmark::Event::DisplayMath(text) => Some(text.into_string()),
                 _ => None,
             })
             .collect()
@@ -436,6 +463,18 @@ mod tests {
             "a _b_ c",
         ] {
             assert_eq!(plain_anchor(s), reader_text(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn plain_anchor_keeps_mark_shaped_code_literal() {
+        assert_eq!(plain_anchor("`{++x++}`"), "{++x++}");
+    }
+
+    #[test]
+    fn extension_anchors_match_the_reader() {
+        for source in ["$a`b`c$", "~~x~~", "^x^", "~x~"] {
+            assert_eq!(plain_anchor(source), reader_text(source), "{source}");
         }
     }
 
