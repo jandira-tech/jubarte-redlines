@@ -147,7 +147,13 @@ fn audit(root: &Path) -> (String, usize, Vec<String>) {
         for (line, predicate) in predicates(&text, "coverage(off)") {
             sites += 1;
             if !in_src || canonical(predicate) != canonical(&gate) {
-                let file = relative.display();
+                // A repo-relative path: `/` between its components on
+                // every OS, as the report compares them (#1222).
+                let file = relative
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
                 let place = if in_src {
                     ""
                 } else {
