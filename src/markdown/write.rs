@@ -1793,6 +1793,7 @@ struct Writer<'o, 'a> {
     metadata: Option<String>,
     box_markdown: HashMap<String, String>,
     box_names: HashMap<String, usize>,
+    box_duplicates: HashSet<String>,
     box_open: Option<(String, Option<String>, usize)>,
     box_spans: Vec<(String, Option<String>, usize, usize)>,
 
@@ -1935,6 +1936,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             metadata: None,
             box_markdown: HashMap::new(),
             box_names: HashMap::new(),
+            box_duplicates: HashSet::new(),
             box_open: None,
             box_spans: Vec::new(),
             bold: 0,
@@ -4165,7 +4167,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                 Ok(drawing) => {
                     self.document.drawings.push(drawing);
                     let index = self.document.drawings.len() - 1;
-                    self.box_names.insert(id, index);
+                    if self.box_names.insert(id.clone(), index).is_some() {
+                        self.box_duplicates.insert(id);
+                    }
                     self.push(Content::Drawing(index));
                 }
                 Err(_) => self.plain(alt.trim()),
@@ -4871,12 +4875,51 @@ impl<'o, 'a> Writer<'o, 'a> {
             // its text anyway.
             self.document.comments.push(comment);
         }
+        for name in self
+            .document
+            .drawings
+            .iter()
+            .flat_map(|drawing| drawing.nested_tokens())
+        {
+            let error = if !self.box_names.contains_key(&name) {
+                Some(format!(
+                    "text-box {name}: nested drawing token is missing; deleting the box token is unsupported"
+                ))
+            } else if self.box_duplicates.contains(&name) {
+                Some(format!(
+                    "text-box {name}: nested drawing token appears more than once"
+                ))
+            } else {
+                None
+            };
+            if let Some(error) = error {
+                self.document.box_error.get_or_insert(error);
+            }
+        }
         for (name, &index) in &self.box_names {
             if let Some(drawing) = self.document.drawings.get(index)
                 && let Err(error) = drawing.check_box_regions(name, &self.box_markdown)
             {
                 self.document.box_error.get_or_insert(error);
             }
+        }
+        for name in self.box_markdown.keys() {
+            let resolved = name.rsplit_once('.').and_then(|(token, ordinal)| {
+                let index = *self.box_names.get(token)?;
+                let ordinal = ordinal.parse::<usize>().ok()?;
+                self.document
+                    .drawings
+                    .get(index)
+                    .map(|drawing| ordinal < drawing.box_count())
+            });
+            let reason = match resolved {
+                None => "undefined or absent drawing token",
+                Some(false) => "box index out of range",
+                Some(true) => continue,
+            };
+            self.document
+                .box_error
+                .get_or_insert_with(|| format!("text-box {name}: {reason}"));
         }
         self.box_frames();
         self.text_boxes();

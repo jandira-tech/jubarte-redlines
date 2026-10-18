@@ -132,13 +132,26 @@ reference definition holds its frame and a text-free template. Matching
 Markdown and word hashes restore the template's original structure (apart
 from package relationship and drawing ids); edited paragraphs rebuild the
 box content inside the same frame. The payload cannot override edited words.
+
+A text box nested in another box has an ordinary `![alt][dN]` token at its
+position inside the enclosing box's region. Its own regions follow the
+closing marker of the enclosing region, in depth-first order. Regions
+never nest; their existing `dN.k` names associate them with their tokens.
+Both boxes' words are editable. Keep each inner token: conversion refuses
+a missing or repeated nested token and names the affected box. An unchanged
+round trip preserves the nested drawing's properties and nesting.
+
+When the Choice and Fallback copies of a nested drawing do not correspond,
+the enclosing drawing stays opaque. Its nested words remain readable, but
+conversion refuses edits to that box and explains the Choice/Fallback
+mismatch. Region names `dN.k` identify box stories; they are separate from
+payload-internal `dP.n` relationship symbols.
+
 Conversion refuses a missing, renamed, annotated, duplicated or overlapping
 marker region when the frame needs its words. The error names the box.
 Keep an empty marker region to remove all its words. Markers in code or
 escaped as text are ordinary words. Older payloads that still hold the box's
 words, including header and footer boxes, need no marker region.
-Conversion also refuses edits to a box story containing a nested drawing,
-because that drawing has no editable token in the story.
 
 Images are read relative to the Markdown file, or to `--resource-path`;
 URLs are not fetched.

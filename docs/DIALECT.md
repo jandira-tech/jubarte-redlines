@@ -58,6 +58,20 @@ Markdown and word hashes restore the template's original structure (apart
 from package relationship and drawing ids); edited paragraphs rebuild the
 box content inside the same frame. The payload cannot override edited words.
 
+A text box nested in another box has an ordinary `![alt][dN]` token at its
+position inside the enclosing box's region. Its own regions follow the
+closing marker of the enclosing region, in depth-first order. Regions
+never nest; their existing `dN.k` names associate them with their tokens.
+Both boxes' words are editable. Keep each inner token: conversion refuses
+a missing or repeated nested token and names the affected box. An unchanged
+round trip preserves the nested drawing's properties and nesting.
+
+When the Choice and Fallback copies of a nested drawing do not correspond,
+the enclosing drawing stays opaque. Its nested words remain readable, but
+conversion refuses edits to that box and explains the Choice/Fallback
+mismatch. Region names `dN.k` identify box stories; they are separate from
+payload-internal `dP.n` relationship symbols.
+
 **Changes and comments (CriticMarkup, read before the Markdown)**
 
 | Write | Word |
