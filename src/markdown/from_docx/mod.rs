@@ -463,6 +463,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     // The style of each note whose first paragraph is not in Word's own
     // (`footnote text`, `endnote text`), by label: its id line names it.
     let mut note_styles: HashMap<String, Vec<String>> = HashMap::new();
+    // A silent line still needs the legend when the built-in name's spelling
+    // differs from the writer's: canonical output id -> source definition id.
+    let mut note_style_sources: HashMap<String, String> = HashMap::new();
     // The notes a definition line shows.
     let mut defined: HashSet<(bool, String)> = HashSet::new();
     while index < writer.note_refs.len() {
@@ -514,16 +517,22 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                         .filter(|id| Some(*id) != default_style.as_deref());
                     match id {
                         None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
-                        // Word's own, under any id (`a5` in a localized
-                        // document), spelled as Word spells it.
+                        // Like builtin_styles::is_built_in, compare names
+                        // ignoring ASCII case, with spaces significant,
+                        // under any id (including localized ids).
                         Some(id)
-                            if writer
-                                .styles
-                                .by_id
-                                .get(id)
-                                .map_or(id.eq_ignore_ascii_case(own), |s| {
-                                    s.exact_name == own_name
-                                }) =>
+                            if writer.styles.by_id.get(id).map_or(
+                                id.eq_ignore_ascii_case(own),
+                                |s| {
+                                    let own_style = s.name == own_name;
+                                    if own_style && s.exact_name != own_name {
+                                        note_style_sources
+                                            .entry(own.to_string())
+                                            .or_insert_with(|| id.to_string());
+                                    }
+                                    own_style
+                                },
+                            ) =>
                         {
                             None
                         }
@@ -848,11 +857,17 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         }
         // The comments' and notes' paragraph styles too, as the stories'
         // below.
-        // A note's list names Word's own style under its English id only
-        // in a mixed note; the source's definition of it is kept like any
-        // other (a footnote can be in `EndnoteText`).
-        let mut note_list: Vec<&String> = note_styles.values().flatten().collect();
+        // Mixed notes name Word's own style explicitly. A silent note also
+        // contributes it when its exact name needs the legend. Keep the
+        // existing id order and describe the source definition under the
+        // canonical id the writer uses for a silent line.
+        let mut note_list: Vec<&String> = note_styles
+            .values()
+            .flatten()
+            .chain(note_style_sources.keys())
+            .collect();
         note_list.sort();
+        note_list.dedup();
         // CommentText is the comments' own, not a note's.
         for style in comment_facts
             .iter()
@@ -860,10 +875,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             .filter(|s| *s != "CommentText")
             .chain(note_list.into_iter().map(String::as_str))
         {
+            let source = note_style_sources.get(style).map_or(style, String::as_str);
             if style != default_style.as_deref().unwrap_or("Normal")
                 && styles_root.as_ref().is_some_and(|root| {
                     root.children_named("style").any(|s| {
-                        s.attr("type") == Some("paragraph") && s.attr("styleId") == Some(style)
+                        s.attr("type") == Some("paragraph") && s.attr("styleId") == Some(source)
                     })
                 })
                 && !heading_styles.iter().any(|(_, h)| h == style)
@@ -1234,6 +1250,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             default_style: default_style.as_deref(),
             heading_styles,
             other_styles,
+            note_style_sources,
             table_styles,
             tables_differ: writer.tables_differ,
             sections,
@@ -1719,9 +1736,8 @@ fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) 
 #[derive(Default, Clone)]
 struct Style {
     name: String,
-    /// The name as the document writes it: Word's own are lower case
-    /// (`footnote text`), and a style that spells one differently is the
-    /// document's own (#528).
+    /// The name as the document writes it. Built-in identity ignores ASCII
+    /// case, while the legend preserves this exact spelling.
     exact_name: String,
     based_on: Option<String>,
     outline: Option<usize>,

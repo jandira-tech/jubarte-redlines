@@ -136,6 +136,9 @@ pub(crate) struct Facts<'a> {
     pub heading_styles: Vec<(usize, String)>,
     /// Every other paragraph style the body uses, in first-use order.
     pub other_styles: Vec<String>,
+    /// Canonical note style ids whose legend uses a source definition's name
+    /// and formatting, even when its localized id differs.
+    pub note_style_sources: HashMap<String, String>,
     pub table_styles: Vec<String>,
     /// The tables differ in style: their lines name theirs, and the
     /// legend lists them all as `tables:`.
@@ -1377,6 +1380,7 @@ fn part_two(out: &mut String, f: &Facts) {
         );
     }
     for style in &f.other_styles {
+        let source = f.note_style_sources.get(style).unwrap_or(style);
         kv(
             out,
             &format!(
@@ -1385,8 +1389,8 @@ fn part_two(out: &mut String, f: &Facts) {
                 scalar(
                     &format!(
                         "{}{}",
-                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
-                        named(f.styles, style, style)
+                        describe(&resolve(f.styles, f.theme, source), Some(&base)),
+                        named(f.styles, source, style)
                     ),
                     false
                 )
