@@ -543,6 +543,12 @@ A `fmt` clause alone creates the notes part it names. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
+
+A style's two `style_changes` tags name its paragraph-property and
+run-property records, in that order. A single legacy tag writes both
+records; the writer assigns distinct ids and warns, so reading it back
+prints two tags. Further round trips keep those two records and ids.
+
 A header's or footer's paragraphs take Word's Header or Footer style unless
 the entry names theirs: `style: Normal` for all, or `styles: [Footer,
 ListParagraph]`, one per paragraph from the part's first through its

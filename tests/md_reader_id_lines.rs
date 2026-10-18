@@ -111,41 +111,36 @@ fn revisions_keep_the_numbers_their_tags_name() {
 }
 
 #[test]
-fn a_revision_number_is_written_as_often_as_the_view_names_it() {
-    // Two separately named changes keep the number both name (`r5` twice,
-    // as Word's own files repeat an id). A change written as several marks
-    // (two runs) keeps its number on the first; the rest take fresh ones,
-    // so a number the view names once is on no two marks.
+fn a_repeated_revision_number_is_renamed_for_a_separate_change() {
+    // Formatting stays in r4; the live separator makes the two r5 marks
+    // separate elements, so the second receives a fresh OOXML id (#1137).
     let body = "<!-- p0 -->\n{++**Bold** plain++}{r4 @AC} and {++one++}{r5 @AC} \
                 {++two++}{r5 @AC}.\n";
-    let docx = markdown_to_docx(
+    let written = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}")),
         &DocxOptions::default(),
     )
-    .expect("the view reads")
-    .docx;
-    // The one duplicate is the twice-named `r5`, as in Word's own files;
-    // nothing else may be invalid.
-    let report = common::validity::check_word_valid_package(&docx);
-    let repeated: Vec<&jubarte::validate::Finding> = report
-        .findings
-        .iter()
-        .filter(|finding| finding.code == "DUPLICATE_REVISION_ID")
-        .collect();
-    assert_eq!(report.findings.len(), repeated.len(), "{report:#?}");
+    .expect("the view reads");
+    assert_word_valid_package(&written.docx);
+    assert_eq!(written.warnings.len(), 1, "{:?}", written.warnings);
     assert!(
-        repeated.len() == 1 && repeated[0].message.contains("'5'"),
-        "{report:#?}"
+        written.warnings[0].contains("r5")
+            && written.warnings[0].contains("r6")
+            && written.warnings[0].contains("line"),
+        "{:?}",
+        written.warnings
     );
-    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
-    assert!(
-        document.matches("w:ins w:id=\"5\"").count() == 2,
-        "r5 on both changes: {document}"
-    );
-    assert!(
-        document.matches("w:ins w:id=\"4\"").count() == 1,
-        "r4 on the first mark only: {document}"
-    );
+    let document = part_string(&written.docx, "word/document.xml").expect("document.xml");
+    assert_eq!(document.matches("<w:ins ").count(), 3, "{document}");
+    for id in [4, 5, 6] {
+        assert_eq!(
+            document.matches(&format!("w:ins w:id=\"{id}\"")).count(),
+            1,
+            "{document}"
+        );
+    }
+    let renamed = body.replace("{++two++}{r5 @AC}", "{++two++}{r6 @AC}");
+    assert_eq!(round_trip(&format!("{AUTHORS}{renamed}")), renamed.trim());
 }
 
 #[test]
