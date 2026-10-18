@@ -1799,6 +1799,52 @@ fn whole_replace_across_runs_keeps_formatting_and_comment() {
     assert_word_valid_package(&result.redline);
 }
 
+/// Annotation ids are independent of the revision-record allocator.
+#[test]
+fn whole_replace_ignores_div_and_bookmark_ids() {
+    let source = docx_with(
+        r#"<w:p><w:bookmarkStart w:id="900000" w:name="Alice"/><w:ins w:id="10" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Send notices by email to Alice.</w:t></w:r></w:ins><w:bookmarkEnd w:id="900000"/></w:p>"#,
+        &[Part {
+            name: "word/webSettings.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings",
+            xml: r#"<w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:divs><w:div w:id="2147483647"/></w:divs></w:webSettings>"#,
+        }],
+    );
+    let mut edit = plan(
+        &source,
+        r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to","replacement":"by courier to","whole":true}]"#,
+    );
+    edit.existing_revisions = jubarte::edit::ExistingRevisions::Accept;
+    let result = apply_plan(&source, &edit).unwrap();
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let ids: Vec<u64> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter_map(|n| {
+            let name = dom.name(n)?;
+            (name.namespace_name() == W::URI
+                && matches!(name.local_name(), "ins" | "del" | "rPrChange" | "pPrChange"))
+            .then(|| dom.attribute(n, &W::id()).unwrap().parse().unwrap())
+        })
+        .collect();
+    assert!(ids.len() >= 2, "both replacement sides must be tracked");
+    let bound = 10 + ids.len() as u64;
+    assert!(
+        ids.iter().all(|&id| id <= bound && id <= 2147483647),
+        "revision ids {ids:?} exceed input revision max 10 + {} records (bound {bound}) or signed 32-bit range",
+        ids.len()
+    );
+    assert_eq!(
+        marked_paragraphs(&result.redline),
+        ["Send notices [-by email to-]{+by courier to+} Alice."]
+    );
+    assert_word_valid_package(&result.redline);
+}
+
 /// `whole` is part of the replace wire schema only.
 #[test]
 fn whole_is_a_replace_field() {
