@@ -1306,3 +1306,52 @@ fn foreign_removed_markers_allow_a_single_merged_carrier() {
     ));
     assert_eq!(foreign_messages(&original, &merged), Vec::<String>::new());
 }
+
+/// #1214: Word opens this shape cleanly but Reject All duplicates moved text.
+#[test]
+fn unequal_move_range_counts_warn_without_being_word_fatal() {
+    let ranges = |side: &str, count: usize, name: &str, offset: usize| {
+        (0..count).map(|i| {
+            let id = offset + i * 2;
+            format!(r#"<w:{side}RangeStart w:id="{id}" w:name="{name}"/><w:{side} w:id="{}" w:author="Alice" w:date="2026-10-18T12:00:00Z"><w:r><w:t>Alice</w:t></w:r></w:{side}><w:{side}RangeEnd w:id="{id}"/>"#, id + 1)
+        }).collect::<String>()
+    };
+    for (from, to) in [(2, 1), (1, 2), (1, 0), (0, 1), (1, 1), (2, 2), (0, 0)] {
+        let body = format!(
+            "<w:p>{}{}</w:p>",
+            ranges("moveFrom", from, "move1", 1),
+            ranges("moveTo", to, "move1", 20)
+        );
+        let findings = validate(&docx(&body)).unwrap();
+        let warnings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == "MOVE_RANGE_COUNT_MISMATCH")
+            .collect();
+        assert_eq!(
+            warnings.len(),
+            usize::from(from != to),
+            "{from} source ranges, {to} destination ranges: {findings:?}"
+        );
+        if let Some(f) = warnings.first() {
+            assert_eq!(f.severity, "warning");
+            assert_eq!(f.set, "word");
+            assert!(!f.word_fatal && !f.repairable);
+            assert_eq!(f.part, "word/document.xml");
+            assert!(f.message.contains("move1"));
+        }
+    }
+    // Equal totals across different names must not hide either unmatched move.
+    let body = format!(
+        "<w:p>{}{}</w:p>",
+        ranges("moveFrom", 1, "move1", 1),
+        ranges("moveTo", 1, "move2", 20)
+    );
+    assert_eq!(
+        validate(&docx(&body))
+            .unwrap()
+            .iter()
+            .filter(|f| f.code == "MOVE_RANGE_COUNT_MISMATCH")
+            .count(),
+        2
+    );
+}

@@ -47,6 +47,7 @@
 //! | `NOTE_REFERENCE_DANGLING` | yes | no |
 //! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
+//! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -196,7 +197,8 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 25] = [
+const RING1_CODES: [&str; 26] = [
+    "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
@@ -477,7 +479,47 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_runs_inside_paragraphs(pkg, &mut out);
     check_style_names(pkg, &mut out);
     check_nested_text_boxes(pkg, &mut out);
+    check_move_range_counts(pkg, &mut out);
     out
+}
+
+/// Word opens unequal per-name move ranges cleanly, but Reject All can
+/// restore the destination over only one source range and duplicate text.
+fn check_move_range_counts(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for part in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        let mut moves = std::collections::BTreeMap::new();
+        for (side, source) in [("moveFromRangeStart", true), ("moveToRangeStart", false)] {
+            for start in dom.descendants(root, Some(&W::name(side))) {
+                let Some(name) = dom
+                    .attribute(start, &W::name("name"))
+                    .filter(|n| !n.is_empty())
+                else {
+                    continue;
+                };
+                let counts = moves
+                    .entry(name.to_string())
+                    .or_insert((0_usize, 0_usize, start));
+                if source {
+                    counts.0 += 1;
+                } else {
+                    counts.1 += 1;
+                }
+            }
+        }
+        for (name, (source, destination, start)) in moves {
+            if source != destination {
+                out.push(Finding::new(
+                    "MOVE_RANGE_COUNT_MISMATCH",
+                    &part,
+                    element_path(&dom, start),
+                    format!("{name}: {source} source ranges, {destination} destination ranges; Word opens it but Reject All can duplicate moved text (#1214)"),
+                ));
+            }
+        }
+    }
 }
 
 /// Word crashes or refuses a box in another box's readable content, even
