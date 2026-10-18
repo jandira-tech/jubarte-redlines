@@ -32256,13 +32256,12 @@ mod public_body_heuristic_story_scope_tests {
         )
     }
 
-    // These are valid header/footer part roots accepted by the public DOM
-    // helpers, not body-pipeline fixtures. Body page-flow and final-pilcrow
-    // heuristics must not reinterpret their independent story boundaries.
-    #[test]
-    fn public_body_layout_heuristics_preserve_complete_independent_header_and_footer_parts() {
-        type BodyHeuristic = fn(&mut Dom, NodeId);
-        let simple: &[(&str, BodyHeuristic)] = &[
+    type BodyHeuristic = fn(&mut Dom, NodeId);
+    type Configured = fn(&mut Dom, NodeId, &WmlComparerSettings, &mut u32);
+
+    /// The public body passes that take only the DOM and a root.
+    fn body_heuristics() -> Vec<(&'static str, BodyHeuristic)> {
+        vec![
             (
                 "unwrap_content_controls_in_pure_revisions",
                 unwrap_content_controls_in_pure_revisions,
@@ -32391,9 +32390,12 @@ mod public_body_heuristic_story_scope_tests {
                 "peel_trailing_for_word_onto_next_mix",
                 peel_trailing_for_word_onto_next_mix,
             ),
-        ];
-        type Configured = fn(&mut Dom, NodeId, &WmlComparerSettings, &mut u32);
-        let configured: &[(&str, Configured)] = &[
+        ]
+    }
+
+    /// The public body passes that also take settings and an id counter.
+    fn configured_heuristics() -> Vec<(&'static str, Configured)> {
+        vec![
             ("trailing_empty_spacing_to_pprchange", |d, r, s, id| {
                 trailing_empty_spacing_to_pprchange(d, r, None, s, id);
             }),
@@ -32476,7 +32478,16 @@ mod public_body_heuristic_story_scope_tests {
                     ensure_empty_pprchange_on_eq_with_live_jc(d, r, &HashSet::new(), s, id);
                 },
             ),
-        ];
+        ]
+    }
+
+    // These are valid header/footer part roots accepted by the public DOM
+    // helpers, not body-pipeline fixtures. Body page-flow and final-pilcrow
+    // heuristics must not reinterpret their independent story boundaries.
+    #[test]
+    fn public_body_layout_heuristics_preserve_complete_independent_header_and_footer_parts() {
+        let simple = body_heuristics();
+        let configured = configured_heuristics();
         const FORMAT: &str = "<w:rPr><w:rFonts w:ascii='Georgia' w:hAnsi='Georgia'/><w:b/><w:color w:val='123456'/><w:sz w:val='20'/><w:lang w:val='en-US'/></w:rPr>";
         for story in ["hdr", "ftr"] {
             for tracked_formats in [false, true] {
@@ -32515,7 +32526,7 @@ mod public_body_heuristic_story_scope_tests {
                 let root = dom.root(document).unwrap();
                 let before = canonical(&dom, root);
                 let count = dom.node_count();
-                for (name, operation) in simple {
+                for (name, operation) in &simple {
                     operation(&mut dom, root);
                     assert_eq!(
                         canonical(&dom, root),
@@ -32535,7 +32546,7 @@ mod public_body_heuristic_story_scope_tests {
                     ..WmlComparerSettings::default()
                 };
                 let mut id = 100;
-                for (name, operation) in configured {
+                for (name, operation) in &configured {
                     operation(&mut dom, root, &settings, &mut id);
                     assert_eq!(
                         canonical(&dom, root),
@@ -32552,6 +32563,184 @@ mod public_body_heuristic_story_scope_tests {
                         "{name} must not consume unrelated story revision IDs"
                     );
                 }
+            }
+        }
+    }
+
+    /// One element or text node per line, indented by depth, attributes
+    /// sorted: the form the pass snapshots diff.
+    fn outline(dom: &Dom, node: NodeId, depth: usize, out: &mut String) {
+        let indent = "  ".repeat(depth);
+        if !dom.is_element(node) {
+            out.push_str(&format!("{indent}{:?}\n", dom.text_value(node)));
+            return;
+        }
+        let short = |name: &XName| {
+            if name.namespace_name() == W::URI {
+                format!("w:{}", name.local_name())
+            } else if name.namespace_name().is_empty() {
+                name.local_name().to_string()
+            } else {
+                format!("{{{}}}{}", name.namespace_name(), name.local_name())
+            }
+        };
+        let mut attrs = dom
+            .attributes_iter(node)
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| format!("{}={value:?}", short(name)))
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let name = dom.name(node).map(|n| short(&n)).unwrap_or_default();
+        out.push_str(&format!("{indent}{name} {}\n", attrs.join(" ")));
+        for child in dom.nodes(node) {
+            outline(dom, child, depth + 1, out);
+        }
+    }
+
+    /// A body with the revision shapes the passes look for: pure inserted and
+    /// pure deleted titles, a mixed paragraph with a recorded property change,
+    /// a field, a table and trailing empty paragraphs.
+    fn synthetic_body() -> String {
+        let date = "2026-01-02T03:04:05Z";
+        let run = |kind: &str, text: &str, id: u32| {
+            let tag = if kind == "del" { "delText" } else { "t" };
+            format!(
+                "<w:{kind} w:id='{id}' w:author='Editor' w:date='{date}'><w:r><w:rPr><w:b/></w:rPr><w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r></w:{kind}>"
+            )
+        };
+        let props = "<w:pStyle w:val='Heading1'/><w:spacing w:before='240' w:after='120' w:line='276'/><w:jc w:val='left'/>";
+        format!(
+            "<w:document xmlns:w='{}'><w:body>\
+             <w:p><w:pPr>{props}<w:rPr><w:ins w:id='1' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
+             <w:p><w:pPr>{props}<w:rPr><w:del w:id='2' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
+             <w:p><w:pPr><w:spacing w:after='200'/><w:pPrChange w:id='3' w:author='Prior' w:date='{date}'><w:pPr><w:spacing w:after='200'/><w:jc w:val='center'/></w:pPr></w:pPrChange></w:pPr><w:r><w:t xml:space='preserve'>Kept text, </w:t></w:r>{}{}</w:p>\
+             <w:p><w:numPr><w:ilvl w:val='0'/><w:numId w:val='1'/></w:numPr><w:r><w:t>List item</w:t></w:r>{}</w:p>\
+             <w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>\
+             <w:tbl><w:tblPr><w:tblW w:w='2400' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='2400'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='2400' w:type='dxa'/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl>\
+             <w:p><w:pPr><w:spacing w:after='240'/><w:rPr><w:ins w:id='9' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr></w:p>\
+             <w:p><w:pPr><w:rPr><w:del w:id='10' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
+             <w:p/><w:sectPr><w:pgSz w:w='11906' w:h='16838'/></w:sectPr>\
+             </w:body></w:document>",
+            W::URI,
+            run("ins", "Revised title", 4),
+            run("del", "Original title", 5),
+            run("ins", "added words", 6),
+            run("del", "removed words", 7),
+            run("ins", " grows", 8),
+            run("del", "Cell text", 11),
+            run("del", "Closing words", 12),
+        )
+    }
+
+    /// The main document part of a fixture package, as XML text.
+    fn document_xml(docx: &[u8]) -> String {
+        let pkg = crate::opc::PartFs::open(docx).expect("fixture opens");
+        let main = pkg.main_document_part().expect("fixture has a main part");
+        pkg.part_string(&main).expect("main part is text")
+    }
+
+    /// What every public body pass does to `xml`: `unchanged`, or a unified
+    /// diff of the outline before and after it (and the ids it took).
+    fn pass_report(xml: &str) -> String {
+        let settings = WmlComparerSettings {
+            author_for_revisions: "Snapshot".to_string(),
+            date_time_for_revisions: "2026-01-02T03:04:05Z".to_string(),
+            ..WmlComparerSettings::default()
+        };
+        let parsed = || {
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(xml);
+            let root = dom.root(document).expect("document element");
+            (dom, root)
+        };
+        let before = {
+            let (dom, root) = parsed();
+            let mut out = String::new();
+            outline(&dom, root, 0, &mut out);
+            out
+        };
+        let mut report = String::new();
+        let mut record = |name: &str, dom: &Dom, root: NodeId, ids: Option<(u32, u32)>| {
+            let mut after = String::new();
+            outline(dom, root, 0, &mut after);
+            report.push_str(&format!("## {name}\n"));
+            if let Some((from, to)) = ids.filter(|(from, to)| from != to) {
+                report.push_str(&format!("ids {from} -> {to}\n"));
+            }
+            if after == before {
+                report.push_str("unchanged\n");
+            } else {
+                let diff = similar::TextDiff::from_lines(&before, &after);
+                report.push_str(
+                    &diff
+                        .unified_diff()
+                        .context_radius(1)
+                        .header("before", "after")
+                        .to_string(),
+                );
+            }
+        };
+        for (name, pass) in body_heuristics() {
+            let (mut dom, root) = parsed();
+            pass(&mut dom, root);
+            record(name, &dom, root, None);
+        }
+        for (name, pass) in configured_heuristics() {
+            let (mut dom, root) = parsed();
+            let mut id = 1000;
+            pass(&mut dom, root, &settings, &mut id);
+            record(name, &dom, root, Some((1000, id)));
+        }
+        report
+    }
+
+    /// Snapshot of every public body pass on a small corpus: two of Word's
+    /// own redlines and a synthetic body. A pass whose output changes fails
+    /// here until the new snapshot is reviewed and blessed with
+    /// `JUBARTE_BLESS=1 cargo nextest run -E 'test(finalize_pass_snapshots)'`.
+    #[test]
+    fn finalize_pass_snapshots() {
+        let corpus = [
+            (
+                "f1-word-redline",
+                document_xml(include_bytes!("../../tests/fixtures/f1/word-redline.docx")),
+            ),
+            (
+                "f4-word-redline",
+                document_xml(include_bytes!("../../tests/fixtures/f4/word-redline.docx")),
+            ),
+            ("synthetic-body", synthetic_body()),
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/finalize-snapshots");
+        let bless = std::env::var_os("JUBARTE_BLESS").is_some();
+        for (name, xml) in corpus {
+            let actual = format!(
+                "# Every public comparer::finalize body pass on {name}: `unchanged`, or the\n\
+                 # outline diff it makes. Regenerate after review with\n\
+                 # JUBARTE_BLESS=1 cargo nextest run -E 'test(finalize_pass_snapshots)'\n{}",
+                pass_report(&xml)
+            );
+            let path = dir.join(format!("{name}.txt"));
+            if bless {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&path, &actual).unwrap();
+                continue;
+            }
+            let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                panic!("{} is missing; run with JUBARTE_BLESS=1", path.display())
+            });
+            if expected != actual {
+                let diff = similar::TextDiff::from_lines(&expected, &actual)
+                    .unified_diff()
+                    .context_radius(2)
+                    .header("blessed", "now")
+                    .to_string();
+                let shown: String = diff.chars().take(6000).collect();
+                panic!(
+                    "{name}: a finalize pass changed its output. Review, then bless with \
+                     JUBARTE_BLESS=1.\n{shown}"
+                );
             }
         }
     }
