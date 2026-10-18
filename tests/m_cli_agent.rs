@@ -798,7 +798,7 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
         ),
         "{patch}"
     );
-    assert!(patch.contains("[-his or her-]{+an+}"), "{patch}");
+    assert!(patch.contains("{+an+}[-his or her-]"), "{patch}");
     // The comparer aligns the insertion as "c), 2(" after the old "2(";
     // the comment on it follows the change, never inside it.
     let unwrapped = patch.replace('\n', " ");
@@ -823,7 +823,10 @@ fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("{~~his or her~>an~~}") && stdout.contains("c0 @C: post-disclosure duty"),
+        regex::Regex::new(r"\{\+\+an\+\+\}\{r[0-9]+ @C\}\{--his or her--\}\{r[0-9]+ @C\}")
+            .unwrap()
+            .is_match(&stdout)
+            && stdout.contains("c0 @C: post-disclosure duty"),
         "{stdout}"
     );
     assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");

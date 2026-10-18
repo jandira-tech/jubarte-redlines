@@ -173,11 +173,11 @@ fn paren_author_outer() -> Vec<u8> {
     )
 }
 
-/// The inner's author holds ` on rN ` (#547 defect 8).
+/// The inner's author holds ` re rN ` (#547 defect 8).
 fn separator_author_inner() -> Vec<u8> {
     docx(
         r#"<w:p><w:ins w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
-           <w:del w:id="3" w:author="Bo on r1 Kim" w:date="2026-09-30T09:00:00Z">
+           <w:del w:id="3" w:author="Bo re r1 Kim" w:date="2026-09-30T09:00:00Z">
            <w:r><w:delText>two</w:delText></w:r></w:del></w:ins></w:p>"#,
     )
 }
@@ -260,30 +260,30 @@ fn written(markdown: &str) -> Vec<u8> {
 fn a_deletion_that_is_an_insertions_only_content_names_it_in_the_note() {
     assert_eq!(
         plain(&sole_del_in_ins()),
-        "{--two--}{>>r3 Ben Ode (2026-09-30T09:00:00Z) \
-         on r1 Ana Lima (2026-09-29T14:05:00Z)<<}\n"
+        "{--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
+         re r1 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
     let view = agent(&sole_del_in_ins());
-    assert!(view.contains("{--two--}{>>r3 @BO on r1 @AL<<}"), "{view}");
+    assert!(view.contains("{--two--}{r3 @BO re r1 @AL}"), "{view}");
 }
 
 #[test]
 fn an_insertion_that_is_a_deletions_only_content_names_it_in_the_note() {
     assert_eq!(
         plain(&sole_ins_in_del()),
-        "{++two++}{>>r1 Ana Lima (2026-09-29T14:05:00Z) \
-         on r3 Ben Ode (2026-09-30T09:00:00Z)<<}\n"
+        "{++two++}{r1 Ana Lima (2026-09-29T14:05:00Z) \
+         re r3 Ben Ode (2026-09-30T09:00:00Z)}\n"
     );
     let view = agent(&sole_ins_in_del());
-    assert!(view.contains("{++two++}{>>r1 @AL on r3 @BO<<}"), "{view}");
+    assert!(view.contains("{++two++}{r1 @AL re r3 @BO}"), "{view}");
 }
 
 #[test]
 fn a_move_from_that_is_an_insertions_only_content_names_it_in_the_note() {
     assert_eq!(
         plain(&sole_move_from_in_ins()),
-        "{--two--}{>>r3 Ben Ode (2026-09-30T09:00:00Z) \
-         on r1 Ana Lima (2026-09-29T14:05:00Z)<<}\n"
+        "{--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
+         re r1 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
 }
 
@@ -396,15 +396,13 @@ fn resolving_sole_nested_changes_matches_the_source() {
 fn a_deletion_inside_an_insertion_splits_the_insertion() {
     assert_eq!(
         plain(&del_in_ins()),
-        "{++one ++}{>>r1 Ana Lima (2026-09-29T14:05:00Z)<<}\
-         {--two--}{>>r3 Ben Ode (2026-09-30T09:00:00Z) on r1 Ana Lima (2026-09-29T14:05:00Z)<<}\
-         {++ three++}{>>r1 Ana Lima (2026-09-29T14:05:00Z)<<}\n"
+        "{++one ++}{r1 Ana Lima (2026-09-29T14:05:00Z)}\
+         {--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) re r1 Ana Lima (2026-09-29T14:05:00Z)}\
+         {++ three++}{r1 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
     let view = agent(&del_in_ins());
     assert!(
-        view.contains(
-            "{++one ++}{>>r1 @AL<<}{--two--}{>>r3 @BO on r1 @AL<<}{++ three++}{>>r1 @AL<<}"
-        ),
+        view.contains("{++one ++}{r1 @AL}{--two--}{r3 @BO re r1 @AL}{++ three++}{r1 @AL}"),
         "{view}"
     );
 }
@@ -413,9 +411,9 @@ fn a_deletion_inside_an_insertion_splits_the_insertion() {
 fn an_insertion_inside_a_deletion_splits_the_deletion() {
     assert_eq!(
         plain(&ins_in_del()),
-        "{--one --}{>>r3 Ben Ode (2026-09-30T09:00:00Z)<<}\
-         {++two++}{>>r1 Ana Lima (2026-09-29T14:05:00Z) on r3 Ben Ode (2026-09-30T09:00:00Z)<<}\
-         {-- three--}{>>r3 Ben Ode (2026-09-30T09:00:00Z)<<}\n"
+        "{--one --}{r3 Ben Ode (2026-09-30T09:00:00Z)}\
+         {++two++}{r1 Ana Lima (2026-09-29T14:05:00Z) re r3 Ben Ode (2026-09-30T09:00:00Z)}\
+         {-- three--}{r3 Ben Ode (2026-09-30T09:00:00Z)}\n"
     );
 }
 
@@ -476,9 +474,9 @@ fn a_folded_change_never_pairs_as_a_substitution() {
     let markdown = plain(&ins_then_sole_nest());
     assert_eq!(
         markdown,
-        "pre {++one++}{>>r6 Cy Dee (2026-09-30T09:00:00Z)<<}\
-         {--a--}{>>r3 Ben Ode (2026-09-30T09:00:00Z) \
-         on r1 Ana Lima (2026-09-29T14:05:00Z)<<}\n"
+        "pre {++one++}{r6 Cy Dee (2026-09-30T09:00:00Z)}\
+         {--a--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
+         re r1 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
     assert_eq!(plain(&written(&markdown)), markdown, "{markdown}");
     let document = part_string(&written(&markdown), "word/document.xml").unwrap();
@@ -496,10 +494,10 @@ fn two_sole_nests_side_by_side_keep_their_own_changes() {
     let markdown = plain(&two_sole_nests());
     assert_eq!(
         markdown,
-        "{--a--}{>>r3 Ben Ode (2026-09-30T09:00:00Z) \
-         on r1 Ana Lima (2026-09-29T14:05:00Z)<<}\
-         {--b--}{>>r4 Ben Ode (2026-09-30T09:00:00Z) \
-         on r2 Ana Lima (2026-09-29T14:05:00Z)<<}\n"
+        "{--a--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
+         re r1 Ana Lima (2026-09-29T14:05:00Z)}\
+         {--b--}{r4 Ben Ode (2026-09-30T09:00:00Z) \
+         re r2 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
     assert_eq!(plain(&written(&markdown)), markdown, "{markdown}");
     let document = part_string(&written(&markdown), "word/document.xml").unwrap();
@@ -514,7 +512,7 @@ fn a_note_naming_two_outers_keeps_the_file_word_valid() {
     // #1134: Word refuses w:t under a deletion. It opens ins > del > ins
     // with delText but misreads reject-all. Pending the chain-writing
     // decision, the body still rebuilds only the first outer it names.
-    let markdown = "{++two++}{>>r5 @CD on r3 @BO on r1 @AL<<}\n";
+    let markdown = "{++two++}{r5 @CD re r3 @BO re r1 @AL}\n";
     let docx = written(markdown);
     assert!(
         check_word_valid_package(&docx).ok(),
@@ -679,7 +677,7 @@ fn a_comment_inside_a_sole_nests_outer_keeps_the_outer() {
     // The comment's position alone must not decide whether the outer
     // revision survives: the note still names it.
     assert!(
-        markdown.contains("{>>r3 Ben Ode (2026-09-30T09:00:00Z) on r1 Ana Lima"),
+        markdown.contains("{r3 Ben Ode (2026-09-30T09:00:00Z) re r1 Ana Lima"),
         "{markdown}"
     );
     let document = part_string(&written(&markdown), "word/document.xml").unwrap();
@@ -726,7 +724,7 @@ fn an_outer_continued_into_the_next_paragraph_keeps_its_id() {
     let source = outer_into_next_paragraph();
     let markdown = plain(&source);
     assert!(
-        markdown.contains(" on r1 Ana Lima (2026-09-29T14:05:00Z)<<}"),
+        markdown.contains(" re r1 Ana Lima (2026-09-29T14:05:00Z)}"),
         "{markdown}"
     );
     let docx = written(&markdown);
@@ -782,11 +780,11 @@ fn a_carried_cell_or_row_keeps_the_paragraphs_outer_change() {
         // Both views keep the paragraph's own insertion: the container's
         // mark must not swallow it, and the fold still names the outer.
         assert!(
-            markdown.contains(" on r1 Ana Lima (2026-09-29T14:05:00Z)<<}"),
+            markdown.contains(" re r1 Ana Lima (2026-09-29T14:05:00Z)}"),
             "{name}: {markdown}"
         );
         let view = agent(&source);
-        assert!(view.contains(" on r1 @AL<<}"), "{name}: {view}");
+        assert!(view.contains(" re r1 @AL}"), "{name}: {view}");
         assert!(view.contains("rev r9 @RA in t0.row0"), "{name}: {view}");
         // The agent view carries the container's own mark on its table line
         // (`rev r9 @RA in t0.row0.cell0`), so its round trip is a full one.
@@ -832,7 +830,7 @@ fn an_inner_author_holding_the_separator_round_trips() {
     let markdown = plain(&source);
     let document = part_string(&written(&markdown), "word/document.xml").unwrap();
     assert!(
-        document.contains(r#"w:author="Bo on r1 Kim""#),
+        document.contains(r#"w:author="Bo re r1 Kim""#),
         "{markdown}: {document}"
     );
     assert!(
@@ -846,12 +844,12 @@ fn an_inner_author_holding_the_separator_round_trips() {
 fn resolving_a_fold_note_matches_the_source() {
     use jubarte::markdown::{TrackChanges, resolve_critic};
     // Exactly what `convert --commonmark` writes for the sole nest.
-    let markdown = "{--two--}{>>r3 Ben Ode (2026-09-30T09:00:00Z) \
-                    on r1 Ana Lima (2026-09-29T14:05:00Z)<<}\n";
+    let markdown = "{--two--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
+                    re r1 Ana Lima (2026-09-29T14:05:00Z)}\n";
     assert_eq!(resolve_critic(markdown, TrackChanges::Reject), "\n");
     assert_eq!(resolve_critic(markdown, TrackChanges::Accept), "\n");
     // The agent view's note names the same nest.
-    let agent_markdown = "{--two--}{>>r3 @BO on r1 @AL<<}\n";
+    let agent_markdown = "{--two--}{r3 @BO re r1 @AL}\n";
     assert_eq!(resolve_critic(agent_markdown, TrackChanges::Reject), "\n");
     assert_eq!(resolve_critic(agent_markdown, TrackChanges::Accept), "\n");
 }
@@ -864,15 +862,15 @@ fn a_three_level_nest_keeps_the_innermost_text_live() {
     // element is delText under the deletion (#1134); the note names each level.
     assert!(
         markdown.starts_with(
-            "{++two++}{>>r5 Cy Dee (2026-09-30T11:00:00Z) \
-             on r3 Ben Ode (2026-09-30T09:00:00Z) \
-             on r1 Ana Lima (2026-09-29T14:05:00Z)<<}"
+            "{++two++}{r5 Cy Dee (2026-09-30T11:00:00Z) \
+             re r3 Ben Ode (2026-09-30T09:00:00Z) \
+             re r1 Ana Lima (2026-09-29T14:05:00Z)}"
         ),
         "{markdown}"
     );
     let view = agent(&source);
     assert!(
-        view.contains("{++two++}{>>r5 @CD on r3 @BO on r1 @AL<<}"),
+        view.contains("{++two++}{r5 @CD re r3 @BO re r1 @AL}"),
         "{view}"
     );
     let document = part_string(&written(&markdown), "word/document.xml").unwrap();
@@ -930,11 +928,11 @@ fn live_insertion_keeps_nested_deletions(shape: &str) {
     let count = if shape == "two" { 2 } else { 1 };
     for id in 4..4 + count {
         assert!(
-            view.contains(&format!("{{>>r{id} @BO on r3 @AL<<}}")),
+            view.contains(&format!("{{r{id} @BO re r3 @AL}}")),
             "{shape}: {view}"
         );
     }
-    assert!(view.contains("{++ and the bank++}{>>r3 @AL<<}"), "{view}");
+    assert!(view.contains("{++ and the bank++}{r3 @AL}"), "{view}");
     for markdown in [view, plain(&source)] {
         let round = written(&markdown);
         assert_eq!(
@@ -993,8 +991,8 @@ fn a_note_on_a_live_insertion_rebuilds_the_nested_deletion() {
     for shape in ["tail", "head", "middle", "two"] {
         let source = live_insertion_with_deletions(shape);
         let view = agent(&source)
-            .replace("{>>r4 @BO<<}", "{>>r4 @BO on r3 @AL<<}")
-            .replace("{>>r5 @BO<<}", "{>>r5 @BO on r3 @AL<<}");
+            .replace("{r4 @BO}", "{r4 @BO re r3 @AL}")
+            .replace("{r5 @BO}", "{r5 @BO re r3 @AL}");
         let document = part_string(&written(&view), "word/document.xml").unwrap();
         assert_eq!(
             document.matches("<w:ins ").count(),
@@ -1123,7 +1121,7 @@ fn review_1111_comment_scope_names_both_deletions() {
     );
     assert_nested_round_trip(
         &source,
-        &["{>>r4 @BO on r3 @AL<<}", "{>>r5 @BO on r3 @AL<<}"],
+        &["{r4 @BO re r3 @AL}", "{r5 @BO re r3 @AL}"],
         &[
             ("w:ins", "3", None),
             ("w:del", "4", Some("3")),
@@ -1147,7 +1145,7 @@ fn review_1111_nested_comment_scopes_name_the_deletion() {
     );
     assert_nested_round_trip(
         &source,
-        &["{>>r4 @BO on r3 @AL<<}"],
+        &["{r4 @BO re r3 @AL}"],
         &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
     );
 }
@@ -1167,9 +1165,9 @@ fn review_1111_split_names_every_full_parent_chain() {
     assert_nested_round_trip(
         &source,
         &[
-            "{>>r5 @CD on r3 @BO on r1 @AL<<}",
-            "{>>r3 @BO on r1 @AL<<}",
-            "{>>r7 @CD on r3 @BO on r1 @AL<<}",
+            "{r5 @CD re r3 @BO re r1 @AL}",
+            "{r3 @BO re r1 @AL}",
+            "{r7 @CD re r3 @BO re r1 @AL}",
         ],
         &[
             ("w:ins", "1", None),
@@ -1254,7 +1252,7 @@ fn live_insertion_keeps_a_same_author_deletion() {
     let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
     assert_nested_round_trip(
         &source,
-        &["{>>r4 @AL on r3 @AL<<}"],
+        &["{r4 @AL re r3 @AL}"],
         &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
     );
 }
@@ -1274,7 +1272,7 @@ fn live_insertion_keeps_a_move_from() {
     let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
     assert_nested_round_trip(
         &source,
-        &["{>>r4 @BO on r3 @AL<<}"],
+        &["{r4 @BO re r3 @AL}"],
         &[("w:ins", "3", None), ("w:del", "4", Some("3"))],
     );
 }
@@ -1286,10 +1284,10 @@ fn whitespace_between_nested_deletions_keeps_their_parent() {
         .unwrap()
         .replace(" and the bank", " ");
     let source = common::docx::replace_entry(&source, "word/document.xml", document.as_bytes());
-    assert!(agent(&source).contains("{++ ++}{>>r3 @AL<<}"));
+    assert!(agent(&source).contains("{++ ++}{r3 @AL}"));
     assert_nested_round_trip(
         &source,
-        &["{>>r4 @BO on r3 @AL<<}", "{>>r5 @BO on r3 @AL<<}"],
+        &["{r4 @BO re r3 @AL}", "{r5 @BO re r3 @AL}"],
         &[
             ("w:ins", "3", None),
             ("w:del", "4", Some("3")),
@@ -1328,7 +1326,7 @@ fn a_footnote_live_insertion_keeps_its_nested_deletion() {
         &parts,
     );
     let view = agent(&source);
-    let note = "{>>footnotes.r4 @BO on footnotes.r3 @AL<<}";
+    let note = "{footnotes.r4 @BO re footnotes.r3 @AL}";
     assert!(view.contains(note), "{view}");
     for markdown in [view, plain(&source)] {
         let round = written(&markdown);
@@ -1427,10 +1425,10 @@ fn assert_story_nested_round_trip(
 }
 
 fn story_live_insertion_keeps_nested_deletions(kind: &str, shape: &str) {
-    let mut notes = vec![format!("{{>>{kind}1.r4 @BO on {kind}1.r3 @AL<<}}")];
+    let mut notes = vec![format!("{{{kind}1.r4 @BO re {kind}1.r3 @AL}}")];
     let mut expected = vec![("w:ins", "3", None), ("w:del", "4", Some("3"))];
     if shape == "two" {
-        notes.push(format!("{{>>{kind}1.r5 @BO on {kind}1.r3 @AL<<}}"));
+        notes.push(format!("{{{kind}1.r5 @BO re {kind}1.r3 @AL}}"));
         expected.push(("w:del", "5", Some("3")));
     }
     assert_story_nested_round_trip(
@@ -1471,7 +1469,7 @@ fn a_header_deletion_keeps_its_nested_insertion() {
     assert_story_nested_round_trip(
         &ins_in_del(),
         "header",
-        &["{>>header1.r1 @AL on header1.r3 @BO<<}"],
+        &["{header1.r1 @AL re header1.r3 @BO}"],
         &[("w:del", "3", None), ("w:ins", "1", Some("3"))],
     );
 }
@@ -1480,8 +1478,8 @@ fn a_header_deletion_keeps_its_nested_insertion() {
 fn review_1126_day_range_story_reuses_one_open_tag() {
     for kind in ["header", "footer"] {
         for text in [
-            "{++a++}{>>PART.r3 @AL<<}{--x--}{>>PART.r4 @BO on PART.r3 @AL<<}",
-            "{--x--}{>>PART.r4 @BO on PART.r3 @AL<<}{++a++}{>>PART.r3 @AL<<}",
+            "{++a++}{PART.r3 @AL}{--x--}{PART.r4 @BO re PART.r3 @AL}",
+            "{--x--}{PART.r4 @BO re PART.r3 @AL}{++a++}{PART.r3 @AL}",
         ] {
             let text = text.replace("PART", &format!("{kind}1"));
             let view = format!(
@@ -1504,7 +1502,7 @@ fn review_1126_day_range_story_reuses_one_open_tag() {
 
 #[test]
 fn review_1126_day_range_body_has_one_open_tag() {
-    let view = "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29..2026-09-30\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\n---\nNotify the buyer{++ and the bank++}{>>r3 @AL<<}{-- and the broker--}{>>r4 @BO on r3 @AL<<}.\n";
+    let view = "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29..2026-09-30\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\n---\nNotify the buyer{++ and the bank++}{r3 @AL}{-- and the broker--}{r4 @BO re r3 @AL}.\n";
     let xml = part_string(&written(view), "word/document.xml").unwrap();
     println!("body: {xml}");
     assert_revision_tree(
@@ -1521,10 +1519,10 @@ fn review_1126_day_range_body_has_one_open_tag() {
 fn review_1126_noid_parent_is_one_fresh_revision() {
     for kind in ["header", "footer"] {
         for text in [
-            "{++a++}{>>PART.noid @AL<<}{++b++}{>>PART.noid @AL<<}{--x--}{>>PART.r4 @BO on PART.noid @AL<<}{++c++}{>>PART.noid @AL<<}",
-            "{++a++}{>>PART.noid @AL<<}{--x--}{>>PART.r4 @BO on PART.noid @AL<<}{++b++}{>>PART.noid @AL<<}",
-            "{--x--}{>>PART.r4 @BO on PART.noid @AL<<}{++ab++}{>>PART.noid @AL<<}",
-            "{++ab++}{>>PART.noid @AL<<}{--x--}{>>PART.r4 @BO on PART.noid @AL<<}",
+            "{++a++}{PART.noid @AL}{++b++}{PART.noid @AL}{--x--}{PART.r4 @BO re PART.noid @AL}{++c++}{PART.noid @AL}",
+            "{++a++}{PART.noid @AL}{--x--}{PART.r4 @BO re PART.noid @AL}{++b++}{PART.noid @AL}",
+            "{--x--}{PART.r4 @BO re PART.noid @AL}{++ab++}{PART.noid @AL}",
+            "{++ab++}{PART.noid @AL}{--x--}{PART.r4 @BO re PART.noid @AL}",
         ] {
             let text = text.replace("PART", &format!("{kind}1"));
             let view = format!(
@@ -1556,9 +1554,9 @@ fn review_1126_noid_parent_is_one_fresh_revision() {
 
 #[test]
 fn review_1126_noid_ids_stop_at_nest_boundaries() {
-    let nest = "{++a++}{>>header1.noid @AL<<}{--x--}{>>header1.r4 @BO on header1.noid @AL<<}{++b++}{>>header1.noid @AL<<}";
+    let nest = "{++a++}{header1.noid @AL}{--x--}{header1.r4 @BO re header1.noid @AL}{++b++}{header1.noid @AL}";
     for text in [
-        "{++a++}{>>header1.noid @AL<<}{++b++}{>>header1.noid @AL<<}".to_string(),
+        "{++a++}{header1.noid @AL}{++b++}{header1.noid @AL}".to_string(),
         format!("{nest} gap {}", nest.replace("r4", "r5")),
         format!("{nest}{{PAGE}}{}", nest.replace("r4", "r5")),
         format!(
@@ -1586,25 +1584,39 @@ fn review_1126_noid_ids_stop_at_nest_boundaries() {
 }
 
 #[test]
-fn review_1126_body_refuses_a_substitution_parent_note() {
-    let note = "r5 @BO on r3 @AL";
-    let result = markdown_to_docx(
-        &format!("{{~~old~>new~~}}{{>>{note}<<}}"),
-        &DocxOptions::default(),
+fn review_1126_body_puts_a_substitution_parent_on_the_old_side_only() {
+    let xml = part_string(
+        &written("{~~old~>new~~}{r5+6 @BO re r3 @AL}"),
+        "word/document.xml",
+    )
+    .unwrap();
+    assert_revision_tree(
+        &xml,
+        &[
+            ("w:ins", "3", None),
+            ("w:del", "5", Some("3")),
+            ("w:ins", "6", None),
+        ],
+        &[
+            revision_by("AL", Some("1970-01-01T00:00:00Z")),
+            revision_by("BO", Some("1970-01-01T00:00:00Z")),
+            revision_by("BO", Some("1970-01-01T00:00:00Z")),
+        ],
     );
     assert!(
-        result.is_err(),
-        "substitution parent was silently discarded"
+        xml.contains("<w:delText xml:space=\"preserve\">old</w:delText>"),
+        "{xml}"
     );
-    assert!(result.unwrap_err().to_string().contains(note));
+    assert!(xml.contains("</w:del></w:ins><w:ins w:id=\"6\""), "{xml}");
+    assert!(xml.contains(">new</w:t>"), "{xml}");
 }
 
 #[test]
-fn review_1126_story_refuses_a_substitution_parent_note() {
+fn review_1126_story_puts_a_substitution_parent_on_the_old_side_only() {
     for kind in ["header", "footer"] {
         for paragraph in [0, 1] {
-            let note = format!("{kind}1.r5 @BO on {kind}1.r3 @AL");
-            let text = format!("{{~~old~>new~~}}{{>>{note}<<}}");
+            let note = format!("{kind}1.r5+6 @BO re {kind}1.r3 @AL");
+            let text = format!("{{~~old~>new~~}}{{{note}}}");
             let text = if paragraph == 0 {
                 format!("\"{text}\"")
             } else {
@@ -1612,12 +1624,25 @@ fn review_1126_story_refuses_a_substitution_parent_note() {
             };
             let view =
                 format!("---\n{kind}s:\n  default: {{id: {kind}1, text: {text}}}\n---\nBody.\n");
-            let result = markdown_to_docx(&view, &DocxOptions::default());
-            assert!(
-                result.is_err(),
-                "{kind}: substitution parent was silently discarded"
+            let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
+            assert_revision_tree(
+                &xml,
+                &[
+                    ("w:ins", "3", None),
+                    ("w:del", "5", Some("3")),
+                    ("w:ins", "6", None),
+                ],
+                &[
+                    revision_by("AL", Some("1970-01-01T00:00:00Z")),
+                    revision_by("BO", Some("1970-01-01T00:00:00Z")),
+                    revision_by("BO", Some("1970-01-01T00:00:00Z")),
+                ],
             );
-            assert!(result.unwrap_err().to_string().contains(&note));
+            assert!(xml.contains("</w:del></w:ins><w:ins w:id=\"6\""), "{xml}");
+            assert!(
+                xml.contains(">old</w:delText>") && xml.contains(">new</w:t>"),
+                "{xml}"
+            );
         }
     }
 }
@@ -1705,7 +1730,7 @@ fn review_1126_nested_story_keeps_a_page_field() {
         let story = in_story(&source, kind);
         let view = agent(&story);
         assert!(view.contains("{PAGE}"), "{view}");
-        let note = format!("{{>>{kind}1.r4 @B on {kind}1.r3 @A<<}}");
+        let note = format!("{{{kind}1.r4 @B re {kind}1.r3 @A}}");
         assert_story_nested_round_trip(
             &source,
             kind,
@@ -1736,7 +1761,7 @@ fn review_1126_nested_story_keeps_a_page_field() {
 }
 
 #[test]
-fn review_1126_story_keeps_a_substitution_beside_a_nest() {
+fn review_1126_story_keeps_separate_authors_beside_a_nest() {
     let source = review_1126_story_payload(
         r#"<w:r><w:delText>x</w:delText></w:r>"#,
         r#"<w:ins w:id="6" w:author="Alice" w:date="2026-09-29T14:05:00Z"><w:r><w:t>new</w:t></w:r></w:ins>
@@ -1744,8 +1769,13 @@ fn review_1126_story_keeps_a_substitution_beside_a_nest() {
     );
     for kind in ["header", "footer"] {
         let view = agent(&in_story(&source, kind));
-        assert!(view.contains("{~~old~>new~~}"), "{view}");
-        let note = format!("{{>>{kind}1.r4 @B on {kind}1.r3 @A<<}}");
+        assert!(
+            view.contains(&format!(
+                "{{++new++}}{{{kind}1.r6 @A}}{{--old--}}{{{kind}1.r7 @B}}"
+            )),
+            "{view}"
+        );
+        let note = format!("{{{kind}1.r4 @B re {kind}1.r3 @A}}");
         assert_story_nested_round_trip(
             &source,
             kind,
@@ -1762,7 +1792,7 @@ fn review_1126_story_keeps_a_substitution_beside_a_nest() {
 
 #[test]
 fn review_1126_open_tag_identity_is_local_to_each_story_part() {
-    let view = "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29T14:05:00Z\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\nheaders:\n  default: {id: header1, text: \"{++a++}{>>header1.r3 @AL<<}\"}\nfooters:\n  default: {id: footer1, text: \"{++b++}{>>footer1.r3 @BO<<}\"}\n---\nBody.\n";
+    let view = "---\nauthors:\n  AL: Alice # 1 revision, 2026-09-29T14:05:00Z\n  BO: Bob # 1 revision, 2026-09-30T09:00:00Z\nheaders:\n  default: {id: header1, text: \"{++a++}{header1.r3 @AL}\"}\nfooters:\n  default: {id: footer1, text: \"{++b++}{footer1.r3 @BO}\"}\n---\nBody.\n";
     let round = written(view);
     for (part, author, date) in [
         ("header1", "Alice", "2026-09-29T14:05:00Z"),
@@ -1790,7 +1820,7 @@ fn story_keeps_its_three_level_chain(kind: &str) {
     );
     // Feed the note grammar directly to pin the writer's metadata; the
     // reader's side of the same chain is `story_reads_its_three_level_chain`.
-    let text = "{++liveA ++}{>>PART.r1 @A<<}{++x++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{-- mid --}{>>PART.r3 @B on PART.r1 @A<<}{++y++}{>>PART.r7 @A on PART.r3 @B on PART.r1 @A<<}{++tail++}{>>PART.r1 @A<<}".replace("PART", &format!("{kind}1"));
+    let text = "{++liveA ++}{PART.r1 @A}{++x++}{PART.r5 @A re PART.r3 @B re PART.r1 @A}{-- mid --}{PART.r3 @B re PART.r1 @A}{++y++}{PART.r7 @A re PART.r3 @B re PART.r1 @A}{++tail++}{PART.r1 @A}".replace("PART", &format!("{kind}1"));
     let view = format!(
         "---\nauthors:\n  A: Alice # 3 revisions, 2026-09-29T14:05:00Z\n  B: Bob # 1 revision, 2026-09-30T09:00:00Z\n{kind}s:\n  default: {{id: {kind}1, text: \"{text}\"}}\n---\nBody.\n"
     );
@@ -1831,9 +1861,9 @@ fn story_reads_its_three_level_chain(kind: &str) {
      <w:r><w:t>tail</w:t></w:r></w:ins></w:p>"#,
     );
     let notes = [
-        format!("{{>>{kind}1.r5 @CD on {kind}1.r3 @BO on {kind}1.r1 @AL<<}}"),
-        format!("{{>>{kind}1.r3 @BO on {kind}1.r1 @AL<<}}"),
-        format!("{{>>{kind}1.r7 @CD on {kind}1.r3 @BO on {kind}1.r1 @AL<<}}"),
+        format!("{{{kind}1.r5 @CD re {kind}1.r3 @BO re {kind}1.r1 @AL}}"),
+        format!("{{{kind}1.r3 @BO re {kind}1.r1 @AL}}"),
+        format!("{{{kind}1.r7 @CD re {kind}1.r3 @BO re {kind}1.r1 @AL}}"),
     ];
     assert_story_nested_round_trip(
         &source,
@@ -1870,7 +1900,7 @@ fn review_1129_anonymous_parents_at_every_level() {
     for kind in ["header", "footer"] {
         let view = review_1129_story_view(
             kind,
-            "{++live++}{>>PART.noid @A<<}{--mid--}{>>PART.noid @B on PART.noid @A<<}{++x++}{>>PART.r5 @A on PART.noid @B on PART.noid @A<<}{--tail--}{>>PART.noid @B on PART.noid @A<<}{++end++}{>>PART.noid @A<<}",
+            "{++live++}{PART.noid @A}{--mid--}{PART.noid @B re PART.noid @A}{++x++}{PART.r5 @A re PART.noid @B re PART.noid @A}{--tail--}{PART.noid @B re PART.noid @A}{++end++}{PART.noid @A}",
         );
         let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
         assert_eq!(xml.matches("<w:ins ").count(), 2, "{xml}");
@@ -1901,7 +1931,7 @@ fn review_1129_day_range_reuses_opens_at_every_level() {
     for kind in ["header", "footer"] {
         let view = review_1129_story_view(
             kind,
-            "{++live++}{>>PART.r1 @A<<}{--mid--}{>>PART.r3 @B on PART.r1 @A<<}{++x++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{--tail--}{>>PART.r3 @B on PART.r1 @A<<}{++end++}{>>PART.r1 @A<<}",
+            "{++live++}{PART.r1 @A}{--mid--}{PART.r3 @B re PART.r1 @A}{++x++}{PART.r5 @A re PART.r3 @B re PART.r1 @A}{--tail--}{PART.r3 @B re PART.r1 @A}{++end++}{PART.r1 @A}",
         );
         let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
         assert_revision_tree(
@@ -1925,12 +1955,12 @@ fn review_1129_repeated_parents_stop_the_chain() {
     for kind in ["header", "footer"] {
         for (note, expected) in [
             (
-                "PART.r5 @A on PART.r3 @B on PART.r3 @B",
+                "PART.r5 @A re PART.r3 @B re PART.r3 @B",
                 vec![("w:del", "3", None), ("w:ins", "5", Some("3"))],
             ),
-            ("PART.r5 @A on PART.r5 @A", vec![("w:ins", "5", None)]),
+            ("PART.r5 @A re PART.r5 @A", vec![("w:ins", "5", None)]),
             (
-                "PART.r5 @A on PART.r3 @B on PART.r1 @A on PART.r3 @B",
+                "PART.r5 @A re PART.r3 @B re PART.r1 @A re PART.r3 @B",
                 vec![
                     ("w:ins", "1", None),
                     ("w:del", "3", Some("1")),
@@ -1938,7 +1968,7 @@ fn review_1129_repeated_parents_stop_the_chain() {
                 ],
             ),
             (
-                "PART.r5+6 @A on PART.r3 @B on PART.r6 @A",
+                "PART.r5+6 @A re PART.r3 @B re PART.r6 @A",
                 vec![
                     ("w:del", "3", None),
                     ("w:ins", "5", Some("3")),
@@ -1946,7 +1976,7 @@ fn review_1129_repeated_parents_stop_the_chain() {
                 ],
             ),
         ] {
-            let view = review_1129_story_view(kind, &format!("{{++xy++}}{{>>{note}<<}}"))
+            let view = review_1129_story_view(kind, &format!("{{++xy++}}{{{note}}}"))
                 .replace("2026-09-29..2026-09-30", "2026-09-29T14:05:00Z");
             let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
             assert!(
@@ -1980,7 +2010,7 @@ fn review_1129_four_level_chain_keeps_metadata() {
     for kind in ["header", "footer"] {
         let view = review_1129_fixed_story_view(
             kind,
-            "{++live++}{>>PART.r1 @A<<}{++head++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{--x--}{>>PART.r7 @B on PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{++tail++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{++end++}{>>PART.r1 @A<<}",
+            "{++live++}{PART.r1 @A}{++head++}{PART.r5 @A re PART.r3 @B re PART.r1 @A}{--x--}{PART.r7 @B re PART.r5 @A re PART.r3 @B re PART.r1 @A}{++tail++}{PART.r5 @A re PART.r3 @B re PART.r1 @A}{++end++}{PART.r1 @A}",
         );
         let xml = part_string(&written(&view), &format!("word/{kind}1.xml")).unwrap();
         assert_revision_tree(
@@ -2032,7 +2062,7 @@ fn review_1129_tree_checks_metadata_at_every_level() {
 fn issue_1134_pins_body_and_story_sole_intermediate_difference() {
     // #1134 owns the depth decision. The same note grammar currently rebuilds
     // only the nearest parent in the body and the whole chain in a story.
-    let text = "{++x++}{>>PART.r5 @A on PART.r3 @B on PART.r1 @A<<}{++tail++}{>>PART.r1 @A<<}";
+    let text = "{++x++}{PART.r5 @A re PART.r3 @B re PART.r1 @A}{++tail++}{PART.r1 @A}";
     let story_tree = [
         ("w:ins", "1", None),
         ("w:del", "3", Some("1")),
@@ -2061,11 +2091,8 @@ fn issue_1134_pins_body_and_story_sole_intermediate_difference() {
 #[test]
 fn review_1129_field_and_substitution_between_chains() {
     for kind in ["header", "footer"] {
-        for separator in [
-            "{PAGE}1{/}",
-            "{~~old~>new~~}{>>PART.r10 @B<<}{>>PART.r11 @A<<}",
-        ] {
-            let first = "{--x--}{>>PART.r7 @B on PART.r5 @A on PART.r3 @B on PART.r1 @A<<}";
+        for separator in ["{PAGE}1{/}", "{~~old~>new~~}{PART.r10 @B}{PART.r11 @A}"] {
+            let first = "{--x--}{PART.r7 @B re PART.r5 @A re PART.r3 @B re PART.r1 @A}";
             let second = first
                 .replace("r7", "r27")
                 .replace("r5", "r25")
@@ -2081,10 +2108,10 @@ fn review_1129_field_and_substitution_between_chains() {
             ];
             let mut attributes = revision_attributes(review_1129_four_level_source());
             if separator.starts_with("{~~") {
-                expected.extend([("w:ins", "11", None), ("w:del", "10", None)]);
+                expected.extend([("w:del", "10", None), ("w:ins", "11", None)]);
                 attributes.extend([
-                    revision_by("Alice", Some("2026-09-29T14:05:00Z")),
                     revision_by("Bob", Some("2026-09-29T14:05:00Z")),
+                    revision_by("Alice", Some("2026-09-29T14:05:00Z")),
                 ]);
                 assert!(xml.contains(">new<") && xml.contains(">old<"), "{xml}");
                 let end = xml.find("</w:ins>").unwrap();
@@ -2113,27 +2140,60 @@ fn review_1129_field_and_substitution_between_chains() {
 }
 
 #[test]
-fn review_1129_substitution_refuses_any_parent_chain() {
-    for parents in ["PART.r3 @B", "PART.r3 @B on PART.r1 @A"] {
-        let text = format!("{{~~old~>new~~}}{{>>PART.r5 @A on {parents}<<}}");
-        for kind in ["header", "footer"] {
-            let result = markdown_to_docx(
-                &review_1129_fixed_story_view(kind, &text),
-                &DocxOptions::default(),
-            );
-            let error = result
-                .expect_err("substitution parent chain was silently discarded")
-                .to_string();
+fn review_1129_substitution_keeps_parent_chains_on_the_old_side_only() {
+    for parents in ["PART.r3 @B", "PART.r3 @B re PART.r1 @A"] {
+        let text = format!("{{~~old~>new~~}}{{PART.r5+6 @A re {parents}}}");
+        for kind in ["header", "footer", "body"] {
+            let view = if kind == "body" {
+                format!(
+                    "---\nauthors:\n  A: Alice # 2 revisions, 2026-09-29T14:05:00Z\n  B: Bob # 1 revision, 2026-09-29T14:05:00Z\n---\n{}",
+                    text.replace("PART.", "")
+                )
+            } else {
+                review_1129_fixed_story_view(kind, &text)
+            };
+            let part = if kind == "body" {
+                "word/document.xml".to_string()
+            } else {
+                format!("word/{kind}1.xml")
+            };
+            let xml = part_string(&written(&view), &part).unwrap();
+            let mut tree = Vec::new();
+            let mut authors = Vec::new();
+            // #1134 retains only the nearest body parent; stories keep
+            // the complete alternating chain.
+            let full_chain = kind != "body" && parents.contains("r1");
+            if full_chain {
+                tree.push(("w:del", "1", None));
+                authors.push(revision_by("Alice", Some("2026-09-29T14:05:00Z")));
+            }
+            tree.extend([
+                ("w:ins", "3", full_chain.then_some("1")),
+                ("w:del", "5", Some("3")),
+                ("w:ins", "6", None),
+            ]);
+            authors.extend([
+                revision_by("Bob", Some("2026-09-29T14:05:00Z")),
+                revision_by("Alice", Some("2026-09-29T14:05:00Z")),
+                revision_by("Alice", Some("2026-09-29T14:05:00Z")),
+            ]);
+            assert_revision_tree(&xml, &tree, &authors);
             assert!(
-                error.contains(&parents.replace("PART", &format!("{kind}1"))),
-                "{error}"
+                xml.contains(">old</w:delText>") && xml.contains(">new</w:t>"),
+                "{xml}"
+            );
+            let insertion = xml
+                .split("<w:ins w:id=\"6\"")
+                .nth(1)
+                .unwrap()
+                .split("</w:ins>")
+                .next()
+                .unwrap();
+            assert!(
+                !insertion.contains("<w:del") && !insertion.contains("<w:ins"),
+                "{xml}"
             );
         }
-        let result = markdown_to_docx(&text.replace("PART.", ""), &DocxOptions::default());
-        let error = result
-            .expect_err("body substitution parent chain was silently discarded")
-            .to_string();
-        assert!(error.contains(&parents.replace("PART.", "")), "{error}");
     }
 }
 
@@ -2144,7 +2204,7 @@ fn deletion_text_probe(kind: &str, content: &str) {
     } else {
         format!("{kind}1.")
     };
-    let marked = format!("Lead {{++{content}++}}{{>>{tag}r5 @CD on {tag}r3 @BO<<}} tail.");
+    let marked = format!("Lead {{++{content}++}}{{{tag}r5 @CD re {tag}r3 @BO}} tail.");
     let markdown = if kind == "body" {
         marked
     } else {

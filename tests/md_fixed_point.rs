@@ -224,7 +224,7 @@ fn round_trip_comparable(markdown: &str, docx: &[u8]) -> String {
 
 fn dated_marks(date: &str) -> Vec<u8> {
     jubarte::markdown::markdown_to_docx(
-        &format!("---\nauthors:\n  AL: Ann Lee  # 2 revisions, {date}\nbody: p0\n---\n\n<!-- p0 -->\n{{++one++}}{{>>r1 @AL<<}} and {{++two++}}{{>>r2 @AL<<}}.\n"),
+        &format!("---\nauthors:\n  AL: Ann Lee  # 2 revisions, {date}\nbody: p0\n---\n\n<!-- p0 -->\n{{++one++}}{{r1 @AL}} and {{++two++}}{{r2 @AL}}.\n"),
         &jubarte::markdown::DocxOptions::default(),
     )
     .unwrap()
@@ -289,9 +289,9 @@ fn latest_collapse_requires_every_mark_and_comment_of_the_named_author() {
     let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n---\n";
     let shared = latest.replace(", latest ", ", ");
     for body in [
-        "{++one++}{>>r1 @AL 2026-10-17T16:59:00Z<<} and {++two++}{>>r2 @AL 2026-10-17T16:58:00Z<<}.",
-        "{++one++}{>>r1 @AL 2026-10-17T16:59:00Z<<} and {==two==}{>>c0 @AL 2026-10-17T16:58:00Z: note<<}.",
-        "{++one++}{>>r1 @BO 2026-10-17T16:59:00Z<<}.",
+        "{++one++}{r1 @AL 2026-10-17T16:59:00Z} and {++two++}{r2 @AL 2026-10-17T16:58:00Z}.",
+        "{++one++}{r1 @AL 2026-10-17T16:59:00Z} and {==two==}{>>c0 @AL 2026-10-17T16:58:00Z: note<<}.",
+        "{++one++}{r1 @BO 2026-10-17T16:59:00Z}.",
         "Plain text.",
     ] {
         let markdown = format!("{latest}\n<!-- p0 -->\n{body}\n");
@@ -629,8 +629,10 @@ fn docx_case(dir: &Path, path: &Path) -> Case {
     }
 }
 
-/// A note: `{>>r1+2 @AL<<}`, `{>>c5 @AL: text<<}`, `{>>footer2.r7 @LW<<}`.
-static NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{>>([^\s<]+)(.*?)<<\}").unwrap());
+/// A note: `{r1+2 @AL}`, `{>>c5 @AL: text<<}`, `{footer2.r7 @LW}`.
+static NOTE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b)([^{}]*?)(?:<<)?\}").unwrap()
+});
 
 /// What a view says under each short id, in the order it says it:
 /// id-line blocks (`p3`, `t0`, `p10-p11`, `footnotes.p0`) up to the next id
@@ -733,13 +735,14 @@ fn ids(view: &str) -> Vec<(String, String)> {
 }
 
 /// The CriticMarkup span a note at `at` belongs to: skip the notes chained
-/// before it (`{~~a~>b~~}{>>r0<<}{>>r1<<}`), then take the span ending there.
+/// before it (`{~~a~>b~~}{r0}{r1}`), then take the span ending there.
 fn span_before(text: &str, mut at: usize) -> &str {
-    while text[..at].ends_with("<<}") {
-        match text[..at].rfind("{>>") {
-            Some(i) => at = i,
-            None => break,
-        }
+    while let Some(note) = NOTE
+        .find_iter(&text[..at])
+        .last()
+        .filter(|note| note.end() == at)
+    {
+        at = note.start();
     }
     for (open, close) in [
         ("{++", "++}"),
@@ -999,7 +1002,7 @@ fn committed_views_match_the_view() {
 #[test]
 fn ids_name_blocks_notes_and_yaml_entries() {
     let view = "---\nview: tracked  # c\nauthors:\n  AL: Ana Lima  # 1\n---\n\n<!-- p0 left -->\n\
-                a {~~x~>y~~}{>>r0 @AL<<}{>>r1 @AL<<} b{== c==}{>>c2 @AL: hi<<}\n\n<!-- p1-p2 empty -->\n";
+                a {~~x~>y~~}{r0 @AL}{r1 @AL} b{== c==}{>>c2 @AL: hi<<}\n\n<!-- p1-p2 empty -->\n";
     let keys: Vec<String> = ids(view).into_iter().map(|(k, _)| k).collect();
     assert_eq!(
         keys,
@@ -1014,11 +1017,11 @@ fn ids_name_blocks_notes_and_yaml_entries() {
         ]
     );
     let notes: HashMap<String, String> = ids(view).into_iter().collect();
-    assert_eq!(notes["r1"], "{~~x~>y~~}{>>r1 @AL<<}");
+    assert_eq!(notes["r1"], "{~~x~>y~~}{r1 @AL}");
     assert_eq!(notes["c2"], "{== c==}{>>c2 @AL: hi<<}");
     let r = verdicts(
         view,
-        &view.replace("hi<<}", "ho<<}").replace("{>>r1 @AL<<}", ""),
+        &view.replace("hi<<}", "ho<<}").replace("{r1 @AL}", ""),
     );
     assert_eq!(
         (r.correct, r.wrong, r.lost, r.new),

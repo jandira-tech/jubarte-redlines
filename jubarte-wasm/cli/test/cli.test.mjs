@@ -600,7 +600,7 @@ test("edit takes the text a comment covers (c0.text), and read names note paragr
   const view = run("read", out);
   assert.equal(view.code, 0, view.err);
   // edit writes the deletion before the insertion; read pairs only insertion-first, so two changes.
-  assert.match(view.out, /\{==\{--Last--\}\{>>r\d+ @R<<\}\{\+\+Final\+\+\}\{>>r\d+ @R<<\}==\}/);
+  assert.match(view.out, /\{==\{~~Last~>Final~~\}\{r\d+\+\d+ @R\}==\}/);
   assert.match(view.out, /<!-- footnotes\.p0 -->\n\[\^1\]: The note text\./);
   const outside = run("edit", commented, "-p", "c0.text", "--anchor", "paragraph", "--content", "x", "-o", path.join(tmp, "covered-no.docx"));
   assert.equal(outside.code, 3, outside.err);
