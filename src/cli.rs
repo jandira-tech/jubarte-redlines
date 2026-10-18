@@ -822,6 +822,9 @@ pub struct CompareArgs {
 
     /// Where images named by the Markdown are found (default: the
     /// original's directory when it is Markdown, else the modified's).
+    /// Only images that resolve inside that directory are read, symlinks
+    /// resolved; a URL or a path out of it is written as its alt text,
+    /// with a warning that says why.
     #[arg(long, value_name = "DIR", help_heading = "Markdown inputs")]
     pub resource_path: Option<PathBuf>,
 
@@ -2558,7 +2561,9 @@ pub struct MarkdownArgs {
     #[arg(long, value_name = "FILE")]
     pub reference_doc: Option<PathBuf>,
     /// Markdown to Word: where images are found [default: the Markdown
-    /// file's directory].
+    /// file's directory]. Only images that resolve inside that directory
+    /// are read, symlinks resolved; a URL or a path out of it is written
+    /// as its alt text, with a warning that says why.
     #[arg(long, value_name = "DIR")]
     pub resource_path: Option<PathBuf>,
     /// Markdown to Word: author of the tracked changes and comments that

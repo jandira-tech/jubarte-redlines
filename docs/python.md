@@ -171,7 +171,9 @@ Markdown inputs:
 
       --resource-path <DIR>
           Where images named by the Markdown are found (default: the original's
-          directory when it is Markdown, else the modified's)
+          directory when it is Markdown, else the modified's). Only images that resolve
+          inside that directory are read, symlinks resolved; a URL or a path out of it
+          is written as its alt text, with a warning that says why
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
@@ -612,7 +614,9 @@ Options:
 
       --resource-path <DIR>
           Markdown to Word: where images are found [default: the Markdown file's
-          directory]
+          directory]. Only images that resolve inside that directory are read, symlinks
+          resolved; a URL or a path out of it is written as its alt text, with a warning
+          that says why
 
   -a, --author <NAME>
           Markdown to Word: author of the tracked changes and comments that name none

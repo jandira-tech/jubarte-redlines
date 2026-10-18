@@ -158,7 +158,13 @@ escaped as text are ordinary words. Older payloads that still hold the box's
 words, including header and footer boxes, need no marker region.
 
 Images are read relative to the Markdown file, or to `--resource-path`;
-URLs are not fetched.
+URLs are not fetched. After `%XX` escapes are decoded, a name that is a
+URL scheme is refused, and the path a local name resolves to must stay
+inside that directory once symlinks are resolved: an absolute path, a
+`..` walk or a link out of it is refused too. A refused image is
+written as its alt text, with a warning that says why, and nothing
+outside the directory is read. A document that names an image in
+another folder needs `--resource-path` at or above it.
 
 `--reference-doc house.docx` works as pandoc's: the output takes the
 reference's styles, numbering, page setup, headers and footers, and none of
