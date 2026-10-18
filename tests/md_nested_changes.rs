@@ -2094,3 +2094,65 @@ fn review_1129_substitution_refuses_any_parent_chain() {
         assert!(error.contains(&parents.replace("PART.", "")), "{error}");
     }
 }
+
+// #1134: Word refuses live text anywhere below a deletion (2026-10-17).
+fn deletion_text_probe(kind: &str, content: &str) {
+    let tag = if kind == "body" {
+        String::new()
+    } else {
+        format!("{kind}1.")
+    };
+    let marked = format!("Lead {{++{content}++}}{{>>{tag}r5 @CD on {tag}r3 @BO<<}} tail.");
+    let markdown = if kind == "body" {
+        marked
+    } else {
+        agent(&in_story(
+            &docx("<w:p><w:r><w:t>Lead x tail.</w:t></w:r></w:p>"),
+            kind,
+        ))
+        .replace("Lead x tail.", &format!("\"{marked}\""))
+    };
+    let output = written(&markdown);
+    let part = if kind == "body" {
+        "word/document.xml".to_string()
+    } else {
+        format!("word/{kind}1.xml")
+    };
+    let xml = part_string(&output, &part).unwrap();
+    if content.contains("{PAGE}") {
+        assert!(xml.contains("<w:delInstrText"), "{xml}");
+        assert!(!xml.contains("<w:instrText"), "{xml}");
+    }
+    assert!(xml.contains("<w:delText"), "{xml}");
+    assert!(
+        !xml.contains("<w:t xml:space=\"preserve\">x</w:t>"),
+        "{xml}"
+    );
+    let checked = check_word_valid_package(&output);
+    assert!(checked.ok(), "{:?}", checked.errors);
+}
+
+#[test]
+fn issue_1134_body_deletion_text() {
+    deletion_text_probe("body", "x");
+}
+#[test]
+fn issue_1134_header_deletion_text() {
+    deletion_text_probe("header", "x");
+}
+#[test]
+fn issue_1134_footer_deletion_text() {
+    deletion_text_probe("footer", "x");
+}
+#[test]
+fn issue_1134_body_deletion_field() {
+    deletion_text_probe("body", "{PAGE}x{/}");
+}
+#[test]
+fn issue_1134_header_deletion_field() {
+    deletion_text_probe("header", "{PAGE}x{/}");
+}
+#[test]
+fn issue_1134_footer_deletion_field() {
+    deletion_text_probe("footer", "{PAGE}x{/}");
+}
