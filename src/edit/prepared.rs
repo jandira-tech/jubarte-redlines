@@ -203,6 +203,8 @@ pub fn prepare(
     options: &PrepareOptions,
 ) -> Result<PreparedEdit, EditError> {
     check_update_fields(plan)?;
+    let lowered = super::visible::lower(source, plan)?;
+    let plan = lowered.as_ref().unwrap_or(plan);
     let mut tx = Transaction::start(source, plan)?;
     tx.syntax = options.syntax;
     tx.resolve()?;
@@ -373,8 +375,9 @@ enum ExpectedScope {
 /// requested text itself — so a requested change the algorithm normalizes
 /// away is detected instead of passing as a no-op.
 fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText)> {
-    /// `para` → (first op id, `(start, end, replacement, op)` spans).
-    type Spans = (String, Vec<(usize, usize, String, usize)>);
+    /// `para` → (first op id, `(start, end, replacement, op, restore)`
+    /// spans).
+    type Spans = (String, Vec<(usize, usize, String, usize, bool)>);
     let mut edits: BTreeMap<usize, Spans> = BTreeMap::new();
     let mut merges = Vec::new();
     let mut filled: HashSet<usize> = HashSet::new();
@@ -392,7 +395,16 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
                 let entry = edits
                     .entry(*para)
                     .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
-                entry.1.push((*start, *end, replacement.clone(), *op));
+                entry
+                    .1
+                    .push((*start, *end, replacement.clone(), *op, false));
+            }
+            // A restore's copy is text inserted where the deletion is.
+            Resolved::Restore { para, at, text, .. } => {
+                let entry = edits
+                    .entry(*para)
+                    .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
+                entry.1.push((*at, *at, text.clone(), *op, true));
             }
             Resolved::MergeParagraphs {
                 para,
@@ -426,7 +438,9 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         let rewrite = if exact { rewrite_text(tx, para) } else { None };
         let rewrite_op = rewrite.as_ref().map(|&(op, _)| op);
         let base = &tx.projections[para].text;
-        spans.sort_by_key(|&(start, ..)| start);
+        // A restore's copy follows its deletion, ahead of the visible text
+        // that starts where the deletion is; other spans keep their order.
+        spans.sort_by_key(|&(start, .., restore)| (start, !restore));
         let mut text = String::with_capacity(base.len());
         // The rewrite's own spans alone, composed on the base: a rewrite
         // beside co-resident edits must still realize its request, or the
@@ -434,7 +448,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         let mut own = String::with_capacity(base.len());
         let mut at = 0;
         let mut own_at = 0;
-        for (start, end, replacement, span_op) in spans {
+        for (start, end, replacement, span_op, _) in spans {
             text.push_str(&base[at..start]);
             text.push_str(&replacement);
             at = end;

@@ -1594,6 +1594,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
                     .then(|| ChangeFilter::ids(request.accept.iter().cloned())),
                 reject: (!request.reject.is_empty())
                     .then(|| ChangeFilter::ids(request.reject.iter().cloned())),
+                reject_visible: false,
             }
         }),
         removed_anchor_comments: Default::default(),

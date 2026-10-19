@@ -1317,6 +1317,7 @@ impl SourceModel {
             selection: ResolveRevisions {
                 accept: filter(accept),
                 reject: filter(reject),
+                reject_visible: false,
             },
             explicit,
             carried,
