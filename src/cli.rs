@@ -3766,9 +3766,16 @@ mod slash_path_tests {
     #[test]
     fn unverbatimed_keeps_every_nonverbatim_path() {
         // The parsed-component contract, portable: only a Windows verbatim
-        // prefix is ever stripped. (A `\\?\…` literal parses as an ordinary
-        // name off Windows, so it also stays.)
-        for path in ["plain", r"dir\sub", r"\\?\C:\a\b", r"\\?\UNC\s\sh\x"] {
+        // prefix is ever stripped, so a drive or UNC path keeps its head.
+        for path in ["plain", r"dir\sub", r"C:\a\b", r"\\server\share\x"] {
+            assert_eq!(unverbatimed(Path::new(path)), None, "{path}");
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_verbatim_literal_is_an_ordinary_name_off_windows() {
+        for path in [r"\\?\C:\a\b", r"\\?\UNC\s\sh\x"] {
             assert_eq!(unverbatimed(Path::new(path)), None, "{path}");
         }
     }
