@@ -380,7 +380,11 @@ Options:
 
 ```text
 $ jubarte-redlines accept --help
-Accept all tracked changes, or select by ID, author or kind
+Accept all tracked changes, or select by ID, author or kind.
+
+Every part counts: the body, headers, footers, notes and comment bodies. An author or
+kind selection reaches comment bodies too, but no ID names a comment-body change, so an
+ID selection leaves those tracked.
 
 Usage: jubarte-redlines accept [OPTIONS] --output <FILE> <FILE>
 
@@ -398,7 +402,8 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable
+          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
+          and stay tracked
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -465,7 +470,11 @@ Rendering (-o FILE.pdf or FILE.png):
 
 ```text
 $ jubarte-redlines reject --help
-Reject all tracked changes, or select by ID, author or kind
+Reject all tracked changes, or select by ID, author or kind.
+
+Every part counts: the body, headers, footers, notes and comment bodies. An author or
+kind selection reaches comment bodies too, but no ID names a comment-body change, so an
+ID selection leaves those tracked.
 
 Usage: jubarte-redlines reject [OPTIONS] --output <FILE> <FILE>
 
@@ -483,7 +492,8 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable
+          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
+          and stay tracked
 
       --author <NAME>
           Only changes by this author. Repeatable
