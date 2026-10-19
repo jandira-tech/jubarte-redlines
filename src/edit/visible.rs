@@ -215,9 +215,19 @@ fn unsupported_child(dom: &Dom, container: NodeId, nested: &[&str]) -> Option<&'
 }
 
 /// Whether a deletion whose parent is `parent` sits where restore puts
-/// text back: in a paragraph, or in an insertion inside one.
+/// text back: in a paragraph, or in an insertion directly inside one.
 fn in_paragraph(dom: &Dom, parent: NodeId) -> bool {
-    dom.name_is(parent, &W::p()) || dom.name_is(parent, &W::ins())
+    dom.name_is(parent, &W::p()) || dom.name_is(container(dom, parent), &W::p())
+}
+
+/// What holds a deletion whose parent is `parent`: that parent, or past an
+/// insertion the one holding it.
+fn container(dom: &Dom, parent: NodeId) -> NodeId {
+    if dom.name_is(parent, &W::ins()) {
+        dom.parent(parent).unwrap_or(parent)
+    } else {
+        parent
+    }
 }
 
 /// Whether `del` holds words to put back: deleted text, or a glyph typed
@@ -356,15 +366,12 @@ impl Transaction<'_> {
             .map_err(|e| fail("INVALID_EDIT", format!("{verb}: {e}"), &outcome))?;
         let [one] = ids.as_slice() else {
             let names: Vec<String> = ids.iter().map(crate::ids::ChangeId::short).collect();
-            let count = match names.len() {
-                2 => "two".to_string(),
-                n => n.to_string(),
-            };
             return Err(fail(
                 "INVALID_EDIT",
                 format!(
-                    "{verb} takes one revision; {} names {count} ({})",
+                    "{verb} takes one revision; {} names {} ({})",
                     revision.trim(),
+                    names.len(),
                     names.join(", ")
                 ),
                 &outcome,
@@ -391,6 +398,19 @@ impl Transaction<'_> {
         let Some(change) = listed.into_iter().find(|c| c.id == short) else {
             return Err(fail("UNKNOWN_CHANGE", unknown(), &outcome));
         };
+        // Our own revision first, whatever its kind: the way to undo it is
+        // ours to take, not a strike or a restore.
+        if let Some(author) = change.author.as_deref().filter(|&a| a == self.plan.author) {
+            let instead = match (visible, change.kind) {
+                (Visible::Strike, ChangeKind::Insertion) => "delete the text instead",
+                _ => "reject it instead",
+            };
+            return Err(fail(
+                "OWN_REVISION",
+                format!("{short} is by {author:?}; {instead}"),
+                &outcome,
+            ));
+        }
         let wrong_kind = match (visible, change.kind, change.move_side) {
             (Visible::Strike, ChangeKind::Insertion, _)
             | (Visible::Restore, ChangeKind::Deletion, _) => None,
@@ -427,24 +447,13 @@ impl Transaction<'_> {
             (_, ChangeKind::Formatting, _) => Some((
                 "INVALID_EDIT",
                 format!(
-                    "{short} is a formatting change; {verb} takes {} text: reject {short} to undo it",
+                    "{short} is a formatting change; {verb} takes {} text: reject {short} to undo it (no visible reject of formatting yet; it leaves no trace)",
                     visible.takes()
                 ),
             )),
         };
         if let Some((code, message)) = wrong_kind {
             return Err(fail(code, message, &outcome));
-        }
-        if let Some(author) = change.author.as_deref().filter(|&a| a == self.plan.author) {
-            let instead = match visible {
-                Visible::Strike => "delete the text instead",
-                Visible::Restore => "reject it instead",
-            };
-            return Err(fail(
-                "OWN_REVISION",
-                format!("{short} is by {author:?}; {instead}"),
-                &outcome,
-            ));
         }
         let unsupported = |message: String| fail("UNSUPPORTED_STRUCTURE", message, &outcome);
         match change.target {
@@ -590,7 +599,7 @@ impl Transaction<'_> {
                 };
                 let parent = dom.parent(del).expect("a run-level deletion has a parent");
                 if !in_paragraph(dom, parent) {
-                    let inside = match local(dom, parent).as_str() {
+                    let inside = match local(dom, container(dom, parent)).as_str() {
                         "hyperlink" => "a hyperlink",
                         "sdtContent" => "a content control",
                         "fldSimple" => "a field",

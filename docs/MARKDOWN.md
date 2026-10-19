@@ -865,12 +865,19 @@ document before both, and rejecting only your changes gives theirs back
 intact. Both need the file's revisions kept (`--existing-revisions keep`,
 the default for a file with tracked changes). Striking an insertion you
 already struck is `ok`, with the note `already struck`. Refused, each with
-the route that takes it instead: your own revision (`OWN_REVISION`), a
-revision with no text (`EMPTY_REVISION`, naming the comment marks it
-holds), a revision the same command also accepts or rejects
-(`REVISION_CONFLICT`), the source of a move to restore or its destination
-to strike, a paragraph mark, a formatting change, and a deletion split
-over several places or holding anything but plain text to restore.
+the route that takes it instead: your own revision of any kind, named
+first (`OWN_REVISION`), a revision with no text (`EMPTY_REVISION`, naming
+the comment marks it holds), a revision the same command also accepts or
+rejects (`REVISION_CONFLICT`), the source of a move to restore or its
+destination to strike, a paragraph mark, a formatting change (no visible
+reject of formatting yet: `--reject` undoes it without a trace), an
+insertion holding anything but plain text (a field among them) to strike,
+and a deletion split over several places, holding anything but plain
+text, or sitting in a hyperlink, content control or field, to restore. A
+plan's `"reject":{"visible":true}` with no `ids`, `authors` or `kinds`
+takes every revision, as a silent reject does. A `--reject` recorded into
+a `--plan` whose reject is visible is refused: record it as `--reject
+--visible`, or start a new plan.
 
 ### Refusals
 

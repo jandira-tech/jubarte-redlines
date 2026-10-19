@@ -713,6 +713,17 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
     }
     if let Some(more) = more.resolve_revisions {
         let resolve = plan.resolve_revisions.get_or_insert_with(Default::default);
+        // The plan's reject list strikes and restores (`visible`); a
+        // recorded `--reject` joined to it would turn visible too.
+        if let Some(ids) = more.reject.as_ref().and_then(|r| r.ids.as_ref())
+            && resolve.reject_visible
+            && !more.reject_visible
+        {
+            return Err(format!(
+                "the plan's reject is visible, and a recorded --reject is silent: record -p {} --reject --visible, or start a new plan",
+                ids.join(" -p ")
+            ));
+        }
         // Every id in its short spelling, as recorded ones are, so `r1+2`
         // and `r1`, `r2` are the same ids; a malformed one is left for the
         // preview to report.
@@ -996,6 +1007,30 @@ mod tests {
             record_into(Some(named), more).unwrap_err(),
             "the plan names an operation op-2, the id a recorded operation takes; rename it, or start a new plan"
         );
+    }
+
+    /// CodeRabbit on #1286: a recorded `--reject` is silent, and the plan's
+    /// reject list strikes and restores; merged, the recorded id would turn
+    /// visible.
+    #[test]
+    fn a_silent_reject_is_not_recorded_into_a_visible_one() {
+        let mut plan = recorded(Verb::Edit, &[rewrite("p1", "One.")], "Ann", "aa");
+        plan.resolve_revisions = Some(ResolveRevisions {
+            accept: None,
+            reject: Some(ChangeFilter::ids(["r4"])),
+            reject_visible: true,
+        });
+        let reject = recorded(Verb::Edit, &[revision("r5", false)], "Ann", "aa");
+        assert_eq!(
+            record_into(Some(plan.clone()), reject).unwrap_err(),
+            "the plan's reject is visible, and a recorded --reject is silent: record -p r5 --reject --visible, or start a new plan"
+        );
+        // An accept still records beside it.
+        let accept = recorded(Verb::Edit, &[revision("r6", true)], "Ann", "aa");
+        let merged = record_into(Some(plan), accept).unwrap();
+        let resolve = merged.resolve_revisions.unwrap();
+        assert!(resolve.reject_visible);
+        assert_eq!(resolve.accept.unwrap().ids.unwrap(), ["r6"]);
     }
 
     /// pi review 06c: id spellings, string op ids, an empty author.

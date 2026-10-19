@@ -199,6 +199,9 @@ fn strike_with_a_comment_anchors_it_on_the_struck_words() {
     assert!(at(start[0]) < at(del) && at(del) < at(end[0]));
     let comments = part_string(&out.redline, "word/comments.xml").unwrap();
     assert!(comments.contains("Not acceptable."), "{comments}");
+    // The clean copy drops the struck words, and the comment on them.
+    assert_eq!(part_string(&out.clean, "word/comments.xml"), None);
+    assert!(!text(&out.clean).contains("Not acceptable."));
     assert_eq!(out.report.operations[0].comment_id, Some(0));
 }
 
@@ -279,7 +282,7 @@ fn strike_and_restore_take_the_kind_they_name() {
     assert_eq!(e.code, "INVALID_EDIT");
     assert_eq!(
         e.message,
-        "strike takes one revision; r4+5 names two (r4, r5)"
+        "strike takes one revision; r4+5 names 2 (r4, r5)"
     );
 }
 
@@ -742,4 +745,167 @@ fn a_restore_inside_another_edit_is_refused_not_composed() {
         ["OVERLAPPING_EDITS", "UNSUPPORTED_STRUCTURE"].contains(&e.code.as_str()),
         "{e}"
     );
+}
+
+/// CodeRabbit on #1286: a deletion in an insertion is in a paragraph only
+/// when that insertion is.
+#[test]
+fn restore_refuses_a_deletion_whose_insertion_sits_in_a_container() {
+    for (open, close, inside) in [
+        (
+            r##"<w:hyperlink w:anchor="x">"##,
+            "</w:hyperlink>",
+            "a hyperlink",
+        ),
+        (
+            "<w:sdt><w:sdtContent>",
+            "</w:sdtContent></w:sdt>",
+            "a content control",
+        ),
+    ] {
+        let source = docx(&format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>{open}<w:ins w:id="6" w:author="Bob Lee" w:date="{OLD_DATE}"><w:del w:id="7" w:author="{ALMA}" w:date="{OLD_DATE}"><w:r><w:delText>alpha</w:delText></w:r></w:del></w:ins>{close}</w:p>"#
+        ));
+        let e = refused(&source, &plan(&restore("r7")));
+        assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{inside}");
+        assert_eq!(
+            e.message,
+            format!(
+                "r7 sits inside {inside}; restore takes deleted text in a paragraph only: reject r7 instead"
+            )
+        );
+    }
+}
+
+/// Our own revision is named first, whatever it is, with the way to undo
+/// it: not a strike sent to restore and refused again there.
+#[test]
+fn our_own_revision_of_any_kind_is_refused_as_ours() {
+    let e = refused(&del_source(CAROL), &plan(&strike("r12")));
+    assert_eq!(e.code, "OWN_REVISION");
+    assert_eq!(e.message, r#"r12 is by "Carol Diaz"; reject it instead"#);
+    let e = refused(&formatted(CAROL), &plan(&strike("r8")));
+    assert_eq!(e.code, "OWN_REVISION");
+    assert_eq!(e.message, r#"r8 is by "Carol Diaz"; reject it instead"#);
+}
+
+fn formatted(author: &str) -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="8" w:author="{author}" w:date="{OLD_DATE}"><w:rPr/></w:rPrChange></w:rPr><w:t>bold</w:t></w:r></w:p>"#
+    ))
+}
+
+/// A formatting change has no visible reject: the refusal says the route
+/// it offers leaves no trace.
+#[test]
+fn a_formatting_change_is_refused_with_the_silent_route_named_as_such() {
+    for (op, verb, takes) in [
+        (strike("r8"), "strike", "inserted"),
+        (restore("r8"), "restore", "deleted"),
+    ] {
+        let e = refused(&formatted("Bob Lee"), &plan(&op));
+        assert_eq!(e.code, "INVALID_EDIT");
+        assert_eq!(
+            e.message,
+            format!(
+                "r8 is a formatting change; {verb} takes {takes} text: reject r8 to undo it (no visible reject of formatting yet; it leaves no trace)"
+            )
+        );
+    }
+}
+
+/// Fields come later (plan 2 ships plain text first): a strike of their
+/// inserted field is refused with the route that takes it.
+#[test]
+fn striking_their_inserted_field_is_refused_for_now() {
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">page </w:t></w:r><w:ins w:id="6" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:ins></w:p>"#
+    ));
+    let e = refused(&source, &plan(&strike("r6")));
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
+    assert_eq!(
+        e.message,
+        "r6 holds a field; strike takes plain inserted text only: reject r6 instead, or comment on it"
+    );
+}
+
+/// `--reject --visible` of a move's source asks for a restore, which a
+/// move does not take: the refusal names the silent route.
+#[test]
+fn a_visible_reject_of_a_move_source_is_refused_with_the_move_route() {
+    let moved = docx(&format!(
+        r#"<w:p><w:moveFromRangeStart w:id="1" w:name="m1"/><w:moveFrom w:id="7" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:t>moved</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="1"/><w:r><w:t> stays</w:t></w:r></w:p><w:p><w:r><w:t>end </w:t></w:r><w:moveToRangeStart w:id="2" w:name="m1"/><w:moveTo w:id="8" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:t>moved</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="2"/></w:p>"#
+    ));
+    let e = refused(
+        &moved,
+        &plan_with(&json!({
+            "resolve_revisions":{"reject":{"ids":["r7"],"visible":true}},
+            "operations":[]
+        })),
+    );
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
+    assert_eq!(
+        e.message,
+        "r7 is the source of a move: restoring it would duplicate the moved words; reject the move (r7) instead"
+    );
+}
+
+#[test]
+fn restore_needs_kept_revisions() {
+    for mode in ["accept", "reject"] {
+        let e = refused(
+            &del_source("Bob Lee"),
+            &plan_with(&json!({"existing_revisions":mode,"operations":restore("r12")})),
+        );
+        assert_eq!(e.code, "INVALID_PLAN", "{mode}");
+        assert_eq!(
+            e.message,
+            "restore needs existing_revisions keep (the revision would already be settled)"
+        );
+    }
+}
+
+/// A visible reject with no filter is every revision, as a silent one is.
+#[test]
+fn a_visible_reject_with_no_filter_takes_every_revision() {
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r><w:ins w:id="6" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:t>alpha</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> and </w:t></w:r><w:del w:id="7" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:delText>beta</w:delText></w:r></w:del></w:p>"#
+    ));
+    let out = applied(
+        &source,
+        &plan_with(&json!({"resolve_revisions":{"reject":{"visible":true}},"operations":[]})),
+    );
+    let kinds: Vec<&str> = out
+        .report
+        .operations
+        .iter()
+        .map(|o| o.kind.as_str())
+        .collect();
+    assert_eq!(kinds, ["strike", "restore"]);
+    assert_eq!(accepted(&out.redline), "keep  and beta");
+}
+
+/// The agent view of a strike and a restore: our deletion inside their
+/// insertion, and our insertion beside their deletion, by our author.
+#[test]
+fn changes_lists_the_strike_inside_theirs_and_the_restore_beside_theirs() {
+    let out = applied(STEP1, &plan(&strike("r1")));
+    let listed = list_changes(&out.redline).unwrap();
+    let ours: Vec<_> = listed
+        .iter()
+        .filter(|c| c.author.as_deref() == Some(CAROL))
+        .collect();
+    assert_eq!(ours.len(), 1, "{listed:?}");
+    assert_eq!(ours[0].kind, ChangeKind::Deletion);
+    assert_eq!(ours[0].inside.as_deref(), Some("r1"));
+    let out = applied(&del_source("Bob Lee"), &plan(&restore("r12")));
+    let listed = list_changes(&out.redline).unwrap();
+    let ours: Vec<_> = listed
+        .iter()
+        .filter(|c| c.author.as_deref() == Some(CAROL))
+        .collect();
+    assert_eq!(ours.len(), 1, "{listed:?}");
+    assert_eq!(ours[0].kind, ChangeKind::Insertion);
+    assert_eq!(ours[0].inside, None);
+    assert_eq!(ours[0].text, "use, store, copy");
 }
