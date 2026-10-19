@@ -56,10 +56,14 @@ parsing returns the same policy message; its raw XML API has no part name.
 The infallible `parse_xdocument` does not enforce input policy: it preserves
 attribute order and keeps the last value at the first position for repeated
 expanded names, with linear bulk insertion. Use the checked APIs for untrusted
-XML. The converter's internal tree builder likewise does not reapply default
-width caps. The public `docx_to_markdown` API has no limits parameter and keeps
-its bounded, XML-tolerant package route; callers requiring tag-policy checks
-must admit the package first. CLI `read` and `validate` enforce admission.
+XML. The Markdown converter checks the same policy before constructing tree
+attributes, using `MarkdownOptions::input_limits` (defaults when omitted).
+Pass the admission limits through this field when rendering a package admitted
+under raised limits. Policy violations refuse the whole conversion with
+`INVALID_XML` and the part name, including auxiliary parts otherwise silently
+skipped by best-effort rendering. Ordinary malformed auxiliary XML retains its
+existing tolerance; this is not full XML admission. CLI `read` and `validate`
+also enforce admission.
 Aliased attributes sharing a namespace URI and local name are malformed XML;
 unprefixed attributes remain in no namespace. The independent OPC metadata
 attribute cap stays at 256. These are XML resource/namespace checks, not claims
