@@ -74,6 +74,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   a `zip-entry-read` finding of its own, so the structural findings
   always reach the report.
 
+- **ZIP entries recorded as non-regular types are refused** (#639). The
+  shared package open reads the raw central record's version-made-by and
+  external attributes: on a Unix or OS X host the entry's recorded type must
+  be a regular file, or a directory on a `/`-terminated name, and on any
+  host the DOS directory attribute demands the same — a symlink, device,
+  FIFO, socket or a directory type on a file name is `UNSUPPORTED_PACKAGE`
+  on every route, and `jubarte debug` reports it as a `zip-special-entry`
+  finding. `jubarte self-update` also lstats the extracted binary before
+  installing it, closing the symlink a tar release archive can plant where
+  the zip path already refuses one.
+
 - **`accept`/`reject` settle tracked changes inside comment bodies**
   (`word/comments.xml`), as Word's Accept/Reject All do. An `--author` or
   `--kind` selection resolves them too; `--id` still cannot name one (they
