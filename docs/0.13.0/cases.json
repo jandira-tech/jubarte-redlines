@@ -1,0 +1,1484 @@
+[
+ {
+  "build": "old",
+  "task": "redline-s1-t2-g02b",
+  "trial": "redline-s1-t2-g02b__RjnX6Cy",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s1-t2-g02b__RjnX6Cy",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (LargeCo)' found (302 revisions / 62 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 56.2,
+  "first_edit_min": 51.1,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 51.1,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r159, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r159\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 51.3,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-2): the text sits inside r56, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r56\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 51.1 min was refused; 2 refusal(s), last at 51.3 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "old",
+  "task": "redline-s1-t2-g05a",
+  "trial": "redline-s1-t2-g05a__XmK2wgS",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s1-t2-g05a__XmK2wgS",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (LargeCo)' found (695 revisions / 118 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 56.0,
+  "first_edit_min": 47.7,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 47.7,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r7, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r7\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 47.7 min was refused; 1 refusal(s), last at 47.7 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "old",
+  "task": "redline-s1-t3-g13a",
+  "trial": "redline-s1-t3-g13a__LqPodoU",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s1-t3-g13a__LqPodoU",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (AgentCo)' found (270 revisions / 39 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 59.2,
+  "first_edit_min": 59.2,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 59.2,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r59, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r59\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 59.2 min was refused; 1 refusal(s), last at 59.2 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "old",
+  "task": "redline-s1-t3-g14a",
+  "trial": "redline-s1-t3-g14a__bVEBicV",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s1-t3-g14a__bVEBicV",
+  "score": 0.6428571428571429,
+  "total_weight": 98,
+  "empty": false,
+  "gate_reason": null,
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 60.8,
+  "first_edit_min": 26.7,
+  "writes_ok": [
+   37.3
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [],
+  "reject_calls": [
+   26.7,
+   28.7
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 5,
+  "items": [
+   {
+    "build": "old",
+    "task": "redline-s1-t3-g14a",
+    "trial": "redline-s1-t3-g14a__bVEBicV",
+    "score": 0.6428571428571429,
+    "rubric_id": "rubric_1780284640376_zpswg",
+    "weight": 5,
+    "verb": "rejects",
+    "phrase": "and excluding Provider\u2019s indemnification obligations",
+    "input": "current:ins:Trainer 1 - LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 17.1 the insertion of \"and excluding Provider\u2019s indemnification obligations\".",
+    "justification": "No 'and excluding Provider's indemnification obligations' language appears in \u00a717.1 (p-104), so no rejection is made.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 5 of 98, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "old",
+  "task": "redline-s2-t2-g01a",
+  "trial": "redline-s2-t2-g01a__QvXg44u",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s2-t2-g01a__QvXg44u",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (AgentCo)' found (1148 revisions / 3 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 58.9,
+  "first_edit_min": 26.4,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 26.4,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "INVALID_PLAN"
+    ],
+    "err": "error: INVALID_PLAN: trailing characters at line 6 column 53"
+   },
+   {
+    "min": 27.8,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r15, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r15\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 37.7,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNKNOWN_STYLE"
+    ],
+    "err": "error: plan refused: UNKNOWN_STYLE (op-4): no paragraph style has id or name \"BodyText\"; defined: Normal, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, Title, Strong1, ListParagraph, FootnoteText, EndnoteText"
+   },
+   {
+    "min": 58.4,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): under keep, a paragraph that holds tracked changes cannot be deleted; resolve them first with resolve_revisions"
+   },
+   {
+    "min": 58.8,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "PARAGRAPH_RESOLVED"
+    ],
+    "err": "error: plan refused: PARAGRAPH_RESOLVED (op-1): p69 is gone once the plan's revisions are settled: its text was removed"
+   },
+   {
+    "min": 58.9,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "PARAGRAPH_RESOLVED"
+    ],
+    "err": "error: plan refused: PARAGRAPH_RESOLVED (op-1): p54 is gone once the plan's revisions are settled: its text was removed"
+   }
+  ],
+  "reject_calls": [
+   26.4,
+   37.7,
+   58.8,
+   58.9
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "A-blocked-with-time-left",
+  "why": "started editing at 26.4 min, 6 refusal(s), last at 58.9 min (PARAGRAPH_RESOLVED); nothing landed, score 0"
+ },
+ {
+  "build": "old",
+  "task": "redline-s2-t2-g01c",
+  "trial": "redline-s2-t2-g01c__wC82omM",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s2-t2-g01c__wC82omM",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (AgentCo)' found (1148 revisions / 3 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 53.3,
+  "first_edit_min": 47.1,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 47.1,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "INVALID_PLAN"
+    ],
+    "err": "error: INVALID_PLAN: operations[7] (delete): unknown field \"comment\""
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 47.1 min was refused; 1 refusal(s), last at 47.1 min (INVALID_PLAN); nothing landed, score 0"
+ },
+ {
+  "build": "old",
+  "task": "redline-s2-t4-g09a",
+  "trial": "redline-s2-t4-g09a__7hS5PjS",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s2-t4-g09a__7hS5PjS",
+  "score": 0.0,
+  "total_weight": 43,
+  "empty": false,
+  "gate_reason": null,
+  "exception": null,
+  "agent_minutes": 58.9,
+  "first_edit_min": 46.7,
+  "writes_ok": [
+   53.9,
+   null,
+   null,
+   57.1,
+   null,
+   null
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 46.7,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-2): the text sits inside r1749, a tracked insertion by \"LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r1749\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [
+   50.1,
+   52.1,
+   53.9
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 15,
+  "items": [
+   {
+    "build": "old",
+    "task": "redline-s2-t4-g09a",
+    "trial": "redline-s2-t4-g09a__7hS5PjS",
+    "score": 0.0,
+    "rubric_id": "rubric_1780507830732_emswr",
+    "weight": 5,
+    "verb": "deletes",
+    "phrase": "representations, covenants, indemnities, Service Level Agreement obligations, privacy/data security obligations, no-trai",
+    "input": "current:ins:LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Deletes from Section 9.3 \", representations, covenants, indemnities, Service Level Agreement obligations, privacy/data security obligations, no-training obligations, malware commitments, and DPA obligations\".",
+    "justification": "Section 9.3 (p-071) contains no tracked deletion of the listed representation, covenant, SLA, privacy, and DPA language.",
+    "used_reject": true
+   },
+   {
+    "build": "old",
+    "task": "redline-s2-t4-g09a",
+    "trial": "redline-s2-t4-g09a__7hS5PjS",
+    "score": 0.0,
+    "rubric_id": "rubric_1780508137168_94bw4",
+    "weight": 5,
+    "verb": "deletes",
+    "phrase": "(b) AgentCo's breach of its representations, warranties, covenants, or obligations under this Agreement",
+    "input": "current:ins:LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Deletes from Section 8.1 \"; (b) AgentCo's breach of its representations, warranties, covenants, or obligations under this Agreement;\".",
+    "justification": "Section 8.1 (p-047) has no tracked deletion of the '(b) AgentCo's breach of its representations...' clause.",
+    "used_reject": true
+   },
+   {
+    "build": "old",
+    "task": "redline-s2-t4-g09a",
+    "trial": "redline-s2-t4-g09a__7hS5PjS",
+    "score": 0.0,
+    "rubric_id": "rubric_1780508195855_dbgh2",
+    "weight": 5,
+    "verb": "deletes",
+    "phrase": "(c) AgentCo's breach of applicable law",
+    "input": "current:ins:LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Deletes from Section 8.1 \"(c) AgentCo's breach of applicable law;\".",
+    "justification": "Section 8.1 (p-047) has no tracked deletion of '(c) AgentCo's breach of applicable law;'.",
+    "used_reject": true
+   }
+  ],
+  "why": "3 rubric item(s), weight 15 of 43, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "old",
+  "task": "redline-s3-t4-g02a",
+  "trial": "redline-s3-t4-g02a__FF93f3W",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total/redline-s3-t4-g02a__FF93f3W",
+  "score": 0.4634146341463415,
+  "total_weight": 82,
+  "empty": false,
+  "gate_reason": null,
+  "exception": null,
+  "agent_minutes": 17.8,
+  "first_edit_min": 5.0,
+  "writes_ok": [
+   5.0,
+   10.7,
+   16.5
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 13.5,
+    "dry": false,
+    "write": true,
+    "failed": true,
+    "codes": [
+     "UNKNOWN_CHANGE"
+    ],
+    "err": "error: plan refused: UNKNOWN_CHANGE: resolve_revisions: no tracked change r11"
+   }
+  ],
+  "reject_calls": [
+   5.0,
+   10.7,
+   13.5
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 9,
+  "items": [
+   {
+    "build": "old",
+    "task": "redline-s3-t4-g02a",
+    "trial": "redline-s3-t4-g02a__FF93f3W",
+    "score": 0.4634146341463415,
+    "rubric_id": "rubric_1780178229200_6q2kg",
+    "weight": 9,
+    "verb": "rejects",
+    "phrase": "at mutual locations",
+    "input": "current:ins:Trainer 1 - AgentCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Article 7, Section 7.5 AgentCo\u2019s insertion of \u201cat mutual locations\u201d",
+    "justification": "The phrase 'at mutual locations' does not appear anywhere in Section 7.5 (p-100), so no rejection is present.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 9 of 82, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t2-g02a",
+  "trial": "redline-s1-t2-g02a__Agkp3Nk",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t2-g02a__Agkp3Nk",
+  "score": 0.0,
+  "total_weight": 74,
+  "empty": false,
+  "gate_reason": null,
+  "exception": null,
+  "agent_minutes": 49.4,
+  "first_edit_min": 10.9,
+  "writes_ok": [
+   23.9,
+   44.7,
+   null,
+   null,
+   null,
+   null
+  ],
+  "rejects_written": 0,
+  "accepts_written": 3,
+  "refusals": [
+   {
+    "min": 10.9,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "INVALID_PLAN"
+    ],
+    "err": "error: INVALID_PLAN: trailing characters at line 6 column 58"
+   },
+   {
+    "min": 16.0,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNKNOWN_COMMENT"
+    ],
+    "err": "error: plan refused: UNKNOWN_COMMENT (op-26): comment 118 is gone once the plan's revisions are settled: its anchor was text they removed; settle fewer revisions, or act on the comment in a plan of its own first"
+   },
+   {
+    "min": 20.1,
+    "dry": false,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "STALE_SOURCE"
+    ],
+    "err": "error: plan refused: STALE_SOURCE: source bytes do not match the plan's source_sha256"
+   },
+   {
+    "min": 30.5,
+    "dry": false,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r11, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r11\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [
+   10.9,
+   16.0,
+   20.1,
+   null,
+   null,
+   41.1
+  ],
+  "silent_reject_fails": [
+   {
+    "rubric_id": "rubric_1778878280625_elvbd",
+    "weight": 10,
+    "criteria": "Rejects in Section 15.1 AgentCo's insertion, \u201c, provided, however,\u00a0 in no event will AgentCo be liable for any indirect, special, incidental, exemplary punitive, treble, or consequential damages (including, without limitation, loss of business, revenue, profits, staff time, goodwill, use, data, or other economic advantage).\u201d",
+    "justification": "No Section 15.1 consequential-damages carve-out text appears anywhere in the document, so there is nothing rejected."
+   }
+  ],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 18,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s1-t2-g02a",
+    "trial": "redline-s1-t2-g02a__Agkp3Nk",
+    "score": 0.0,
+    "rubric_id": "rubric_1778878281848_bbb7v",
+    "weight": 8,
+    "verb": "rejects",
+    "phrase": "use, store, copy, analyze, monitor, create Derivative Works from",
+    "input": "original:del:Trainer 1 - AgentCo",
+    "output": "current:plain | original:plain",
+    "kind": "silent restore (reject of their deletion)",
+    "criteria": "Rejects in Section 9.2 AgentCo's deletion, \u201cuse, store, copy, analyze, monitor, create Derivative Works from\u201d",
+    "justification": "At p-054 the phrase 'use, store, copy, analyze, monitor, create Derivative Works from' appears as plain text with no tracked reinstatement, so no rejecting change is shown.",
+    "used_reject": true
+   },
+   {
+    "build": "new",
+    "task": "redline-s1-t2-g02a",
+    "trial": "redline-s1-t2-g02a__Agkp3Nk",
+    "score": 0.0,
+    "rubric_id": "rubric_1778878280625_elvbd",
+    "weight": 10,
+    "verb": "rejects",
+    "phrase": "provided, however,\u00a0 in no event will AgentCo be liable for any indirect, special, incidental, exemplary punitive, treble",
+    "input": "current:ins:Trainer 1 - AgentCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 15.1 AgentCo's insertion, \u201c, provided, however,\u00a0 in no event will AgentCo be liable for any indirect, special, incidental, exemplary punitive, treble, or consequential damages (including, without limitation, loss of business, revenue, profits, staff time, goodwill, use, data, or other economic advantage).\u201d",
+    "justification": "No Section 15.1 consequential-damages carve-out text appears anywhere in the document, so there is nothing rejected.",
+    "used_reject": true
+   }
+  ],
+  "why": "2 rubric item(s), weight 18 of 74, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t2-g02c",
+  "trial": "redline-s1-t2-g02c__buMX2GD",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t2-g02c__buMX2GD",
+  "score": 0.08045977011494253,
+  "total_weight": 87,
+  "empty": false,
+  "gate_reason": null,
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 60.5,
+  "first_edit_min": 25.1,
+  "writes_ok": [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   60.3
+  ],
+  "rejects_written": 0,
+  "accepts_written": 1,
+  "refusals": [
+   {
+    "min": 48.5,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNKNOWN_COMMENT"
+    ],
+    "err": "error: plan refused: UNKNOWN_COMMENT (op-19): comment 118 is gone once the plan's revisions are settled: its anchor was text they removed; settle fewer revisions, or act on the comment in a plan of its own first"
+   }
+  ],
+  "reject_calls": [
+   25.1,
+   37.4,
+   41.2,
+   43.3,
+   48.5,
+   52.7
+  ],
+  "silent_reject_fails": [
+   {
+    "rubric_id": "rubric_1778181202803_exs8i",
+    "weight": 6,
+    "criteria": "Removes in Section 17.5 the Use of Name as follows: \"Customer grants AgentCo the right to identify Customer as a customer of the Service and to use Customer's logo for that purpose.\"",
+    "justification": "Section 17.5 is absent with no tracked deletion (~~) showing the use-of-name grant being struck; removal is only asserted in a comment."
+   },
+   {
+    "rubric_id": "rubric_1779119053315_okwfd",
+    "weight": 7,
+    "criteria": "Deletes in Section 17 \"for customers located in the EEA, Switzerland, or the United Kingdom, the dispute will be heard by a sole arbitrator seated in London under the Rules of Arbitration of the International Chamber of Commerce.\"",
+    "justification": "The EEA/UK London ICC arbitration language in Section 17 has no tracked deletion marker; it is absent without visible strikethrough."
+   },
+   {
+    "rubric_id": "rubric_1778181203921_hzja3",
+    "weight": 8,
+    "criteria": "Removes Exhibit C, Section 10(d) \"all Personal Information created by Provider on behalf of LargeCo is accurate and, where appropriate, kept up to date, and ensure that any Personal Information which is inaccurate or incomplete is erased or rectified in accordance with LargeCo\u2019s instructions\" since that is an unduly burdensome obligation for Provider.",
+    "justification": "Exhibit C \u00a710(d) accuracy obligation has no tracked deletion; p-202 shows only 'Reserved;' with no strikethrough of the removed text."
+   }
+  ],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 28,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s1-t2-g02c",
+    "trial": "redline-s1-t2-g02c__buMX2GD",
+    "score": 0.08045977011494253,
+    "rubric_id": "rubric_1778181202803_exs8i",
+    "weight": 6,
+    "verb": "removes",
+    "phrase": "Customer grants AgentCo the right to identify Customer as a customer of the Service and to use Customer's logo for that ",
+    "input": "current:ins:Trainer 1 - AgentCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Removes in Section 17.5 the Use of Name as follows: \"Customer grants AgentCo the right to identify Customer as a customer of the Service and to use Customer's logo for that purpose.\"",
+    "justification": "Section 17.5 is absent with no tracked deletion (~~) showing the use-of-name grant being struck; removal is only asserted in a comment.",
+    "used_reject": true
+   },
+   {
+    "build": "new",
+    "task": "redline-s1-t2-g02c",
+    "trial": "redline-s1-t2-g02c__buMX2GD",
+    "score": 0.08045977011494253,
+    "rubric_id": "rubric_1779119053315_okwfd",
+    "weight": 7,
+    "verb": "deletes",
+    "phrase": "for customers located in the EEA, Switzerland, or the United Kingdom, the dispute will be heard by a sole arbitrator sea",
+    "input": "current:ins:Trainer 1 - AgentCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Deletes in Section 17 \"for customers located in the EEA, Switzerland, or the United Kingdom, the dispute will be heard by a sole arbitrator seated in London under the Rules of Arbitration of the International Chamber of Commerce.\"",
+    "justification": "The EEA/UK London ICC arbitration language in Section 17 has no tracked deletion marker; it is absent without visible strikethrough.",
+    "used_reject": true
+   },
+   {
+    "build": "new",
+    "task": "redline-s1-t2-g02c",
+    "trial": "redline-s1-t2-g02c__buMX2GD",
+    "score": 0.08045977011494253,
+    "rubric_id": "rubric_1779119049828_kqjlg",
+    "weight": 7,
+    "verb": "removes",
+    "phrase": "where the amount in controversy exceeds $150,000, the dispute will be heard by a panel of three arbitrators in the same ",
+    "input": "current:ins:Trainer 1 - AgentCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Removes Section 17.7.2 \"where the amount in controversy exceeds $150,000, the dispute will be heard by a panel of three arbitrators in the same seat and under the same rules specified above\" since the parties should not be limited to arbitration and should have access to any competent court of jurisdiction.",
+    "justification": "Section 17.7.2 three-arbitrator provision has no tracked deletion marker; removal is only described in a comment.",
+    "used_reject": true
+   },
+   {
+    "build": "new",
+    "task": "redline-s1-t2-g02c",
+    "trial": "redline-s1-t2-g02c__buMX2GD",
+    "score": 0.08045977011494253,
+    "rubric_id": "rubric_1778181203921_hzja3",
+    "weight": 8,
+    "verb": "removes",
+    "phrase": "all Personal Information created by Provider on behalf of LargeCo is accurate and, where appropriate, kept up to date, a",
+    "input": "original:del:Trainer 1 - AgentCo",
+    "output": "absent",
+    "kind": "silent accept of their deletion",
+    "criteria": "Removes Exhibit C, Section 10(d) \"all Personal Information created by Provider on behalf of LargeCo is accurate and, where appropriate, kept up to date, and ensure that any Personal Information which is inaccurate or incomplete is erased or rectified in accordance with LargeCo\u2019s instructions\" since that is an unduly burdensome obligation for Provider.",
+    "justification": "Exhibit C \u00a710(d) accuracy obligation has no tracked deletion; p-202 shows only 'Reserved;' with no strikethrough of the removed text.",
+    "used_reject": true
+   }
+  ],
+  "why": "4 rubric item(s), weight 28 of 87, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t2-g04b",
+  "trial": "redline-s1-t2-g04b__cuEHDNN",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t2-g04b__cuEHDNN",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (LargeCo)' found (360 revisions / 37 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 60.0,
+  "first_edit_min": 49.5,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 49.5,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r71, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r71\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 49.5 min was refused; 1 refusal(s), last at 49.5 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t2-g05a",
+  "trial": "redline-s1-t2-g05a__UEN2ztd",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t2-g05a__UEN2ztd",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (LargeCo)' found (695 revisions / 118 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 54.1,
+  "first_edit_min": 45.2,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 45.2,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "INVALID_PLAN"
+    ],
+    "err": "error: INVALID_PLAN: operations[3] (comment): unknown field \"comment\""
+   },
+   {
+    "min": 45.5,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r134, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r134\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 45.2 min was refused; 2 refusal(s), last at 45.5 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t2-g05c",
+  "trial": "redline-s1-t2-g05c__bv9iJZk",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t2-g05c__bv9iJZk",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (LargeCo)' found (695 revisions / 118 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 55.7,
+  "first_edit_min": 55.6,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 55.6,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r94, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r94\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [
+   55.6
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 55.6 min was refused; 1 refusal(s), last at 55.6 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t3-g12a",
+  "trial": "redline-s1-t3-g12a__2cadi9r",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t3-g12a__2cadi9r",
+  "score": 0.4925373134328358,
+  "total_weight": 67,
+  "empty": false,
+  "gate_reason": null,
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 60.4,
+  "first_edit_min": 25.3,
+  "writes_ok": [
+   25.3,
+   58.5,
+   59.6
+  ],
+  "rejects_written": 6,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 43.4,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-2): the text sits inside r437, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r437\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [
+   25.3,
+   34.2,
+   43.4,
+   50.6
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 2,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s1-t3-g12a",
+    "trial": "redline-s1-t3-g12a__2cadi9r",
+    "score": 0.4925373134328358,
+    "rubric_id": "rubric_1778700754552_1o8re",
+    "weight": 2,
+    "verb": "rejects",
+    "phrase": "PROVIDER MAKES NO WARRANTY OF ANY KIND THAT THE SERVICE WILL MEET LARGECO\u2019S OR ANY OTHER PERSON'S REQUIREMENTS, OPERATE ",
+    "input": "original:del:Trainer 1 - LargeCo",
+    "output": "current:plain | original:plain",
+    "kind": "silent restore (reject of their deletion)",
+    "criteria": "Rejects in Section 13.3 LargeCo's deletion of \"PROVIDER MAKES NO WARRANTY OF ANY KIND THAT THE SERVICE WILL MEET LARGECO\u2019S OR ANY OTHER PERSON'S REQUIREMENTS, OPERATE WITHOUT INTERRUPTION, ACHIEVE ANY INTENDED RESULT, BE COMPATIBLE WITH ANY SYSTEM, OR BE SECURE, ACCURATE, COMPLETE, FREE OF HARMFUL CODE, OR ERROR FREE\"",
+    "justification": "The disclaimer tail at p-093 appears as untracked base text with comment cmt-722 claiming restoration, but no tracked change shows the rejection.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 2 of 67, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t3-g14a",
+  "trial": "redline-s1-t3-g14a__68H3gas",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t3-g14a__68H3gas",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (AgentCo)' found (458 revisions / 160 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 50.4,
+  "first_edit_min": 44.6,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 44.6,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r136, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r136\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 44.6 min was refused; 1 refusal(s), last at 44.6 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t4-g10a",
+  "trial": "redline-s1-t4-g10a__HW8X4uE",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t4-g10a__HW8X4uE",
+  "score": 0.5652173913043478,
+  "total_weight": 69,
+  "empty": false,
+  "gate_reason": null,
+  "exception": null,
+  "agent_minutes": 42.5,
+  "first_edit_min": 29.8,
+  "writes_ok": [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 29.8,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "INVALID_PLAN"
+    ],
+    "err": "error: INVALID_PLAN: operations[16] (comment): unknown field \"comment\""
+   },
+   {
+    "min": 30.0,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r54, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r54\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [
+   36.4,
+   null,
+   null
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 8,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s1-t4-g10a",
+    "trial": "redline-s1-t4-g10a__HW8X4uE",
+    "score": 0.5652173913043478,
+    "rubric_id": "rubric_1779827548276_vv79r",
+    "weight": 8,
+    "verb": "rejects",
+    "phrase": "Conditioned on LargeCo\u2019s compliance with the terms of this agreement",
+    "input": "current:ins:Trainer 1 - AgentCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 3.2 AgentCo\u2019s insertion of \u201cConditioned on LargeCo\u2019s compliance with the terms of this agreement\u201d",
+    "justification": "The 'Conditioned on LargeCo's compliance' insertion does not appear anywhere in Section 3.2 (p-028), so there is no rejection.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 8 of 69, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s1-t4-g12a",
+  "trial": "redline-s1-t4-g12a__F2VHNtj",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s1-t4-g12a__F2VHNtj",
+  "score": 0.5428571428571428,
+  "total_weight": 35,
+  "empty": false,
+  "gate_reason": null,
+  "exception": null,
+  "agent_minutes": 16.3,
+  "first_edit_min": 9.9,
+  "writes_ok": [
+   12.8,
+   15.3
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 9.9,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "ANCHOR_NOT_FOUND"
+    ],
+    "err": "error: plan refused: ANCHOR_NOT_FOUND (op-10): \"Application Law\" does not occur in the paragraph"
+   }
+  ],
+  "reject_calls": [
+   9.9,
+   11.8
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 8,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s1-t4-g12a",
+    "trial": "redline-s1-t4-g12a__F2VHNtj",
+    "score": 0.5428571428571428,
+    "rubric_id": "rubric_1780592596755_owcfb",
+    "weight": 8,
+    "verb": "rejects",
+    "phrase": "and excluding Provider\u2019s indemnification obligations",
+    "input": "original:del:Trainer 2 - AgentCo",
+    "output": "current:plain | original:plain",
+    "kind": "silent restore (reject of their deletion)",
+    "criteria": "Rejects in Section 16 AgentCo\u2019s deletion of \u201cand excluding Provider\u2019s indemnification obligations\u201d.",
+    "justification": "The 'and excluding Provider's indemnification obligations' text in \u00a717.1 (p-104) carries no tracked reinstatement or rejection markup; it simply sits as untracked base text.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 8 of 35, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s2-t2-g02a",
+  "trial": "redline-s2-t2-g02a__YpQNo88",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s2-t2-g02a__YpQNo88",
+  "score": 0.40707964601769914,
+  "total_weight": 113,
+  "empty": false,
+  "gate_reason": null,
+  "exception": null,
+  "agent_minutes": 28.2,
+  "first_edit_min": 8.3,
+  "writes_ok": [
+   19.3,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 8.3,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r93, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r93\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 14.4,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-8): the insertion point sits inside r77, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r77\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 27.5,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "STALE_SOURCE"
+    ],
+    "err": "error: plan refused: STALE_SOURCE: source bytes do not match the plan's source_sha256"
+   }
+  ],
+  "reject_calls": [
+   14.4,
+   17.3,
+   null,
+   null
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 9,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s2-t2-g02a",
+    "trial": "redline-s2-t2-g02a__YpQNo88",
+    "score": 0.40707964601769914,
+    "rubric_id": "rubric_1779828873879_10fz8",
+    "weight": 9,
+    "verb": "rejects",
+    "phrase": "represents, to the best of Customer's knowledge",
+    "input": "current:ins:Trainer 1 - LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 9.1 the change of language from \"warrants\" to \"represents, to the best of Customer's knowledge.\"",
+    "justification": "\u00a79.1 (p-053) has no tracked change rejecting the knowledge-qualified 'represents' language; the flat warranty appears only as unmarked text.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 9 of 113, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s2-t2-g03c",
+  "trial": "redline-s2-t2-g03c__Ak8z43j",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s2-t2-g03c__Ak8z43j",
+  "score": 0.09375,
+  "total_weight": 96,
+  "empty": false,
+  "gate_reason": null,
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 60.6,
+  "first_edit_min": 21.9,
+  "writes_ok": [
+   59.1
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 21.9,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-2): the text sits inside r366, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r366\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 53.7,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-12): under keep, a paragraph that holds tracked changes cannot be deleted; resolve them first with resolve_revisions"
+   }
+  ],
+  "reject_calls": [
+   53.7,
+   56.2
+  ],
+  "silent_reject_fails": [
+   {
+    "rubric_id": "rubric_1780009542535_n6qnc",
+    "weight": 9,
+    "criteria": "Rejects in Section 8.1 the insertion of \"and each of their respective parents, subsidiaries, affiliates, sponsors, advertising agencies\". ",
+    "justification": "No tracked change rejects the \"parents, subsidiaries, affiliates...\" language; the insertion is absent from Section 8.1 (p-060)."
+   },
+   {
+    "rubric_id": "rubric_1780511842857_0rsw4",
+    "weight": 5,
+    "criteria": "Rejects in Section 8.1 the insertion of \"except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably contemplated for the use of the Service\".",
+    "justification": "The \"except as otherwise expressly stated\" combination language is absent from Section 8.1 and no rejecting tracked change exists."
+   }
+  ],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 23,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s2-t2-g03c",
+    "trial": "redline-s2-t2-g03c__Ak8z43j",
+    "score": 0.09375,
+    "rubric_id": "rubric_1780009542535_n6qnc",
+    "weight": 9,
+    "verb": "rejects",
+    "phrase": "and each of their respective parents, subsidiaries, affiliates, sponsors, advertising agencies",
+    "input": "current:ins:Trainer 1 - LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 8.1 the insertion of \"and each of their respective parents, subsidiaries, affiliates, sponsors, advertising agencies\". ",
+    "justification": "No tracked change rejects the \"parents, subsidiaries, affiliates...\" language; the insertion is absent from Section 8.1 (p-060).",
+    "used_reject": true
+   },
+   {
+    "build": "new",
+    "task": "redline-s2-t2-g03c",
+    "trial": "redline-s2-t2-g03c__Ak8z43j",
+    "score": 0.09375,
+    "rubric_id": "rubric_1780511842857_0rsw4",
+    "weight": 5,
+    "verb": "rejects",
+    "phrase": "except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably cont",
+    "input": "current:ins:Trainer 1 - LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 8.1 the insertion of \"except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably contemplated for the use of the Service\".",
+    "justification": "The \"except as otherwise expressly stated\" combination language is absent from Section 8.1 and no rejecting tracked change exists.",
+    "used_reject": true
+   },
+   {
+    "build": "new",
+    "task": "redline-s2-t2-g03c",
+    "trial": "redline-s2-t2-g03c__Ak8z43j",
+    "score": 0.09375,
+    "rubric_id": "rubric_1780512119706_9fgsf",
+    "weight": 9,
+    "verb": "rejects",
+    "phrase": "AgentCo\u2019s breach of its confidentiality obligations, AgentCo\u2019s breach of its data and information security obligations",
+    "input": "current:ins:Trainer 1 - LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 10.2 the insertion of \"AgentCo\u2019s breach of its confidentiality obligations, AgentCo\u2019s breach of its data and information security obligations, \".",
+    "justification": "AgentCo keeps its own 10.2 proviso covering confidentiality and data security breaches; no rejection of the insertion appears.",
+    "used_reject": true
+   }
+  ],
+  "why": "3 rubric item(s), weight 23 of 96, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s2-t2-g04c",
+  "trial": "redline-s2-t2-g04c__h9yxBcY",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s2-t2-g04c__h9yxBcY",
+  "score": 0.44554455445544555,
+  "total_weight": 101,
+  "empty": false,
+  "gate_reason": null,
+  "exception": null,
+  "agent_minutes": 35.1,
+  "first_edit_min": 14.0,
+  "writes_ok": [
+   33.7
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 14.0,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r87, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r87\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 32.0,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-4): cannot insert text into an empty paragraph; use insert_paragraph"
+   }
+  ],
+  "reject_calls": [
+   32.0
+  ],
+  "silent_reject_fails": [
+   {
+    "rubric_id": "rubric_1780542389313_kvpil",
+    "weight": 9,
+    "criteria": "Rejects in Section 8.1 the insertion of \"or (ii) a breach by AgentCo of any term of this Agreement,\".",
+    "justification": "No tracked change in Section 8.1 (p-053) strikes the 'or (ii) a breach by AgentCo' insertion; the clause is absent from the redline."
+   }
+  ],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 9,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s2-t2-g04c",
+    "trial": "redline-s2-t2-g04c__h9yxBcY",
+    "score": 0.44554455445544555,
+    "rubric_id": "rubric_1780542389313_kvpil",
+    "weight": 9,
+    "verb": "rejects",
+    "phrase": "or (ii) a breach by AgentCo of any term of this Agreement",
+    "input": "current:ins:Trainer 1 - LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 8.1 the insertion of \"or (ii) a breach by AgentCo of any term of this Agreement,\".",
+    "justification": "No tracked change in Section 8.1 (p-053) strikes the 'or (ii) a breach by AgentCo' insertion; the clause is absent from the redline.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 9 of 101, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s2-t3-g02a",
+  "trial": "redline-s2-t3-g02a__PycmXko",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s2-t3-g02a__PycmXko",
+  "score": 0.0,
+  "total_weight": null,
+  "empty": true,
+  "gate_reason": "no tracked changes or comments by author 'Reviewing Counsel (LargeCo)' found (1471 revisions / 45 comments by other authors)",
+  "exception": "AgentTimeoutError",
+  "agent_minutes": 58.3,
+  "first_edit_min": 47.9,
+  "writes_ok": [],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 49.1,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r39, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r39\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 52.9,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r40, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r40\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 58.3,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE",
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text sits inside r387, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r387\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "B-final-blow-late-start",
+  "why": "first edit attempt at 47.9 min was refused; 3 refusal(s), last at 58.3 min (UNSUPPORTED_STRUCTURE); nothing landed, score 0"
+ },
+ {
+  "build": "new",
+  "task": "redline-s2-t4-g06a",
+  "trial": "redline-s2-t4-g06a__qV3rNsY",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s2-t4-g06a__qV3rNsY",
+  "score": 0.1044776119402985,
+  "total_weight": 67,
+  "empty": false,
+  "gate_reason": null,
+  "exception": "RewardFileNotFoundError",
+  "agent_minutes": 45.6,
+  "first_edit_min": 38.2,
+  "writes_ok": [
+   45.2
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 38.2,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-2): the text sits inside r401, a tracked insertion by \"Trainer 1 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r401\"]}}, or reject), or comment on it"
+   },
+   {
+    "min": 44.9,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-5): the text sits inside r571, a tracked insertion by \"Trainer 2 - LargeCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r571\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [
+   44.9
+  ],
+  "silent_reject_fails": [
+   {
+    "rubric_id": "rubric_1780104041354_ognyj",
+    "weight": 8,
+    "criteria": "Rejects in Section 8.1 the addition of \", except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably contemplated for the use of the Service.\"",
+    "justification": "The \"except as otherwise expressly stated\" combination carve-out is absent from \u00a78.1 with no tracked deletion of it."
+   }
+  ],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 8,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s2-t4-g06a",
+    "trial": "redline-s2-t4-g06a__qV3rNsY",
+    "score": 0.1044776119402985,
+    "rubric_id": "rubric_1780104041354_ognyj",
+    "weight": 8,
+    "verb": "rejects",
+    "phrase": "except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably cont",
+    "input": "current:ins:Trainer 1 - LargeCo",
+    "output": "absent",
+    "kind": "silent reject of their insertion",
+    "criteria": "Rejects in Section 8.1 the addition of \", except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably contemplated for the use of the Service.\"",
+    "justification": "The \"except as otherwise expressly stated\" combination carve-out is absent from \u00a78.1 with no tracked deletion of it.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 8 of 67, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ },
+ {
+  "build": "new",
+  "task": "redline-s3-t2-g03b",
+  "trial": "redline-s3-t2-g03b__6hm3YWq",
+  "dir": "/Users/arthrod/temp/T/redline-bench/reproduce_out/jobs/muse-1-3-contributor-total-jubarte-oct-18/redline-s3-t2-g03b__6hm3YWq",
+  "score": 0.6136363636363636,
+  "total_weight": 88,
+  "empty": false,
+  "gate_reason": null,
+  "exception": "RewardFileNotFoundError",
+  "agent_minutes": 28.9,
+  "first_edit_min": 22.4,
+  "writes_ok": [
+   25.6
+  ],
+  "rejects_written": 0,
+  "accepts_written": 0,
+  "refusals": [
+   {
+    "min": 22.4,
+    "dry": true,
+    "write": false,
+    "failed": true,
+    "codes": [
+     "UNSUPPORTED_STRUCTURE"
+    ],
+    "err": "error: plan refused: UNSUPPORTED_STRUCTURE (op-5): the text sits inside r105, a tracked insertion by \"Trainer 1 - AgentCo\"; settle it first (\"resolve_revisions\": {\"accept\": {\"ids\": [\"r105\"]}}, or reject), or comment on it"
+   }
+  ],
+  "reject_calls": [
+   22.3,
+   24.7
+  ],
+  "silent_reject_fails": [],
+  "silent_like_fails_no_reject": [],
+  "category": "C-invisible-settle",
+  "lost_weight": 7,
+  "items": [
+   {
+    "build": "new",
+    "task": "redline-s3-t2-g03b",
+    "trial": "redline-s3-t2-g03b__6hm3YWq",
+    "score": 0.6136363636363636,
+    "rubric_id": "rubric_1780261806770_fyl1i",
+    "weight": 7,
+    "verb": "restores",
+    "phrase": "Consultant will not",
+    "input": "original:del:Trainer 1 - AgentCo",
+    "output": "current:plain | original:plain",
+    "kind": "silent restore (reject of their deletion)",
+    "criteria": "Restores in Section 7.7  \"Consultant will not\" use the trade name of GiantCo without permission.",
+    "justification": "The trade-name restriction at p-108 was never deleted and no tracked restoration appears, so nothing is restored.",
+    "used_reject": true
+   }
+  ],
+  "why": "1 rubric item(s), weight 7 of 88, failed although the text outcome was right: jubarte's reject/accept removed the counterparty change with no tracked trace"
+ }
+]

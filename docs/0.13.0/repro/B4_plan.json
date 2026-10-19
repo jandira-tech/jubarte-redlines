@@ -1,0 +1,3 @@
+{"schema_version":1,"source_sha256":"a8a6f3fd406061734128f27a9318033d3bc83992852794c5bb74f3b538f874e7","author":"Ana Lee","date":"2026-01-02T03:04:05Z",
+ "operations":[{"kind":"insert_paragraph","paragraph":"p22","position":"after","runs":[{"text":"“Subscription Term” means the period stated in an Order Form."}]},
+ {"kind":"replace","paragraph":"p23","find":"users given","replacement":"individuals given"}]}

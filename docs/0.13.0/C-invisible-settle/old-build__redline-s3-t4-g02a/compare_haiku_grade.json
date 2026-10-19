@@ -1,0 +1,111 @@
+{
+  "task_id": 119,
+  "scenario_id": 3,
+  "side": "B",
+  "level": 4,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.5121951219512195,
+    "earned_weight": 42,
+    "penalty_weight": 0,
+    "total_weight": 82,
+    "n_pass": 5,
+    "n_total": 10,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780175485702_6zw9x",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Article 4, Section 4.3 AgentCo\u2019s insertion of \u201c(iii) after human review of Results of Service;\u201d",
+        "justification": "At p-045 GiantCo strikes 'after' and rewrites the AgentCo clause to 'human review by Client... before use in hiring decisions', replacing the opposing language."
+      },
+      {
+        "rubric_id": "rubric_1780178120084_sgbs7",
+        "verdict": "FAIL",
+        "weight": 6,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Article 5, Section 5.1 AgentCo\u2019s insertion of \u201capplicable\u201d",
+        "justification": "At p-065 the word 'applicable' is struck through (rev-8), so AgentCo's insertion is not accepted."
+      },
+      {
+        "rubric_id": "rubric_1780178145299_zvmmk",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Article 6, Section 6.1 AgentCo\u2019s insertion of \u201ccandidate-material summaries and interview-note drafting\u201d",
+        "justification": "The 'candidate-material summaries and interview-note drafting' language at p-087 remains unstruck and intact as inserted."
+      },
+      {
+        "rubric_id": "rubric_1780178175444_2xdok",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Article 6, Section 6.1 AgentCo\u2019s insertion of \u201c(collectively the \u201cServices)\u201d",
+        "justification": "At p-087 the '(collectively...the Services)' definition is restructured but retained, not rejected; the defined term survives."
+      },
+      {
+        "rubric_id": "rubric_1780178191520_ci0ap",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Article 6, Section 6.2 AgentCo\u2019s deletion of \u201cConsultant may be provided access to Client\u2019s \u201cproprietary\u201d (See \u201cConfidentiality of Client Information\u201d below) website wherein Consultant may obtain access to Client\u2019s current Guidelines, Policies, Protocols, Processes, Specifications, including Client\u2019s Travel Policies for Consultants and other requirements\u201d",
+        "justification": "The deleted 'proprietary' website access sentence in \u00a76.2 (p-088) is not reinstated and no contradicting tracked change appears."
+      },
+      {
+        "rubric_id": "rubric_1780178802342_58f90",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts in Article 7, Section 7.5 \"worldwide,\"",
+        "justification": "No tracked insertion of 'worldwide,' appears in \u00a77.5 (p-100); only 'everywhere' is reinserted."
+      },
+      {
+        "rubric_id": "rubric_1780178229200_6q2kg",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Article 7, Section 7.5 AgentCo\u2019s insertion of \u201cat mutual locations\u201d",
+        "justification": "At p-100 'at mutual locations' is struck through (rev-30), rejecting AgentCo's insertion."
+      },
+      {
+        "rubric_id": "rubric_1780178248945_pwoht",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Article 7, Section 7.5 AgentCo\u2019s deletion of \u201ceverywhere\u201d",
+        "justification": "At p-100 GiantCo reinserts 'everywhere' (rev-29), reversing AgentCo's deletion rather than accepting it."
+      },
+      {
+        "rubric_id": "rubric_1780178340016_om6yv",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Article 7, Section 7.5 AgentCo\u2019s deletion of \u201cirrevocable\u201d",
+        "justification": "At p-100 'irrevocable' is restored via 'ir' insertion and 'revocable' deletion, reversing AgentCo's deletion."
+      },
+      {
+        "rubric_id": "rubric_1780178393941_3vos1",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Article 15, Section 15.12 AgentCo\u2019s insertion of \u201cOBLIGATION TO PAY UNDISPUTED AMOUNTS DUE AND OWING UNDER THIS AGREEMENT; (C) EITHER PARTY'S INFRINGEMENT OR MISAPPROPRIATION OF THE OTHER PARTY'S INTELLECTUAL PROPERTY RIGHTS; OR (D) EITHER PARTY'S INDEMNIFICATION OBLIGATIONS WITH RESPECT TO THIRD-PARTY CLAIMS UNDER THIS AGREEMENT\u201d",
+        "justification": "The \u00a715.12 carve-outs (B)\u2013(D) at p-220 carry no tracked change, leaving AgentCo's insertion intact; comments agree."
+      }
+    ]
+  }
+}

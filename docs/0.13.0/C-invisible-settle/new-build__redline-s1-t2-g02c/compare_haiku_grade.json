@@ -1,0 +1,120 @@
+{
+  "task_id": 21,
+  "scenario_id": 1,
+  "side": "B",
+  "level": 2,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.5057471264367817,
+    "earned_weight": 44,
+    "penalty_weight": 0,
+    "total_weight": 87,
+    "n_pass": 6,
+    "n_total": 11,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1778159893914_y9cqj",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts in Section 1 a definition for \"Transition Period\" as \"the time period following termination or expiration of this Agreement during which the Parties will agree to cooperate to transfer the Services and/or Deliverables.\"",
+        "justification": "No tracked insertion of a 'Transition Period' definition appears in Section 1; cmt-78 flags the term but the definition is never added."
+      },
+      {
+        "rubric_id": "rubric_1778179510260_un6cf",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 7 that LargeCo is purchasing a software and must be granted some limited IP rights and a license to use the software during the term of the Agreement.",
+        "justification": "Tracked deletion of AgentCo's 'Reserved' (p-048) and insertion of a term-limited license grant (p-047) reject the no-rights position in Section 7."
+      },
+      {
+        "rubric_id": "rubric_1778180043064_lbbip",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts in Section 9.2 language which limits AgentCo's use of LargeCo's Confidential Information as \"...Provider shall not...use, store, copy, analyze, monitor, create, Derivative Works from...\" LargeCo's Confidential Information.",
+        "justification": "Insertion at p-055 adds 'use, store, copy, analyze, monitor, create Derivative Works from' to the Provider restrictions on LargeCo Confidential Information, matching the rubric language."
+      },
+      {
+        "rubric_id": "rubric_1778180051010_il89x",
+        "verdict": "FAIL",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Inserts in Section 11.1 mutually beneficial payment terms as \"forty-five (45) days after LargeCo's receipt of an undisputed invoice.\"",
+        "justification": "Section 11.1 (p-059) inserts 'sixty (60) days' rather than the required forty-five (45) days after receipt of an undisputed invoice."
+      },
+      {
+        "rubric_id": "rubric_1778180053327_cxze5",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts in Section 16 a mutual indemnity provision which requires each party to indemnify the other party for acts or omissions caused by their negligence.",
+        "justification": "Section 16 contains no mutual negligence-based indemnity; the 16.2 LargeCo indemnity is deleted and only a one-way Provider indemnity remains."
+      },
+      {
+        "rubric_id": "rubric_1778181201502_1ckbp",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts in Section 17.1 \"provided, however, that any such merger, consolidation, or sale shall not be permitted if AgentCo\u2019s assets are transferred to a competitor of LargeCo. Notwithstanding the foregoing, AgentCo shall remain responsible for the performance of its obligations under this Agreement.\"",
+        "justification": "Section 17.1 (p-088) adds only 'either party' and prior written notice; no competitor-transfer prohibition or retained-responsibility sentence is inserted."
+      },
+      {
+        "rubric_id": "rubric_1778181202803_exs8i",
+        "verdict": "PASS",
+        "weight": 6,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Removes in Section 17.5 the Use of Name as follows: \"Customer grants AgentCo the right to identify Customer as a customer of the Service and to use Customer's logo for that purpose.\"",
+        "justification": "Section 17.5 Use of Name is fully struck through at p-092 (rev-81, rev-82), removing the logo grant."
+      },
+      {
+        "rubric_id": "rubric_1779119053315_okwfd",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Deletes in Section 17 \"for customers located in the EEA, Switzerland, or the United Kingdom, the dispute will be heard by a sole arbitrator seated in London under the Rules of Arbitration of the International Chamber of Commerce.\"",
+        "justification": "The EEA/UK London ICC sole-arbitrator sentence in 17.7.1 is struck through at p-095 (rev-86)."
+      },
+      {
+        "rubric_id": "rubric_1779119049828_kqjlg",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Removes Section 17.7.2 \"where the amount in controversy exceeds $150,000, the dispute will be heard by a panel of three arbitrators in the same seat and under the same rules specified above\" since the parties should not be limited to arbitration and should have access to any competent court of jurisdiction.",
+        "justification": "The three-arbitrator panel provision for claims over $150,000 in 17.7.2 is struck through at p-096 (rev-88)."
+      },
+      {
+        "rubric_id": "rubric_1779119046341_lielv",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Exhibit A, Section 5(a) AgentCo's deletion of a monthly calculation for Service Credits.",
+        "justification": "Exhibit A Service Credits monthly 5% calculation is reinserted as tracked text at p-131, reversing AgentCo's deletion."
+      },
+      {
+        "rubric_id": "rubric_1778181203921_hzja3",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Removes Exhibit C, Section 10(d) \"all Personal Information created by Provider on behalf of LargeCo is accurate and, where appropriate, kept up to date, and ensure that any Personal Information which is inaccurate or incomplete is erased or rectified in accordance with LargeCo\u2019s instructions\" since that is an unduly burdensome obligation for Provider.",
+        "justification": "Exhibit C accuracy clause at p-212 is left as AgentCo's 'Reserved'; no tracked deletion is made and cmt-461 accepts it rather than striking it."
+      }
+    ]
+  }
+}

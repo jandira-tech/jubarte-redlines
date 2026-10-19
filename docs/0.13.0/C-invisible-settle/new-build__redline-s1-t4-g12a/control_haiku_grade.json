@@ -1,0 +1,66 @@
+{
+  "task_id": 130,
+  "scenario_id": 1,
+  "side": "B",
+  "level": 4,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.5428571428571428,
+    "earned_weight": 19,
+    "penalty_weight": 0,
+    "total_weight": 35,
+    "n_pass": 3,
+    "n_total": 5,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780320703650_go4fy",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Section 4.1 AgentCo\u2019s reinsertion of \u201cindirectly\u201d.",
+        "justification": "The \"directly or indirectly\" insertion in \u00a74.1 (p-039) remains as an untouched tracked insertion with no contradicting strike-through."
+      },
+      {
+        "rubric_id": "rubric_1780592556825_pl05h",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Section 10 AgentCo\u2019s reinsertion Section 10.2 in its entirety. ",
+        "justification": "\u00a710.2 (p-063) is not left intact: LargeCo's new tracked insertion rewrites the suspension language to add a 15-day notice and cure period."
+      },
+      {
+        "rubric_id": "rubric_1780592574742_7gjw6",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Section 13.2 AgentCo\u2019s reinsertion of the obligation for LargeCo to comply with applicable anti-corruption laws. ",
+        "justification": "LargeCo's anti-corruption compliance obligation in \u00a713.2(d) (p-088) carries no tracked change and remains structurally intact."
+      },
+      {
+        "rubric_id": "rubric_1780592596755_owcfb",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Rejects in Section 16 AgentCo\u2019s deletion of \u201cand excluding Provider\u2019s indemnification obligations\u201d.",
+        "justification": "No tracked change reinstates or rejects the deletion; the phrase sits in \u00a717.1 (p-104), not \u00a716, as untracked text."
+      },
+      {
+        "rubric_id": "rubric_1780592613154_kecks",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 18.5 AgentCo\u2019s insertion of \u201cReserved.\u201d",
+        "justification": "AgentCo's \"18.5 Reserved.\" insertion at p-111 remains as an untouched tracked insertion with no LargeCo strike-through."
+      }
+    ]
+  }
+}
