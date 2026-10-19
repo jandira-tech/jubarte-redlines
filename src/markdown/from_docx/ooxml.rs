@@ -397,12 +397,13 @@ impl Element {
 }
 
 /// Parse XML bytes into an element tree (the document element).
+/// Input policy belongs to admission with the caller's active limits, not
+/// to this internal builder. The tolerant converter also uses this builder
+/// without full XML admission; do not impose stricter default width caps here.
 pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
     let text = decode(bytes);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().trim_text(false);
-    let mut policy =
-        crate::xmllinq::parse::TagPolicy::new(crate::admission::InputLimits::default());
     let mut stack: Vec<Element> = vec![Element::default()];
     loop {
         let event = reader
@@ -410,9 +411,6 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
             .map_err(|e| format!("malformed XML at byte {}: {e}", reader.buffer_position()))?;
         match event {
             Event::Start(start) => {
-                policy
-                    .open(&start)
-                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 if stack.len() > MAX_DEPTH {
                     return Err("XML nesting too deep".into());
                 }
@@ -422,15 +420,11 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
                 )?);
             }
             Event::Empty(start) => {
-                policy
-                    .empty(&start)
-                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 let element =
                     element_from(&start, &stack.last().expect("document scope").namespaces)?;
                 push_child(&mut stack, Node::Element(element));
             }
             Event::End(_) => {
-                policy.close();
                 if stack.len() <= 1 {
                     return Err("unbalanced end tag".into());
                 }
@@ -1449,19 +1443,44 @@ mod tests {
     }
 
     #[test]
-    fn issue650_converter_tree_checks_attribute_width() {
-        for (count, accepted) in [(1024, true), (1025, false)] {
-            let attrs: String = (0..count).map(|i| format!(" a{i}='v'")).collect();
+    fn issue650_converter_tree_preserves_attribute_width() {
+        for count in [1024, 1025, 2000] {
+            let attrs: String = (0..count).map(|i| format!(" a{i}='v{i}'")).collect();
             let xml = format!("<r{attrs}/>");
-            assert_eq!(parse_xml(xml.as_bytes()).is_ok(), accepted, "count {count}");
+            let parsed = parse_xml(xml.as_bytes());
+            assert!(
+                parsed.is_ok(),
+                "converter must preserve count {count}: {parsed:?}"
+            );
+            let root = parsed.unwrap();
+            assert_eq!(root.attrs.len(), count);
+            for (i, (name, value)) in root.attrs.iter().enumerate() {
+                assert_eq!(name, &format!("a{i}"));
+                assert_eq!(value, &format!("v{i}"));
+            }
         }
-        let xml = format!("<r {}='v'/>", "n".repeat(1025));
-        assert!(parse_xml(xml.as_bytes()).is_err());
     }
 
     #[test]
-    fn issue650_converter_tree_refuses_aliases() {
-        assert!(parse_xml(b"<r xmlns:a='urn:x' xmlns:b='urn:x' a:x='1' b:x='2'/>").is_err());
+    fn issue650_converter_tree_preserves_long_names() {
+        let name = "n".repeat(1025);
+        let xml = format!("<r {name}='Alice'/>");
+        let parsed = parse_xml(xml.as_bytes());
+        assert!(
+            parsed.is_ok(),
+            "converter must preserve long names: {parsed:?}"
+        );
+        assert_eq!(parsed.unwrap().attrs, [(name, "Alice".to_string())]);
+    }
+
+    #[test]
+    fn issue650_converter_tree_leaves_alias_policy_to_admission() {
+        let parsed = parse_xml(b"<r xmlns:a='urn:x' xmlns:b='urn:x' a:x='1' b:x='2'/>");
+        assert!(
+            parsed.is_ok(),
+            "converter must leave policy to admission: {parsed:?}"
+        );
+        assert_eq!(parsed.unwrap().attrs.len(), 4);
         assert!(parse_xml(b"<r xmlns:a='urn:x' x='1' a:x='2'/>").is_ok());
     }
 

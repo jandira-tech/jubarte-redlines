@@ -23,10 +23,9 @@
 //!   part: tolerates missing closing tags, unquoted / mixed-quote
 //!   attributes, and similar WW-isms in real-world .docx files.
 //!
-//!   Tag-policy violations panic; its input should have passed a
-//!   gate first: [`validate_xml`], or the package admission scan
-//!   (`admission::check_xml_depth`), which applies the same tag and
-//!   namespace budgets. A caller holding unchecked XML uses
+//!   It does not enforce input policy. Its input should have passed a
+//!   gate first: [`validate_xml_with_limits`], or package admission with
+//!   the caller's active limits. A caller holding unchecked XML uses
 //!   [`try_parse_xdocument`], which runs [`validate_xml`] before it
 //!   builds any node.
 //! - [`unescape_xml_text`] — decode XML entities / character references
@@ -88,21 +87,15 @@ fn bump_ns_scope_declared_bytes(by: usize) {
 /// the module-level docs. A leading UTF-8 BOM is stripped before parsing
 /// so a BOM-prefixed input still yields a document with a root.
 ///
-/// Run [`validate_xml`] (or package admission) on `xml` first, or call
-/// [`try_parse_xdocument`] to receive errors.
-///
-/// # Panics
-///
-/// Panics when a tag violates the default attribute or namespace policy.
+/// This parser does not enforce input policy or panic on policy violations.
+/// Run [`validate_xml_with_limits`] (or package admission) with the active
+/// limits first, or call [`try_parse_xdocument_with_limits`] to receive errors.
+/// Attributes retain their order; repeated expanded names keep the first
+/// position and the last value. Bulk attribute insertion is linear.
 ///
 /// `xml` may be a complete document (prolog + root + children) or a
 /// fragment; the result is wrapped in a fresh Document node.
 pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId {
-    parse_with_limits(dom, xml, InputLimits::default())
-        .expect("XML tag policy refused input; use try_parse_xdocument for errors")
-}
-
-fn parse_with_limits(dom: &mut Dom, xml: &str, limits: InputLimits) -> Result<NodeId, String> {
     // Strip a leading UTF-8 BOM (U+FEFF): char::is_whitespace() excludes it,
     // so skip_ws() cannot, and an unstripped BOM leaves the document with no root.
     let xml = xml.strip_prefix('\u{feff}').unwrap_or(xml);
@@ -111,7 +104,6 @@ fn parse_with_limits(dom: &mut Dom, xml: &str, limits: InputLimits) -> Result<No
         dom,
         c: chars,
         pos: 0,
-        limits,
     };
     p.parse_document()
 }
@@ -140,14 +132,13 @@ pub fn try_parse_xdocument_with_limits(
     limits: InputLimits,
 ) -> Result<NodeId, String> {
     validate_xml_with_limits(xml, limits)?;
-    parse_with_limits(dom, xml, limits)
+    Ok(parse_xdocument(dom, xml))
 }
 
 struct Parser<'a> {
     dom: &'a mut Dom,
     c: Vec<char>,
     pos: usize,
-    limits: InputLimits,
 }
 
 /// In-scope namespace bindings as an overlay stack (N02): one `HashMap`
@@ -224,8 +215,6 @@ pub(crate) struct TagPolicy {
     /// Read attributes with quick-xml's HTML rules, which also accept
     /// unquoted (`w:val=on`) and valueless (`compact`) attributes.
     html_attributes: bool,
-    /// Only the legacy DOM API tolerates an incomplete attribute tail.
-    legacy_attributes: bool,
 }
 
 impl TagPolicy {
@@ -238,7 +227,6 @@ impl TagPolicy {
             marks: Vec::new(),
             declared_bytes: 0,
             html_attributes: false,
-            legacy_attributes: false,
         }
     }
 
@@ -327,7 +315,6 @@ impl TagPolicy {
                 Err(error @ quick_xml::events::attributes::AttrError::Duplicated(..)) => {
                     return Err(error.to_string());
                 }
-                Err(_) if self.legacy_attributes => break,
                 Err(error) => return Err(error.to_string()),
             };
             count += 1;
@@ -357,8 +344,7 @@ impl TagPolicy {
         Ok(())
     }
 
-    /// The same width check also protects attributes recovered by the
-    /// legacy parser from an incomplete tag that quick-xml cannot iterate.
+    /// Enforce the active width budgets at the checked boundary.
     fn check_attribute(
         &self,
         count: usize,
@@ -511,12 +497,11 @@ impl<'a> Parser<'a> {
         self.slice(start, self.pos)
     }
 
-    fn parse_document(&mut self) -> Result<NodeId, String> {
+    fn parse_document(&mut self) -> NodeId {
         let doc = self.dom.new_document();
         // N02: one overlay stack serves every top-level element; marks are
         // balanced, so it is empty again between roots.
-        let mut policy = TagPolicy::tolerant(self.limits);
-        policy.legacy_attributes = true;
+        let mut scope = NsScope::default();
         let len = self.len();
         while self.pos < len {
             self.skip_ws();
@@ -558,39 +543,19 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let el = self.parse_element(&mut policy)?;
+                let el = self.parse_element(&mut scope);
                 self.dom.add(doc, el);
                 continue;
             }
             break;
         }
-        Ok(doc)
+        doc
     }
 
-    fn parse_element(&mut self, policy: &mut TagPolicy) -> Result<NodeId, String> {
+    fn parse_element(&mut self, scope: &mut NsScope) -> NodeId {
         // at '<'
         self.pos += 1; // consume '<'
-        let tag_start = self.pos;
         let raw_name = self.read_name();
-        // Scan the raw start tag before allocating or decoding any DOM
-        // attribute. Quotes protect embedded '>'; UTF-8 byte lengths are
-        // measured by the shared policy, not by this character cursor.
-        let mut end = self.pos;
-        let mut quote = None;
-        while end < self.len() {
-            let ch = self.c[end];
-            match quote {
-                Some(q) if ch == q => quote = None,
-                None if ch == '\'' || ch == '"' => quote = Some(ch),
-                None if ch == '>' => break,
-                _ => {}
-            }
-            end += 1;
-        }
-        let empty = end > tag_start && self.c[end - 1] == '/';
-        let content = self.slice(tag_start, end - usize::from(empty));
-        let tag = quick_xml::events::BytesStart::from_content(content, raw_name.len());
-        policy.enter(&tag, if empty { 3 } else { 2 })?;
         let mut raw_attrs: Vec<(String, String)> = Vec::new();
         loop {
             self.skip_ws();
@@ -618,9 +583,6 @@ impl<'a> Parser<'a> {
                 avalue = self.slice(vstart, self.pos);
                 self.pos += 1; // closing quote
             }
-            policy
-                .check_attribute(raw_attrs.len() + 1, aname.len(), avalue.len())
-                .map_err(|why| format!("element <{raw_name}>: {why}"))?;
             // Normalize the RAW slice before entity decoding: literal
             // whitespace reads as space (§3.3.3) but character references
             // keep the characters they name.
@@ -630,21 +592,34 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        let el_name = resolve(&raw_name, false, &policy.scope);
+        // N02: this element's xmlns / xmlns:* attributes push onto the
+        // overlay scope (marks restore them on every return path below) —
+        // no parent-map clone, and shadowing is last-declaration-wins, as
+        // the cloned HashMap gave before.
+        let mark = scope.mark();
+        for (name, value) in &raw_attrs {
+            if name == "xmlns" {
+                scope.push("", value);
+            } else if let Some(prefix) = name.strip_prefix("xmlns:") {
+                scope.push(prefix, value);
+            }
+        }
+
+        let el_name = resolve(&raw_name, false, scope);
         let el = self.dom.new_element(el_name);
         // N01: one bulk insert — a hash index of the expanded names — rather
         // than N calls each re-scanning the growing attribute Vec.
         let attrs: Vec<(XName, String)> = raw_attrs
             .iter()
-            .map(|(name, value)| (resolve(name, true, &policy.scope), value.clone()))
+            .map(|(name, value)| (resolve(name, true, scope), value.clone()))
             .collect();
         self.dom.set_attributes(el, attrs);
 
         self.skip_ws();
         if self.cur() == '/' {
             self.pos += 2; // '/' '>'
-            policy.close();
-            return Ok(el);
+            scope.pop(mark);
+            return el;
         }
         self.pos += 1; // '>'
 
@@ -683,7 +658,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let child = self.parse_element(policy)?;
+                let child = self.parse_element(scope);
                 self.dom.add(el, child);
                 continue;
             }
@@ -699,8 +674,8 @@ impl<'a> Parser<'a> {
                 self.dom.add(el, t);
             }
         }
-        policy.close();
-        Ok(el)
+        scope.pop(mark);
+        el
     }
 
     /// Parse a processing instruction (`<?target data?>`) into a `Pi` node.
@@ -1439,17 +1414,67 @@ mod tag_policy_tests {
     }
 
     #[test]
-    fn duplicate_expanded_names_refuse_in_the_dom_parser() {
+    fn duplicate_expanded_names_refuse_only_in_the_checked_parser() {
         let xml = "<r xmlns:p='urn:x' xmlns:q='urn:x' p:a='first' q:a='second'/>";
         assert!(validate_xml(xml).is_err());
+        assert!(try_parse_xdocument(&mut Dom::new(), xml).is_err());
         let mut dom = Dom::new();
-        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            parse_xdocument(&mut dom, xml);
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            parse_xdocument(&mut dom, xml)
         }));
         assert!(
-            refused.is_err(),
-            "the infallible parser must refuse aliased duplicates"
+            parsed.is_ok(),
+            "the infallible parser must return a document"
         );
+        let root = dom.root(parsed.unwrap()).unwrap();
+        assert_eq!(dom.attr_count(root), 3);
+        assert_eq!(
+            dom.attribute(root, &XName::get("a", "urn:x")),
+            Some("second")
+        );
+        let names: Vec<_> = (0..3)
+            .map(|i| dom.attr_at(root, i).0.local_name().to_string())
+            .collect();
+        assert_eq!(names, ["p", "q", "a"]);
+    }
+
+    #[test]
+    fn issue650_infallible_parser_preserves_over_default_count() {
+        let xml = xml_with_attrs(1025);
+        let mut dom = Dom::new();
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            parse_xdocument(&mut dom, &xml)
+        }));
+        assert!(
+            parsed.is_ok(),
+            "the infallible parser must return all 1025 attributes"
+        );
+        let root = dom.root(parsed.unwrap()).unwrap();
+        assert_eq!(dom.attr_count(root), 1025);
+        for i in 0..1025 {
+            let (name, value) = dom.attr_at(root, i);
+            assert_eq!(name.local_name(), format!("a{i}"));
+            assert_eq!(name.namespace_name(), "");
+            assert_eq!(value, format!("v{i}"));
+        }
+    }
+
+    #[test]
+    fn issue650_infallible_parser_preserves_over_default_name() {
+        let name = "n".repeat(1025);
+        let xml = format!("<r {name}='Alice'/>");
+        let mut dom = Dom::new();
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            parse_xdocument(&mut dom, &xml)
+        }));
+        assert!(
+            parsed.is_ok(),
+            "the infallible parser must return the 1025-byte name"
+        );
+        let root = dom.root(parsed.unwrap()).unwrap();
+        assert_eq!(dom.attr_count(root), 1);
+        assert_eq!(dom.attr_at(root, 0).0.local_name(), name);
+        assert_eq!(dom.attr_at(root, 0).1, "Alice");
     }
 
     #[test]
@@ -1479,15 +1504,14 @@ mod tag_policy_tests {
     }
 
     #[test]
-    fn issue650_dom_parser_enforces_width_limits() {
+    fn issue650_checked_dom_parser_enforces_width_limits() {
         for xml in [
             xml_with_attrs(1025),
             format!("<r {}='v'/>", "n".repeat(1025)),
         ] {
-            let refused = std::panic::catch_unwind(|| parse_xdocument(&mut Dom::new(), &xml));
             assert!(
-                refused.is_err(),
-                "DOM parser must refuse oversized attributes"
+                try_parse_xdocument(&mut Dom::new(), &xml).is_err(),
+                "checked DOM parser must refuse oversized attributes"
             );
         }
     }
