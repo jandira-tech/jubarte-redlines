@@ -190,3 +190,112 @@ pub fn sha1_fingerprint(s: &str) -> u64 {
 pub fn sha1_fingerprint128(s: &str) -> u128 {
     fnv1a_128(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hex_string_from_bytes() {
+        assert_eq!(hex_string_from_bytes(b"hello"), "68656c6c6f");
+        assert_eq!(hex_string_from_bytes(b""), "");
+    }
+
+    #[test]
+    fn test_sha1_hex() {
+        // sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
+        assert_eq!(sha1_hex("hello"), "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        assert_eq!(sha1_hex(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+
+    #[test]
+    fn test_sha1_digest() {
+        let digest_hello = sha1_digest(b"hello");
+        assert_eq!(hex_encode_20(&digest_hello).as_slice(), b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+
+        let digest_empty = sha1_digest(b"");
+        assert_eq!(hex_encode_20(&digest_empty).as_slice(), b"da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+
+    #[test]
+    fn test_hex_encode_20() {
+        let digest = sha1_digest(b"hello");
+        let encoded = hex_encode_20(&digest);
+        assert_eq!(encoded, *b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+    }
+
+    #[test]
+    fn test_hex_decode_20() {
+        let valid_hex = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+        let digest = hex_decode_20(valid_hex).unwrap();
+        assert_eq!(digest, sha1_digest(b"hello"));
+
+        let upper_hex = "AAF4C61DDCC5E8A2DABEDE0F3B482CD9AEA9434D";
+        let digest_upper = hex_decode_20(upper_hex).unwrap();
+        assert_eq!(digest_upper, sha1_digest(b"hello"));
+
+        // Invalid cases
+        assert!(hex_decode_20("").is_none());
+        assert!(hex_decode_20("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434").is_none()); // 39 chars
+        assert!(hex_decode_20("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434dg").is_none()); // 41 chars
+        assert!(hex_decode_20("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434z").is_none()); // non-hex
+    }
+
+    #[test]
+    fn test_sha1_hex_of_digest_hexes() {
+        let d1 = sha1_digest(b"hello");
+        let d2 = sha1_digest(b"world");
+        let hexes = [d1, d2];
+
+        let expected = sha1_hex("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d7c211433f02071597741e6ff5a8ea34789abbf43");
+        assert_eq!(sha1_hex_of_digest_hexes(&hexes), expected);
+
+        assert_eq!(sha1_hex_of_digest_hexes(std::iter::empty::<&[u8; 20]>()), sha1_hex(""));
+    }
+
+    #[test]
+    fn test_sha1_hex_bytes() {
+        assert_eq!(sha1_hex_bytes(b"hello"), "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        assert_eq!(sha1_hex_bytes(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+
+    #[test]
+    fn test_sha1_hex_parts() {
+        let parts = ["he", "ll", "o"];
+        assert_eq!(sha1_hex_parts(parts), "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+
+        let empty_parts: [&str; 0] = [];
+        assert_eq!(sha1_hex_parts(empty_parts), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+
+    #[test]
+    fn test_fnv1a_64() {
+        assert_eq!(fnv1a_64(""), 0xcbf2_9ce4_8422_2325);
+
+        let hello_hash = fnv1a_64("hello");
+        // We just ensure it produces consistent deterministic output
+        assert_eq!(fnv1a_64("hello"), hello_hash);
+        assert_ne!(fnv1a_64("world"), hello_hash);
+    }
+
+    #[test]
+    fn test_fnv1a_128() {
+        assert_eq!(fnv1a_128(""), 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d);
+
+        let hello_hash = fnv1a_128("hello");
+        assert_eq!(fnv1a_128("hello"), hello_hash);
+        assert_ne!(fnv1a_128("world"), hello_hash);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_sha1_fingerprint() {
+        assert_eq!(sha1_fingerprint("hello"), fnv1a_64("hello"));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_sha1_fingerprint128() {
+        assert_eq!(sha1_fingerprint128("hello"), fnv1a_128("hello"));
+    }
+}
