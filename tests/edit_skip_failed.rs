@@ -7,6 +7,9 @@
 //! the plan; a clean dry run prints the command that applies it; every
 //! write prints the output's SHA-256.
 
+mod common;
+
+use common::docx::docx;
 use jubarte::edit::{
     EditPlan, ExistingRevisions, PrepareOptions, SkippedOperation, failed_plan_json, prepare,
 };
@@ -1101,5 +1104,131 @@ fn the_next_command_drops_the_flag_not_a_value_spelled_like_it() {
             true,
         ),
         argv(&["edit", "--plan", "p.json", "--force", "--", "--dry-run"])
+    );
+}
+
+/// p0 "Intro.", p1 a Country drop-down, a one-cell table whose paragraph
+/// (p2) holds a Region drop-down, p3 "Tail.".
+fn form() -> Vec<u8> {
+    let list = |tag: &str, items: &[(&str, &str)]| {
+        let items: String = items
+            .iter()
+            .map(|(text, value)| {
+                format!(r#"<w:listItem w:displayText="{text}" w:value="{value}"/>"#)
+            })
+            .collect();
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:dropDownList>{items}</w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Choose</w:t></w:r></w:sdtContent></w:sdt>"#
+        )
+    };
+    let country = list("Country", &[("Brazil", "BR"), ("Chile", "CL")]);
+    let region = list("Region", &[("North", "N"), ("South", "S")]);
+    docx(&format!(
+        r#"<w:p><w:r><w:t>Intro.</w:t></w:r></w:p><w:p>{country}</w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p>{region}</w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>Tail.</w:t></w:r></w:p>"#
+    ))
+}
+
+/// A control named through its paragraph (`p1.cc0`, `t0.row0.cell0.cc0`)
+/// moves with that paragraph, and every note quotes the selector as the
+/// plan's author wrote it (#1289 review).
+#[test]
+fn the_failed_plan_names_the_controls_of_the_output() {
+    let source = form();
+    let ops = json!([
+        {"kind":"insert_paragraph","paragraph":"p0","position":"after","runs":[{"text":"Inserted."}]},
+        {"kind":"fill_control","control":"p1.cc0","choice":"Peru"},
+        {"kind":"fill_control","control":{"id":"t0.row0.cell0.cc0"},"choice":"East"},
+        {"kind":"replace","paragraph":"t0.row0.cell0","find":"West","replacement":"East"},
+    ]);
+    let original = plan(&ops);
+    let prepared = prepare(&source, &original, &skipping()).unwrap();
+    assert_eq!(prepared.skipped.len(), 3);
+    let written = &prepared.result.clean;
+    let failed: Value = serde_json::from_str(&failed_plan_json(
+        &source,
+        &original,
+        &prepared.skipped,
+        DATE,
+        &source_sha256(written),
+        original.existing_revisions,
+        false,
+    ))
+    .unwrap();
+    let ops = failed["operations"].as_array().unwrap();
+    let why = |i: usize| ops[i]["why"].as_str().unwrap().to_string();
+    assert_eq!(ops[0]["control"], "p2.cc0", "{failed}");
+    assert!(
+        why(0).ends_with("; p1.cc0 is p2.cc0 in the output"),
+        "{}",
+        why(0)
+    );
+    assert_eq!(ops[1]["control"], json!({"id": "p3.cc0"}), "{failed}");
+    assert!(
+        why(1).ends_with("; t0.row0.cell0.cc0 is p3.cc0 in the output"),
+        "{}",
+        why(1)
+    );
+    assert_eq!(ops[2]["paragraph"], "p3", "{failed}");
+    assert!(
+        why(2).ends_with("; t0.row0.cell0 is p3 in the output"),
+        "{}",
+        why(2)
+    );
+    // Fixed, the plan fills the controls its author meant.
+    let mut fixed = failed.clone();
+    fixed["operations"] = json!([ops[0].clone(), ops[1].clone()]);
+    fixed["operations"][0]["choice"] = json!("CL");
+    fixed["operations"][1]["choice"] = json!("S");
+    let fixed = EditPlan::from_json(&fixed.to_string()).unwrap();
+    let applied = prepare(written, &fixed, &PrepareOptions::default()).unwrap();
+    assert_eq!(
+        texts(&applied.result.clean),
+        ["Intro.", "Inserted.", "Chile", "South", "Tail."]
+    );
+}
+
+/// `--out-dir` naming a file, or a folder holding what no bundle wrote, is
+/// refused even under --force, so a dry run promises no --force there.
+#[test]
+fn a_dry_run_promises_no_force_that_would_be_refused() {
+    let good = json!([
+        {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
+    ]);
+    let dir = workspace(&good);
+    std::fs::write(dir.path().join("out"), b"a file").unwrap();
+    std::fs::create_dir(dir.path().join("mine")).unwrap();
+    std::fs::write(dir.path().join("mine/notes.txt"), b"keep").unwrap();
+    std::fs::create_dir(dir.path().join("out.docx")).unwrap();
+    for (flag, target, note) in [
+        (
+            "--out-dir",
+            "out",
+            "note: out is an existing file, not a directory; name another --out-dir",
+        ),
+        (
+            "--out-dir",
+            "mine",
+            "note: mine holds what no earlier bundle wrote (notes.txt); --force replaces only a jubarte bundle, so move those files or name another --out-dir",
+        ),
+        (
+            "-o",
+            "out.docx",
+            "note: out.docx is a directory; name another output",
+        ),
+    ] {
+        let apply = ["edit", "in.docx", "--plan", "plan.json", flag, target];
+        let out = cli(dir.path(), &[&apply[..], &["--dry-run"]].concat());
+        let says = stderr(&out);
+        assert_eq!(out.status.code(), Some(0), "{says}");
+        assert_eq!(says.lines().last(), Some(note), "{says}");
+        assert!(!says.contains("next:"), "{says}");
+        // As it says: --force does not get past it.
+        let forced = cli(dir.path(), &[&apply[..], &["--force"]].concat());
+        assert_ne!(forced.status.code(), Some(0), "{}", stderr(&forced));
+    }
+    assert_eq!(std::fs::read(dir.path().join("out")).unwrap(), b"a file");
+    assert_eq!(
+        std::fs::read(dir.path().join("mine/notes.txt")).unwrap(),
+        b"keep"
     );
 }

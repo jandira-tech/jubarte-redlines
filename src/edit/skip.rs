@@ -13,7 +13,10 @@
 
 use super::origin::{Paragraphs, written_places};
 use super::prepared::{PrepareOptions, PreparedEdit, prepare};
-use super::{EditError, EditOutcome, EditPlan, ExistingRevisions, Operation, Selector, kind_name};
+use super::{
+    ControlSelector, EditError, EditOutcome, EditPlan, ExistingRevisions, Operation, OperationKind,
+    Selector, kind_name,
+};
 use std::collections::BTreeSet;
 
 /// The outcome code of an operation skipped because another operation of
@@ -319,11 +322,31 @@ fn keep_note(kind: &str, existing_revisions: ExistingRevisions) -> Option<String
     )
 }
 
-/// Rename each positional paragraph of `operations` (the skipped ones') to
-/// its id in the document the plan's other operations write, read off a
-/// run of them on `source` with its paragraphs tagged; the notes, per
-/// operation, of what moved and what has no one-to-one paragraph there.
-/// Text selectors, and ids `source` does not have, stay as given.
+/// What a positional name in a skipped operation points at.
+enum Named {
+    /// Its `n`th paragraph selector.
+    Paragraph(usize),
+    /// Its `fill_control` control, `PARA.ccK`: K.
+    Control(String),
+}
+
+/// A `fill_control` control named through its paragraph, `PARA.ccK`
+/// (`p3.cc0`, `t0.row1.cell2.cc0`): that paragraph's spelling and K.
+fn control_paragraph(control: &ControlSelector) -> Option<(&str, &str)> {
+    let (ControlSelector::Name(id) | ControlSelector::Id { id }) = control else {
+        return None;
+    };
+    let (paragraph, k) = id.rsplit_once(".cc")?;
+    (!paragraph.is_empty() && k.parse::<usize>().is_ok()).then_some((paragraph, k))
+}
+
+/// Rename each positional paragraph of `operations` (the skipped ones'),
+/// and each control named through one, to its id in the document the
+/// plan's other operations write, read off a run of them on `source` with
+/// its paragraphs tagged; the notes, per operation, of what moved and what
+/// has no one-to-one paragraph there, each naming the paragraph as the
+/// plan spelled it. Text selectors, and ids `source` does not have, stay
+/// as given.
 fn rename_positions(
     source: &[u8],
     plan: &EditPlan,
@@ -336,12 +359,23 @@ fn rename_positions(
         return notes;
     };
     let ids = read.ids();
-    // (operation, selector, source paragraph) of each positional paragraph.
+    // (operation, what names it, source paragraph, the plan's spelling) of
+    // each positional paragraph.
     let mut named = Vec::new();
     for (o, op) in operations.iter_mut().enumerate() {
+        if let OperationKind::FillControl { control, .. } = &op.kind
+            && let Some((paragraph, k)) = control_paragraph(control)
+            && let Ok(Ok(g)) = ids.position(&Selector::Name(paragraph.to_string()))
+        {
+            named.push((o, Named::Control(k.to_string()), g, paragraph.to_string()));
+        }
         for (n, selector) in super::selectors_mut(&mut op.kind).into_iter().enumerate() {
             if let Ok(Ok(g)) = ids.position(selector) {
-                named.push((o, n, g));
+                let spelled = match selector {
+                    Selector::Name(id) | Selector::Id { id } => id.clone(),
+                    _ => ids.id(g),
+                };
+                named.push((o, Named::Paragraph(n), g, spelled));
             }
         }
     }
@@ -368,34 +402,53 @@ fn rename_positions(
             prepared.result.clean
         })
     });
-    for (o, n, g) in named {
-        let from = ids.id(g);
-        let selector = &mut *super::selectors_mut(&mut operations[o].kind).swap_remove(n);
+    for (o, what, g, spelled) in named {
+        let shown = match &what {
+            Named::Paragraph(_) => spelled,
+            Named::Control(k) => format!("{spelled}.cc{k}"),
+        };
         let Ok((places, written)) = &landed else {
             notes[o].push(format!(
-                "{from} names a paragraph of the source: check it against the output"
+                "{shown} names a paragraph of the source: check it against the output"
             ));
             continue;
         };
         let Some(post) = places[g].filter(|&post| written.place(post).0 == read.place(g).0) else {
             notes[o].push(format!(
-                "{from} has no one-to-one paragraph in the output: give it again from the output"
+                "{shown} has no one-to-one paragraph in the output: give it again from the output"
             ));
             continue;
         };
         let to = written.ids().id(post);
-        if to == from {
+        if to == ids.id(g) {
             continue;
         }
-        *selector = match selector {
-            Selector::Index { story, .. } => Selector::Index {
-                index: written.place(post).1,
-                story: story.clone(),
-            },
-            Selector::Id { .. } => Selector::Id { id: to.clone() },
-            _ => Selector::Name(to.clone()),
+        let renamed = match what {
+            Named::Paragraph(n) => {
+                let selector = &mut *super::selectors_mut(&mut operations[o].kind).swap_remove(n);
+                *selector = match selector {
+                    Selector::Index { story, .. } => Selector::Index {
+                        index: written.place(post).1,
+                        story: story.clone(),
+                    },
+                    Selector::Id { .. } => Selector::Id { id: to.clone() },
+                    _ => Selector::Name(to.clone()),
+                };
+                to
+            }
+            Named::Control(k) => {
+                let OperationKind::FillControl { control, .. } = &mut operations[o].kind else {
+                    continue;
+                };
+                let id = format!("{to}.cc{k}");
+                *control = match control {
+                    ControlSelector::Id { .. } => ControlSelector::Id { id: id.clone() },
+                    _ => ControlSelector::Name(id.clone()),
+                };
+                id
+            }
         };
-        notes[o].push(format!("{from} is {to} in the output"));
+        notes[o].push(format!("{shown} is {renamed} in the output"));
     }
     notes
 }

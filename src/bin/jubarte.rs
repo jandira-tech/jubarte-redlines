@@ -1078,16 +1078,20 @@ fn run_edit(
             jubarte::edit::preview_plan_with(source, plan, &options).map_err(|e| refused(&e))?;
         write_stdout(report.to_jsonl()).map_err(fail)?;
         // A clean dry run says how to apply it: the same command, with the
-        // --force an output already there needs.
+        // --force an output already there needs. An output --force cannot
+        // replace gets no command, only what to do.
         if report.ok && !job.quiet {
-            let taken = taken_edit_output(job).filter(|_| !job.force);
-            if let Some(taken) = &taken {
-                edit_status(format_args!(
-                    "note: {} exists; the next command replaces it (--force)",
-                    slash_path(taken)
-                ));
+            match taken_edit_output(job) {
+                Some(Taken::Blocked(why)) => edit_status(format_args!("note: {why}")),
+                Some(Taken::Replaceable(taken)) if !job.force => {
+                    edit_status(format_args!(
+                        "note: {} exists; the next command replaces it (--force)",
+                        slash_path(&taken)
+                    ));
+                    edit_status(format_args!("next: {}", next_command(true)));
+                }
+                _ => edit_status(format_args!("next: {}", next_command(false))),
             }
-            edit_status(format_args!("next: {}", next_command(taken.is_some())));
         }
         return Ok(());
     }
@@ -1605,8 +1609,29 @@ fn publish_files(
 /// in it (a user's file, an input under a subdirectory) would be deleted by
 /// the replacement, so the publication refuses before staging.
 fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let foreign = foreign_bundle_entries(dir);
+    if foreign.is_empty() {
         return Ok(());
+    }
+    Err((
+        EXIT_USAGE,
+        format!(
+            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); {FORCE_BUNDLE_ONLY}",
+            dir.display(),
+            foreign.join(", ")
+        ),
+    ))
+}
+
+/// What to do about a bundle directory --force will not replace.
+const FORCE_BUNDLE_ONLY: &str =
+    "--force replaces only a jubarte bundle, so move those files or name another --out-dir";
+
+/// The entries of `dir` no earlier bundle's `report.jsonl` names, sorted,
+/// a directory with a trailing `/`; none when `dir` cannot be read.
+fn foreign_bundle_entries(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
     };
     let mut ours: std::collections::BTreeSet<String> = ["report.jsonl".to_string()].into();
     if let Ok(report) = std::fs::read_to_string(dir.join("report.jsonl")) {
@@ -1631,18 +1656,8 @@ fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| format!("{}/", e.file_name().to_string_lossy())),
     );
-    if foreign.is_empty() {
-        return Ok(());
-    }
     foreign.sort();
-    Err((
-        EXIT_USAGE,
-        format!(
-            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); --force replaces only a jubarte bundle, so move those files or name another --out-dir",
-            dir.display(),
-            foreign.join(", ")
-        ),
-    ))
+    foreign
 }
 
 /// The sibling temp directory a bundle is staged in (V2-05). Its parent
@@ -2036,20 +2051,60 @@ fn fixes_revisions(
     }
 }
 
+/// An output of `edit` already on disk.
+enum Taken {
+    /// One --force replaces.
+    Replaceable(PathBuf),
+    /// One --force is refused over too: why, and what to do instead.
+    Blocked(String),
+}
+
 /// The output of `job` already on disk, if any: the document or its PDF,
 /// or the bundle directory, empty or not (an existing --out-dir is refused
-/// without --force). The PNG names are known only once rendered, so a dry
-/// run does not look for them.
-fn taken_edit_output(job: &EditJob<'_>) -> Option<PathBuf> {
+/// without --force). A directory where the document goes, a file where the
+/// bundle goes, or a bundle directory holding what no bundle wrote is
+/// refused under --force as well. The PNG names are known only once
+/// rendered, so a dry run does not look for them.
+fn taken_edit_output(job: &EditJob<'_>) -> Option<Taken> {
     match job.target {
-        EditTarget::Single(path) => [
-            Some(path.clone()),
-            job.pdf.then(|| path.with_extension("pdf")),
-        ]
-        .into_iter()
-        .flatten()
-        .find(|p| p.symlink_metadata().is_ok()),
-        EditTarget::Bundle(dir) => dir.symlink_metadata().is_ok().then(|| dir.clone()),
+        EditTarget::Single(path) => {
+            let taken: Vec<PathBuf> = [
+                Some(path.clone()),
+                job.pdf.then(|| path.with_extension("pdf")),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|p| p.symlink_metadata().is_ok())
+            .collect();
+            match taken
+                .iter()
+                .find(|p| p.symlink_metadata().is_ok_and(|m| m.is_dir()))
+            {
+                Some(dir) => Some(Taken::Blocked(format!(
+                    "{} is a directory; name another output",
+                    slash_path(dir)
+                ))),
+                None => taken.into_iter().next().map(Taken::Replaceable),
+            }
+        }
+        EditTarget::Bundle(dir) => {
+            dir.symlink_metadata().ok()?;
+            let foreign = foreign_bundle_entries(dir);
+            Some(if !dir.is_dir() {
+                Taken::Blocked(format!(
+                    "{} is an existing file, not a directory; name another --out-dir",
+                    slash_path(dir)
+                ))
+            } else if foreign.is_empty() {
+                Taken::Replaceable(dir.clone())
+            } else {
+                Taken::Blocked(format!(
+                    "{} holds what no earlier bundle wrote ({}); {FORCE_BUNDLE_ONLY}",
+                    slash_path(dir),
+                    foreign.join(", ")
+                ))
+            })
+        }
     }
 }
 
