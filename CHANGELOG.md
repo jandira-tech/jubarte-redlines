@@ -43,6 +43,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Resolved Markdown verifies against the md→docx reader** (#1240).
+  Resolving CriticMarkup could still splice bytes CommonMark re-reads
+  differently than the reader's own run model of the source — a kept
+  `_b_` inside `*a…c*` read literal, `***a*b*c***` read as italic plus a
+  stray `**`. Resolve now compares the spliced block's runs with the
+  reader's resolved model; on a mismatch the smallest inline span
+  holding the mark is re-emitted from that model as a common-format
+  interval tree (bold+italic `a`/`b`/`c` as `**a*b*c**`), the user's
+  delimiter flavour first, every try re-verified. Blocks whose marks the
+  reader cannot parse faithfully — a comment or a highlight inside a
+  change — keep the splice, as do marks holding a line break.
+
 - **`convert --to md --track-changes accept|reject` keeps the spans at a
   seam** (#1220). Resolving CriticMarkup in Markdown could leave two
   same-kind inline spans touching, which CommonMark then read as one
