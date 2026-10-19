@@ -1444,8 +1444,8 @@ Options:
           JSON Lines: one object per finding, nothing when there is none
 
       --rules <RULES>
-          Rule sets or audit codes, comma-separated [default: word; with --original,
-          word and edits]
+          Rule sets or audit codes, comma-separated [default: word; with --original, or
+          --baseline and --author, word and edits]
 
       --strict
           Fail (exit 2) on warnings too, not only on errors
