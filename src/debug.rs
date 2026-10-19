@@ -2998,6 +2998,34 @@ mod tests {
         );
     }
 
+    /// ZIP-16 (#639): an entry recorded as a non-regular Unix type — a
+    /// symlink here — is a `zip-special-entry` finding, not a refusal.
+    #[test]
+    fn a_special_entry_reports_a_finding_instead_of_refusing() {
+        let mut pkg = docx(CLEAN);
+        let at = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
+            usize::try_from(
+                archive
+                    .by_name("word/document.xml")
+                    .unwrap()
+                    .central_header_start(),
+            )
+            .unwrap()
+        };
+        assert_eq!(&pkg[at..at + 4], b"PK\x01\x02");
+        // version_made_by = Unix host, external attributes = S_IFLNK mode.
+        pkg[at + 4..at + 6].copy_from_slice(&0x0314u16.to_le_bytes());
+        pkg[at + 38..at + 42].copy_from_slice(&0o120777u32.to_le_bytes());
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        assert!(out.contains("zip-special-entry: 1\n"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(
+            found.iter().any(|f| f.code == "ZIP_SPECIAL_ENTRY"),
+            "{found:?}"
+        );
+    }
+
     #[test]
     fn a_deleted_text_box_field_left_bare_is_reported() {
         let out = report(&docx(ORPHAN), None, &Options::default()).unwrap();

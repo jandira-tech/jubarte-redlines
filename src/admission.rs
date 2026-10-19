@@ -2240,6 +2240,91 @@ mod tests {
             .expect("Word's o:gfxdata header must be admitted");
         assert!(admitted.entries >= 5);
     }
+
+    /// Overwrite `entry`'s central record: `version_made_by` at +4 (host
+    /// byte high, spec low) and the external attributes at +38. The local
+    /// header has neither field, so nothing else needs patching.
+    fn set_central_attributes(
+        bytes: &mut [u8],
+        entry: &str,
+        version_made_by: u16,
+        external: u32,
+    ) {
+        let at = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+            usize::try_from(archive.by_name(entry).unwrap().central_header_start()).unwrap()
+        };
+        assert_eq!(&bytes[at..at + 4], b"PK\x01\x02");
+        bytes[at + 4..at + 6].copy_from_slice(&version_made_by.to_le_bytes());
+        bytes[at + 38..at + 42].copy_from_slice(&external.to_le_bytes());
+    }
+
+    /// ZIP-16 (#639): an entry recorded as a non-regular Unix type, and a
+    /// directory type whose name is not slash-terminated, are refused like
+    /// encryption and exotic compression (`UNSUPPORTED_PACKAGE`), with the
+    /// message naming the entry and its type.
+    #[test]
+    fn zip16_refuses_special_entry_types() {
+        for (version_made_by, mode, name, detail) in [
+            (0x0314u16, 0o120777u32, "x.bin", "symlink"),
+            (0x0314, 0o020666, "x.bin", "character device"),
+            (0x0314, 0o060600, "x.bin", "block device"),
+            (0x0314, 0o010644, "x.bin", "FIFO"),
+            (0x1314, 0o140755, "x.bin", "socket"),
+            (0x0314, 0o160644, "x.bin", "160000"),
+            (0x0314, 0o040755, "x.bin", "directory"),
+        ] {
+            let mut bytes =
+                zip_names::docx_package("", &[zip_names::RawEntry::raw(name.as_bytes(), b"x")]);
+            set_central_attributes(&mut bytes, name, version_made_by, mode);
+            let err =
+                admit(&bytes, InputLimits::default()).expect_err("a special entry must be refused");
+            assert_eq!(
+                err.kind,
+                AdmissionErrorKind::UnsupportedPackage,
+                "{version_made_by:#06x}/{mode:o}: {err}"
+            );
+            assert!(
+                err.message.contains(name) && err.message.contains(detail),
+                "{version_made_by:#06x}/{mode:o}: {}",
+                err.message
+            );
+        }
+        // The DOS directory attribute on any host, without a trailing slash.
+        for version_made_by in [0x0014u16, 0x0a14, 0x0314] {
+            let mut bytes = zip_names::docx_package("", &[zip_names::RawEntry::raw(b"x.bin", b"x")]);
+            set_central_attributes(&mut bytes, "x.bin", version_made_by, 0x10);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::UnsupportedPackage,
+                "{version_made_by:#06x}: a DOS directory on a file name must refuse"
+            );
+        }
+    }
+
+    /// ZIP-16 controls (#639): the shapes real writers emit still admit —
+    /// an Info-ZIP regular file and directory, an OS X host record, a
+    /// DOS-host archive bit, no attributes at all, and the macOS Archive
+    /// Utility shape (regular `0o644` files, `0o755` directories that
+    /// carry the DOS directory bit).
+    #[test]
+    fn zip16_admits_recorded_entry_types() {
+        for (version_made_by, mode, name) in [
+            (0x0314u16, 0o100644u32, "x.bin"), // Info-ZIP file
+            (0x0314, 0o040755, "word/media/"), // Info-ZIP directory
+            (0x1314, 0o100600, "x.bin"),       // an OS X host record
+            (0x0014, 0x20, "x.bin"),           // DOS archive bit
+            (0x0014, 0, "x.bin"),              // attributes 0
+            (0x0314, 0o100644, "x.bin"),       // Archive Utility file
+            (0x0314, 0o040755 | 0x10, "word/media/"), // … and its directory
+        ] {
+            let mut bytes =
+                zip_names::docx_package("", &[zip_names::RawEntry::raw(name.as_bytes(), b"")]);
+            set_central_attributes(&mut bytes, name, version_made_by, mode);
+            admit(&bytes, InputLimits::default())
+                .unwrap_or_else(|err| panic!("{version_made_by:#06x}/{mode:o} {name}: {err}"));
+        }
+    }
 }
 
 #[cfg(test)]
