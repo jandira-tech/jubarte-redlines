@@ -1182,3 +1182,39 @@ fn accept_keeps_untracked_text_under_an_orphan_move_to_mark() {
     let settled = accept_revisions(&docx(body)).unwrap();
     assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
 }
+
+/// #1243: an orphan `moveFromRangeStart`/`End` pair — no `moveToRange` of
+/// the same `w:name` — deletes its unwrapped paragraph on Accept All, like
+/// any moveFrom range. Word's Accept All of the `orphan_from_acc` probe
+/// (`normal`, a range around an untracked paragraph, `second`; the bench
+/// drove Word through `word_pdf.py --accept-all`, 2026-10-18) reads
+/// `normal | second`: the range's paragraph is gone.
+#[test]
+fn accept_deletes_an_orphan_move_from_range_s_unwrapped_paragraph() {
+    let body = r#"<w:p><w:r><w:t>normal</w:t></w:r></w:p>
+<w:moveFromRangeStart w:id="1" w:name="m1" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
+<w:p><w:r><w:t>movedaway</w:t></w:r></w:p>
+<w:moveFromRangeEnd w:id="1"/>
+<w:p><w:r><w:t>second</w:t></w:r></w:p>"#;
+    let settled = accept_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["normal", "second"]);
+}
+
+/// #1243: the mirror — an orphan `moveToRange` keeps its unwrapped
+/// paragraph on Accept All. Word's Accept All of the `orphan_to_acc` probe
+/// (`normal`, a moveTo range around an untracked paragraph, `second`;
+/// `word_pdf.py --accept-all`, 2026-10-18) reads `normal | arrived | second`.
+#[test]
+fn accept_keeps_an_orphan_move_to_range_s_unwrapped_paragraph() {
+    let body = r#"<w:p><w:r><w:t>normal</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="1" w:name="m9" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
+<w:p><w:r><w:t>arrived</w:t></w:r></w:p>
+<w:moveToRangeEnd w:id="1"/>
+<w:p><w:r><w:t>second</w:t></w:r></w:p>"#;
+    let settled = accept_revisions(&docx(body)).unwrap();
+    assert_part_resolved(
+        &settled,
+        "word/document.xml",
+        &["normal", "arrived", "second"],
+    );
+}
