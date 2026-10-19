@@ -1,0 +1,8 @@
+<w:comment w:id="106" w:author="Trainer 1 - LargeCo" w:date="2026-05-19T13:52:00Z" w:initials="TX">
+c106	p29	Trainer 1 - LargeCo	"We will share PHI with AgentCo."	on ""
+c7	p5	Trainer 1 - GiantCo	"Accepted."	on "Services,  including the exp
+c9	p14	Trainer 1 - AgentCo	"Not applicable"	on ""
+c12	p15	Trainer 1 - AgentCo	"We are not doing construction, so to avoi
+c6	p5	Trainer 1 - GiantCo	"Accepted."	on "Services,  including the exp
+c7	p13	Trainer 1 - AgentCo	"Not applicable"	on "Co-Consultant:  Other 
+c9	p14	Trainer 1 - AgentCo	"We are not doing construction, so to avoid

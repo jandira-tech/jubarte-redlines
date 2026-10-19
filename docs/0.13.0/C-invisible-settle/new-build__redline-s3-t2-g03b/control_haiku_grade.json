@@ -1,0 +1,129 @@
+{
+  "task_id": 110,
+  "scenario_id": 3,
+  "side": "B",
+  "level": 2,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.6931818181818182,
+    "earned_weight": 61,
+    "penalty_weight": 0,
+    "total_weight": 88,
+    "n_pass": 8,
+    "n_total": 12,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780106981423_37etm",
+        "verdict": "FAIL",
+        "weight": 6,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Restores in Article 1 (Definition of Additional Services) the deleted exclusion for any service that is \"necessitated by or arises out of failure of Consultant to comply with the terms of this Agreement.\"",
+        "justification": "The Additional Services exclusion for services necessitated by Consultant's non-compliance remains struck (rev-19) in the Article 1 definition at p-005 with no restoring insertion."
+      },
+      {
+        "rubric_id": "rubric_1780256906326_5os6s",
+        "verdict": "FAIL",
+        "weight": 6,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Restores in Section 3.3 GiantCo's right to demand performance without payment should AgentCo fail to respond to GiantCo's notice of proposed change.",
+        "justification": "The Change-forfeiture language in the Section 5.3 paragraph (p-043) is struck and replaced with 'Reserved.' so GiantCo's no-response performance right is not restored."
+      },
+      {
+        "rubric_id": "rubric_1780256906937_da6of",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 4.1 the addition of  a disclaimer for the warranty of non-infringement.",
+        "justification": "GiantCo strikes 'non-infringement' from the Section 4.1 disclaimer at p-045, rejecting the warranty disclaimer addition, with comment cmt-340 explaining the rationale."
+      },
+      {
+        "rubric_id": "rubric_1780256907871_qts27",
+        "verdict": "PASS",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 4.4 (Guidelines) AgentCo's insertion of \"the Parties shall review and mutually agree in writing to the proposed guidelines to the extent they deviate from the scope of Services.\"",
+        "justification": "AgentCo's 'The Parties shall review and mutually agree in writing...' insertion at p-050 (Guidelines) remains intact with no contradicting tracked change."
+      },
+      {
+        "rubric_id": "rubric_1780256908370_awikn",
+        "verdict": "FAIL",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 5.9 the insertion that any breach must be of a \"material provision\".",
+        "justification": "The 'material provision' qualifier in the termination-for-cause clause (p-084) is kept, with only the duplicate 'materially violates' language removed; no rejection of the insertion."
+      },
+      {
+        "rubric_id": "rubric_1780260779395_a7tk3",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Section 5.9 AgentCo's replacement of \"Client\" with \"Either Party\".",
+        "justification": "The 'Either Party may terminate' replacement of 'Client' at p-084 is retained untouched, accepting AgentCo's mutual replacement."
+      },
+      {
+        "rubric_id": "rubric_1780260780039_12mkx",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 5.9 the insertion of a mutual right to immediately terminate the agreement without observing the 30-day cure period. ",
+        "justification": "The 'for cause, immediately' language giving immediate termination at p-084 is left unstruck, so the immediate-termination insertion is not rejected."
+      },
+      {
+        "rubric_id": "rubric_1780260780422_85076",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 5.9 AgentCo's deletion of the right to terminate the agreement for cause for violations of immigration law. ",
+        "justification": "No tracked change restores an immigration-law termination right in the Section 5.9 termination clause (p-084); AgentCo's deletion stands."
+      },
+      {
+        "rubric_id": "rubric_1780260780923_md87t",
+        "verdict": "PASS",
+        "weight": 3,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Deletes in Section 4.8 GiantCo's right to damages for delay. ",
+        "justification": "The Damages for Delay paragraph in Section 4.8 (p-058) is struck through with tracked deletion (rev-118), removing the delay damages right."
+      },
+      {
+        "rubric_id": "rubric_1780261806770_fyl1i",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Restores in Section 7.7  \"Consultant will not\" use the trade name of GiantCo without permission.",
+        "justification": "The 'Consultant will not use the trade name' prohibition in Section 7.7 (p-108) is untouched and remains in force with no tracked deletion."
+      },
+      {
+        "rubric_id": "rubric_1780261807269_dc7r9",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 9.1 the deletion of payment obligations on an hourly basis.",
+        "justification": "The hourly-basis compensation language in Section 9.1 (p-114) is struck and replaced with an order-form basis, accepting the deletion of hourly payment obligations."
+      },
+      {
+        "rubric_id": "rubric_1780261807970_ncans",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 12.1 (Confidentiality) AgentCo's replacement of a unilateral confidentiality obligation for AgentCo with a mutual obligation. ",
+        "justification": "Section 12.1 (p-160) retains AgentCo's mutual 'Each Party' confidentiality structure with no reversion to a unilateral obligation."
+      }
+    ]
+  }
+}

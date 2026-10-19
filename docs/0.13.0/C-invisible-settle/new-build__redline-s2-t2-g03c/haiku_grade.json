@@ -1,0 +1,174 @@
+{
+  "task_id": 91,
+  "scenario_id": 2,
+  "side": "A",
+  "level": 2,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.09375,
+    "earned_weight": 9,
+    "penalty_weight": 0,
+    "total_weight": 96,
+    "n_pass": 3,
+    "n_total": 17,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780009538986_jn3lg",
+        "verdict": "PASS",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts the insertion of a preamble identifying the parties to the agreement. ",
+        "justification": "Preamble insertion at p-002 identifying AgentCo and LargeCo remains intact with no contradicting tracked change."
+      },
+      {
+        "rubric_id": "rubric_1780009540898_hdh5g",
+        "verdict": "FAIL",
+        "weight": 3,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 2.6 the deletion of \"any information that the Disclosing Party marks or identifies as confidential at the time of disclosure, or that the Receiving Party reasonably should understand to be confidential or proprietary given its nature and the circumstances of disclosure. Customer-specific Content and Customer Data constitute Customer's Confidential Information.\"",
+        "justification": "The Section 2.6 text is shown as restored plain text with no tracked deletion, and cmt-119 restores a mutual definition, so the deletion is not accepted."
+      },
+      {
+        "rubric_id": "rubric_1780009541216_tytk9",
+        "verdict": "FAIL",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2.7 the insertion of \"provided by Customer\".",
+        "justification": "\"provided by Customer\" remains as tracked insertion in 2.7 (p-015) with no rejection."
+      },
+      {
+        "rubric_id": "rubric_1780528564949_1yx4d",
+        "verdict": "FAIL",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2.7 the insertion of  \"provided by the Service\".",
+        "justification": "\"provided by the Service\" remains as tracked insertion in 2.7 (p-015) with no rejection."
+      },
+      {
+        "rubric_id": "rubric_1780009541370_hr5ki",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2 the insertion of Section 2.9 \"Customer Data\" in its entirety. ",
+        "justification": "AgentCo narrows the Section 2.9 Customer Data insertion via a counter-redline rather than rejecting it in its entirety."
+      },
+      {
+        "rubric_id": "rubric_1780009541506_bpzzx",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2 the insertion of Section 2.10 \"Deliverables\" in its entirety. ",
+        "justification": "Section 2.10 Deliverables is revised to a narrower counter-version instead of being rejected in its entirety."
+      },
+      {
+        "rubric_id": "rubric_1780009541778_phnl6",
+        "verdict": "PASS",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 3 the replacement of \"Conditioned on Customer's compliance with this Agreement\" with \"Pursuant to the terms of this Agreement\".",
+        "justification": "The \"Pursuant to the terms of this Agreement\" replacement in Section 3.1 (p-038) is left intact."
+      },
+      {
+        "rubric_id": "rubric_1780009541924_t8dor",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 5.2 the deletion of \"worldwide\".",
+        "justification": "The Section 5.2 deletion of \"worldwide\" (p-048) stands; AgentCo does not reject it."
+      },
+      {
+        "rubric_id": "rubric_1780009542208_zfevg",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 7.1 the insertion of \"Customer may terminate this Agreement upon thirty (30) days\u2019 written notice to AgentCo.\" ",
+        "justification": "The 30-day termination-for-convenience sentence in Section 7.1 (p-054) remains as an intact tracked insertion."
+      },
+      {
+        "rubric_id": "rubric_1780009542370_fogy4",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Inserts in Section 7.1 \"Upon such termination for convenience, Customer will pay all outstanding Fees for the work completed prior to the termination date, including the $40,000 implementation fee, immediately with no right to a refund.\"",
+        "justification": "The $40,000 implementation fee and no-refund payment language is not inserted in Section 7.1."
+      },
+      {
+        "rubric_id": "rubric_1780009542535_n6qnc",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 8.1 the insertion of \"and each of their respective parents, subsidiaries, affiliates, sponsors, advertising agencies\". ",
+        "justification": "No tracked change rejects the \"parents, subsidiaries, affiliates...\" language; the insertion is absent from Section 8.1 (p-060)."
+      },
+      {
+        "rubric_id": "rubric_1780009552382_wxuep",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 8.1 the insertion of \"and such modification was without AgentCo's knowledge or consent\".",
+        "justification": "The \"without AgentCo's knowledge or consent\" insertion does not appear in Section 8.1, so there is nothing accepted."
+      },
+      {
+        "rubric_id": "rubric_1780511842857_0rsw4",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 8.1 the insertion of \"except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably contemplated for the use of the Service\".",
+        "justification": "The \"except as otherwise expressly stated\" combination language is absent from Section 8.1 and no rejecting tracked change exists."
+      },
+      {
+        "rubric_id": "rubric_1780512119706_9fgsf",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 10.2 the insertion of \"AgentCo\u2019s breach of its confidentiality obligations, AgentCo\u2019s breach of its data and information security obligations, \".",
+        "justification": "AgentCo keeps its own 10.2 proviso covering confidentiality and data security breaches; no rejection of the insertion appears."
+      },
+      {
+        "rubric_id": "rubric_1780512311584_1081z",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Inserts in Section 10.2  a super cap of five times the aggregate amounts paid by LargeCo to AgentCo in the twelve months immediately preceding an event giving rise to a claim for breaches of confidentiality or data security obligations. ",
+        "justification": "The 10.2 proviso inserts a 2x cap, not the five-times super cap tied to fees paid in the prior twelve months."
+      },
+      {
+        "rubric_id": "rubric_1780512407742_75y3e",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 11.1 the insertion of \"provided, however, that any such sale of AgentCo\u2019s assets to a competitor of Customer shall prohibit any assignment without the prior written consent of Customer. \"",
+        "justification": "The competitor-sale assignment consent proviso is absent from Section 11.1 (p-072); AgentCo's comment removes it rather than accepting it."
+      },
+      {
+        "rubric_id": "rubric_1780512527743_j0jwz",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects the insertion of Exhibit B \"Insurance Requirements\" in its entirety. ",
+        "justification": "Exhibit B insurance insertions remain as tracked insertions (p-207 to p-228) with no rejection."
+      }
+    ]
+  }
+}

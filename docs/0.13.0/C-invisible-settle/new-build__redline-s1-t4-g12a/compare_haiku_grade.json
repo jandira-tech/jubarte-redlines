@@ -1,0 +1,66 @@
+{
+  "task_id": 130,
+  "scenario_id": 1,
+  "side": "B",
+  "level": 4,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.7714285714285715,
+    "earned_weight": 27,
+    "penalty_weight": 0,
+    "total_weight": 35,
+    "n_pass": 4,
+    "n_total": 5,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780320703650_go4fy",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Section 4.1 AgentCo\u2019s reinsertion of \u201cindirectly\u201d.",
+        "justification": "The 'directly or indirectly' language in the \u00a74.1 restrictions (p-039) carries no tracked change, so AgentCo's reinsertion of 'indirectly' is left intact."
+      },
+      {
+        "rubric_id": "rubric_1780592556825_pl05h",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Section 10 AgentCo\u2019s reinsertion Section 10.2 in its entirety. ",
+        "justification": "Section 10 (p-060) is a single injunction paragraph with no Section 10.2, and no AgentCo reinsertion of a 10.2 is visible."
+      },
+      {
+        "rubric_id": "rubric_1780592574742_7gjw6",
+        "verdict": "PASS",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Section 13.2 AgentCo\u2019s reinsertion of the obligation for LargeCo to comply with applicable anti-corruption laws. ",
+        "justification": "The LargeCo anti-corruption compliance obligation in the representations (p-088) is untouched by any tracked change, so the reinsertion is accepted."
+      },
+      {
+        "rubric_id": "rubric_1780592596755_owcfb",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Rejects in Section 16 AgentCo\u2019s deletion of \u201cand excluding Provider\u2019s indemnification obligations\u201d.",
+        "justification": "The 'and excluding Provider's indemnification obligations' phrase is kept as a tracked insertion (p-103), reversing AgentCo's deletion, though it sits in \u00a717.1 rather than \u00a716."
+      },
+      {
+        "rubric_id": "rubric_1780592613154_kecks",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 18.5 AgentCo\u2019s insertion of \u201cReserved.\u201d",
+        "justification": "Section 18.5 'Reserved.' (p-110) carries no tracked change, so AgentCo's insertion is accepted and left intact."
+      }
+    ]
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "task_id": 148,
+  "scenario_id": 2,
+  "side": "A",
+  "level": 4,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.0,
+    "earned_weight": 0,
+    "penalty_weight": 0,
+    "total_weight": 43,
+    "n_pass": 0,
+    "n_total": 7,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780507830732_emswr",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Deletes from Section 9.3 \", representations, covenants, indemnities, Service Level Agreement obligations, privacy/data security obligations, no-training obligations, malware commitments, and DPA obligations\".",
+        "justification": "Section 9.3 (p-071) contains no tracked deletion of the listed representation, covenant, SLA, privacy, and DPA language."
+      },
+      {
+        "rubric_id": "rubric_1780508137168_94bw4",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Deletes from Section 8.1 \"; (b) AgentCo's breach of its representations, warranties, covenants, or obligations under this Agreement;\".",
+        "justification": "Section 8.1 (p-047) has no tracked deletion of the '(b) AgentCo's breach of its representations...' clause."
+      },
+      {
+        "rubric_id": "rubric_1780508195855_dbgh2",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Deletes from Section 8.1 \"(c) AgentCo's breach of applicable law;\".",
+        "justification": "Section 8.1 (p-047) has no tracked deletion of '(c) AgentCo's breach of applicable law;'."
+      },
+      {
+        "rubric_id": "rubric_1780508256318_9sgep",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Inserts in Section 10 a super cap of five times the aggregate amounts paid by LargeCo to AgentCo in the twelve months immediately preceding the event giving rise to the claim for breaches of confidentiality. ",
+        "justification": "Section 10.2 (p-074) contains no inserted super cap of five times the twelve-month fees for confidentiality breaches."
+      },
+      {
+        "rubric_id": "rubric_1780508655236_hh2mn",
+        "verdict": "FAIL",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 11.7 the insertion of \"providers acting solely to host or store the Service, neither AgentCo nor its\". ",
+        "justification": "The LargeCo insertions at p-087 ('providers acting solely to host or store the Service', 'neither AgentCo nor its') remain as untouched tracked insertions, not struck."
+      },
+      {
+        "rubric_id": "rubric_1780508768719_f8xh3",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Deletes in Section 11.6 the insertion of \", provided that AgentCo will not use Usage Data to train, build, fine-tune, or evaluate any AI model except as expressly permitted by Customer in writing\".",
+        "justification": "The ', provided that AgentCo will not use Usage Data to train...' insertion at p-086 remains unstruck; no tracked deletion of it appears."
+      },
+      {
+        "rubric_id": "rubric_1780509764453_fg3pw",
+        "verdict": "FAIL",
+        "weight": 4,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Replaces in Exhibit A, Section 7.1 \"best efforts\" with \"commercially reasonable efforts\". ",
+        "justification": "The phrase 'best efforts' does not appear in Exhibit A \u00a77.1 of the redline, so no replacement with 'commercially reasonable efforts' exists."
+      }
+    ]
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "task_id": 112,
+  "scenario_id": 2,
+  "side": "A",
+  "level": 4,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.4925373134328358,
+    "earned_weight": 33,
+    "penalty_weight": 0,
+    "total_weight": 67,
+    "n_pass": 5,
+    "n_total": 10,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780090680657_728le",
+        "verdict": "PASS",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts insertion of Preamble.",
+        "justification": "LargeCo's preamble insertions at p-002 remain intact with no contradicting tracked change from AgentCo."
+      },
+      {
+        "rubric_id": "rubric_1780101645079_sm2qz",
+        "verdict": "FAIL",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2.7 the addition of \"provided by Customer\" and \"provided by the Service\".",
+        "justification": "The 'provided by Customer' and 'provided by the Service' insertions in \u00a72.7 (p-014) are not struck through or rejected."
+      },
+      {
+        "rubric_id": "rubric_1780101762220_6bfrz",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2.9 the insertion of the definition for \"Customer Data\". ",
+        "justification": "The inserted 'Customer Data' definition in \u00a72.9 (p-017) remains unstruck; no tracked deletion rejects it."
+      },
+      {
+        "rubric_id": "rubric_1780101856895_lu531",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Replaces in Section 2.16 definition of \"Intellectual Property\" as proprietary or intellectual property rights with intellectual and industrial property rights\"",
+        "justification": "\u00a72.16 'Intellectual Property' (p-026) still reads 'proprietary or intellectual property rights'; no replacement with 'intellectual and industrial property rights'."
+      },
+      {
+        "rubric_id": "rubric_1780102928407_gu2wc",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 7.1 insertion of \"Customer may terminate this Agreement upon thirty (30) days\u2019 written notice to AgentCo, so long as all outstanding Fees for work completed prior to the termination date, including the $40,000 implementation fee, become immediately due and payable, with no right to refund.\"",
+        "justification": "The \u00a77.1 termination-for-convenience insertion (p-053) is left intact, with AgentCo's comment accepting it and no contradicting tracked change."
+      },
+      {
+        "rubric_id": "rubric_1780103606714_ejd2g",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 8.1 the addition of a breach of Applicable law, breach of confidentiality, and gross negligence or willful misconduct indemnification. ",
+        "justification": "Operative \u00a78.1 (p-059) is IP-only with no applicable-law, confidentiality, or gross negligence indemnity, consistent with cmt-347's rejection."
+      },
+      {
+        "rubric_id": "rubric_1780168783837_lbv3c",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 8.1  the addition of \"and each of their respective parents, subsidiaries, affiliates, sponsors, advertising agencies...clients, customers, successors, and assigns.",
+        "justification": "Operative \u00a78.1 (p-059) limits the indemnified group to Customer's organization, omitting the affiliates, sponsors, and related-party language, per cmt-347."
+      },
+      {
+        "rubric_id": "rubric_1780103795158_rduad",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 8.1 the insertion of \"and such modification was without AgentCo\u2019s knowledge or consent\".",
+        "justification": "The 'without AgentCo's knowledge or consent' insertion is absent from \u00a78.1 (p-059) rather than accepted; the clause has no such language."
+      },
+      {
+        "rubric_id": "rubric_1780104041354_ognyj",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 8.1 the addition of \", except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably contemplated for the use of the Service.\"",
+        "justification": "The 'except as otherwise expressly stated... necessary or reasonably contemplated' addition is not in operative \u00a78.1 (p-059), so it is effectively rejected."
+      },
+      {
+        "rubric_id": "rubric_1780104678824_xmpyl",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 10.1 the insertion of \"Other than the parties\u2019 obligations under Section 8 (Indemnification),  Section 11.5 (Confidentiality), and a party\u2019s breach of its data and information security obligations as set forth herein,\".",
+        "justification": "LargeCo's carve-out insertion at \u00a710.1 (p-067) remains unstruck and accepted, with no tracked rejection of its Section 8, 11.5, or data-security language."
+      }
+    ]
+  }
+}

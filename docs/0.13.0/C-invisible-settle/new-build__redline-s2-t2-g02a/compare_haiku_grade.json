@@ -1,0 +1,219 @@
+{
+  "task_id": 78,
+  "scenario_id": 2,
+  "side": "A",
+  "level": 2,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.504424778761062,
+    "earned_weight": 57,
+    "penalty_weight": 0,
+    "total_weight": 113,
+    "n_pass": 12,
+    "n_total": 22,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1779800527835_4qbl5",
+        "verdict": "PASS",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts  in Section 1.1  insertion of \"(as defined herein)\"",
+        "justification": "\"(as defined herein)\" appears untracked in \u00a71.1 with no strikethrough or contradicting change."
+      },
+      {
+        "rubric_id": "rubric_1779801532601_39ig7",
+        "verdict": "PASS",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Section 1.2 the replacement of \"Addendum\" with \"Agreement\".",
+        "justification": "\u00a71.2 reads \"Agreement\" with no tracked change against it, so the replacement is left in place."
+      },
+      {
+        "rubric_id": "rubric_1779801750100_fsvps",
+        "verdict": "FAIL",
+        "weight": 6,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 1.3 the insertion of  \"shall comply and provide the Service in accordance with all applicable law, the DPA, this Agreement (including without limitation the Service Level Agreement (\u201cSLA\u201d) attached hereto as Exhibit B), and as further set forth in an Order Form.\"",
+        "justification": "\u00a71.3 strikes \"without limitation\" and adds exclusive-remedy language to the opposing insertion, modifying it rather than accepting it."
+      },
+      {
+        "rubric_id": "rubric_1779802877469_lm2e9",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Replaces in Section 1.3 \"AgentCo\" with \"Both Parties\".",
+        "justification": "\u00a71.3 still reads \"AgentCo shall comply\" with no tracked replacement of AgentCo with \"Both Parties.\""
+      },
+      {
+        "rubric_id": "rubric_1779803513307_wi1zv",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts new Section 2.13 \u201cOrder Form\u201d  definition.",
+        "justification": "New \u00a72.13 \"Order Form\" definition appears untracked and intact."
+      },
+      {
+        "rubric_id": "rubric_1779804274540_c9pnk",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 2.13 the deletion of the definition of Protected Health Information.",
+        "justification": "No tracked deletion of a Protected Health Information definition appears in \u00a72.13 or elsewhere; the redline does not reflect the deletion."
+      },
+      {
+        "rubric_id": "rubric_1779804499638_1qvud",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Section 3.1 the insertion of \"For clarity, the Service made available to Customer under this Agreement consists solely of AgentCo\u2019s \u2018TalentFlow\u2019 functionality for HR and recruiting teams, as further described in the applicable Order Form, and will not include any integrations, custom workflows, or additional features unless and until the Parties execute a mutually agreed written order form or amendment \"",
+        "justification": "\u00a73.1 \"For clarity\" sentence is retained but altered: \"integrations\" struck and expanded exclusion list and security-review language inserted."
+      },
+      {
+        "rubric_id": "rubric_1779804937361_avla7",
+        "verdict": "FAIL",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 3.1 the insertion of \"worldwide\" and \"royalty-free, and fully paid up\"",
+        "justification": "\u00a73.1 keeps \"worldwide\" and \"royalty-free\" but strikes \"up\" and the comma in \"fully paid up,\" altering the inserted language."
+      },
+      {
+        "rubric_id": "rubric_1779805291033_0qvb1",
+        "verdict": "PASS",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts as Section 3.4 insertion of a \"No PHI or Highly Regulated Data\" clause.",
+        "justification": "\u00a73.4 \"No PHI or Highly Regulated Data\" clause appears untracked and intact."
+      },
+      {
+        "rubric_id": "rubric_1779818553133_7nx6s",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Section 4.1  the addition of \"AgentCo will access and process Customer\u2019s Content solely as necessary to provide and support the Service to Customer under this Agreement and the Data Processing Addendum, and for no other purpose.\"",
+        "justification": "\u00a74.1 tracked insertion \"AgentCo will access and process Customer's Content solely as necessary...for no other purpose\" is left unstruck."
+      },
+      {
+        "rubric_id": "rubric_1779822863031_2t4h8",
+        "verdict": "PASS",
+        "weight": 3,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts as Section  4.3 a  \"No Model Training or Productization\" clause.",
+        "justification": "\u00a74.3 \"No Model Training or Productization\" clause appears untracked and intact."
+      },
+      {
+        "rubric_id": "rubric_1779823208607_krxil",
+        "verdict": "PASS",
+        "weight": 3,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 5.2 the addition of \"worldwide, revocable\".",
+        "justification": "\u00a75.2 shows \", worldwide, revocable\" struck as a tracked deletion, rejecting the addition."
+      },
+      {
+        "rubric_id": "rubric_1779824295612_b9xmw",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 5.2 the addition of \"AgentCo will not sell, disclose, or otherwise use Customer Data for any other purpose, including for targeted advertising or profiling\".",
+        "justification": "\u00a75.2 sentence prohibiting sale, disclosure, or other use of Customer Data for other purposes is untracked and intact."
+      },
+      {
+        "rubric_id": "rubric_1779824596153_477vn",
+        "verdict": "FAIL",
+        "weight": 4,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Rejects in Section 6.3 the insertion of \"Customer may withhold payment of any amounts it reasonably and in good faith disputes, provided it notifies AgentCo in writing and describes the basis for the dispute. \"",
+        "justification": "\u00a76.3 withholding-for-dispute sentence appears untracked with no strikethrough or other rejecting change."
+      },
+      {
+        "rubric_id": "rubric_1779824903915_af4fp",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Section 6.3 the insertion of \"AgentCo may suspend Customer\u2019s access to the Service only if (a) any undisputed Fee remains past due for more than thirty (30) days after written notice, and (b) Customer has not cured such non\u2011payment within that notice period. \"",
+        "justification": "\u00a76.3 cure-period suspension sentence (a)/(b) appears untracked and intact."
+      },
+      {
+        "rubric_id": "rubric_1779825352460_nxqoo",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Inserts in Section 7.2 \"or (iii) for convenience\".",
+        "justification": "\u00a77.2 contains no inserted \"or (iii) for convenience\"; \"for convenience\" was added only in \u00a77.1."
+      },
+      {
+        "rubric_id": "rubric_1779826104771_d96i7",
+        "verdict": "FAIL",
+        "weight": 4,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 8.1 insertion of \"or (ii) AgentCo\u2019s failure to comply with its data security obligations under this Agreement caused a Personal Data Breach (as defined in the DPA),  \"",
+        "justification": "\u00a78.1 modifies the opposing data-breach language, changing \"failure to comply with\" to \"breach of\" and restructuring the clause."
+      },
+      {
+        "rubric_id": "rubric_1779826227339_fgefr",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Section 8.2 the insertion of \"use of the Service in violation of this Agreement or applicable law, or (ii) Customer Data, that, in the form provided by Customer, infringes any third party\u2019s intellectual property rights, \"",
+        "justification": "\u00a78.2 retains the opposing language only within a restructured vendor parenthetical, not as the inserted text accepted as drafted."
+      },
+      {
+        "rubric_id": "rubric_1779828992238_vr6gf",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Inserts in Section 8.2 \"or (ii) use of Customer Input and Customer Data.\"",
+        "justification": "\u00a78.2 contains no insertion of \"or (ii) use of Customer Input and Customer Data.\""
+      },
+      {
+        "rubric_id": "rubric_1779828873879_10fz8",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 9.1 the change of language from \"warrants\" to \"represents, to the best of Customer's knowledge.\"",
+        "justification": "\u00a79.1 tracked change strikes \"represents, to the best of Customer's knowledge\" and reinserts \"warrants,\" rejecting the knowledge qualifier."
+      },
+      {
+        "rubric_id": "rubric_1779842037542_xx1z8",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts a new Section 9.2 in which AgentCo represents and warrants the Services will perform in all material respects.",
+        "justification": "\u00a79.2 AgentCo warranty that the Service will perform in all material respects appears untracked and intact."
+      },
+      {
+        "rubric_id": "rubric_1779842675674_xj038",
+        "verdict": "PASS",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 10.3 the insertion of the Limitation of Liability exclusions. ",
+        "justification": "\u00a710.3 adds a 2x-fees cap on the carve-outs and strikes the indemnification carve-out, modifying the exclusions rather than accepting them."
+      }
+    ]
+  }
+}

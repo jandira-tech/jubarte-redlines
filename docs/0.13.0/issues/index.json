@@ -1,0 +1,209 @@
+[
+ {
+  "n": 1,
+  "title": "edits inside another author's insertion (land #1136)",
+  "area": "edit",
+  "branch": "fix/edit-inside-ins-1136",
+  "step": "E1",
+  "label": "bug",
+  "file": "issues/plan-01.md"
+ },
+ {
+  "n": 2,
+  "title": "`strike` and `restore` (visible rejects)",
+  "area": "edit",
+  "branch": "feat/edit-strike-restore",
+  "step": "E2",
+  "label": "enhancement",
+  "file": "issues/plan-02.md"
+ },
+ {
+  "n": 3,
+  "title": "`--skip-failed`, the `next:` line and the output digest",
+  "area": "edit",
+  "branch": "feat/edit-skip-failed",
+  "step": "E3",
+  "label": "enhancement",
+  "file": "issues/plan-03.md"
+ },
+ {
+  "n": 4,
+  "title": "refusal hints that name both decisions and the visible route (#1108)",
+  "area": "edit",
+  "branch": "fix/edit-inside-ins-1136",
+  "step": "E1",
+  "label": "bug",
+  "file": "issues/plan-04.md"
+ },
+ {
+  "n": 5,
+  "title": "option conflicts, and JSON-shaped usage errors (#1158)",
+  "area": "read",
+  "branch": "fix/read-option-conflicts-1158",
+  "step": "E4",
+  "label": "bug",
+  "file": "issues/plan-05.md"
+ },
+ {
+  "n": 6,
+  "title": "`validate --baseline`, and warnings printed once",
+  "area": "validate",
+  "branch": "feat/validate-baseline",
+  "step": "E4",
+  "label": "enhancement",
+  "file": "issues/plan-06.md"
+ },
+ {
+  "n": 7,
+  "title": "markers stay beside a new insertion (#1156)",
+  "area": "edit",
+  "branch": "fix/markers-beside-insertion-1156",
+  "step": "E4",
+  "label": "bug",
+  "file": "issues/plan-07.md"
+ },
+ {
+  "n": 8,
+  "title": "plan schema errors that teach, and three aliases",
+  "area": "edit",
+  "branch": "feat/plan-errors-aliases",
+  "step": "E5",
+  "label": "enhancement",
+  "file": "issues/plan-08.md"
+ },
+ {
+  "n": 9,
+  "title": "summary-first reading",
+  "area": "changes",
+  "branch": "feat/summary-reads",
+  "step": "E10",
+  "label": "enhancement",
+  "file": "issues/plan-09.md"
+ },
+ {
+  "n": 10,
+  "title": "report what a settle removes; replies in tracked-deleted text (#1159)",
+  "area": "edit",
+  "branch": "fix/settle-reports-1159",
+  "step": "E6",
+  "label": "bug",
+  "file": "issues/plan-10.md"
+ },
+ {
+  "n": 11,
+  "title": "one notion of a change",
+  "area": "changes",
+  "branch": "feat/one-change-notion",
+  "step": "E7",
+  "label": "enhancement",
+  "file": "issues/plan-11.md"
+ },
+ {
+  "n": 12,
+  "title": "`replace` keeps the formatting it keeps; lenient anchors keep the document's characters",
+  "area": "edit",
+  "branch": "fix/replace-keeps-formatting",
+  "step": "E8",
+  "label": "bug",
+  "file": "issues/plan-12.md"
+ },
+ {
+  "n": 13,
+  "title": "insert into an empty paragraph",
+  "area": "edit",
+  "branch": "fix/insert-empty-paragraph",
+  "step": "E6",
+  "label": "bug",
+  "file": "issues/plan-13.md"
+ },
+ {
+  "n": 14,
+  "title": "stable comment ids; no editing another author's comment",
+  "area": "edit",
+  "branch": "fix/stable-comment-ids",
+  "step": "E6",
+  "label": "bug",
+  "file": "issues/plan-14.md"
+ },
+ {
+  "n": 15,
+  "title": "`insert_paragraph` with `style` copies nothing else; structural ops emitted directly",
+  "area": "edit",
+  "branch": "fix/structural-direct-emission",
+  "step": "E9",
+  "label": "bug",
+  "file": "issues/plan-15.md"
+ },
+ {
+  "n": 16,
+  "title": "numbering side effects",
+  "area": "edit",
+  "branch": "fix/numbering-side-effects",
+  "step": "E9",
+  "label": "bug",
+  "file": "issues/plan-16.md"
+ },
+ {
+  "n": 17,
+  "title": "view attribution (#1111)",
+  "area": "read",
+  "branch": "fix/view-attribution-1111",
+  "step": "E7",
+  "label": "bug",
+  "file": "issues/plan-17.md"
+ },
+ {
+  "n": 18,
+  "title": "settled-id messages, and resolving through the mapping",
+  "area": "edit",
+  "branch": "fix/settled-id-messages",
+  "step": "E5",
+  "label": "bug",
+  "file": "issues/plan-18.md"
+ },
+ {
+  "n": 19,
+  "title": "a new paragraph beside a pending-deleted mark",
+  "area": "edit",
+  "branch": "fix/paragraph-beside-deleted-mark",
+  "step": "E9",
+  "label": "bug",
+  "file": "issues/plan-19.md"
+ },
+ {
+  "n": 20,
+  "title": "small fixes from the repro (tabs in `changes --json`)",
+  "area": "changes",
+  "branch": "fix/changes-tabs-b12",
+  "step": "E9",
+  "label": "bug",
+  "file": "issues/plan-20.md"
+ },
+ {
+  "n": 21,
+  "title": "revision-aware compare (three-way)",
+  "area": "compare",
+  "branch": "feat/compare-three-way",
+  "step": "E11",
+  "label": "enhancement",
+  "file": "issues/plan-21.md"
+ },
+ {
+  "n": 22,
+  "title": "help that fits a clock",
+  "area": "cli",
+  "branch": "feat/help-plan-errors",
+  "step": "E10",
+  "label": "enhancement",
+  "file": "issues/plan-22.md"
+ },
+ {
+  "n": 23,
+  "title": "skill template (bench side)",
+  "area": "docs",
+  "branch": "(bench side: jubarte-syntax / neurotic_docx_bench)",
+  "step": "E10",
+  "label": "documentation",
+  "file": "issues/plan-23.md"
+ }
+]
