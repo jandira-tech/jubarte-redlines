@@ -92,7 +92,7 @@ fn a_note_without_a_number_after_a_change_keeps_its_old_meaning() {
     assert!(back.contains(": why<<}"), "{back}");
     assert!(back.contains("{++two++}{>>r"), "{back}");
     assert!(
-        back.contains(" Redline (2026-01-02T03:04:05Z)<<}"),
+        back.contains(" Jubarte (2026-01-02T03:04:05Z)<<}"),
         "{back}"
     );
 }

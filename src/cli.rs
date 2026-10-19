@@ -157,7 +157,7 @@ pub enum CommentsArg {
 pub struct EditOptions {
     /// Author of the changes and comments (operation flags; a plan names
     /// its own).
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
+    #[arg(short = 'a', long, value_name = "NAME", default_value = "Jubarte")]
     pub author: String,
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
@@ -547,7 +547,7 @@ pub struct CompareArgs {
     pub output: Option<PathBuf>,
 
     /// Author name recorded on the revisions.
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
+    #[arg(short = 'a', long, value_name = "NAME", default_value = "Jubarte")]
     pub author: String,
 
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
@@ -840,7 +840,7 @@ pub enum Command {
             short = 'a',
             long,
             value_name = "NAME",
-            default_value = "Redline",
+            default_value = "Jubarte",
             help_heading = "Paragraph patch"
         )]
         author: String,
@@ -2199,7 +2199,7 @@ pub struct MarkdownArgs {
     pub resource_path: Option<PathBuf>,
     /// Markdown to Word: author of the tracked changes and comments that
     /// name none [default: the front matter's `author:`, else the
-    /// --reference-doc's creator, else Redline].
+    /// --reference-doc's creator, else Jubarte].
     #[arg(short = 'a', long, value_name = "NAME")]
     pub author: Option<String>,
     /// Markdown to Word: timestamp (ISO 8601) of the tracked changes and
@@ -3036,7 +3036,7 @@ fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap:
 /// string paths, defaults and null optional fields. Nested subcommands use
 /// `{command, args}`. Compare inputs include resolved named-over-positional
 /// values; compare's output path stays null (the host picks it), while the
-/// author is `Redline` (D12) and the date now (D17), as for the binary.
+/// author is `Jubarte` (D12) and the date now (D17), as for the binary.
 /// `edit` and `add` carry where they write, resolved: `output` for the one
 /// document or `out_dir` for the bundle, both null while recording into a plan. Informational/error results contain
 /// `{exit_code, stream, text}`.

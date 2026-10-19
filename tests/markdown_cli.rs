@@ -320,8 +320,8 @@ fn convert_writes_word_back_as_critic_markup() {
     ));
     // The substitution's note names its deletion's id, then its
     // insertion's: Word writes the insertion first.
-    let critic = "Payment is due in {~~30~>45~~}{>>r2+1 Redline (1970-01-01T00:00:00Z)<<} days.\
-                  {>>Redline (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
+    let critic = "Payment is due in {~~30~>45~~}{>>r2+1 Jubarte (1970-01-01T00:00:00Z)<<} days.\
+                  {>>Jubarte (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
     // By default plain Markdown names its pages; the text after the marker
     // is exactly what --no-page-markers writes.
     assert_eq!(
@@ -488,7 +488,7 @@ fn diff_wraps_at_72_columns_unless_told_otherwise() {
 }
 
 #[test]
-fn the_owner_is_redline_whatever_git_says() {
+fn the_owner_is_jubarte_whatever_git_says() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
     let header = |name: Option<&str>| {
@@ -497,13 +497,13 @@ fn the_owner_is_redline_whatever_git_says() {
     };
     let named = header(Some("Ana Lima"));
     let fields: Vec<&str> = named.split('\t').collect();
-    assert_eq!(fields[..2], ["+++ b/new.md", "Redline"], "{named}");
+    assert_eq!(fields[..2], ["+++ b/new.md", "Jubarte"], "{named}");
     // YYYY-MM-DDTHH:MM:SSZ, this year or later.
     let date = fields[2];
     assert_eq!(date.len(), 20, "{date}");
     assert!(date.ends_with('Z') && &date[10..11] == "T", "{date}");
     assert!(date[..4].parse::<u32>().unwrap() >= 2026, "{date}");
-    assert!(header(None).contains("\tRedline\t"));
+    assert!(header(None).contains("\tJubarte\t"));
 }
 
 #[test]

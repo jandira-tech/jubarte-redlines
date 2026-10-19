@@ -593,7 +593,7 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
     for args, message in (
         (["-p", "p0", "--delete", "--out-dir", "d"], "--out-dir takes effect when the plan is applied"),
         (["--author", "Bob"], "--author belongs to recorded operations"),
-        (["-p", "p0", "--delete", "--author", "Bob"], 'the plan\'s author is "Redline"'),
+        (["-p", "p0", "--delete", "--author", "Bob"], 'the plan\'s author is "Jubarte"'),
         (["-p", "p0", "--delete", "--revisions", "word"], "--revisions takes effect when the plan is applied"),
         (["--author", "Redline"], "--author belongs to recorded operations"),
     ):

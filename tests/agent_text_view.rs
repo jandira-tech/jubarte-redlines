@@ -3202,24 +3202,24 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     }
     assert!(out.contains("\nsource: base.edit/redline.docx\n"), "{out}");
     assert!(
-        out.contains("\nrange: changed by @R (p0, p1, p2) of p0-p2\n"),
+        out.contains("\nrange: changed by @J (p0, p1, p2) of p0-p2\n"),
         "{out}"
     );
     assert!(
-        out.contains("R: Redline") && out.contains("# 4 revisions, 2026-10-01T09:00:00Z"),
+        out.contains("J: Jubarte") && out.contains("# 4 revisions, 2026-10-01T09:00:00Z"),
         "{out}"
     );
     captures(
         &out,
-        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>r\d+ @R<<\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>r\d+ @J<<\}\n",
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @J<<\} days of receipt\.\n",
     );
     captures(
         &out,
-        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>r\d+ @R<<\} ?\.\n",
+        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>r\d+ @J<<\} ?\.\n",
     );
     assert!(!out.contains("\n@@ "), "the patch is not printed: {out}");
     let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
@@ -3339,11 +3339,11 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"within thirty\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days",
+        r"within thirty\{\+\+ \(30\)\+\+\}\{>>r\d+ @J<<\} days",
     );
     captures(
         &out,
-        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>r\d+ @R<<\}Late amounts",
+        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>r\d+ @J<<\}Late amounts",
     );
     let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
     assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
@@ -3373,7 +3373,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
+        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @J<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
     );
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(
@@ -3488,7 +3488,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
+        out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @J: Add a fee schedule.<<}\n"),
         "{out}"
     );
     let out = ok(
@@ -3507,7 +3507,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     let gone = regex::Regex::new(r"\bc[01]\b").unwrap();
     assert!(!gone.is_match(&out), "the thread is gone: {out}");
     assert!(
-        out.contains("\nrange: changed by @R (p0) of p0-p2\n") && out.contains("c2 @R"),
+        out.contains("\nrange: changed by @J (p0) of p0-p2\n") && out.contains("c2 @J"),
         "{out}"
     );
     for bad in [
@@ -3562,12 +3562,12 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         dir.path(),
     );
     assert!(
-        after.contains("range: changed by @R (") && after.contains("p2"),
+        after.contains("range: changed by @J (") && after.contains("p2"),
         "{after}"
     );
     captures(
         &after,
-        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>r\d+ @R<<\}\n",
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>r\d+ @J<<\}\n",
     );
     let before = ok(
         &[
@@ -3589,7 +3589,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>r\d+ @R<<\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>r\d+ @J<<\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
@@ -3627,12 +3627,12 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         "editing mode writes no redline"
     );
     assert!(
-        out.contains("\nrange: changed by @R (p1) of p0-p2\n"),
+        out.contains("\nrange: changed by @J (p1) of p0-p2\n"),
         "{out}"
     );
     captures(
         &out,
-        r"<!-- p1 rev r\d+\+\d+ @R -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
+        r"<!-- p1 rev r\d+\+\d+ @J -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
     );
 
     let (noted, noted_err) = ok_both(
@@ -3653,7 +3653,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     assert!(noted_err.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted_err}");
     captures(
         &noted,
-        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>r\d+ @R<<\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>r\d+ @J<<\}\n",
     );
     let (_, marks) = ok_both(
         &[
@@ -3711,9 +3711,9 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @J<<\} days of receipt\.\n",
     );
-    assert!(out.contains("R: Redline"), "{out}");
+    assert!(out.contains("J: Jubarte"), "{out}");
     // The digest is the in-memory redline's, neither input's.
     let digest = captures(&out, r"\nsha256: ([0-9a-f]{64})\n")[0].to_string();
     for input in ["old.docx", "new.docx"] {

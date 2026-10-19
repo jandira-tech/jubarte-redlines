@@ -165,7 +165,7 @@ pub type ImageLoader<'a> = &'a dyn Fn(&str) -> Option<Vec<u8>>;
 /// How [`markdown_to_docx`] writes a Markdown document to a `.docx`.
 /// Defaults to Word-faithful settings: no reference document,
 /// `critic = true` (CriticMarkup is read as tracked changes),
-/// `track_changes = All`, author `"Redline"`, date pinned to
+/// `track_changes = All`, author `"Jubarte"`, date pinned to
 /// `1970-01-01T00:00:00Z` (so the same Markdown writes the same bytes),
 /// no image loader, US Letter page size.
 #[derive(Clone)]
@@ -219,7 +219,7 @@ impl Default for DocxOptions<'_> {
             reference: None,
             critic: true,
             track_changes: TrackChanges::All,
-            author: "Redline".to_string(),
+            author: "Jubarte".to_string(),
             date: crate::document_comparer::DEFAULT_DATE.to_string(),
             author_fixed: false,
             date_fixed: false,
@@ -562,7 +562,7 @@ impl Select {
 /// The author and timestamp a `.docx` gives the changes and comments that
 /// name none, when no parameter does: its first `dc:creator` and its
 /// `dcterms:created`. `None` for each it does not tell (or bytes that are
-/// no package); the caller falls back to `Redline` and
+/// no package); the caller falls back to `Jubarte` and
 /// [`crate::document_comparer::DEFAULT_DATE`].
 ///
 /// ```
@@ -578,7 +578,7 @@ pub fn docx_stamp(docx: &[u8]) -> (Option<String>, Option<String>) {
 /// (`author:`; `last_modified:`, else `modified:`, `date:`, `created:`),
 /// else the reference `.docx`'s creator and creation time ([`docx_stamp`]),
 /// each on its own. `None` for each neither tells: the caller falls back
-/// to `Redline` and now, as `jubarte convert` does.
+/// to `Jubarte` and now, as `jubarte convert` does.
 ///
 /// ```
 /// let md = "---\nauthor: Ann\ncreated: 2026-03-02\n---\n\nText.\n";

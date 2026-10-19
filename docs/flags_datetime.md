@@ -20,7 +20,7 @@ Read, edit, compare and render Word documents
 | `-b, --original` |  | <FILE> |  |  | hidden | Original/base document (overrides the positional ORIGINAL) |
 | `-m, --modified` |  | <FILE> |  |  | hidden | Modified document (overrides the positional MODIFIED) |
 | `-o, --output` |  | <FILE> |  |  | hidden | Write the redline to FILE instead of printing its agent view; the extension picks the format: .docx (also any other), .md (the agent view; CriticMarkup when both documents are Markdown), .pdf, .png (one file per page) or .json (the snapshot) |
-| `-a, --author` |  | <NAME> | Redline |  | hidden | Author name recorded on the revisions |
+| `-a, --author` |  | <NAME> | Jubarte |  | hidden | Author name recorded on the revisions |
 | `-d, --datetime` |  | <ISO8601> |  |  | hidden | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--force` |  |  | false |  | hidden | Overwrite the output file if it already exists |
 | `--detail-threshold` |  | <RATIO> |  |  | hidden | Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15] |
@@ -60,7 +60,7 @@ Compare documents: print the redline as the agent view, or write it with -o
 | `-b, --original` |  | <FILE> |  |  |  | Original/base document (overrides the positional ORIGINAL) |
 | `-m, --modified` |  | <FILE> |  |  |  | Modified document (overrides the positional MODIFIED) |
 | `-o, --output` |  | <FILE> |  |  |  | Write the redline to FILE instead of printing its agent view; the extension picks the format: .docx (also any other), .md (the agent view; CriticMarkup when both documents are Markdown), .pdf, .png (one file per page) or .json (the snapshot) |
-| `-a, --author` |  | <NAME> | Redline |  |  | Author name recorded on the revisions |
+| `-a, --author` |  | <NAME> | Jubarte |  |  | Author name recorded on the revisions |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
 | `--detail-threshold` |  | <RATIO> |  |  |  | Word-match detail, from 0 to 1 [default: 0.02; powertools: 0.15] |
@@ -162,7 +162,7 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `--no-critic` |  |  | false |  |  | Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text |
 | `--reference-doc` |  | <FILE> |  |  |  | Markdown to Word: take styles, numbering, page setup, headers and footers from this .docx (pandoc's --reference-doc) |
 | `--resource-path` |  | <DIR> |  |  |  | Markdown to Word: where images are found [default: the Markdown file's directory] |
-| `-a, --author` |  | <NAME> |  |  |  | Markdown to Word: author of the tracked changes and comments that name none [default: the front matter's `author:`, else the --reference-doc's creator, else Redline] |
+| `-a, --author` |  | <NAME> |  |  |  | Markdown to Word: author of the tracked changes and comments that name none [default: the front matter's `author:`, else the --reference-doc's creator, else Jubarte] |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments that carry none [default: the front matter's `last_modified:`/`modified:`/`date:`/`created:`, else the --reference-doc's creation time, else now]; pin it (`-d 1970-01-01T00:00:00Z`) for reproducible output |
 | `--page` |  | <SIZE> | letter | letter, a4 |  | Markdown to Word: the page size when there is no --reference-doc (one-inch margins either way); a reference's page setup wins |
 | `--tracking` |  | <SWITCH> |  | on, off |  | Markdown to Word: turn Word's Track Changes on or off in the .docx written, whatever the Markdown's `track_changes:` key says [default: the key; without one, the --reference-doc's setting, else off] |
@@ -198,7 +198,7 @@ Review differences as GitHub, word, normal, context or side-by-side text
 | `-t, --to` |  | <FORMAT> |  | docx, md=markdown, pdf, png, json | under "Formats" | Output format: md only (the patch, CriticMarkup or a text view are all text) |
 | `-f, --from` |  | <FORMAT> |  | docx, md, markdown | under "Formats" | Input format of both documents [default: from each file] |
 | `--force` |  |  | false |  | under "Review" | Overwrite the output file if it already exists |
-| `-a, --author` |  | <NAME> | Redline |  | under "Paragraph patch" | Who made the changes: the patch's owner |
+| `-a, --author` |  | <NAME> | Jubarte |  | under "Paragraph patch" | Who made the changes: the patch's owner |
 | `-d, --datetime` |  | <ISO8601> |  |  | under "Paragraph patch" | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, and no summary or view of what `edit`/`add` changed. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
@@ -242,7 +242,7 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
-| `-a, --author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
+| `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own) |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
@@ -274,7 +274,7 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `--before` |  |  |  |  | append | A new paragraph before WHERE instead of after it |
 | `--comment` |  |  |  |  | append | A comment on the whole paragraph (with --anchor the comment sits on the anchor and this flag is implied) |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the new paragraph's text (bold, italic, underline, highlight=yellow) or its paragraph style (Heading2) |
-| `-a, --author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
+| `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own) |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
 | `--suggesting-mode` |  |  | false |  | conflicts --editing-mode | The edits are tracked changes (the default): the file written is the redline and the view shows the marks |
 | `--editing-mode` |  |  | false |  | conflicts --suggesting-mode | The edits land directly: the file written is the result, and the view shows it with rev tags on the id lines |
@@ -428,7 +428,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--accept` | edit | `default= values=` |
 | `--accept-changes` | diff | `default=false values=` |
 | `--anchor` | edit, add | `<TEXT> default= values=` |
-| `--author` | (shorthand), compare, accept, reject, convert, diff, edit, add, comments, validate | **differs**: `-a <NAME> default= values=` on convert; `-a <NAME> default=Redline values=` on (shorthand), compare, diff, edit, add; `<NAME> default= values=` on accept, reject, comments, validate |
+| `--author` | (shorthand), compare, accept, reject, convert, diff, edit, add, comments, validate | **differs**: `-a <NAME> default= values=` on convert; `-a <NAME> default=Jubarte values=` on (shorthand), compare, diff, edit, add; `<NAME> default= values=` on accept, reject, comments, validate |
 | `--author-alias` | scrub | `<NAME> default= values=` |
 | `--before` | add | `default= values=` |
 | `--by` | (shorthand), compare, read | `<AUTHOR> default= values=` |

@@ -195,7 +195,7 @@ fn critic_markup_becomes_revisions_and_comments() {
     let xml = document_xml(&docx);
     assert_eq!(xml.matches("<w:commentRangeStart ").count(), 3);
     assert_eq!(xml.matches("<w:commentReference ").count(), 3);
-    assert!(xml.contains("w:author=\"Redline\""));
+    assert!(xml.contains("w:author=\"Jubarte\""));
     assert!(
         !xml.contains("<w:highlight"),
         "a commented highlight is the comment's range"
@@ -1094,8 +1094,8 @@ fn attributions_name_the_author_and_date_of_the_change_before_them() {
             // side (Cy's) before the deleted side (Bo's).
             r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
             r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
-            r#"w:author="Redline" w:date="2026-04-05T06:07:08+01:00""#,
-            r#"w:author="Redline" w:date="1970-01-01T00:00:00Z""#,
+            r#"w:author="Jubarte" w:date="2026-04-05T06:07:08+01:00""#,
+            r#"w:author="Jubarte" w:date="1970-01-01T00:00:00Z""#,
         ]
     );
     // Two real comments: one named, and one whose text has no date.
