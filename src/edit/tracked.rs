@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::structural;
+use super::visible;
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounts,
     ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format,
@@ -462,8 +463,13 @@ fn emit(
     // 1. Text edits and their comments, paragraph by paragraph.
     let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
     let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
+    let mut strike_comments: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
     for (i, r) in &t.resolved {
         match r {
+            Resolved::StrikeComment { para, start, end } => strike_comments
+                .entry(*para)
+                .or_default()
+                .push((*start, *end, *i)),
             Resolved::Text {
                 para,
                 start,
@@ -513,6 +519,13 @@ fn emit(
         } else {
             edits.clone()
         };
+        // A strike's comment, on the words before they are struck: their
+        // text leaves the projection with the deletion.
+        for (start, end, i) in strike_comments.remove(&para).unwrap_or_default() {
+            if let Some(&id) = comment_ids.get(&i) {
+                anchor_comment(dom, node, start, end, id);
+            }
+        }
         for edit in emission.iter().rev() {
             if matches!(
                 t.plan.operations[edit.op].kind,
@@ -570,6 +583,29 @@ fn emit(
             let (first, last) = (t.paragraph_nodes[*para], t.paragraph_nodes[*last]);
             anchor_span(&mut t.opened.dom, first, last, id);
         }
+    }
+    // 1c. Restores: their deletion stays, and our insertion of a copy of
+    // its runs follows it.
+    for (i, r) in &t.resolved {
+        let Resolved::Restore { para, wid, .. } = r else {
+            continue;
+        };
+        let node = t.paragraph_nodes[*para];
+        let dom = &mut t.opened.dom;
+        let Some(del) = visible::revision_in(dom, node, "del", wid) else {
+            continue;
+        };
+        let ours = stamp.container(dom, W::ins());
+        for copy in visible::copy_runs(dom, del) {
+            dom.add(ours, copy);
+        }
+        let runs = dom.elements(ours, None);
+        if let (Some(&first), Some(&last), Some(&id)) =
+            (runs.first(), runs.last(), comment_ids.get(i))
+        {
+            visible::comment_around(dom, first, last, id);
+        }
+        place_beside(dom, del, ours, stamp);
     }
     // 2. Paragraph and table insertions: every run, row and paragraph mark
     // inserted.
@@ -1254,6 +1290,40 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
     at
 }
 
+/// Our insertion `ours` right after deletion `del`. A deletion inside an
+/// insertion splits it there, as typing does in Word: ours follows the
+/// piece that holds the deletion, and the rest follows ours under a new id
+/// with the source attribution.
+fn place_beside(dom: &mut Dom, del: NodeId, ours: NodeId, stamp: &mut Stamp<'_>) {
+    let Some(host) = dom.parent(del).filter(|&p| dom.name_is(p, &W::ins())) else {
+        dom.add_after_self(del, ours);
+        return;
+    };
+    let children = dom.elements(host, None);
+    let at = children
+        .iter()
+        .position(|&n| n == del)
+        .map_or(children.len(), |i| i + 1);
+    let at = insertion_split_boundary(dom, &children, at, false);
+    dom.add_after_self(host, ours);
+    if at < children.len() {
+        let tail = dom.clone_subtree(host);
+        for child in dom.nodes(tail) {
+            dom.remove(child);
+        }
+        for &child in &children[at..] {
+            dom.remove(child);
+            dom.add(tail, child);
+        }
+        if let Some(origin) = stamp.insertions.get(&host).cloned() {
+            stamp.insertions.insert(tail, origin);
+        }
+        dom.set_attribute_value(tail, &W::id(), Some(&stamp.next_id.to_string()));
+        stamp.next_id += 1;
+        dom.add_after_self(ours, tail);
+    }
+}
+
 /// Empty run shells must not keep an otherwise deleted own insertion alive.
 pub(super) fn remove_empty_insertion(dom: &mut Dom, ins: NodeId) {
     for run in dom.elements(ins, Some(&W::r())) {
@@ -1543,7 +1613,7 @@ fn mark(dom: &mut Dom, paragraph: NodeId, name: XName, stamp: &mut Stamp<'_>) {
 
 /// A copy of a run's `w:rPr` for new text: without another revision's
 /// format change or mark revisions, whose ids must stay unique.
-fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
+pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
     let copy = dom.clone_subtree(rpr);
     for child in dom.elements(copy, None) {
         if dom.name_is(child, &W::r_pr_change())

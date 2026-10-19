@@ -100,6 +100,7 @@ pub fn plan_from_flags(
     let resolve_revisions = (!accept.is_empty() || !reject.is_empty()).then(|| ResolveRevisions {
         accept: side(accept),
         reject: side(reject),
+        reject_visible: false,
     });
     let existing = existing.unwrap_or_else(|| {
         if crate::changes::list_changes(source).is_ok_and(|c| !c.is_empty()) {
@@ -887,6 +888,7 @@ mod tests {
             plan.resolve_revisions = Some(ResolveRevisions {
                 accept: Some(held),
                 reject: None,
+                reject_visible: false,
             });
             let accept = recorded(Verb::Edit, &[revision("r9", true)], "Ann", "aa");
             assert!(
@@ -912,6 +914,7 @@ mod tests {
         short.resolve_revisions = Some(ResolveRevisions {
             accept: Some(ChangeFilter::ids(["r1"])),
             reject: None,
+            reject_visible: false,
         });
         let again = recorded(Verb::Edit, &[revision("r1", true)], "Ann", "aa");
         let plan = record_into(Some(short.clone()), again).unwrap();
@@ -1361,6 +1364,7 @@ mod tests {
             Some(ResolveRevisions {
                 accept: Some(ChangeFilter::ids(["r1", "r3", "r4"])),
                 reject: Some(ChangeFilter::ids(["header1.r2"])),
+                reject_visible: false,
             })
         );
         assert_eq!(built.plan.operations.len(), 1);

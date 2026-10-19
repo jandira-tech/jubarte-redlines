@@ -54,6 +54,7 @@ mod runs;
 mod sections;
 mod structural;
 mod tracked;
+mod visible;
 mod watermark;
 mod whole;
 
@@ -132,14 +133,69 @@ pub struct EditPlan {
 /// selected by both (`REVISION_CONFLICT`); both sides of a move count as
 /// one change.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "ResolveRevisionsWire", into = "ResolveRevisionsWire")]
 pub struct ResolveRevisions {
     /// Changes to accept.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept: Option<ChangeFilter>,
     /// Changes to reject (after the accepted ones).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reject: Option<ChangeFilter>,
+    /// `reject.visible`: reject them visibly instead, as our tracked
+    /// changes (a `strike` of each insertion, a `restore` of each
+    /// deletion) that Reject takes back. Needs `existing_revisions` `keep`.
+    pub reject_visible: bool,
+}
+
+/// [`ResolveRevisions`] as plans write it: `visible` inside `reject`.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolveRevisionsWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accept: Option<ChangeFilter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reject: Option<RejectWire>,
+}
+
+/// A [`ChangeFilter`] with `visible`.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RejectWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authors: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kinds: Option<Vec<ChangeKind>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    visible: bool,
+}
+
+impl From<ResolveRevisionsWire> for ResolveRevisions {
+    fn from(wire: ResolveRevisionsWire) -> Self {
+        let reject_visible = wire.reject.as_ref().is_some_and(|r| r.visible);
+        Self {
+            accept: wire.accept,
+            reject: wire.reject.map(|r| ChangeFilter {
+                ids: r.ids,
+                authors: r.authors,
+                kinds: r.kinds,
+            }),
+            reject_visible,
+        }
+    }
+}
+
+impl From<ResolveRevisions> for ResolveRevisionsWire {
+    fn from(selection: ResolveRevisions) -> Self {
+        Self {
+            accept: selection.accept,
+            reject: selection.reject.map(|r| RejectWire {
+                ids: r.ids,
+                authors: r.authors,
+                kinds: r.kinds,
+                visible: selection.reject_visible,
+            }),
+        }
+    }
 }
 
 /// Where a source paragraph id went when the plan's revisions were settled.
@@ -434,6 +490,35 @@ pub enum OperationKind {
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
         #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
+    },
+    /// Reject another author's insertion visibly: our tracked deletion of
+    /// its words, nested inside it, so Word shows it struck under our name
+    /// and Reject of our change gives it back. Needs `existing_revisions`
+    /// `keep`.
+    Strike {
+        /// The insertion, as `changes` lists it (`r366`, `header1.r3`).
+        revision: String,
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment on the struck words; blank is none.
+        comment: Option<String>,
+    },
+    /// Reject another author's deletion visibly: their deletion stays, and
+    /// our tracked insertion right after it holds a copy of its words,
+    /// formatting included. Needs `existing_revisions` `keep`.
+    Restore {
+        /// The deletion, as `changes` lists it (`r12`, `header1.r3`).
+        revision: String,
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment on the restored words; blank is none.
+        comment: Option<String>,
     },
     /// Insert a table next to the anchor paragraph. Each cell holds one
     /// paragraph in the anchor's paragraph style; the redline shows the
@@ -1210,17 +1295,9 @@ fn open_error(error: crate::inspect::InspectError) -> EditError {
     }
 }
 
-/// Accept, then reject, the changes `resolve_revisions` selects: the new
-/// source (`None` when it selects nothing) and what was resolved.
-fn resolve_selected(
-    source: &[u8],
-    selection: Option<&ResolveRevisions>,
-) -> Result<(Option<Vec<u8>>, ResolvedRevisions), EditError> {
-    let mut resolved = ResolvedRevisions::default();
-    let Some(selection) = selection else {
-        return Ok((None, resolved));
-    };
-    let change_err = |e: ChangeError| match e {
+/// A [`ChangeError`] of a `resolve_revisions` selection as the plan's error.
+fn selection_error(e: ChangeError) -> EditError {
+    match e {
         ChangeError::UnknownChange(id) => err(
             "UNKNOWN_CHANGE",
             None,
@@ -1233,27 +1310,50 @@ fn resolve_selected(
             format!("resolve_revisions: {ambiguous}"),
         ),
         ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
+    }
+}
+
+/// The ids of `listed` a `resolve_revisions` side selects, in document
+/// order, a move's other side included.
+fn selected_ids(
+    listed: &[Change],
+    filter: Option<&ChangeFilter>,
+) -> Result<Vec<String>, EditError> {
+    let Some(filter) = filter else {
+        return Ok(Vec::new());
     };
+    let filter = &filter.normalized().map_err(selection_error)?;
+    filter.check(listed).map_err(selection_error)?;
+    let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
+    Ok(listed
+        .iter()
+        .filter(|c| {
+            hit.iter()
+                .any(|h| h.id == c.id || h.move_name.is_some() && h.move_name == c.move_name)
+        })
+        .map(|c| c.id.clone())
+        .collect())
+}
+
+/// Accept, then reject, the changes `resolve_revisions` selects: the new
+/// source (`None` when it selects nothing) and what was resolved.
+fn resolve_selected(
+    source: &[u8],
+    selection: Option<&ResolveRevisions>,
+) -> Result<(Option<Vec<u8>>, ResolvedRevisions), EditError> {
+    let mut resolved = ResolvedRevisions::default();
+    let Some(selection) = selection else {
+        return Ok((None, resolved));
+    };
+    let change_err = selection_error;
     let listed = crate::changes::list_changes(source).map_err(change_err)?;
-    // The ids a side selects, a move's other side included.
-    let select = |filter: Option<&ChangeFilter>| -> Result<Vec<String>, EditError> {
-        let Some(filter) = filter else {
-            return Ok(Vec::new());
-        };
-        let filter = &filter.normalized().map_err(change_err)?;
-        filter.check(&listed).map_err(change_err)?;
-        let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
-        Ok(listed
-            .iter()
-            .filter(|c| {
-                hit.iter()
-                    .any(|h| h.id == c.id || h.move_name.is_some() && h.move_name == c.move_name)
-            })
-            .map(|c| c.id.clone())
-            .collect())
+    let accept = selected_ids(&listed, selection.accept.as_ref())?;
+    // A visible reject settles nothing: it is lowered to operations.
+    let reject = if selection.reject_visible {
+        Vec::new()
+    } else {
+        selected_ids(&listed, selection.reject.as_ref())?
     };
-    let accept = select(selection.accept.as_ref())?;
-    let reject = select(selection.reject.as_ref())?;
     if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
         return Err(err(
             "REVISION_CONFLICT",
@@ -1711,7 +1811,8 @@ fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
 /// it: what `add --plan` runs on each recorded operation, so recording a
 /// long plan never re-applies it.
 pub fn check_plan(source: &[u8], plan: &EditPlan) -> Result<(), EditError> {
-    resolved(source, plan).map(|_| ())
+    let lowered = visible::lower(source, plan)?;
+    resolved(source, lowered.as_ref().unwrap_or(plan)).map(|_| ())
 }
 
 fn resolved<'a>(source: &'a [u8], plan: &'a EditPlan) -> Result<Transaction<'a>, EditError> {
@@ -1885,6 +1986,26 @@ enum Resolved {
     PageSetup {
         targets: sections::Targets,
     },
+    /// The comment of a `strike`, on the struck words `[start, end)` of
+    /// `para` (source offsets): anchored before they are deleted, in the
+    /// redline only, as a commented paragraph deletion's.
+    StrikeComment {
+        para: usize,
+        start: usize,
+        end: usize,
+    },
+    /// A `restore`: plain copies of deletion `wid`'s runs right after it
+    /// (projection offset `at`), inserted as ours in the redline.
+    Restore {
+        para: usize,
+        /// The deletion's `w:id`.
+        wid: String,
+        at: usize,
+        /// The copies' text, as the projection reads it.
+        text: String,
+        /// Comment text anchored on the copies.
+        comment: Option<String>,
+    },
 }
 
 /// What a thread operation does to an existing comment.
@@ -2022,6 +2143,7 @@ impl<'p> Transaction<'p> {
         if plan.author.trim().is_empty() {
             return Err(err("INVALID_PLAN", None, "author must be nonempty"));
         }
+        visible::check_keep(plan)?;
         let probe = Opened::open(source).map_err(open_error)?;
         if probe
             .pkg
@@ -2522,6 +2644,14 @@ impl<'p> Transaction<'p> {
                         (Vec::new(), outcome)
                     })
                 }
+                OperationKind::Strike { revision, comment }
+                | OperationKind::Restore { revision, comment } => {
+                    let visible = match &op.kind {
+                        OperationKind::Strike { .. } => visible::Visible::Strike,
+                        _ => visible::Visible::Restore,
+                    };
+                    self.resolve_visible(&id, visible, revision, comment.as_deref())
+                }
                 other => self
                     .resolve_one(&id, other)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
@@ -2638,6 +2768,13 @@ impl<'p> Transaction<'p> {
                 return Err(fail(
                     "INVALID_PLAN",
                     "settings resolve through resolve_settings".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::Strike { .. } | OperationKind::Restore { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "strike and restore resolve through resolve_visible".into(),
                     outcome,
                 ));
             }
@@ -3115,6 +3252,11 @@ impl<'p> Transaction<'p> {
             OperationKind::Settings { .. } => Err(fail(
                 "INVALID_PLAN",
                 "settings resolve through resolve_settings".into(),
+                outcome,
+            )),
+            OperationKind::Strike { .. } | OperationKind::Restore { .. } => Err(fail(
+                "INVALID_PLAN",
+                "strike and restore resolve through resolve_visible".into(),
                 outcome,
             )),
             OperationKind::InsertParagraph {
@@ -3893,7 +4035,9 @@ impl<'p> Transaction<'p> {
                 | Resolved::FormatParagraph { para, .. }
                 | Resolved::MergeParagraphs { para, .. }
                 | Resolved::FormatRun { para, .. }
-                | Resolved::InsertFootnote { para, .. } => vec![self.paragraph_story[*para].0],
+                | Resolved::InsertFootnote { para, .. }
+                | Resolved::StrikeComment { para, .. }
+                | Resolved::Restore { para, .. } => vec![self.paragraph_story[*para].0],
                 Resolved::InsertParagraph { anchor, .. }
                 | Resolved::InsertTable { anchor, .. }
                 | Resolved::InsertImage { anchor, .. } => {
@@ -4208,6 +4352,8 @@ impl<'p> Transaction<'p> {
                 Resolved::Text {
                     para, start, end, ..
                 } => (*para, *start, *end),
+                // A restore inserts its copy where the deletion is.
+                Resolved::Restore { para, at, .. } => (*para, *at, *at),
                 Resolved::CommentRange { para, .. } => {
                     if deleted.contains(para) {
                         return Err(comment_conflict(*i, "comments on a deleted paragraph"));
@@ -4269,7 +4415,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::List { .. }
                 | Resolved::PageSetup { .. }
                 | Resolved::Thread { .. }
-                | Resolved::FillControl { .. } => continue,
+                | Resolved::FillControl { .. }
+                | Resolved::StrikeComment { .. } => continue,
             };
             if deleted.contains(&para) {
                 return Err(self.conflict(*i, "edits text of a deleted paragraph"));
@@ -4536,7 +4683,10 @@ impl<'p> Transaction<'p> {
                 }
                 Resolved::CommentRange { .. } | Resolved::CommentSpan { .. } => true,
                 Resolved::Thread { op, .. } => matches!(op, ThreadOp::Reply { .. }),
-                Resolved::DeleteParagraph { .. } => self.deletion_comment(*i).is_some(),
+                Resolved::DeleteParagraph { .. } | Resolved::StrikeComment { .. } => {
+                    self.deletion_comment(*i).is_some()
+                }
+                Resolved::Restore { comment, .. } => comment.is_some(),
                 Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::InsertTable { .. }
@@ -4658,9 +4808,10 @@ impl<'p> Transaction<'p> {
                             op: ThreadOp::Reply { text, .. },
                             ..
                         } => Some(text.clone()),
-                        Resolved::DeleteParagraph { .. } => {
+                        Resolved::DeleteParagraph { .. } | Resolved::StrikeComment { .. } => {
                             self.deletion_comment(*i).map(str::to_string)
                         }
+                        Resolved::Restore { comment, .. } => comment.clone(),
                         Resolved::FormatParagraph { .. }
                         | Resolved::MergeParagraphs { .. }
                         | Resolved::InsertTable { .. }
@@ -4890,6 +5041,18 @@ impl<'p> Transaction<'p> {
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
             for (start, end, i, _) in pending {
                 anchor_comment(&mut self.opened.dom, node, start, end, ids[&i]);
+            }
+        }
+        // 1a. Restores: plain copies of the deletion's runs after it, which
+        // stays; found by `w:id`, so the text edits before do not move them.
+        for (i, r) in &self.resolved {
+            let Resolved::Restore { para, wid, .. } = r else {
+                continue;
+            };
+            let node = self.paragraph_nodes[*para];
+            let placed = visible::restore_plain(&mut self.opened.dom, node, wid);
+            if let (Some((first, last)), Some(&id)) = (placed, ids.get(i)) {
+                visible::comment_around(&mut self.opened.dom, first, last, id);
             }
         }
         // 1b. Comments over several paragraphs, in their edited text.
@@ -5143,10 +5306,12 @@ impl<'p> Transaction<'p> {
         id
     }
 
-    /// The comment of operation `op` when it deletes a paragraph.
+    /// The comment of operation `op` when it deletes a paragraph or strikes
+    /// an insertion: on deleted text, so in the redline only.
     fn deletion_comment(&self, op: usize) -> Option<&str> {
         match &self.plan.operations[op].kind {
-            OperationKind::DeleteParagraph { comment, .. } => comment.as_deref(),
+            OperationKind::DeleteParagraph { comment, .. }
+            | OperationKind::Strike { comment, .. } => comment.as_deref(),
             _ => None,
         }
     }
@@ -5186,19 +5351,20 @@ impl<'p> Transaction<'p> {
         {
             return Ok(std::borrow::Cow::Borrowed(&self.base));
         }
+        // A strike's comment is emitted with it, under keep: never compared.
         let mut operations: Vec<Operation> = self
             .deletion_comments
             .iter()
-            .map(|&(_, op)| {
+            .filter_map(|&(_, op)| {
                 let operation = &self.plan.operations[op];
                 let OperationKind::DeleteParagraph {
                     paragraph,
                     comment: Some(text),
                 } = &operation.kind
                 else {
-                    unreachable!("deletion_comments holds commented deletions");
+                    return None;
                 };
-                Operation {
+                Some(Operation {
                     id: operation.id.clone(),
                     kind: OperationKind::Comment {
                         paragraph: paragraph.clone(),
@@ -5207,7 +5373,7 @@ impl<'p> Transaction<'p> {
                         through: None,
                         occurrence: None,
                     },
-                }
+                })
             })
             .collect();
         operations.extend(thread_ops);
@@ -5493,6 +5659,8 @@ pub(crate) fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertToc { .. } => "insert_toc",
         OperationKind::Redact { .. } => "redact",
         OperationKind::Settings { .. } => "settings",
+        OperationKind::Strike { .. } => "strike",
+        OperationKind::Restore { .. } => "restore",
     }
 }
 
@@ -7000,6 +7168,7 @@ mod deeper_boundary_tests {
             ResolveRevisions {
                 accept: Some(ChangeFilter::ids(Vec::<String>::new())),
                 reject: Some(ChangeFilter::ids(Vec::<String>::new())),
+                reject_visible: false,
             },
         ] {
             assert_eq!(
@@ -7010,6 +7179,7 @@ mod deeper_boundary_tests {
         let selection = ResolveRevisions {
             accept: None,
             reject: Some(ChangeFilter::ids(["r1"])),
+            reject_visible: false,
         };
         let (bytes, resolved) = resolve_selected(&source, Some(&selection)).unwrap();
         assert_eq!(

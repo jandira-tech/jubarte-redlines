@@ -203,6 +203,8 @@ pub fn prepare(
     options: &PrepareOptions,
 ) -> Result<PreparedEdit, EditError> {
     check_update_fields(plan)?;
+    let lowered = super::visible::lower(source, plan)?;
+    let plan = lowered.as_ref().unwrap_or(plan);
     let mut tx = Transaction::start(source, plan)?;
     tx.syntax = options.syntax;
     tx.resolve()?;
@@ -393,6 +395,13 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
                     .entry(*para)
                     .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
                 entry.1.push((*start, *end, replacement.clone(), *op));
+            }
+            // A restore's copy is text inserted where the deletion is.
+            Resolved::Restore { para, at, text, .. } => {
+                let entry = edits
+                    .entry(*para)
+                    .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
+                entry.1.push((*at, *at, text.clone(), *op));
             }
             Resolved::MergeParagraphs {
                 para,
