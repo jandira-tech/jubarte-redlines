@@ -40,6 +40,22 @@ include ZIP decompression bombs, excessive nesting, malformed parser inputs,
 algorithmic complexity, memory exhaustion, path traversal and accidental
 network/file access through external relationships. Admission bounds archive
 size, entries, inflated bytes and XML depth (`src/admission.rs`); the library
+bounds start tags before building DOM attributes (#650). `InputLimits` defaults
+are `max_element_attributes = 1024` (namespace declarations included),
+`max_attribute_name_bytes = 1024` (qualified UTF-8 name),
+`max_attribute_value_bytes = 67108864` (64 MiB, raw and decoded), and
+`max_start_tag_bytes = 134217728` (128 MiB, including spaces, quotes and
+`<`, `>`, `/` delimiters). Each bound is inclusive and configurable,
+including through `InputLimitOverrides`; comparison budgets keep these defaults.
+Admission returns the existing `InvalidXml` / `INVALID_XML` refusal for
+tag-policy violations, with the part, element and limit. Checked library
+parsing returns the same policy message; its raw XML API has no part name.
+The infallible DOM parser panics on a tag-policy violation; use
+`try_parse_xdocument` or `try_parse_xdocument_with_limits` for untrusted XML.
+Aliased attributes sharing a namespace URI and local name are malformed XML;
+unprefixed attributes remain in no namespace. The independent OPC metadata
+attribute cap stays at 256. These are XML resource/namespace checks, not claims
+about which files Word will open. The library
 forbids unsafe Rust; external relationships are not fetched during document
 processing. Run untrusted workloads in a process with memory/CPU limits: input
 budgets do not prove protection against every denial of service. Do not
