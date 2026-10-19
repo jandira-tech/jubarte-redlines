@@ -45,6 +45,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - **Dual-header ZIP packages are refused** (#594, GHSA-m665-v7pm-7grj). zip is bumped to 9.0.5, and every package open compares each entry's raw name in its local file header with its central record. A disagreement, or a central record with no local header, is `ZIP_HEADER_MISMATCH` on every route. `jubarte debug` reports it as a finding instead of refusing. A local time that differs from the central record is still accepted, as Word accepts it.
 
+- **Structural ZIP inconsistencies are refused** (#644). The same
+  local-vs-central pass now compares the compression method, flag bits 0/3/11,
+  and — with bit 3 clear — the CRC-32 and ZIP64-resolved sizes (still
+  `ZIP_HEADER_MISMATCH`); validates every entry's extent — local header,
+  payload and data descriptor — for overlaps and placement before the
+  central directory (`INVALID_PACKAGE`); checks each data descriptor,
+  signed or unsigned, in the width the entry's ZIP64 form selects; and
+  reads directory payloads through the bounded CRC stream so a corrupt
+  one refuses and its bytes count against the budgets. `jubarte debug`
+  reports each class as a `zip-header-mismatch`, `zip-extent`,
+  `zip-descriptor` or `zip-directory-payload` finding instead of refusing.
+
 - **`accept`/`reject` settle tracked changes inside comment bodies**
   (`word/comments.xml`), as Word's Accept/Reject All do. An `--author` or
   `--kind` selection resolves them too; `--id` still cannot name one (they
