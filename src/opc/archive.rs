@@ -160,10 +160,10 @@ fn header_fields<R: Read + Seek>(
     })
 }
 
-/// The `(uncompressed, compressed)` sizes a local header's 0x0001
-/// (ZIP64 extended information) extra field carries — always both, in
-/// that order (APPNOTE 4.5.3). A malformed extra block yields `None`.
-fn zip64_sizes(extra: &[u8]) -> Option<(u64, u64)> {
+/// The data of the first 0x0001 (ZIP64 extended information) field in
+/// `extra`, of any length. `None` when no field carries the tag or an
+/// earlier field's declared length runs past the block.
+fn zip64_field(extra: &[u8]) -> Option<&[u8]> {
     let mut at = 0usize;
     while at.checked_add(4).is_some_and(|end| end <= extra.len()) {
         let tag = read_u16(extra, at)?;
@@ -174,25 +174,25 @@ fn zip64_sizes(extra: &[u8]) -> Option<(u64, u64)> {
             return None;
         }
         if tag == 0x0001 {
-            if length < 16 {
-                return None;
-            }
-            let uncompressed = data
-                .checked_add(8)
-                .and_then(|e| extra.get(data..e))
-                .and_then(|f| <[u8; 8]>::try_from(f).ok())
-                .map(u64::from_le_bytes)?;
-            let compressed = data
-                .checked_add(8)
-                .and_then(|s| s.checked_add(8))
-                .and_then(|e| extra.get(data.checked_add(8)?..e))
-                .and_then(|f| <[u8; 8]>::try_from(f).ok())
-                .map(u64::from_le_bytes)?;
-            return Some((uncompressed, compressed));
+            return extra.get(data..end);
         }
         at = end;
     }
     None
+}
+
+/// The `(uncompressed, compressed)` sizes a local header's 0x0001
+/// (ZIP64 extended information) extra field carries — always both, in
+/// that order (APPNOTE 4.5.3). A malformed or short field yields `None`.
+fn zip64_sizes(extra: &[u8]) -> Option<(u64, u64)> {
+    let field = zip64_field(extra)?;
+    let size = |at: usize| {
+        field
+            .get(at..at.checked_add(8)?)
+            .and_then(|f| <[u8; 8]>::try_from(f).ok())
+            .map(u64::from_le_bytes)
+    };
+    Some((size(0)?, size(8)?))
 }
 
 /// The size a local header's `field` stands for: itself, or the local
@@ -211,8 +211,11 @@ fn resolved_local_size(field: u32, extra: &[u8], which: usize) -> Option<u64> {
 /// trails its payload with — when exactly one interpretation matches the
 /// central record. APPNOTE 4.3.9.3 permits the optional signature, so a
 /// first word equal to `0x08074b50` is tried as both signature and CRC;
-/// any other first word can only be the CRC. ZIP64 entries carry 8-byte
-/// sizes. An unreadable, non-matching or ambiguous triple is a defect.
+/// any other first word can only be the CRC. `zip64` prescribes 8-byte
+/// sizes (APPNOTE 4.3.9.2), but some writers pick the other width, so
+/// both are tried — the CRC and both sizes must still match, and the
+/// prescribed width wins when both do. An unreadable, non-matching or
+/// ambiguous triple is a defect.
 fn descriptor_extent<R: Read + Seek>(
     reader: &mut R,
     at: u64,
@@ -222,20 +225,19 @@ fn descriptor_extent<R: Read + Seek>(
     uncompressed: u64,
 ) -> Result<u64, &'static str> {
     const SIGNATURE: u32 = 0x0807_4b50;
-    let need = if zip64 { 24 } else { 16 };
     let mut buf = [0u8; 28];
     reader
         .seek(SeekFrom::Start(at))
         .map_err(|_| "has no readable data descriptor")?;
     let mut got = 0usize;
-    while let Some(tail) = buf.get_mut(got..need) {
+    while let Some(tail) = buf.get_mut(got..24) {
         match reader.read(tail) {
             Ok(0) => break,
             Ok(n) => got = got.saturating_add(n),
             Err(_) => return Err("has no readable data descriptor"),
         }
     }
-    if got < if zip64 { 20 } else { 12 } {
+    if got < 12 {
         return Err("has a truncated data descriptor");
     }
     let filled = buf.get(..got).unwrap_or_default();
@@ -246,27 +248,37 @@ fn descriptor_extent<R: Read + Seek>(
             .and_then(|field| <[u8; 8]>::try_from(field).ok())
             .map(u64::from_le_bytes)
     };
-    let triple = |at: usize| -> bool {
-        let Some(crc) = word(at) else {
-            return false;
+    // The extents each size width admits, prescribed width first. Both
+    // widths matching picks the prescribed one; neither refuses.
+    let mut extents = Vec::with_capacity(2);
+    for wide in [zip64, !zip64] {
+        let need = if wide { 24 } else { 16 };
+        let triple = |at: usize| -> bool {
+            let Some(crc) = word(at) else {
+                return false;
+            };
+            let (c, u) = if wide {
+                (qword(at.saturating_add(4)), qword(at.saturating_add(12)))
+            } else {
+                (
+                    word(at.saturating_add(4)).map(u64::from),
+                    word(at.saturating_add(8)).map(u64::from),
+                )
+            };
+            crc == crc32 && c == Some(compressed) && u == Some(uncompressed)
         };
-        let (c, u) = if zip64 {
-            (qword(at.saturating_add(4)), qword(at.saturating_add(12)))
-        } else {
-            (
-                word(at.saturating_add(4)).map(u64::from),
-                word(at.saturating_add(8)).map(u64::from),
-            )
-        };
-        crc == crc32 && c == Some(compressed) && u == Some(uncompressed)
-    };
-    let unsigned = triple(0);
-    let signed = word(0) == Some(SIGNATURE) && got >= need && triple(4);
-    match (unsigned, signed) {
-        (true, false) => Ok(if zip64 { 20 } else { 12 }),
-        (false, true) => Ok(if zip64 { 24 } else { 16 }),
-        (false, false) => Err("has no data descriptor matching its central record"),
-        (true, true) => Err("has an ambiguous data descriptor"),
+        let unsigned = triple(0);
+        let signed = word(0) == Some(SIGNATURE) && got >= need && triple(4);
+        match (unsigned, signed) {
+            (true, false) => extents.push(if wide { 20 } else { 12 }),
+            (false, true) => extents.push(if wide { 24 } else { 16 }),
+            (false, false) => {}
+            (true, true) => return Err("has an ambiguous data descriptor"),
+        }
+    }
+    match extents.first() {
+        Some(&extent) => Ok(extent),
+        None => Err("has no data descriptor matching its central record"),
     }
 }
 
@@ -345,8 +357,9 @@ const COMPARED_FLAGS: u16 = 0x0001 | 0x0008 | 0x0800;
 ///   payload and any data descriptor — which must end before the central
 ///   directory and intersect no other entry's;
 /// - the descriptor itself, whose CRC and sizes must match the central
-///   record, signed or unsigned, in the width the entry's ZIP64
-///   representation selects.
+///   record, signed or unsigned, in the width the local header's ZIP64
+///   form prescribes — a 0x0001 extra field alone prescribes 8-byte
+///   sizes (APPNOTE 4.3.9.2) — or the other width when only it matches.
 ///
 /// The raw bytes are read from `reader`, the source [`ZipArchive`]
 /// indexed, because zip resolves an entry's name through a central
@@ -465,10 +478,14 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             });
             continue;
         };
+        // APPNOTE 4.3.9.2: the local header's 0x0001 field alone
+        // prescribes the descriptor's 8-byte sizes, whatever it or the
+        // fixed fields hold.
         let zip64 = local.compressed_size == u32::MAX
             || local.uncompressed_size == u32::MAX
             || entry.compressed_size() > u64::from(u32::MAX)
-            || entry.size() > u64::from(u32::MAX);
+            || entry.size() > u64::from(u32::MAX)
+            || zip64_field(&local.extra).is_some();
         let end = if descriptor {
             match descriptor_extent(
                 reader,
@@ -732,6 +749,34 @@ mod tests {
                 .contains("compression method 0 in the central directory but 8"),
             "{err}"
         );
+    }
+
+    /// #644 fix round: a bit-3 entry whose local header carries a 0x0001
+    /// ZIP64 extra field takes a 24-byte descriptor (APPNOTE 4.3.9.2),
+    /// whatever its sizes say — Word opens the shape.
+    #[test]
+    fn open_archive_admits_a_zip64_local_extra_wide_descriptor() {
+        use crate::admission::zip_names;
+
+        let extra = zip_names::zip64_extra(0, 0);
+        let package = zip_names::assembled(
+            b"",
+            &[zip_names::AssembledEntry {
+                local_extra: extra.as_slice(),
+                ..zip_names::AssembledEntry::plain(b"payload.bin", b"payload")
+                    .with_descriptor(zip_names::Descriptor::SignedZip64)
+            }],
+            None,
+            b"",
+        );
+        let mut archive = open_archive(Cursor::new(&package)).expect("the wide descriptor admits");
+        let mut actual = Vec::new();
+        archive
+            .by_name("payload.bin")
+            .unwrap()
+            .read_to_end(&mut actual)
+            .unwrap();
+        assert_eq!(actual, b"payload");
     }
 
     /// The header check refuses only headers that disagree: every `.docx`
