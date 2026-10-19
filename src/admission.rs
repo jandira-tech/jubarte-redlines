@@ -2062,6 +2062,39 @@ mod tests {
         }
     }
 
+    /// Set or clear one flag bit in one header of `name`'s entry.
+    fn patch_flag(bytes: &mut [u8], name: &str, bit: u16, local: bool, set: bool) {
+        let (lfh, central) = header_offsets(bytes, name);
+        let at = if local { lfh + 6 } else { central + 8 };
+        let flags = u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+        let flags = if set { flags | bit } else { flags & !bit };
+        bytes[at..at + 2].copy_from_slice(&flags.to_le_bytes());
+    }
+
+    /// #644 fix round: bit 11 only matters when the raw name is not
+    /// ASCII — it selects UTF-8 over CP437 decoding, which an ASCII name
+    /// decodes the same either way. A real Word-opened input carries the
+    /// bit set in the local header only on an ASCII name.
+    #[test]
+    fn zip17_compares_the_utf8_flag_only_for_non_ascii_names() {
+        let mut ascii = zip_names::docx_package("", &[zip_names::RawEntry::raw(b"x.bin", b"x")]);
+        patch_flag(&mut ascii, "x.bin", 0x0800, true, true);
+        admit(&ascii, InputLimits::default())
+            .expect("a one-sided UTF-8 flag on an ASCII name admits");
+        for local_only in [true, false] {
+            let mut bytes = zip_names::docx_package(
+                "",
+                &[zip_names::RawEntry::raw("word/m\u{e9}dia.bin".as_bytes(), b"x").utf8()],
+            );
+            patch_flag(&mut bytes, "word/m\u{e9}dia.bin", 0x0800, local_only, false);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::ZipHeaderMismatch,
+                "local_only={local_only}"
+            );
+        }
+    }
+
     /// ZIP-17 item 2: a central record whose local header lives inside
     /// another entry's payload is refused even though every compared
     /// field — name, method, flags, CRC-32, sizes — matches.

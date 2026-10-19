@@ -56,7 +56,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   and `moveTo` destination sharing a `w:name`) are unchanged.
 
 - **Structural ZIP inconsistencies are refused** (#644). The same
-  local-vs-central pass now compares the compression method, flag bits 0/3/11,
+  local-vs-central pass now compares the compression method, flag bits 0
+  and 3 (bit 11 only when a raw name is non-ASCII — an ASCII name
+  decodes identically with the bit set or clear),
   and — with bit 3 clear — the CRC-32 and ZIP64-resolved sizes (still
   `ZIP_HEADER_MISMATCH`); validates every entry's extent — local header,
   payload and data descriptor — for overlaps and placement before the
