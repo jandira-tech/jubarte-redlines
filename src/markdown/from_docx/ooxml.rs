@@ -401,6 +401,8 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
     let text = decode(bytes);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().trim_text(false);
+    let mut policy =
+        crate::xmllinq::parse::TagPolicy::new(crate::admission::InputLimits::default());
     let mut stack: Vec<Element> = vec![Element::default()];
     loop {
         let event = reader
@@ -408,6 +410,9 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
             .map_err(|e| format!("malformed XML at byte {}: {e}", reader.buffer_position()))?;
         match event {
             Event::Start(start) => {
+                policy
+                    .open(&start)
+                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 if stack.len() > MAX_DEPTH {
                     return Err("XML nesting too deep".into());
                 }
@@ -417,11 +422,15 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
                 )?);
             }
             Event::Empty(start) => {
+                policy
+                    .empty(&start)
+                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 let element =
                     element_from(&start, &stack.last().expect("document scope").namespaces)?;
                 push_child(&mut stack, Node::Element(element));
             }
             Event::End(_) => {
+                policy.close();
                 if stack.len() <= 1 {
                     return Err("unbalanced end tag".into());
                 }
@@ -1437,6 +1446,23 @@ mod tests {
             "**Hello world** and [_site_](https://x.y)"
         );
         assert_eq!(inline.render(false), "Hello world and [site](https://x.y)");
+    }
+
+    #[test]
+    fn issue650_converter_tree_checks_attribute_width() {
+        for (count, accepted) in [(1024, true), (1025, false)] {
+            let attrs: String = (0..count).map(|i| format!(" a{i}='v'")).collect();
+            let xml = format!("<r{attrs}/>");
+            assert_eq!(parse_xml(xml.as_bytes()).is_ok(), accepted, "count {count}");
+        }
+        let xml = format!("<r {}='v'/>", "n".repeat(1025));
+        assert!(parse_xml(xml.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn issue650_converter_tree_refuses_aliases() {
+        assert!(parse_xml(b"<r xmlns:a='urn:x' xmlns:b='urn:x' a:x='1' b:x='2'/>").is_err());
+        assert!(parse_xml(b"<r xmlns:a='urn:x' x='1' a:x='2'/>").is_ok());
     }
 
     #[test]

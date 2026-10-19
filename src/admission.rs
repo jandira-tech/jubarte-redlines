@@ -50,6 +50,14 @@ pub struct InputLimits {
     pub max_uncompressed_bytes: u64,
     /// Element nesting in any XML part.
     pub max_xml_depth: usize,
+    /// Attributes per element, including namespace declarations.
+    pub max_element_attributes: usize,
+    /// UTF-8 bytes in a qualified attribute name.
+    pub max_attribute_name_bytes: usize,
+    /// Bytes in a raw or decoded attribute value.
+    pub max_attribute_value_bytes: usize,
+    /// Bytes in a complete start tag, including syntax and delimiters.
+    pub max_start_tag_bytes: usize,
 }
 
 impl Default for InputLimits {
@@ -61,6 +69,10 @@ impl Default for InputLimits {
             max_part_bytes: 64 * MIB,
             max_uncompressed_bytes: 256 * MIB,
             max_xml_depth: 256,
+            max_element_attributes: crate::xmllinq::parse::MAX_ELEMENT_ATTRIBUTES,
+            max_attribute_name_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_NAME_BYTES,
+            max_attribute_value_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_VALUE_BYTES,
+            max_start_tag_bytes: crate::xmllinq::parse::MAX_TAG_ATTRIBUTE_BYTES,
         }
     }
 }
@@ -80,6 +92,10 @@ impl InputLimits {
             max_part_bytes: 512 * MIB,
             max_uncompressed_bytes: 2048 * MIB,
             max_xml_depth: 256,
+            max_element_attributes: crate::xmllinq::parse::MAX_ELEMENT_ATTRIBUTES,
+            max_attribute_name_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_NAME_BYTES,
+            max_attribute_value_bytes: crate::xmllinq::parse::MAX_ATTRIBUTE_VALUE_BYTES,
+            max_start_tag_bytes: crate::xmllinq::parse::MAX_TAG_ATTRIBUTE_BYTES,
         }
     }
 }
@@ -101,6 +117,14 @@ pub struct InputLimitOverrides {
     pub max_uncompressed_bytes: Option<u64>,
     /// Replaces [`InputLimits::max_xml_depth`].
     pub max_xml_depth: Option<usize>,
+    /// Replaces [`InputLimits::max_element_attributes`].
+    pub max_element_attributes: Option<usize>,
+    /// Replaces [`InputLimits::max_attribute_name_bytes`].
+    pub max_attribute_name_bytes: Option<usize>,
+    /// Replaces [`InputLimits::max_attribute_value_bytes`].
+    pub max_attribute_value_bytes: Option<usize>,
+    /// Replaces [`InputLimits::max_start_tag_bytes`].
+    pub max_start_tag_bytes: Option<usize>,
 }
 
 impl InputLimitOverrides {
@@ -127,6 +151,16 @@ impl InputLimitOverrides {
                 .max_uncompressed_bytes
                 .unwrap_or(base.max_uncompressed_bytes),
             max_xml_depth: self.max_xml_depth.unwrap_or(base.max_xml_depth),
+            max_element_attributes: self
+                .max_element_attributes
+                .unwrap_or(base.max_element_attributes),
+            max_attribute_name_bytes: self
+                .max_attribute_name_bytes
+                .unwrap_or(base.max_attribute_name_bytes),
+            max_attribute_value_bytes: self
+                .max_attribute_value_bytes
+                .unwrap_or(base.max_attribute_value_bytes),
+            max_start_tag_bytes: self.max_start_tag_bytes.unwrap_or(base.max_start_tag_bytes),
         }
     }
 }
@@ -506,7 +540,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
                 .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{name}: {e}")))?;
             let n = buf.len() as u64;
             if n <= cap {
-                check_xml_depth(&name, &buf, limits.max_xml_depth)?;
+                check_xml_depth(&name, &buf, limits)?;
                 if lower == "[content_types].xml" || lower == "_rels/.rels" {
                     kept.insert(lower, buf);
                 }
@@ -532,7 +566,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             .take(limits.max_part_bytes.saturating_add(1))
             .read_to_end(&mut buf)
             .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{main_part}: {e}")))?;
-        check_xml_depth(&main_part, &buf, limits.max_xml_depth)?;
+        check_xml_depth(&main_part, &buf, limits)?;
     }
     Ok(AdmittedPackage {
         entries: archive.len(),
@@ -751,13 +785,14 @@ fn part_text(xml: &[u8]) -> Cow<'_, str> {
 /// inside the tag/namespace policy (`xmllinq::parse::TagPolicy`) so no part
 /// reaching the permissive DOM parser can carry pathological attribute or
 /// namespace-declaration widths.
-fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), AdmissionError> {
+fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError> {
     let invalid =
         |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().check_end_names = true;
-    let mut policy = crate::xmllinq::parse::TagPolicy::tolerant();
+    let max_depth = limits.max_xml_depth;
+    let mut policy = crate::xmllinq::parse::TagPolicy::tolerant(limits);
     let mut depth = 0usize;
     loop {
         match reader.read_event() {
@@ -1455,6 +1490,7 @@ mod tests {
             max_part_bytes: largest,
             max_uncompressed_bytes: total,
             max_xml_depth: 5,
+            ..InputLimits::default()
         };
         assert!(admit(&bytes, exact).is_ok());
         for tighter in [
@@ -1773,7 +1809,7 @@ mod tests {
     fn pathological_tags_and_namespaces_are_refused_at_admission() {
         let wide_attrs = format!(
             "<a{}/>",
-            (0..300).map(|i| format!(" a{i}='v'")).collect::<String>()
+            (0..1025).map(|i| format!(" a{i}='v'")).collect::<String>()
         );
         let alias = "<a xmlns:p='urn:x' xmlns:q='urn:x' p:b='1' q:b='2'/>";
         let big_uri = format!("<a xmlns:p='{}'/>", "u".repeat(9000));
@@ -1799,7 +1835,7 @@ mod tests {
         // The exact boundaries still admit.
         let at_cap = format!(
             "<a{}/>",
-            (0..256).map(|i| format!(" a{i}='v'")).collect::<String>()
+            (0..1024).map(|i| format!(" a{i}='v'")).collect::<String>()
         );
         let bytes = docx_with(&[("word/capped.xml", at_cap.as_bytes())]);
         assert!(admit(&bytes, InputLimits::default()).is_ok());

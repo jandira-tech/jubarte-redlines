@@ -1127,6 +1127,11 @@ fn selection(args: &ReadArgs) -> Result<Option<jubarte::markdown::Select>, Strin
 /// Report the first Word-fatal nest once per invocation, before editing or
 /// selecting content. Ring-1 owns branch selection, names and the diagnosis.
 fn warn_nested_text_boxes(bytes: &[u8]) {
+    // The command reports admission errors through its ordinary fallible
+    // reader. Do not run the preliminary DOM-based warning on refused XML.
+    if jubarte::admission::admit(bytes, jubarte::admission::InputLimits::default()).is_err() {
+        return;
+    }
     let Ok(package) = jubarte::opc::PartFs::open(bytes) else {
         return;
     };
