@@ -337,12 +337,19 @@ impl ZipDefect {
 }
 
 /// The general-purpose flag bits the two records must agree on: bit 0
-/// (encrypted), bit 3 (data descriptor) and bit 11 (UTF-8 names). The
-/// deflate option bits and the reserved bits are not compared — writers
-/// set them in only one header — and neither are the modification time,
-/// the date nor any extra field, which real Word-opened files carry
-/// differing (#594, zip 9.0.5's stricter check).
+/// (encrypted) and bit 3 (data descriptor), always, plus bit 11 (UTF-8
+/// names) only when a raw name byte is 0x80 or above — for an ASCII
+/// name the bit changes no decoding, so the one-sided flag real
+/// Word-opened files carry is not a mismatch. The deflate option bits
+/// and the reserved bits are not compared — writers set them in only
+/// one header — and neither are the modification time, the date nor any
+/// extra field, which real Word-opened files carry differing (#594, zip
+/// 9.0.5's stricter check).
 const COMPARED_FLAGS: u16 = 0x0001 | 0x0008 | 0x0800;
+
+/// Bit 11, the UTF-8-name flag: compared only when either raw name
+/// holds a byte at or above 0x80 (see [`COMPARED_FLAGS`]).
+const UTF8_FLAG: u16 = 0x0800;
 
 /// Every structural disagreement between what the central directory
 /// declares and what the package's bytes carry, in archive order
@@ -409,8 +416,13 @@ pub(crate) fn zip_defects<R: Read + Seek>(
                 central.method, local.method
             )));
         }
-        let (central_flags, local_flags) =
-            (central.flags & COMPARED_FLAGS, local.flags & COMPARED_FLAGS);
+        let compared = COMPARED_FLAGS
+            & if central.name.iter().chain(&local.name).any(|&b| b >= 0x80) {
+                u16::MAX
+            } else {
+                !UTF8_FLAG
+            };
+        let (central_flags, local_flags) = (central.flags & compared, local.flags & compared);
         if central_flags != local_flags {
             defects.push(mismatch(format!(
                 "entry {i} ('{shown}') has general-purpose flags 0x{central_flags:04x} in the central directory but 0x{local_flags:04x} in its local header",
@@ -749,6 +761,46 @@ mod tests {
                 .contains("compression method 0 in the central directory but 8"),
             "{err}"
         );
+    }
+
+    /// #644 fix round: bit 11 is compared only when a raw name byte is
+    /// 0x80 or above — an ASCII name decodes identically whether the bit
+    /// is set, so the one-sided flag a real Word-opened file carries is
+    /// not a mismatch.
+    #[test]
+    fn open_archive_compares_bit_11_only_for_non_ascii_names() {
+        use crate::admission::zip_names;
+
+        let patch = |bytes: &mut Vec<u8>, name: &str, bit: u16, local: bool, set: bool| {
+            let at = {
+                let mut archive = ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+                let entry = archive.by_name(name).unwrap();
+                if local {
+                    entry.header_start() as usize + 6
+                } else {
+                    entry.central_header_start() as usize + 8
+                }
+            };
+            let flags = u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+            let flags = if set { flags | bit } else { flags & !bit };
+            bytes[at..at + 2].copy_from_slice(&flags.to_le_bytes());
+        };
+        let mut ascii = zip_names::docx_package("", &[zip_names::RawEntry::raw(b"x.bin", b"x")]);
+        patch(&mut ascii, "x.bin", 0x0800, true, true);
+        open_archive(Cursor::new(&ascii)).expect("a one-sided UTF-8 flag on ASCII admits");
+        for local_only in [true, false] {
+            let mut bytes = zip_names::docx_package(
+                "",
+                &[zip_names::RawEntry::raw("word/m\u{e9}dia.bin".as_bytes(), b"x").utf8()],
+            );
+            patch(&mut bytes, "word/m\u{e9}dia.bin", 0x0800, local_only, false);
+            let err = open_archive(Cursor::new(&bytes))
+                .expect_err("a one-sided UTF-8 flag on a non-ASCII name refuses");
+            assert!(
+                err.to_string().contains("ZIP_HEADER_MISMATCH"),
+                "local_only={local_only}: {err}"
+            );
+        }
     }
 
     /// #644 fix round: a bit-3 entry whose local header carries a 0x0001

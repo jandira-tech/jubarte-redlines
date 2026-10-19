@@ -89,9 +89,10 @@ fails the open and every caller reports `ZIP_HEADER_MISMATCH`. zip
 9.0.5's own `ZipArchive::validate_header_consistency` is not used: it
 also refuses a local time or a central-only Unicode Path field, which hide
 no content and which real Word-opened inputs carry. The same pass (#644)
-compares the remaining content fields — compression method, flag bits
-0/3/11, and with bit 3 clear the CRC-32 and ZIP64-resolved sizes — as
-`ZIP_HEADER_MISMATCH`, refuses entries whose extents overlap or reach
+compares the remaining content fields — compression method, flag bits 0
+and 3 (bit 11, the UTF-8-name flag, only when a raw name byte is 0x80 or
+above — an ASCII name decodes the same either way), and with bit 3 clear
+the CRC-32 and ZIP64-resolved sizes — as `ZIP_HEADER_MISMATCH`, refuses entries whose extents overlap or reach
 into the central directory and data descriptors that disagree with the
 central record as `INVALID_PACKAGE`, and validates directory payloads
 through the bounded CRC stream. Admission keeps the typed
