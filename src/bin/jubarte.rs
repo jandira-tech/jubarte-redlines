@@ -2804,7 +2804,7 @@ fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
         reference: compare.reference_doc,
         critic: compare.critic,
         resource_path: compare.resource_path,
-        // A change is made now, by Redline unless a flag names someone:
+        // A change is made now, by Jubarte unless a flag names someone:
         // never the files' own metadata (Arthur, 2026-10-14).
         author: compare.author,
         date: compare
@@ -3714,7 +3714,7 @@ fn run_convert_any(
             );
             // The changes and comments that name no author or date take
             // the flag's, else the front matter's, else the reference
-            // document's creator and creation time, else Redline and now.
+            // document's creator and creation time, else Jubarte and now.
             let (creator, created) = reference
                 .as_deref()
                 .map(jubarte::markdown::docx_stamp)
@@ -3727,7 +3727,7 @@ fn run_convert_any(
                     .author
                     .clone()
                     .or(creator)
-                    .unwrap_or_else(|| "Redline".to_string()),
+                    .unwrap_or_else(|| "Jubarte".to_string()),
                 date: markdown
                     .datetime
                     .clone()
@@ -4811,7 +4811,7 @@ mod tests {
         let j = job_of(&["jubarte", "compare", "a.docx", "b.docx"]);
         let after = jubarte::convert::utc_now_iso8601();
         assert_eq!(j.output, None, "so does compare");
-        assert_eq!(j.author, "Redline");
+        assert_eq!(j.author, "Jubarte");
         // Without -d the revisions are dated now (D17); the fixed-width
         // UTC form orders as text.
         assert!(

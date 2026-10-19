@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! What signs and dates the changes a command makes (Arthur, 2026-10-14):
 //! changing a file (`compare`, `edit`, `add`) signs them by the flags, else
-//! Redline and now, never by the files' own `dc:creator` and
+//! Jubarte and now, never by the files' own `dc:creator` and
 //! `dcterms:created`; those describe the document, not this change.
 
 use std::io::{Read, Write};
@@ -133,7 +133,7 @@ fn compare_signs_redline_now_whatever_the_files_metadata() {
     );
     let after = jubarte::convert::utc_now_iso8601();
     let (author, date) = first_insertion(&d.join("r.docx"));
-    assert_eq!(author, "Redline");
+    assert_eq!(author, "Jubarte");
     now_between(&before, &date, &after);
     // The flags name someone else.
     jubarte(
@@ -179,7 +179,7 @@ fn edit_and_add_sign_redline_now_whatever_the_files_metadata() {
         );
         let after = jubarte::convert::utc_now_iso8601();
         let (author, date) = first_insertion(&d.join(out));
-        assert_eq!(author, "Redline", "{verb}");
+        assert_eq!(author, "Jubarte", "{verb}");
         now_between(&before, &date, &after);
     }
     jubarte(

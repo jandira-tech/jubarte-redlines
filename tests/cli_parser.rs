@@ -204,7 +204,7 @@ fn explicit_compare_alias_and_shorthand_preserve_overrides() {
         assert_eq!(result["command"], "compare");
         assert_eq!(result["args"]["original"], "real.docx");
         assert_eq!(result["args"]["modified"], "b.docx");
-        assert_eq!(result["args"]["author"], "Redline");
+        assert_eq!(result["args"]["author"], "Jubarte");
         assert_eq!(result["args"]["mode"], "word");
     }
     assert_eq!(

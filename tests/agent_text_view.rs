@@ -3289,20 +3289,20 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         "{out}"
     );
     assert!(
-        out.contains("R: Redline") && out.contains("# 4 revisions, 2026-10-01T09:00:00Z"),
+        out.contains("J: Jubarte") && out.contains("# 4 revisions, 2026-10-01T09:00:00Z"),
         "{out}"
     );
     captures(
         &out,
-        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{r\d+ @R\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{r\d+ @J\}\n",
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r\d+\+\d+ @R\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r\d+\+\d+ @J\} days of receipt\.\n",
     );
     captures(
         &out,
-        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{r\d+ @R\} ?\.\n",
+        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{r\d+ @J\} ?\.\n",
     );
     // confirmation_after already asserted unified hunks on the raw stdout.
     let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
@@ -3420,10 +3420,10 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         .concat(),
         dir.path(),
     );
-    captures(&out, r"within thirty\{\+\+ \(30\)\+\+\}\{r\d+ @R\} days");
+    captures(&out, r"within thirty\{\+\+ \(30\)\+\+\}\{r\d+ @J\} days");
     captures(
         &out,
-        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{r\d+ @R\}Late amounts",
+        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{r\d+ @J\}Late amounts",
     );
     let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
     assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
@@ -3453,7 +3453,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"\{\+\+ \(30\)\+\+\}\{r\d+ @R\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
+        r"\{\+\+ \(30\)\+\+\}\{r\d+ @J\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
     );
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(
@@ -3570,7 +3570,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
+        out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @J: Add a fee schedule.<<}\n"),
         "{out}"
     );
     let out = confirmed(
@@ -3598,7 +3598,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     // lines of the p2 deletion hunk; retain its content check via read.
     let remaining = ok(&["read", "five/redline.docx"], dir.path());
     assert!(
-        remaining.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
+        remaining.contains("<!-- p0 -->\n{==Fees==}{>>c2 @J: Add a fee schedule.<<}\n"),
         "{remaining}"
     );
     assert!(
@@ -3662,7 +3662,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &after,
-        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+\+\d+ @R\}¶\{r\d+\+\d+ @R\}\n",
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+\+\d+ @J\}¶\{r\d+\+\d+ @J\}\n",
     );
     let before = confirmed(
         &[
@@ -3684,7 +3684,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+\+\d+ @R\}¶\{r\d+\+\d+ @R\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+\+\d+ @J\}¶\{r\d+\+\d+ @J\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
@@ -3748,7 +3748,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     assert!(noted_err.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted_err}");
     captures(
         &confirmation_after(&noted),
-        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{r\d+ @R\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{r\d+ @J\}\n",
     );
     let (_, marks) = ok_both(
         &[
@@ -3808,10 +3808,10 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     // on both pieces (#1359).
     let ids = captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{(r\d+\+\d+) @R\}\{--thirty--\}\{(r\d+\+\d+) @R\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{(r\d+\+\d+) @J\}\{--thirty--\}\{(r\d+\+\d+) @J\} days of receipt\.\n",
     );
     assert_eq!(ids[0], ids[1], "{out}");
-    assert!(out.contains("R: Redline"), "{out}");
+    assert!(out.contains("J: Jubarte"), "{out}");
     // The digest is the in-memory redline's, neither input's.
     let digest = captures(&out, r"\nsha256: ([0-9a-f]{64})\n")[0].to_string();
     for input in ["old.docx", "new.docx"] {
