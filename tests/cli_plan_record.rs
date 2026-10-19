@@ -1927,11 +1927,7 @@ fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
     assert_eq!(code, 0, "{out} {err}");
     let summary = format!(
         "edit replace: changed; wrote {}\n",
-        dir.path()
-            .join("out.docx")
-            .canonicalize()
-            .unwrap()
-            .display()
+        slash_path(&dir.path().join("out.docx").canonicalize().unwrap())
     );
     assert!(
         out.starts_with(&format!("{summary}SUCCESS:\n~~~~diff\n")),
@@ -1950,6 +1946,49 @@ fn review_10_all_actions_help_and_human_success_and_usage_exit_two() {
     );
     assert!(out.ends_with("~~~~\n"), "{out}");
     assert!(err.is_empty(), "{err}");
+}
+
+/// #1244: the summary path comes from `absolute()`, which the CLI calls
+/// before publication. `canonicalize(path)` fails while the file is still
+/// unwritten, so the fallback must canonicalize the parent and rejoin the
+/// file name — never just `current_dir().join(path)`. A `./out.docx`
+/// output pins the difference on every host: the old code lets the `./`
+/// through to the summary, the new code resolves it.
+#[test]
+fn review_11_wrote_summary_canonicalizes_a_relative_output() {
+    let dir = tempfile::tempdir().unwrap();
+    letter(dir.path(), "letter.docx", "fee");
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "letter.docx",
+            "--find",
+            "fee",
+            "--text",
+            "cost",
+            "-o",
+            "./out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{out} {err}");
+    let canonical = dir.path().canonicalize().unwrap().join("out.docx");
+    let expected_summary = format!("edit replace: changed; wrote {}\n", slash_path(&canonical));
+    assert!(out.starts_with(&expected_summary), "{out}");
+    // The user-facing `./out.docx` echo in the diff header (`+++ after
+    // ./out.docx`) stays verbatim, but the agent-facing summary line on
+    // stdout must not carry it: a `./` survives the old code's
+    // `current_dir().join(path)` fallback because `Path::join` keeps
+    // literal path components as written.
+    let summary_line = out
+        .lines()
+        .next()
+        .expect("summary line is the first line of stdout");
+    assert!(
+        !summary_line.contains("./"),
+        "the `./` must not survive into the summary line: {summary_line}"
+    );
 }
 
 #[test]

@@ -3779,6 +3779,15 @@ mod slash_path_tests {
         assert_eq!(slash_path(Path::new("plain")), "plain");
     }
 
+    /// The agent-facing contract: a canonical drive-letter path spelled
+    /// `C:/…` regardless of the OS the test runs on (#1244).
+    #[test]
+    fn slash_path_canonical_drive_letter_spells_agent_facing() {
+        let formatted = slash_path(Path::new(r"C:\Users\Alice\out.docx"));
+        assert_eq!(formatted, "C:/Users/Alice/out.docx");
+        assert!(!formatted.contains('\\'), "backslashes: {formatted}");
+    }
+
     #[test]
     fn unverbatimed_keeps_every_nonverbatim_path() {
         // The parsed-component contract, portable: only a Windows verbatim
