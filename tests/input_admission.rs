@@ -162,6 +162,53 @@ fn dual_header_package() -> Vec<u8> {
     bytes
 }
 
+/// Rename an entry in its local AND central header (the shape a hostile
+/// writer produces): the two records agree, so the only defect is the
+/// duplicate part identity the new spelling creates (#600). `stand_in` is
+/// the name the writer emitted, `alias` the name both headers adopt.
+fn rename_entry(bytes: &mut [u8], stand_in: &[u8], alias: &[u8]) {
+    assert_eq!(stand_in.len(), alias.len(), "names must keep the length");
+    let (lfh, central) = header_offsets(bytes, std::str::from_utf8(stand_in).unwrap());
+    bytes[lfh + 30..lfh + 30 + alias.len()].copy_from_slice(alias);
+    bytes[central + 46..central + 46 + alias.len()].copy_from_slice(alias);
+}
+
+/// A valid package carrying a second entry that names the same part —
+/// exactly or under ASCII case (#600 probes p1/p2/p6/p7/p9, which Word
+/// refuses). `stand_in` is the unique name the writer emits, `alias` the
+/// spelling it is renamed to.
+fn duplicate_probe(stand_in: &str, alias: &str) -> Vec<u8> {
+    let mut bytes = package(|writer, options| {
+        writer
+            .start_file(
+                stand_in,
+                options.compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"second").unwrap();
+    });
+    rename_entry(&mut bytes, stand_in.as_bytes(), alias.as_bytes());
+    bytes
+}
+
+/// A package with exactly `entries` parts in order (a name ending in `/`
+/// becomes a directory entry). Unlike `package`, the caller chooses every
+/// part name, so case-variant spellings of the reserved names are
+/// expressible (#600 probes p3/p4/p5).
+fn package_named(entries: &[(&str, &str)]) -> Vec<u8> {
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (name, body) in entries {
+        if name.ends_with('/') {
+            writer.add_directory(*name, options).unwrap();
+        } else {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(body.as_bytes()).unwrap();
+        }
+    }
+    writer.finish().unwrap().into_inner()
+}
+
 /// A package valid in every other way whose `word/document.xml` local
 /// header names the entry differently than the central directory: a tool
 /// that trusts the local header and a reader that trusts the central
@@ -838,6 +885,39 @@ fn zip17_public_boundaries() {
             "UNSUPPORTED_PACKAGE",
             "ZIP_SPECIAL_ENTRY",
         ),
+        // ZIP-15 (#600): two entries naming one part — Word refuses each
+        // of these shapes, so every route refuses them with DUPLICATE_PART
+        // and `debug` reports the defect for triage.
+        (
+            "exact duplicate part",
+            duplicate_probe("word/document.xm0", "word/document.xml"),
+            "DUPLICATE_PART",
+            "ZIP_DUPLICATE_PART",
+        ),
+        (
+            "case-aliased main part",
+            duplicate_probe("word/document.xm0", "word/Document.xml"),
+            "DUPLICATE_PART",
+            "ZIP_DUPLICATE_PART",
+        ),
+        (
+            "upper-case main part",
+            duplicate_probe("word/document.xm0", "WORD/document.xml"),
+            "DUPLICATE_PART",
+            "ZIP_DUPLICATE_PART",
+        ),
+        (
+            "case-aliased content types",
+            duplicate_probe("[Content_Types].xmx", "[content_types].xml"),
+            "DUPLICATE_PART",
+            "ZIP_DUPLICATE_PART",
+        ),
+        (
+            "case-aliased package rels",
+            duplicate_probe("xrels/.rels", "_RELS/.rels"),
+            "DUPLICATE_PART",
+            "ZIP_DUPLICATE_PART",
+        ),
     ] {
         let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
             .expect_err("{what} probe must be refused");
@@ -863,6 +943,12 @@ fn zip17_public_boundaries() {
         }
         let found = jubarte::scrub::leaks(&bytes, "no-such-text-occurs-here");
         assert!(!found.is_empty(), "{what}: leaks must fail closed");
+        if finding == "ZIP_DUPLICATE_PART" {
+            assert!(
+                found.iter().any(|f| f.contains(code)),
+                "{what}: leaks must name the refusal code: {found:?}"
+            );
+        }
         let findings =
             jubarte::debug::findings(&bytes).expect("debug opens a package every route refuses");
         assert!(
@@ -881,6 +967,87 @@ fn zip17_public_boundaries() {
     jubarte::markdown::docx_to_markdown(&control, &jubarte::markdown::MarkdownOptions::default())
         .expect("markdown opens it");
     jubarte::debug::findings(&control).expect("debug opens it");
+
+    // ZIP-15 (#600) controls: OPC part names ignore ASCII case
+    // (ECMA-376 Part 2 §6.2.2.3 M1.12), so a single case-variant name IS
+    // the part — Word opens each of these packages (probes p3, p4, p5,
+    // p8), and every route must read the variant's content.
+    let document = |text: &str| {
+        format!(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+            <w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"
+        )
+    };
+    for (what, text, bytes, stored) in [
+        (
+            "case-variant main part (p3)",
+            "variant main",
+            package_named(&[
+                ("[Content_Types].xml", CONTENT_TYPES),
+                ("_rels/.rels", PACKAGE_RELS),
+                ("word/Document.xml", &document("variant main")),
+            ]),
+            "word/Document.xml",
+        ),
+        (
+            "lower-case content types (p4)",
+            "lower content types",
+            package_named(&[
+                ("[content_types].xml", CONTENT_TYPES),
+                ("_rels/.rels", PACKAGE_RELS),
+                ("word/document.xml", &document("lower content types")),
+            ]),
+            "word/document.xml",
+        ),
+        (
+            "upper-case package rels (p5)",
+            "upper rels",
+            package_named(&[
+                ("[Content_Types].xml", CONTENT_TYPES),
+                ("_RELS/.RELS", PACKAGE_RELS),
+                ("word/document.xml", &document("upper rels")),
+            ]),
+            "word/document.xml",
+        ),
+        (
+            "directory entry beside its part (p8)",
+            "beside its directory",
+            package_named(&[
+                ("[Content_Types].xml", CONTENT_TYPES),
+                ("_rels/.rels", PACKAGE_RELS),
+                ("word/", ""),
+                ("word/document.xml", &document("beside its directory")),
+            ]),
+            "word/document.xml",
+        ),
+    ] {
+        let admitted =
+            jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
+                .unwrap_or_else(|err| panic!("{what} must admit: {err}"));
+        assert_eq!(admitted.main_part, stored, "{what}");
+        let fs = jubarte::opc::PartFs::open(&bytes).unwrap_or_else(|err| panic!("{what}: {err}"));
+        let found_text = fs
+            .part_string("word/document.xml")
+            .unwrap_or_else(|| panic!("{what}: the main part resolves under one identity"));
+        assert!(found_text.contains(text), "{what}: {found_text}");
+        assert_eq!(
+            fs.main_document_part().as_deref(),
+            Some("word/document.xml"),
+            "{what}: the relationship target is reported verbatim"
+        );
+        jubarte::scrub::scrub(&bytes, &jubarte::scrub::ScrubOptions::default())
+            .unwrap_or_else(|err| panic!("{what}: scrub opens it: {err}"));
+        let read = jubarte::markdown::docx_to_markdown(
+            &bytes,
+            &jubarte::markdown::MarkdownOptions::default(),
+        )
+        .unwrap_or_else(|err| panic!("{what}: markdown opens it: {err}"));
+        assert!(read.markdown.contains(text), "{what}: {}", read.markdown);
+        jubarte::debug::findings(&bytes)
+            .unwrap_or_else(|err| panic!("{what}: debug opens it: {err}"));
+        let found = jubarte::scrub::leaks(&bytes, text);
+        assert!(!found.is_empty(), "{what}: leaks finds the variant part");
+    }
 
     // ZIP-10 (#604): the pre-index tail checks refuse hostile ZIP64 shapes
     // on every route — the declared-count pass runs before any indexing, so
