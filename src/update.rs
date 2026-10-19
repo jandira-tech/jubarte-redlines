@@ -203,6 +203,7 @@ pub fn run(opts: &Options) -> Result<(), String> {
         .target(target)
         .current_version(current)
         .bin_path_in_archive(bin_path_in_archive(target))
+        .verify_binary(extracted_binary_is_regular_file)
         .checksum_from_asset(SUMS_ASSET)
         .show_output(false)
         .show_download_progress(interactive)
@@ -295,11 +296,29 @@ fn confirm(from: &str, to: &str) -> Result<bool, String> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes" | "YES"))
 }
 
-/// The `verify_binary` hook `run` registers (#639): refuse the extracted
-/// binary when it is anything but a regular file, checked with
-/// `symlink_metadata` so a link is seen, not its target.
-fn extracted_binary_is_regular_file(_path: &std::path::Path) -> self_update::Result<()> {
-    Ok(())
+/// The `verify_binary` hook `run` registers (ZIP-16/#639): refuse the
+/// extracted binary when it is anything but a regular file. `self_update`
+/// already refuses a symlink *zip* entry in its single-file path, but its
+/// tar path delegates to `tar`'s `unpack_in`, which restores a symlink
+/// entry as a real link whose target is not confined to the staging
+/// directory — a crafted release archive could then install any path's
+/// contents as the new binary. `symlink_metadata`, not `metadata`, sees
+/// the entry itself rather than its target.
+fn extracted_binary_is_regular_file(path: &std::path::Path) -> self_update::Result<()> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| {
+        self_update::Error::verification_rejected(format!(
+            "the extracted binary {} cannot be inspected: {e}",
+            path.display()
+        ))
+    })?;
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(self_update::Error::verification_rejected(format!(
+            "the extracted binary {} is not a regular file",
+            path.display()
+        )))
+    }
 }
 
 #[cfg(test)]
