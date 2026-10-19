@@ -938,7 +938,15 @@ pub fn diff_documents_critic(
             Ok(jubarte::markdown::diff_markdown(old, next))
         }
         _ => jubarte::markdown::redline(old, next, &options)
-            .and_then(|docx| jubarte::markdown::docx_to_markdown(&docx, &Default::default()))
+            .and_then(|docx| {
+                jubarte::markdown::docx_to_markdown(
+                    &docx,
+                    &jubarte::markdown::MarkdownOptions {
+                        input_limits: options.settings.input_limits,
+                        ..Default::default()
+                    },
+                )
+            })
             .map(|read| read.markdown)
             .map_err(js_err),
     }

@@ -1066,6 +1066,26 @@ fn issue650_raised_attribute_limits_survive_changed_compare() {
     let output = compared
         .unwrap()
         .expect("comparison with active limits succeeds");
+    let patch = jubarte::markdown::patch_documents(
+        jubarte::markdown::Source::Docx(&original),
+        jubarte::markdown::Source::Docx(&modified),
+        &jubarte::markdown::RedlineOptions {
+            settings: settings.clone(),
+            ..Default::default()
+        },
+        &jubarte::markdown::PatchOptions {
+            old_name: "Alice.docx".into(),
+            new_name: "Bob.docx".into(),
+            owner: jubarte::markdown::Attribution {
+                author: "Carol Diaz".into(),
+                date: "2026-10-18T00:00:00Z".into(),
+            },
+        },
+    );
+    assert!(
+        patch.is_ok(),
+        "Markdown patch must retain active comparison limits: {patch:?}"
+    );
     let package = jubarte::opc::PartFs::open(&output).unwrap();
     let xml = package.part_string("word/document.xml").unwrap();
     let mut dom = Dom::new();
@@ -1091,7 +1111,7 @@ fn issue650_raised_attribute_limits_survive_changed_compare() {
 }
 
 #[test]
-fn issue650_markdown_converts_default_and_raised_admitted_widths() {
+fn issue650_markdown_converts_default_and_explicit_raised_widths() {
     use jubarte::admission::{InputLimitOverrides, admit};
     let raised = InputLimitOverrides::from_json(
         r#"{"max_element_attributes":4096,"max_start_tag_bytes":268435456}"#,
@@ -1113,7 +1133,10 @@ fn issue650_markdown_converts_default_and_raised_admitted_widths() {
         let converted = std::panic::catch_unwind(|| {
             jubarte::markdown::docx_to_markdown(
                 &bytes,
-                &jubarte::markdown::MarkdownOptions::default(),
+                &jubarte::markdown::MarkdownOptions {
+                    input_limits: limits,
+                    ..Default::default()
+                },
             )
         });
         assert!(
@@ -1131,5 +1154,109 @@ fn issue650_markdown_converts_default_and_raised_admitted_widths() {
                 .markdown
                 .contains("Alice greets Carol Diaz")
         );
+    }
+}
+
+#[test]
+fn issue650_markdown_refuses_default_attribute_count() {
+    let attrs: String = (0..1025).map(|i| format!(" a{i}='Alice'")).collect();
+    assert_markdown_policy_refusal(
+        &DOCUMENT.replace("<w:p>", &format!("<w:p{attrs}>")),
+        "attributes",
+    );
+}
+
+#[test]
+fn issue650_markdown_refuses_default_attribute_name() {
+    let name = "n".repeat(1025);
+    assert_markdown_policy_refusal(
+        &DOCUMENT.replace("<w:p>", &format!("<w:p {name}='Bob'>")),
+        "attribute name",
+    );
+}
+
+#[test]
+fn issue650_markdown_refuses_aliased_duplicate() {
+    assert_markdown_policy_refusal(
+        &DOCUMENT.replace(
+            "<w:p>",
+            "<w:p xmlns:a='urn:alias' xmlns:b='urn:alias' a:x='Alice' b:x='Bob'>",
+        ),
+        "expanded name",
+    );
+}
+
+fn assert_markdown_policy_refusal(xml: &str, reason: &str) {
+    let bytes = package_with_document(xml);
+    let result = jubarte::markdown::docx_to_markdown(&bytes, &Default::default());
+    assert!(
+        result.is_err(),
+        "Markdown must refuse {reason} before constructing attributes"
+    );
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("INVALID_XML")
+            && error.contains("word/document.xml")
+            && error.contains(reason),
+        "{error}"
+    );
+}
+
+#[test]
+fn issue650_markdown_refuses_over_cap_auxiliary_part() {
+    let attrs: String = (0..1025).map(|i| format!(" a{i}='Alice'")).collect();
+    let styles = format!(
+        "<w:styles xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'{attrs}/>"
+    );
+    let bytes = package(|writer, options| {
+        writer.start_file("word/styles.xml", options).unwrap();
+        writer.write_all(styles.as_bytes()).unwrap();
+    });
+    let result = jubarte::markdown::docx_to_markdown(&bytes, &Default::default());
+    assert!(
+        result.is_err(),
+        "over-cap auxiliary parts must refuse the whole conversion"
+    );
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("INVALID_XML") && error.contains("word/styles.xml"),
+        "{error}"
+    );
+}
+
+#[test]
+fn issue650_markdown_honors_explicit_tighter_budgets() {
+    use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
+    for limits in [
+        InputLimits {
+            max_element_attributes: 1,
+            ..Default::default()
+        },
+        InputLimits {
+            max_attribute_name_bytes: 2,
+            ..Default::default()
+        },
+        InputLimits {
+            max_attribute_value_bytes: 2,
+            ..Default::default()
+        },
+        InputLimits {
+            max_start_tag_bytes: 12,
+            ..Default::default()
+        },
+    ] {
+        let bytes = package_with_document(DOCUMENT);
+        let result = docx_to_markdown(
+            &bytes,
+            &MarkdownOptions {
+                input_limits: limits,
+                ..Default::default()
+            },
+        );
+        assert!(
+            result.is_err(),
+            "explicit tighter tag budget must refuse: {limits:?}"
+        );
+        assert!(result.unwrap_err().to_string().contains("INVALID_XML"));
     }
 }

@@ -767,7 +767,10 @@ fn diff_json(
             _ => jubarte::markdown::redline(old, new, &redline()).and_then(|docx| {
                 jubarte::markdown::docx_to_markdown(
                     &docx,
-                    &jubarte::markdown::MarkdownOptions::default(),
+                    &jubarte::markdown::MarkdownOptions {
+                        input_limits: settings.input_limits,
+                        ..Default::default()
+                    },
                 )
                 .map(|read| read.markdown)
             }),

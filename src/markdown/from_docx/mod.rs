@@ -40,6 +40,7 @@ pub(crate) enum Revisions {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Options {
+    pub(crate) input_limits: crate::admission::InputLimits,
     pub(crate) revisions: Revisions,
     /// Collect raster pictures and name them under this directory. `None`
     /// writes pictures as their alt text.
@@ -94,6 +95,8 @@ fn part_stem(path: &str) -> String {
 
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
     let mut package = Package::open(bytes, "DOCX")?;
+    package.input_limits = options.input_limits;
+    package.check_tag_policy()?;
     let main = package.main_part("word/document.xml")?;
     let mut document = package
         .xml(&main)?
