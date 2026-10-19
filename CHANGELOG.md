@@ -43,6 +43,20 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **`convert --to md --track-changes accept|reject` keeps the spans at a
+  seam** (#1220). Resolving CriticMarkup in Markdown could leave two
+  same-kind inline spans touching, which CommonMark then read as one
+  span with the inner delimiters as text (`` `a``b` `` is a code span
+  `a``b`, not `a` and `b`), could lose text behind a chain of marks,
+  merge a kept body of a different kind into its neighbours (`*abc*`
+  for `*a*{++`b`++}*c*`), or panic on non-ASCII spans. Resolve now
+  joins same-kind spans that touch across anything resolving to
+  nothing — code joined on its CommonMark contents and re-fenced, a
+  different-kind body never merged, chains joined transitively, and a
+  `_` run landing intraword or touching a run of the same character
+  rewritten `*`/`_` to match — so the md→md route agrees with the
+  docx route in both directions.
+
 - **Dual-header ZIP packages are refused** (#594, GHSA-m665-v7pm-7grj). zip is bumped to 9.0.5, and every package open compares each entry's raw name in its local file header with its central record. A disagreement, or a central record with no local header, is `ZIP_HEADER_MISMATCH` on every route. `jubarte debug` reports it as a finding instead of refusing. A local time that differs from the central record is still accepted, as Word accepts it.
 
 - **`accept`/`reject` keep untracked text under an orphan move.** A
