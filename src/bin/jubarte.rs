@@ -152,13 +152,30 @@ fn pdf_options(
 }
 
 /// The absolute form of a CLI path: the real path when it exists, else the
-/// working directory joined with it. Error envelopes use it to name the
-/// file the caller supplied even when its bytes were never read (#1084
-/// review F5; proposal §11 keeps `source.path` absolute).
+/// canonical parent joined with the file name. Error envelopes use it to
+/// name the file the caller supplied even when its bytes were never read
+/// (#1084 review F5; proposal §11 keeps `source.path` absolute).
+///
+/// When the file does not exist yet (artifact recorded before
+/// publication), `canonicalize(path)` fails and we fall back to
+/// `canonicalize(parent).join(name)` so symlinks are resolved on Unix
+/// and 8.3 short names are expanded on Windows (`std::fs::canonicalize`
+/// uses `GetFinalPathNameByHandleW` with `VOLUME_NAME_DOS`, which
+/// returns the long form). The bare working-directory join left a
+/// `RUNNER~1` short name on Windows CI (#1244).
 fn absolute(path: &Path) -> String {
-    let path = std::fs::canonicalize(path)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
-    slash_path(&path)
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let canon_parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        match path.file_name() {
+            Some(name) => canon_parent.join(name),
+            None => canon_parent,
+        }
+    });
+    slash_path(&resolved)
 }
 
 /// Whether two CLI paths name the same file. Two existing paths are compared
