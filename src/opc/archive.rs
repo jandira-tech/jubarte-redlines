@@ -8,7 +8,9 @@ use zip::ZipArchive;
 use zip::read::{ArchiveOffset, Config};
 use zip::result::{ZipError, ZipResult};
 
-/// Open at offset zero first, retaining support for prepended data.
+/// Open at offset zero first, retaining support for prepended data —
+/// APPNOTE 4.3.6 lets a self-extracting archive carry a stub ahead of
+/// the first local header, and jubarte admits one.
 ///
 /// The unchecked opener: like [`ZipArchive::new`] it trusts the central
 /// directory and never looks at local file headers. `jubarte debug` — the

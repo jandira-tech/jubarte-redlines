@@ -12,10 +12,10 @@
 
 use std::io::{Cursor, Write};
 
+use jubarte::WmlDocument;
 use jubarte::admission::InputLimits;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::{compare_documents, compare_documents_with_settings};
-use jubarte::WmlDocument;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -107,6 +107,8 @@ fn small_limits() -> InputLimits {
     }
 }
 
+/// APPNOTE 4.3.6 lets a self-extracting archive carry a stub ahead of
+/// the first local header; jubarte admits a prefixed package.
 #[test]
 fn admission_accepts_a_package_with_prepended_data() {
     let mut bytes = b"prepended data".to_vec();

@@ -1189,7 +1189,7 @@ pub(crate) mod zip_names {
     /// expresses: bit-3 descriptors, forced ZIP64 records and a central
     /// order different from the physical one. With a `prefix`, offsets
     /// are relative to the archive start, as prepended-data packages
-    /// carry them.
+    /// carry them (APPNOTE 4.3.6's self-extracting stub).
     pub fn assembled(
         prefix: &[u8],
         entries: &[AssembledEntry<'_>],
@@ -2185,8 +2185,10 @@ mod tests {
 
     /// ZIP-17 items 2-3 controls: signed and unsigned ZIP32 descriptors,
     /// a small forced-ZIP64 descriptor, a descriptor followed
-    /// immediately by the next local header, a package with a prefix and
-    /// one whose central order differs from its physical order all admit.
+    /// immediately by the next local header, a package with a prefix
+    /// (APPNOTE 4.3.6 allows a self-extracting stub; jubarte admits one)
+    /// and one whose central order differs from its physical order all
+    /// admit.
     #[test]
     fn zip17_accepts_legitimate_descriptor_and_layout_shapes() {
         for shape in [
