@@ -190,3 +190,27 @@ pub fn sha1_fingerprint(s: &str) -> u64 {
 pub fn sha1_fingerprint128(s: &str) -> u128 {
     fnv1a_128(s)
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hex_encode_20() {
+        // All zeros
+        let digest_zero = [0u8; 20];
+        let encoded_zero = hex_encode_20(&digest_zero);
+        assert_eq!(encoded_zero, [b'0'; 40]);
+
+        // All 0xff
+        let digest_ff = [0xffu8; 20];
+        let encoded_ff = hex_encode_20(&digest_ff);
+        assert_eq!(encoded_ff, [b'f'; 40]);
+
+        // Mixed bytes pattern
+        let digest_mixed: [u8; 20] = [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x0f, 0xf0, 0x5a, 0xa5,
+        ];
+        let encoded_mixed = hex_encode_20(&digest_mixed);
+        assert_eq!(&encoded_mixed, b"0123456789abcdeffedcba98765432100ff05aa5");
+    }
+}
