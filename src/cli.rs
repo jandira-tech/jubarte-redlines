@@ -1028,8 +1028,8 @@ pub enum Command {
         args: ReadArgs,
     },
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
-    /// --resolve, --reply, --accept, --reject or --style (several -p per
-    /// command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
+    /// --resolve, --reply, --accept, --reject, --strike, --restore or --style
+    /// (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
     /// bundle), then prints the changed paragraphs as the agent view (a
     /// pure --accept/--reject prints the resolved changes; refusal: exit 3).
     #[command(after_help = "Examples:\n  \

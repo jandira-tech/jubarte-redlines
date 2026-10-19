@@ -46,6 +46,19 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **Visible rejects: `strike` and `restore` (#1252).** `edit FILE -p r12
+  --strike` deletes another author's insertion with your tracked deletion
+  inside it; `-p r12 --restore` leaves their deletion and inserts a copy of
+  its words, formatting kept, right after it. Rejecting either way shows
+  the decision, where `--reject` leaves no trace. `--content` comments on
+  the struck or restored words, and `--reject --visible`
+  (`resolve_revisions.reject.visible` in a plan) picks strike or restore by
+  each revision's kind. Plans take `{"kind":"strike"|"restore","revision":…,
+  "comment":…}` under `existing_revisions: keep`; discovery offers both
+  only there. Own revisions, empty ones, paragraph marks, formatting
+  changes, a move's source to restore or destination to strike, and a
+  split or non-plain deletion to restore are refused with the route that
+  takes them.
 - **`convert --commonmark`** writes Word as plain CommonMark with
   CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
   wrote before.
@@ -180,7 +193,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   operation's own `target`. An anchor that reaches into another author's
   deletion gets this refusal instead of `ANCHOR_NOT_FOUND`, copied with or
   without the deletion's marks, with a tab or a lookalike character. No
-  refusal says to resolve the change first.
+  refusal says to resolve the change first. A deletion restore takes is
+  offered `restore` first ("put it back visibly"), in operation flags and
+  v1 plans.
 
 - **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
   `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`

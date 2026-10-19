@@ -33,7 +33,7 @@ fn replace(find: &str, text: &str) -> Value {
 }
 
 #[test]
-fn deletion_hint_offers_both_settles_then_comment() {
+fn deletion_hint_offers_restore_first_then_both_settles_then_comment() {
     let e = apply_plan(STEP2, &plan(replace("bankers", "brokers"))).unwrap_err();
     assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
     assert_eq!(e.operation.as_deref(), Some("op-1"));
@@ -41,6 +41,7 @@ fn deletion_hint_offers_both_settles_then_comment() {
         e.message,
         [
             r#"the text is inside r4, "bankers" deleted by "Bob"."#,
+            r#"  put it back visibly:  {"kind":"restore","revision":"r4"}            (their deletion stays, your insertion shows)"#,
             r#"  let it go:            "resolve_revisions":{"accept":{"ids":["r4"]}} (their words leave the document for good)"#,
             r#"  put it back silently: "resolve_revisions":{"reject":{"ids":["r4"]}} (their deletion disappears, no trace)"#,
             r#"  or comment on it:     {"kind":"comment","paragraph":"p0","find":"…","text":"…"}"#,
@@ -78,6 +79,60 @@ fn following_the_reject_route_frees_the_text() {
         .text
         .clone();
     assert!(text.contains("pay the brokers"), "{text}");
+}
+
+#[test]
+fn following_the_restore_route_puts_their_words_back_visibly() {
+    let e = apply_plan(STEP2, &plan(replace("bankers", "brokers"))).unwrap_err();
+    let line = e.message.lines().nth(1).unwrap();
+    let route: Value = serde_json::from_str(fragment(line)).unwrap_or_else(|x| panic!("{x}: {e}"));
+    let out = apply_plan(STEP2, &plan(json!([route]))).unwrap_or_else(|x| panic!("{x}: {e}"));
+    let accepted = jubarte::changes::accept_changes(&out.redline, &Default::default()).unwrap();
+    let text = jubarte::inspect::paragraphs(&accepted).unwrap()[0]
+        .text
+        .clone();
+    assert!(text.contains("pay the bankers"), "{text}");
+    // Bob's deletion stays, beside ours.
+    let bob = jubarte::changes::list_changes(&out.redline)
+        .unwrap()
+        .into_iter()
+        .any(|c| c.id == "r4" && c.author.as_deref() == Some("Bob"));
+    assert!(bob, "{e}");
+}
+
+#[test]
+fn an_edit_of_words_the_same_command_restores_says_to_edit_them_after() {
+    let restore = json!({"kind":"restore","revision":"r4"});
+    let e = apply_plan(
+        STEP2,
+        &plan(json!([restore, replace("bankers", "brokers")[0].clone()])),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    assert_eq!(
+        e.message,
+        r#"the text is inside r4, "bankers" deleted by "Bob", which this command restores: edit the restored words in a command of their own, after the restore."#,
+        "{e}"
+    );
+}
+
+#[test]
+fn a_deletion_restore_cannot_take_offers_no_visible_route() {
+    // r6 is split over two stretches: restore takes one.
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">alpha </w:t></w:r><w:del w:id="6" w:author="Bob" w:date="{OLD}"><w:r><w:delText>beta</w:delText></w:r></w:del><w:r><w:t xml:space="preserve"> mid </w:t></w:r><w:del w:id="6" w:author="Bob" w:date="{OLD}"><w:r><w:delText>gamma</w:delText></w:r></w:del></w:p>"#
+    ));
+    let e = apply_plan(&source, &plan(replace("beta", "delta"))).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    assert!(
+        e.message
+            .lines()
+            .nth(1)
+            .unwrap()
+            .starts_with("  let it go:"),
+        "{e}"
+    );
+    assert!(!e.message.contains("restore"), "{e}");
 }
 
 fn moved(kind: &str, t: &str) -> Vec<u8> {
@@ -239,7 +294,12 @@ fn hint_quotes_the_active_plan_syntax() {
     );
     let flags = says(&out);
     assert!(!out.status.success(), "{flags}");
-    for want in ["-p r4 --accept", "-p r4 --reject", "add -p p0 --anchor"] {
+    for want in [
+        "-p r4 --restore",
+        "-p r4 --accept",
+        "-p r4 --reject",
+        "add -p p0 --anchor",
+    ] {
         assert!(flags.contains(want), "flags lack {want}: {flags}");
     }
     assert!(!flags.contains("resolve_revisions"), "{flags}");
@@ -257,6 +317,11 @@ fn hint_quotes_the_active_plan_syntax() {
     assert!(
         v1.contains(r#"\"accept\":{\"ids\":[\"r4\"]}"#)
             || v1.contains(r#""accept":{"ids":["r4"]}"#),
+        "{v1}"
+    );
+    assert!(
+        v1.contains(r#"{\"kind\":\"restore\",\"revision\":\"r4\"}"#)
+            || v1.contains(r#"{"kind":"restore","revision":"r4"}"#),
         "{v1}"
     );
     assert!(!v1.contains("--accept"), "{v1}");
@@ -299,6 +364,8 @@ fn hint_quotes_the_active_plan_syntax() {
         "{v2}"
     );
     assert!(!v2.contains("--accept"), "{v2}");
+    // A v2 plan has no restore yet.
+    assert!(!v2.contains("restore"), "{v2}");
     assert!(
         !v2.contains(r#"{"ids":["r4"]}"#) && !v2.contains(r#"{\"ids\":[\"r4\"]}"#),
         "{v2}"

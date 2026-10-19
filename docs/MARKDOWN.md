@@ -800,6 +800,7 @@ jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment
 jubarte edit FILE -p c5 --reply TEXT                           a reply
 jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
 jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change (prints `accepted r12 in p3: "from" > "to"`)
+jubarte edit FILE -p r12 --strike | --restore                  reject another author's change visibly (--reject --visible picks by kind)
 jubarte add  FILE -p WHERE --content TEXT [--before]           a new paragraph after (or before) WHERE
 jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND (--comment: on the whole paragraph)
 jubarte add  FILE -p c5 --content TEXT                         a reply (also --reply TEXT)
@@ -843,6 +844,34 @@ content operation) prints one line per resolved change instead
 Anchors match literally first, then without their Markdown marks, with a
 note.
 
+### Visible rejects
+
+`--reject` is Word's Reject: another author's insertion vanishes and their
+deletion silently comes back, and nothing in the document shows the
+decision. `--strike` and `--restore` reject visibly, as your own tracked
+change beside theirs:
+
+- `-p r12 --strike` (`{"kind":"strike","revision":"r12"}`) deletes the
+  words of another author's insertion, your tracked deletion inside it.
+- `-p r12 --restore` (`{"kind":"restore","revision":"r12"}`) leaves their
+  deletion as it is and inserts a copy of its words right after it, with
+  their formatting.
+- `-p r12 --reject --visible`, and `"resolve_revisions":{"reject":{"ids":[…],"visible":true}}`
+  in a plan, strike each insertion and restore each deletion they name.
+
+`--content` (a plan's `comment`) adds a comment on the struck or restored
+words. Accept All reads as their change rejected, Reject All as the
+document before both, and rejecting only your changes gives theirs back
+intact. Both need the file's revisions kept (`--existing-revisions keep`,
+the default for a file with tracked changes). Striking an insertion you
+already struck is `ok`, with the note `already struck`. Refused, each with
+the route that takes it instead: your own revision (`OWN_REVISION`), a
+revision with no text (`EMPTY_REVISION`, naming the comment marks it
+holds), a revision the same command also accepts or rejects
+(`REVISION_CONFLICT`), the source of a move to restore or its destination
+to strike, a paragraph mark, a formatting change, and a deletion split
+over several places or holding anything but plain text to restore.
+
 ### Refusals
 
 Text inside another author's insertion is editable: the edit nests in
@@ -861,18 +890,25 @@ command used:
 
 ```text
 error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text is inside r4, "bankers" deleted by "Bob".
-  let it go:            -p r4 --accept (their words leave the document for good)
-  put it back silently: -p r4 --reject (their deletion disappears, no trace)
+  put it back visibly:  -p r4 --restore (their deletion stays, your insertion shows)
+  let it go:            -p r4 --accept  (their words leave the document for good)
+  put it back silently: -p r4 --reject  (their deletion disappears, no trace)
   or comment on it:     add -p p0 --anchor "…" --content "…"
 ```
 
-Either route goes in the same command, before the edit
+Accepting or rejecting goes in the same command, before the edit
 (`edit FILE -p r4 --reject -p p0 --anchor bankers --content brokers`). A
-`--plan` quotes `"resolve_revisions":{"reject":{"ids":["r4"]}}` and a
+restore goes in a command of its own (an edit of its words in the same
+command is refused, saying so): the next edit finds the restored words,
+your own insertion, and rewrites them in place. A
+`--plan` quotes `{"kind":"restore","revision":"r4"}`,
+`"resolve_revisions":{"reject":{"ids":["r4"]}}` and a
 `{"kind":"comment",…}` operation instead; `edit apply` quotes a whole
 `"resolve_revisions":{"accept":[…],"reject":[…]}` naming the revision's
 `short_id` and `long_id`, and a comment on the refused operation's own
-`target`. Each JSON route pastes into its plan as written. An anchor that
+`target`, but no restore: its plans have none yet. The visible route is
+offered only where restore would land: not for a deletion split over
+several places or holding a field, a picture or a note reference. Each JSON route pastes into its plan as written. An anchor that
 misses the visible text but reaches into a deletion gets the same refusal,
 not `ANCHOR_NOT_FOUND`, whether it is copied with the deletion's marks
 (`{--bankers--}`) or without them, with a tab as `\t` or a curly quote

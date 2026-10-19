@@ -214,6 +214,37 @@ fn unsupported_child(dom: &Dom, container: NodeId, nested: &[&str]) -> Option<&'
         })
 }
 
+/// Whether a deletion whose parent is `parent` sits where restore puts
+/// text back: in a paragraph, or in an insertion inside one.
+fn in_paragraph(dom: &Dom, parent: NodeId) -> bool {
+    dom.name_is(parent, &W::p()) || dom.name_is(parent, &W::ins())
+}
+
+/// Whether `del` holds words to put back: deleted text, or a glyph typed
+/// in one of its runs (a tab, a break, a symbol, a hyphen).
+fn holds_words(dom: &Dom, del: NodeId) -> bool {
+    dom.descendants(del, None).into_iter().any(|n| {
+        let name = local(dom, n);
+        let typed = matches!(
+            name.as_str(),
+            "tab" | "br" | "cr" | "sym" | "noBreakHyphen" | "softHyphen"
+        ) && dom.parent(n).is_some_and(|p| dom.name_is(p, &W::r()));
+        (name == "delText" && !dom.value(n).is_empty()) || typed
+    })
+}
+
+/// Whether restore takes `del`, a `w:del` its revision spreads over
+/// `stretches` places: one stretch of plain deleted words in a paragraph.
+/// A refusal hint offers restore only where it would land, by the checks
+/// restore itself makes.
+pub(super) fn restorable(dom: &Dom, del: NodeId, stretches: usize) -> bool {
+    stretches == 1
+        && dom.name_is(del, &W::name("del"))
+        && dom.parent(del).is_some_and(|p| in_paragraph(dom, p))
+        && holds_words(dom, del)
+        && unsupported_child(dom, del, &[]).is_none()
+}
+
 /// Detached copies of `del`'s runs as inserted text: `w:delText` read as
 /// `w:t`, the run formatting without another revision's marks.
 pub(super) fn copy_runs(dom: &mut Dom, del: NodeId) -> Vec<NodeId> {
@@ -558,7 +589,7 @@ impl Transaction<'_> {
                     )));
                 };
                 let parent = dom.parent(del).expect("a run-level deletion has a parent");
-                if !dom.name_is(parent, &W::p()) && !dom.name_is(parent, &W::ins()) {
+                if !in_paragraph(dom, parent) {
                     let inside = match local(dom, parent).as_str() {
                         "hyperlink" => "a hyperlink",
                         "sdtContent" => "a content control",
@@ -574,15 +605,7 @@ impl Transaction<'_> {
                     .into_iter()
                     .filter_map(|r| dom.attribute(r, &W::id()).map(|n| format!("c{n}")))
                     .collect();
-                let words = dom.descendants(del, None).into_iter().any(|n| {
-                    let name = local(dom, n);
-                    let typed = matches!(
-                        name.as_str(),
-                        "tab" | "br" | "cr" | "sym" | "noBreakHyphen" | "softHyphen"
-                    ) && dom.parent(n).is_some_and(|p| dom.name_is(p, &W::r()));
-                    (name == "delText" && !dom.value(n).is_empty()) || typed
-                });
-                if !words {
+                if !holds_words(dom, del) {
                     let message = match marks.as_slice() {
                         [] => format!("{short} holds no text; reject {short} instead"),
                         [one] => format!(

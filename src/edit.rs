@@ -4273,18 +4273,43 @@ impl<'p> Transaction<'p> {
             .find(|&&n| dom.name_is(n, &W::p()))
             .and_then(|p| self.paragraph_nodes.iter().position(|n| n == p))
             .map_or_else(String::new, |para| self.paragraph_id(para));
-        hint::settle_hint(
-            &hint::Holder {
-                held,
-                id: &id,
-                long_id: &long_id,
-                author: dom.attribute(revision, &W::author()).unwrap_or_default(),
-                text: &text,
-                paragraph: &paragraph,
-                lead,
-            },
-            self.syntax,
-        )
+        let author = dom.attribute(revision, &W::author()).unwrap_or_default();
+        // Restore takes another author's deletion in one stretch.
+        let restorable = held == hint::Held::Deleted
+            && author != self.plan.author
+            && story.is_some_and(|s| {
+                let stretches = dom
+                    .descendants(s.root, Some(&W::name("del")))
+                    .into_iter()
+                    .filter(|&n| {
+                        dom.attribute(n, &W::id()) == Some(wid)
+                            && dom.parent(n).is_some_and(|p| !dom.name_is(p, &W::r_pr()))
+                    })
+                    .count();
+                visible::restorable(dom, revision, stretches)
+            });
+        let holder = hint::Holder {
+            held,
+            id: &id,
+            long_id: &long_id,
+            author,
+            text: &text,
+            paragraph: &paragraph,
+            lead,
+            restorable,
+        };
+        // A restore of the same deletion in this command lands first; the
+        // edit of its words waits for the next command.
+        let restored_here = held == hint::Held::Deleted
+            && self.plan.operations.iter().any(|op| {
+                matches!(&op.kind, OperationKind::Restore { revision, .. }
+                    if crate::ids::parse_change_ids(revision.trim())
+                        .is_ok_and(|ids| ids.iter().any(|c| c.short() == id)))
+            });
+        if restored_here {
+            return hint::restored_here_hint(&holder);
+        }
+        hint::settle_hint(&holder, self.syntax)
     }
 
     /// When `find` misses `projection`'s visible text but reaches into text

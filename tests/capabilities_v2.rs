@@ -250,7 +250,7 @@ fn each_runtime_advertises_only_dispatched_operations() {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        assert_eq!(advertised.len(), 24);
+        assert_eq!(advertised.len(), 26);
         // The advertised list is checked against the real dispatcher, not a
         // second copy of the same catalog: every advertised kind must clear
         // the dispatcher's kind gate on a real document, and the gate must
