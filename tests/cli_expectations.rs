@@ -565,6 +565,33 @@ fn v1_plan_with_expect_refuses_with_unresolved_verification() {
     );
 }
 
+/// #1244: `absolute()` canonicalizes the parent of a file that does not
+/// exist yet, so Windows' 8.3 short names expand. A parent that does not
+/// exist either cannot be canonicalized; the path must still come back
+/// absolute (proposal §11), not as the relative spelling the caller typed.
+#[test]
+fn error_envelopes_name_a_missing_file_in_a_missing_directory_absolutely() {
+    let dir = tempfile::tempdir().unwrap();
+    satisfying_fixture(dir.path());
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "check",
+            "nodir/missing.docx",
+            "--expect",
+            "satisfied.expect.json",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 1, "check read: exit {code}: {out} {err}");
+    let envelope = json_envelope(&out);
+    let path = field(&envelope, "/source/path").as_str().expect("path");
+    assert!(
+        std::path::Path::new(path).is_absolute() && path.ends_with("nodir/missing.docx"),
+        "a missing file in a missing directory is still named absolutely: {path}"
+    );
+}
+
 #[test]
 fn error_envelopes_name_the_file_the_caller_supplied() {
     // Proposal §11: the envelope's `source` keeps the path. An error the

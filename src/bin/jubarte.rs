@@ -152,27 +152,34 @@ fn pdf_options(
 }
 
 /// The absolute form of a CLI path: the real path when it exists, else the
-/// canonical parent joined with the file name. Error envelopes use it to
-/// name the file the caller supplied even when its bytes were never read
-/// (#1084 review F5; proposal §11 keeps `source.path` absolute).
+/// deepest existing ancestor's real path joined with the rest. Error
+/// envelopes use it to name the file the caller supplied even when its
+/// bytes were never read (#1084 review F5; proposal §11 keeps
+/// `source.path` absolute).
 ///
-/// When the file does not exist yet (artifact recorded before
-/// publication), `canonicalize(path)` fails and we fall back to
-/// `canonicalize(parent).join(name)` so symlinks are resolved on Unix
-/// and 8.3 short names are expanded on Windows (`std::fs::canonicalize`
-/// uses `GetFinalPathNameByHandleW` with `VOLUME_NAME_DOS`, which
-/// returns the long form). The bare working-directory join left a
-/// `RUNNER~1` short name on Windows CI (#1244).
+/// An artifact is recorded before it is published, so `canonicalize(path)`
+/// fails for every `-o`. The working-directory join alone kept Windows' 8.3
+/// short names (`RUNNER~1` on CI, #1244): `std::fs::canonicalize` expands
+/// them (`GetFinalPathNameByHandleW`, `VOLUME_NAME_DOS`), so the nearest
+/// ancestor that exists is canonicalized and the missing tail rejoined. A
+/// path with no existing ancestor keeps the working-directory join, still
+/// absolute.
 fn absolute(path: &Path) -> String {
-    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| {
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let canon_parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-        match path.file_name() {
-            Some(name) => canon_parent.join(name),
-            None => canon_parent,
+    let joined = std::env::current_dir().unwrap_or_default().join(path);
+    let resolved = std::fs::canonicalize(&joined).unwrap_or_else(|_| {
+        let mut missing = Vec::new();
+        let mut ancestor = joined.as_path();
+        loop {
+            if let Ok(real) = std::fs::canonicalize(ancestor) {
+                break missing.iter().rev().fold(real, |acc, name| acc.join(name));
+            }
+            match (ancestor.parent(), ancestor.file_name()) {
+                (Some(parent), Some(name)) => {
+                    missing.push(name.to_os_string());
+                    ancestor = parent;
+                }
+                _ => break joined.clone(),
+            }
         }
     });
     slash_path(&resolved)
