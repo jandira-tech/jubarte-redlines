@@ -333,11 +333,12 @@ pub fn validate_with(
 }
 
 /// [`validate_with`] on `docx`, split by the findings of `base`, the
-/// document the edits started from, under the same rules but `edits`
-/// ([`baseline`]): that rule reads `docx` against its original, so each of
-/// its findings is the edit's. `base` is that original unless `original`
-/// names another; `author` turns the rule on as `validate_with`'s
-/// `original` does.
+/// document the edits started from, under the same rules and against the
+/// same original ([`baseline_keyed`], each side's keys read in its own
+/// document by [`identities`]). That original is `base` unless `original`
+/// names another; `author` turns the `edits` rule on as `validate_with`'s
+/// `original` does, so the other party's changes `base` already had are
+/// the input's, not the edit's.
 ///
 /// # Errors
 ///
@@ -350,21 +351,19 @@ pub fn validate_baselined(
     author: Option<&str>,
     mut layout: Option<crate::audit::LayoutPass<'_>>,
 ) -> Result<Baselined, ValidateError> {
+    let against = original.or(Some(base)).zip(author);
     let findings = validate_with(
         docx,
         rules,
-        original.or(Some(base)).zip(author),
+        against,
         layout
             .as_mut()
             .map(|pass| &mut **pass as crate::audit::LayoutPass<'_>),
     )?;
-    let base_rules: Vec<&str> = rules.iter().copied().filter(|r| *r != "edits").collect();
-    let inherited = if base_rules.is_empty() && !rules.is_empty() {
-        Vec::new()
-    } else {
-        validate_with(base, &base_rules, None, layout)?
-    };
-    Ok(baseline(findings, inherited))
+    let inherited = validate_with(base, rules, against, layout)?;
+    let keys = identities(docx, &findings);
+    let inherited_keys = identities(base, &inherited);
+    Ok(baseline_keyed(findings, keys, inherited, inherited_keys))
 }
 
 /// The usage message for a rule that is neither a set nor an audit code.
@@ -460,6 +459,155 @@ impl Finding {
     }
 }
 
+/// Each of `findings`' [`FindingKey`], read in `docx`, the document they
+/// were found in. A finding at an element chain or a body paragraph id
+/// keys by what it sits in, not by where: the chain with its indices
+/// dropped, the text of its paragraph (or of the element, outside one),
+/// and how many earlier paragraphs (elements) hold that same text. So a
+/// finding keeps its identity when an edit moves it, and two findings of
+/// one kind in different paragraphs keep theirs. A `FOREIGN_AUTHOR`
+/// change keys by its kind, author and text, not by the `rN` an added
+/// change renumbers. Anything else keys as [`Finding::identity`] does.
+#[must_use]
+pub fn identities(docx: &[u8], findings: &[Finding]) -> Vec<FindingKey> {
+    let mut anchors = Anchors::new(docx);
+    findings
+        .iter()
+        .map(|f| {
+            let mut key = f.identity();
+            if f.code == "FOREIGN_AUTHOR" {
+                if let Some((id, rest)) = f.message.split_once(' ')
+                    && let Some(change) = anchors.change(id)
+                {
+                    key.location = change;
+                    key.message = normalised(rest);
+                }
+            } else if let Some(anchor) = anchors.place(&f.part, &f.location) {
+                key.location = anchor;
+            }
+            key
+        })
+        .collect()
+}
+
+/// What [`identities`] reads a document's places by, each part parsed once.
+struct Anchors<'a> {
+    docx: &'a [u8],
+    pkg: Option<PartFs>,
+    parts: HashMap<String, Option<(Dom, NodeId)>>,
+    paragraphs: Option<Vec<(String, String)>>,
+    changes: Option<HashMap<String, String>>,
+}
+
+impl<'a> Anchors<'a> {
+    fn new(docx: &'a [u8]) -> Self {
+        Anchors {
+            docx,
+            pkg: PartFs::open(docx).ok(),
+            parts: HashMap::new(),
+            paragraphs: None,
+            changes: None,
+        }
+    }
+
+    /// `kind, author, text` of change `id` (`r3`).
+    fn change(&mut self, id: &str) -> Option<String> {
+        let docx = self.docx;
+        self.changes
+            .get_or_insert_with(|| {
+                list_changes(docx)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| {
+                        let anchor = format!(
+                            "{:?}\u{1f}{}\u{1f}{}",
+                            c.kind,
+                            c.author.unwrap_or_default(),
+                            c.text
+                        );
+                        (c.id, anchor)
+                    })
+                    .collect()
+            })
+            .get(id)
+            .cloned()
+    }
+
+    /// The place of `location` in `part` by what it holds; `None` when it
+    /// is neither an element chain of the part nor a body paragraph id.
+    fn place(&mut self, part: &str, location: &str) -> Option<String> {
+        if location.is_empty() {
+            return None;
+        }
+        if !location.contains('[') {
+            return self.paragraph(location);
+        }
+        let pkg = self.pkg.as_ref()?;
+        let (dom, root) = self
+            .parts
+            .entry(part.to_string())
+            .or_insert_with(|| parse_part(pkg, part))
+            .as_ref()?;
+        let node = resolve_chain(dom, *root, location)?;
+        let w_p = W::p();
+        let anchor = std::iter::once(node)
+            .chain(dom.ancestors(node, None))
+            .find(|&n| dom.name(n).as_ref() == Some(&w_p))
+            .unwrap_or(node);
+        let name = dom.name(anchor)?;
+        let text = dom.value(anchor);
+        let before = dom
+            .descendants(*root, Some(&name))
+            .into_iter()
+            .take_while(|&n| n != anchor)
+            .filter(|&n| dom.value(n) == text)
+            .count();
+        let chain: Vec<&str> = location
+            .split('/')
+            .map(|step| step.split_once('[').map_or(step, |(name, _)| name))
+            .collect();
+        Some(format!("{}\u{1f}{before}\u{1f}{text}", chain.join("/")))
+    }
+
+    /// The place of body paragraph `id` (`p3`) by its text.
+    fn paragraph(&mut self, id: &str) -> Option<String> {
+        let docx = self.docx;
+        let paragraphs = self.paragraphs.get_or_insert_with(|| {
+            crate::inspect::paragraphs(docx)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| (p.id, p.text))
+                .collect()
+        });
+        let at = paragraphs.iter().position(|(pid, _)| pid == id)?;
+        let text = &paragraphs[at].1;
+        let before = paragraphs[..at].iter().filter(|(_, t)| t == text).count();
+        Some(format!("p#\u{1f}{before}\u{1f}{text}"))
+    }
+}
+
+/// The element `chain` ([`element_path`]) names under `root`.
+fn resolve_chain(dom: &Dom, root: NodeId, chain: &str) -> Option<NodeId> {
+    let mut node = root;
+    for step in chain.split('/') {
+        let (name, index) = step.strip_suffix(']')?.split_once('[')?;
+        let index: usize = index.parse().ok()?;
+        let (namespace, local) = match name.split_once(':') {
+            Some((prefix, local)) => (well_known_namespace(prefix)?, local),
+            None => ("", name),
+        };
+        node = dom
+            .elements(node, None)
+            .into_iter()
+            .filter(|&e| {
+                dom.name(e)
+                    .is_some_and(|n| n.local_name() == local && n.namespace_name() == namespace)
+            })
+            .nth(index)?;
+    }
+    Some(node)
+}
+
 /// `message` with each `[N]` element index dropped and each paragraph or
 /// cell id ([`is_paragraph_id`]) spelled `p#`, so an inherited finding keeps
 /// its identity when an edit renumbers what it names in passing.
@@ -531,14 +679,28 @@ pub struct Baselined {
 /// replaced another is new while the one it replaced is resolved, whatever
 /// the counts. Each list keeps its input's order.
 pub fn baseline(new: Vec<Finding>, base: Vec<Finding>) -> Baselined {
+    let new_keys = new.iter().map(Finding::identity).collect();
+    let base_keys = base.iter().map(Finding::identity).collect();
+    baseline_keyed(new, new_keys, base, base_keys)
+}
+
+/// [`baseline`] with each finding's key given, in step with its list:
+/// [`identities`] reads them in the documents themselves.
+#[must_use]
+pub fn baseline_keyed(
+    new: Vec<Finding>,
+    new_keys: Vec<FindingKey>,
+    base: Vec<Finding>,
+    base_keys: Vec<FindingKey>,
+) -> Baselined {
     let mut open: HashMap<FindingKey, Vec<usize>> = HashMap::new();
-    for (i, f) in base.iter().enumerate().rev() {
-        open.entry(f.identity()).or_default().push(i);
+    for (i, key) in base_keys.into_iter().enumerate().rev() {
+        open.entry(key).or_default().push(i);
     }
     let mut matched = vec![false; base.len()];
     let mut out = Baselined::default();
-    for f in new {
-        match open.get_mut(&f.identity()).and_then(Vec::pop) {
+    for (f, key) in new.into_iter().zip(new_keys) {
+        match open.get_mut(&key).and_then(Vec::pop) {
             Some(i) => {
                 matched[i] = true;
                 out.baseline.push(f);
@@ -800,7 +962,7 @@ fn check_runs_inside_paragraphs(pkg: &PartFs, out: &mut Vec<Finding>) {
 
 /// `w:body[0]/w:p[3]/w:r[2]`: conventional prefix and local name with the
 /// index among same-named siblings, root excluded.
-fn element_path(dom: &Dom, node: NodeId) -> String {
+pub(crate) fn element_path(dom: &Dom, node: NodeId) -> String {
     let mut parts = Vec::new();
     let mut cur = Some(node);
     while let Some(n) = cur {
@@ -3336,6 +3498,22 @@ mod baseline_tests {
 
     fn finding(code: &str, location: &str, message: &str) -> Finding {
         Finding::new(code, "word/document.xml", location, message)
+    }
+
+    #[test]
+    fn a_chain_resolves_to_the_element_it_names() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{W_NS}"><w:body><w:p/><w:p><w:r/><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#,
+            W_NS = W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        let t = dom.descendants(root, Some(&W::t()))[0];
+        let chain = element_path(&dom, t);
+        assert_eq!(chain, "w:body[0]/w:p[1]/w:r[1]/w:t[0]");
+        assert_eq!(resolve_chain(&dom, root, &chain), Some(t));
+        assert_eq!(resolve_chain(&dom, root, "w:body[0]/w:p[2]"), None);
+        assert_eq!(resolve_chain(&dom, root, "w:body[0]/w:p"), None);
     }
 
     #[test]

@@ -263,14 +263,27 @@ fn decode_xml(data: &[u8]) -> Option<String> {
 #[derive(Default)]
 struct Findings {
     by_kind: BTreeMap<String, Vec<(String, String)>>,
+    /// In step with `by_kind`: where each example sits, as `validate`'s
+    /// element chain ([`crate::validate::element_path`]), or empty.
+    places: BTreeMap<String, Vec<String>>,
 }
 
 impl Findings {
     fn add(&mut self, kind: &str, part: &str, detail: String) {
+        self.push(kind, part, detail, String::new());
+    }
+
+    /// [`Findings::add`] for an example at element `n`.
+    fn add_at(&mut self, kind: &str, part: &str, detail: String, dom: &Dom, n: NodeId) {
+        self.push(kind, part, detail, crate::validate::element_path(dom, n));
+    }
+
+    fn push(&mut self, kind: &str, part: &str, detail: String, place: String) {
         self.by_kind
             .entry(kind.to_string())
             .or_default()
             .push((part.to_string(), detail));
+        self.places.entry(kind.to_string()).or_default().push(place);
     }
 }
 
@@ -379,10 +392,12 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
     for n in dom.descendants(root, None) {
         let name = local(dom, n);
         match name.as_str() {
-            "delText" | "delInstrText" if state(dom, n) != 'D' => f.add(
+            "delText" | "delInstrText" if state(dom, n) != 'D' => f.add_at(
                 &format!("orphan-{name}"),
                 part,
                 format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
+                dom,
+                n,
             ),
             "t" | "instrText"
                 if state(dom, n) == 'D'
@@ -391,10 +406,12 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                         .iter()
                         .any(|&a| local(dom, a) == "del") =>
             {
-                f.add(
+                f.add_at(
                     &format!("{name}-under-del"),
                     part,
                     format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
+                    dom,
+                    n,
                 );
             }
             "r" => {
@@ -419,7 +436,7 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                         .map(|c| local(dom, c))
                         .filter(|c| c != "rPr")
                         .collect();
-                    f.add(
+                    f.add_at(
                         "bare-run-in-deleted-textbox",
                         part,
                         format!(
@@ -428,6 +445,8 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                             kids.join(","),
                             clip(&dom.value(n), 30)
                         ),
+                        dom,
+                        n,
                     );
                 }
             }
@@ -442,6 +461,7 @@ struct OpenField {
     instr: Vec<(bool, char)>,
     code: String,
     at: String,
+    node: NodeId,
 }
 
 fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
@@ -460,7 +480,7 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     open.instr.push((name == "delInstrText", st));
                     open.code.push_str(&dom.value(n));
                 }
-                None => f.add("field-code-outside-field", part, path(dom, n)),
+                None => f.add_at("field-code-outside-field", part, path(dom, n), dom, n),
             }
             continue;
         }
@@ -477,14 +497,15 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 instr: Vec::new(),
                 code: String::new(),
                 at: path(dom, n),
+                node: n,
             }),
             "separate" => match stack.last_mut() {
                 Some(open) => open.separate = Some(st),
-                None => f.add("field-separate-without-begin", part, path(dom, n)),
+                None => f.add_at("field-separate-without-begin", part, path(dom, n), dom, n),
             },
             "end" => {
                 let Some(open) = stack.pop() else {
-                    f.add("field-end-without-begin", part, path(dom, n));
+                    f.add_at("field-end-without-begin", part, path(dom, n), dom, n);
                     continue;
                 };
                 let states: String = std::iter::once(open.begin)
@@ -494,17 +515,21 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .collect();
                 let code = clip(&open.code, 40);
                 if states.contains('D') && states.chars().any(|c| c != 'D') {
-                    f.add(
+                    f.add_at(
                         "field-partly-deleted",
                         part,
                         format!("begin/code/separate/end={states} \"{code}\" at {}", open.at),
+                        dom,
+                        open.node,
                     );
                 }
                 if open.instr.iter().any(|&(del, s)| del != (s == 'D')) {
-                    f.add(
+                    f.add_at(
                         "field-code-kind-vs-state",
                         part,
                         format!("states={states} \"{code}\" at {}", open.at),
+                        dom,
+                        open.node,
                     );
                 }
             }
@@ -512,10 +537,12 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
         }
     }
     for open in stacks.into_values().flatten() {
-        f.add(
+        f.add_at(
             "field-unclosed",
             part,
             format!("\"{}\" at {}", clip(&open.code, 40), open.at),
+            dom,
+            open.node,
         );
     }
 }
@@ -890,7 +917,7 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
         let name = local(dom, n);
         match name.as_str() {
             "instrText" | "delInstrText" if dom.value(n).is_empty() => {
-                f.add(&format!("{name}-empty"), part, path(dom, n));
+                f.add_at(&format!("{name}-empty"), part, path(dom, n), dom, n);
             }
             "tc" if !cell_ends_in_paragraph(dom, n) => {
                 let last = dom
@@ -898,10 +925,12 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .into_iter()
                     .map(|c| local(dom, c))
                     .rfind(|c| c.as_str() != "tcPr");
-                f.add(
+                f.add_at(
                     "cell-not-ending-in-p",
                     part,
                     format!("{} last={}", path(dom, n), last.unwrap_or_default()),
+                    dom,
+                    n,
                 );
             }
             "tr" if !dom
@@ -909,7 +938,7 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 .iter()
                 .any(|&c| local(dom, c) == "tc") =>
             {
-                f.add("row-without-cell", part, path(dom, n));
+                f.add_at("row-without-cell", part, path(dom, n), dom, n);
             }
             // Only `ins`/`del` count as interleaving: Word's measured
             // reject-all misreading (#1134, 2026-10-17) alternates the two. A
@@ -930,7 +959,13 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     })
                     .any(|a| matches!(local(dom, a).as_str(), "ins" | "del"));
                 let relation = if alternating { "interleaved" } else { "nested" };
-                f.add(&format!("{name}-{relation}-in-{name}"), part, path(dom, n));
+                f.add_at(
+                    &format!("{name}-{relation}-in-{name}"),
+                    part,
+                    path(dom, n),
+                    dom,
+                    n,
+                );
             }
             "body" => {
                 let kids = dom.elements(n, None);
@@ -2412,13 +2447,14 @@ pub fn findings(docx: &[u8]) -> Result<Vec<crate::validate::Finding>, String> {
     let mut out = Vec::new();
     for (kind, items) in &analysis.findings.by_kind {
         let code = finding_code(kind);
-        for (part, detail) in items {
+        let places = &analysis.findings.places[kind];
+        for ((part, detail), place) in items.iter().zip(places) {
             let message = if detail.is_empty() {
                 format!("{kind} in '{part}'")
             } else {
                 format!("{kind} in '{part}': {detail}")
             };
-            let mut finding = crate::validate::Finding::new(&code, part, "", message);
+            let mut finding = crate::validate::Finding::new(&code, part, place, message);
             if code == "NESTED_SAME_REVISION" {
                 if matches!(kind.as_str(), "ins-nested-in-ins" | "del-nested-in-del") {
                     finding.severity = "info".to_string();

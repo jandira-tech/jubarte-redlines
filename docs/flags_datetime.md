@@ -639,7 +639,7 @@ Check Word validity, tracked edits, accessibility, style and structure; or repai
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) |
 | `--json` |  |  | false |  |  | JSON Lines: one object per finding, nothing when there is none |
-| `--rules` |  | <RULES> |  |  | append | Rule sets or audit codes, comma-separated [default: word; with --original, word and edits] |
+| `--rules` |  | <RULES> |  |  | append | Rule sets or audit codes, comma-separated [default: word; with --original, or --baseline and --author, word and edits] |
 | `--strict` |  |  | false |  |  | Fail (exit 2) on warnings too, not only on errors |
 | `--repair` |  | <FILE> |  |  | conflicts --baseline | Write the repaired package here; remaining findings still fail |
 | `--baseline` |  | <FILE> |  |  | conflicts --repair | The document the edits started from: its findings print as already in the input (not yours), and only new ones fail the run. A finding is new by identity (code, part, place and message), never by count. With --author and no --original, the edits are checked against it too |

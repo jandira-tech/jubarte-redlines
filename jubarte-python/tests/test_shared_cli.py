@@ -381,7 +381,12 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
     assert _main(["validate", str(broken), "--baseline", str(broken), "--repair", str(tmp_path / "f.docx")]) == 2
     assert "cannot be used with" in capsys.readouterr().err
     # One stderr line on each reading task; -q drops it; a clean input has none.
-    line = f"input has 1 validity error; jubarte validate {broken} lists it\n"
+    # The path is quoted for a shell as the binary quotes it (a Windows path
+    # holds backslashes), so the line comes from the same formatter.
+    notice = _native.input_notice(broken.read_bytes(), str(broken))
+    assert notice.startswith("input has 1 validity error; jubarte validate "), notice
+    assert notice.endswith(" lists it"), notice
+    line = f"{notice}\n"
     for arguments in (["read", str(broken), "--no-page-markers"], ["read", str(broken), "--json"],
                       ["changes", str(broken)], ["comments", str(broken), "--json"]):
         assert _main(arguments) == 0

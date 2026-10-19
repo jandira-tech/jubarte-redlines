@@ -362,3 +362,102 @@ fn quiet_drops_it() {
         assert_eq!(err, "", "{args:?}");
     }
 }
+
+/// IN and OUT in a fresh directory.
+fn pair(input: &[u8], output: &[u8]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), input).unwrap();
+    std::fs::write(dir.path().join("out.docx"), output).unwrap();
+    dir
+}
+
+const END: &str = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+
+/// A field end with no begin carries no place in its message; an edit that
+/// fixes one and makes another, elsewhere, still made a new error (#1291
+/// review).
+#[test]
+fn a_new_finding_of_a_placeless_kind_is_new() {
+    let input = docx(&format!(
+        r#"<w:p><w:r><w:t>One.</w:t></w:r>{END}</w:p>{}"#,
+        para("Two.")
+    ));
+    let output = docx(&format!(
+        r#"{}<w:p><w:r><w:t>Two.</w:t></w:r>{END}</w:p>"#,
+        para("One.")
+    ));
+    let dir = pair(&input, &output);
+    let (code, out, err) = run(
+        dir.path(),
+        &["validate", "out.docx", "--baseline", "in.docx"],
+    );
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(out.starts_with("new: 1\n"), "{out}");
+    assert!(out.contains("FIELD_UNBALANCED"), "{out}");
+    assert!(
+        out.contains("resolved: 1 (in the input, not in this file)"),
+        "{out}"
+    );
+}
+
+/// A paragraph added above an inherited finding renumbers its element
+/// chain, not what it is: it stays the input's (#1291 review).
+#[test]
+fn an_inherited_finding_stays_inherited_when_paragraphs_move() {
+    let input = docx(&format!("{DELETED}{}", para("Kept.")));
+    let output = docx(&format!("{}{DELETED}{}", para("Inserted."), para("Kept.")));
+    let dir = pair(&input, &output);
+    let (code, out, err) = run(
+        dir.path(),
+        &["validate", "out.docx", "--baseline", "in.docx"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.starts_with("new: none\n"), "{out}");
+    assert!(!out.contains("already in the input: none"), "{out}");
+    assert!(!out.contains("resolved:"), "{out}");
+}
+
+/// The other party's tracked changes, inherited, are no `FOREIGN_AUTHOR`
+/// of the edit's, though the edit's own change renumbers them; a change
+/// under a third name is (#1291 review).
+#[test]
+fn inherited_revisions_are_the_inputs() {
+    let ann = r#"<w:ins w:id="1" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve"> two</w:t></w:r></w:ins>"#;
+    let ours = r#"<w:ins w:id="5" w:author="US" w:date="2026-02-01T00:00:00Z"><w:r><w:t xml:space="preserve">Zero </w:t></w:r></w:ins>"#;
+    let bob = r#"<w:ins w:id="6" w:author="Bob" w:date="2026-02-01T00:00:00Z"><w:r><w:t xml:space="preserve"> three</w:t></w:r></w:ins>"#;
+    let input = docx(&format!(r#"<w:p><w:r><w:t>One</w:t></w:r>{ann}</w:p>"#));
+    let output = docx(&format!(
+        r#"<w:p>{ours}<w:r><w:t>One</w:t></w:r>{ann}</w:p>"#
+    ));
+    let dir = pair(&input, &output);
+    let args = [
+        "validate",
+        "out.docx",
+        "--baseline",
+        "in.docx",
+        "--author",
+        "US",
+    ];
+    let (code, out, err) = run(dir.path(), &args);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out, "new: none\nalready in the input: 1 (not yours)\n");
+    let third = docx(&format!(
+        r#"<w:p>{ours}<w:r><w:t>One</w:t></w:r>{ann}</w:p><w:p><w:r><w:t>Two</w:t></w:r>{bob}</w:p>"#
+    ));
+    std::fs::write(dir.path().join("out.docx"), third).unwrap();
+    let (code, out, _) = run(dir.path(), &args);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.starts_with("new: "), "{out}");
+    assert!(out.contains("by Bob"), "{out}");
+    assert!(!out.contains("by Ann"), "{out}");
+}
+
+#[test]
+fn the_rules_default_names_the_baseline() {
+    let (_, out, _) = run(Path::new("."), &["validate", "--help"]);
+    let words = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("with --original, or --baseline and --author, word and edits"),
+        "{out}"
+    );
+}

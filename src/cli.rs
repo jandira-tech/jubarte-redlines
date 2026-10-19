@@ -1425,7 +1425,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
         /// Rule sets or audit codes, comma-separated [default: word; with
-        /// --original, word and edits].
+        /// --original, or --baseline and --author, word and edits].
         #[arg(long, value_name = "RULES", value_delimiter = ',', value_parser = parse_rule)]
         rules: Vec<String>,
         /// Fail (exit 2) on warnings too, not only on errors.

@@ -78,15 +78,22 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   yours)` after the new ones (`new: none`, or `new: N` and their lines),
   then, when the edits fixed some, `resolved: N (in the input, not in this
   file)` and those; only new findings fail the run, `--strict` included. A
-  finding is new by identity, never by count: its code, set, part and
-  place, and its message with element indices and paragraph ids
-  normalised, so a finding that replaced another is new at the same total.
-  `--json` prints each finding with `"status": "new"` or `"baseline"`, new
-  ones first, then one `{"resolved":[…]}` line. With `--author` and no
-  `--original`, the edits rule checks the output against IN; that rule
-  still names every revision by another author, IN's included, until the
-  foreign-revision matcher of #1192 lands. `--baseline` conflicts with
-  `--repair`. Library: `validate::{baseline, validate_baselined,
+  finding is new by identity, never by count: its code, set and part, what
+  it sits in (its element chain without indices, the text of its
+  paragraph, and how many paragraphs of that text come before it), and its
+  message with element indices and paragraph ids normalised. So a
+  paragraph added above an inherited finding leaves it the input's, and a
+  finding that replaced another, elsewhere, is new at the same total. The
+  field, table and nesting checks now report the element chain they found
+  (`word/document.xml#w:body[0]/w:p[1]/w:r[1]/w:fldChar[0]`) instead of
+  an empty place. `--json` prints each finding with `"status": "new"` or
+  `"baseline"`, new ones first, then one `{"resolved":[…]}` line. With
+  `--author`, IN goes through the same rules, the edits rule included,
+  against the same original (IN, unless `--original` names another), so
+  the other party's changes IN already had are `already in the input`,
+  matched by kind, author and text whatever `rN` they are renumbered to.
+  `--baseline` conflicts with `--repair`. Library:
+  `validate::{baseline, baseline_keyed, identities, validate_baselined,
   baselined_text, baselined_json, input_notice}`, `Baselined`,
   `FindingKey` and `Finding::identity`; Python `validate_run(…,
   baseline=)` and `input_notice`, WASM `inputNotice`.
@@ -265,7 +272,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `input has 2 validity warnings; jubarte validate FILE lists them` (`1
   validity error`, or `1 validity error and 2 warnings`; `info` findings do
   not count), so an agent does not take them for its own; `-q` drops it
-  and skips the check. stdout is unchanged. The npm CLI's `read` and
+  and skips the check. stdout is unchanged, `--json` included: read the
+  JSON from stdout alone, not merged with `2>&1`. The npm CLI's `read` and
   `changes` and the Python CLI print the same. `--rules edits` without
   `--author` now says `--rules edits needs --author, and --original or
   --baseline`.
