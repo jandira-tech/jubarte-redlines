@@ -316,7 +316,13 @@ fn invalid(document: &'static str, message: impl Into<String>) -> AppendError {
 fn open(document: &'static str, bytes: &[u8]) -> Result<PartFs, AppendError> {
     crate::admission::admit(bytes, InputLimits::default())
         .map_err(|error| AppendError::Admission { document, error })?;
-    let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);
+    let normalized =
+        crate::strict_translation::strict_to_transitional_docx(bytes).map_err(|e| {
+            AppendError::Package {
+                document,
+                message: e.to_string(),
+            }
+        })?;
     PartFs::open(&normalized).map_err(|e| package(document, &e))
 }
 

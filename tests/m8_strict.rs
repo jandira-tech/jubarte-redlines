@@ -228,7 +228,7 @@ fn f4_strict_and_transitional_geometry_twins_compare_with_zero_revisions() {
 #[test]
 fn strict01_translation_clears_every_namespace_site() {
     let bytes = std::fs::read("tests/fixtures/strict/Strict01.docx").expect("strict fixture");
-    let out = jubarte::strict_translation::strict_to_transitional_docx(&bytes);
+    let out = jubarte::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
     for (name, data) in all_zip_entries(&out) {
         if !(name.ends_with(".xml") || name.ends_with(".rels")) {
             continue;

@@ -614,7 +614,8 @@ impl Opened {
         bump_reopened_packages();
         crate::admission::admit(bytes, limits).map_err(InspectError::Admission)?;
         let normalized =
-            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits);
+            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits)
+                .map_err(|error| InspectError::Package(error.to_string()))?;
         let pkg = PartFs::open_within(&normalized, limits)
             .map_err(|error| InspectError::Package(error.to_string()))?;
         let main = main_part(&pkg)?;

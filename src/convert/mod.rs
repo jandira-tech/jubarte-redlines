@@ -772,7 +772,8 @@ fn with_layout<T>(
 ) -> Result<T, ConvertError> {
     crate::document_comparer::admit_package(docx)
         .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
     let main = pkg
@@ -45341,7 +45342,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45393,7 +45394,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let sheet = load_stylesheet(&pkg);
         let bullet = sheet.by_id.get("ListBullet").expect("ListBullet style");
@@ -45409,7 +45410,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45492,7 +45493,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45550,7 +45551,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45738,7 +45739,7 @@ mod comments_spacing_tests {
         };
         let pdf = crate::convert::docx_to_pdf(&bytes).expect("pdf");
         let n = super::pdf_page_count(&pdf);
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg.main_document_part().expect("main");
         let xml = pkg.part_string(&main).expect("xml");
@@ -45766,7 +45767,7 @@ mod comments_spacing_tests {
     #[test]
     fn strict01_section_break_census() {
         let bytes = std::fs::read("tests/fixtures/strict/Strict01.docx").expect("strict");
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45860,7 +45861,7 @@ mod comments_spacing_tests {
     }
 
     fn listbullet_marked(docx: &[u8]) -> Marked {
-        let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(docx).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45902,7 +45903,7 @@ mod comments_spacing_tests {
     }
 
     fn listbullet_marker_family(docx: &[u8]) -> Option<String> {
-        let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(docx).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()

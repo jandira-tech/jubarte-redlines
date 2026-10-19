@@ -465,7 +465,8 @@ pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
 /// admission, and a part that does not parse lists nothing, so the view's
 /// count fails only where the package itself does.
 pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
     let pkg = PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
     Ok(changes_in(&pkg))
 }
@@ -715,7 +716,8 @@ struct ResolutionOutcome {
 fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
     crate::document_comparer::admit_package(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
     PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))
 }
 

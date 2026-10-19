@@ -203,8 +203,11 @@ impl Package {
         // bytes it carries (#531), while a package whose subparts alone
         // are Strict is translated too, as before the main-part gate
         // (#561).
+        // A ZIP32 plan refusal keeps the original bytes: triage reports on
+        // the package as found rather than refusing its one openable file.
         let translated =
-            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits);
+            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits)
+                .unwrap_or_else(|_| bytes.to_vec());
         let bytes = translated.as_slice();
         crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
         let mut zip = crate::opc::open_archive_unchecked(Cursor::new(bytes))

@@ -740,7 +740,13 @@ fn root_open(head: &str) -> Option<(usize, char)> {
 ///
 /// Entries inflate under [`InputLimits::compare`]; see
 /// [`strict_to_transitional_docx_within`] for the budget semantics.
-pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
+///
+/// # Errors
+///
+/// A [`crate::opc::Zip32Limit`] (`OUTPUT_LIMIT`) when the rewritten package
+/// could not stay inside ZIP32 — unreachable under the compare budget, which
+/// caps the output far below the boundary, but refused rather than written.
+pub fn strict_to_transitional_docx(bytes: &[u8]) -> Result<Vec<u8>, crate::opc::Zip32Limit> {
     strict_to_transitional_docx_within(bytes, InputLimits::compare())
 }
 
@@ -753,11 +759,21 @@ pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
 /// entry that inflates past its cap ends the scan and `bytes` come back
 /// unchanged, the same answer an unreadable archive gets; a caller that wants
 /// a typed refusal admits the package first with [`crate::admission::admit`].
-pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> Vec<u8> {
+///
+/// # Errors
+///
+/// A [`crate::opc::Zip32Limit`] (`OUTPUT_LIMIT`) when the entries about to be
+/// written cannot fit a ZIP32 package (ZIP-10/#604): jubarte writes no ZIP64,
+/// so the plan refuses before `ZipWriter::new` instead of handing back the
+/// untranslated Strict bytes, which a caller could mistake for output.
+pub fn strict_to_transitional_docx_within(
+    bytes: &[u8],
+    limits: InputLimits,
+) -> Result<Vec<u8>, crate::opc::Zip32Limit> {
     // Not a readable zip — leave untouched (PartFs::open reports the real
     // error downstream).
     let Ok(mut archive) = crate::opc::open_archive(Cursor::new(bytes)) else {
-        return bytes.to_vec();
+        return Ok(bytes.to_vec());
     };
 
     let n = archive.len();
@@ -768,13 +784,13 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
     let mut total: u64 = 0;
     for i in 0..n {
         let Ok(mut f) = archive.by_index(i) else {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         };
         if f.is_dir() {
             continue;
         }
         let Ok(name) = f.name() else {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         };
         let name = name.into_owned();
         let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
@@ -786,7 +802,7 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
             .is_err()
             || buf.len() as u64 > cap
         {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         }
         total = total.saturating_add(buf.len() as u64);
 
@@ -812,8 +828,16 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
 
     if !any_changed {
         // Already Transitional: byte-identical round-trip.
-        return bytes.to_vec();
+        return Ok(bytes.to_vec());
     }
+
+    // jubarte writes ZIP32 only (ZIP-10/#604): a rebuild that would need
+    // ZIP64 is a typed refusal, not the untranslated input back.
+    let plan: Vec<(&str, u64)> = entries
+        .iter()
+        .map(|(name, data)| (name.as_str(), data.len() as u64))
+        .collect();
+    crate::opc::zip32_plan(&plan)?;
 
     // Rebuild the package with translated parts, dated as `PartFs::to_zip`
     // dates its entries (no wall-clock time).
@@ -823,15 +847,15 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
         .last_modified_time(zip::DateTime::default());
     for (name, data) in &entries {
         if writer.start_file(name, options).is_err() {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         }
         if writer.write_all(data).is_err() {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         }
     }
     match writer.finish() {
-        Ok(c) => c.into_inner(),
-        Err(_) => bytes.to_vec(),
+        Ok(c) => Ok(c.into_inner()),
+        Err(_) => Ok(bytes.to_vec()),
     }
 }
 
@@ -919,7 +943,7 @@ mod tests {
         let pkg = writer.finish().unwrap().into_inner();
 
         assert_eq!(
-            strict_to_transitional_docx(&pkg),
+            strict_to_transitional_docx(&pkg).unwrap(),
             pkg,
             "a Transitional package quoting a Strict URI must round-trip byte-identical"
         );
@@ -941,7 +965,7 @@ mod tests {
         writer.write_all(strict_doc.as_bytes()).unwrap();
         let strict_pkg = writer.finish().unwrap().into_inner();
 
-        let out = strict_to_transitional_docx(&strict_pkg);
+        let out = strict_to_transitional_docx(&strict_pkg).unwrap();
         let mut reread = ZipArchive::new(Cursor::new(&out)).unwrap();
         let doc = {
             let mut f = reread.by_name("word/document.xml").unwrap();
@@ -1081,7 +1105,7 @@ mod tests {
             ..crate::admission::InputLimits::compare()
         };
         assert_eq!(
-            strict_to_transitional_docx_within(&strict_pkg, small),
+            strict_to_transitional_docx_within(&strict_pkg, small).unwrap(),
             strict_pkg,
             "a part past the budget stops the rewrite and returns the input"
         );
@@ -1090,11 +1114,11 @@ mod tests {
             ..crate::admission::InputLimits::compare()
         };
         assert_eq!(
-            strict_to_transitional_docx_within(&strict_pkg, total_only),
+            strict_to_transitional_docx_within(&strict_pkg, total_only).unwrap(),
             strict_pkg,
             "the package budget is honoured as well"
         );
-        let out = strict_to_transitional_docx(&strict_pkg);
+        let out = strict_to_transitional_docx(&strict_pkg).unwrap();
         assert_ne!(
             out, strict_pkg,
             "within the default budget the Strict package is rewritten"
@@ -1147,7 +1171,7 @@ mod tests {
             .unwrap();
         let pkg = writer.finish().unwrap().into_inner();
 
-        let out = strict_to_transitional_docx(&pkg);
+        let out = strict_to_transitional_docx(&pkg).unwrap();
         assert_eq!(
             out, pkg,
             "transitional package must round-trip byte-identical"
@@ -1179,7 +1203,7 @@ mod tests {
         writer.write_all(strict_doc.as_bytes()).unwrap();
         let strict_pkg = writer.finish().unwrap().into_inner();
 
-        let out = strict_to_transitional_docx(&strict_pkg);
+        let out = strict_to_transitional_docx(&strict_pkg).unwrap();
         assert_ne!(out, strict_pkg, "strict package must be rewritten");
         assert!(
             out.windows(4).any(|w| w == b"PK\x03\x04"),

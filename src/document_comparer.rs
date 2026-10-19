@@ -6535,7 +6535,8 @@ fn compare_documents_impl(
         let mut owned = crate::strict_translation::strict_to_transitional_docx_within(
             original,
             settings.input_limits,
-        );
+        )
+        .map_err(crate::opc::refused)?;
         if settings.merge_replaced_paragraphs
             && docx_has_tracked_changes(&owned, settings.input_limits)
         {
@@ -6559,11 +6560,13 @@ fn compare_documents_impl(
     let mut original_owned = crate::strict_translation::strict_to_transitional_docx_within(
         original,
         settings.input_limits,
-    );
+    )
+    .map_err(crate::opc::refused)?;
     let mut modified_owned = crate::strict_translation::strict_to_transitional_docx_within(
         modified,
         settings.input_limits,
-    );
+    )
+    .map_err(crate::opc::refused)?;
 
     // Accept-before-diff flattens a revised insertion into live text, so a late
     // pass can no longer see where that insertion ended. Keep both main parts
