@@ -11,7 +11,7 @@
 //! unit. A failure no operation is blamed for (`STALE_SOURCE`, a
 //! `resolve_revisions` error, a plan-level refusal) is never skipped.
 
-use super::origin::{Paragraphs, written_places};
+use super::origin::{Paragraphs, SOURCE_ONLY, written_places};
 use super::prepared::{PrepareOptions, PreparedEdit, prepare};
 use super::{
     ControlSelector, EditError, EditOutcome, EditPlan, ExistingRevisions, Operation, OperationKind,
@@ -330,6 +330,30 @@ enum Named {
     Control(String),
 }
 
+/// Name what `what` points at in `operation` as `source:SHOWN`, which no
+/// document resolves: the plan of the fixes cannot run it on whatever
+/// paragraph or control now has its id until it is given again.
+fn source_only(operation: &mut Operation, what: &Named, shown: &str) {
+    let id = format!("{SOURCE_ONLY}{shown}");
+    match what {
+        Named::Paragraph(n) => {
+            let selector = &mut *super::selectors_mut(&mut operation.kind).swap_remove(*n);
+            *selector = match selector {
+                Selector::Id { .. } => Selector::Id { id },
+                _ => Selector::Name(id),
+            };
+        }
+        Named::Control(_) => {
+            if let OperationKind::FillControl { control, .. } = &mut operation.kind {
+                *control = match control {
+                    ControlSelector::Id { .. } => ControlSelector::Id { id },
+                    _ => ControlSelector::Name(id),
+                };
+            }
+        }
+    }
+}
+
 /// A `fill_control` control named through its paragraph, `PARA.ccK`
 /// (`p3.cc0`, `t0.row1.cell2.cc0`): that paragraph's spelling and K.
 fn control_paragraph(control: &ControlSelector) -> Option<(&str, &str)> {
@@ -408,17 +432,29 @@ fn rename_positions(
             Named::Control(k) => format!("{spelled}.cc{k}"),
         };
         let Ok((places, written)) = &landed else {
+            source_only(&mut operations[o], &what, &shown);
             notes[o].push(format!(
-                "{shown} names a paragraph of the source: check it against the output"
+                "{shown} names a paragraph of the source: give it again from the output"
             ));
             continue;
         };
         let Some(post) = places[g].filter(|&post| written.place(post).0 == read.place(g).0) else {
+            source_only(&mut operations[o], &what, &shown);
             notes[o].push(format!(
                 "{shown} has no one-to-one paragraph in the output: give it again from the output"
             ));
             continue;
         };
+        // Its `ccK` counts the paragraph's controls: one that gained or lost
+        // some (a merge) numbers them anew.
+        if matches!(what, Named::Control(_)) && written.control_count(post) != read.control_count(g)
+        {
+            source_only(&mut operations[o], &what, &shown);
+            notes[o].push(format!(
+                "{shown} has no one-to-one control in the output: give it again from the output"
+            ));
+            continue;
+        }
         let to = written.ids().id(post);
         if to == ids.id(g) {
             continue;

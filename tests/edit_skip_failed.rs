@@ -1232,3 +1232,104 @@ fn a_dry_run_promises_no_force_that_would_be_refused() {
         b"keep"
     );
 }
+
+/// A paragraph the survivors delete has no one-to-one paragraph in the
+/// output: its selector becomes `source:ID`, which no document resolves, so
+/// a fix that only corrects the value cannot land on the paragraph that now
+/// has the id (#1289 review).
+#[test]
+fn a_name_with_no_one_to_one_paragraph_cannot_run_until_given_again() {
+    let source = form();
+    let ops = json!([
+        {"kind":"delete_paragraph","paragraph":"p1"},
+        {"kind":"fill_control","control":"p1.cc0","choice":"Peru"},
+        {"kind":"replace","paragraph":{"index":1},"find":"XXXX","replacement":"Y"},
+    ]);
+    let original = plan(&ops);
+    let prepared = prepare(&source, &original, &skipping()).unwrap();
+    assert_eq!(prepared.skipped.len(), 2);
+    let written = &prepared.result.clean;
+    let failed: Value = serde_json::from_str(&failed_plan_json(
+        &source,
+        &original,
+        &prepared.skipped,
+        DATE,
+        &source_sha256(written),
+        original.existing_revisions,
+        false,
+    ))
+    .unwrap();
+    let ops = failed["operations"].as_array().unwrap();
+    assert_eq!(ops[0]["control"], "source:p1.cc0", "{failed}");
+    assert!(
+        ops[0]["why"].as_str().unwrap().ends_with(
+            "; p1.cc0 has no one-to-one paragraph in the output: give it again from the output"
+        ),
+        "{failed}"
+    );
+    assert_eq!(ops[1]["paragraph"], "source:p1", "{failed}");
+    // In the output p1 is the table's paragraph, with its own control: the
+    // choice corrected alone is refused, not written into Region.
+    for (op, value) in [(&ops[0], "S"), (&ops[1], "")] {
+        let mut fixed = failed.clone();
+        fixed["operations"] = json!([op.clone()]);
+        if op["kind"] == "fill_control" {
+            fixed["operations"][0]["choice"] = json!(value);
+        } else {
+            fixed["operations"][0]["find"] = json!("Choose");
+        }
+        let fixed = EditPlan::from_json(&fixed.to_string()).unwrap();
+        let refused = prepare(written, &fixed, &PrepareOptions::default()).unwrap_err();
+        let said = refused.to_string();
+        assert!(
+            said.contains("ANCHOR_NOT_FOUND")
+                && said.contains("names a paragraph of the source document"),
+            "{said}"
+        );
+    }
+}
+
+/// Merged into a paragraph that holds controls of its own, a control's
+/// `ccK` no longer counts from the paragraph's start: it is not renamed.
+#[test]
+fn a_control_whose_paragraph_gains_controls_is_not_renamed() {
+    let control = |tag: &str, items: &str| {
+        format!(
+            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:dropDownList>{items}</w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Choose</w:t></w:r></w:sdtContent></w:sdt>"#
+        )
+    };
+    let size = control("Size", r#"<w:listItem w:displayText="Small" w:value="S"/>"#);
+    let country = control(
+        "Country",
+        r#"<w:listItem w:displayText="Chile" w:value="CL"/>"#,
+    );
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Size: </w:t></w:r>{size}</w:p><w:p>{country}</w:p><w:p><w:r><w:t>Tail.</w:t></w:r></w:p>"#
+    ));
+    let ops = json!([
+        {"kind":"merge_paragraphs","paragraph":"p0"},
+        {"kind":"fill_control","control":"p1.cc0","choice":"Peru"},
+    ]);
+    let original = plan(&ops);
+    let prepared = prepare(&source, &original, &skipping()).unwrap();
+    assert_eq!(prepared.skipped.len(), 1);
+    let failed: Value = serde_json::from_str(&failed_plan_json(
+        &source,
+        &original,
+        &prepared.skipped,
+        DATE,
+        &source_sha256(&prepared.result.clean),
+        original.existing_revisions,
+        false,
+    ))
+    .unwrap();
+    let op = &failed["operations"][0];
+    // p0.cc0 in the output is Size.
+    assert_eq!(op["control"], "source:p1.cc0", "{failed}");
+    assert!(
+        op["why"].as_str().unwrap().ends_with(
+            "; p1.cc0 has no one-to-one control in the output: give it again from the output"
+        ),
+        "{failed}"
+    );
+}

@@ -46,6 +46,9 @@ impl Ids<'_> {
     /// id, the old `body:p:3` among them, is refused with its settled
     /// spelling ([`ShortId`] is the grammar).
     pub(super) fn paragraph_id(&self, id: &str) -> Option<Result<String, String>> {
+        if let Some(refused) = source_only(id) {
+            return Some(Err(refused));
+        }
         if id.contains(":p:") {
             return crate::ids::parse_location(id)
                 .err()
@@ -539,11 +542,39 @@ impl Paragraphs {
         }
     }
 
+    /// How many content controls paragraph `global` holds: the `ccK` its
+    /// `pN.ccK` ids count (text boxes aside, as `inspect` numbers them).
+    pub(super) fn control_count(&self, global: usize) -> usize {
+        let dom = &self.opened.dom;
+        let paragraph = self.paragraph_nodes[global];
+        dom.descendants(paragraph, Some(&W::name("sdt")))
+            .into_iter()
+            .filter(|&sdt| {
+                !crate::inspect::in_text_box(dom, sdt)
+                    && dom.ancestors(sdt, Some(&W::p())).first() == Some(&paragraph)
+            })
+            .count()
+    }
+
     /// The story id and the index in it of paragraph `global`.
     pub(super) fn place(&self, global: usize) -> (&str, usize) {
         let (story, local) = self.paragraph_story[global];
         (&self.story_ids[story], local)
     }
+}
+
+/// The prefix the plan of the fixes (`--skip-failed`) gives a name of the
+/// source's that has no one-to-one paragraph or control in the output: no
+/// document resolves it, so the operation runs only once given again.
+pub(super) const SOURCE_ONLY: &str = "source:";
+
+/// The refusal of a [`SOURCE_ONLY`] name; `None` for any other.
+pub(super) fn source_only(id: &str) -> Option<String> {
+    id.starts_with(SOURCE_ONLY).then(|| {
+        format!(
+            "{id} names a paragraph of the source document, with no one-to-one counterpart in this one: give it again from this document"
+        )
+    })
 }
 
 /// Where each paragraph of `source` is in the document `write` makes of

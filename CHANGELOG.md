@@ -58,9 +58,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   14 operations; the fixes are in PLAN.failed.json`, a plan of the failed
   operations to fix and run on the output (its `source_sha256`, the run's
   `date`, a `why` on each operation that the parser ignores). A
-  positional paragraph (`p3`, `{"index": 3}`) the applied operations moved
+  positional paragraph (`p3`, `{"index": 3}`, `t0.row1.cell2`), or a
+  control named through one (`p3.cc0`), that the applied operations moved
   is renamed to its id in the output, and `why` says `p3 is p4 in the
-  output`; a skipped operation `existing_revisions` keep refuses
+  output` in the plan's own spelling. One with no one-to-one counterpart in
+  the output (deleted, merged, split) becomes `source:p3`, which no
+  document resolves, so it runs only once given again; a skipped operation
+  `existing_revisions` keep refuses
   (`insert_footnote`, `insert_image`, `page_setup`, `fill_control`) says,
   on the skip line and in `why`, to fix it in the original plan. Operations
   sharing a `"group"` stand or fall together (`GROUP_FAILED`). The report's
