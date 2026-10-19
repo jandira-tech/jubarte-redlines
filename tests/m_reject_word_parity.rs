@@ -1674,16 +1674,21 @@ fn reject_resolves_inserted_final_mark_on_section_break_paragraph() {
     );
 }
 
-/// #1224: a `w:moveTo` final mark. Reject removes the moved paragraph.
+/// #1224: `B` moved from the first paragraph to the last, so the final
+/// mark is a `w:moveTo` with its `w:moveFrom` source. Word's Reject All
+/// puts `B` back first (`B | Keep`, no mark left); so does jubarte.
 #[test]
 fn reject_resolves_move_to_final_mark() {
-    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:moveToRangeStart w:id="2" w:name="m1"/>
-<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>
-<w:moveToRangeEnd w:id="2"/>"#;
+    let body = r#"<w:moveFromRangeStart w:id="3" w:name="m1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/>
+<w:p><w:pPr><w:rPr><w:moveFrom w:id="4" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:moveFrom w:id="5" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>B</w:t></w:r></w:moveFrom></w:p>
+<w:moveFromRangeEnd w:id="3"/>
+<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="6" w:name="m1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/>
+<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:moveTo w:id="7" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>B</w:t></w:r></w:moveTo></w:p>
+<w:moveToRangeEnd w:id="6"/>"#;
     let pkg = docx(body);
     let settled = reject_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["Keep"]);
+    assert_part_resolved(&settled, "word/document.xml", &["B", "Keep"]);
 }
 
 /// #1224: a `w:pPrChange` on the same final paragraph as the inserted
@@ -1718,18 +1723,13 @@ fn reject_resolves_inserted_final_mark_inside_tc() {
     assert_word_valid_package(&settled);
 }
 
-/// #1224: an inserted final mark inside `w:txbxContent`. Reject
-/// resolves the mark.
+/// #1224: an inserted final mark inside a VML text box's `w:txbxContent`.
+/// Reject resolves the mark, as Word's Reject All does on this
+/// body (a bare `wps:wsp` box is one Word cannot open).
 #[test]
 fn reject_resolves_inserted_final_mark_inside_txbx_content() {
-    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:p><w:r>
-<w:drawing xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
-<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="1000000" cy="1000000"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="Box"/><wp:cNvGraphicFramePr/>
-<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
-<wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/></a:xfrm></wps:spPr><wps:txbx><w:txbxContent><w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp>
-</a:graphicData></a:graphic></wp:inline></w:drawing>
-</w:r></w:p>"#;
+    let body = r##"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype><v:shape id="Box1" o:spid="_x0000_s1026" type="#_x0000_t202" style="width:100pt;height:50pt"><v:textbox><w:txbxContent><w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"##;
     let pkg = docx(body);
     let settled = reject_revisions(&pkg).unwrap();
     let xml = part_string(&settled, "word/document.xml").unwrap();
