@@ -869,10 +869,14 @@ error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text is inside r4, "banke
 Either route goes in the same command, before the edit
 (`edit FILE -p r4 --reject -p p0 --anchor bankers --content brokers`). A
 `--plan` quotes `"resolve_revisions":{"reject":{"ids":["r4"]}}` and a
-`{"kind":"comment",…}` operation instead; `edit apply` quotes the
-revision's `short_id` and `long_id`. An anchor that misses the visible
-text but reaches into a deletion gets the same refusal, not
-`ANCHOR_NOT_FOUND`. A move offers "keep the move" and "undo it silently";
+`{"kind":"comment",…}` operation instead; `edit apply` quotes a whole
+`"resolve_revisions":{"accept":[…],"reject":[…]}` naming the revision's
+`short_id` and `long_id`, and a comment on the refused operation's own
+`target`. Each JSON route pastes into its plan as written. An anchor that
+misses the visible text but reaches into a deletion gets the same refusal,
+not `ANCHOR_NOT_FOUND`, whether it is copied with the deletion's marks
+(`{--bankers--}`) or without them, with a tab as `\t` or a curly quote
+typed straight. A move offers "keep the move" and "undo it silently";
 a formatting change, "keep their formatting" and "undo it silently". A
 field, hyperlink or content control names itself instead.
 

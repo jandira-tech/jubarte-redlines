@@ -174,9 +174,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   whose mark or formatting change is tracked, are refused with the
   revision's id, author and text, then accept, reject and a comment, each
   with what it costs, quoted in the syntax the caller wrote (operation
-  flags, a v1 plan, or an `edit apply` plan). An anchor that reaches into
-  another author's deletion gets this refusal instead of
-  `ANCHOR_NOT_FOUND`. No refusal says to resolve the change first.
+  flags, a v1 plan, or an `edit apply` plan). Each JSON route pastes into
+  its plan as written: ids are JSON-escaped, an `edit apply` route names
+  both `accept` and `reject` lists, and its comment carries the refused
+  operation's own `target`. An anchor that reaches into another author's
+  deletion gets this refusal instead of `ANCHOR_NOT_FOUND`, copied with or
+  without the deletion's marks, with a tab or a lookalike character. No
+  refusal says to resolve the change first.
 
 - **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
   `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`

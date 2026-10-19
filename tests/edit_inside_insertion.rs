@@ -1238,6 +1238,41 @@ fn delete_paragraph_under_keep_leaves_their_deletion_and_nests_their_insertion()
 }
 
 #[test]
+fn delete_paragraph_keeps_their_formatting_change_inside_their_insertion() {
+    // Alice inserted bold words and tracked the bolding (r7) inside r6.
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:rPr><w:b/><w:rPrChange w:id="7" w:author="Alice" w:date="{OLD_DATE}"><w:rPr/></w:rPrChange></w:rPr><w:t>bold words</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>next</w:t></w:r></w:p>"#
+    ));
+    let out = delete_p0(&source, "Carol Diaz");
+    let (dom, p) = tree(&out.redline);
+    let theirs = revision(&dom, p, "ins", "6", "Alice", OLD_DATE, "bold words");
+    let ours = dom.elements(theirs, Some(&W::del()));
+    assert_eq!(ours.len(), 1, "{}", dom.serialize_element(p));
+    assert_eq!(dom.attribute(ours[0], &W::author()), Some("Carol Diaz"));
+    let change = dom.descendants(ours[0], Some(&W::r_pr_change()));
+    assert_eq!(change.len(), 1, "{}", dom.serialize_element(p));
+    assert_eq!(dom.attribute(change[0], &W::author()), Some("Alice"));
+    assert_eq!(dom.attribute(change[0], &W::id()), Some("7"));
+    settled(&out.redline, "next", "\nnext");
+    // Rejecting only ours gives the source back, bolding change and all.
+    let ours_only = ChangeFilter {
+        authors: Some(vec!["Carol Diaz".into()]),
+        ..ChangeFilter::default()
+    };
+    let back = reject_changes(&out.redline, &ours_only).unwrap();
+    assert_eq!(text(&back), "bold words\nnext");
+    let (dom, p) = tree(&back);
+    let theirs = revision(&dom, p, "ins", "6", "Alice", OLD_DATE, "bold words");
+    assert!(dom.descendants(theirs, Some(&W::del())).is_empty());
+    assert_eq!(
+        dom.descendants(theirs, Some(&W::r_pr_change())).len(),
+        1,
+        "{}",
+        dom.serialize_element(p)
+    );
+}
+
+#[test]
 fn delete_paragraph_holding_a_move_is_refused_with_the_move_named() {
     let source = docx(&format!(
         r#"<w:p><w:r><w:t xml:space="preserve">alpha </w:t></w:r><w:moveTo w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t>beta</w:t></w:r></w:moveTo></w:p><w:p><w:r><w:t>next</w:t></w:r></w:p>"#
@@ -1432,4 +1467,114 @@ fn step2_untracked_deletions_reject_to_the_source_and_accept_to_the_plain_edit()
 #[test]
 fn step2_untracked_insertions_reject_to_the_source_and_accept_to_the_plain_edit() {
     step_family("step2-untracked", STEP2_UNTRACKED, "insert");
+}
+
+/// One edit by Carol under keep on `source`: both outputs Word-valid, and
+/// rejecting Carol gives the source's text with the other authors' changes
+/// as they were.
+fn rejects_to_the_source(what: &str, source: &[u8], edit: &Value) -> Vec<u8> {
+    let carol = ChangeFilter {
+        authors: Some(vec!["Carol Diaz".into()]),
+        ..ChangeFilter::default()
+    };
+    let out = apply_plan(source, &plan("Carol Diaz", json!([edit])))
+        .unwrap_or_else(|e| panic!("{what}: {e}"));
+    validate_output(&out.redline);
+    validate_output(&out.clean);
+    let rejected = reject_changes(&out.redline, &carol).unwrap();
+    assert_eq!(text(&rejected), text(source), "{what}: reject ours");
+    assert_eq!(
+        others(&rejected, "Carol Diaz"),
+        others(source, "Carol Diaz"),
+        "{what}: their changes"
+    );
+    out.redline
+}
+
+#[test]
+fn the_other_text_operations_land_inside_their_insertion() {
+    let theirs = source("Alice");
+    for (what, edit) in [
+        (
+            "format_run",
+            json!({"kind":"format_run","paragraph":"p0","find":"beta","format":{"italic":true}}),
+        ),
+        (
+            "replace with a comment",
+            json!({"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA","comment":"Why?"}),
+        ),
+        (
+            "comment",
+            json!({"kind":"comment","paragraph":"p0","find":"beta","text":"Why?"}),
+        ),
+        (
+            "a range into it",
+            json!({"kind":"replace","paragraph":"p0","find":"[alpha","replacement":"X"}),
+        ),
+        (
+            "a range out of it",
+            json!({"kind":"replace","paragraph":"p0","find":"gamma]","replacement":"X"}),
+        ),
+    ] {
+        rejects_to_the_source(what, &theirs, &edit);
+    }
+}
+
+#[test]
+fn a_range_over_two_authors_insertions_lands_in_both() {
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t xml:space="preserve">alpha </w:t></w:r></w:ins><w:ins w:id="7" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:t>beta</w:t></w:r></w:ins></w:p>"#
+    ));
+    let redline = rejects_to_the_source(
+        "two owners",
+        &source,
+        &json!({"kind":"replace","paragraph":"p0","find":"alpha beta","replacement":"X"}),
+    );
+    settled(&redline, "X", "");
+}
+
+#[test]
+fn the_text_a_comment_covers_is_edited_inside_their_insertion() {
+    let commented = apply_plan(
+        &source("Alice"),
+        &plan(
+            "Ann",
+            json!([{"kind":"comment","paragraph":"p0","find":"beta","text":"Check"}]),
+        ),
+    )
+    .unwrap()
+    .redline;
+    rejects_to_the_source(
+        "c0.text",
+        &commented,
+        &json!({"kind":"replace","paragraph":"c0.text","find":"beta","replacement":"BETA"}),
+    );
+}
+
+#[test]
+fn a_redaction_inside_their_insertion_removes_the_words_from_both_outputs() {
+    let out = apply_plan(
+        &source("Alice"),
+        &plan(
+            "Carol Diaz",
+            json!([{"kind":"redact","paragraph":"p0","find":"beta"}]),
+        ),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    validate_output(&out.redline);
+    validate_output(&out.clean);
+    for bytes in [&out.redline, &out.clean] {
+        assert!(!text(bytes).contains("beta"), "{}", text(bytes));
+    }
+}
+
+#[test]
+fn a_hyperlink_names_itself_around_their_insertion() {
+    let source = docx(&format!(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="top"/><w:bookmarkEnd w:id="0"/><w:hyperlink w:anchor="top"><w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t>link text</w:t></w:r></w:ins></w:hyperlink></w:p>"#
+    ));
+    let e = apply_plan(&source, &plan("Carol Diaz", replace("link", "LINK"))).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    assert!(e.message.contains("inside a hyperlink"), "{e}");
+    assert!(!e.message.contains("r6"), "{e}");
 }

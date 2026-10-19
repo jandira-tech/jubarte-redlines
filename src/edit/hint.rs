@@ -119,8 +119,11 @@ pub(super) struct Holder<'a> {
 
 /// The `w:del` or `w:moveFrom` of `paragraph` whose text `find` reaches
 /// into, reading the paragraph's visible and removed text in document
-/// order: an anchor copied from another author's deletion misses the
-/// visible text, and the hint should name the deletion, not the miss.
+/// order, glyphs as the projection reads them (a tab as `\t`): an anchor
+/// copied from another author's deletion misses the visible text, and the
+/// hint should name the deletion, not the miss. The anchor matches as
+/// written, as it reads without marks, and with a deletion's marks
+/// unwrapped (`{--x--}` as `x`), each read past lookalike characters.
 pub(super) fn removed_holder(dom: &Dom, paragraph: NodeId, find: &str) -> Option<NodeId> {
     if find.is_empty() {
         return None;
@@ -128,13 +131,17 @@ pub(super) fn removed_holder(dom: &Dom, paragraph: NodeId, find: &str) -> Option
     let mut text = String::new();
     let mut removed: Vec<(usize, usize, NodeId)> = Vec::new();
     for node in dom.descendants(paragraph, None) {
-        let is_text = dom.name_is(node, &W::t()) || dom.name_is(node, &W::del_text());
         // Text of a paragraph nested in a text box belongs to that one.
-        if !is_text || dom.ancestors(node, Some(&W::p())).first() != Some(&paragraph) {
+        if !dom.parent(node).is_some_and(|r| dom.name_is(r, &W::r()))
+            || dom.ancestors(node, Some(&W::p())).first() != Some(&paragraph)
+        {
             continue;
         }
+        let Some(piece) = run_text(dom, node) else {
+            continue;
+        };
         let start = text.len();
-        text.push_str(&dom.value(node));
+        text.push_str(&piece);
         let holder = dom
             .ancestors(node, None)
             .into_iter()
@@ -144,20 +151,39 @@ pub(super) fn removed_holder(dom: &Dom, paragraph: NodeId, find: &str) -> Option
         }
     }
     let plain = crate::markdown::plain_anchor(find);
-    [find, plain.as_str()]
+    let unwrapped = crate::markdown::plain_anchor_with_removed(find);
+    [find, plain.as_str(), unwrapped.as_str()]
         .into_iter()
-        .filter(|needle| !needle.is_empty())
-        .flat_map(|needle| {
-            text.match_indices(needle)
-                .map(|(at, hit)| (at, at + hit.len()))
-                .collect::<Vec<_>>()
-        })
+        .flat_map(|needle| super::anchor::reading_hits(&text, needle))
         .find_map(|(start, end)| {
             removed
                 .iter()
                 .find(|&&(s, e, _)| s < end && start < e)
                 .map(|&(.., holder)| holder)
         })
+}
+
+/// What a run child reads as in the paragraph's text: its text, or the
+/// character the projection gives a glyph; `None` for the rest.
+fn run_text(dom: &Dom, node: NodeId) -> Option<String> {
+    let local = dom.name(node).filter(|n| n.namespace_name() == W::URI)?;
+    let glyph = match local.local_name() {
+        "t" | "delText" => return Some(dom.value(node)),
+        "tab" | "ptab" => '\t',
+        "cr" => '\n',
+        "br" if !matches!(
+            dom.attribute(node, &W::name("type")),
+            Some("page" | "column")
+        ) =>
+        {
+            '\n'
+        }
+        "noBreakHyphen" => '\u{2011}',
+        "softHyphen" => '\u{00ad}',
+        "sym" => '\u{fffc}',
+        _ => return None,
+    };
+    Some(glyph.to_string())
 }
 
 /// The longest stretch of a revision's text the hint quotes.
@@ -204,29 +230,57 @@ pub(super) fn settle_hint(holder: &Holder<'_>, syntax: PlanSyntax) -> String {
     lines.join("\n")
 }
 
+/// The target a v2 comment route names until [`super::v2_apply`] writes in
+/// the refused operation's own: valid JSON, left to fill in like `find`.
+pub(super) const OPERATION_TARGET: &str = r#"{"short_id":"…","long_id":"…"}"#;
+
+/// `text` as a JSON string, quotes and backslashes escaped.
+fn json(text: &str) -> String {
+    serde_json::Value::from(text).to_string()
+}
+
 /// `verb` (`accept` or `reject`) of the revision, as `syntax` spells it.
 fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
     let id = holder.id;
     match syntax {
-        PlanSyntax::V1 => format!(r#""resolve_revisions":{{"{verb}":{{"ids":["{id}"]}}}}"#),
-        PlanSyntax::Flags => format!("-p {id} --{verb}"),
-        PlanSyntax::V2 => format!(
-            r#""resolve_revisions":{{"{verb}":[{{"short_id":"{id}","long_id":"{}"}}]}}"#,
-            holder.long_id
+        PlanSyntax::V1 => format!(
+            r#""resolve_revisions":{{"{verb}":{{"ids":[{}]}}}}"#,
+            json(id)
         ),
+        PlanSyntax::Flags => format!("-p {id} --{verb}"),
+        // A v2 plan's resolve_revisions names both lists.
+        PlanSyntax::V2 => {
+            let target = format!(
+                r#"[{{"short_id":{},"long_id":{}}}]"#,
+                json(id),
+                json(holder.long_id)
+            );
+            let (accept, reject) = if verb == "accept" {
+                (target.as_str(), "[]")
+            } else {
+                ("[]", target.as_str())
+            };
+            format!(r#""resolve_revisions":{{"accept":{accept},"reject":{reject}}}"#)
+        }
     }
 }
 
-/// A comment on the paragraph, as `syntax` spells it.
+/// A comment on the paragraph, as `syntax` spells it; a paragraph the
+/// hint could not name is left to fill in.
 fn comment(syntax: PlanSyntax, paragraph: &str) -> String {
+    let paragraph = if paragraph.is_empty() {
+        "…"
+    } else {
+        paragraph
+    };
     match syntax {
-        PlanSyntax::V1 => {
-            format!(r#"{{"kind":"comment","paragraph":"{paragraph}","find":"…","text":"…"}}"#)
-        }
+        PlanSyntax::V1 => format!(
+            r#"{{"kind":"comment","paragraph":{},"find":"…","text":"…"}}"#,
+            json(paragraph)
+        ),
         PlanSyntax::Flags => format!(r#"add -p {paragraph} --anchor "…" --content "…""#),
         PlanSyntax::V2 => {
-            r#"{"kind":"comment","target":<this operation's target>,"find":"…","text":"…"}"#
-                .to_string()
+            format!(r#"{{"kind":"comment","target":{OPERATION_TARGET},"find":"…","text":"…"}}"#)
         }
     }
 }
@@ -332,6 +386,78 @@ mod tests {
         assert_eq!(
             hint.lines().next().unwrap(),
             r#"that mark is r12, inserted by "Bob Lee"."#
+        );
+    }
+
+    /// A route line's fragment: what follows its label, without the cost.
+    fn fragment(line: &str) -> &str {
+        let rest = line.split_once(':').map_or(line, |(_, r)| r).trim_start();
+        rest.rsplit_once(" (").map_or(rest, |(f, _)| f.trim_end())
+    }
+
+    /// The route lines of `hint` as JSON: accept, reject, comment.
+    fn routes(hint: &str) -> [serde_json::Value; 3] {
+        let lines: Vec<&str> = hint.lines().collect();
+        let parse = |s: String| {
+            serde_json::from_str(&s).unwrap_or_else(|e| panic!("{s} is not JSON ({e}): {hint}"))
+        };
+        [
+            parse(format!("{{{}}}", fragment(lines[1]))),
+            parse(format!("{{{}}}", fragment(lines[2]))),
+            parse(fragment(lines[3]).to_string()),
+        ]
+    }
+
+    #[test]
+    fn every_json_route_parses_whatever_the_ids_hold() {
+        let odd = Holder {
+            id: r#"r"1\2"#,
+            long_id: r#"document.w:del.w:id."1\2"#,
+            paragraph: r#"p"3\"#,
+            ..holder(Held::Deleted)
+        };
+        let [accept, reject, comment] = routes(&settle_hint(&odd, PlanSyntax::V1));
+        assert_eq!(accept["resolve_revisions"]["accept"]["ids"][0], odd.id);
+        assert_eq!(reject["resolve_revisions"]["reject"]["ids"][0], odd.id);
+        assert_eq!(comment["paragraph"], odd.paragraph);
+        let [accept, reject, comment] = routes(&settle_hint(&odd, PlanSyntax::V2));
+        let target = serde_json::json!({"short_id": odd.id, "long_id": odd.long_id});
+        assert_eq!(accept["resolve_revisions"]["accept"][0], target);
+        assert_eq!(reject["resolve_revisions"]["reject"][0], target);
+        assert_eq!(comment["kind"], "comment");
+    }
+
+    #[test]
+    fn v2_routes_parse_as_the_plan_v2_types() {
+        let hint = settle_hint(&holder(Held::Deleted), PlanSyntax::V2);
+        let [accept, reject, comment] = routes(&hint);
+        for route in [accept, reject] {
+            serde_json::from_value::<super::super::v2::RevisionDecisions>(
+                route["resolve_revisions"].clone(),
+            )
+            .unwrap_or_else(|e| panic!("{route} is no resolve_revisions ({e}): {hint}"));
+        }
+        serde_json::from_value::<super::super::v2::Operation>(comment.clone())
+            .unwrap_or_else(|e| panic!("{comment} is no operation ({e}): {hint}"));
+    }
+
+    #[test]
+    fn a_paragraph_the_hint_cannot_name_is_left_to_fill_in() {
+        let lost = Holder {
+            paragraph: "",
+            ..holder(Held::Deleted)
+        };
+        let v1 = settle_hint(&lost, PlanSyntax::V1);
+        let [.., comment] = routes(&v1);
+        assert_eq!(comment["paragraph"], "…", "{v1}");
+        let flags = settle_hint(&lost, PlanSyntax::Flags);
+        assert!(
+            flags
+                .lines()
+                .last()
+                .unwrap()
+                .ends_with(r#"add -p … --anchor "…" --content "…""#),
+            "{flags}"
         );
     }
 

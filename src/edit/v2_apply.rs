@@ -78,6 +78,36 @@ pub struct V2EditResult {
 /// requests return original bytes. Serialized integrity/publication gates
 /// belong to the preparation/publication layer, not to this adapter.
 pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
+    apply_bound(source, plan).map_err(|e| with_operation_targets(e, plan))
+}
+
+/// A refusal's comment route on the refused operation's own target: the
+/// hint quotes a placeholder, since only the plan holds the target.
+fn with_operation_targets(mut error: EditError, plan: &PlanV2) -> EditError {
+    let placeholder = format!(r#""target":{}"#, super::hint::OPERATION_TARGET);
+    let fill = |message: &mut String, pointer: Option<&str>| {
+        if !message.contains(&placeholder) {
+            return;
+        }
+        let target = pointer
+            .and_then(|p| p.strip_prefix("/operations/"))
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| plan.operations.get(i))
+            .and_then(|op| serde_json::to_string(op.target()).ok());
+        if let Some(target) = target {
+            *message = message.replace(&placeholder, &format!(r#""target":{target}"#));
+        }
+    };
+    fill(&mut error.message, error.operation.as_deref());
+    for outcome in &mut error.outcomes {
+        if let Some(message) = &mut outcome.message {
+            fill(message, Some(&outcome.id));
+        }
+    }
+    error
+}
+
+fn apply_bound(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     plan.validate()?;
     if source_sha256(source) != plan.source.sha256 {
         return Err(err(

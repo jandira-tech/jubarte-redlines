@@ -8,8 +8,11 @@
 //! refusal tells the caller to "settle it first".
 mod common;
 
-use common::docx::docx;
-use jubarte::edit::{EditPlan, apply_plan};
+use common::docx::{Part, W_NS, docx, docx_with_sect, para, part_string};
+use jubarte::edit::v2::PlanV2;
+use jubarte::edit::{
+    EditError, EditPlan, PlanSyntax, PrepareOptions, apply_plan, apply_plan_json_with, v2_apply,
+};
 use serde_json::{Value, json};
 use std::process::Command;
 
@@ -300,4 +303,144 @@ fn hint_quotes_the_active_plan_syntax() {
         !v2.contains(r#"{"ids":["r4"]}"#) && !v2.contains(r#"{\"ids\":[\"r4\"]}"#),
         "{v2}"
     );
+}
+
+/// A route line's fragment: what follows its label, without the cost.
+fn fragment(line: &str) -> &str {
+    let rest = line.split_once(':').map_or(line, |(_, r)| r).trim_start();
+    rest.rsplit_once(" (").map_or(rest, |(f, _)| f.trim_end())
+}
+
+/// A settle route line as the `resolve_revisions` it quotes.
+fn decisions(line: &str) -> Value {
+    let route: Value = serde_json::from_str(&format!("{{{}}}", fragment(line)))
+        .unwrap_or_else(|e| panic!("not JSON ({e}): {line}"));
+    route["resolve_revisions"].clone()
+}
+
+/// The v2 template plan `edit template` writes for `source`.
+fn v2_plan(source: &[u8]) -> Value {
+    use jubarte::edit::{
+        for_edit::ForEditRequest,
+        template::{TemplateRequest, generate},
+    };
+    let generated = generate(
+        source,
+        &TemplateRequest {
+            view: ForEditRequest::default(),
+            author: "Carol Diaz".into(),
+            date: DATE.into(),
+        },
+    )
+    .unwrap();
+    serde_json::from_str(&generated.plan.to_json()).unwrap()
+}
+
+fn apply_v2(source: &[u8], q: &Value) -> Result<v2_apply::V2EditResult, EditError> {
+    v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string())?)
+}
+
+#[test]
+fn every_v2_route_pastes_into_the_plan_it_refused() {
+    let mut q = v2_plan(STEP2);
+    let target = q["operations"][0]["target"].clone();
+    q["operations"] = json!([{"kind":"replace","target":target,"find":"bankers","text":"brokers"}]);
+    let e = apply_v2(STEP2, &q).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    let lines: Vec<&str> = e.message.lines().collect();
+    assert_eq!(lines.len(), 4, "{e}");
+    // Reject: their word comes back, and the replacement lands on it.
+    let mut rejected = q.clone();
+    rejected["resolve_revisions"] = decisions(lines[2]);
+    let out = apply_v2(STEP2, &rejected).unwrap_or_else(|x| panic!("{x}: {e}"));
+    let text = jubarte::inspect::paragraphs(&out.clean).unwrap()[0]
+        .text
+        .clone();
+    assert!(text.contains("pay the brokers"), "{text}");
+    // Accept, with the comment route on the operation's own target.
+    let mut comment: Value = serde_json::from_str(fragment(lines[3]))
+        .unwrap_or_else(|x| panic!("not JSON ({x}): {}", lines[3]));
+    assert_eq!(comment["target"], target, "{e}");
+    comment["find"] = json!("pay");
+    comment["text"] = json!("Why?");
+    let mut accepted = q.clone();
+    accepted["resolve_revisions"] = decisions(lines[1]);
+    accepted["operations"] = json!([comment]);
+    apply_v2(STEP2, &accepted).unwrap_or_else(|x| panic!("{x}: {e}"));
+}
+
+#[test]
+fn a_glyph_or_lookalike_before_their_deletion_still_names_it() {
+    for (before, deleted, find) in [
+        ("<w:t>alpha</w:t><w:tab/>", "gamma", "alpha\tgamma"),
+        ("<w:t>alpha</w:t><w:noBreakHyphen/>", "gamma", "alpha-gamma"),
+        ("<w:t>don</w:t>", "\u{2019}t", "don't"),
+    ] {
+        let source = docx(&format!(
+            r#"<w:p><w:r>{before}</w:r><w:del w:id="4" w:author="Bob" w:date="{OLD}"><w:r><w:delText>{deleted}</w:delText></w:r></w:del></w:p>"#
+        ));
+        let e = apply_plan(&source, &plan(replace(find, "x"))).unwrap_err();
+        assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{find:?}: {e}");
+        assert!(
+            e.message.starts_with(&format!(
+                r#"the text is inside r4, {deleted:?} deleted by "Bob"."#
+            )),
+            "{find:?}: {e}"
+        );
+    }
+}
+
+#[test]
+fn an_anchor_copied_with_its_change_marks_names_the_deletion() {
+    let e = apply_plan(STEP2, &plan(replace("{--bankers--}", "brokers"))).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    assert!(
+        e.message
+            .starts_with(r#"the text is inside r4, "bankers" deleted by "Bob"."#),
+        "{e}"
+    );
+}
+
+const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const HEADER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+
+#[test]
+fn a_header_revision_routes_by_its_header_ids() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t xml:space="preserve">alpha </w:t></w:r><w:del w:id="6" w:author="Bob" w:date="{OLD}"><w:r><w:delText>gamma</w:delText></w:r></w:del></w:p></w:hdr>"#
+    );
+    let source = docx_with_sect(
+        &para("Body"),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let request = plan(
+        json!([{"kind":"replace","paragraph":"header1.p0","find":"gamma","replacement":"delta"}]),
+    );
+    let options = PrepareOptions {
+        syntax: PlanSyntax::V2,
+        ..PrepareOptions::default()
+    };
+    let e = apply_plan_json_with(&source, &request.to_json(), &options).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    let lines: Vec<&str> = e.message.lines().collect();
+    let accept = decisions(lines[1]);
+    assert_eq!(
+        accept["accept"][0],
+        json!({"short_id":"header1.r6","long_id":"header1.w:del.w:id.6"}),
+        "{e}"
+    );
+    // A v2 plan takes the route as written.
+    let mut q = v2_plan(&source);
+    q["resolve_revisions"] = accept;
+    q["operations"] = json!([]);
+    let out = apply_v2(&source, &q).unwrap_or_else(|x| panic!("{x}: {e}"));
+    let kept = part_string(&out.clean, "word/header1.xml").unwrap();
+    assert!(!kept.contains("gamma"), "{kept}");
 }
