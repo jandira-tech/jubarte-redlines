@@ -380,6 +380,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte comments` | List comments, threads and the text they annotate |
 | `jubarte append` | Join documents in order, preserving images, styles, lists and notes |
 | `jubarte validate` | Check Word validity, tracked edits, accessibility, style and structure; or repair Word validity |
+| `jubarte check` | Check a document against a source-bound expectation contract |
 | `jubarte scrub` | Remove authors, editing IDs, metadata and comments before sharing |
 | `jubarte self-update` | Check or install a release from GitHub |
 <!-- gen:cli-summary:end -->
