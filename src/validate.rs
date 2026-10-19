@@ -4611,7 +4611,7 @@ mod foreign_alignment_budget_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod baseline_tests {
     use super::*;
 
