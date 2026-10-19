@@ -43,7 +43,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
-- Bound XML tag width before DOM attributes are built: configurable limits of 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags; refuse duplicate expanded attribute names on every parser route (#650).
+- Enforce XML tag policy at package admission and checked XML APIs with active limits: defaults of 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags, plus duplicate expanded-name refusal. Preserve permissive internal tree construction and linear bulk attribute insertion so raised limits survive comparison and conversion (#650).
 
 - **Dual-header ZIP packages are refused** (#594, GHSA-m665-v7pm-7grj). zip is bumped to 9.0.5, and every package open compares each entry's raw name in its local file header with its central record. A disagreement, or a central record with no local header, is `ZIP_HEADER_MISMATCH` on every route. `jubarte debug` reports it as a finding instead of refusing. A local time that differs from the central record is still accepted, as Word accepts it.
 

@@ -39,8 +39,9 @@ DOCX, legacy DOC, XML, embedded fonts and images are untrusted inputs. Risks
 include ZIP decompression bombs, excessive nesting, malformed parser inputs,
 algorithmic complexity, memory exhaustion, path traversal and accidental
 network/file access through external relationships. Admission bounds archive
-size, entries, inflated bytes and XML depth (`src/admission.rs`); the library
-bounds start tags before building DOM attributes (#650). `InputLimits` defaults
+size, entries, inflated bytes and XML depth (`src/admission.rs`). Package
+admission and the checked XML APIs enforce tag policy with the active
+`InputLimits` before DOM construction (#650). `InputLimits` defaults
 are `max_element_attributes = 1024` (namespace declarations included),
 `max_attribute_name_bytes = 1024` (qualified UTF-8 name),
 `max_attribute_value_bytes = 67108864` (64 MiB, raw and decoded), and
@@ -50,8 +51,15 @@ including through `InputLimitOverrides`; comparison budgets keep these defaults.
 Admission returns the existing `InvalidXml` / `INVALID_XML` refusal for
 tag-policy violations, with the part, element and limit. Checked library
 parsing returns the same policy message; its raw XML API has no part name.
-The infallible DOM parser panics on a tag-policy violation; use
-`try_parse_xdocument` or `try_parse_xdocument_with_limits` for untrusted XML.
+`validate_xml` and `try_parse_xdocument` use the defaults; their
+`*_with_limits` variants use the supplied limits, as does package admission.
+The infallible `parse_xdocument` does not enforce input policy: it preserves
+attribute order and keeps the last value at the first position for repeated
+expanded names, with linear bulk insertion. Use the checked APIs for untrusted
+XML. The converter's internal tree builder likewise does not reapply default
+width caps. The public `docx_to_markdown` API has no limits parameter and keeps
+its bounded, XML-tolerant package route; callers requiring tag-policy checks
+must admit the package first. CLI `read` and `validate` enforce admission.
 Aliased attributes sharing a namespace URI and local name are malformed XML;
 unprefixed attributes remain in no namespace. The independent OPC metadata
 attribute cap stays at 256. These are XML resource/namespace checks, not claims
