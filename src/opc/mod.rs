@@ -155,7 +155,21 @@ fn norm(name: &str) -> String {
 /// ZIP-15/#600). The `part_index`/`rels_index` maps keep one stored
 /// spelling per identity, so lookups stay O(1) without a scan.
 fn identity(name: &str) -> String {
-    resolve_rel_target("", name).to_ascii_lowercase()
+    // `resolve_rel_target` changes a name only to strip its leading '/'
+    // or to resolve `.`, `..` and empty segments: a name with none of
+    // those IS the resolved name, so the common lookup allocates once
+    // for the lowercasing instead of twice (#600 lookup cost).
+    let needs_resolve = name.starts_with('/')
+        || name
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..");
+    if needs_resolve {
+        let mut resolved = resolve_rel_target("", name);
+        resolved.make_ascii_lowercase();
+        resolved
+    } else {
+        name.to_ascii_lowercase()
+    }
 }
 
 /// The relationship `Target` value that reaches `target_part` from
@@ -534,18 +548,12 @@ pub struct PartFs {
 
 /// Canonical target resolution shared by package APIs and text story labels.
 pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String {
-    let joined = OpcPackage::resolve_rel_target(&norm(source_part), rel_target);
-    let mut segments: Vec<&str> = Vec::new();
-    for seg in joined.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            s => segments.push(s),
-        }
-    }
-    segments.join("/")
+    // The upstream resolver already returns the normalized absolute
+    // name (`.`/`..`/empty segments collapsed under a leading '/');
+    // PartFs stores the no-leading-slash form.
+    OpcPackage::resolve_rel_target(&norm(source_part), rel_target)
+        .trim_start_matches('/')
+        .to_string()
 }
 
 impl PartFs {
@@ -597,14 +605,16 @@ impl PartFs {
         owners.sort();
         let owners: Vec<String> = owners.into_iter().cloned().collect();
         for owner in owners {
-            if let Some(rels) = fs.part_rels.get_mut(&owner) {
-                let part = owner.trim_start_matches('/').to_string();
-                repaired_duplicate_ids.extend(
-                    drop_repeated_relationships(rels)?
-                        .into_iter()
-                        .map(|id| (part.clone(), id)),
-                );
-            }
+            let rels = fs
+                .part_rels
+                .get_mut(&owner)
+                .expect("owner names a part_rels entry");
+            let part = owner.trim_start_matches('/').to_string();
+            repaired_duplicate_ids.extend(
+                drop_repeated_relationships(rels)?
+                    .into_iter()
+                    .map(|id| (part.clone(), id)),
+            );
         }
         fs.repaired_duplicate_ids = repaired_duplicate_ids;
         Ok(fs)
@@ -855,6 +865,10 @@ impl PartFs {
     /// source types is left alone rather than guessed.
     pub fn adopt_missing_content_types(&mut self, sources: &[&PartFs]) {
         for part in self.parts() {
+            // `content_type_for` already matches a Default under another
+            // case (`png` for `image3.PNG`), so a part typed by our own
+            // Default stops here: a second Default for the same extension
+            // would make the package unopenable.
             if self.content_type_for(&part).is_some() {
                 continue;
             }
@@ -869,12 +883,6 @@ impl PartFs {
                     .find(|(e, _)| e.eq_ignore_ascii_case(ext))
                     .map(|(_, ct)| ct.clone())
             };
-            // Our own Default under another case (`png` for `image3.PNG`)
-            // already types the part: a second Default for the same extension
-            // makes the package unopenable.
-            if by_ext(self).is_some() {
-                continue;
-            }
             let key = norm(&part);
             for src in sources {
                 if let Some(ct) = src.pkg.content_types.override_for(&key).map(str::to_string) {
@@ -931,9 +939,11 @@ impl PartFs {
             return;
         };
         let part = self.resolve_rel_target(source_part, &target);
-        if let Some(rels) = self.part_rels.get_mut(&key) {
-            rels.items.retain(|r| r.id != rel_id);
-        }
+        self.part_rels
+            .get_mut(&key)
+            .expect("the index names a rels entry")
+            .items
+            .retain(|r| r.id != rel_id);
         self.remove_untargeted_part(&part);
     }
 
@@ -1049,9 +1059,12 @@ impl PartFs {
     ) -> String {
         let rels = self.part_rels_mut(source_part);
         let id = rels.add(rel_type, target);
-        if let Some(r) = rels.items.iter_mut().find(|r| r.id == id) {
-            r.target_mode = Some("External".to_string());
-        }
+        let r = rels
+            .items
+            .iter_mut()
+            .find(|r| r.id == id)
+            .expect("add returned the id it inserted");
+        r.target_mode = Some("External".to_string());
         id
     }
 
@@ -1358,6 +1371,20 @@ mod tests {
         );
         // Nothing to adopt: left alone rather than guessed.
         assert_eq!(out.content_type_for("word/media/unknown.zzz"), None);
+        // A part with no extension has no Default to ask for.
+        out.set_part("word/media/LICENSE", vec![6]);
+        out.adopt_missing_content_types(&[&src]);
+        assert_eq!(out.content_type_for("word/media/LICENSE"), None);
+        // A part the source names in an Override adopts that Override.
+        let mut typed = package_with_header_rels();
+        typed.add_content_type_override("word/media/logo.bin", "image/x-logo");
+        let mut out = package_with_header_rels();
+        out.set_part("word/media/logo.bin", vec![7]);
+        out.adopt_missing_content_types(&[&typed]);
+        assert_eq!(
+            out.content_type_for("word/media/logo.bin").as_deref(),
+            Some("image/x-logo")
+        );
     }
 
     #[test]
@@ -1945,10 +1972,57 @@ mod tests {
             .expect("owner resolves by identity");
         assert_eq!(rels.items.len(), 1);
         assert_eq!(rels.items[0].id, "rId3");
+        // A `.rels` name for the package itself (any case) removes the
+        // package's own relationships.
+        fs.remove_part("_RELS/.rels");
+        assert!(fs.package_relationships().items.is_empty());
         fs.remove_part("WORD/HEADER1.XML");
         assert_eq!(fs.parts(), ["word/document.xml"]);
         fs.remove_part("word/document.XML");
         assert!(fs.parts().is_empty());
+    }
+
+    /// `set_part` with a `.rels` name whose XML does not parse keeps the
+    /// raw part, and a later parseable `.rels` supersedes it — `to_zip`
+    /// writes the parsed copy and no second entry of the one identity
+    /// (#600).
+    #[test]
+    fn a_raw_rels_part_is_superseded_by_parsed_relationships() {
+        let mut fs = package_with_header_rels();
+        fs.set_part("word/_rels/extra.xml.rels", b"<broken".to_vec());
+        assert_eq!(
+            fs.part_bytes("word/_rels/extra.xml.rels"),
+            Some(b"<broken".as_slice()),
+            "unparseable relationship XML is kept raw"
+        );
+        fs.set_part(
+            "word/_rels/extra.xml.rels",
+            format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId5" Type="{HYPERLINK}" Target="https://e.example/" TargetMode="External"/></Relationships>"#).into_bytes(),
+        );
+        assert_eq!(
+            fs.part_bytes("word/_rels/extra.xml.rels"),
+            None,
+            "the parsed copy supersedes the raw part"
+        );
+        assert_eq!(
+            fs.read_rels_for("word/extra.xml").unwrap().items[0].id,
+            "rId5"
+        );
+        fs.to_zip()
+            .expect("one entry of the rels identity serializes");
+    }
+
+    /// The identity a part or owner name resolves to: the part a
+    /// relationship target names (leading slashes and `.`/`..` segments
+    /// resolved), compared under ASCII case (#600).
+    #[test]
+    fn identity_resolves_like_a_relationship_target() {
+        assert_eq!(identity("word/document.xml"), "word/document.xml");
+        assert_eq!(identity("/word/Document.xml"), "word/document.xml");
+        assert_eq!(identity("WORD/document.xml"), "word/document.xml");
+        assert_eq!(identity("word/./document.xml"), "word/document.xml");
+        assert_eq!(identity("word/../word/document.xml"), "word/document.xml");
+        assert_eq!(identity(""), "");
     }
 
     /// `to_zip` must not write two entries of one identity: a raw part
@@ -1973,6 +2047,140 @@ mod tests {
             .to_zip()
             .expect_err("the raw copy collides with the reserved part");
         assert!(err.to_string().contains("DUPLICATE_PART"), "{err}");
+    }
+
+    /// A `.rels` entry that is not a `…/_rels/….rels` path still parses:
+    /// its owner is the part the name's stem names, and `to_zip` writes it
+    /// back beside that root part (#600 identity coverage).
+    #[test]
+    fn a_root_rels_part_belongs_to_its_stem() {
+        let rels = format!(
+            r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="{HYPERLINK}" Target="https://f.example/" TargetMode="External"/></Relationships>"#
+        );
+        let bytes = variant_package(&[
+            (b"[Content_Types].xml", TYPES),
+            (b"_rels/.rels", PKG_RELS),
+            (b"word/document.xml", b"<w:document/>"),
+            (b"x.rels", rels.as_bytes()),
+        ]);
+        let fs = PartFs::open(&bytes).expect("a root .rels part opens");
+        // It is relationships storage, not a part of its own.
+        assert!(!fs.parts().iter().any(|p| p == "x.rels"));
+        assert_eq!(fs.read_rels_for("x").unwrap().items[0].id, "rId1");
+    }
+
+    /// A package without `[Content_Types].xml` names the reserved part it
+    /// is missing, under any spelling the entry could have carried.
+    #[test]
+    fn a_package_without_content_types_is_part_not_found() {
+        let bytes = variant_package(&[
+            (b"_rels/.rels", PKG_RELS),
+            (b"word/document.xml", b"<w:document/>"),
+        ]);
+        assert!(matches!(
+            PartFs::open(&bytes),
+            Err(OpcError::PartNotFound(name)) if name == "[Content_Types].xml"
+        ));
+    }
+
+    /// Mutations resolve under the one OPC identity everywhere: a `.rels`
+    /// name drops its owner's parsed relationships, the
+    /// `[Content_Types].xml` identity clears the content types, a raw
+    /// part of a reserved identity is superseded by a parsed one, the
+    /// relationship helpers no-op on absent owners and unknown ids, and
+    /// a root part's relationships serialize as `_rels/<part>.rels`.
+    #[test]
+    fn helper_mutations_resolve_under_the_same_index() {
+        let mut fs = package_with_header_rels();
+        fs.remove_part("word/_rels/header1.xml.rels");
+        assert!(fs.read_rels_for("word/header1.xml").is_none());
+        fs.remove_part("[CONTENT_TYPES].XML");
+        assert_eq!(fs.content_type_for("word/document.xml"), None);
+        // Absent owners and unknown or external ids are no-ops.
+        assert!(fs.read_rels_for("word/styles.xml").is_none());
+        fs.remove_relationships_by_type("word/styles.xml", HYPERLINK);
+        fs.remove_related_part("word/styles.xml", "rId1");
+        fs.remove_related_part("word/document.xml", "rId404");
+        fs.set_rel_target_mode_external("word/document.xml", "rId9");
+        // Removing by type drops matching items of a part's rels or the
+        // package's own.
+        assert_eq!(
+            fs.add_package_relationship(HYPERLINK, "https://g.example/"),
+            "rId2"
+        );
+        fs.add_document_relationship_external("word/document.xml", HYPERLINK, "https://h.example/");
+        fs.set_rel_target_mode_external("word/document.xml", "rId1");
+        fs.set_rel_target_mode_external("word/document.xml", "rId77");
+        fs.remove_package_relationships_by_type(HYPERLINK);
+        assert!(
+            fs.package_relationships()
+                .items
+                .iter()
+                .all(|r| r.rel_type != HYPERLINK)
+        );
+        fs.remove_relationships_by_type("word/document.xml", HYPERLINK);
+        assert!(
+            fs.read_rels_for("word/document.xml")
+                .unwrap()
+                .items
+                .iter()
+                .all(|r| r.rel_type != HYPERLINK)
+        );
+        // An absent id inside present rels is a no-op; an internal
+        // relationship's removal drops the part it alone targeted.
+        fs.remove_related_part("word/document.xml", "rId404");
+        fs.set_part("word/media/bye.png", vec![9]);
+        let drop_id = fs.add_document_relationship("word/document.xml", "image", "media/bye.png");
+        fs.remove_related_part("word/document.xml", &drop_id);
+        assert_eq!(fs.part_bytes("word/media/bye.png"), None);
+        // A `.rels` path whose owner has no rels is a no-op, as is a
+        // parseable [Content_Types].xml over none raw part.
+        fs.remove_part("word/_rels/styles.xml.rels");
+        fs.set_part("[Content_Types].xml", TYPES.to_vec());
+        // A raw [Content_Types].xml part is superseded by a parseable one.
+        fs.set_part("[Content_Types].xml", b"<broken".to_vec());
+        assert!(fs.part_bytes("[content_types].xml").is_some());
+        fs.set_part("[content_types].xml", TYPES.to_vec());
+        assert_eq!(
+            fs.part_bytes("[Content_Types].xml"),
+            None,
+            "the parsed content types supersede the raw part"
+        );
+        // Root-part relationships serialize as `_rels/<part>.rels`.
+        fs.set_part("x.xml", b"<x/>".to_vec());
+        fs.add_document_relationship("x.xml", HYPERLINK, "https://i.example/");
+        let mut names: Vec<String> = ZipArchive::new(Cursor::new(&fs.to_zip().unwrap()))
+            .unwrap()
+            .file_names()
+            .map(|name| name.expect("decode ZIP fixture name").into_owned())
+            .collect();
+        names.sort();
+        assert!(names.contains(&"_rels/x.xml.rels".to_string()), "{names:?}");
+    }
+
+    /// A relationship Id repeated three or more times still repairs to
+    /// one entry and reports the Id once, in the package's own rels as in
+    /// a part's (#600 coverage of the package-level repair and the
+    /// recorded-ids dedup).
+    #[test]
+    fn a_relationship_repeated_more_than_twice_is_repaired_once() {
+        let rels = format!(
+            r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="{HYPERLINK}" Target="https://j.example/" TargetMode="External"/><Relationship Id="rId2" Type="{HYPERLINK}" Target="https://j.example/" TargetMode="External"/><Relationship Id="rId2" Type="{HYPERLINK}" Target="https://j.example/" TargetMode="External"/></Relationships>"#
+        );
+        let bytes = variant_package(&[
+            (b"[Content_Types].xml", TYPES),
+            (b"_rels/.rels", rels.as_bytes()),
+            (b"word/document.xml", b"<w:document/>"),
+        ]);
+        let fs = PartFs::open(&bytes).expect("identical repeats repair");
+        assert_eq!(fs.package_relationships().items.len(), 2);
+        assert_eq!(
+            fs.repaired_duplicate_ids(),
+            [
+                (String::new(), "rId1".to_string()),
+                (String::new(), "rId2".to_string())
+            ]
+        );
     }
 }
 

@@ -667,7 +667,7 @@ pub(crate) fn zip_defects<R: Read + Seek>(
     }
     for pair in extents.windows(2) {
         let [(index, name, _, end), (_, other, other_start, _)] = pair else {
-            continue;
+            unreachable!("windows(2) yields pairs")
         };
         if end > other_start {
             defects.push(ZipDefect {
@@ -711,13 +711,11 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
         let step = u64::from(central.name_length)
             .saturating_add(u64::from(central.extra_length))
             .saturating_add(u64::from(central.comment_length));
-        let Some(next) = at
-            .checked_add(CENTRAL_HEADER.name as u64)
-            .and_then(|at| at.checked_add(step))
-        else {
-            break;
-        };
-        at = next;
+        // Overflow pins `at` at u64::MAX: the next header read fails and
+        // the walk stops, the same end a checked add would give.
+        at = at
+            .saturating_add(CENTRAL_HEADER.name as u64)
+            .saturating_add(step);
         if central.name.ends_with(b"/") {
             continue;
         }
