@@ -1802,12 +1802,27 @@ fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
 /// it: what `add --plan` runs on each recorded operation, so recording a
 /// long plan never re-applies it.
 pub fn check_plan(source: &[u8], plan: &EditPlan) -> Result<(), EditError> {
-    resolved(source, plan).map(|_| ())
+    check_plan_quoting(source, plan, PlanSyntax::V1)
 }
 
-fn resolved<'a>(source: &'a [u8], plan: &'a EditPlan) -> Result<Transaction<'a>, EditError> {
+/// [`check_plan`], its refusals quoting their routes in `syntax`: the
+/// flags `add --plan` records come back as flags.
+pub fn check_plan_quoting(
+    source: &[u8],
+    plan: &EditPlan,
+    syntax: PlanSyntax,
+) -> Result<(), EditError> {
+    resolved(source, plan, syntax).map(|_| ())
+}
+
+fn resolved<'a>(
+    source: &'a [u8],
+    plan: &'a EditPlan,
+    syntax: PlanSyntax,
+) -> Result<Transaction<'a>, EditError> {
     check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
+    tx.syntax = syntax;
     tx.resolve()?;
     tracked::check(&tx)?;
     tx.emits_directly()?;

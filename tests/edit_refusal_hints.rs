@@ -217,6 +217,19 @@ fn hint_quotes_the_active_plan_syntax() {
             String::from_utf8_lossy(&out.stderr)
         )
     };
+    // What the refusal says: stderr and each JSON row's message, not the
+    // structured next actions (#1147), whose argv run `edit template`.
+    let refusal = |out: &std::process::Output| {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let messages = stdout
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .flat_map(|row| [row["message"].clone(), row["error"]["message"].clone()])
+            .filter_map(|m| m.as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{messages}\n{}", String::from_utf8_lossy(&out.stderr))
+    };
     // Flags.
     let out = cli(
         dir.path(),
@@ -253,7 +266,8 @@ fn hint_quotes_the_active_plan_syntax() {
         dir.path(),
         &["edit", "in.docx", "--plan", "plan.json", "-o", "out.docx"],
     );
-    let v1 = says(&out);
+    let v1 = refusal(&out);
+    assert!(!out.status.success(), "{v1}");
     assert!(
         v1.contains(r#"\"accept\":{\"ids\":[\"r4\"]}"#)
             || v1.contains(r#""accept":{"ids":["r4"]}"#),
@@ -292,7 +306,7 @@ fn hint_quotes_the_active_plan_syntax() {
             "out.docx",
         ],
     );
-    let v2 = says(&out);
+    let v2 = refusal(&out);
     assert!(!out.status.success(), "{v2}");
     assert!(
         v2.contains("short_id") && v2.contains("document.w:del.w:id.4"),
@@ -303,6 +317,46 @@ fn hint_quotes_the_active_plan_syntax() {
         !v2.contains(r#"{"ids":["r4"]}"#) && !v2.contains(r#"{\"ids\":[\"r4\"]}"#),
         "{v2}"
     );
+    // A typed command (#1310): its own options, added to the command. Its
+    // --find reads the final text, so Bob's moved words, not his deleted ones.
+    std::fs::write(
+        dir.path().join("moved.docx"),
+        docx(&format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">pay the </w:t></w:r><w:moveTo w:id="4" w:author="Bob" w:date="{DATE}"><w:r><w:t>bankers</w:t></w:r></w:moveTo></w:p>"#
+        )),
+    )
+    .unwrap();
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "replace",
+            "moved.docx",
+            "--at",
+            "p0",
+            "--find",
+            "bankers",
+            "--text",
+            "brokers",
+            "-a",
+            "Carol Diaz",
+            "-d",
+            DATE,
+            "-o",
+            "out.docx",
+        ],
+    );
+    let typed = refusal(&out);
+    assert!(!out.status.success(), "{typed}");
+    for want in [
+        "--accept-change r4",
+        "--reject-change r4",
+        "add -p p0 --anchor",
+    ] {
+        assert!(typed.contains(want), "typed lacks {want}: {typed}");
+    }
+    assert!(!typed.contains("resolve_revisions"), "{typed}");
+    assert!(!typed.contains("-p r4 --accept"), "{typed}");
 }
 
 /// A route line's fragment: what follows its label, without the cost.

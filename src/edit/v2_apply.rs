@@ -78,7 +78,17 @@ pub struct V2EditResult {
 /// requests return original bytes. Serialized integrity/publication gates
 /// belong to the preparation/publication layer, not to this adapter.
 pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
-    apply_bound(source, plan).map_err(|e| {
+    apply_quoting(source, plan, super::PlanSyntax::V2)
+}
+
+/// [`apply_plan`], its refusals quoting their routes in `syntax`: the
+/// plan's JSON, or the options of the typed command that built it.
+pub(super) fn apply_quoting(
+    source: &[u8],
+    plan: &PlanV2,
+    syntax: super::PlanSyntax,
+) -> Result<V2EditResult, EditError> {
+    apply_bound(source, plan, syntax).map_err(|e| {
         with_operation_targets(
             e.with_revision_syntax(super::refusal::RevisionSyntax::V2Plan),
             plan,
@@ -112,7 +122,11 @@ fn with_operation_targets(mut error: EditError, plan: &PlanV2) -> EditError {
     error
 }
 
-fn apply_bound(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
+fn apply_bound(
+    source: &[u8],
+    plan: &PlanV2,
+    syntax: super::PlanSyntax,
+) -> Result<V2EditResult, EditError> {
     plan.validate()?;
     if source_sha256(source) != plan.source.sha256 {
         return Err(err(
@@ -214,7 +228,7 @@ fn apply_bound(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> 
     execution.operations = mapped.iter().map(|m| m.legacy.clone()).collect();
     // Always use the preserving engine path. Tracking controls only the new edits.
     let mut tx = Transaction::start(&working, &execution)?;
-    tx.syntax = super::PlanSyntax::V2;
+    tx.syntax = syntax;
     if selected_report.is_empty() && remaining_revisions.is_empty() {
         tx.origin = None;
     } else {
@@ -235,7 +249,7 @@ fn apply_bound(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> 
     let effect = !tx.resolved.is_empty()
         || !tx.resolved_revisions.is_empty()
         || !remaining_revisions.is_empty();
-    let edited_insertions = edited_insertions(&tx);
+    let edited_revisions = edited_revisions(&tx);
     tx.apply()?;
     super::prepared::check_dom_realized(&tx, true)?;
     let (clean, _) = tx.finish()?;
@@ -321,7 +335,7 @@ fn apply_bound(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> 
     preserve_direct_history(
         &working,
         &clean,
-        &edited_insertions,
+        &edited_revisions,
         &plan.author,
         &BTreeMap::new(),
     )?;
@@ -333,7 +347,7 @@ fn apply_bound(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> 
     guard(
         &working,
         &redline,
-        &edited_insertions,
+        &edited_revisions,
         &plan.author,
         &insertion_origins,
     )?;
@@ -2324,25 +2338,25 @@ fn exact_rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)> {
         .collect()
 }
 
-/// Only insertion content touched by a resolved text operation may change.
-/// Snapshot these identities before applying the transaction: the stored
-/// projection nodes themselves are mutated by `apply`.
-fn edited_insertions(tx: &Transaction<'_>) -> BTreeSet<String> {
+/// The revisions the resolved operations reach: only insertion content a
+/// text operation touches may change, and a deleted paragraph reaches every
+/// revision it holds. Snapshot these identities before applying the
+/// transaction: the stored projection nodes themselves are mutated by
+/// `apply`.
+fn edited_revisions(tx: &Transaction<'_>) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
     let dom = &tx.opened.dom;
     for (_, resolved) in &tx.resolved {
         // A deleted paragraph deletes inside every insertion of its runs
-        // (#1136); its mark's own revision is not text.
+        // (#1136). A direct deletion takes the paragraph, and so every
+        // revision in it, mark included.
         if let Resolved::DeleteParagraph { para } = resolved {
             let story = &tx.stories[tx.paragraph_story[*para].0].id;
             let node = tx.paragraph_nodes[*para];
-            for ins in dom.descendants(node, Some(&W::ins())) {
-                let in_mark = dom
-                    .ancestors(ins, None)
-                    .into_iter()
-                    .take_while(|&a| a != node)
-                    .any(|a| dom.name_is(a, &W::p_pr()));
-                if !in_mark && let Some(wid) = dom.attribute(ins, &W::id()) {
+            for revision in dom.descendants(node, None) {
+                if super::hint::Held::of(dom, revision).is_some()
+                    && let Some(wid) = dom.attribute(revision, &W::id())
+                {
                     ids.insert(crate::ids::ChangeId::new(story, wid).short());
                 }
             }
@@ -2495,7 +2509,10 @@ fn compare_history(
         }
     }
     before.retain_mut(|c| {
-        if c.kind == ChangeKind::Insertion && c.target == "text" && edited.contains(&c.id) {
+        if !edited.contains(&c.id) {
+            return true;
+        }
+        if c.kind == ChangeKind::Insertion && c.target == "text" {
             if let Some(new) = after.iter().find(|new| new.id == c.id) {
                 c.text.clone_from(&new.text);
             } else if c.author.as_deref() == Some(author) || !tracked {
@@ -2504,6 +2521,10 @@ fn compare_history(
                 // author's (`check_dom_realized` holds the text).
                 return false;
             }
+        } else if !tracked && after.iter().all(|new| new.id != c.id) {
+            // A direct paragraph deletion takes the paragraph's other
+            // revisions with it; a tracked one keeps them (#1136).
+            return false;
         }
         true
     });

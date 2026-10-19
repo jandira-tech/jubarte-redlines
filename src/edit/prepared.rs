@@ -909,7 +909,13 @@ pub fn prepare_v2(
     plan: &super::v2::PlanV2,
     options: &PrepareOptions,
 ) -> Result<PreparedEdit, EditError> {
-    let applied = super::v2_apply::apply_plan(source, plan)?;
+    // A v2 plan's refusals quote its JSON, unless a typed command built it.
+    let syntax = if options.syntax == super::PlanSyntax::Typed {
+        super::PlanSyntax::Typed
+    } else {
+        super::PlanSyntax::V2
+    };
+    let applied = super::v2_apply::apply_quoting(source, plan, syntax)?;
     let result = EditResult {
         clean: applied.clean,
         redline: applied.redline,

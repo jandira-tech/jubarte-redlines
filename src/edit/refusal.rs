@@ -154,12 +154,16 @@ impl EditError {
     pub fn revision_next_actions(&self, source_path: &str, source_digest: &str) -> Vec<NextAction> {
         // Only the refusal the message names: a revision another operation
         // met must not answer for a refusal of a different kind.
+        // The message's first line names the refusal's lead and its first
+        // revision, after any diagnostic prefix (v2's insertion side).
+        let header = self.message.lines().next().unwrap_or_default();
         let Some(refusal) = self.revision_refusals.first().filter(|refusal| {
-            self.message.starts_with(&refusal.reason)
-                && refusal
-                    .revisions
-                    .iter()
-                    .all(|r| self.message.contains(&r.target.short_id))
+            refusal.revisions.first().is_some_and(|first| {
+                header.contains(&format!("{} {}", refusal.reason, first.target.short_id))
+            }) && refusal
+                .revisions
+                .iter()
+                .all(|r| self.message.contains(&r.target.short_id))
         }) else {
             return Vec::new();
         };

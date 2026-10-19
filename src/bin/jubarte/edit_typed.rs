@@ -440,6 +440,24 @@ fn prepare_and_publish(
             "--expect requires a PlanV2 request in this layer; re-save the plan as v2 (edit template / --save-plan) or use jubarte check on the output",
         ));
     }
+    // A refusal quotes its routes, and records its choices, in the syntax
+    // the caller wrote: the typed options, or the plan's JSON.
+    let (syntax, revision_syntax) = if action.inline().is_some() {
+        (
+            jubarte::edit::PlanSyntax::Typed,
+            jubarte::edit::refusal::RevisionSyntax::TypedAction,
+        )
+    } else if matches!(request, Request::V2(_)) {
+        (
+            jubarte::edit::PlanSyntax::V2,
+            jubarte::edit::refusal::RevisionSyntax::V2Plan,
+        )
+    } else {
+        (
+            jubarte::edit::PlanSyntax::V1,
+            jubarte::edit::refusal::RevisionSyntax::V1Plan,
+        )
+    };
     let prepared = request
         .prepare(
             source,
@@ -447,7 +465,7 @@ fn prepare_and_publish(
                 require_change: delivery.require_change,
                 exact_text: matches!(request, Request::V2(_)),
                 role: PrimaryRole::Clean,
-                ..PrepareOptions::default()
+                syntax,
             },
         )
         .map_err(|e| {
@@ -457,14 +475,7 @@ fn prepare_and_publish(
                 }
                 _ => None,
             };
-            let syntax = if action.inline().is_some() {
-                jubarte::edit::refusal::RevisionSyntax::TypedAction
-            } else if matches!(request, Request::V2(_)) {
-                jubarte::edit::refusal::RevisionSyntax::V2Plan
-            } else {
-                jubarte::edit::refusal::RevisionSyntax::V1Plan
-            };
-            let e = e.with_revision_syntax(syntax);
+            let e = e.with_revision_syntax(revision_syntax);
             let actions = e.revision_next_actions(
                 &absolute(action.file()),
                 &jubarte::inspect::source_sha256(source),

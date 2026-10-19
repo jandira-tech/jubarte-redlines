@@ -257,14 +257,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   deletions as they are and removes your own pending insertion outright; a
   paragraph holding a move is still refused. The report's `summary` names
   the pieces of each split insertion under its source id
-  (`split_revisions`, `EditReport::split_revisions`).
+  (`split_revisions`, `EditReport::split_revisions`). An `edit apply` plan
+  or a typed `edit delete --whole-block` of a paragraph holding another
+  author's deletion no longer fails `REVISION_PRESERVATION_FAILED`: the
+  clean copy drops the paragraph with its revisions, the redline keeps
+  them.
 
 - **A refusal names the revision in the way and every route around it
   (#1108).** Text another author deleted or moved, and a paragraph or run
   whose mark or formatting change is tracked, are refused with the
   revision's id, author and text, then accept, reject and a comment, each
   with what it costs, quoted in the syntax the caller wrote (operation
-  flags, a v1 plan, or an `edit apply` plan). Each JSON route pastes into
+  flags, including flags recorded into a plan; a v1 plan; an `edit apply`
+  plan; or a typed command, whose routes are its own `--accept-change ID`
+  and `--reject-change ID` (#1310)). The structured `next_actions` (#1147)
+  come with every such refusal, a v2 insertion-side one included. Each JSON route pastes into
   its plan as written: ids are JSON-escaped, an `edit apply` route names
   both `accept` and `reject` lists, and its comment carries the refused
   operation's own `target`. An anchor that reaches into another author's

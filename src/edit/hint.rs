@@ -20,11 +20,14 @@ pub enum PlanSyntax {
     Flags,
     /// A `schema_version: 2` plan (`edit apply`).
     V2,
+    /// The typed commands (`edit replace FILE --at p3 --find … --text …`),
+    /// which take their decisions as `--accept-change` / `--reject-change`.
+    Typed,
 }
 
 impl PlanSyntax {
     /// Every syntax, for the tests that check each one's fragments.
-    pub const ALL: [Self; 3] = [Self::V1, Self::Flags, Self::V2];
+    pub const ALL: [Self; 4] = [Self::V1, Self::Flags, Self::V2, Self::Typed];
 }
 
 /// What another author's revision did to the text it holds.
@@ -248,6 +251,8 @@ fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
             json(id)
         ),
         PlanSyntax::Flags => format!("-p {id} --{verb}"),
+        // Added to the refused command itself, which settles before it edits.
+        PlanSyntax::Typed => format!("--{verb}-change {id}"),
         // A v2 plan's resolve_revisions names both lists.
         PlanSyntax::V2 => {
             let target = format!(
@@ -278,7 +283,11 @@ fn comment(syntax: PlanSyntax, paragraph: &str) -> String {
             r#"{{"kind":"comment","paragraph":{},"find":"…","text":"…"}}"#,
             json(paragraph)
         ),
-        PlanSyntax::Flags => format!(r#"add -p {paragraph} --anchor "…" --content "…""#),
+        // The typed commands have no comment of their own; `add` is the
+        // command line's.
+        PlanSyntax::Flags | PlanSyntax::Typed => {
+            format!(r#"add -p {paragraph} --anchor "…" --content "…""#)
+        }
         PlanSyntax::V2 => {
             format!(r#"{{"kind":"comment","target":{OPERATION_TARGET},"find":"…","text":"…"}}"#)
         }
@@ -343,6 +352,14 @@ mod tests {
                         r#""target":"#,
                     ],
                     &[r#""ids""#, "--accept", r#""paragraph""#],
+                ),
+                PlanSyntax::Typed => (
+                    &[
+                        "--accept-change r12",
+                        "--reject-change r12",
+                        "add -p p3 --anchor",
+                    ],
+                    &["resolve_revisions", "-p r12"],
                 ),
             };
             for want in wanted {

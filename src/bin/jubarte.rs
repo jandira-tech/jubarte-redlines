@@ -2369,13 +2369,14 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Usage(m) => (EXIT_USAGE, m),
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
-    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| {
-        refused(
-            &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
-            flags.file,
-            source,
-        )
-    })?;
+    jubarte::edit::check_plan_quoting(source, &recorded.plan, jubarte::edit::PlanSyntax::Flags)
+        .map_err(|e| {
+            refused(
+                &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
+                flags.file,
+                source,
+            )
+        })?;
     if !flags.quiet {
         for note in &recorded.notes {
             outln!("note: {note}");
