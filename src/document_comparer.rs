@@ -4988,6 +4988,45 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
+/// Accept every revision through the processor, rescuing wholly removed comment anchors.
+///
+/// # Errors
+/// Refused input, an unreadable package or unreadable comment records.
+pub fn accept_revisions_keeping_comments(
+    docx: &[u8],
+) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
+    resolve_revisions_keeping_comments(docx, crate::revision_processor::Resolution::Accept)
+}
+
+/// Reject every revision through the processor, rescuing wholly removed comment anchors.
+///
+/// # Errors
+/// As [`accept_revisions_keeping_comments`].
+pub fn reject_revisions_keeping_comments(
+    docx: &[u8],
+) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
+    resolve_revisions_keeping_comments(docx, crate::revision_processor::Resolution::Reject)
+}
+
+fn resolve_revisions_keeping_comments(
+    docx: &[u8],
+    resolution: crate::revision_processor::Resolution,
+) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
+    use crate::changes::ChangeError;
+    admit_package(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
+    let mut pkg = PartFs::open(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
+    let (removed, kept) =
+        crate::revision_processor::resolve_package_with_comments(&mut pkg, resolution, None, true);
+    crate::changes::kept_resolution(
+        docx,
+        &pkg.to_zip()
+            .map_err(|e| ChangeError::Package(e.to_string()))?,
+        &removed,
+        kept,
+        resolution,
+    )
+}
+
 /// Collision-proof target name for copying `want` (with `bytes`) into `out`:
 /// free name or byte-identical existing part → `want` unchanged; an existing
 /// part with DIFFERENT content → the first free or identical candidate: a

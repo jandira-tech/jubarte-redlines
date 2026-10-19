@@ -128,6 +128,31 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
                     .is_some_and(|name| super::bookmarks::is_character(dom, n, &name))
             });
         let mut boundary = first_character.unwrap_or(start);
+        // A matched move range later discards plain runs between its markers.
+        // Put the rescued reference run before that range too, so the same
+        // empty anchor survives both wrapper deletion and range deletion.
+        let character_at = order
+            .iter()
+            .position(|&n| n == boundary)
+            .expect("character in story");
+        if let Some(range_start) = order[..character_at]
+            .iter()
+            .enumerate()
+            .find_map(|(i, &n)| {
+                if dom.name(n) != Some(W::move_from_range_start()) {
+                    return None;
+                }
+                let id = dom.attribute(n, &W::id())?;
+                let end = order[i + 1..].iter().position(|&e| {
+                    dom.name(e) == Some(W::move_from_range_end())
+                        && dom.attribute(e, &W::id()) == Some(id)
+                })? + i
+                    + 1;
+                (end > character_at).then_some(n)
+            })
+        {
+            boundary = range_start;
+        }
         while let Some(parent) = dom.parent(boundary) {
             if dom.name(parent) == Some(W::p()) {
                 break;

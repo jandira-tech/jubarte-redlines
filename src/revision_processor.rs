@@ -3872,10 +3872,10 @@ fn resolve(
     resolve_with_comments(pkg, resolution, freeze, renumber, false, &mut Vec::new())
 }
 
-/// Edit plans retain annotation ids so subsequent operations still address the
-/// snapshot they read. The edit result renumbers once all operations finish.
-/// Only this entry point can rescue removed anchors.
-pub(crate) fn resolve_package_for_edit(
+/// Shared opt-in anchor rescue for edit plans, selective settlement and
+/// convert. Retain source annotation ids for reporting; the caller numbers
+/// the published document once it has finished its operations.
+pub(crate) fn resolve_package_with_comments(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,

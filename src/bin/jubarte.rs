@@ -494,6 +494,9 @@ fn run_resolution(
                 comment.id, comment.author,
             );
         }
+        for note in settlement_notes(&[], &resolved.kept_comments, &resolved.document, what) {
+            eprintln!("note: {note}");
+        }
         // #1223: --id cannot name a comment-body change, so a selection can
         // leave some; say how many (an empty selection resolves them all).
         if resolved.comment_changes_left > 0 {
@@ -3117,6 +3120,25 @@ fn paginated(
     text
 }
 
+/// One processor settlement and the edit path's receipt, before any output writer.
+fn keep_converted_comments(bytes: &[u8], choice: TrackChanges) -> Result<Vec<u8>, ConvertFailure> {
+    let resolve = if choice == TrackChanges::Accept {
+        jubarte::document_comparer::accept_revisions_keeping_comments
+    } else {
+        jubarte::document_comparer::reject_revisions_keeping_comments
+    };
+    let resolved = resolve(bytes).map_err(|e| format!("convert failed: {e}"))?;
+    for note in settlement_notes(
+        &[],
+        &resolved.kept_comments,
+        &resolved.document,
+        "settlement",
+    ) {
+        eprintln!("note: {note}");
+    }
+    Ok(resolved.document)
+}
+
 fn run_convert_any(
     job: &ConvertJob<'_>,
     markdown: &MarkdownArgs,
@@ -3173,7 +3195,17 @@ fn run_convert_any(
             }
         }
     }
-    let converted = legacy.then_some(bytes.as_slice());
+    let bytes = if from == Format::Docx && markdown.keep_nested_comment {
+        keep_converted_comments(&bytes, markdown.track_changes)?
+    } else {
+        bytes
+    };
+    let track_changes = if markdown.keep_nested_comment && from == Format::Docx {
+        TrackChanges::All
+    } else {
+        markdown.track_changes
+    };
+    let converted = (legacy || markdown.keep_nested_comment).then_some(bytes.as_slice());
     if from == Format::Docx && to == Format::Md {
         warn_nested_text_boxes(&bytes);
     }
@@ -3202,7 +3234,7 @@ fn run_convert_any(
         (Format::Docx, Format::Json) => {
             let path = output_at(Format::Json);
             at(Format::Json, &path, None)?;
-            let resolved = match markdown.track_changes {
+            let resolved = match track_changes {
                 TrackChanges::All => bytes,
                 TrackChanges::Accept => jubarte::document_comparer::accept_revisions(&bytes)
                     .map_err(|e| {
@@ -3215,7 +3247,7 @@ fn run_convert_any(
             };
             at(Format::Json, &path, Some(Produced::Docx(&resolved)))
         }
-        (Format::Docx, Format::Pdf | Format::Png) => match markdown.track_changes {
+        (Format::Docx, Format::Pdf | Format::Png) => match track_changes {
             TrackChanges::All => pdf_job(converted, to),
             // The pages of the document with every change accepted or rejected.
             choice => {
@@ -3236,7 +3268,7 @@ fn run_convert_any(
             let view = jubarte::markdown::read(
                 &bytes,
                 &jubarte::markdown::ReadOptions {
-                    track_changes: markdown.track_changes.into(),
+                    track_changes: track_changes.into(),
                     comments: true,
                     dates: false,
                     page_markers: !markdown.no_page_markers,
@@ -3262,7 +3294,7 @@ fn run_convert_any(
             let read = jubarte::markdown::docx_to_markdown(
                 &bytes,
                 &jubarte::markdown::MarkdownOptions {
-                    track_changes: markdown.track_changes.into(),
+                    track_changes: track_changes.into(),
                     extract_media: None,
                     ..jubarte::markdown::MarkdownOptions::default()
                 },
@@ -3271,12 +3303,7 @@ fn run_convert_any(
             let text = if markdown.no_page_markers {
                 read.markdown
             } else {
-                paginated(
-                    &bytes,
-                    &read.markdown,
-                    markdown.track_changes,
-                    job.options.revisions,
-                )
+                paginated(&bytes, &read.markdown, track_changes, job.options.revisions)
             };
             match job.output {
                 Some(path) => at(Format::Md, path, Some(Produced::Text(&text))),
@@ -3284,7 +3311,7 @@ fn run_convert_any(
             }
         }
         (Format::Docx, Format::Docx) => {
-            let resolve = match markdown.track_changes {
+            let resolve = match track_changes {
                 TrackChanges::Accept => {
                     Some(jubarte::document_comparer::accept_revisions as Resolve)
                 }
@@ -3292,7 +3319,9 @@ fn run_convert_any(
                     Some(jubarte::document_comparer::reject_revisions as Resolve)
                 }
                 // The `.doc` read as it is, or the fields refreshed.
-                TrackChanges::All if legacy || update_fields => None,
+                TrackChanges::All if legacy || update_fields || markdown.keep_nested_comment => {
+                    None
+                }
                 TrackChanges::All => {
                     return Err(format!(
                         "{} is already Word: give --track-changes accept or reject, --update-fields, or another --to",
@@ -3350,19 +3379,19 @@ fn run_convert_any(
             }
             at(Format::Docx, &path, Some(Produced::Docx(&out)))
         }
-        (Format::Md, Format::Md) => {
+        (Format::Md, Format::Md) if !markdown.keep_nested_comment => {
             let text = markdown_text(job.file, bytes)?;
             let out = if markdown.no_critic {
                 text
             } else {
-                jubarte::markdown::resolve_critic(&text, markdown.track_changes.into())
+                jubarte::markdown::resolve_critic(&text, track_changes.into())
             };
             match job.output {
                 Some(path) => at(Format::Md, path, Some(Produced::Text(&out))),
                 None => write_stdout(&out).map_err(ConvertFailure::from),
             }
         }
-        (Format::Md, Format::Docx | Format::Pdf | Format::Png | Format::Json) => {
+        (Format::Md, Format::Docx | Format::Md | Format::Pdf | Format::Png | Format::Json) => {
             let text = markdown_text(job.file, bytes)?;
             let reference = markdown
                 .reference_doc
@@ -3384,7 +3413,11 @@ fn run_convert_any(
             let options = jubarte::markdown::DocxOptions {
                 reference: reference.as_deref(),
                 critic: !markdown.no_critic,
-                track_changes: markdown.track_changes.into(),
+                track_changes: if markdown.keep_nested_comment {
+                    jubarte::markdown::TrackChanges::All
+                } else {
+                    track_changes.into()
+                },
                 author: markdown
                     .author
                     .clone()
@@ -3409,11 +3442,27 @@ fn run_convert_any(
             for warning in &written.warnings {
                 eprintln!("warning: {}", image_warning_reason(warning, &refusals));
             }
+            let docx = if markdown.keep_nested_comment {
+                keep_converted_comments(&written.docx, markdown.track_changes)?
+            } else {
+                written.docx
+            };
+            if to == Format::Md && job.output.is_none() {
+                let view = jubarte::markdown::read(
+                    &docx,
+                    &jubarte::markdown::ReadOptions {
+                        page_markers: !markdown.no_page_markers,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| format!("convert failed: {e}"))?;
+                return write_stdout(&view.markdown).map_err(ConvertFailure::from);
+            }
             if matches!(to, Format::Pdf | Format::Png) {
-                return pdf_job(Some(&written.docx), to);
+                return pdf_job(Some(&docx), to);
             }
             let path = output_at(to);
-            at(to, &path, Some(Produced::Docx(&written.docx)))
+            at(to, &path, Some(Produced::Docx(&docx)))
         }
         (Format::Pdf | Format::Png | Format::Json, _) => {
             Err(format!("{}: PDF, PNG and JSON are not inputs", job.file.display()).into())
@@ -3646,6 +3695,7 @@ fn cli_main() -> ExitCode {
             output,
             force,
             selection,
+            keep_nested_comment,
             render,
         }) => {
             let out = match task_output(Task::Accept, &output, &file, &render, force, quiet) {
@@ -3656,7 +3706,11 @@ fn cli_main() -> ExitCode {
                 &file,
                 &out,
                 &selection.filter(),
-                jubarte::changes::accept_changes_with_report,
+                if keep_nested_comment {
+                    jubarte::changes::accept_changes_keeping_comments
+                } else {
+                    jubarte::changes::accept_changes_with_report
+                },
                 "accept",
             );
         }
@@ -3665,6 +3719,7 @@ fn cli_main() -> ExitCode {
             output,
             force,
             selection,
+            keep_nested_comment,
             render,
         }) => {
             let out = match task_output(Task::Reject, &output, &file, &render, force, quiet) {
@@ -3675,7 +3730,11 @@ fn cli_main() -> ExitCode {
                 &file,
                 &out,
                 &selection.filter(),
-                jubarte::changes::reject_changes_with_report,
+                if keep_nested_comment {
+                    jubarte::changes::reject_changes_keeping_comments
+                } else {
+                    jubarte::changes::reject_changes_with_report
+                },
                 "reject",
             );
         }
@@ -4570,6 +4629,7 @@ mod tests {
                 force,
                 selection,
                 render,
+                ..
             }) => {
                 assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(
@@ -4633,6 +4693,7 @@ mod tests {
                 force,
                 selection,
                 render,
+                ..
             }) => {
                 assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(

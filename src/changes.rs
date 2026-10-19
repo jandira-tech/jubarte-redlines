@@ -538,6 +538,8 @@ pub struct ResolvedChanges {
     /// an author or kind filter resolves them, an id selection cannot name
     /// them, so a partial selection can leave some (#1223).
     pub comment_changes_left: usize,
+    /// Threads rescued onto empty anchors, in source ids with published-id mappings.
+    pub kept_comments: Vec<crate::edit::KeptComment>,
 }
 
 /// Accept selected changes and report comments that disappeared with them.
@@ -581,6 +583,73 @@ fn resolve_with_report(
         document,
         removed_comments,
         comment_changes_left,
+        kept_comments: Vec::new(),
+    })
+}
+
+/// Accept selected changes, keeping wholly removed comment threads on empty anchors.
+///
+/// # Errors
+/// As [`accept_changes_with_report`].
+pub fn accept_changes_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_keeping_comments(docx, filter, Resolution::Accept)
+}
+
+/// Reject selected changes, keeping wholly removed comment threads on empty anchors.
+///
+/// # Errors
+/// As [`reject_changes_with_report`].
+pub fn reject_changes_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_keeping_comments(docx, filter, Resolution::Reject)
+}
+
+fn resolve_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+) -> Result<ResolvedChanges, ChangeError> {
+    let (document, removed, kept) = resolve_for_edit(docx, filter, resolution, true)?;
+    kept_resolution(docx, &document, &removed, kept, resolution)
+}
+
+/// The same source-id thread records and final numbering as edit plans.
+pub(crate) fn kept_resolution(
+    source: &[u8],
+    document: &[u8],
+    removed: &[String],
+    kept: Vec<String>,
+    resolution: Resolution,
+) -> Result<ResolvedChanges, ChangeError> {
+    let package_error = |e: crate::opc::OpcError| ChangeError::Package(e.to_string());
+    let mut pkg = PartFs::open(document).map_err(package_error)?;
+    let mut anchors = crate::edit::comment_settlement::AnchorChanges::default();
+    anchors.extend(removed.to_vec(), kept, resolution);
+    let (_, mut kept_comments) = anchors
+        .records(source)
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    if let Some(ids) = crate::revision_processor::renumber_settled_annotations(&mut pkg) {
+        crate::edit::comment_settlement::remap_kept(&mut kept_comments, &ids);
+    }
+    let removed_comments = if removed.is_empty() {
+        Vec::new()
+    } else {
+        crate::comments::list_comments(source)
+            .map_err(|e| ChangeError::Package(e.to_string()))?
+            .into_iter()
+            .filter(|c| removed.contains(&c.id.to_string()))
+            .collect()
+    };
+    Ok(ResolvedChanges {
+        comment_changes_left: comment_changes_in(&pkg).len(),
+        document: pkg.to_zip().map_err(package_error)?,
+        removed_comments,
+        kept_comments,
     })
 }
 
@@ -658,7 +727,7 @@ fn resolve_for_edit_or_cli(
         }
     };
     let (removed, kept) = match edit {
-        Some(keep) => crate::revision_processor::resolve_package_for_edit(
+        Some(keep) => crate::revision_processor::resolve_package_with_comments(
             &mut pkg,
             resolution,
             Some(&freeze),

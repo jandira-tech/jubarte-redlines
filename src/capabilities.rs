@@ -66,6 +66,9 @@ pub struct Capabilities {
     /// shell-safety note ([`crate::ids`]).
     #[serde(default)]
     pub ids: Ids,
+    /// Native CLI options offered while choosing revision settlement.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub settlement_options: BTreeMap<String, String>,
 }
 
 /// The id spellings the CLI, plans and selectors take, by kind
@@ -444,6 +447,11 @@ pub fn capabilities(runtime: &str) -> Capabilities {
                 ((*task).to_string(), extensions)
             })
             .collect(),
+        settlement_options: if runtime == "cli" {
+            [("--keep-nested-comment".into(), "accept / reject; convert with --track-changes accept|reject: keep wholly removed comment threads on empty anchors (default: remove)".into())].into()
+        } else {
+            BTreeMap::new()
+        },
         ids: Ids {
             change: strings(crate::ids::CHANGE_SPELLINGS),
             comment: strings(crate::ids::COMMENT_SPELLINGS),
@@ -524,6 +532,9 @@ pub fn capabilities_text(c: &Capabilities) -> String {
         c.ids.control.join(", ")
     ));
     out.push_str(&format!("ids note: {}\n", c.ids.note));
+    for (flag, meaning) in &c.settlement_options {
+        out.push_str(&format!("{flag}: {meaning}\n"));
+    }
     out.push_str("run with --json for the manifest\n");
     out
 }

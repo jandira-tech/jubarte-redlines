@@ -35,7 +35,7 @@ pub struct KeptComment {
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(super) struct AnchorChanges {
+pub(crate) struct AnchorChanges {
     pub removed: Vec<String>,
     pub kept: Vec<String>,
     decisions: std::collections::HashMap<String, String>,
@@ -162,7 +162,15 @@ pub(super) fn remap_report(
             outcome.comment_id = new.parse().ok();
         }
     }
-    for kept in &mut report.kept_comments {
+    remap_kept(&mut report.kept_comments, ids);
+}
+
+/// Share the published-id mapping with standalone settlement receipts.
+pub(crate) fn remap_kept(
+    kept_comments: &mut [KeptComment],
+    ids: &crate::revision_processor::AnnotationIds,
+) {
+    for kept in kept_comments {
         kept.written_id = kept
             .id
             .strip_prefix('c')
