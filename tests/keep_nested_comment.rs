@@ -181,6 +181,14 @@ fn routes_share_one_keep_table_and_default_bytes() {
         let source = fixture(case);
         let input = dir.path().join(format!("{}.docx", case.name));
         std::fs::write(&input, &source).unwrap();
+        if let Some(export) = std::env::var_os("JUBARTE_1279_WORD_DIR") {
+            let inputs = std::path::PathBuf::from(export)
+                .parent()
+                .unwrap()
+                .join("inputs");
+            std::fs::create_dir_all(&inputs).unwrap();
+            std::fs::write(inputs.join(format!("{}.docx", case.name)), &source).unwrap();
+        }
         let part = if case.header {
             "word/header1.xml"
         } else {
@@ -482,4 +490,62 @@ fn convert_keeps_before_each_output_format() {
             String::from_utf8_lossy(&result.stderr)
         );
     }
+}
+
+#[test]
+fn markdown_input_keeps_removed_anchor_threads() {
+    let source = fixture(&CASES[0]);
+    let view = jubarte::markdown::read(
+        &source,
+        &jubarte::markdown::ReadOptions {
+            page_markers: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.md");
+    std::fs::write(&input, view.markdown).unwrap();
+    let mut missing = Vec::new();
+    for format in ["docx", "md"] {
+        let output = dir.path().join(format!("output.{format}"));
+        let result = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .arg("convert")
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .args(["--track-changes", "reject", FLAG, "--no-page-markers"])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let bytes = std::fs::read(output).unwrap();
+        let bytes = if format == "md" {
+            jubarte::markdown::markdown_to_docx(
+                std::str::from_utf8(&bytes).unwrap(),
+                &Default::default(),
+            )
+            .unwrap()
+            .docx
+        } else {
+            bytes
+        };
+        let comments = list_comments(&bytes).unwrap();
+        if comments.len() != 2 {
+            missing.push(format!(
+                "{format}: expected 2 comments, got {}",
+                comments.len()
+            ));
+        } else {
+            assert_eq!(comments[1].parent, Some(comments[0].id));
+            assert_eq!(comments[0].anchor_text, "");
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "Markdown conversion must honor the offered keep flag: {missing:?}"
+    );
 }
