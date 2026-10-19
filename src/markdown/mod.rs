@@ -84,12 +84,13 @@ pub enum TrackChanges {
 
 impl TrackChanges {
     /// Parses `"all"`, `"accept"` or `"reject"`, the values of pandoc's
-    /// `--track-changes`. Returns `None` for any other input.
+    /// `--track-changes`, and the `"accepted"` and `"rejected"` the CLI
+    /// takes for them too. Returns `None` for any other input.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "all" => Some(Self::All),
-            "accept" => Some(Self::Accept),
-            "reject" => Some(Self::Reject),
+            "accept" | "accepted" => Some(Self::Accept),
+            "reject" | "rejected" => Some(Self::Reject),
             _ => None,
         }
     }
@@ -796,12 +797,22 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
 /// describes, without page markers. The view prints a table whole, but a
 /// paragraph pick keeps only the paragraphs it names: `-p p5` of a cell
 /// is p5, not its table; `-p t0` keeps the table's every paragraph.
+/// `options.track_changes` `Accept` or `Reject` reads the text with every
+/// change settled ([`crate::inspect::settled_snapshot`]); `All` is the
+/// plain snapshot. The comments, dates and page-marker options shape only
+/// the view and change nothing here.
 pub fn read_snapshot(
     docx: &[u8],
     options: &ReadOptions,
 ) -> Result<crate::inspect::Snapshot, MarkdownError> {
+    use crate::inspect::Settle;
     let docx_error = |e: crate::inspect::InspectError| MarkdownError::Docx(e.to_string());
-    let mut snapshot = crate::inspect::snapshot(docx).map_err(docx_error)?;
+    let mut snapshot = match options.track_changes {
+        TrackChanges::All => crate::inspect::snapshot(docx),
+        TrackChanges::Accept => crate::inspect::settled_snapshot(docx, Settle::Accept),
+        TrackChanges::Reject => crate::inspect::settled_snapshot(docx, Settle::Reject),
+    }
+    .map_err(docx_error)?;
     if options.select.is_some() {
         let view = read(
             docx,
@@ -842,6 +853,73 @@ pub fn read_snapshot(
         snapshot.retain_with(&kept, &view.selected_stories);
     }
     Ok(snapshot)
+}
+
+/// The view's tables a `read --tables -p` selection names (`t0,t2`), or
+/// `None` without one: every table. The grids are tables, so a paragraph
+/// pick (and `--head`, `--tail`, `--changed`) is refused, naming how to
+/// read it instead.
+///
+/// # Errors
+///
+/// The refusal, a usage error.
+pub fn table_picks(select: Option<&Select>) -> Result<Option<Vec<usize>>, String> {
+    let picks = match select {
+        None => return Ok(None),
+        Some(Select::Picks(picks)) => picks,
+        Some(_) => return Err("--tables takes -p tN only".to_string()),
+    };
+    picks
+        .iter()
+        .map(|pick| match *pick {
+            Pick::Table(t) => Ok(t),
+            Pick::Paragraphs { from, to } => {
+                let spelled = match to {
+                    Some(to) if to == from => format!("p{from}"),
+                    Some(to) => format!("p{from}-p{to}"),
+                    None => format!("p{from}-"),
+                };
+                Err(format!(
+                    "--tables -p takes tables (t0, t1), not paragraphs: drop --tables to read {spelled}"
+                ))
+            }
+        })
+        .collect::<Result<Vec<usize>, String>>()
+        .map(Some)
+}
+
+/// The grids `read --tables` prints ([`crate::inspect::tables_text`]):
+/// with `options.select` only the view's tables it names
+/// ([`table_picks`]), each with the tables nested in it, in document
+/// order; under `options.track_changes` `Reject` the text with every
+/// change rejected (`Accept` and `All` read the accepted text). The view's
+/// other options change nothing here.
+///
+/// # Errors
+///
+/// [`MarkdownError::Docx`] when the document cannot be read, the selection
+/// is refused, or it names a table the view does not have.
+pub fn read_tables(docx: &[u8], options: &ReadOptions) -> Result<String, MarkdownError> {
+    let picks = table_picks(options.select.as_ref()).map_err(MarkdownError::Docx)?;
+    let settle =
+        (options.track_changes == TrackChanges::Reject).then_some(crate::inspect::Settle::Reject);
+    let tables = crate::inspect::view_tables(docx, settle)
+        .map_err(|e| MarkdownError::Docx(e.to_string()))?;
+    if let Some(picks) = &picks {
+        let count = tables.last().map_or(0, |(view, _)| view + 1);
+        if let Some(missing) = picks.iter().find(|&&t| t >= count) {
+            let noun = if count == 1 { "table" } else { "tables" };
+            return Err(MarkdownError::Docx(format!(
+                "t{missing} is not a table of this document ({count} {noun})"
+            )));
+        }
+    }
+    let kept: Vec<crate::inspect::Table> = tables
+        .into_iter()
+        .filter(|(view, _)| picks.as_ref().is_none_or(|picks| picks.contains(view)))
+        .map(|(_, table)| table)
+        .collect();
+    Ok(crate::inspect::tables_text(&kept))
 }
 
 /// The view `jubarte edit` and `jubarte add` print after applying:

@@ -282,14 +282,20 @@ fn read_tables_and_the_json_refusals() {
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("--tables reads one document"), "{stderr}");
     for args in [
-        &["read", RECEIVED, "--json", "--dates"][..],
-        &["read", RECEIVED, "--json", "--comments", "none"],
-        &["read", RECEIVED, "--json", "--track-changes", "accept"],
-        &["read", RECEIVED, "--json", "--no-page-markers"],
-        &["read", RECEIVED, "--tables", "--head", "2"],
+        &["read", RECEIVED, "--tables", "--head", "2"][..],
+        &["read", RECEIVED, "--tables", "-p", "p0"],
+        &["read", RECEIVED, "--tables", "--json"],
         &[RECEIVED, RECEIVED, "--tables"],
     ] {
         assert_eq!(run(args).0, 2, "{args:?}");
+    }
+    // The view's own options change nothing in the snapshot (#1255).
+    for args in [
+        &["read", RECEIVED, "--json", "--dates"][..],
+        &["read", RECEIVED, "--json", "--comments", "none"],
+        &["read", RECEIVED, "--json", "--no-page-markers"],
+    ] {
+        assert_eq!(json(args), json(&["read", RECEIVED, "--json"]), "{args:?}");
     }
     // The one-file shorthand reads like `read`.
     assert_eq!(

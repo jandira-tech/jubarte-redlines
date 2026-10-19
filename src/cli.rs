@@ -59,11 +59,16 @@ pub struct Cli {
 #[group(id = "read_options", multiple = true)]
 pub struct ReadArgs {
     /// Tracked changes inline (all, the default), or the text with every
-    /// change accepted or rejected; the id lines then list what changed.
+    /// change accepted or rejected (also spelled accepted, rejected); the
+    /// id lines then list what changed. --json and --tables read the
+    /// accepted text, or under reject the rejected one, every paragraph
+    /// keeping its id; the snapshot names an accept or a reject in
+    /// `track_changes`.
     #[arg(long, value_enum, value_name = "CHOICE", help_heading = "Read options")]
     pub track_changes: Option<TrackChanges>,
     /// Comments inline (default) or hidden, with their ids on the id line
-    /// of the paragraph that holds them.
+    /// of the paragraph that holds them; ignored with --json, --tables and
+    /// --for-edit.
     #[arg(
         long,
         value_enum,
@@ -73,16 +78,20 @@ pub struct ReadArgs {
     )]
     pub comments: CommentsArg,
     /// Timestamps on the notes of an author whose changes do not all share
-    /// one (the header shows an author's single timestamp).
+    /// one (the header shows an author's single timestamp); ignored with
+    /// --json, --tables and --for-edit.
     #[arg(long, help_heading = "Read options")]
     pub dates: bool,
     /// Skip the layout pass; page count from Word's cached breaks, no
-    /// `<!-- page N of M -->` lines.
+    /// `<!-- page N of M -->` lines; ignored with --json, --tables and
+    /// --for-edit.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
     /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
     /// `p17-` / `-p3` spellings still parse, transitionally; the 17 October
-    /// 2026 contract retires them — spell the end, `p17-p20`).
+    /// 2026 contract retires them — spell the end, `p17-p20`). With
+    /// --tables, only tables: `t1` is the view's t1, with the tables
+    /// nested in it.
     #[arg(
         short = 'p',
         long = "paragraphs",
@@ -125,22 +134,17 @@ pub struct ReadArgs {
     /// `controls`, `changes` and `comments`. -p, --head, --tail, --changed
     /// and --by keep the body paragraphs they select, and every change and
     /// comment that starts in one of them, whoever made it; the rest of the
-    /// snapshot stays whole.
-    #[arg(
-        long,
-        conflicts_with_all = ["track_changes", "comments", "dates", "no_page_markers"],
-        help_heading = "Read options"
-    )]
+    /// snapshot stays whole. --track-changes accept or reject settles the
+    /// text.
+    #[arg(long, help_heading = "Read options")]
     pub json: bool,
     /// Print each body table as a grid instead of the view: a `table N:
     /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
-    /// tab-separated `ids=text` cells.
+    /// tab-separated `ids=text` cells. N counts nested tables too; `-p t1`
+    /// prints the view's t1 and the tables nested in it.
     #[arg(
         long,
-        conflicts_with_all = [
-            "json", "track_changes", "comments", "dates", "no_page_markers",
-            "paragraphs", "head", "tail", "changed", "by",
-        ],
+        conflicts_with_all = ["json", "head", "tail", "changed", "by"],
         help_heading = "Read options"
     )]
     pub tables: bool,
@@ -154,9 +158,7 @@ pub struct ReadArgs {
     /// applied in `coverage.omissions`.
     #[arg(
         long,
-        conflicts_with_all = [
-            "json", "tables", "track_changes", "comments", "dates", "no_page_markers",
-        ],
+        conflicts_with_all = ["json", "tables", "track_changes"],
         help_heading = "Read options"
     )]
     pub for_edit: bool,
@@ -2284,8 +2286,10 @@ pub enum TrackChanges {
     /// Keep them: CriticMarkup becomes Word tracked changes and comments.
     All,
     /// Accept every change.
+    #[value(alias = "accepted")]
     Accept,
     /// Reject every change.
+    #[value(alias = "rejected")]
     Reject,
 }
 
@@ -2749,16 +2753,8 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
     if given("json") && kind != Format::Json {
         return Err("--json writes the snapshot: name the file FILE.json".to_string());
     }
-    if kind == Format::Json
-        && let Some(id) = ["track_changes", "comments", "dates", "no_page_markers"]
-            .into_iter()
-            .find(|id| given(id))
-    {
-        return Err(format!(
-            "--{} shapes the view; a .json snapshot has none",
-            id.replace('_', "-")
-        ));
-    }
+    // A .json snapshot is --json's: --track-changes settles its text, and
+    // the view's other options change nothing in it.
     Ok(kind)
 }
 
@@ -3373,6 +3369,143 @@ fn error_json(error: &clap::Error) -> String {
     .to_string()
 }
 
+/// Whether a command line (without the program name) asks for JSON: a
+/// `--json` flag before any `--`. An error then prints on stdout too, as one
+/// [`json_error`] line, for a reader that pipes stdout to a JSON parser
+/// (#1158); stderr and the exit code stay as they are.
+pub fn wants_json(argv: &[String]) -> bool {
+    // Read as the typed edit protocol reads it: a `--json` where an option
+    // takes its value (`--text --json`) is no request for JSON.
+    let model = top_level_command();
+    let arguments: Vec<std::ffi::OsString> = std::iter::once("jubarte".into())
+        .chain(argv.iter().map(Into::into))
+        .collect();
+    let routed = edit_arguments(&model, &arguments);
+    let tokens: Vec<&str> = routed
+        .iter()
+        .skip(1)
+        .filter_map(|a| a.to_str())
+        .take_while(|a| *a != "--")
+        .collect();
+    let mut command = &model;
+    let mut rest = &tokens[..];
+    loop {
+        let (options, next) = spelled_options(command, rest);
+        if options.iter().any(|option| option.name == "--json") {
+            return true;
+        }
+        let Some(word) = rest.get(next) else {
+            return false;
+        };
+        if let Some(task) = command.find_subcommand(word) {
+            command = task;
+        }
+        rest = &rest[next + 1..];
+    }
+}
+
+/// `{"error":{"code":…,"message":…,"usage":…}}` and a newline: the line an
+/// error prints on stdout under `--json`. `usage` only when given.
+pub fn json_error(code: &str, message: &str, usage: Option<&str>) -> String {
+    let mut error = serde_json::json!({ "code": code, "message": message });
+    if let Some(usage) = usage {
+        error["usage"] = usage.into();
+    }
+    format!("{}\n", serde_json::json!({ "error": error }))
+}
+
+/// The [`json_error`] line of a runtime error that ends a run with `exit`,
+/// `message` being what follows `error: ` on stderr. Its code is the
+/// message's leading `CODE:` (`STALE_SOURCE: …`), else `USAGE` for an exit
+/// 2 and `ERROR` for any other.
+pub fn runtime_json_error(message: &str, exit: u8) -> String {
+    let lead = message.split_once(": ").map_or("", |(lead, _)| lead);
+    let coded = lead.len() >= 3
+        && lead.starts_with(|c: char| c.is_ascii_uppercase())
+        && lead
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    let code = if coded {
+        lead
+    } else if exit == 2 {
+        "USAGE"
+    } else {
+        "ERROR"
+    };
+    json_error(code, message, None)
+}
+
+/// The [`json_error`] line of a usage error clap reports for `argv` (no
+/// program name) run as `program`: its message without `error: `, on one
+/// line (a list clap names under it joined on, each tip after it), and the
+/// task's usage (`jubarte read [OPTIONS] <FILE>`; clap's own usage, which
+/// names the flags given, when no task is named), a line per form. `None`
+/// for help and version, which are not errors.
+pub fn usage_json_error(error: &clap::Error, argv: &[String], program: &str) -> Option<String> {
+    if !error.use_stderr() {
+        return None;
+    }
+    #[derive(Clone, Copy)]
+    enum Part {
+        Message,
+        Tip,
+        Usage,
+        Other,
+    }
+    let text = error.render().to_string();
+    let (mut message, mut tips, mut usage) = (String::new(), Vec::<String>::new(), Vec::new());
+    let mut part = Part::Other;
+    // Blank lines part clap's text: the message, its tips, the usage and
+    // the pointer to --help; an indented line goes on with its part.
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(first) = line.strip_prefix("error: ") {
+            message.push_str(first);
+            part = Part::Message;
+        } else if let Some(tip) = trimmed.strip_prefix("tip: ") {
+            tips.push(tip.to_string());
+            part = Part::Tip;
+        } else if let Some(first) = line.strip_prefix("Usage: ") {
+            usage.push(first.trim());
+            part = Part::Usage;
+        } else if trimmed.is_empty() {
+            part = Part::Other;
+        } else {
+            match (part, tips.last_mut()) {
+                (Part::Message, _) => {
+                    message.push(' ');
+                    message.push_str(trimmed);
+                }
+                (Part::Tip, Some(tip)) => {
+                    tip.push(' ');
+                    tip.push_str(trimmed);
+                }
+                (Part::Usage, _) => usage.push(trimmed),
+                _ => {}
+            }
+        }
+    }
+    for tip in tips {
+        message.push_str(&format!(" (tip: {tip})"));
+    }
+    let usage = task_usage(argv, program).or_else(|| (!usage.is_empty()).then(|| usage.join("\n")));
+    Some(json_error("USAGE", &message, usage.as_deref()))
+}
+
+/// The usage of the task `argv` names (`jubarte read [OPTIONS] <FILE>`), a
+/// line per form, or `None` when its first word is no task.
+fn task_usage(argv: &[String], program: &str) -> Option<String> {
+    let mut model = Cli::command().bin_name(program.to_string());
+    model.build();
+    let name = argv
+        .iter()
+        .take_while(|a| *a != "--")
+        .find(|a| !a.starts_with('-'))?;
+    let usage = model.find_subcommand_mut(name)?.render_usage().to_string();
+    let usage = usage.strip_prefix("Usage: ")?;
+    Some(usage.lines().map(str::trim).collect::<Vec<_>>().join("\n"))
+}
+
 /// The usage error for a task the host (`program`) does not have.
 fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap::Error {
     command.error(
@@ -3637,12 +3770,20 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             value.to_string()
         }
         Err(error) => match removed_spellings(arguments.iter().map(String::as_str)).first() {
-            Some((old, now)) => serde_json::json!({
-                "exit_code": 2,
-                "stream": "stderr",
-                "text": format!("{}\n", removed_error(old, now)),
-            })
-            .to_string(),
+            Some((old, now)) => {
+                let removed = removed_error(old, now);
+                let mut value = serde_json::json!({
+                    "exit_code": 2,
+                    "stream": "stderr",
+                    "text": format!("{removed}\n"),
+                });
+                // Under --json, the line a host prints on stdout too.
+                if wants_json(arguments) {
+                    let message = removed.strip_prefix("error: ").unwrap_or(&removed);
+                    value["json"] = json_error("USAGE", message, None).into();
+                }
+                value.to_string()
+            }
             None => {
                 let mut value: serde_json::Value =
                     serde_json::from_str(&error_json(&error)).unwrap_or_default();
@@ -3650,6 +3791,11 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 // run that fails is the one that needs the new name. Hosts
                 // print them before `text`.
                 value["notes"] = notes(arguments).into();
+                if wants_json(arguments)
+                    && let Some(line) = usage_json_error(&error, arguments, program)
+                {
+                    value["json"] = line.into();
+                }
                 value.to_string()
             }
         },

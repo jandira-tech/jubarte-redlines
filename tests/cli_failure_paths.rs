@@ -901,7 +901,18 @@ fn a_word_input_that_is_not_a_zip_reads_the_same_on_every_task() {
         let out = run(dir.path(), args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         assert_eq!(String::from_utf8_lossy(&out.stderr), expected, "{args:?}");
-        assert!(out.stdout.is_empty(), "{args:?}");
+        if args.contains(&"--json") {
+            // With --json, stdout says it as JSON too (#1255).
+            let line: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(line["error"]["code"], "INVALID_PACKAGE", "{args:?}");
+            assert_eq!(
+                line["error"]["message"],
+                expected.trim_end().strip_prefix("error: ").unwrap(),
+                "{args:?}"
+            );
+        } else {
+            assert!(out.stdout.is_empty(), "{args:?}");
+        }
     }
 }
 

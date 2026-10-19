@@ -331,14 +331,9 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             agent_view(bytes, Some(out.source.clone()), out.view)?.markdown
         }
         (Format::Json, Produced::Docx(bytes)) => {
-            let snapshot = jubarte::markdown::read_snapshot(
-                bytes,
-                &jubarte::markdown::ReadOptions {
-                    select: selection(out.view)?,
-                    ..jubarte::markdown::ReadOptions::default()
-                },
-            )
-            .map_err(|e| e.to_string())?;
+            let snapshot =
+                jubarte::markdown::read_snapshot(bytes, &snapshot_options(out.view, None)?)
+                    .map_err(|e| e.to_string())?;
             let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
             format!("{json}\n")
         }
@@ -519,7 +514,7 @@ fn convert_exit_code(r: Result<(), ConvertFailure>) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(ConvertFailure { code: 1, message }) => exit_code(Err(message)),
         Err(ConvertFailure { code, message }) => {
-            eprintln!("error: {message}");
+            say_error(&message, code);
             ExitCode::from(code)
         }
     }
@@ -801,11 +796,31 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
     format!("{stem}-page-{:0width$}.png", index + 1)
 }
 
-/// `read --tables`: each body table as a grid.
-fn run_read_tables(file: &Path) -> Result<(), String> {
+/// `read --tables`: each body table as a grid; `-p tN` keeps the view's
+/// table tN and the tables nested in it, and `--track-changes reject`
+/// reads the rejected text.
+fn run_read_tables(file: &Path, args: &ReadArgs) -> Result<(), ConvertFailure> {
+    let select = selection(args).map_err(usage_failure)?;
+    jubarte::markdown::table_picks(select.as_ref()).map_err(usage_failure)?;
     let bytes = read_word(file)?;
-    let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
-    write_stdout(jubarte::inspect::tables_text(&tables))
+    let grids = jubarte::markdown::read_tables(
+        &bytes,
+        &jubarte::markdown::ReadOptions {
+            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+            select,
+            ..jubarte::markdown::ReadOptions::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(write_stdout(grids)?)
+}
+
+/// A usage error: exit 2.
+fn usage_failure(message: String) -> ConvertFailure {
+    ConvertFailure {
+        code: EXIT_USAGE,
+        message,
+    }
 }
 
 /// `read --for-edit` (V2-10): the working document template/apply
@@ -884,11 +899,13 @@ fn run_text(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
+    // A selection that does not parse is a usage error, before I/O.
+    selection(args).map_err(usage_failure)?;
     if args.for_edit {
         return run_for_edit(file, args, output, force, quiet);
     }
     if args.tables {
-        return Ok(run_read_tables(file)?);
+        return run_read_tables(file, args);
     }
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if let Some(path) = output {
@@ -911,19 +928,27 @@ fn run_text(
     }
     let bytes = read_word(file)?;
     if args.json {
-        let snapshot = jubarte::markdown::read_snapshot(
-            &bytes,
-            &jubarte::markdown::ReadOptions {
-                select: selection(args)?,
-                source,
-                ..jubarte::markdown::ReadOptions::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
+        let snapshot = jubarte::markdown::read_snapshot(&bytes, &snapshot_options(args, source)?)
+            .map_err(|e| e.to_string())?;
         let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
         return Ok(write_stdout(format!("{json}\n"))?);
     }
     Ok(print_agent_view(&bytes, source, args)?)
+}
+
+/// The options `read --json` and `read -o FILE.json` read the snapshot
+/// with: the selection, and the text `--track-changes` settles. The view's
+/// other options change nothing in a snapshot.
+fn snapshot_options(
+    args: &ReadArgs,
+    source: Option<String>,
+) -> Result<jubarte::markdown::ReadOptions, String> {
+    Ok(jubarte::markdown::ReadOptions {
+        track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+        select: selection(args)?,
+        source,
+        ..jubarte::markdown::ReadOptions::default()
+    })
 }
 
 /// The paragraphs `-p`, `--head`, `--tail`, `--changed` and `--by` select.
@@ -2580,10 +2605,26 @@ fn exit_code(r: Result<(), String>) -> ExitCode {
     match r {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e}");
+            say_error(&e, 1);
             ExitCode::FAILURE
         }
     }
+}
+
+/// Set when the command line asks for JSON (`--json` before any `--`): an
+/// error then prints on stdout too, as one
+/// [`jubarte::cli::json_error`] line, for a reader that pipes stdout to a
+/// JSON parser (#1158).
+static JSON_ERRORS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says `message` as the error a run ends with `exit` for: `error: …` on
+/// stderr, and under `--json` its JSON object on stdout too.
+fn say_error(message: &str, exit: u8) {
+    if JSON_ERRORS.load(std::sync::atomic::Ordering::Relaxed) {
+        // stdout may be closed already; stderr still says it.
+        let _ = write_stdout(jubarte::cli::runtime_json_error(message, exit));
+    }
+    eprintln!("error: {message}");
 }
 
 /// A document read for comparison: Word bytes or Markdown text.
@@ -3339,7 +3380,12 @@ fn cli_main() -> ExitCode {
         if let Some((old, now)) =
             jubarte::cli::removed_spellings(argv.iter().map(String::as_str)).first()
         {
-            eprintln!("{}", jubarte::cli::removed_error(old, now));
+            let removed = jubarte::cli::removed_error(old, now);
+            if jubarte::cli::wants_json(&argv) {
+                let message = removed.strip_prefix("error: ").unwrap_or(&removed);
+                let _ = write_stdout(jubarte::cli::json_error("USAGE", message, None));
+            }
+            eprintln!("{removed}");
             std::process::exit(2);
         }
         // Help, version and usage errors say a name is retired too: the run
@@ -3347,11 +3393,20 @@ fn cli_main() -> ExitCode {
         for note in jubarte::cli::notes(&argv) {
             eprintln!("{note}");
         }
+        if jubarte::cli::wants_json(&argv)
+            && let Some(line) = jubarte::cli::usage_json_error(&error, &argv, "jubarte")
+        {
+            let _ = write_stdout(line);
+        }
         error.exit()
     });
     for note in jubarte::cli::notes(&argv) {
         eprintln!("{note}");
     }
+    JSON_ERRORS.store(
+        jubarte::cli::wants_json(&argv),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let quiet = cli.quiet;
     match cli.command {
         Some(Command::EditTemplate(jubarte::cli::edit_template::TemplateDispatch {
@@ -3520,11 +3575,6 @@ fn cli_main() -> ExitCode {
             output,
             force,
         }) => {
-            // A selection that does not parse is a usage error, before I/O.
-            if let Err(e) = selection(&args) {
-                eprintln!("error: {e}");
-                return ExitCode::from(2);
-            }
             return convert_exit_code(run_text(&file, &args, output.as_deref(), force, quiet));
         }
         Some(Command::Edit {
@@ -3676,7 +3726,7 @@ fn cli_main() -> ExitCode {
                 // Like `edit`'s 3: a CI step can gate on a visual change.
                 Ok(true) => ExitCode::from(5),
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    say_error(&e, 1);
                     ExitCode::FAILURE
                 }
             };

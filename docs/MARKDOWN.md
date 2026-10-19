@@ -322,6 +322,25 @@ recorded date forms differ, including offsets for the same instant.
 `-p p3,p10-p20,t0`, `--head N` and `--tail N` print a selection, and
 `--no-page-markers` skips the layout pass.
 
+`--json` prints the snapshot and `--tables` the grids instead of the
+view. Both read the accepted text; `--track-changes reject` reads the
+text Word's Reject All leaves (`accepted` and `rejected` spell the two
+choices too), every paragraph, row and cell keeping its id, and the
+snapshot names an `accept` or `reject` in a top-level `track_changes`
+(its `summary.track_changes` still says whether the document tracks
+changes). `--comments`, `--dates` and `--no-page-markers` shape only the
+view, so `--json`, `--tables` and `--for-edit` take them and change
+nothing. `--tables -p t1` prints the view's `t1` and the tables nested in
+it; the grids' `table N` counts nested tables too, so it can differ from
+`t1`. A paragraph pick under `--tables` is a usage error.
+
+With `--json` on the command line, an error also prints on stdout as one
+line, `{"error":{"code":"USAGE","message":"unexpected argument '--bogus'
+found","usage":"jubarte read [OPTIONS] <FILE>"}}`, so `2>&1 | jq` or
+`| jq .error.code` reads it; stderr and the exit code stay as they are. A
+usage error's code is `USAGE`; a runtime error's is the message's leading
+code (`STALE_SOURCE`), else `ERROR`.
+
 ### Id lines
 
 One per body paragraph, on the line above it: a head, one space, then
@@ -786,7 +805,7 @@ name) keeps one author's. A selection keeps the footnotes its blocks cite;
 jubarte read FILE                      the view; jubarte FILE is the same
   -p p5,p12-p20,t0   --head N   --tail N   --changed [--by AC]
   --track-changes accept|reject   --comments none   --dates   --no-page-markers
-  --json (the snapshot)   --tables (the grids)   -o FILE.md|FILE.json
+  --json (the snapshot)   --tables [-p t0] (the grids)   -o FILE.md|FILE.json
 jubarte A B                            accept both sides' changes, compare, print the redline's view
                                        (read options apply; -o FILE writes the file instead)
 jubarte compare A B                    the same; -o FILE writes the redline (.docx, .pdf, .png, .md)

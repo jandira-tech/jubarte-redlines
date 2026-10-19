@@ -1679,10 +1679,6 @@ fn every_writing_task_takes_the_formats_its_output_names() {
             "--json writes the snapshot",
         ),
         (
-            vec!["read", "a.docx", "-o", "v.json", "--dates"],
-            "--dates shapes the view",
-        ),
-        (
             vec!["read", "a.docx", "-o", "v.md", "--tables"],
             "--tables prints the grids",
         ),
@@ -2257,23 +2253,21 @@ fn writer_render_options_survive_shared_parser_serialization() {
 #[test]
 fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
     for prefix in [&["read", "a.docx"][..], &["text", "a.docx"], &["a.docx"]] {
+        // A .json snapshot is --json's (#1255): --track-changes settles its
+        // text, and the view's other options change nothing in it.
+        for flags in [
+            vec!["--track-changes", "all"],
+            vec!["--track-changes", "rejected"],
+            vec!["--comments", "inline"],
+            vec!["--dates"],
+            vec!["--no-page-markers"],
+        ] {
+            let args = [prefix, &["-o", "v.json"], &flags].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(result["args"]["output_format"], "json", "{args:?}");
+        }
         for (output, flags, message) in [
-            (
-                "v.json",
-                vec!["--track-changes", "all"],
-                "--track-changes shapes the view",
-            ),
-            (
-                "v.json",
-                vec!["--comments", "inline"],
-                "--comments shapes the view",
-            ),
-            ("v.json", vec!["--dates"], "--dates shapes the view"),
-            (
-                "v.json",
-                vec!["--no-page-markers"],
-                "--no-page-markers shapes the view",
-            ),
             ("v.json", vec!["--tables"], "--tables prints the grids"),
             ("v.md", vec!["--tables"], "--tables prints the grids"),
             ("v.unknown", vec!["--json"], "--json writes the snapshot"),

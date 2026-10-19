@@ -44,6 +44,25 @@ fn nearest(dom: &Dom, node: NodeId, name: &XName) -> Option<NodeId> {
     dom.ancestors(node, Some(name)).first().copied()
 }
 
+/// For each table [`body_tables`] lists, the number `read`'s view gives
+/// the table outside every cell that is it or holds it: the view numbers
+/// only those, and a nested table belongs to its outer table's block.
+pub(super) fn view_numbers(dom: &Dom, body: NodeId) -> Vec<usize> {
+    let tc = W::tc();
+    let mut outer = 0;
+    let mut next = 0;
+    dom.descendants(body, Some(&W::tbl()))
+        .into_iter()
+        .map(|table| {
+            if nearest(dom, table, &tc).is_none() {
+                outer = next;
+                next += 1;
+            }
+            outer
+        })
+        .collect()
+}
+
 /// Every table under `body`, in document order.
 pub(super) fn body_tables(dom: &Dom, body: NodeId) -> Vec<Table> {
     let tc = W::tc();
