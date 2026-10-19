@@ -323,3 +323,24 @@ mod tests {
         assert_eq!(hex_encode_20(&[0xff; 20]), [b'f'; 40]);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sha1_hex() {
+        assert_eq!(
+            sha1_hex(""),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
+        assert_eq!(
+            sha1_hex("test"),
+            "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"
+        );
+        assert_eq!(
+            sha1_hex("ünïcödé"),
+            "bf5f8ac304f8a364c02e108151c3a18c4c6eb4ce"
+        );
+    }
+}
