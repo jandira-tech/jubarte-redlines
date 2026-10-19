@@ -357,3 +357,41 @@ def test_an_error_under_json_is_a_json_line_on_stdout(tmp_path, capsys):
     assert _native.wants_json(["read", "f.docx", "--json"])
     assert not _native.wants_json(["edit", "replace", "f.docx", "--find", "x", "--text", "--json"])
     assert not _native.wants_json(["read", "f.docx", "--", "--json"])
+
+
+DELETED_AS_TEXT = ('<w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z">'
+                   '<w:r><w:t>gone</w:t></w:r></w:del></w:p>')
+
+
+def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
+    # #1256: what the binary does, from the Python CLI.
+    broken = tmp_path / "broken.docx"
+    broken.write_bytes(docx(DELETED_AS_TEXT + para("x")))
+    clean = tmp_path / "clean.docx"
+    clean.write_bytes(docx(para("x")))
+    assert _main(["validate", str(broken), "--baseline", str(broken)]) == 0
+    assert capsys.readouterr().out == "new: none\nalready in the input: 1 (not yours)\n"
+    assert _main(["validate", str(broken), "--baseline", str(clean)]) == 2
+    out = capsys.readouterr().out
+    assert out.startswith("new: 1\n* TEXT_INSIDE_DELETION\terror\t"), out
+    assert out.endswith("already in the input: none\n"), out
+    assert _main(["validate", str(clean), "--baseline", str(broken), "--json"]) == 0
+    (resolved,) = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert resolved["resolved"][0]["code"] == "TEXT_INSIDE_DELETION"
+    assert _main(["validate", str(broken), "--baseline", str(broken), "--repair", str(tmp_path / "f.docx")]) == 2
+    assert "cannot be used with" in capsys.readouterr().err
+    # One stderr line on each reading task; -q drops it; a clean input has none.
+    line = f"input has 1 validity error; jubarte validate {broken} lists it\n"
+    for arguments in (["read", str(broken), "--no-page-markers"], ["read", str(broken), "--json"],
+                      ["changes", str(broken)], ["comments", str(broken), "--json"]):
+        assert _main(arguments) == 0
+        captured = capsys.readouterr()
+        assert captured.err == line, arguments
+        assert "validity" not in captured.out
+    for arguments in (["-q", "changes", str(broken)], ["read", str(broken), "--json", "-q"],
+                      ["changes", str(clean)]):
+        assert _main(arguments) == 0
+        assert capsys.readouterr().err == "", arguments
+    assert _native.input_notice(clean.read_bytes(), "clean.docx") is None
+    assert _native.input_notice(broken.read_bytes(), "my file.docx") == (
+        "input has 1 validity error; jubarte validate 'my file.docx' lists it")

@@ -130,7 +130,9 @@ def validate_run(
     original: bytes | None = None,
     author: str | None = None,
     strict: bool = False,
+    baseline: bytes | None = None,
 ) -> tuple[str, str, bool]: ...
+def input_notice(docx: bytes, file: str) -> str | None: ...
 def diff_json(
     old: bytes | str,
     new: bytes | str,

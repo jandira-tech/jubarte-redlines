@@ -281,7 +281,7 @@ def cmd_read(args: argparse.Namespace) -> int:
         # pick that reaches no table is a usage error.
         try:
             markdown, warnings = _native.tables_view(
-                _read(args.file).to_bytes(),
+                _input(args),
                 track_changes=args.track_changes,
                 comments=args.comments == "inline",
                 dates=bool(args.dates),
@@ -300,13 +300,13 @@ def cmd_read(args: argparse.Namespace) -> int:
         sys.stdout.write(markdown)
         return EXIT_OK
     if args.output is not None:
-        _write_result(args, _read(args.file).to_bytes(), source=args.file.name, view=vars(args))
+        _write_result(args, _input(args), source=args.file.name, view=vars(args))
         return EXIT_OK
     if args.json:
-        snapshot = _native.read_json(_read(args.file).to_bytes(), **_selection(vars(args)), source=args.file.name)
+        snapshot = _native.read_json(_input(args), **_selection(vars(args)), source=args.file.name)
         print(snapshot)
         return EXIT_OK
-    return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
+    return _print_view(_input(args), vars(args), args.file.name)
 
 
 _DOCX_NEEDS_MARKDOWN = "--to docx requires Markdown input in the Python CLI"
@@ -365,6 +365,19 @@ def _jsonl(row: dict) -> str:
 def _spelled(args: argparse.Namespace, key: str) -> str:
     """FILE, --plan, OLD, NEW or -o as the command line spells it."""
     return getattr(args, "spelled", {}).get(key) or str(getattr(args, key))
+
+
+def _input(args: argparse.Namespace) -> bytes:
+    """FILE's bytes for ``read``, ``changes`` and ``comments``; unless ``-q``,
+    one stderr line says how many validity findings the input has."""
+    from . import _native
+
+    docx = _read(args.file).to_bytes()
+    if not getattr(args, "quiet", False):
+        notice = _native.input_notice(docx, _spelled(args, "file"))
+        if notice is not None:
+            print(notice, file=sys.stderr)
+    return docx
 
 
 def _wrote(args: argparse.Namespace, path: Path, format: str, size: int, pages: int | None = None) -> None:
@@ -945,7 +958,7 @@ def _json_lines(payload: str) -> None:
 def cmd_changes(args: argparse.Namespace) -> int:
     from . import _native
 
-    docx = _read(args.file).to_bytes()
+    docx = _input(args)
     if args.json:
         _json_lines(_native.list_changes_json(docx))
     else:
@@ -956,7 +969,7 @@ def cmd_changes(args: argparse.Namespace) -> int:
 def cmd_comments(args: argparse.Namespace) -> int:
     from . import _native
 
-    docx = _read(args.file).to_bytes()
+    docx = _input(args)
     if args.json:
         _json_lines(_native.list_comments_json(docx, author=args.author, latest=args.latest))
     else:
@@ -1006,8 +1019,14 @@ def cmd_validate(args: argparse.Namespace) -> int:
             sys.stdout.flush()  # stdout's lines first when both streams share a pipe
             print(_native.wrote_line(_spelled(args, "repair"), "docx", size), file=sys.stderr)
     original = _read(args.original).to_bytes() if args.original is not None else None
+    baseline = _read(args.baseline).to_bytes() if args.baseline is not None else None
     jsonl, text, failed = _native.validate_run(
-        docx, rules=list(args.rules) or None, original=original, author=args.author, strict=args.strict
+        docx,
+        rules=list(args.rules) or None,
+        original=original,
+        author=args.author,
+        strict=args.strict,
+        baseline=baseline,
     )
     sys.stdout.write(jsonl if args.json else text)
     return EXIT_FINDINGS if failed else EXIT_OK
@@ -1037,7 +1056,7 @@ _HANDLERS = {
     "accept": cmd_accept, "reject": cmd_reject, "visual-diff": cmd_diff_render,
     "validate": cmd_validate, "capabilities": cmd_capabilities,
 }
-_PATH_ARGUMENTS = {"file", "original", "modified", "old", "new", "output", "plan", "out_dir", "reference_doc", "report", "font_report", "repair", "a", "b"}
+_PATH_ARGUMENTS = {"file", "original", "baseline", "modified", "old", "new", "output", "plan", "out_dir", "reference_doc", "report", "font_report", "repair", "a", "b"}
 
 
 class SharedParser:
