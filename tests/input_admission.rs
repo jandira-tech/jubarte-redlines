@@ -12,10 +12,10 @@
 
 use std::io::{Cursor, Write};
 
+use jubarte::WmlDocument;
 use jubarte::admission::InputLimits;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::{compare_documents, compare_documents_with_settings};
-use jubarte::WmlDocument;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -800,7 +800,7 @@ fn special_entry_probe() -> Vec<u8> {
             .unwrap();
         writer.write_all(b"link-target").unwrap();
     });
-    set_central_attributes(&mut bytes, "x.bin", 0x0314, 0o120777);
+    set_central_attributes(&mut bytes, "x.bin", 0x0314, 0o120777 << 16);
     bytes
 }
 
