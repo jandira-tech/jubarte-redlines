@@ -54,7 +54,7 @@ Every non-test function that calls an id parser directly: the places the source 
 | Parser | Called from |
 |-|-|
 | `ids::ChangeId::from_long` | `ids::parse_change_ids` |
-| `ids::change_id` | `changes::fold_style_pairs`, `edit::resolution::is_substitution_pair`, `edit::resolution::pair_ref`, `edit::resolution::short_place`, `edit::tracked::revision_counts`, `edit::v2_apply::SourceModel::entity`, `markdown::from_docx::header::revisions_comment`, `validate::story_part` |
+| `ids::change_id` | `changes::fold_style_pairs`, `edit::resolution::is_substitution_pair`, `edit::resolution::pair_ref`, `edit::resolution::short_place`, `edit::tracked::revision_counts`, `edit::tracked::splits`, `edit::v2_apply::SourceModel::entity`, `markdown::from_docx::header::revisions_comment`, `validate::story_part` |
 | `ids::comment_id_de` | `edit::OperationKind` (attribute) |
 | `ids::comment_text_id` | `edit::comment_text_of` |
 | `ids::paragraph_place` | `edit::anchor_error::cell_paragraph`, `edit::anchor_error::find_target`, `edit::anchor_error::missing_target_message`, `edit::anchor_error::skip_id`, `edit::for_edit::changed_selection`, `edit::for_edit::comment_paragraphs`, `edit::origin::Ids::position`, `edit::prepared::outcome_paragraph`, `edit::v2_apply::SourceModel::close_open_range`, `edit::v2_apply::SourceModel::past_end_usage`, `inspect::Snapshot::retain_with`, `inspect::body_index`, `validate::Finding::from`, `validate::story_part` |
