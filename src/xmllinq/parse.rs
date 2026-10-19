@@ -662,3 +662,49 @@ mod xml_lexical_boundary_contract_tests {
         assert!(validate_xml("<?xml-stylesheet type='text/css'?>\n<p>owned</p><?tail?>").is_ok());
     }
 }
+
+#[cfg(test)]
+mod unescape_tests {
+    use super::unescape_xml_text;
+
+    #[test]
+    fn test_unescape_xml_text() {
+        // No ampersand
+        assert_eq!(unescape_xml_text("hello world"), "hello world");
+
+        // Basic named entities
+        assert_eq!(unescape_xml_text("&lt;hello&gt;"), "<hello>");
+        assert_eq!(unescape_xml_text("Tom &amp; Jerry"), "Tom & Jerry");
+        assert_eq!(unescape_xml_text("&quot;quote&quot;"), "\"quote\"");
+        assert_eq!(unescape_xml_text("&apos;apostrophe&apos;"), "'apostrophe'");
+
+        // Numeric entities - decimal
+        assert_eq!(unescape_xml_text("&#65;"), "A");
+        assert_eq!(unescape_xml_text("&#97;"), "a");
+
+        // Numeric entities - hexadecimal
+        assert_eq!(unescape_xml_text("&#x41;"), "A");
+        assert_eq!(unescape_xml_text("&#x61;"), "a");
+        assert_eq!(unescape_xml_text("&#X41;"), "A"); // Uppercase X
+
+        // Unicode entities
+        assert_eq!(unescape_xml_text("&#x1F433;"), "🐳");
+        assert_eq!(unescape_xml_text("&#128051;"), "🐳"); // 1F433 in decimal
+
+        // Invalid/Unknown entities (should be left as is)
+        assert_eq!(unescape_xml_text("&unknown;"), "&unknown;");
+        assert_eq!(unescape_xml_text("&123;"), "&123;");
+        assert_eq!(unescape_xml_text("&#xG;"), "&#xG;"); // Invalid hex
+        assert_eq!(unescape_xml_text("&#;"), "&#;"); // Empty numeric
+        assert_eq!(unescape_xml_text("&;"), "&;"); // Empty named
+
+        // Missing semicolon (should be left as is)
+        assert_eq!(unescape_xml_text("before &amp after"), "before &amp after");
+
+        // Multiple entities
+        assert_eq!(unescape_xml_text("A &lt; B &amp; C &gt; D"), "A < B & C > D");
+
+        // Mixed text and entities
+        assert_eq!(unescape_xml_text("Start &#x41; middle &amp; end"), "Start A middle & end");
+    }
+}
