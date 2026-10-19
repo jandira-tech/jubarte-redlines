@@ -166,10 +166,10 @@ struct Package {
     entries: Vec<Entry>,
     /// The package's bytes, for a layout pass.
     raw: Vec<u8>,
-    /// Why the local and central headers disagree, when they do: a package
-    /// every reader refuses is still a package a maintainer must triage, so
-    /// `debug` opens it unchecked and reports the mismatch as a finding.
-    header_mismatch: Option<String>,
+    /// The package's structural zip defects: a package every reader
+    /// refuses is still a package a maintainer must triage, so `debug`
+    /// opens it unchecked and reports each defect as a finding.
+    defects: Vec<crate::opc::ZipDefect>,
 }
 
 impl Package {
@@ -209,13 +209,7 @@ impl Package {
         crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
         let mut zip = crate::opc::open_archive_unchecked(Cursor::new(bytes))
             .map_err(|e| format!("not a zip: {e}"))?;
-        let header_mismatch =
-            crate::opc::local_name_mismatch(&zip, &mut Cursor::new(bytes)).map(|detail| {
-                format!(
-                    "{}: local and central headers disagree: {detail}",
-                    crate::admission::AdmissionErrorKind::ZipHeaderMismatch.code()
-                )
-            });
+        let mut defects = crate::opc::zip_defects(&zip, &mut Cursor::new(bytes));
         let mut entries = Vec::with_capacity(zip.len());
         let mut total = 0u64;
         for i in 0..zip.len() {
@@ -235,10 +229,22 @@ impl Package {
             let mut data = Vec::with_capacity(
                 usize::try_from(f.size().min(cap).min(16 * 1024 * 1024)).unwrap_or(0),
             );
-            let read = (&mut f)
-                .take(cap.saturating_add(1))
-                .read_to_end(&mut data)
-                .map_err(|e| format!("{name}: {e}"))?;
+            // A directory's payload is read too: where a reading route
+            // refuses its failed CRC with INVALID_PACKAGE, triage keeps
+            // the entry out and reports the payload as a finding (#644).
+            let read = match (&mut f).take(cap.saturating_add(1)).read_to_end(&mut data) {
+                Ok(read) => read,
+                Err(error) if f.is_dir() => {
+                    defects.push(crate::opc::ZipDefect {
+                        kind: crate::opc::ZipDefectKind::DirectoryPayload,
+                        detail: format!(
+                            "directory entry '{name}' has an unreadable payload: {error}"
+                        ),
+                    });
+                    continue;
+                }
+                Err(error) => return Err(format!("{name}: {error}")),
+            };
             crate::admission::account_inflated(&mut total, read as u64, &name, cap, &limits)
                 .map_err(|e| e.to_string())?;
             entries.push(Entry {
@@ -251,7 +257,7 @@ impl Package {
         Ok(Package {
             entries,
             raw: bytes.to_vec(),
-            header_mismatch,
+            defects,
         })
     }
 
@@ -1150,9 +1156,12 @@ fn analyze(pkg: &Package, opts: &Options) -> Analysis {
         textboxes: Vec::new(),
     };
     let on = |c: Check| opts.checks.contains(&c);
-    if let Some(detail) = &pkg.header_mismatch {
-        a.findings
-            .add("zip-header-mismatch", "package", detail.clone());
+    for defect in &pkg.defects {
+        a.findings.add(
+            defect.finding_kind(),
+            "package",
+            defect.refusal().to_string(),
+        );
     }
     let parts = pkg.xml_parts(opts.part.as_deref(), &mut a.findings);
     if on(Check::Package) {
@@ -2882,6 +2891,109 @@ mod tests {
         let found = findings(&pkg).unwrap();
         assert!(
             found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
+            "{found:?}"
+        );
+    }
+
+    /// The fixture builders for structural packages, shared with the
+    /// admission tests.
+    use crate::admission::zip_names;
+
+    /// An entry's local-header offset, located through the reader.
+    fn local_header_at(bytes: &[u8], name: &str) -> usize {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        usize::try_from(archive.by_name(name).unwrap().header_start()).unwrap()
+    }
+
+    /// ZIP-17 (#644): a content field that disagrees between the two
+    /// headers is a `zip-header-mismatch` finding, not a refusal.
+    #[test]
+    fn a_header_field_mismatch_reports_a_finding_instead_of_refusing() {
+        let mut pkg = docx(CLEAN);
+        let at = local_header_at(&pkg, "word/document.xml");
+        pkg[at + 8] ^= 0x08; // the local method no longer matches the record's
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        assert!(out.contains("zip-header-mismatch: 1\n"), "{out}");
+        assert!(
+            out.contains("compression method 8 in the central directory but 0"),
+            "{out}"
+        );
+        let found = findings(&pkg).unwrap();
+        assert!(
+            found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
+            "{found:?}"
+        );
+    }
+
+    /// ZIP-17 (#644): an entry nested inside another entry's payload is
+    /// a `zip-extent` finding, not a refusal.
+    #[test]
+    fn an_overlapping_entry_reports_a_finding_instead_of_refusing() {
+        let mut embedded = zip_names::local_header(b"b.bin", 0, zip_names::crc32(b"x"), 1, 1, &[]);
+        embedded.push(b'x');
+        let mut pkg = zip_names::docx_package(
+            "",
+            &[
+                zip_names::RawEntry::raw(b"a.bin", &embedded),
+                zip_names::RawEntry::raw(b"b.bin", b"x"),
+            ],
+        );
+        let embedded_at = local_header_at(&pkg, "a.bin") + 30 + b"a.bin".len();
+        let b_central = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
+            usize::try_from(archive.by_name("b.bin").unwrap().central_header_start()).unwrap()
+        };
+        pkg[b_central + 42..b_central + 46]
+            .copy_from_slice(&u32::try_from(embedded_at).unwrap().to_le_bytes());
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        assert!(out.contains("zip-extent: 1\n"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(found.iter().any(|f| f.code == "ZIP_EXTENT"), "{found:?}");
+    }
+
+    /// ZIP-17 (#644): a descriptor that disagrees with the central
+    /// record is a `zip-descriptor` finding, not a refusal.
+    #[test]
+    fn a_descriptor_disagreement_reports_a_finding_instead_of_refusing() {
+        let mut pkg = zip_names::assembled(
+            b"",
+            &[
+                zip_names::AssembledEntry::plain(b"[Content_Types].xml", b"<Types/>"),
+                zip_names::AssembledEntry::plain(b"_rels/.rels", b"<Relationships/>"),
+                zip_names::AssembledEntry::plain(b"word/document.xml", b"<w:document/>"),
+                zip_names::AssembledEntry::plain(b"x.bin", b"payload")
+                    .with_descriptor(zip_names::Descriptor::Signed),
+            ],
+            None,
+            b"",
+        );
+        let signature = pkg
+            .windows(4)
+            .position(|w| w == b"PK\x07\x08")
+            .expect("signed descriptor");
+        pkg[signature + 4] ^= 0xff;
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        assert!(out.contains("zip-descriptor: 1\n"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(
+            found.iter().any(|f| f.code == "ZIP_DESCRIPTOR"),
+            "{found:?}"
+        );
+    }
+
+    /// ZIP-17 (#644): a directory entry whose payload fails its CRC is a
+    /// `zip-directory-payload` finding, not a refusal.
+    #[test]
+    fn a_corrupt_directory_payload_reports_a_finding_instead_of_refusing() {
+        let mut pkg =
+            zip_names::docx_package("", &[zip_names::RawEntry::raw(b"word/media/", b"x")]);
+        let at = local_header_at(&pkg, "word/media/") + 30 + b"word/media/".len();
+        pkg[at] = b'y';
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        assert!(out.contains("zip-directory-payload: 1\n"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(
+            found.iter().any(|f| f.code == "ZIP_DIRECTORY_PAYLOAD"),
             "{found:?}"
         );
     }
