@@ -126,6 +126,14 @@ Gotchas:
   move resolve together; a change whose `inside` holder is resolved away
   goes with it.
 
+`jubarte accept` and `jubarte reject` offer `--keep-nested-comment` (off by
+default). Offer it when removing a revision would remove an entire comment
+anchor and its replies: it keeps the thread on an empty untracked anchor
+at the removed text's position. `jubarte convert FILE --track-changes
+accept|reject` offers the same flag; without one of those two choices it
+exits 2. Partial overlaps keep the existing behavior. A kept receipt reads
+`kept c0 and its reply c1 on an empty anchor in p1`.
+
 ## 2. Edit with a plan
 
 A plan is JSON: author, optional date, the source hash, and operations. Each

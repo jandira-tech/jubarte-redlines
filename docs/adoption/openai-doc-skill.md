@@ -51,7 +51,7 @@ included), `3` edit plan refused (nothing written).
 | python-docx tables and lists | `insert_table` (`rows`, `header_row`, `widths_dxa`, `style`) and `list` (`kind_of_list`: `bullet`, `decimal` or `lower_letter`; `level`, `restart`) plan operations, both tracked in the redline | released |
 | python-docx run formatting, footnotes, images, page setup | structural plan operations | released |
 | Comparing two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` | released |
-| Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id r12`, `--author`, `--kind`); `jubarte edit FILE -p r12 --accept` for one | released |
+| Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id r12`, `--author`, `--kind` (native CLI: add `--keep-nested-comment` to keep removed-anchor threads; also on `convert --track-changes accept\|reject`)); `jubarte edit FILE -p r12 --accept` for one | released |
 | Legacy `.doc` (LibreOffice in the install section) | `jubarte convert old.doc` writes `old.docx`: text, headings, lists, bold, italic, tables ([plans.md](plans.md) §1 for the rest) | released |
 | Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
 

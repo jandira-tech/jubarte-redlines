@@ -133,6 +133,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **Keep nested comment threads during settlement** (#1279). Native
+  `accept`, `reject` and `convert --track-changes accept|reject` offer
+  `--keep-nested-comment`, off by default. A wholly removed anchor becomes
+  an empty untracked anchor, keeping the comment and its replies, with the
+  same kept receipt as an edit plan's `"removed_anchor_comments": "keep"`.
+  Partial overlaps and flag-off output retain their existing behavior.
+
 - **`convert --commonmark`** writes Word as plain CommonMark with
   CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
   wrote before.

@@ -267,7 +267,12 @@ paragraph) can be inserted or deleted too:
 accepted or rejected, through the same engine as `jubarte accept` and
 `jubarte reject`. With `-t md` the Markdown itself is resolved instead. The
 flag works on a `.docx` too: `jubarte convert redline.docx --track-changes
-accept` renders the accepted document to PDF.
+accept` renders the accepted document to PDF. Add
+`--keep-nested-comment` to preserve comments and replies whose whole range
+settlement removes, on an empty untracked anchor at the removed text.
+`accept` and `reject` offer the same opt-in. Partial overlaps keep their
+existing behavior. Without `--track-changes accept` or `reject`, convert
+refuses the keep flag with exit 2.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
 (`\{++`) or without its partner is text too, and says so in a warning.
 

@@ -387,6 +387,9 @@ Options:
       --force
           Overwrite the output file if it already exists
 
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
+
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
           `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
@@ -475,6 +478,9 @@ Options:
 
       --force
           Overwrite the output file if it already exists
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
@@ -587,6 +593,10 @@ Options:
           - reject: Reject every change
 
           [default: all]
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed; requires
+          --track-changes accept or reject
 
       --no-critic
           Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text

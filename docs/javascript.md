@@ -977,6 +977,11 @@ and encrypted files are refused with a clear message before parsing.
 
 Generated from the real `--help` output of `jubarte-redlines.mjs`.
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
 <!-- gen:cli-npm:start -->
 #### `jubarte-redlines`
 

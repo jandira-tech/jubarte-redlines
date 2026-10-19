@@ -44,6 +44,11 @@ error, 2 usage (and `validate` findings), 3 edit plan refused, 5
 Generated from the real `--help` output of the wheel's `jubarte-redlines`
 entry point — flags and defaults cannot drift from the shipped code.
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
 <!-- gen:cli-python:start -->
 #### `jubarte-redlines`
 

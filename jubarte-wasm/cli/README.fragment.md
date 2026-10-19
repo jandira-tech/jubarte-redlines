@@ -40,6 +40,12 @@ Inputs are `.docx`: save a Word 97-2003 `.doc` as `.docx` first.
 
 ## Text comparisons
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
+
 ```sh
 jubarte-redlines diff a.docx b.docx --format github
 jubarte-redlines diff a.docx b.docx --format github -U0 --accept-changes

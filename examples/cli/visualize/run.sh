@@ -263,12 +263,13 @@ cat >> "$GUIDE" <<'EOF'
 | View | Command | Options that change what is shown |
 |---|---|---|
 | Agent view with IDs | `read FILE` | `--track-changes accept\|reject`, `--comments none`, `-p`, `--head`, `--tail`, `--changed`, `--by`, `-o FILE.md` |
-| Markdown with pages | `convert FILE -t md` | `--no-page-markers`, `--track-changes all\|accept\|reject`, `-o FILE` |
+| Markdown with pages | `convert FILE -t md` | `--no-page-markers`, `--track-changes all\|accept\|reject`, `--keep-nested-comment` (with accept or reject), `-o FILE` |
+| Settlement | `accept FILE -o OUT` / `reject FILE -o OUT` | `--id`, `--author`, `--kind`, `--keep-nested-comment` |
 | Tracked changes | `changes FILE` | `--json` |
 | Comments | `comments FILE` | `--json`, `--author NAME`, `--latest` |
 | Structure | `read FILE --json` / `--tables` | `-o FILE.json` |
 | Render triage | `debug FILE --check render` | `--check text\|runs\|xml\|changes\|…`, two files print only differences |
-| Pages | `convert FILE -o x.png` / `x.pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-pages`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout` |
+| Pages | `convert FILE -o x.png` / `x.pdf` | `--dpi`, `--pages`, `--revisions conventional\|word\|custom`, `--revision-palette`, `--move-comments`, `--changed-pages`, `--compress`, `--report`, `--font-report`, `--fail-on-substitution`, `--timeout`, `--keep-nested-comment` (with `--track-changes accept\|reject`) |
 | Validity | `validate FILE` | `--rules word,a11y,style,structure`, `--strict`, `--repair`, `--json` (see `--help`) |
 | Edit result | `edit FILE --plan P --out-dir D` | `--dry-run`, `--pdf`, `--png`, `--dpi`, `--revisions`, `--revision-palette`, `--quiet`; writes `patch.diff`, `report.jsonl`, `clean.*`, `redline.*` |
 | Text diff | `diff OLD NEW` | `--format patch\|critic\|github\|word\|normal\|context\|side-by-side`, `-U N`, `--accept-changes`, `--full-lines`, `--columns N`, `-f md\|docx`, `-o FILE.md\|.txt\|.patch\|.diff` |
