@@ -403,7 +403,10 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
             tokens.extend(indices.zip(values).map(|(i, v)| (i, name, Some(v.clone()))));
         }
     }
-    for name in ["delete", "resolve", "before", "comment", "accept", "reject"] {
+    for name in [
+        "delete", "resolve", "before", "comment", "accept", "reject", "strike", "restore",
+        "visible",
+    ] {
         // `try_get_many` is `Err` for a flag this command does not declare
         // (`add` has no --resolve or --accept); `indices_of` would panic on
         // it.
@@ -442,6 +445,9 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
             "comment" => op.comment = true,
             "accept" => op.accept = true,
             "reject" => op.reject = true,
+            "strike" => op.strike = true,
+            "restore" => op.restore = true,
+            "visible" => op.visible = true,
             _ => {}
         }
     }
@@ -1062,9 +1068,9 @@ pub enum Command {
         #[arg(long, requires = "plan")]
         consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment),
-        /// c5.text (the text c5 covers) or r12 (a revision, with --accept or
-        /// --reject). Each -p starts an operation; the flags after it belong
-        /// to it.
+        /// c5.text (the text c5 covers) or r12 (a revision, with --accept,
+        /// --reject, --strike or --restore). Each -p starts an operation; the
+        /// flags after it belong to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
         /// Text inside WHERE the operation applies to (must occur once).
@@ -1091,6 +1097,20 @@ pub enum Command {
         /// resolved change (`rejected r0 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         reject: Vec<bool>,
+        /// Strike another author's insertion r12 (with -p r12): our tracked
+        /// deletion inside it, so the decision shows. --content is a comment
+        /// on the struck words.
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        strike: Vec<bool>,
+        /// Restore another author's deletion r12 (with -p r12): their deletion
+        /// stays and our tracked insertion of its words follows it. --content
+        /// is a comment on the restored words.
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        restore: Vec<bool>,
+        /// With --reject: strike each insertion and restore each deletion
+        /// instead of removing the change without a trace.
+        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
+        visible: Vec<bool>,
         /// Formatting for the anchored text: bold, italic, underline, strike,
         /// caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any
         /// other value is a paragraph style (Heading2).

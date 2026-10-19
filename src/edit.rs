@@ -495,6 +495,7 @@ pub enum OperationKind {
     /// its words, nested inside it, so Word shows it struck under our name
     /// and Reject of our change gives it back. Needs `existing_revisions`
     /// `keep`.
+    #[schemars(extend("x-jubarte-keep-only" = true))]
     Strike {
         /// The insertion, as `changes` lists it (`r366`, `header1.r3`).
         revision: String,
@@ -509,6 +510,7 @@ pub enum OperationKind {
     /// Reject another author's deletion visibly: their deletion stays, and
     /// our tracked insertion right after it holds a copy of its words,
     /// formatting included. Needs `existing_revisions` `keep`.
+    #[schemars(extend("x-jubarte-keep-only" = true))]
     Restore {
         /// The deletion, as `changes` lists it (`r12`, `header1.r3`).
         revision: String,
@@ -1638,6 +1640,15 @@ pub fn dispatched_operation_kinds() -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+/// The operation answers another author's revision beside it, so it runs
+/// only when the plan keeps revisions (`strike`, `restore`).
+pub(crate) fn operation_needs_keep(kind: &str) -> bool {
+    operation_schemas()
+        .iter()
+        .find(|s| s["properties"]["kind"]["const"] == kind)
+        .is_some_and(|s| s["x-jubarte-keep-only"] == true)
 }
 
 pub(crate) fn operation_supports_keep(kind: &str) -> bool {

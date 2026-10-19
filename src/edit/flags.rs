@@ -35,6 +35,15 @@ pub struct FlagOp {
     pub accept: bool,
     /// `--reject` (`edit` only): reject the revision `at` names.
     pub reject: bool,
+    /// `--strike` (`edit` only): strike another author's insertion, as our
+    /// tracked deletion inside it.
+    pub strike: bool,
+    /// `--restore` (`edit` only): restore another author's deletion, as our
+    /// tracked insertion of its words after it.
+    pub restore: bool,
+    /// `--visible` (with `--reject`): a strike or a restore, by the kind of
+    /// each revision `at` names.
+    pub visible: bool,
     /// `--reply`: a reply to the comment `at` names.
     pub reply: Option<String>,
     /// `--before` (`add` only).
@@ -87,14 +96,33 @@ pub fn plan_from_flags(
     let mut operations = Vec::with_capacity(ops.len());
     let mut notes = Vec::new();
     let (mut accept, mut reject) = (Vec::new(), Vec::new());
+    let mut listed: Option<Vec<crate::changes::Change>> = None;
     for op in ops {
-        if let Some((accepted, ids)) = revision_group(verb, op)? {
-            if accepted { &mut accept } else { &mut reject }.extend(ids);
-            continue;
+        match revision_group(verb, op)? {
+            Group::Settle { accept: true, ids } => accept.extend(ids),
+            Group::Settle { accept: false, ids } => reject.extend(ids),
+            Group::Answer { how, ids, comment } => {
+                for revision in ids {
+                    let comment = comment.clone();
+                    let kind = match how {
+                        Answer::Strike => OperationKind::Strike { revision, comment },
+                        Answer::Restore => OperationKind::Restore { revision, comment },
+                        Answer::ByKind => {
+                            let listed = listed.get_or_insert_with(|| {
+                                crate::changes::list_changes(source).unwrap_or_default()
+                            });
+                            super::visible::reject_kind(listed, revision, comment)
+                        }
+                    };
+                    operations.push(Operation { id: None, kind });
+                }
+            }
+            Group::Operation => {
+                let (kind, note) = flag_operation(verb, op)?;
+                operations.push(Operation { id: None, kind });
+                notes.extend(note.map(|n| format!("op-{}: {n}", operations.len())));
+            }
         }
-        let (kind, note) = flag_operation(verb, op)?;
-        operations.push(Operation { id: None, kind });
-        notes.extend(note.map(|n| format!("op-{}: {n}", operations.len())));
     }
     let side = |ids: Vec<String>| (!ids.is_empty()).then(|| ChangeFilter::ids(ids));
     let resolve_revisions = (!accept.is_empty() || !reject.is_empty()).then(|| ResolveRevisions {
@@ -211,14 +239,46 @@ fn expired(at: &str, keep: impl Fn(&ShortId) -> bool) -> Option<String> {
     }
 }
 
-/// A `-p r12 --accept` (or `--reject`) group: whether it accepts, and the
-/// long ids it names. `None` for a group that is an operation. Only `edit`
+/// What a `-p` group does with the revisions it names.
+enum Group {
+    /// Not a revision group: an operation.
+    Operation,
+    /// `--accept` or `--reject`: the long ids join `resolve_revisions`.
+    Settle { accept: bool, ids: Vec<String> },
+    /// `--strike`, `--restore` or `--reject --visible`: one operation by
+    /// our author per revision, with `--content` as its comment.
+    Answer {
+        how: Answer,
+        ids: Vec<String>,
+        comment: Option<String>,
+    },
+}
+
+/// Which visible reject a group asks for.
+#[derive(Clone, Copy)]
+enum Answer {
+    Strike,
+    Restore,
+    /// `--reject --visible`: by each revision's kind.
+    ByKind,
+}
+
+/// What the `-p r12` group `op` asks of its revisions. Only `edit`
 /// resolves revisions.
-fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>, String> {
+fn revision_group(verb: Verb, op: &FlagOp) -> Result<Group, String> {
     let at = op.at.trim();
+    let verbs: Vec<&str> = [
+        ("accept", op.accept),
+        ("reject", op.reject),
+        ("strike", op.strike),
+        ("restore", op.restore),
+    ]
+    .into_iter()
+    .filter_map(|(name, set)| set.then_some(name))
+    .collect();
     // Only a revision group names a change; any other group's id is
     // refused by [`flag_operation`], with the spellings it takes.
-    if (op.accept || op.reject)
+    if !verbs.is_empty()
         && let Some(refused) = expired(at, |id| matches!(id, ShortId::Change { .. }))
     {
         return Err(refused);
@@ -229,37 +289,68 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Option<(bool, Vec<String>)>
         _ => None,
     };
     // A `--reply` group is an operation: off a comment it says so. It
-    // resolves no revision, so `--accept` or `--reject` beside it is refused,
-    // not ignored.
+    // resolves no revision, so a revision flag beside it is refused, not
+    // ignored.
     if op.reply.is_some() {
-        if op.accept || op.reject {
+        if !verbs.is_empty() || op.visible {
             return bad("--reply takes no other flag");
         }
-        return Ok(None);
+        return Ok(Group::Operation);
     }
     if verb == Verb::Add && ids.is_some() {
-        return bad("add resolves no revision; use edit -p r12 --accept or --reject");
+        return bad(
+            "add resolves no revision; use edit -p r12 --accept, --reject, --strike or --restore",
+        );
+    }
+    if op.visible && !op.reject {
+        return bad("--visible goes with --reject");
+    }
+    let Some(ids) = ids else {
+        return match verbs.first() {
+            None => Ok(Group::Operation),
+            Some(&("accept" | "reject")) => bad("--accept and --reject take a revision (-p r12)"),
+            Some(name) => bad(&format!("--{name} takes a revision (-p r12)")),
+        };
+    };
+    if let [first, second, ..] = verbs[..] {
+        return bad(&format!("--{first} and --{second} exclude each other"));
     }
     let others = op.anchor.is_some()
-        || op.content.is_some()
         || op.delete
         || op.resolve
         || op.before
         || op.comment
-        || op.reply.is_some()
         || !op.styles.is_empty();
-    match ids {
-        None if op.accept || op.reject => bad("--accept and --reject take a revision (-p r12)"),
-        None => Ok(None),
-        Some(_) if op.accept && op.reject => bad("--accept and --reject exclude each other"),
-        Some(_) if others || !(op.accept || op.reject) => {
-            bad("a revision takes --accept or --reject")
-        }
-        Some(ids) => Ok(Some((
-            op.accept,
-            ids.iter().map(crate::ids::ChangeId::short).collect(),
-        ))),
+    if others || verbs.is_empty() {
+        return bad("a revision takes --accept, --reject, --strike or --restore");
     }
+    let how = if op.strike {
+        Some(Answer::Strike)
+    } else if op.restore {
+        Some(Answer::Restore)
+    } else {
+        op.visible.then_some(Answer::ByKind)
+    };
+    if op.content.is_some() && how.is_none() {
+        return bad(
+            "--content on a revision is the comment of --strike, --restore or --reject --visible",
+        );
+    }
+    if op.content.is_some() && ids.len() > 1 {
+        return bad("--content comments one revision; give each its own -p");
+    }
+    let ids = ids.iter().map(crate::ids::ChangeId::short).collect();
+    Ok(match how {
+        Some(how) => Group::Answer {
+            how,
+            ids,
+            comment: op.content.clone(),
+        },
+        None => Group::Settle {
+            accept: op.accept,
+            ids,
+        },
+    })
 }
 
 /// The operation one `-p` group stands for, and a note for the report.
@@ -1388,6 +1479,107 @@ mod tests {
         );
     }
 
+    /// `-p r4 --strike` and `-p r5 --restore` are operations by our
+    /// author, with `--content` as the comment on them.
+    #[test]
+    fn strike_and_restore_groups_are_operations() {
+        let built = plan_from_flags(
+            Verb::Edit,
+            &[
+                with("r4", |o| {
+                    o.strike = true;
+                    o.content = Some("No.".into());
+                }),
+                with("header1.r2", |o| o.restore = true),
+            ],
+            "A",
+            None,
+            None,
+            b"",
+        )
+        .unwrap();
+        assert!(built.plan.resolve_revisions.is_none());
+        let kinds: Vec<OperationKind> = built.plan.operations.into_iter().map(|o| o.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                OperationKind::Strike {
+                    revision: "r4".into(),
+                    comment: Some("No.".into()),
+                },
+                OperationKind::Restore {
+                    revision: "header1.r2".into(),
+                    comment: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn strike_restore_and_visible_refuse_what_they_cannot_mean() {
+        for (verb, group, want) in [
+            (
+                Verb::Edit,
+                with("r4", |o| {
+                    o.strike = true;
+                    o.restore = true;
+                }),
+                "-p r4: --strike and --restore exclude each other",
+            ),
+            (
+                Verb::Edit,
+                with("r4", |o| {
+                    o.accept = true;
+                    o.strike = true;
+                }),
+                "-p r4: --accept and --strike exclude each other",
+            ),
+            (
+                Verb::Edit,
+                with("r4", |o| o.visible = true),
+                "-p r4: --visible goes with --reject",
+            ),
+            (
+                Verb::Edit,
+                with("p0", |o| o.strike = true),
+                "-p p0: --strike takes a revision (-p r12)",
+            ),
+            (
+                Verb::Edit,
+                with("r4", |o| {
+                    o.strike = true;
+                    o.anchor = Some("x".into());
+                }),
+                "-p r4: a revision takes --accept, --reject, --strike or --restore",
+            ),
+            (
+                Verb::Edit,
+                with("r4", |o| {
+                    o.reject = true;
+                    o.content = Some("No.".into());
+                }),
+                "-p r4: --content on a revision is the comment of --strike, --restore or --reject --visible",
+            ),
+            (
+                Verb::Edit,
+                with("r4+5", |o| {
+                    o.reject = true;
+                    o.visible = true;
+                    o.content = Some("No.".into());
+                }),
+                "-p r4+5: --content comments one revision; give each its own -p",
+            ),
+            (
+                Verb::Add,
+                with("r4", |o| o.strike = true),
+                "-p r4: add resolves no revision; use edit -p r12 --accept, --reject, --strike or --restore",
+            ),
+        ] {
+            let got = plan_from_flags(verb, &[group], "A", None, None, b"").map(|_| ());
+            assert_eq!(got, Err(want.to_string()));
+        }
+    }
+
     /// `--reply` on `edit` and `add` is the reply `add -p c5 --content`
     /// writes.
     #[test]
@@ -1425,11 +1617,11 @@ mod tests {
             ),
             (
                 with("r0", |o| o.content = Some("x".into())),
-                "-p r0: a revision takes --accept or --reject",
+                "-p r0: a revision takes --accept, --reject, --strike or --restore",
             ),
             (
                 with("r0", |_| {}),
-                "-p r0: a revision takes --accept or --reject",
+                "-p r0: a revision takes --accept, --reject, --strike or --restore",
             ),
             (
                 with("r0", |o| {
@@ -1443,7 +1635,7 @@ mod tests {
                     o.accept = true;
                     o.delete = true;
                 }),
-                "-p r0: a revision takes --accept or --reject",
+                "-p r0: a revision takes --accept, --reject, --strike or --restore",
             ),
             (
                 with("p1", |o| o.reply = Some("x".into())),
@@ -1509,7 +1701,7 @@ mod tests {
             assert_eq!(
                 refusal(Verb::Add, o.clone()),
                 format!(
-                    "-p {}: add resolves no revision; use edit -p r12 --accept or --reject",
+                    "-p {}: add resolves no revision; use edit -p r12 --accept, --reject, --strike or --restore",
                     o.at
                 )
             );

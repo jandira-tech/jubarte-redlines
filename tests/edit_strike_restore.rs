@@ -597,3 +597,149 @@ fn step2_strikes_and_restores_read_as_rejects() {
 fn annex_strikes_and_restores_read_as_rejects() {
     property_family("annex", ANNEX);
 }
+
+/// A `-p AT --reject` group, `--visible` or not.
+fn reject_group(at: &str, visible: bool) -> jubarte::edit::flags::FlagOp {
+    jubarte::edit::flags::FlagOp {
+        at: at.into(),
+        reject: true,
+        visible,
+        ..jubarte::edit::flags::FlagOp::default()
+    }
+}
+
+#[test]
+fn reject_visible_flags_pick_by_kind_per_group() {
+    use jubarte::edit::OperationKind;
+    use jubarte::edit::flags::{Verb, plan_from_flags};
+    let built = plan_from_flags(
+        Verb::Edit,
+        &[reject_group("r4", true), reject_group("r5", true)],
+        CAROL,
+        Some(DATE),
+        None,
+        STEP2,
+    )
+    .unwrap()
+    .plan;
+    assert!(built.resolve_revisions.is_none(), "{built:?}");
+    let kinds: Vec<OperationKind> = built.operations.iter().map(|o| o.kind.clone()).collect();
+    assert_eq!(
+        kinds,
+        [
+            OperationKind::Restore {
+                revision: "r4".into(),
+                comment: None
+            },
+            OperationKind::Strike {
+                revision: "r5".into(),
+                comment: None
+            },
+        ]
+    );
+    // A silent reject beside a visible one stays a silent reject.
+    let mixed = plan_from_flags(
+        Verb::Edit,
+        &[reject_group("r4", true), reject_group("r5", false)],
+        CAROL,
+        Some(DATE),
+        None,
+        STEP2,
+    )
+    .unwrap()
+    .plan;
+    assert_eq!(mixed.operations.len(), 1);
+    assert_eq!(
+        mixed.resolve_revisions.as_ref().unwrap().reject,
+        Some(ChangeFilter::ids(["r5"]))
+    );
+    let out = applied(STEP2, &mixed);
+    let settled = reject_changes(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
+    assert_eq!(accepted(&out.redline), accepted(&settled));
+}
+
+fn cli(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    let says = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{args:?}: {says}");
+    says
+}
+
+#[test]
+fn the_cli_strikes_restores_and_rejects_visibly() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), STEP2).unwrap();
+    let settled = reject_changes(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
+    for (out, groups) in [
+        (
+            "flags.docx",
+            &[
+                "-p",
+                "r5",
+                "--strike",
+                "--content",
+                "Not agreed.",
+                "-p",
+                "r4",
+                "--restore",
+            ][..],
+        ),
+        ("visible.docx", &["-p", "r4+5", "--reject", "--visible"][..]),
+    ] {
+        let mut args = vec!["edit", "in.docx"];
+        args.extend_from_slice(groups);
+        args.extend_from_slice(&["-a", CAROL, "-d", DATE, "-o", out]);
+        cli(dir.path(), &args);
+        let bytes = std::fs::read(dir.path().join(out)).unwrap();
+        validate_output(&bytes);
+        assert_eq!(accepted(&bytes), accepted(&settled), "{out}");
+        // Their changes stay, beside ours.
+        let theirs: Vec<String> = list_changes(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|c| c.author.as_deref() != Some(CAROL))
+            .map(|c| c.id)
+            .collect();
+        for id in ["r4", "r5"] {
+            assert!(theirs.iter().any(|t| t == id), "{out}: {theirs:?}");
+        }
+    }
+}
+
+#[test]
+fn a_strike_listed_before_the_restore_beside_it_composes() {
+    // r4 ("bankers", deleted) sits right before r5 ("insurers", inserted).
+    let out = applied(
+        STEP2,
+        &plan(&json!([
+            {"kind":"strike","revision":"r5","comment":"Not agreed."},
+            {"kind":"restore","revision":"r4"}
+        ])),
+    );
+    let settled = reject_changes(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
+    assert_eq!(accepted(&out.redline), accepted(&settled));
+}
+
+#[test]
+fn a_restore_inside_another_edit_is_refused_not_composed() {
+    let e = apply_plan(
+        STEP2,
+        &plan(&json!([
+            {"kind":"restore","revision":"r4"},
+            {"kind":"replace","paragraph":"p0","find":"the insurers","replacement":"the brokers"}
+        ])),
+    )
+    .unwrap_err();
+    assert!(
+        ["OVERLAPPING_EDITS", "UNSUPPORTED_STRUCTURE"].contains(&e.code.as_str()),
+        "{e}"
+    );
+}

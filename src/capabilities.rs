@@ -546,9 +546,9 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1, 2]);
-        assert_eq!(c.edit_operations.len(), 24);
+        assert_eq!(c.edit_operations.len(), 26);
         assert!(c.operations.fields);
-        for op in ["insert_toc", "redact", "settings"] {
+        for op in ["insert_toc", "redact", "settings", "strike", "restore"] {
             assert!(c.edit_operations.iter().any(|o| o == op), "{op}");
         }
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));

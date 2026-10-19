@@ -16,7 +16,7 @@ use super::{
     EditError, EditOutcome, EditPlan, ExistingRevisions, OperationKind, Resolved, Transaction,
     check_comment, comment_marker, comment_reference_run, editable_insertion, err, excerpt, run_of,
 };
-use crate::changes::{ChangeKind, MoveSide};
+use crate::changes::{Change, ChangeKind, MoveSide};
 use crate::inspect::project_paragraph;
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId};
@@ -115,25 +115,33 @@ pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, 
             reject_visible: false,
         });
     for id in ids {
-        let Some(change) = listed.iter().find(|c| c.id == id) else {
-            continue;
-        };
-        let revision = change.id.clone();
-        let kind = match (change.kind, change.move_side) {
-            (ChangeKind::Deletion, _) | (ChangeKind::Move, Some(MoveSide::From)) => {
-                OperationKind::Restore {
-                    revision,
-                    comment: None,
-                }
-            }
-            _ => OperationKind::Strike {
-                revision,
-                comment: None,
-            },
-        };
-        lowered.operations.push(super::Operation { id: None, kind });
+        if listed.iter().any(|c| c.id == id) {
+            let kind = reject_kind(&listed, id, None);
+            lowered.operations.push(super::Operation { id: None, kind });
+        }
     }
     Ok(Some(lowered))
+}
+
+/// The visible reject of `revision`: a `restore` of a deletion or of a
+/// move's source, a `strike` of anything else, an id `listed` lacks
+/// included (the strike then refuses it as unknown).
+pub(super) fn reject_kind(
+    listed: &[Change],
+    revision: String,
+    comment: Option<String>,
+) -> OperationKind {
+    let restores = listed.iter().find(|c| c.id == revision).is_some_and(|c| {
+        matches!(
+            (c.kind, c.move_side),
+            (ChangeKind::Deletion, _) | (ChangeKind::Move, Some(MoveSide::From))
+        )
+    });
+    if restores {
+        OperationKind::Restore { revision, comment }
+    } else {
+        OperationKind::Strike { revision, comment }
+    }
 }
 
 /// The run content a struck or restored run may hold: text and the
