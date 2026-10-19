@@ -12,7 +12,8 @@ use common::validity::assert_word_valid_package;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::inspect;
 use jubarte::markdown::{
-    DocxOptions, TrackChanges, diff_markdown, markdown_to_docx, resolve_critic,
+    DocxOptions, MarkdownOptions, TrackChanges, diff_markdown, docx_to_markdown, markdown_to_docx,
+    resolve_critic,
 };
 
 use common::markdown_pairs::PAIRS;
@@ -187,50 +188,51 @@ fn changed_blocks_stay_word_structure_inside_the_change() {
     );
 }
 
-/// Issue #1220's oracle: the paragraph text the md reader gets from
-/// the resolved Markdown equals what the docx route writes for the
-/// same input and decision. The md→md path is the change under test;
-/// the md→docx path is the spec. Both routes are read with the same
-/// helper so the assertion sees only their visible text.
+/// `md → docx → md`, with CriticMarkup read as tracked changes when
+/// `critic` is set; the resolved output carries no marks, so the md
+/// route's canonical form reads them as text. The docx→md writer
+/// normalises delimiter flavours and run splits, so equivalent
+/// Markdown compares equal.
+fn canon(markdown: &str, critic: bool) -> String {
+    let options = DocxOptions {
+        critic,
+        ..DocxOptions::default()
+    };
+    let docx = markdown_to_docx(markdown, &options).unwrap().docx;
+    docx_to_markdown(&docx, &MarkdownOptions::default())
+        .unwrap()
+        .markdown
+}
+
+/// `md → docx (marks are tracked changes) → accept/reject → md`: the
+/// canonical form the md→md resolution must agree with.
+fn docx_route(markdown: &str, choice: TrackChanges) -> String {
+    let options = DocxOptions {
+        critic: true,
+        ..DocxOptions::default()
+    };
+    let docx = markdown_to_docx(markdown, &options).unwrap().docx;
+    let docx = match choice {
+        TrackChanges::All => docx,
+        TrackChanges::Accept => accept_revisions(&docx).unwrap(),
+        TrackChanges::Reject => reject_revisions(&docx).unwrap(),
+    };
+    docx_to_markdown(&docx, &MarkdownOptions::default())
+        .unwrap()
+        .markdown
+}
+
+/// Issue #1220's oracle: the resolved Markdown, read back through docx
+/// (`canon`), equals what the docx route writes for the same input and
+/// decision. Paragraph text alone cannot see a code span read as
+/// literal backticks; the canonical form can.
 #[test]
 fn md_and_docx_routes_resolve_a_mark_between_two_spans_to_the_same_text() {
-    fn texts(markdown: &str, critic: bool) -> Vec<String> {
-        let options = DocxOptions {
-            critic,
-            ..DocxOptions::default()
-        };
-        let written = markdown_to_docx(markdown, &options).unwrap().docx;
-        inspect::paragraphs(&written)
-            .unwrap()
-            .into_iter()
-            .map(|p| p.text)
-            .filter(|t| !t.is_empty())
-            .collect()
-    }
-    fn texts_accepted_or_rejected(markdown: &str, choice: TrackChanges) -> Vec<String> {
-        let options = DocxOptions {
-            critic: true,
-            ..DocxOptions::default()
-        };
-        let written = markdown_to_docx(markdown, &options).unwrap().docx;
-        let written = match choice {
-            TrackChanges::All => written,
-            TrackChanges::Accept => accept_revisions(&written).unwrap(),
-            TrackChanges::Reject => reject_revisions(&written).unwrap(),
-        };
-        inspect::paragraphs(&written)
-            .unwrap()
-            .into_iter()
-            .map(|p| p.text)
-            .filter(|t| !t.is_empty())
-            .collect()
-    }
-
     // Each case: the md→md route after `resolve_critic` and the
-    // md→docx route after `accept_revisions`/`reject_revisions` should
-    // produce the same set of paragraph texts. The reader sees the
-    // resolved Markdown's spans as written code spans and emphasis
-    // runs, so the joined form's content is what they all read.
+    // md→docx route after `accept_revisions`/`reject_revisions` write
+    // the same document. The reader sees the resolved Markdown's
+    // spans as written code spans and emphasis runs, so the joined
+    // form's content is what they all read.
     let cases: &[(&str, TrackChanges)] = &[
         ("Use `alpha`{++`beta`++} here.", TrackChanges::Accept),
         ("Use `alpha`{++x++}`beta` here.", TrackChanges::Reject),
@@ -243,12 +245,100 @@ fn md_and_docx_routes_resolve_a_mark_between_two_spans_to_the_same_text() {
     let mut failures = Vec::new();
     for &(input, choice) in cases {
         let resolved = resolve_critic(input, choice);
-        let md_route = texts(&resolved, false);
-        let docx_route = texts_accepted_or_rejected(input, choice);
-        if md_route != docx_route {
+        let md_route = canon(&resolved, false);
+        let want = docx_route(input, choice);
+        if md_route != want {
             failures.push(format!(
-                "input={input:?} {choice:?}\n  md  {md_route:?}\n  doc {docx_route:?}",
+                "input={input:?} {choice:?}\n  resolved {resolved:?}\n  md  {md_route:?}\n  doc {want:?}",
             ));
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Issue #1220's settled criterion: the md→md resolution is equivalent
+/// to the docx route on a canonical form. `canon(md)` is `md → docx →
+/// md` — the docx→md writer normalises delimiter flavours and run
+/// splits, so equivalent Markdown compares equal — and the docx route
+/// for the same input is `md → docx (tracked) → accept/reject → md`,
+/// which is the same canonical form, so the two compare directly.
+/// Comparing paragraph text alone is not enough: a code span read as
+/// literal backticks (`*abc*` for `*a*{++`b`++}*c*`) has the same text.
+///
+/// The seam shapes are the spans a removed (or kept) mark leaves
+/// touching: code, emphasis, strong and strikethrough, in chains and
+/// with bodies of the same kind, a different kind, or plain text.
+/// Every case runs both directions.
+#[test]
+fn md_and_docx_routes_resolve_every_span_seam_alike() {
+    let cases: &[&str] = &[
+        // The issue's four cases.
+        "Use `alpha`{++`beta`++} here.",
+        "Use `alpha`{++x++}`beta` here.",
+        "Use `a`{~~`b`~>`c`~~}`d` here.",
+        "Say *a*{--x--}*b* now.",
+        // Chains of seams join transitively.
+        "`a`{--x--}`b`{--y--}`c`",
+        "`a`{--x--}{--y--}`b`",
+        // Non-ASCII on both sides of a seam.
+        "`é`{--x--}`世`{--y--}`界`",
+        "*é*{--x--}*界*",
+        // A padded code span's content is its CommonMark content.
+        "`` a ``{--x--}`b`",
+        // A kept body of a different kind never merges into the spans.
+        "*a*{++`b`++}*c*",
+        "**a**{++`b`++}**c**",
+        "~~a~~{++`b`++}~~c~~",
+        // A kept body of the same kind joins.
+        "*a*{++*b*++}*c*",
+        "**a**{++**b**++}**c**",
+        "~~a~~{~~x~>~~b~~~~}~~c~~",
+        // A kept body that is a code span between code spans joins,
+        // carrying its literal text.
+        "`a`{++`*b*`++}`c`",
+        // Seams at the paragraph's start and end.
+        "{--x--}`a`{--y--}`b`",
+        "`a`{--x--}`b`{--y--}",
+        "{++*a*++}*b*",
+        "*a*{++*b*++}",
+        // A mark inside a span is no seam at all.
+        "*a{--x--}b*",
+        "`a{--x--}b`",
+        // Marks between plain text stay plain text.
+        "alpha{++beta++}gamma",
+        // A mark between a span and plain text is no join.
+        "`a`{--x--} tail",
+        "head {--x--}`b`",
+        // Three spans in a row of another kind.
+        "**a**{--x--}**b**{--y--}**c**",
+        // A substitution keeping either side.
+        "*a*{~~u~>*b*~~}*c*",
+        // Flavour differences are equivalent under canon.
+        "*a*{--x--}_b_",
+        "Say _a_{--x--}_b_ now.",
+        "***a***{--x--}***b***",
+        "*`a`{--x--}`b`*",
+        // Different kinds sharing a delimiter character cannot touch
+        // either: the later run is rewritten to the other flavour.
+        "*a*{--x--}**b**",
+        "**a**{--x--}*b*",
+        // Emphasis and strong chains, like the code chains.
+        "*a*{--x--}*b*{--y--}*c*",
+        "{++`a`++}`b`",
+        // A newline inside a code span is a space in its content.
+        "`a\nb`{--x--}`c`",
+    ];
+    let mut failures = Vec::new();
+    for &input in cases {
+        for choice in [TrackChanges::Accept, TrackChanges::Reject] {
+            let resolved = resolve_critic(input, choice);
+            let md_route = canon(&resolved, false);
+            let want = docx_route(input, choice);
+            if md_route != want {
+                failures.push(format!(
+                    "input={input:?} {choice:?}\n  resolved {resolved:?}\n  md  {md_route:?}\n  doc {want:?}",
+                ));
+            }
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
@@ -268,24 +358,6 @@ fn md_and_docx_routes_resolve_a_mark_between_two_spans_to_the_same_text() {
 /// in the issue report and left as-is.
 #[test]
 fn md_roundtrip_sample_matches_docx_route_after_resolve() {
-    fn texts(markdown: &str, critic: bool, choice: TrackChanges) -> Vec<String> {
-        let options = DocxOptions {
-            critic,
-            ..DocxOptions::default()
-        };
-        let written = markdown_to_docx(markdown, &options).unwrap().docx;
-        let written = match choice {
-            TrackChanges::All => written,
-            TrackChanges::Accept => accept_revisions(&written).unwrap(),
-            TrackChanges::Reject => reject_revisions(&written).unwrap(),
-        };
-        inspect::paragraphs(&written)
-            .unwrap()
-            .into_iter()
-            .map(|p| p.text)
-            .filter(|t| !t.is_empty())
-            .collect()
-    }
     let cases: &[(&str, TrackChanges)] = &[
         // Mark sits between two `` `alpha` ``s. The docx route never
         // matched the md→md's joined form before the fix.
@@ -300,11 +372,11 @@ fn md_roundtrip_sample_matches_docx_route_after_resolve() {
     let mut failures = Vec::new();
     for &(input, choice) in cases {
         let resolved = resolve_critic(input, choice);
-        let md_route = texts(&resolved, false, TrackChanges::All);
-        let docx_route = texts(input, true, choice);
-        if md_route != docx_route {
+        let md_route = canon(&resolved, false);
+        let want = docx_route(input, choice);
+        if md_route != want {
             failures.push(format!(
-                "input={input:?} {choice:?}\n  md  {md_route:?}\n  doc {docx_route:?}",
+                "input={input:?} {choice:?}\n  resolved {resolved:?}\n  md  {md_route:?}\n  doc {want:?}",
             ));
         }
     }
