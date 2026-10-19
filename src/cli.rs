@@ -899,10 +899,12 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Accept all tracked changes — in the body, headers, footers, notes
-    /// and comment bodies — or select by ID, author or kind. A selection
-    /// resolves the changes it names in every part but cannot name a
-    /// comment-body change by ID.
+    /// Accept all tracked changes, or select by ID, author or kind.
+    ///
+    /// Every part counts: the body, headers, footers, notes and comment
+    /// bodies. An author or kind selection reaches comment bodies too, but
+    /// no ID names a comment-body change, so an ID selection leaves those
+    /// tracked.
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
@@ -924,10 +926,12 @@ pub enum Command {
         #[serde(flatten)]
         render: RenderArgs,
     },
-    /// Reject all tracked changes — in the body, headers, footers, notes
-    /// and comment bodies — or select by ID, author or kind. A selection
-    /// resolves the changes it names in every part but cannot name a
-    /// comment-body change by ID.
+    /// Reject all tracked changes, or select by ID, author or kind.
+    ///
+    /// Every part counts: the body, headers, footers, notes and comment
+    /// bodies. An author or kind selection reaches comment bodies too, but
+    /// no ID names a comment-body change, so an ID selection leaves those
+    /// tracked.
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]

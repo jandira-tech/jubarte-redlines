@@ -331,7 +331,7 @@ List tracked changes with IDs for accept, reject and edit plans
 
 ## jubarte accept
 
-Accept all tracked changes — in the body, headers, footers, notes and comment bodies — or select by ID, author or kind. A selection resolves the changes it names in every part but cannot name a comment-body change by ID
+Accept all tracked changes, or select by ID, author or kind
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
@@ -352,7 +352,7 @@ Accept all tracked changes — in the body, headers, footers, notes and comment 
 
 ## jubarte reject
 
-Reject all tracked changes — in the body, headers, footers, notes and comment bodies — or select by ID, author or kind. A selection resolves the changes it names in every part but cannot name a comment-body change by ID
+Reject all tracked changes, or select by ID, author or kind
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
