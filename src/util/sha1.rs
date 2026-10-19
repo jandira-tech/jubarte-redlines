@@ -190,3 +190,30 @@ pub fn sha1_fingerprint(s: &str) -> u64 {
 pub fn sha1_fingerprint128(s: &str) -> u128 {
     fnv1a_128(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sha1_digest() {
+        // "hello world" -> 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
+        let input = b"hello world";
+        let expected_digest = [
+            0x2a, 0xae, 0x6c, 0x35, 0xc9, 0x4f, 0xcf, 0xb4, 0x15, 0xdb, 0xe9, 0x5f, 0x40, 0x8b,
+            0x9c, 0xe9, 0x1e, 0xe8, 0x46, 0xed,
+        ];
+        assert_eq!(sha1_digest(input), expected_digest);
+    }
+
+    #[test]
+    fn test_sha1_digest_empty() {
+        // empty string -> da39a3ee5e6b4b0d3255bfef95601890afd80709
+        let input = b"";
+        let expected_digest = [
+            0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55, 0xbf, 0xef, 0x95, 0x60,
+            0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09,
+        ];
+        assert_eq!(sha1_digest(input), expected_digest);
+    }
+}
