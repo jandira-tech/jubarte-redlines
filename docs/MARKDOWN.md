@@ -937,9 +937,9 @@ skipped 2 of 4 operations; the fixes are in plan.failed.json
 ```
 
 The output is the bytes the plan without the failed operations writes.
-Operations that stand or fall together share a `group`
-(`"group":"spacing"`): when one fails, the rest of its group is left out
-too, with the code `GROUP_FAILED`. The failed operations go to
+An operation is one unit, its `comment` included. Operations that stand
+or fall together share a `group` (`"group":"spacing"`): when one fails,
+the rest of its group is left out too, with the code `GROUP_FAILED`. The failed operations go to
 `PLAN.failed.json` beside the plan (`FILE_plan.failed.json` beside FILE
 when operation flags made the plan, and into the bundle with
 `--out-dir`): a plan to fix and run on the document just written. Its
@@ -947,8 +947,9 @@ when operation flags made the plan, and into the bundle with
 operation carries a `why` the parser ignores
 (`"why":"ANCHOR_NOT_FOUND: \"two spaces\" does not occur in the
 paragraph"`). In suggesting mode its `existing_revisions` is `keep`: the
-output's tracked changes are the plan's own, and `update_fields` is
-dropped with it. The report's `summary` says `"status":"partial"` with
+output's tracked changes are the plan's own, and `update_fields` is left
+out with it (the skip line says so). The skip line is a warning: `-q`
+keeps it. The report's `summary` says `"status":"partial"` with
 `ops.skipped`, and each operation left out reports `skipped` with its
 code. Never skipped: `STALE_SOURCE`, a `resolve_revisions` that fails,
 and an operation id used twice. A plan whose every operation fails is
@@ -959,7 +960,9 @@ Every write prints the primary output's `sha256:` (the `summary`
 event's `output_sha256`), the digest a follow-up plan's `source_sha256`
 names. A `--dry-run` that passes whole ends with `next:`, the same
 command without `--dry-run`, quoted for a POSIX shell (`-q` drops it); a
-dry run that would skip operations prints none.
+dry run that would skip operations prints none. When the output is
+already there, a note says the next command replaces it, and `next:`
+ends with `--force`.
 
 ### Limits of the agent view
 

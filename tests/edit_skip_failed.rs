@@ -491,10 +491,14 @@ fn dry_run_prints_the_next_command() {
             "out.docx",
         ],
     );
-    assert!(
-        stderr(&out).contains(&format!(
-            "next: {bin} edit in.docx -p p0 --anchor '30 days' --content '45 days' -o out.docx"
-        )),
+    assert_eq!(
+        stderr(&out).lines().last(),
+        Some(
+            format!(
+                "next: {bin} edit in.docx -p p0 --anchor '30 days' --content '45 days' -o out.docx"
+            )
+            .as_str()
+        ),
         "{}",
         stderr(&out)
     );
@@ -511,10 +515,9 @@ fn dry_run_prints_the_next_command() {
             "--dry-run",
         ],
     );
-    assert!(
-        stderr(&out).contains(&format!(
-            "next: {bin} edit in.docx --plan plan.json -o 'O'\\''Brien.docx'"
-        )),
+    assert_eq!(
+        stderr(&out).lines().last(),
+        Some(format!("next: {bin} edit in.docx --plan plan.json -o 'O'\\''Brien.docx'").as_str()),
         "{}",
         stderr(&out)
     );
@@ -634,4 +637,211 @@ fn the_manifest_says_edit_skips_failed_operations() {
     assert_eq!(json["operations"]["edit_skip_failed"], true);
     let text = jubarte::capabilities::capabilities_text(&manifest);
     assert!(text.contains("\nedit_skip_failed: yes\n"), "{text}");
+}
+
+/// A dry run over an output that exists says the next command replaces it,
+/// and that command carries `--force`, as the real run needs.
+#[test]
+fn a_dry_run_over_an_existing_output_says_next_replaces_it() {
+    let good = json!([
+        {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
+    ]);
+    let dir = workspace(&good);
+    std::fs::write(dir.path().join("out.docx"), b"older").unwrap();
+    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let args = [
+        "edit",
+        "in.docx",
+        "--plan",
+        "plan.json",
+        "-o",
+        "out.docx",
+        "--dry-run",
+    ];
+    let out = cli(dir.path(), &args);
+    let says = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "{says}");
+    let lines: Vec<&str> = says.lines().collect();
+    assert_eq!(
+        lines[lines.len() - 2..],
+        [
+            "note: out.docx exists; the next command replaces it (--force)",
+            format!("next: {bin} edit in.docx --plan plan.json -o out.docx --force").as_str(),
+        ],
+        "{says}"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.docx")).unwrap(),
+        b"older"
+    );
+    // Given --force, the command is the argv as it stands.
+    let out = cli(dir.path(), &[&args[..], &["--force"]].concat());
+    let says = stderr(&out);
+    assert!(!says.contains("note:"), "{says}");
+    assert_eq!(
+        says.lines().last(),
+        Some(format!("next: {bin} edit in.docx --plan plan.json -o out.docx --force").as_str()),
+        "{says}"
+    );
+}
+
+/// `-q` silences the status lines; a skip is a warning, and stays.
+#[test]
+fn quiet_keeps_the_skipped_warning_only() {
+    let dir = workspace(&five(&missing()));
+    let out = cli(
+        dir.path(),
+        &[
+            "-q",
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "--skip-failed",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out),
+        "skipped 1 of 5 operations; the fixes are in plan.failed.json\n"
+    );
+}
+
+/// The fixes plan cannot carry `update_fields` under keep: the skip line
+/// says it was left out.
+#[test]
+fn the_skipped_line_says_update_fields_was_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), SOURCE).unwrap();
+    let mut wire = request(&five(&missing()));
+    wire["update_fields"] = json!(true);
+    std::fs::write(dir.path().join("plan.json"), wire.to_string()).unwrap();
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "--skip-failed",
+            "-o",
+            "out.docx",
+        ],
+    );
+    let says = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "{says}");
+    assert!(
+        says.contains(
+            "skipped 1 of 5 operations; the fixes are in plan.failed.json (update_fields left out: it cannot go with existing_revisions keep)"
+        ),
+        "{says}"
+    );
+    let failed: Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("plan.failed.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        failed.get("update_fields").is_none_or(|v| v == false),
+        "{failed}"
+    );
+}
+
+/// Operation flags with --plan record; --skip-failed applies: the refusal
+/// names both ways out.
+#[test]
+fn skip_failed_with_recording_flags_is_refused_with_both_ways_out() {
+    let dir = workspace(&five(&missing()));
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p0",
+            "--content",
+            "x",
+            "--skip-failed",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains(
+            "--skip-failed applies a plan, and with --plan the operation flags record into it: drop --plan to apply them with --skip-failed, or drop --skip-failed to record"
+        ),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// --require-change still holds after the skip: survivors that change
+/// nothing are refused, and nothing is written.
+#[test]
+fn require_change_holds_after_the_skip() {
+    let dir = workspace(&json!([
+        {"kind":"replace","paragraph":"p0","find":"Payment","replacement":"Payment"},
+        missing(),
+    ]));
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "--skip-failed",
+            "--require-change",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("NO_CHANGES_REQUESTED"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!dir.path().join("out.docx").exists());
+    assert!(!dir.path().join("plan.failed.json").exists());
+}
+
+/// An id two operations share cannot say which one failed: never skipped.
+#[test]
+fn a_shared_operation_id_is_never_skipped() {
+    let mut ops = five(&missing());
+    ops[1]["id"] = json!("twin");
+    ops[2]["id"] = json!("twin");
+    let e = prepare(SOURCE, &plan(&ops), &skipping()).unwrap_err();
+    assert_eq!(e.code, "ANCHOR_NOT_FOUND", "{e}");
+}
+
+/// Shell metacharacters in a value are single-quoted.
+#[test]
+fn next_quotes_shell_metacharacters() {
+    let good = json!([
+        {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
+    ]);
+    let dir = workspace(&good);
+    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "a$b*?.docx",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(
+        stderr(&out).lines().last(),
+        Some(format!("next: {bin} edit in.docx --plan plan.json -o 'a$b*?.docx'").as_str()),
+        "{}",
+        stderr(&out)
+    );
 }
