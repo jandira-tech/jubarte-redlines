@@ -57,7 +57,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   the bytes the plan without them writes, exit 0. stderr says `skipped 2 of
   14 operations; the fixes are in PLAN.failed.json`, a plan of the failed
   operations to fix and run on the output (its `source_sha256`, the run's
-  `date`, a `why` on each operation that the parser ignores). Operations
+  `date`, a `why` on each operation that the parser ignores). A
+  positional paragraph (`p3`, `{"index": 3}`) the applied operations moved
+  is renamed to its id in the output, and `why` says `p3 is p4 in the
+  output`; a skipped operation `existing_revisions` keep refuses
+  (`insert_footnote`, `insert_image`, `page_setup`, `fill_control`) says,
+  on the skip line and in `why`, to fix it in the original plan. Operations
   sharing a `"group"` stand or fall together (`GROUP_FAILED`). The report's
   `summary` says `"status":"partial"` with `ops.skipped`. `STALE_SOURCE`, a
   failing `resolve_revisions` and a plan whose every operation fails are
@@ -65,7 +70,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   a build has it (the CLI; not yet the Python and WASM bindings).
 - **Every edit write prints `sha256: <hex>`** of the primary output, also
   the `summary` event's `output_sha256`, and a `--dry-run` that passes
-  whole ends with `next:`, the command that writes it (#1253).
+  whole ends with `next:`, the command that writes it: the same arguments
+  without the `--dry-run` flag (a FILE named `--dry-run` after `--` stays),
+  and `--force` before any `--` when the output, or an `--out-dir` empty
+  or not, is already there (#1253). `cli::next_command` builds it.
 - **Visible rejects: `strike` and `restore` (#1252).** `edit FILE -p r12
   --strike` deletes another author's insertion with your tracked deletion
   inside it; `-p r12 --restore` leaves their deletion and inserts a copy of

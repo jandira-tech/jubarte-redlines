@@ -268,25 +268,13 @@ impl Origin {
             paragraph_nodes,
             paragraph_story,
         } = load_stories(&mut opened)?;
-        // The tag of source paragraph g is g + 1; every other paraId goes,
-        // so no tag is ambiguous.
-        let para_id = W14::name("paraId");
         let mut tagged = open(source)?;
         let Loaded {
             stories: tagged_stories,
             paragraph_nodes: tagged_nodes,
             ..
         } = load_stories(&mut tagged)?;
-        for story in &tagged_stories {
-            for p in tagged.dom.descendants(story.root, Some(&W::p())) {
-                tagged.dom.set_attribute_value(p, &para_id, None);
-            }
-        }
-        for (g, &p) in tagged_nodes.iter().enumerate() {
-            tagged
-                .dom
-                .set_attribute_value(p, &para_id, Some(&format!("{:08X}", g + 1)));
-        }
+        tag_paragraphs(&mut tagged, &tagged_stories, &tagged_nodes);
         // The body's controls are tagged the same way, in their `w:id`
         // (control n gets n + 1, every other control 0).
         let tagged_controls = crate::inspect::body_control_nodes(&tagged.dom, tagged.body);
@@ -299,14 +287,7 @@ impl Origin {
                 tag_control(&mut tagged.dom, sdt, tag);
             }
         }
-        for story in &tagged_stories {
-            let xml = tagged.dom.serialize_document(story.document);
-            tagged.pkg.set_part(&story.part, xml.into_bytes());
-        }
-        let tagged_bytes = tagged
-            .pkg
-            .to_zip()
-            .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
+        let tagged_bytes = package_of(&mut tagged, &tagged_stories)?;
         let mut settled = settle(&tagged_bytes, plan, open(&tagged_bytes)?)?.opened;
         let Loaded {
             stories: settled_stories,
@@ -325,14 +306,7 @@ impl Origin {
                 "settling the plan's revisions twice gave two documents",
             ));
         }
-        let tags: Vec<Option<usize>> = settled_nodes
-            .iter()
-            .map(|&p| {
-                let tag = settled.dom.attribute(p, &para_id)?;
-                let g = usize::from_str_radix(tag, 16).ok()?.checked_sub(1)?;
-                (g < paragraph_nodes.len()).then_some(g)
-            })
-            .collect();
+        let tags = paragraph_tags(&settled.dom, &settled_nodes, paragraph_nodes.len());
         let content_free: Vec<bool> = settled_nodes
             .iter()
             .map(|&p| paragraph_holds_no_content(&settled.dom, p))
@@ -485,6 +459,125 @@ impl Origin {
             })
             .collect()
     }
+}
+
+/// Tag `opened`'s paragraphs: in every story, the `w14:paraId` of
+/// paragraph g (`paragraph_nodes` order) is g + 1, and every other paraId
+/// goes, so no tag is ambiguous.
+fn tag_paragraphs(opened: &mut Opened, stories: &[super::StoryPart], paragraph_nodes: &[NodeId]) {
+    let para_id = W14::name("paraId");
+    for story in stories {
+        for p in opened.dom.descendants(story.root, Some(&W::p())) {
+            opened.dom.set_attribute_value(p, &para_id, None);
+        }
+    }
+    for (g, &p) in paragraph_nodes.iter().enumerate() {
+        opened
+            .dom
+            .set_attribute_value(p, &para_id, Some(&format!("{:08X}", g + 1)));
+    }
+}
+
+/// `opened` as package bytes, its stories' DOMs written back.
+fn package_of(opened: &mut Opened, stories: &[super::StoryPart]) -> Result<Vec<u8>, EditError> {
+    for story in stories {
+        let xml = opened.dom.serialize_document(story.document);
+        opened.pkg.set_part(&story.part, xml.into_bytes());
+    }
+    opened
+        .pkg
+        .to_zip()
+        .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
+}
+
+/// The source paragraph each of `nodes` carries the tag of
+/// ([`tag_paragraphs`]); `None` for one with no tag, or a tag no paragraph
+/// of `count` has.
+fn paragraph_tags(dom: &Dom, nodes: &[NodeId], count: usize) -> Vec<Option<usize>> {
+    let para_id = W14::name("paraId");
+    nodes
+        .iter()
+        .map(|&p| {
+            let tag = dom.attribute(p, &para_id)?;
+            let g = usize::from_str_radix(tag, 16).ok()?.checked_sub(1)?;
+            (g < count).then_some(g)
+        })
+        .collect()
+}
+
+/// A document's addressable paragraphs, as [`Ids`] reads them.
+pub(super) struct Paragraphs {
+    opened: Opened,
+    story_ids: Vec<String>,
+    paragraph_nodes: Vec<NodeId>,
+    paragraph_story: Vec<(usize, usize)>,
+}
+
+impl Paragraphs {
+    pub(super) fn open(docx: &[u8]) -> Result<Self, EditError> {
+        let mut opened = Opened::open(docx).map_err(super::open_error)?;
+        let Loaded {
+            stories,
+            paragraph_nodes,
+            paragraph_story,
+        } = load_stories(&mut opened)?;
+        Ok(Self {
+            opened,
+            story_ids: stories.into_iter().map(|s| s.id).collect(),
+            paragraph_nodes,
+            paragraph_story,
+        })
+    }
+
+    pub(super) fn ids(&self) -> Ids<'_> {
+        Ids {
+            dom: &self.opened.dom,
+            body: self.opened.body,
+            story_ids: self.story_ids.iter().map(String::as_str).collect(),
+            paragraph_nodes: &self.paragraph_nodes,
+            paragraph_story: &self.paragraph_story,
+        }
+    }
+
+    /// The story id and the index in it of paragraph `global`.
+    pub(super) fn place(&self, global: usize) -> (&str, usize) {
+        let (story, local) = self.paragraph_story[global];
+        (&self.story_ids[story], local)
+    }
+}
+
+/// Where each paragraph of `source` is in the document `write` makes of
+/// `source` with its paragraphs tagged: per source paragraph (`load_stories`
+/// order), its index among the written document's paragraphs, when exactly
+/// one of them carries its tag; and those paragraphs.
+pub(super) fn written_places(
+    source: &[u8],
+    write: impl FnOnce(&[u8]) -> Result<Vec<u8>, EditError>,
+) -> Result<(Vec<Option<usize>>, Paragraphs), EditError> {
+    let mut tagged = Opened::open(source).map_err(super::open_error)?;
+    let Loaded {
+        stories,
+        paragraph_nodes,
+        ..
+    } = load_stories(&mut tagged)?;
+    let count = paragraph_nodes.len();
+    tag_paragraphs(&mut tagged, &stories, &paragraph_nodes);
+    let written = Paragraphs::open(&write(&package_of(&mut tagged, &stories)?)?)?;
+    let tags = paragraph_tags(&written.opened.dom, &written.paragraph_nodes, count);
+    let mut places: Vec<Option<usize>> = vec![None; count];
+    let mut seen = vec![0usize; count];
+    for (post, tag) in tags.iter().enumerate() {
+        if let Some(g) = *tag {
+            seen[g] += 1;
+            places[g] = Some(post);
+        }
+    }
+    for (place, &n) in places.iter_mut().zip(&seen) {
+        if n != 1 {
+            *place = None;
+        }
+    }
+    Ok((places, written))
 }
 
 /// Whether a settled paragraph holds only properties and content-free markers.

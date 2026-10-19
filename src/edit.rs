@@ -92,7 +92,7 @@ pub use prepared::{
 /// `section` values.
 pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
 /// `--skip-failed`: what was left out, and the plan to fix and run.
-pub use skip::{SkippedOperation, failed_plan_json};
+pub use skip::{SkippedOperation, failed_plan_json, keep_notes};
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -5782,6 +5782,34 @@ fn selector_of(kind: &OperationKind) -> Option<&Selector> {
         | OperationKind::InsertImage { paragraph, .. }
         | OperationKind::Redact { paragraph, .. } => Some(paragraph),
         _ => None,
+    }
+}
+
+/// Every paragraph an operation names: its paragraph, a comment's
+/// `through`, an inserted paragraph's `like`, a list's `paragraphs`.
+fn selectors_mut(kind: &mut OperationKind) -> Vec<&mut Selector> {
+    match kind {
+        OperationKind::Comment {
+            paragraph, through, ..
+        } => std::iter::once(paragraph).chain(through.as_mut()).collect(),
+        OperationKind::InsertParagraph {
+            paragraph, like, ..
+        } => std::iter::once(paragraph).chain(like.as_mut()).collect(),
+        OperationKind::List { paragraphs, .. } => paragraphs.iter_mut().collect(),
+        OperationKind::Replace { paragraph, .. }
+        | OperationKind::Insert { paragraph, .. }
+        | OperationKind::Delete { paragraph, .. }
+        | OperationKind::DeleteParagraph { paragraph, .. }
+        | OperationKind::FormatParagraph { paragraph, .. }
+        | OperationKind::MergeParagraphs { paragraph, .. }
+        | OperationKind::Rewrite { paragraph, .. }
+        | OperationKind::InsertTable { paragraph, .. }
+        | OperationKind::InsertToc { paragraph, .. }
+        | OperationKind::FormatRun { paragraph, .. }
+        | OperationKind::InsertFootnote { paragraph, .. }
+        | OperationKind::InsertImage { paragraph, .. }
+        | OperationKind::Redact { paragraph, .. } => vec![paragraph],
+        _ => Vec::new(),
     }
 }
 

@@ -11,8 +11,9 @@
 //! unit. A failure no operation is blamed for (`STALE_SOURCE`, a
 //! `resolve_revisions` error, a plan-level refusal) is never skipped.
 
+use super::origin::{Paragraphs, written_places};
 use super::prepared::{PrepareOptions, PreparedEdit, prepare};
-use super::{EditError, EditOutcome, EditPlan, ExistingRevisions, Operation, kind_name};
+use super::{EditError, EditOutcome, EditPlan, ExistingRevisions, Operation, Selector, kind_name};
 use std::collections::BTreeSet;
 
 /// The outcome code of an operation skipped because another operation of
@@ -244,18 +245,25 @@ fn merged(
     prepared
 }
 
-/// The plan of `skipped`, to fix and run on the document written: the
-/// plan's author, the date the run used, `existing_revisions` as given
-/// (`keep` when the output is a redline, whose tracked changes are the
-/// plan's own), `source_sha256` of that document, no `resolve_revisions`
-/// (already settled), and on each operation a `why` the parser ignores.
+/// The plan of `skipped`, to fix and run on the document written (the
+/// redline when `redline`, else the clean copy): the plan's author, the
+/// date the run used, `existing_revisions` as given (`keep` when the output
+/// is a redline, whose tracked changes are the plan's own), `source_sha256`
+/// of that document, no `resolve_revisions` (already settled), and on each
+/// operation a `why` the parser ignores. A positional paragraph (`p3`,
+/// `{"index": 3}`) the operations that landed moved is renamed to its id
+/// in that document, and `why` says so, or says it has none there.
 pub fn failed_plan_json(
+    source: &[u8],
     plan: &EditPlan,
     skipped: &[SkippedOperation],
     date: &str,
     output_sha256: &str,
     existing_revisions: ExistingRevisions,
+    redline: bool,
 ) -> String {
+    let mut operations: Vec<Operation> = skipped.iter().map(|s| s.operation.clone()).collect();
+    let notes = rename_positions(source, plan, skipped, redline, &mut operations);
     let failed = EditPlan {
         source_sha256: Some(output_sha256.to_string()),
         date: Some(date.to_string()),
@@ -263,16 +271,131 @@ pub fn failed_plan_json(
         existing_revisions,
         // update_fields cannot go with keep (check_update_fields).
         update_fields: plan.update_fields && existing_revisions != ExistingRevisions::Keep,
-        operations: skipped.iter().map(|s| s.operation.clone()).collect(),
+        operations,
         ..plan.clone()
     };
     let mut value = serde_json::to_value(&failed).expect("plan serializes");
     if let Some(ops) = value["operations"].as_array_mut() {
-        for (op, s) in ops.iter_mut().zip(skipped) {
-            op["why"] = format!("{}: {}", s.code, s.message).into();
+        for ((op, s), notes) in ops.iter_mut().zip(skipped).zip(&notes) {
+            let keep = keep_note(kind_name(&s.operation.kind), existing_revisions);
+            let mut why = format!("{}: {}", s.code, s.message);
+            for note in notes.iter().chain(keep.as_ref()) {
+                why.push_str("; ");
+                why.push_str(note);
+            }
+            op["why"] = why.into();
         }
     }
     let mut json = serde_json::to_string_pretty(&value).expect("plan serializes");
     json.push('\n');
     json
+}
+
+/// What the plan of the fixes cannot do once per kind, in plan order:
+/// under `existing_revisions` keep (the redline's tracked changes kept), a
+/// skipped operation of a kind keep refuses (`x-jubarte-keep` false).
+pub fn keep_notes(
+    skipped: &[SkippedOperation],
+    existing_revisions: ExistingRevisions,
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    for s in skipped {
+        if let Some(note) = keep_note(kind_name(&s.operation.kind), existing_revisions)
+            && !notes.contains(&note)
+        {
+            notes.push(note);
+        }
+    }
+    notes
+}
+
+fn keep_note(kind: &str, existing_revisions: ExistingRevisions) -> Option<String> {
+    (existing_revisions == ExistingRevisions::Keep && !super::operation_supports_keep(kind)).then(
+        || {
+            format!(
+                "{kind} cannot run under existing_revisions keep: fix it in the original plan and run that on the source"
+            )
+        },
+    )
+}
+
+/// Rename each positional paragraph of `operations` (the skipped ones') to
+/// its id in the document the plan's other operations write, read off a
+/// run of them on `source` with its paragraphs tagged; the notes, per
+/// operation, of what moved and what has no one-to-one paragraph there.
+/// Text selectors, and ids `source` does not have, stay as given.
+fn rename_positions(
+    source: &[u8],
+    plan: &EditPlan,
+    skipped: &[SkippedOperation],
+    redline: bool,
+    operations: &mut [Operation],
+) -> Vec<Vec<String>> {
+    let mut notes = vec![Vec::new(); operations.len()];
+    let Ok(read) = Paragraphs::open(source) else {
+        return notes;
+    };
+    let ids = read.ids();
+    // (operation, selector, source paragraph) of each positional paragraph.
+    let mut named = Vec::new();
+    for (o, op) in operations.iter_mut().enumerate() {
+        for (n, selector) in super::selectors_mut(&mut op.kind).into_iter().enumerate() {
+            if let Ok(Ok(g)) = ids.position(selector) {
+                named.push((o, n, g));
+            }
+        }
+    }
+    if named.is_empty() {
+        return notes;
+    }
+    let left_out: BTreeSet<usize> = skipped.iter().map(|s| s.index).collect();
+    let survivors = EditPlan {
+        source_sha256: None,
+        operations: plan
+            .operations
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !left_out.contains(i))
+            .map(|(_, op)| op.clone())
+            .collect(),
+        ..plan.clone()
+    };
+    let landed = written_places(source, |tagged| {
+        let prepared = prepare(tagged, &survivors, &PrepareOptions::default())?;
+        Ok(if redline {
+            prepared.result.redline
+        } else {
+            prepared.result.clean
+        })
+    });
+    for (o, n, g) in named {
+        let from = ids.id(g);
+        let selector = &mut *super::selectors_mut(&mut operations[o].kind).swap_remove(n);
+        let Ok((places, written)) = &landed else {
+            notes[o].push(format!(
+                "{from} names a paragraph of the source: check it against the output"
+            ));
+            continue;
+        };
+        let Some(post) = places[g].filter(|&post| written.place(post).0 == read.place(g).0) else {
+            notes[o].push(format!(
+                "{from} has no one-to-one paragraph in the output: give it again from the output"
+            ));
+            continue;
+        };
+        let to = written.ids().id(post);
+        if to == from {
+            continue;
+        }
+        *selector = match selector {
+            Selector::Index { story, .. } => Selector::Index {
+                index: written.place(post).1,
+                story: story.clone(),
+            },
+            Selector::Id { .. } => Selector::Id { id: to.clone() },
+            _ => Selector::Name(to.clone()),
+        };
+        notes[o].push(format!("{from} is {to} in the output"));
+    }
+    notes
 }

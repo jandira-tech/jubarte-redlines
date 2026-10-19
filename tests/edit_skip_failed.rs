@@ -198,11 +198,13 @@ fn the_failed_plan_is_a_runnable_plan_of_the_failures() {
     let prepared = prepare(SOURCE, &original, &skipping()).unwrap();
     let output = source_sha256(&prepared.result.redline);
     let failed: Value = serde_json::from_str(&failed_plan_json(
+        SOURCE,
         &original,
         &prepared.skipped,
         DATE,
         &output,
         ExistingRevisions::Keep,
+        true,
     ))
     .unwrap();
     assert_eq!(failed["schema_version"], 1);
@@ -269,11 +271,13 @@ fn skipping_then_fixing_equals_fixing_first() {
             output
         } else {
             let mut failed: Value = serde_json::from_str(&failed_plan_json(
+                SOURCE,
                 &original,
                 &first.skipped,
                 DATE,
                 &source_sha256(&output),
                 ExistingRevisions::Keep,
+                true,
             ))
             .unwrap();
             for op in failed["operations"].as_array_mut().unwrap() {
@@ -843,5 +847,259 @@ fn next_quotes_shell_metacharacters() {
         Some(format!("next: {bin} edit in.docx --plan plan.json -o 'a$b*?.docx'").as_str()),
         "{}",
         stderr(&out)
+    );
+}
+
+/// An existing --out-dir is refused without --force, empty or not, so the
+/// dry run's next command adds it for an empty one too (#1289 review).
+#[test]
+fn a_dry_run_over_an_empty_out_dir_says_next_replaces_it() {
+    let good = json!([
+        {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
+    ]);
+    let dir = workspace(&good);
+    std::fs::create_dir(dir.path().join("out")).unwrap();
+    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let apply = ["edit", "in.docx", "--plan", "plan.json", "--out-dir", "out"];
+    let out = cli(dir.path(), &[&apply[..], &["--dry-run"]].concat());
+    let says = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "{says}");
+    let lines: Vec<&str> = says.lines().collect();
+    assert_eq!(
+        lines[lines.len() - 2..],
+        [
+            "note: out exists; the next command replaces it (--force)",
+            format!("next: {bin} edit in.docx --plan plan.json --out-dir out --force").as_str(),
+        ],
+        "{says}"
+    );
+    let refused = cli(dir.path(), &apply);
+    assert_eq!(refused.status.code(), Some(2), "{}", stderr(&refused));
+    let applied = cli(dir.path(), &[&apply[..], &["--force"]].concat());
+    assert_eq!(applied.status.code(), Some(0), "{}", stderr(&applied));
+}
+
+/// The next command drops the --dry-run flag only: a FILE named --dry-run
+/// after `--` stays, and --force goes before `--` (#1289 review).
+#[test]
+fn the_next_command_keeps_what_follows_the_delimiter() {
+    let good = json!([
+        {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
+    ]);
+    let dir = workspace(&good);
+    std::fs::copy(dir.path().join("in.docx"), dir.path().join("--dry-run")).unwrap();
+    std::fs::write(dir.path().join("out.docx"), b"older").unwrap();
+    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "--plan",
+            "plan.json",
+            "-o",
+            "out.docx",
+            "--dry-run",
+            "--",
+            "--dry-run",
+        ],
+    );
+    let says = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "{says}");
+    assert_eq!(
+        says.lines().last(),
+        Some(
+            format!("next: {bin} edit --plan plan.json -o out.docx --force -- --dry-run").as_str()
+        ),
+        "{says}"
+    );
+    // The command it prints runs.
+    let applied = cli(
+        dir.path(),
+        &[
+            "edit",
+            "--plan",
+            "plan.json",
+            "-o",
+            "out.docx",
+            "--force",
+            "--",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(applied.status.code(), Some(0), "{}", stderr(&applied));
+    assert_ne!(
+        std::fs::read(dir.path().join("out.docx")).unwrap(),
+        b"older"
+    );
+}
+
+/// The fixes keep the output's tracked changes (existing_revisions keep),
+/// and some operations cannot run under keep: a skipped one says where to
+/// run it instead (#1289 review).
+#[test]
+fn a_skipped_operation_keep_refuses_says_where_to_run_it() {
+    let ops = json!([
+        {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
+        {"kind":"insert_footnote","paragraph":"p3","after":"ninety days","text":"A note."},
+    ]);
+    let dir = workspace(&ops);
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "--skip-failed",
+            "-o",
+            "out.docx",
+        ],
+    );
+    let says = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "{says}");
+    let note = "insert_footnote cannot run under existing_revisions keep: fix it in the original plan and run that on the source";
+    assert!(
+        says.contains(&format!(
+            "skipped 1 of 2 operations; the fixes are in plan.failed.json ({note})"
+        )),
+        "{says}"
+    );
+    let failed: Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("plan.failed.json")).unwrap(),
+    )
+    .unwrap();
+    let why = failed["operations"][0]["why"].as_str().unwrap();
+    assert!(
+        why.starts_with("ANCHOR_NOT_FOUND: ") && why.ends_with(&format!("; {note}")),
+        "{why}"
+    );
+    // As it says: fixed, the plan of the fixes is refused on the output.
+    let mut fixed = failed.clone();
+    fixed["operations"][0]["after"] = json!("Notice");
+    std::fs::write(dir.path().join("fixed.json"), fixed.to_string()).unwrap();
+    let retry = cli(
+        dir.path(),
+        &[
+            "edit",
+            "out.docx",
+            "--plan",
+            "fixed.json",
+            "-o",
+            "again.docx",
+        ],
+    );
+    assert_ne!(retry.status.code(), Some(0), "{}", stderr(&retry));
+}
+
+/// A surviving operation that adds a paragraph moves the ids after it: the
+/// plan of the fixes names the paragraphs of the document written, the
+/// redline or the clean copy (#1289 review).
+#[test]
+fn the_failed_plan_names_the_paragraphs_of_the_output() {
+    let ops = json!([
+        {"kind":"insert_paragraph","paragraph":"p0","position":"after","runs":[{"text":"Inserted."}]},
+        {"kind":"replace","paragraph":"p3","find":"within 31 days","replacement":"within 60 days"},
+        {"kind":"replace","paragraph":{"index":1},"find":"fee is late","replacement":"fee is owed"},
+        {"kind":"replace","paragraph":{"contains":"One  space"},"find":"two","replacement":"one"},
+    ]);
+    let original = plan(&ops);
+    let prepared = prepare(SOURCE, &original, &skipping()).unwrap();
+    assert_eq!(prepared.skipped.len(), 3);
+    for (written, redline, existing) in [
+        (&prepared.result.redline, true, ExistingRevisions::Keep),
+        (&prepared.result.clean, false, original.existing_revisions),
+    ] {
+        let failed: Value = serde_json::from_str(&failed_plan_json(
+            SOURCE,
+            &original,
+            &prepared.skipped,
+            DATE,
+            &source_sha256(written),
+            existing,
+            redline,
+        ))
+        .unwrap();
+        let ops = failed["operations"].as_array().unwrap();
+        assert_eq!(ops[0]["paragraph"], "p4", "{failed}");
+        let why = ops[0]["why"].as_str().unwrap();
+        assert!(why.ends_with("; p3 is p4 in the output"), "{why}");
+        assert_eq!(ops[1]["paragraph"], json!({"index": 2}), "{failed}");
+        // A text selector reads the same in the output.
+        assert_eq!(ops[2]["paragraph"], json!({"contains": "One  space"}));
+        assert!(!ops[2]["why"].as_str().unwrap().contains(" in the output"));
+        // Fixed, the plan edits the paragraph its author meant.
+        let mut fixed = failed.clone();
+        fixed["operations"] = json!([ops[0].clone()]);
+        fixed["operations"][0]["find"] = json!("within 30 days");
+        let fixed = EditPlan::from_json(&fixed.to_string()).unwrap();
+        let applied = prepare(written, &fixed, &PrepareOptions::default()).unwrap();
+        let after = texts(&applied.result.clean);
+        assert!(
+            after.iter().any(|t| t == "Notice is due within 60 days."),
+            "{after:?}"
+        );
+        assert!(
+            after.iter().any(|t| t == "Payment is due within 30 days."),
+            "{after:?}"
+        );
+    }
+}
+
+/// Ids the survivors leave in place stay as given, with no note.
+#[test]
+fn the_failed_plan_keeps_ids_nothing_moved() {
+    let ops = five(&missing());
+    let original = plan(&ops);
+    let prepared = prepare(SOURCE, &original, &skipping()).unwrap();
+    let failed: Value = serde_json::from_str(&failed_plan_json(
+        SOURCE,
+        &original,
+        &prepared.skipped,
+        DATE,
+        &source_sha256(&prepared.result.redline),
+        ExistingRevisions::Keep,
+        true,
+    ))
+    .unwrap();
+    assert_eq!(failed["operations"][0]["paragraph"], "p2");
+    let why = failed["operations"][0]["why"].as_str().unwrap();
+    assert!(!why.contains("in the output"), "{why}");
+}
+
+/// Only the parsed --dry-run flag leaves the next command: one an option
+/// takes as its value stays, as does a FILE after `--` (#1289 review).
+#[test]
+fn the_next_command_drops_the_flag_not_a_value_spelled_like_it() {
+    let argv = |args: &[&str]| args.iter().map(ToString::to_string).collect::<Vec<_>>();
+    assert_eq!(
+        jubarte::cli::next_command(
+            &argv(&[
+                "edit",
+                "replace",
+                "f.docx",
+                "--find",
+                "x",
+                "--text",
+                "--dry-run",
+                "--dry-run",
+            ]),
+            false,
+        ),
+        argv(&[
+            "edit",
+            "replace",
+            "f.docx",
+            "--find",
+            "x",
+            "--text",
+            "--dry-run"
+        ])
+    );
+    assert_eq!(
+        jubarte::cli::next_command(
+            &argv(&["edit", "--dry-run", "--plan", "p.json", "--", "--dry-run"]),
+            true,
+        ),
+        argv(&["edit", "--plan", "p.json", "--force", "--", "--dry-run"])
     );
 }
