@@ -447,6 +447,7 @@ fn prepare_and_publish(
                 require_change: delivery.require_change,
                 exact_text: matches!(request, Request::V2(_)),
                 role: PrimaryRole::Clean,
+                ..PrepareOptions::default()
             },
         )
         .map_err(|e| {

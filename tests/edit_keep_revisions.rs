@@ -326,7 +326,6 @@ fn keep_refuses_paragraph_changes_on_tracked_paragraphs() {
     let reformatted = r#"<w:p><w:pPr><w:jc w:val="right"/><w:pPrChange w:id="4" w:author="Other" w:date="2026-09-01T00:00:00Z"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Moved right.</w:t></w:r></w:p>"#;
     let source = docx(&(OTHER.to_string() + tracked_mark + reformatted + &para("Last.")));
     for operations in [
-        r#"[{"kind":"delete_paragraph","paragraph":"p0"}]"#,
         r#"[{"kind":"merge_paragraphs","paragraph":"p1"}]"#,
         r#"[{"kind":"format_paragraph","paragraph":"p2","alignment":"left"}]"#,
         r#"[{"kind":"list","paragraphs":["p2"]}]"#,
@@ -347,6 +346,19 @@ fn keep_refuses_paragraph_changes_on_tracked_paragraphs() {
     )
     .unwrap();
     invariants(&source, &out);
+    // Deleting a paragraph that holds another author's insertion lands
+    // (#1136): the deletion nests in their insertion.
+    let out = apply_plan(
+        &source,
+        &keep(r#"[{"kind":"delete_paragraph","paragraph":"p0"}]"#),
+    )
+    .unwrap();
+    invariants(&source, &out);
+    let red = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(
+        red.contains(r#"w:author="Other""#) && red.contains("<w:delText>45</w:delText>"),
+        "{red}"
+    );
 }
 
 #[test]

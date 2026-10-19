@@ -40,6 +40,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   | Inserted paragraph mark | `<!-- p0 break-ins r7 @AL -->` on an id line | Inline `¶{r7 @AL}` at the paragraph end |
   | Literal escape | Attribution-shaped text after a closer was unprotected | Escape the opening brace, as in `{++new++}\{r1 @AL}` and `¶\{` |
 
+- **`edit::PrepareOptions` has a `syntax` field** (`PlanSyntax`: `V1`,
+  `Flags`, `V2`), the request syntax a refusal quotes. A struct literal adds
+  `..PrepareOptions::default()`.
 
 ### Fixed
 
@@ -244,6 +247,30 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   say, in the binary and in both hosts.
 
 ### Changed
+
+- **Edits inside another author's insertion land (#1136).** Under
+  `existing_revisions: keep`, a replace, deletion or insertion in text
+  another author inserted nests in their insertion: Accept All keeps the
+  edit, Reject All removes their insertion with it. An edit inside your own
+  insertion rewrites it in place. `delete_paragraph` of a paragraph holding
+  revisions nests the deletion in other authors' insertions, leaves
+  deletions as they are and removes your own pending insertion outright; a
+  paragraph holding a move is still refused. The report's `summary` names
+  the pieces of each split insertion under its source id
+  (`split_revisions`, `EditReport::split_revisions`).
+
+- **A refusal names the revision in the way and every route around it
+  (#1108).** Text another author deleted or moved, and a paragraph or run
+  whose mark or formatting change is tracked, are refused with the
+  revision's id, author and text, then accept, reject and a comment, each
+  with what it costs, quoted in the syntax the caller wrote (operation
+  flags, a v1 plan, or an `edit apply` plan). Each JSON route pastes into
+  its plan as written: ids are JSON-escaped, an `edit apply` route names
+  both `accept` and `reject` lists, and its comment carries the refused
+  operation's own `target`. An anchor that reaches into another author's
+  deletion gets this refusal instead of `ANCHOR_NOT_FOUND`, copied with or
+  without the deletion's marks, with a tab or a lookalike character. No
+  refusal says to resolve the change first.
 
 - **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
   `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`
