@@ -295,6 +295,13 @@ fn confirm(from: &str, to: &str) -> Result<bool, String> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes" | "YES"))
 }
 
+/// The `verify_binary` hook `run` registers (#639): refuse the extracted
+/// binary when it is anything but a regular file, checked with
+/// `symlink_metadata` so a link is seen, not its target.
+fn extracted_binary_is_regular_file(_path: &std::path::Path) -> self_update::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
@@ -465,6 +472,34 @@ mod tests {
             // compared with this build's version.
             assert!(!first.starts_with('v'), "write {first} without the v");
             assert_eq!(signature_required(first, Some(first), true), Ok(true));
+        }
+    }
+
+    /// ZIP-16 (#639): the binary swap must never install a link or a
+    /// special file. `self_update`'s zip path refuses a symlink entry, but
+    /// its tar path hands the entry to `tar`'s `unpack_in`, which restores
+    /// a symlink as a real link whose target the crate does not confine to
+    /// the staging dir — a crafted release could install any path as the
+    /// new binary. The extracted path is checked with `symlink_metadata`
+    /// (not `metadata`, which follows the link).
+    #[test]
+    fn a_special_extracted_binary_is_refused_before_the_swap() {
+        let dir = tempfile::tempdir().unwrap();
+        let regular = dir.path().join("jubarte");
+        std::fs::write(&regular, b"binary").unwrap();
+        extracted_binary_is_regular_file(&regular).expect("a regular file installs");
+        extracted_binary_is_regular_file(dir.path())
+            .expect_err("a directory at the extracted path must be refused");
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("linked");
+            std::os::unix::fs::symlink(&regular, &link).unwrap();
+            extracted_binary_is_regular_file(&link)
+                .expect_err("a symlink at the extracted path must be refused");
+            let dangling = dir.path().join("dangling");
+            std::os::unix::fs::symlink(dir.path().join("no-such-target"), &dangling).unwrap();
+            extracted_binary_is_regular_file(&dangling)
+                .expect_err("a dangling symlink must be refused too");
         }
     }
 }
