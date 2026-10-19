@@ -1206,6 +1206,19 @@ pub fn validate_document(docx: &[u8]) -> Result<String, JsValue> {
     serde_json::to_string(&findings).map_err(js_err)
 }
 
+/// The one stderr line `read` and `changes` give an input with validity
+/// findings (`input has 2 validity warnings; jubarte validate FILE lists
+/// them`), or `undefined` when there is none or the package cannot be
+/// validated; `file` is the path as the command line spells it.
+///
+/// Mirrors `jubarte::validate::input_notice`.
+#[wasm_bindgen(js_name = inputNotice)]
+pub fn input_notice(docx: &[u8], file: &str) -> Option<String> {
+    jubarte::validate::validate(docx)
+        .ok()
+        .and_then(|findings| jubarte::validate::input_notice(&findings, file))
+}
+
 /// Every text change from `original` to `edited` must be a revision by
 /// `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
 /// array.
@@ -2269,6 +2282,29 @@ mod tests {
             "no tables\n"
         );
         assert_eq!(comments_text(&docx, None, None).unwrap(), "0 comment(s)\n");
+    }
+
+    #[test]
+    fn input_notice_counts_the_inputs_findings() {
+        // #1256: the line `read` and `changes` print, as the CLI's.
+        let clean = word("Due in 30 days.\n");
+        assert_eq!(input_notice(&clean, "a.docx"), None);
+        let mut pkg = jubarte::opc::PartFs::open(&clean).unwrap();
+        let xml = String::from_utf8(pkg.part_bytes("word/document.xml").unwrap().to_vec()).unwrap();
+        // Text inside a deletion as `w:t`: one Word-fatal error.
+        let broken = xml.replacen(
+            "<w:body>",
+            r#"<w:body><w:p><w:del w:id="90" w:author="A"><w:r><w:t>gone</w:t></w:r></w:del></w:p>"#,
+            1,
+        );
+        assert_ne!(broken, xml);
+        pkg.set_part("word/document.xml", broken.into_bytes());
+        let docx = pkg.to_zip().unwrap();
+        assert_eq!(
+            input_notice(&docx, "my file.docx").as_deref(),
+            Some("input has 1 validity error; jubarte validate 'my file.docx' lists it")
+        );
+        assert_eq!(input_notice(b"no package", "x.docx"), None);
     }
 
     #[test]

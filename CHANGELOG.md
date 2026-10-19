@@ -164,6 +164,38 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **`validate OUT --baseline IN` names only the edit's findings (#1256).**
+  The findings IN already has print as `already in the input: N (not
+  yours)` after the new ones (`new: none`, or `new: N` and their lines),
+  then, when the edits fixed some, `resolved: N (in the input, not in this
+  file)` and those; only new findings fail the run, `--strict` included. A
+  finding is new by identity, never by count: its code, set and part, its
+  element chain without indices (`p#` for a paragraph id, in any story),
+  its message with element indices and paragraph ids normalised, and a
+  place it shares with the input's finding, tried strongest first:
+  nothing around it changed; the tracked change it sits in (`jubarte
+  edit` keeps the input's `w:id` values); its paragraph's `w14:paraId`;
+  its paragraph's text between the same neighbours; that text alone; and
+  last the neighbours alone, its paragraph rewritten. Outside a
+  paragraph the text is its table's, or its element's with the
+  attributes of what holds it (a style's id). So a paragraph added above
+  an inherited finding, even one of the same text, leaves it the
+  input's; the copy an edit adds beside an inherited finding is the one
+  printed as new; and a finding that replaced another, elsewhere, is new
+  at the same total. The
+  field, table and nesting checks now report the element chain they found
+  (`word/document.xml#w:body[0]/w:p[1]/w:r[1]/w:fldChar[0]`) instead of
+  an empty place. `--json` prints each finding with `"status": "new"` or
+  `"baseline"`, new ones first, then one `{"resolved":[…]}` line. With
+  `--author`, IN goes through the same rules, the edits rule included,
+  against the same original (IN, unless `--original` names another), so
+  the other party's changes IN already had are `already in the input`,
+  matched by their id, then by kind, author and text.
+  `--baseline` conflicts with `--repair`. Library:
+  `validate::{baseline, baseline_keyed, identities, validate_baselined,
+  baselined_text, baselined_json, input_notice}`, `Baselined`,
+  `FindingKey`, `Place` and `Finding::identity`; Python `validate_run(…,
+  baseline=)` and `input_notice`, WASM `inputNotice`.
 - **With `--json`, an error is a JSON object on stdout too (#1255).** A
   usage error prints `{"error":{"code":"USAGE","message":"…","usage":"jubarte
   read [OPTIONS] <FILE>"}}`, a runtime error `{"error":{"code":…,"message":…}}`
@@ -338,6 +370,16 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **`read`, `changes` and `comments` name the input's validity findings
+  once (#1256).** An input `validate` would flag earns one stderr line,
+  `input has 2 validity warnings; jubarte validate FILE lists them` (`1
+  validity error`, or `1 validity error and 2 warnings`; `info` findings do
+  not count), so an agent does not take them for its own; `-q` drops it
+  and skips the check. stdout is unchanged, `--json` included: read the
+  JSON from stdout alone, not merged with `2>&1`. The npm CLI's `read` and
+  `changes` and the Python CLI print the same. `--rules edits` without
+  `--author` now says `--rules edits needs --author, and --original or
+  --baseline`.
 - **Edits inside another author's insertion land (#1136).** Under
   `existing_revisions: keep`, a replace, deletion or insertion in text
   another author inserted nests in their insertion: Accept All keeps the

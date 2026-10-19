@@ -505,8 +505,8 @@ fn run_resolution(
     }
 }
 
-fn run_changes(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = read_word(file)?;
+fn run_changes(file: &Path, json: bool, quiet: bool) -> Result<(), String> {
+    let bytes = read_input(file, quiet)?;
     let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
     if !json {
         outln!(
@@ -521,8 +521,14 @@ fn run_changes(file: &Path, json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> Result<(), String> {
-    let bytes = read_word(file)?;
+fn run_comments(
+    file: &Path,
+    json: bool,
+    author: Option<&str>,
+    latest: bool,
+    quiet: bool,
+) -> Result<(), String> {
+    let bytes = read_input(file, quiet)?;
     let comments = jubarte::comments::list_comments(&bytes).map_err(|e| e.to_string())?;
     let comments = jubarte::comments::select_comments(comments, author, latest);
     if !json {
@@ -898,8 +904,8 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
 /// tables the view's selection reaches, then that view (#1161), and
 /// `--track-changes reject` reads the rejected text. A pick that reaches
 /// no table exits 2; what the view refuses, as `read -p` does.
-fn run_read_tables(file: &Path, args: &ReadArgs) -> Result<(), ConvertFailure> {
-    let bytes = read_word(file)?;
+fn run_read_tables(file: &Path, args: &ReadArgs, quiet: bool) -> Result<(), ConvertFailure> {
+    let bytes = read_input(file, quiet)?;
     warn_nested_text_boxes(&bytes);
     let view = jubarte::markdown::read_tables(
         &bytes,
@@ -981,7 +987,7 @@ fn run_for_edit(
             message: format!("{e}"),
         }
     };
-    let bytes = read_word(file).map_err(ConvertFailure::from)?;
+    let bytes = read_input(file, quiet).map_err(ConvertFailure::from)?;
     warn_nested_text_boxes(&bytes);
     let result = for_edit(&bytes, &request).map_err(refused)?;
     let json =
@@ -1013,7 +1019,7 @@ fn run_text(
         return run_for_edit(file, args, output, force, quiet);
     }
     if args.tables {
-        return run_read_tables(file, args);
+        return run_read_tables(file, args, quiet);
     }
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if let Some(path) = output {
@@ -1032,11 +1038,11 @@ fn run_text(
             render: &render,
         };
         check_output(&out)?;
-        let bytes = read_word(file)?;
+        let bytes = read_input(file, quiet)?;
         warn_nested_text_boxes(&bytes);
         return write_output(&out, Produced::Docx(&bytes));
     }
-    let bytes = read_word(file)?;
+    let bytes = read_input(file, quiet)?;
     warn_nested_text_boxes(&bytes);
     if args.json {
         let snapshot = jubarte::markdown::read_snapshot(&bytes, &snapshot_options(args, source)?)
@@ -2401,19 +2407,9 @@ fn next_command(force: bool) -> String {
     let rest: Vec<String> = args.collect();
     std::iter::once(program)
         .chain(jubarte::cli::next_command(&rest, force))
-        .map(|arg| shell_quoted(&arg))
+        .map(|arg| jubarte::cli::shell_word(&arg))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// `arg` as a POSIX shell reads it back: bare when it holds only safe
-/// characters, else single-quoted.
-fn shell_quoted(arg: &str) -> String {
-    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
-    if !arg.is_empty() && arg.chars().all(safe) {
-        return arg.to_string();
-    }
-    format!("'{}'", arg.replace('\'', r"'\''"))
 }
 
 /// One `edit` or `add` invocation, parsed.
@@ -2984,6 +2980,21 @@ fn read_document(path: &Path) -> Result<Vec<u8>, String> {
 fn read_word(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = read_document(path)?;
     admit_word(path, &bytes)?;
+    Ok(bytes)
+}
+
+/// [`read_word`] for a task that reads the document (`read`, `changes`,
+/// `comments`): unless `quiet`, one stderr line says how many validity
+/// findings the input has ([`jubarte::validate::input_notice`]), so they
+/// are not taken for the reader's own, and where `validate` lists them.
+fn read_input(path: &Path, quiet: bool) -> Result<Vec<u8>, String> {
+    let bytes = read_word(path)?;
+    if !quiet
+        && let Ok(findings) = jubarte::validate::validate(&bytes)
+        && let Some(line) = jubarte::validate::input_notice(&findings, &path.to_string_lossy())
+    {
+        eprintln!("{line}");
+    }
     Ok(bytes)
 }
 
@@ -3682,6 +3693,8 @@ struct ValidateJob<'a> {
     rules: &'a [String],
     strict: bool,
     repair: Option<&'a Path>,
+    /// The document the edits started from (`--baseline`).
+    baseline: Option<&'a Path>,
     original: Option<&'a Path>,
     author: Option<&'a str>,
     force: bool,
@@ -3691,9 +3704,14 @@ struct ValidateJob<'a> {
 /// `jubarte validate`: `Ok(true)` when the findings fail the run
 /// ([`jubarte::validate::fails`]), `Err` when a file could not be read or
 /// written or the rules cannot run. With `--repair` the findings are the
-/// repaired package's.
+/// repaired package's; with `--baseline` only the findings the baseline
+/// lacks count ([`jubarte::validate::baseline`]), and the baseline is the
+/// edits rule's original when `--original` is not given.
 fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
-    use jubarte::validate::{fails, findings_text, repair, validate_with};
+    use jubarte::validate::{
+        baselined_json, baselined_text, fails, findings_text, repair, validate_baselined,
+        validate_with,
+    };
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
     if let Some(out) = job.repair {
@@ -3709,12 +3727,30 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         docx = fixed.docx;
     }
     let before = job.original.map(read).transpose()?;
-    let original = before.as_deref().zip(job.author);
     let rules: Vec<&str> = job.rules.iter().map(String::as_str).collect();
+    if let Some(path) = job.baseline {
+        // A baseline that is no Word package is refused by its name.
+        let base = read_word(path)?;
+        let split = validate_baselined(
+            &docx,
+            &base,
+            &rules,
+            before.as_deref(),
+            job.author,
+            Some(&mut jubarte::audit::word_layout),
+        )
+        .map_err(|e| e.to_string())?;
+        if job.json {
+            write_stdout(baselined_json(&split).map_err(|e| e.to_string())?)?;
+        } else {
+            write_stdout(baselined_text(&split))?;
+        }
+        return Ok(fails(&split.new, job.strict));
+    }
     let findings = validate_with(
         &docx,
         &rules,
-        original,
+        before.as_deref().zip(job.author),
         Some(&mut jubarte::audit::word_layout),
     )
     .map_err(|e| e.to_string())?;
@@ -3870,7 +3906,7 @@ fn cli_main() -> ExitCode {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }
         Some(Command::Changes { file, json }) => {
-            return exit_code(run_changes(&file, json));
+            return exit_code(run_changes(&file, json, quiet));
         }
         Some(Command::Comments {
             file,
@@ -3878,7 +3914,7 @@ fn cli_main() -> ExitCode {
             author,
             latest,
         }) => {
-            return exit_code(run_comments(&file, json, author.as_deref(), latest));
+            return exit_code(run_comments(&file, json, author.as_deref(), latest, quiet));
         }
         Some(Command::Accept {
             file,
@@ -4221,6 +4257,7 @@ fn cli_main() -> ExitCode {
             rules,
             strict,
             repair,
+            baseline,
             original,
             author,
             force,
@@ -4231,6 +4268,7 @@ fn cli_main() -> ExitCode {
                 rules: &rules,
                 strict,
                 repair: repair.as_deref(),
+                baseline: baseline.as_deref(),
                 original: original.as_deref(),
                 author: author.as_deref(),
                 force,

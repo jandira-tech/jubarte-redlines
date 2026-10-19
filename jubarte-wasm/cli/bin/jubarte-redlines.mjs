@@ -73,6 +73,18 @@ function read(file, forceKind) {
   return bytes;
 }
 
+/** `read`'s bytes for `read` and `changes`; unless `-q`, one stderr line
+ * says how many validity findings the input has, as the binary's does. (A
+ * binding older than #1256 has no inputNotice and says nothing.) */
+function readInput(file, o) {
+  const docx = read(file);
+  if (!o.quiet && wasm.inputNotice) {
+    const notice = wasm.inputNotice(docx, file);
+    if (notice) console.error(notice);
+  }
+  return docx;
+}
+
 function ensureWritable(file, force) {
   if (fs.existsSync(file) && !force) {
     throw new CliError(`output '${file}' already exists (use --force to overwrite)`);
@@ -218,7 +230,7 @@ const COMMANDS = {
   },
   changes: {
     run(_, [file], o) {
-      const docx = read(file);
+      const docx = readInput(file, o);
       if (!o.json) return void process.stdout.write(wasm.changesText(docx));
       for (const change of JSON.parse(wasm.listChanges(docx))) {
         console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
@@ -229,15 +241,16 @@ const COMMANDS = {
   reject: resolution(false),
   read: {
     run(_, [file], o) {
+      const docx = readInput(file, o);
       if (o.tables) {
         // (A binding older than #1255 has no tablesView; its parser
         // refuses -p and --track-changes here.)
-        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(read(file)));
+        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(docx));
         // With -p, the grids of the tables it reaches, then its view; a
         // pick that reaches no table is a usage error.
         let view;
         try {
-          view = JSON.parse(wasm.tablesView(read(file), JSON.stringify({
+          view = JSON.parse(wasm.tablesView(docx, JSON.stringify({
             trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
             pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined, source: path.basename(file),
           })));
@@ -249,9 +262,9 @@ const COMMANDS = {
         for (const warning of view.warnings) console.error(`warning: ${warning}`);
         return void process.stdout.write(view.markdown);
       }
-      if (o.output != null) return void writeResult(o, read(file), path.basename(file), o);
-      if (o.json) return void console.log(wasm.readJson(read(file), JSON.stringify({ ...selection(o), source: path.basename(file) })));
-      printView(read(file), o, path.basename(file));
+      if (o.output != null) return void writeResult(o, docx, path.basename(file), o);
+      if (o.json) return void console.log(wasm.readJson(docx, JSON.stringify({ ...selection(o), source: path.basename(file) })));
+      printView(docx, o, path.basename(file));
     },
   },
   convert: {

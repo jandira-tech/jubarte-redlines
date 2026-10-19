@@ -1142,10 +1142,14 @@ type ValidateRun = (String, String, bool);
 
 /// `jubarte validate` on bytes: `rules` are rule sets or audit codes
 /// (`None`: `word`, plus `edits` with `original`), `original` and `author`
-/// check tracked edits, `strict` fails on warnings too. Mirrors
-/// `jubarte::validate::validate_with`, `findings_text` and `fails`.
+/// check tracked edits, `strict` fails on warnings too. With `baseline`
+/// (the document the edits started from) only the findings it lacks fail
+/// the run, the JSON Lines and text are `validate --baseline`'s, and it is
+/// the edits rule's original when `original` is not given. Mirrors
+/// `jubarte::validate::validate_with`, `findings_text`, `baseline` and
+/// `fails`.
 #[pyfunction]
-#[pyo3(signature = (docx, *, rules=None, original=None, author=None, strict=false))]
+#[pyo3(signature = (docx, *, rules=None, original=None, author=None, strict=false, baseline=None))]
 fn validate_run(
     py: Python<'_>,
     docx: &[u8],
@@ -1153,10 +1157,28 @@ fn validate_run(
     original: Option<&[u8]>,
     author: Option<&str>,
     strict: bool,
+    baseline: Option<&[u8]>,
 ) -> PyResult<ValidateRun> {
     let rules = rules.unwrap_or_default();
     py.detach(|| {
+        use jubarte::validate::{baselined_json, baselined_text, fails, validate_baselined};
         let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
+        if let Some(base) = baseline {
+            let split = validate_baselined(
+                docx,
+                base,
+                &rules,
+                original,
+                author,
+                Some(&mut jubarte::audit::word_layout),
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok((
+                baselined_json(&split).map_err(|e| e.to_string())?,
+                baselined_text(&split),
+                fails(&split.new, strict),
+            ));
+        }
         let findings = jubarte::validate::validate_with(
             docx,
             &rules,
@@ -1176,6 +1198,20 @@ fn validate_run(
         ))
     })
     .map_err(|e: String| err(e))
+}
+
+/// The one stderr line `read`, `changes` and `comments` give an input with
+/// validity findings (`input has 2 validity warnings; jubarte validate FILE
+/// lists them`), or `None`; `file` is the path as the command line spells
+/// it. Mirrors `jubarte::validate::input_notice`; a package that cannot be
+/// validated has nothing to say.
+#[pyfunction]
+fn input_notice(py: Python<'_>, docx: &[u8], file: &str) -> Option<String> {
+    py.detach(|| {
+        jubarte::validate::validate(docx)
+            .ok()
+            .and_then(|findings| jubarte::validate::input_notice(&findings, file))
+    })
 }
 
 /// `repair_json`'s result: the repaired package and `{"repaired": [...],
@@ -1450,6 +1486,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
+    m.add_function(wrap_pyfunction!(input_notice, m)?)?;
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;

@@ -368,8 +368,12 @@ this document`) fails as `read -p` does.
 
 With `--json` on the command line, an error also prints on stdout as one
 line, `{"error":{"code":"USAGE","message":"unexpected argument '--bogus'
-found","usage":"jubarte read [OPTIONS] <FILE>"}}`, so `2>&1 | jq` or
-`| jq .error.code` reads it; stderr and the exit code stay as they are.
+found","usage":"jubarte read [OPTIONS] <FILE>"}}`, so `| jq .error.code`
+reads it from stdout alone; stderr and the exit code stay as they are.
+stderr is text, the error and, for an input `validate` would flag, the
+one line naming its findings (`input has 2 validity warnings; jubarte
+validate FILE lists them`, which `-q` drops), so pipe stdout alone, never
+`2>&1 | jq`.
 Its `usage` is the task's, a line per form; the `Usage:` line on stderr is
 clap's, which names the flags given. The code is the message's leading
 code (`STALE_SOURCE`), else `USAGE` for an exit 2 and `ERROR` for any

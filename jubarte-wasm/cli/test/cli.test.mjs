@@ -27,6 +27,7 @@ let tmp;
 // rebuilt from a source that has them; until then their tests skip.
 const binding = createRequire(import.meta.url)(path.join(cliDir, "..", "npm"));
 const jsonErrors = typeof binding.runtimeJsonError === "function";
+const inputNotices = typeof binding.inputNotice === "function";
 
 before(() => {
   // The published package resolves jubarte-wasm from npm; here it is the
@@ -1529,4 +1530,20 @@ test("read --json and --tables take the view's options; errors under --json are 
   const missing = run("read", untracked, "--tables", "-p", "t9");
   assert.equal(missing.code, run("read", untracked, "-p", "t9").code);
   assert.match(missing.err, /t9 is not a table of this document/);
+});
+
+test("read and changes name the input's validity findings once; -q drops it (#1256)", { skip: !inputNotices && "the checked-in binding predates #1256" }, () => {
+  copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-1256.docx");
+  const line = "input has 2 validity warnings; jubarte validate received-1256.docx lists them\n";
+  for (const args of [["read", "received-1256.docx", "--no-page-markers"], ["read", "received-1256.docx", "--json"], ["changes", "received-1256.docx"]]) {
+    const r = run(...args);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.err, line, args.join(" "));
+    assert.doesNotMatch(r.out, /validity/);
+  }
+  for (const args of [["-q", "read", "received-1256.docx", "--no-page-markers"], ["changes", "received-1256.docx", "-q"], ["changes", untracked]]) {
+    const r = run(...args);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.err, "", args.join(" "));
+  }
 });
