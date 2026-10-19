@@ -881,6 +881,136 @@ fn zip17_public_boundaries() {
     jubarte::markdown::docx_to_markdown(&control, &jubarte::markdown::MarkdownOptions::default())
         .expect("markdown opens it");
     jubarte::debug::findings(&control).expect("debug opens it");
+
+    // ZIP-10 (#604): the pre-index tail checks refuse hostile ZIP64 shapes
+    // on every route — the declared-count pass runs before any indexing, so
+    // even `debug`, which reports structural defects as findings, fails
+    // here. A valid forced-ZIP64 package is the control: `large_file(true)`
+    // writes 0xFFFFFFFF sizes plus the 0x0001 field and version-needed 45,
+    // and every route resolves it through the ZIP64 extra field.
+    for (what, bytes, code) in [
+        (
+            "ZIP64 count past the budget",
+            zip64_tail_probe(10_013, 0),
+            "INPUT_LIMIT",
+        ),
+        (
+            "ZIP64 end record past the input",
+            zip64_tail_probe(0, 1_000_000),
+            "INVALID_PACKAGE",
+        ),
+        (
+            "ZIP32 count sentinel without a locator",
+            zip64_sentinel_count_probe(),
+            "INVALID_PACKAGE",
+        ),
+    ] {
+        let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
+            .expect_err("{what} probe must be refused");
+        assert_eq!(err.code(), code, "{what}: {err}");
+        for route in [
+            jubarte::opc::PartFs::open(&bytes)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+                .expect_err("{what} PartFs"),
+            jubarte::scrub::scrub(&bytes, &jubarte::scrub::ScrubOptions::default())
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+                .expect_err("{what} scrub"),
+            jubarte::markdown::docx_to_markdown(
+                &bytes,
+                &jubarte::markdown::MarkdownOptions::default(),
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+            .expect_err("{what} markdown"),
+            jubarte::debug::findings(&bytes)
+                .map(|_| ())
+                .expect_err("{what} debug"),
+        ] {
+            assert!(route.contains(code), "{what}: {route}");
+        }
+        let found = jubarte::scrub::leaks(&bytes, "no-such-text-occurs-here");
+        assert!(!found.is_empty(), "{what}: leaks must fail closed");
+    }
+    let forced = zip64_forced_probe();
+    jubarte::admission::admit(&forced, jubarte::admission::InputLimits::compare())
+        .expect("a forced-ZIP64 package admits");
+    jubarte::opc::PartFs::open(&forced).expect("PartFs opens it");
+    jubarte::scrub::scrub(&forced, &jubarte::scrub::ScrubOptions::default())
+        .expect("scrub opens it");
+    jubarte::markdown::docx_to_markdown(&forced, &jubarte::markdown::MarkdownOptions::default())
+        .expect("markdown opens it");
+    jubarte::debug::findings(&forced).expect("debug opens it");
+}
+
+/// A 56-byte ZIP64 end-of-central-directory record (APPNOTE 4.3.14)
+/// declaring `entries`.
+fn eocd64(entries: u64) -> Vec<u8> {
+    let mut record = vec![0x50, 0x4b, 0x06, 0x06];
+    record.extend_from_slice(&44u64.to_le_bytes());
+    record.extend_from_slice(&[45, 0, 45, 0]);
+    record.extend_from_slice(&0u32.to_le_bytes());
+    record.extend_from_slice(&0u32.to_le_bytes());
+    record.extend_from_slice(&entries.to_le_bytes());
+    record.extend_from_slice(&entries.to_le_bytes());
+    record.extend_from_slice(&0u64.to_le_bytes());
+    record.extend_from_slice(&0u64.to_le_bytes());
+    assert_eq!(record.len(), 56);
+    record
+}
+
+/// A valid package whose tail is rewritten ZIP64-shaped: the EOCD's count
+/// fields become the 0xFFFF sentinel, a 20-byte locator (APPNOTE 4.3.15)
+/// points at a real end record inserted before it declaring `entries`, and
+/// `offset_extra` moves the locator's record offset that many bytes — past
+/// the input when large (#604).
+fn zip64_tail_probe(entries: u64, offset_extra: u64) -> Vec<u8> {
+    let bytes = package(|_, _| {});
+    let eocd_at = bytes.len() - 22;
+    assert_eq!(&bytes[eocd_at..eocd_at + 4], b"PK\x05\x06");
+    let mut out = bytes[..eocd_at].to_vec();
+    out.extend_from_slice(&eocd64(entries));
+    let record_at = u64::try_from(out.len()).unwrap() - 56;
+    out.extend_from_slice(&[0x50, 0x4b, 0x06, 0x07]);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&(record_at + offset_extra).to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
+    let mut eocd = bytes[eocd_at..].to_vec();
+    eocd[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
+    eocd[10..12].copy_from_slice(&u16::MAX.to_le_bytes());
+    out.extend_from_slice(&eocd);
+    out
+}
+
+/// A valid package whose EOCD count fields carry the 0xFFFF sentinel but
+/// no ZIP64 locator precedes them (#604): the declared count cannot be
+/// trusted, so the package is refused rather than indexed.
+fn zip64_sentinel_count_probe() -> Vec<u8> {
+    let mut bytes = package(|_, _| {});
+    let eocd_at = bytes.len() - 22;
+    assert_eq!(&bytes[eocd_at..eocd_at + 4], b"PK\x05\x06");
+    bytes[eocd_at + 8..eocd_at + 10].copy_from_slice(&u16::MAX.to_le_bytes());
+    bytes[eocd_at + 10..eocd_at + 12].copy_from_slice(&u16::MAX.to_le_bytes());
+    bytes
+}
+
+/// A valid small package written `large_file(true)`: every entry carries
+/// the 0x0001 ZIP64 extra field, 0xFFFFFFFF size sentinels and
+/// version-needed 45 — the shape ZIP-10 (#604) refuses to write but every
+/// route must read (#604's descriptor/UTF-16-style control).
+fn zip64_forced_probe() -> Vec<u8> {
+    package(|writer, _| {
+        writer
+            .start_file(
+                "word/media/wide.bin",
+                SimpleFileOptions::default()
+                    .compression_method(CompressionMethod::Stored)
+                    .large_file(true),
+            )
+            .unwrap();
+        writer.write_all(b"wide").unwrap();
+    })
 }
 
 #[test]
