@@ -736,6 +736,13 @@ fn reject_content(
     }
     let reverted =
         reject_revisions_for_part_transform(dom, root).expect("reject: root must not be dropped");
+    // O.0 (#1243): before the reversal, drop only the orphan moveTo range
+    // markers. The reversal would turn them into moveFrom ranges whose
+    // unwrapped content A.2 deletes on the accept pass below, but Word keeps
+    // an orphan moveTo range's content on Reject (#1235). Orphan moveFrom
+    // markers survive the reversal as moveTo markers — inert for A.2/A.4,
+    // stripped by A.10 — so their content is kept too (#1243).
+    let reverted = normalize_orphan_moves(dom, reverted, OrphanMovePass::RejectMoveToMarkers);
     let reversed = reverse_revisions_transform(dom, reverted);
     let derssid = remove_rsid_transform(dom, reversed).expect("reject: root not dropped by rsid");
     accept_content(dom, derssid, keep_comments, kept)
@@ -1129,24 +1136,44 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
     ne
 }
 
-// ─────────────── O.0 — orphan move normalization (#1235) ────────────────────
+// ────────── O.0 — orphan move normalization (#1235, #1243) ───────────
 
-/// #1235: a `w:moveTo` / `w:moveFrom` is an ORPHAN when no range of the other
-/// kind shares its `w:name` in the same part — a bare `moveTo` has no `w:name`
-/// at all, so it is an orphan unless it sits inside a paired `moveToRange`.
-/// Word keeps an orphan `moveTo` like an insertion and an orphan `moveFrom`
-/// like a deletion; only the elements themselves carry moved content. The
-/// range markers around an orphan move mean nothing on their own: leaving a
-/// `moveFromRange` unpaired lets A.2 (or A.4 for `customXml…` markers) delete
-/// every unwrapped run inside it, which is the untracked-text loss of #1235.
+/// Which orphan-move cleanup a resolution path runs (#1243).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OrphanMovePass {
+    /// Accept (and Reject, on its reversed tree): orphan `moveTo` elements
+    /// become `w:ins` and orphan `moveFrom` elements become `w:del`; range
+    /// markers stay. Word deletes an orphan `moveFromRange`'s unwrapped
+    /// content on Accept (#1243), which is A.2's own reading of the
+    /// markers, and A.10 strips every leftover marker afterwards.
+    AcceptElements,
+    /// Reject, before the reversal: drop only orphan `moveToRange…`
+    /// markers (no element conversion). The reversal would otherwise turn
+    /// them into `moveFromRange` markers whose unwrapped content A.2
+    /// deletes on the accept pass below, while Word keeps an orphan
+    /// `moveToRange`'s content on Reject (#1235).
+    RejectMoveToMarkers,
+}
+
+/// #1235, #1243: a `w:moveTo` / `w:moveFrom` is an ORPHAN when no range of
+/// the other kind shares its `w:name` in the same part — a bare `moveTo`
+/// has no `w:name` at all, so it is an orphan unless it sits inside a
+/// paired `moveToRange`. Word keeps an orphan `moveTo` like an insertion
+/// and an orphan `moveFrom` like a deletion; only the elements themselves
+/// carry moved content.
 ///
-/// Normalize before every resolution step: orphan `moveTo` → `w:ins`, orphan
-/// `moveFrom` → `w:del`, orphan range markers (all four flavors) → dropped.
-/// Reject reverses first, so an orphan `moveTo` arrives here as `moveFrom`
-/// and resolves exactly like a rejected insertion. A well-formed move —
-/// `moveFromRange`/`moveToRange` sharing a `w:name` — keeps its markers and
-/// its `moveFrom`/`moveTo` elements and is untouched.
-fn normalize_orphan_moves(dom: &mut Dom, root: NodeId) -> NodeId {
+/// [`OrphanMovePass::AcceptElements`] rewrites those elements to
+/// `w:ins`/`w:del` and leaves every range marker in place: Word deletes the
+/// unwrapped content of a `moveFromRange` on Accept whether or not a
+/// `moveToRange` shares its `w:name` (#1243), so A.2 (A.4 for the
+/// `customXml…` markers) must still see an orphan `moveFromRange`.
+/// [`OrphanMovePass::RejectMoveToMarkers`] drops only orphan
+/// `moveToRange`/`customXmlMoveToRange` markers, before the reversal turns
+/// them into `moveFromRange` markers whose content A.2 would wrongly
+/// delete — Word keeps it (#1235). A well-formed move —
+/// `moveFromRange`/`moveToRange` sharing a `w:name` — keeps its markers
+/// and its `moveFrom`/`moveTo` elements and is untouched.
+fn normalize_orphan_moves(dom: &mut Dom, root: NodeId, pass: OrphanMovePass) -> NodeId {
     let ns = W::URI;
     let mut from_names: HashSet<String> = HashSet::new();
     let mut to_names: HashSet<String> = HashSet::new();
@@ -1169,17 +1196,23 @@ fn normalize_orphan_moves(dom: &mut Dom, root: NodeId) -> NodeId {
             _ => {}
         }
     }
-    if from_names.is_empty() && to_names.is_empty() {
-        // Ranges cannot tell orphan from paired without names, but a bare
-        // `w:moveTo` / `w:moveFrom` is still orphaned: it has no `w:name`
-        // to pair with anything.
-        let has_move = dom.descendants_and_self(root, None).into_iter().any(|e| {
-            dom.name(e)
-                .is_some_and(|n| n == W::move_to() || n == W::move_from())
-        });
-        if !has_move {
-            return root;
+    match pass {
+        // No moveTo range markers exist → nothing to drop before the
+        // reversal.
+        OrphanMovePass::RejectMoveToMarkers if to_names.is_empty() => return root,
+        OrphanMovePass::AcceptElements if from_names.is_empty() && to_names.is_empty() => {
+            // Ranges cannot tell orphan from paired without names, but a bare
+            // `w:moveTo` / `w:moveFrom` is still orphaned: it has no `w:name`
+            // to pair with anything.
+            let has_move = dom.descendants_and_self(root, None).into_iter().any(|e| {
+                dom.name(e)
+                    .is_some_and(|n| n == W::move_to() || n == W::move_from())
+            });
+            if !has_move {
+                return root;
+            }
         }
+        _ => {}
     }
 
     let mut to_ins: HashSet<NodeId> = HashSet::new();
@@ -1198,23 +1231,16 @@ fn normalize_orphan_moves(dom: &mut Dom, root: NodeId) -> NodeId {
             "moveFromRangeStart" | "customXmlMoveFromRangeStart" => {
                 let id = dom.attribute(e, &W::id()).unwrap_or("").to_string();
                 let name = dom.attribute(e, &W::name("name")).unwrap_or("").to_string();
-                if !to_names.contains(&name) {
-                    drop_markers.insert(e);
-                }
                 open_from.insert(id, name);
             }
             "moveFromRangeEnd" | "customXmlMoveFromRangeEnd" => {
                 let id = dom.attribute(e, &W::id()).unwrap_or("");
-                if let Some(name) = open_from.remove(id)
-                    && !to_names.contains(&name)
-                {
-                    drop_markers.insert(e);
-                }
+                open_from.remove(id);
             }
             "moveToRangeStart" | "customXmlMoveToRangeStart" => {
                 let id = dom.attribute(e, &W::id()).unwrap_or("").to_string();
                 let name = dom.attribute(e, &W::name("name")).unwrap_or("").to_string();
-                if !from_names.contains(&name) {
+                if pass == OrphanMovePass::RejectMoveToMarkers && !from_names.contains(&name) {
                     drop_markers.insert(e);
                 }
                 open_to.insert(id, name);
@@ -1222,18 +1248,25 @@ fn normalize_orphan_moves(dom: &mut Dom, root: NodeId) -> NodeId {
             "moveToRangeEnd" | "customXmlMoveToRangeEnd" => {
                 let id = dom.attribute(e, &W::id()).unwrap_or("");
                 if let Some(name) = open_to.remove(id)
+                    && pass == OrphanMovePass::RejectMoveToMarkers
                     && !from_names.contains(&name)
                 {
                     drop_markers.insert(e);
                 }
             }
-            "moveTo" if tag.tag_type != TagType::EndElement => {
+            "moveTo"
+                if tag.tag_type != TagType::EndElement
+                    && pass == OrphanMovePass::AcceptElements =>
+            {
                 let inside_paired_range = open_to.values().any(|name| from_names.contains(name));
                 if !inside_paired_range {
                     to_ins.insert(e);
                 }
             }
-            "moveFrom" if tag.tag_type != TagType::EndElement => {
+            "moveFrom"
+                if tag.tag_type != TagType::EndElement
+                    && pass == OrphanMovePass::AcceptElements =>
+            {
                 let inside_paired_range = open_from.values().any(|name| to_names.contains(name));
                 if !inside_paired_range {
                     to_del.insert(e);
@@ -3456,10 +3489,14 @@ fn accept_content(
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
-        // O.0: normalize orphan moves first — the comment/bookmark prepasses
-        // and A.2/A.4 all treat matched moveFrom-range content as deleted, so
-        // orphan markers must be gone before any of them runs (#1235).
-        let e = normalize_orphan_moves(dom, e);
+        // O.0: normalize orphan move elements first — the comment/bookmark
+        // prepasses and A.2/A.4 all treat matched moveFrom-range content as
+        // deleted, so orphan `moveTo`/`moveFrom` elements must be `w:ins`/
+        // `w:del` before any of them runs (#1235). No range marker is
+        // dropped here: Word deletes an orphan moveFrom range's unwrapped
+        // content on Accept (#1243), which is A.2's own doing, and A.10
+        // strips every leftover marker afterwards.
+        let e = normalize_orphan_moves(dom, e, OrphanMovePass::AcceptElements);
         if keep_comments {
             kept.extend(comments::keep_wholly_deleted_comments(dom, e));
         }

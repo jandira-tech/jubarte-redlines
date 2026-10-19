@@ -49,11 +49,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `w:moveTo` whose `w:name` range has no `w:moveFrom` counterpart (or a bare
   move element with no range at all) was treated as moved content: Reject All
   deleted every run inside the orphaned range markers, wrapped or not.
-  Orphan moves now resolve like `w:ins`/`w:del` — only the runs a `w:moveTo`
-  or `w:moveFrom` element wraps carry move semantics, and unpaired range
-  markers are dropped — so `jubarte reject` keeps `Keep | B` on the #1235
-  probe, as Word's Reject All does. Well-formed moves (a `moveFrom` source
-  and `moveTo` destination sharing a `w:name`) are unchanged.
+  Orphan move elements now resolve like `w:ins`/`w:del`, and on Reject the
+  markers of an orphan `moveTo` range are dropped before the ranges are
+  reversed, so `jubarte reject` keeps `Keep | B` on the #1235 probe, as
+  Word's Reject All does. An orphan `moveFrom` range still deletes its
+  unwrapped content on Accept, as Word's Accept All does (#1243: the first
+  version of this fix dropped those markers too and kept the content).
+  Well-formed moves (a `moveFrom` source and `moveTo` destination sharing a
+  `w:name`) are unchanged.
 
 - **`accept`/`reject` settle tracked changes inside comment bodies**
   (`word/comments.xml`), as Word's Accept/Reject All do. An `--author` or
