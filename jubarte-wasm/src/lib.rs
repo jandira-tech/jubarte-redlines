@@ -1563,8 +1563,9 @@ mod tests {
             Some(r#"{"oldFormat":"docx","newFormat":"docx"}"#),
         )
         .unwrap();
-        // The writer emits a substitution insertion-first (document order).
-        assert!(marked.contains("{++45++}{--30--}") && marked.contains("{++45++}{--60--}"));
+        // The writer uses Word typing order: deletion before insertion.
+        // The snapshot preserves that document order.
+        assert!(marked.contains("{--30--}{++45++}") && marked.contains("{--60--}{++45++}"));
         for options in [r#"{"acceptChanges":true}"#, r#"{"format":"word"}"#] {
             assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
         }
@@ -1832,8 +1833,10 @@ mod tests {
         let out = diffed(&word(OLD), NEW.as_bytes(), None);
         let text = out["text"].as_str().unwrap();
         assert!(text.starts_with("--- a/old.docx\n+++ b/new.md\t"), "{text}");
+        // Compare keeps its insertion-first order, unlike typed replacements
+        // and the Markdown-only diff above. The patch follows its XML.
         assert!(
-            text.contains("@@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"),
+            text.contains("@@ [p1] @@\nPayment is due in {+45+}[-30-] days.\n"),
             "{text}"
         );
         let json = diff_documents(
@@ -2123,9 +2126,10 @@ mod tests {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
         let changes = changes_text(&docx).unwrap();
         assert!(
-            // A substitution is written as Word writes one: insertion first.
+            // Word typing order: the deletion precedes the insertion, and
+            // the listing assigns revision ids in that document order.
             changes.starts_with(
-                "r1\tinsertion\ttext\tRedline\tp0\t\"45\"\nr2\tdeletion\ttext\tRedline\tp0\t\"30\"\n"
+                "r1\tdeletion\ttext\tRedline\tp0\t\"30\"\nr2\tinsertion\ttext\tRedline\tp0\t\"45\"\n"
             ),
             "{changes}"
         );
