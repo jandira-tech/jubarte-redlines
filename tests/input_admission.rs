@@ -1036,3 +1036,100 @@ fn issue650_attribute_overrides_are_recognized() {
         assert!(parsed.is_ok(), "{key} must be configurable: {parsed:?}");
     }
 }
+
+#[test]
+fn issue650_raised_attribute_limits_survive_changed_compare() {
+    use jubarte::admission::{InputLimitOverrides, admit};
+    use jubarte::xmllinq::{Dom, XName, parse::try_parse_xdocument_with_limits};
+    let base = WmlComparerSettings::default();
+    let overrides = InputLimitOverrides::from_json(
+        r#"{"max_element_attributes":4096,"max_start_tag_bytes":268435456}"#,
+    )
+    .unwrap();
+    let limits = overrides.apply(base.input_limits);
+    let settings = base.with_input_limits(limits);
+    let attrs: String = (0..2000).map(|i| format!(" c:a{i}='v{i}'")).collect();
+    let xml = DOCUMENT
+        .replace("<w:p>", &format!("<w:p{attrs}>"))
+        .replace("<w:document ", "<w:document xmlns:c='urn:issue650' ");
+    let original = package_with_document(&xml.replace("hello", "Alice greets Bob"));
+    let modified = package_with_document(&xml.replace("hello", "Alice greets Carol Diaz"));
+    admit(&original, limits).expect("active limits admit original");
+    admit(&modified, limits).expect("active limits admit modified");
+    let compared = std::panic::catch_unwind(|| {
+        compare_documents_with_settings(&original, &modified, &settings)
+    });
+    assert!(
+        compared.is_ok(),
+        "comparison with active limits must return without a panic"
+    );
+    let output = compared
+        .unwrap()
+        .expect("comparison with active limits succeeds");
+    let package = jubarte::opc::PartFs::open(&output).unwrap();
+    let xml = package.part_string("word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = try_parse_xdocument_with_limits(&mut dom, &xml, limits).unwrap();
+    let ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    assert!(
+        !dom.descendants(doc, Some(&XName::get("ins", ns)))
+            .is_empty(),
+        "text change must produce an insertion"
+    );
+    let paragraphs = dom.descendants(doc, Some(&XName::get("p", ns)));
+    assert!(!paragraphs.is_empty());
+    for paragraph in paragraphs {
+        // Namespaced extensions survive; inherited-validity repair removes unqualified attributes.
+        // The comparer can add revision metadata; assert every source attribute survives.
+        for i in 0..2000 {
+            assert_eq!(
+                dom.attribute(paragraph, &XName::get(&format!("a{i}"), "urn:issue650")),
+                Some(format!("v{i}").as_str())
+            );
+        }
+    }
+}
+
+#[test]
+fn issue650_markdown_converts_default_and_raised_admitted_widths() {
+    use jubarte::admission::{InputLimitOverrides, admit};
+    let raised = InputLimitOverrides::from_json(
+        r#"{"max_element_attributes":4096,"max_start_tag_bytes":268435456}"#,
+    )
+    .unwrap()
+    .apply(InputLimits::default());
+    for count in [1024, 2000] {
+        let attrs: String = (0..count).map(|i| format!(" a{i}='v{i}'")).collect();
+        let xml = DOCUMENT
+            .replace("<w:p>", &format!("<w:p{attrs}>"))
+            .replace("hello", "Alice greets Carol Diaz");
+        let bytes = package_with_document(&xml);
+        let limits = if count == 1024 {
+            InputLimits::default()
+        } else {
+            raised
+        };
+        admit(&bytes, limits).expect("package admitted under selected limits");
+        let converted = std::panic::catch_unwind(|| {
+            jubarte::markdown::docx_to_markdown(
+                &bytes,
+                &jubarte::markdown::MarkdownOptions::default(),
+            )
+        });
+        assert!(
+            converted.is_ok(),
+            "converter must return without a panic for count {count}"
+        );
+        let converted = converted.unwrap();
+        assert!(
+            converted.is_ok(),
+            "converter must accept admitted count {count}: {converted:?}"
+        );
+        assert!(
+            converted
+                .unwrap()
+                .markdown
+                .contains("Alice greets Carol Diaz")
+        );
+    }
+}
