@@ -45,6 +45,7 @@
 //! | `NESTED_SAME_REVISION` | no: Word opens direct same-kind nests faithfully (info); alternating nests misread reject-all (warning); probe 2026-10-17, #1134 | no |
 //! | `CELL_WITHOUT_PARAGRAPH` | yes | yes: an empty paragraph is appended |
 //! | `NOTE_REFERENCE_DANGLING` | yes | no |
+//! | `DUPLICATE_EXPANDED_ATTRIBUTE` | yes: aliased duplicate refused by Word (#650) | no |
 //! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
@@ -72,7 +73,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +175,7 @@ pub fn traits(code: &str) -> (bool, bool) {
         "MISSING_CONTENT_TYPE"
         | "OVERRIDE_WITHOUT_PART"
         | "MALFORMED_XML"
+        | "DUPLICATE_EXPANDED_ATTRIBUTE"
         | "MISSING_REL_TARGET"
         | "PICTURE_BULLET_UNDEFINED"
         | "COMMENT_PARTS_INCONSISTENT"
@@ -197,12 +198,13 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 26] = [
+const RING1_CODES: [&str; 27] = [
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
     "MALFORMED_XML",
+    "DUPLICATE_EXPANDED_ATTRIBUTE",
     "DANGLING_RELATIONSHIP",
     "DUPLICATE_RID",
     "MISSING_REL_TARGET",
@@ -749,12 +751,42 @@ fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
                 ));
                 continue;
             };
-            let mut reader = Reader::from_str(&xml);
+            let mut reader = quick_xml::NsReader::from_str(&xml);
             reader.config_mut().trim_text(false);
             let mut buf = Vec::new();
             loop {
                 match reader.read_event_into(&mut buf) {
                     Ok(Event::Eof) => break,
+                    Ok(Event::Start(tag) | Event::Empty(tag)) => {
+                        let mut expanded = HashSet::new();
+                        for attr in tag.attributes().with_checks(false).flatten() {
+                            if attr.key.as_ref() == "xmlns"
+                                || attr.key.as_ref().starts_with("xmlns:")
+                            {
+                                continue;
+                            }
+                            let (namespace, local) = reader.resolver().resolve_attribute(attr.key);
+                            let namespace = match namespace {
+                                quick_xml::name::ResolveResult::Bound(ns) => {
+                                    quick_xml::escape::unescape(ns.as_ref()).map_or_else(
+                                        |_| ns.as_ref().to_string(),
+                                        |uri| uri.into_owned(),
+                                    )
+                                }
+                                quick_xml::name::ResolveResult::Unbound => String::new(),
+                                quick_xml::name::ResolveResult::Unknown(_) => continue,
+                            };
+                            if !expanded.insert((namespace, local.as_ref().to_string())) {
+                                let element = tag.name().as_ref().to_string();
+                                out.push(Finding::new(
+                                    "DUPLICATE_EXPANDED_ATTRIBUTE",
+                                    &name,
+                                    &element,
+                                    format!("part '{name}', element <{element}>: attribute {} repeats an expanded name", attr.key.as_ref()),
+                                ));
+                            }
+                        }
+                    }
                     Ok(_) => {}
                     Err(e) => {
                         out.push(Finding::new(

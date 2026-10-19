@@ -2034,3 +2034,60 @@ fn split_move_ranges_are_a_ring1_warning_once() {
         );
     }
 }
+
+#[test]
+fn issue650_aliased_duplicate_attribute_is_word_fatal() {
+    for (part, element, shape) in [
+        (
+            "word/document.xml",
+            "w:p",
+            "<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:a='urn:alias' xmlns:b='urn:alias'><w:body><w:p a:x='Alice' b:x='Bob'><w:r><w:t>Alice, Bob, and Carol Diaz</w:t></w:r></w:p></w:body></w:document>",
+        ),
+        (
+            "word/header1.xml",
+            "w:hdr",
+            "<w:hdr xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' a:x='Alice' b:x='Bob' xmlns:a='urn:alias' xmlns:b='urn:alias'/>",
+        ),
+        (
+            "word/footer1.xml",
+            "w:ftr",
+            "<w:ftr xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:a='urn:alias' xmlns:b='urn:ali&#97;s' a:x='Alice' b:x='Bob'/>",
+        ),
+    ] {
+        let bytes = zip_with_parts(&[(part, shape)]);
+        let pkg = PartFs::open(&bytes).unwrap();
+        let findings: Vec<_> = jubarte::validate::ring1(&pkg)
+            .into_iter()
+            .filter(|f| f.code == "DUPLICATE_EXPANDED_ATTRIBUTE")
+            .collect();
+        assert_eq!(
+            findings.len(),
+            1,
+            "aliased duplicate must be caught in {part}: {findings:?}"
+        );
+        let finding = &findings[0];
+        assert!(finding.word_fatal && !finding.repairable, "{finding:?}");
+        assert_eq!(finding.severity, "error");
+        assert_eq!(finding.part, part);
+        assert!(finding.location.contains(element), "{finding:?}");
+        assert!(finding.message.contains(element), "{finding:?}");
+    }
+}
+
+#[test]
+fn issue650_distinct_attribute_namespaces_are_valid() {
+    for shape in [
+        "<r xmlns:a='urn:a' xmlns:b='urn:b' a:x='Alice' b:x='Bob'/>",
+        "<r xmlns='urn:a' xmlns:a='urn:a' x='Alice' a:x='Bob'/>",
+        "<r xmlns:a='urn:a' xmlns:b='urn:a'><s xmlns:b='urn:b' a:x='Alice' b:x='Bob'/><s a:x='Carol Diaz'/></r>",
+    ] {
+        let bytes = zip_with_parts(&[("word/document.xml", shape)]);
+        let pkg = PartFs::open(&bytes).unwrap();
+        assert!(
+            jubarte::validate::ring1(&pkg)
+                .iter()
+                .all(|f| f.code != "DUPLICATE_EXPANDED_ATTRIBUTE"),
+            "{shape}"
+        );
+    }
+}
