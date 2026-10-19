@@ -1115,33 +1115,36 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
         isolate(dom, run, t);
         (Some(run), Some(run), before)
     };
-    // A deletion stays inside the source insertion. Range endpoints stay
+    // A deletion stays inside the source insertion, which stays whole, as
+    // Word leaves it: only the editor's words split it. Range endpoints stay
     // beside their words; the remaining children follow the editor's words.
-    let split = anchor.and_then(|anchor| {
-        let ins = dom.parent(anchor).filter(|&n| dom.name_is(n, &W::ins()))?;
-        let children = dom.elements(ins, None);
-        let at = children.iter().position(|&n| n == anchor)? + usize::from(!before);
-        let at = insertion_split_boundary(dom, &children, at, before);
-        if at == 0 {
-            // There is no first piece to keep. The complete source
-            // insertion becomes the newly numbered trailing piece.
-            return Some((ins, true, Some(ins)));
-        }
-        let tail = if at < children.len() {
-            let tail = dom.clone_subtree(ins);
-            for child in dom.nodes(tail) {
-                dom.remove(child);
+    let split = anchor
+        .filter(|_| !replacement.is_empty())
+        .and_then(|anchor| {
+            let ins = dom.parent(anchor).filter(|&n| dom.name_is(n, &W::ins()))?;
+            let children = dom.elements(ins, None);
+            let at = children.iter().position(|&n| n == anchor)? + usize::from(!before);
+            let at = insertion_split_boundary(dom, &children, at, before);
+            if at == 0 {
+                // There is no first piece to keep. The complete source
+                // insertion becomes the newly numbered trailing piece.
+                return Some((ins, true, Some(ins)));
             }
-            for &child in &children[at..] {
-                dom.remove(child);
-                dom.add(tail, child);
-            }
-            Some(tail)
-        } else {
-            None
-        };
-        Some((ins, false, tail))
-    });
+            let tail = if at < children.len() {
+                let tail = dom.clone_subtree(ins);
+                for child in dom.nodes(tail) {
+                    dom.remove(child);
+                }
+                for &child in &children[at..] {
+                    dom.remove(child);
+                    dom.add(tail, child);
+                }
+                Some(tail)
+            } else {
+                None
+            };
+            Some((ins, false, tail))
+        });
     let (anchor, before) = split.map_or((anchor, before), |(ins, before, _)| (Some(ins), before));
     let mut last = anchor;
     if !replacement.is_empty() {

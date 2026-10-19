@@ -151,8 +151,43 @@ fn another_author_replacement_splits_and_preserves_stamps() {
     split_case("beta", "new", "alpha ", "beta", " gamma");
 }
 #[test]
-fn another_author_deletion_has_no_editor_insertion() {
-    split_case("beta", "", "alpha ", "beta", " gamma");
+fn another_author_deletion_nests_without_splitting() {
+    // Word nests a deletion inside another author's insertion and leaves
+    // the insertion whole: annex.docx holds ASR's r4 inside AR's r3, with
+    // AR's words before and after it in the one w:ins.
+    let out = run(&source("Alice"), "Carol Diaz", replace("beta", ""));
+    let (dom, p) = tree(&out);
+    let theirs = revision(&dom, p, "ins", "6", "Alice", OLD_DATE, "alpha beta gamma");
+    let del = revision(&dom, p, "del", "7", "Carol Diaz", DATE, "beta");
+    assert_eq!(dom.parent(del), Some(theirs));
+    assert!(dom.descendants(del, Some(&W::t())).is_empty());
+    assert_eq!(dom.elements(p, Some(&W::ins())).len(), 1);
+    settled(&out, "[alpha  gamma]", "[]");
+}
+
+#[test]
+fn word_nests_a_deletion_inside_an_insertion_without_splitting_it() {
+    let annex = include_bytes!("fixtures/re-dialect/annex.docx");
+    let mut dom = Dom::new();
+    let xml = part_string(annex, "word/document.xml").unwrap();
+    let doc = dom.parse_xdocument(&xml);
+    let r3 = dom
+        .descendants(doc, Some(&W::ins()))
+        .into_iter()
+        .find(|&n| dom.attribute(n, &W::id()) == Some("3"))
+        .unwrap();
+    let kinds: Vec<String> = dom
+        .elements(r3, None)
+        .into_iter()
+        .map(|n| dom.name(n).unwrap().local_name().to_string())
+        .filter(|local| local != "proofErr")
+        .collect();
+    assert_eq!(
+        kinds,
+        ["del", "r", "r", "del"],
+        "{}",
+        dom.serialize_element(r3)
+    );
 }
 #[test]
 fn replacement_at_start_has_no_empty_prefix() {
