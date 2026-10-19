@@ -1129,6 +1129,161 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
     ne
 }
 
+// ─────────────── O.0 — orphan move normalization (#1235) ────────────────────
+
+/// #1235: a `w:moveTo` / `w:moveFrom` is an ORPHAN when no range of the other
+/// kind shares its `w:name` in the same part — a bare `moveTo` has no `w:name`
+/// at all, so it is an orphan unless it sits inside a paired `moveToRange`.
+/// Word keeps an orphan `moveTo` like an insertion and an orphan `moveFrom`
+/// like a deletion; only the elements themselves carry moved content. The
+/// range markers around an orphan move mean nothing on their own: leaving a
+/// `moveFromRange` unpaired lets A.2 (or A.4 for `customXml…` markers) delete
+/// every unwrapped run inside it, which is the untracked-text loss of #1235.
+///
+/// Normalize before every resolution step: orphan `moveTo` → `w:ins`, orphan
+/// `moveFrom` → `w:del`, orphan range markers (all four flavors) → dropped.
+/// Reject reverses first, so an orphan `moveTo` arrives here as `moveFrom`
+/// and resolves exactly like a rejected insertion. A well-formed move —
+/// `moveFromRange`/`moveToRange` sharing a `w:name` — keeps its markers and
+/// its `moveFrom`/`moveTo` elements and is untouched.
+fn normalize_orphan_moves(dom: &mut Dom, root: NodeId) -> NodeId {
+    let ns = W::URI;
+    let mut from_names: HashSet<String> = HashSet::new();
+    let mut to_names: HashSet<String> = HashSet::new();
+    for e in dom.descendants_and_self(root, None) {
+        let Some(n) = dom.name(e) else { continue };
+        if n.namespace_name() != ns {
+            continue;
+        }
+        match n.local_name() {
+            "moveFromRangeStart" | "customXmlMoveFromRangeStart" => {
+                if let Some(v) = dom.attribute(e, &W::name("name")) {
+                    from_names.insert(v.to_string());
+                }
+            }
+            "moveToRangeStart" | "customXmlMoveToRangeStart" => {
+                if let Some(v) = dom.attribute(e, &W::name("name")) {
+                    to_names.insert(v.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    if from_names.is_empty() && to_names.is_empty() {
+        // Ranges cannot tell orphan from paired without names, but a bare
+        // `w:moveTo` / `w:moveFrom` is still orphaned: it has no `w:name`
+        // to pair with anything.
+        let has_move = dom.descendants_and_self(root, None).into_iter().any(|e| {
+            dom.name(e)
+                .is_some_and(|n| n == W::move_to() || n == W::move_from())
+        });
+        if !has_move {
+            return root;
+        }
+    }
+
+    let mut to_ins: HashSet<NodeId> = HashSet::new();
+    let mut to_del: HashSet<NodeId> = HashSet::new();
+    let mut drop_markers: HashSet<NodeId> = HashSet::new();
+    // id → w:name of every currently open range, by flavor.
+    let mut open_from: HashMap<String, String> = HashMap::new();
+    let mut open_to: HashMap<String, String> = HashMap::new();
+    for tag in descendant_and_self_tags(dom, root) {
+        let e = tag.element;
+        let Some(n) = dom.name(e) else { continue };
+        if n.namespace_name() != ns {
+            continue;
+        }
+        match n.local_name() {
+            "moveFromRangeStart" | "customXmlMoveFromRangeStart" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("").to_string();
+                let name = dom.attribute(e, &W::name("name")).unwrap_or("").to_string();
+                if !to_names.contains(&name) {
+                    drop_markers.insert(e);
+                }
+                open_from.insert(id, name);
+            }
+            "moveFromRangeEnd" | "customXmlMoveFromRangeEnd" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("");
+                if let Some(name) = open_from.remove(id)
+                    && !to_names.contains(&name)
+                {
+                    drop_markers.insert(e);
+                }
+            }
+            "moveToRangeStart" | "customXmlMoveToRangeStart" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("").to_string();
+                let name = dom.attribute(e, &W::name("name")).unwrap_or("").to_string();
+                if !from_names.contains(&name) {
+                    drop_markers.insert(e);
+                }
+                open_to.insert(id, name);
+            }
+            "moveToRangeEnd" | "customXmlMoveToRangeEnd" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("");
+                if let Some(name) = open_to.remove(id)
+                    && !from_names.contains(&name)
+                {
+                    drop_markers.insert(e);
+                }
+            }
+            "moveTo" if tag.tag_type != TagType::EndElement => {
+                let inside_paired_range = open_to.values().any(|name| from_names.contains(name));
+                if !inside_paired_range {
+                    to_ins.insert(e);
+                }
+            }
+            "moveFrom" if tag.tag_type != TagType::EndElement => {
+                let inside_paired_range = open_from.values().any(|name| to_names.contains(name));
+                if !inside_paired_range {
+                    to_del.insert(e);
+                }
+            }
+            _ => {}
+        }
+    }
+    if to_ins.is_empty() && to_del.is_empty() && drop_markers.is_empty() {
+        return root;
+    }
+    normalize_orphan_moves_transform(dom, root, &to_ins, &to_del, &drop_markers)
+        .expect("the part root is never a move element or range marker")
+}
+
+/// Rebuild for [`normalize_orphan_moves`]: orphan `moveTo`/`moveFrom`
+/// re-emerge as `w:ins`/`w:del` (attributes preserved), orphan range markers
+/// vanish, everything else rebuilds recursively.
+fn normalize_orphan_moves_transform(
+    dom: &mut Dom,
+    node: NodeId,
+    to_ins: &HashSet<NodeId>,
+    to_del: &HashSet<NodeId>,
+    drop_markers: &HashSet<NodeId>,
+) -> Option<NodeId> {
+    if !dom.is_element(node) {
+        return Some(dom.clone_subtree(node));
+    }
+    if drop_markers.contains(&node) {
+        return None;
+    }
+    let new_name = if to_ins.contains(&node) {
+        W::ins()
+    } else if to_del.contains(&node) {
+        W::del()
+    } else {
+        dom.name(node).unwrap()
+    };
+    let ne = dom.new_element(new_name);
+    for (an, av) in dom.attributes(node) {
+        dom.set_attribute_value(ne, &an, Some(&av));
+    }
+    for c in dom.nodes(node) {
+        if let Some(tc) = normalize_orphan_moves_transform(dom, c, to_ins, to_del, drop_markers) {
+            dom.add(ne, tc);
+        }
+    }
+    Some(ne)
+}
+
 // ───────────────────────────── A.2 — moveFrom ranges ────────────────────────
 
 /// A.2 — `AcceptMoveFromRanges` (:1530): walk the tag stream; while one or
@@ -3301,6 +3456,10 @@ fn accept_content(
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        // O.0: normalize orphan moves first — the comment/bookmark prepasses
+        // and A.2/A.4 all treat matched moveFrom-range content as deleted, so
+        // orphan markers must be gone before any of them runs (#1235).
+        let e = normalize_orphan_moves(dom, e);
         if keep_comments {
             kept.extend(comments::keep_wholly_deleted_comments(dom, e));
         }

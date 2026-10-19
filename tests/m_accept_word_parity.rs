@@ -1169,3 +1169,16 @@ fn cli_accept_selects_one_revision_and_leaves_inserted_final_mark() {
         "r7 was resolved: {xml}"
     );
 }
+
+/// #1235: an orphan `w:moveTo` paragraph mark — its `w:name` range has no
+/// `w:moveFrom` counterpart — accepts like an inserted mark: the untracked
+/// run `B` inside the `moveToRange` survives.
+#[test]
+fn accept_keeps_untracked_text_under_an_orphan_move_to_mark() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="2" w:name="m1"/>
+<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>
+<w:moveToRangeEnd w:id="2"/>"#;
+    let settled = accept_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
+}

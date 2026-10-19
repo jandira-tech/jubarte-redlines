@@ -1797,3 +1797,55 @@ fn cli_reject_selects_one_revision_and_leaves_inserted_final_mark() {
         "r7 was resolved: {xml}"
     );
 }
+
+/// #1235: an orphan move — a `w:moveTo` whose `w:name` range has no
+/// `w:moveFrom` counterpart — is a tracked insertion, not moved content.
+/// Reject All must drop only what a `w:moveTo` element wraps: the untracked
+/// run `B` inside the `moveToRange` stays, as Word's Reject All shows
+/// (`Keep | B`). Before the fix the range markers deleted the whole
+/// paragraph and `B` was lost.
+#[test]
+fn reject_keeps_untracked_text_under_an_orphan_move_to_mark() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="2" w:name="m1"/>
+<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>
+<w:moveToRangeEnd w:id="2"/>"#;
+    let settled = reject_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
+}
+
+/// #1235: the same orphan mark under Accept All — `Keep | B`, nothing
+/// left tracked.
+#[test]
+fn accept_keeps_untracked_text_under_an_orphan_move_to_mark() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:moveToRangeStart w:id="2" w:name="m1"/>
+<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>
+<w:moveToRangeEnd w:id="2"/>"#;
+    let settled = accept_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
+}
+
+/// #1235: a run-level orphan `w:moveTo` resolves like `w:ins` in both
+/// directions: Reject drops the wrapped run, Accept keeps it.
+#[test]
+fn reject_treats_an_orphan_move_to_run_as_an_insertion() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:p><w:r><w:t>A</w:t></w:r><w:moveTo w:id="5" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>X</w:t></w:r></w:moveTo></w:p>"#;
+    let rejected = reject_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&rejected, "word/document.xml", &["Keep", "A"]);
+    let accepted = accept_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&accepted, "word/document.xml", &["Keep", "AX"]);
+}
+
+/// #1235: the mirror — a run-level orphan `w:moveFrom` resolves like
+/// `w:del`: Reject restores the wrapped run, Accept drops it.
+#[test]
+fn reject_treats_an_orphan_move_from_run_as_a_deletion() {
+    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
+<w:p><w:r><w:t>A</w:t></w:r><w:moveFrom w:id="5" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>X</w:t></w:r></w:moveFrom></w:p>"#;
+    let rejected = reject_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&rejected, "word/document.xml", &["Keep", "AX"]);
+    let accepted = accept_revisions(&docx(body)).unwrap();
+    assert_part_resolved(&accepted, "word/document.xml", &["Keep", "A"]);
+}
