@@ -79,13 +79,32 @@ where
 {
     OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
+
+/// The message a text surface prints for an [`OpcError`].
+/// `DuplicatePartName` carries only the second entry's spelling, so its
+/// line is the admission refusal for the same package — `DUPLICATE_PART:`
+/// with both spellings — and any other error keeps its own text (#600).
+#[must_use]
+pub fn refusal_message(docx: &[u8], err: &OpcError) -> String {
+    if let OpcError::DuplicatePartName(_) = err
+        && let Ok(archive) = open_archive_unchecked(Cursor::new(docx))
+    {
+        return duplicate_parts(&mut Cursor::new(docx), archive.central_directory_start())
+            .into_iter()
+            .next()
+            .map(|(_, defect)| defect.refusal().to_string())
+            .unwrap_or_else(|| err.to_string());
+    }
+    err.to_string()
+}
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 mod archive;
 mod zip32;
 pub(crate) use archive::{
-    ZipDefect, ZipDefectKind, open_archive, open_archive_unchecked, zip_defects,
+    ZipDefect, ZipDefectKind, duplicate_parts, open_archive, open_archive_unchecked,
+    open_archive_within, zip_defects,
 };
 pub use zip32::Zip32Limit;
 pub(crate) use zip32::zip32_plan;
@@ -291,7 +310,21 @@ fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
 /// wording.
 fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<PartFs, OpcError> {
     crate::admission::preindex_budget(bytes, limits).map_err(refused)?;
-    let mut archive = open_archive(Cursor::new(bytes))?;
+    // Duplicate part identities are refused below as
+    // `DuplicatePartName`, the variant callers match on (#600); every
+    // other structural defect refuses in the shared open. The raw walk
+    // of the central directory must catch them: zip 9's index collapses
+    // a byte-equal duplicate before the decode loop can see both
+    // records, and its decoded names agree with the per-entry decode on
+    // every shape (bit 11 / CP437 / 0x7075).
+    let mut archive = open_archive_within(Cursor::new(bytes), false)?;
+    if let Some((second, _)) =
+        duplicate_parts(&mut Cursor::new(bytes), archive.central_directory_start())
+            .into_iter()
+            .next()
+    {
+        return Err(OpcError::DuplicatePartName(second));
+    }
     let mut parts = HashMap::new();
     let mut source_order = HashMap::new();
     let mut total = 0u64;
@@ -537,8 +570,11 @@ impl PartFs {
     /// (an [`crate::admission::AdmissionError`] with code `INPUT_LIMIT` as
     /// the [`std::io::Error`] source), an OPC metadata element exceeding
     /// 256 attributes, two relationships under the same `Id` that differ in
-    /// any attribute, or two entries whose decoded part names collide
-    /// case-insensitively ([`OpcError::DuplicatePartName`]).
+    /// any attribute, or two entries whose decoded part names are equal
+    /// byte-for-byte or under ASCII case
+    /// ([`OpcError::DuplicatePartName`], naming the second entry's
+    /// spelling; text surfaces print the admission `DUPLICATE_PART`
+    /// detail through [`refusal_message`]).
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
         Self::open_within(bytes, crate::admission::InputLimits::compare())
     }
@@ -1689,58 +1725,58 @@ mod tests {
         assert_eq!(fs.part_bytes("word/media/\u{e9}.png"), None);
     }
 
-    /// The typed admission refusal behind a constructor refusal, when
-    /// there is one: the io error a `ZipError` or `OpcError` wraps keeps
-    /// the `AdmissionError` as its source, so the code reads
-    /// `DUPLICATE_PART` whichever route met the package (#600).
-    fn refusal_code(err: &OpcError) -> Option<String> {
-        let io = match err {
-            OpcError::Io(io) => io,
-            OpcError::Zip(zip::result::ZipError::Io(io)) => io,
-            _ => return None,
-        };
-        io.get_ref()
-            .and_then(|inner| inner.downcast_ref::<crate::admission::AdmissionError>())
-            .map(|refused| refused.code().to_string())
-    }
-
     #[test]
     fn decoded_part_name_aliases_are_refused_not_overwritten() {
         // Two entries whose decoded names collide are one OPC part: the second
         // `parts.insert` used to overwrite the first silently, `parts()` lost
         // a member and `to_zip()` dropped it. Upstream's reader refuses
-        // `DuplicatePartName` on the ASCII-lowercased name
-        // (oxml-opc-0.14.2/src/package.rs 159-162); since #600 the raw
-        // central-directory walk refuses the same shapes first, with the
-        // typed `DUPLICATE_PART` code `admit` reports, so nothing is lost.
+        // `DuplicatePartName` on the second entry's name
+        // (oxml-opc-0.14.2/src/package.rs 159-162); so does the constructor —
+        // the raw central-directory pass reports the defect for `admit`,
+        // `debug` and the archive readers while the constructor keeps the
+        // typed variant Rust callers match on (#600).
         let base = |extra: &[zip_names::RawEntry<'_>]| zip_names::docx_package("", extra);
-        // (a) two raw names, bit 11 set, whose lossy UTF-8 decode is the same
+        // (a) two entries of the same name, byte for byte (the p1 shape):
+        // one part, the refusal names the second entry's spelling.
+        let exact = base(&[
+            zip_names::RawEntry::raw(b"x.bin", b"FIRST"),
+            zip_names::RawEntry::raw(b"x.bin", b"SECOND"),
+        ]);
+        assert!(
+            matches!(PartFs::open(&exact), Err(OpcError::DuplicatePartName(ref n)) if n == "x.bin"),
+            "{:?}",
+            PartFs::open(&exact).err()
+        );
+        assert!(
+            matches!(
+                PartFs::open_within(&exact, crate::admission::InputLimits::compare()),
+                Err(OpcError::DuplicatePartName(ref n)) if n == "x.bin"
+            ),
+            "open_within refuses the same"
+        );
+        // (b) two raw names, bit 11 set, whose lossy UTF-8 decode is the same
         // `x\u{FFFD}.bin`: two parts, one name.
         let aliased = base(&[
             zip_names::RawEntry::raw(b"x\x82.bin", b"FIRST").utf8(),
             zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
         ]);
-        let err = PartFs::open(&aliased)
-            .err()
-            .expect("a decoded alias is refused");
-        assert_eq!(
-            refusal_code(&err).as_deref(),
-            Some("DUPLICATE_PART"),
-            "{err}"
+        assert!(
+            matches!(PartFs::open(&aliased), Err(OpcError::DuplicatePartName(ref n)) if n == "x\u{FFFD}.bin"),
+            "{:?}",
+            PartFs::open(&aliased).err()
         );
-        // (b) two names that differ only in ASCII case: one part, OPC names
+        // (c) two names that differ only in ASCII case: one part, OPC names
         // are case-insensitive.
         let cased = base(&[
             zip_names::RawEntry::raw(b"word/A.bin", b"FIRST"),
             zip_names::RawEntry::raw(b"word/a.bin", b"SECOND"),
         ]);
-        let err = PartFs::open(&cased).err().expect("a case alias is refused");
-        assert_eq!(
-            refusal_code(&err).as_deref(),
-            Some("DUPLICATE_PART"),
-            "{err}"
+        assert!(
+            matches!(PartFs::open(&cased), Err(OpcError::DuplicatePartName(ref n)) if n == "word/a.bin"),
+            "{:?}",
+            PartFs::open(&cased).err()
         );
-        // (c) the zip 8 shape: both names flag-clear, CP437 decodes them
+        // (d) the zip 8 shape: both names flag-clear, CP437 decodes them
         // apart (`x\x82.bin` → `xé.bin`, `x\xc3\xa9.bin` → `x├⌐.bin`), and
         // both payloads survive instead of aliasing as zip 9's UTF-8-first
         // `name()` had them.

@@ -109,8 +109,12 @@ pub(super) fn assemble(
         Some(bytes) => bytes.to_vec(),
         None => default_template(options.page).map_err(err)?,
     };
-    let mut package = PartFs::open(&template)
-        .map_err(|e| MarkdownError::Reference(format!("not a readable .docx ({e})")))?;
+    let mut package = PartFs::open(&template).map_err(|e| {
+        MarkdownError::Reference(format!(
+            "not a readable .docx ({})",
+            crate::opc::refusal_message(&template, &e)
+        ))
+    })?;
     let main = package
         .main_document_part()
         .ok_or_else(|| MarkdownError::Reference("it has no main document part".into()))?;

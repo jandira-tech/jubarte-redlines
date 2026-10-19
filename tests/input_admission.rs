@@ -922,11 +922,22 @@ fn zip17_public_boundaries() {
         let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
             .expect_err("{what} probe must be refused");
         assert_eq!(err.code(), code, "{what}: {err}");
-        for route in [
-            jubarte::opc::PartFs::open(&bytes)
+        if finding == "ZIP_DUPLICATE_PART" {
+            // The package constructor reports the one OPC defect as the
+            // typed variant its callers match on (#600).
+            let Err(jubarte::opc::OpcError::DuplicatePartName(_)) =
+                jubarte::opc::PartFs::open(&bytes)
+            else {
+                panic!("{what}: PartFs must refuse with DuplicatePartName");
+            };
+        } else {
+            let route = jubarte::opc::PartFs::open(&bytes)
                 .map(|_| ())
                 .map_err(|e| e.to_string())
-                .expect_err("{what} PartFs"),
+                .expect_err("{what} PartFs");
+            assert!(route.contains(code), "{what}: {route}");
+        }
+        for route in [
             jubarte::scrub::scrub(&bytes, &jubarte::scrub::ScrubOptions::default())
                 .map(|_| ())
                 .map_err(|e| e.to_string())

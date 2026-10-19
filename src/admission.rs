@@ -1463,12 +1463,32 @@ mod tests {
             kind(&aliased, InputLimits::default()).code(),
             "DUPLICATE_PART"
         );
-        let opc = crate::opc::PartFs::open(&aliased)
-            .err()
-            .expect("the constructor must refuse the same aliases");
         assert!(
-            opc.to_string().contains("DUPLICATE_PART"),
-            "the constructor refusal must carry the admission code, got: {opc}"
+            matches!(
+                crate::opc::PartFs::open(&aliased),
+                Err(crate::opc::OpcError::DuplicatePartName(ref n)) if n == "x\u{FFFD}.bin"
+            ),
+            "the constructor must refuse the same aliases with the typed variant"
+        );
+        // Two entries of the same name, byte for byte: the same pair of
+        // refusals (the p1 shape).
+        let exact = zip_names::docx_package(
+            "",
+            &[
+                zip_names::RawEntry::raw(b"x.bin", b"FIRST"),
+                zip_names::RawEntry::raw(b"x.bin", b"SECOND"),
+            ],
+        );
+        assert_eq!(
+            kind(&exact, InputLimits::default()).code(),
+            "DUPLICATE_PART"
+        );
+        assert!(
+            matches!(
+                crate::opc::PartFs::open(&exact),
+                Err(crate::opc::OpcError::DuplicatePartName(ref n)) if n == "x.bin"
+            ),
+            "the constructor must refuse the byte-equal duplicate as well"
         );
 
         // Row 2: a flag-clear CP437 media name and the relationship that
@@ -2553,13 +2573,16 @@ mod tests {
             } else {
                 assert!(err.message.contains("ignore case"), "{err}");
             }
-            // The package constructor refuses through the same defect, so
-            // the typed code travels as the io error's source.
-            let opc = crate::opc::PartFs::open(&bytes)
-                .err()
-                .expect("the constructor must refuse the same shape");
-            let text = opc.to_string();
-            assert!(text.contains("DUPLICATE_PART"), "{first}/{second}: {text}");
+            // The package constructor refuses the same identity — as the
+            // typed `DuplicatePartName` variant Rust callers match on, naming
+            // the second entry's spelling (#600).
+            assert!(
+                matches!(
+                    crate::opc::PartFs::open(&bytes),
+                    Err(crate::opc::OpcError::DuplicatePartName(ref n)) if n == second
+                ),
+                "{first}/{second}"
+            );
         }
     }
 
@@ -2584,6 +2607,44 @@ mod tests {
             ],
         );
         admit(&both, InputLimits::default()).expect("two spellings of one directory");
+    }
+
+    /// The message a text surface prints for the constructor's typed
+    /// `DuplicatePartName`: the admission refusal for the same package —
+    /// the `DUPLICATE_PART` code and both spellings — while any other
+    /// error's text passes through unchanged (#600).
+    #[test]
+    fn a_duplicate_refusal_reads_as_the_admission_detail() {
+        let bytes = zip_names::docx_package(
+            "",
+            &[zip_names::RawEntry::raw(b"word/Document.xml", b"SECOND")],
+        );
+        let err = crate::opc::PartFs::open(&bytes)
+            .err()
+            .expect("the constructor refuses the case alias");
+        let message = crate::opc::refusal_message(&bytes, &err);
+        assert!(message.starts_with("DUPLICATE_PART: "), "{message}");
+        assert!(message.contains("'word/document.xml'"), "{message}");
+        assert!(message.contains("'word/Document.xml'"), "{message}");
+        let exact = zip_names::docx_package(
+            "",
+            &[zip_names::RawEntry::raw(b"word/document.xml", b"SECOND")],
+        );
+        let err = crate::opc::PartFs::open(&exact)
+            .err()
+            .expect("the constructor refuses the byte-equal duplicate");
+        let message = crate::opc::refusal_message(&exact, &err);
+        assert!(message.starts_with("DUPLICATE_PART: "), "{message}");
+        assert!(
+            message.contains("two ZIP entries have the same name 'word/document.xml'"),
+            "{message}"
+        );
+        // Any other `OpcError` keeps its own text.
+        let err = crate::opc::PartFs::open(b"not a zip")
+            .err()
+            .expect("not a zip is refused");
+        let message = crate::opc::refusal_message(b"not a zip", &err);
+        assert_eq!(message, err.to_string());
     }
 
     /// One case-variant name is the part (ECMA-376 Part 2 §6.2.2.3

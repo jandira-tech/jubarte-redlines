@@ -6,7 +6,8 @@
 
 mod common;
 
-use common::docx::{docx, para, part_string};
+use common::docx::{Part, docx, docx_with, para, part_string};
+use std::io::Cursor;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -903,6 +904,57 @@ fn a_word_input_that_is_not_a_zip_reads_the_same_on_every_task() {
         assert_eq!(String::from_utf8_lossy(&out.stderr), expected, "{args:?}");
         assert!(out.stdout.is_empty(), "{args:?}");
     }
+}
+
+/// A valid package carrying a second entry that names `alias` exactly or
+/// under ASCII case (#600). `stand_in` is the name the writer emitted (it
+/// must keep `alias`'s byte length); the local and central records of the
+/// extra part are renamed to `alias` so the two records agree.
+fn duplicate_part_docx(stand_in: &str, alias: &str) -> Vec<u8> {
+    assert_eq!(stand_in.len(), alias.len(), "names must keep the length");
+    let mut bytes = docx_with(
+        &para("first copy"),
+        &[Part {
+            name: stand_in,
+            content_type: "application/xml",
+            rel_type: "",
+            xml: "second copy",
+        }],
+    );
+    let (local, central) = {
+        let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let entry = archive.by_name(stand_in).unwrap();
+        (
+            usize::try_from(entry.header_start()).unwrap(),
+            usize::try_from(entry.central_header_start()).unwrap(),
+        )
+    };
+    bytes[local + 30..local + 30 + alias.len()].copy_from_slice(alias.as_bytes());
+    bytes[central + 46..central + 46 + alias.len()].copy_from_slice(alias.as_bytes());
+    bytes
+}
+
+/// Two entries naming one part — byte-equal (p1) or an ASCII-case alias
+/// (p2) — refuse with the stable `DUPLICATE_PART` code and both spellings
+/// on every CLI route the read takes (#600).
+#[test]
+fn read_and_convert_refuse_a_duplicate_part_with_both_spellings() {
+    let dir = tempfile::tempdir().unwrap();
+    let exact = duplicate_part_docx("word/document.xm0", "word/document.xml");
+    let cased = duplicate_part_docx("word/document.xm0", "word/Document.xml");
+    std::fs::write(dir.path().join("p1.docx"), &exact).unwrap();
+    std::fs::write(dir.path().join("p2.docx"), &cased).unwrap();
+    let read = run(dir.path(), &["read", "p1.docx"]);
+    assert_eq!(read.status.code(), Some(1), "{read:?}");
+    let stderr = String::from_utf8_lossy(&read.stderr);
+    assert!(stderr.contains("DUPLICATE_PART"), "{stderr}");
+    assert!(stderr.contains("word/document.xml"), "{stderr}");
+    let convert = run(dir.path(), &["convert", "p2.docx", "-t", "md"]);
+    assert_eq!(convert.status.code(), Some(1), "{convert:?}");
+    let stderr = String::from_utf8_lossy(&convert.stderr);
+    assert!(stderr.contains("DUPLICATE_PART"), "{stderr}");
+    assert!(stderr.contains("word/document.xml"), "{stderr}");
+    assert!(stderr.contains("word/Document.xml"), "{stderr}");
 }
 
 /// V2-05 (plan §5): a reporting failure after a successful commit says

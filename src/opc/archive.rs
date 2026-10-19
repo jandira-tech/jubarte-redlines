@@ -40,9 +40,23 @@ pub(crate) fn open_archive_unchecked<R: Read + Seek + Clone>(
 /// [`crate::admission::AdmissionError`] as its source, so the refusal
 /// code reads the same whichever route met the file.
 pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipArchive<R>> {
+    open_archive_within(reader, true)
+}
+
+/// [`open_archive`] without the duplicate-part refusal: [`PartFs`] refuses
+/// the same identity itself, with the typed `OpcError::DuplicatePartName`
+/// its callers match on (ZIP-15/#600); every other defect still refuses
+/// here.
+pub(crate) fn open_archive_within<R: Read + Seek + Clone>(
+    reader: R,
+    refuse_duplicates: bool,
+) -> ZipResult<ZipArchive<R>> {
     let mut headers = reader.clone();
     let archive = open_archive_unchecked(reader)?;
-    if let Some(defect) = zip_defects(&archive, &mut headers).into_iter().next() {
+    if let Some(defect) = zip_defects(&archive, &mut headers)
+        .into_iter()
+        .find(|defect| refuse_duplicates || defect.kind != ZipDefectKind::DuplicatePart)
+    {
         return Err(ZipError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             defect.refusal(),
@@ -664,7 +678,11 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             });
         }
     }
-    defects.extend(duplicate_parts(reader, archive.central_directory_start()));
+    defects.extend(
+        duplicate_parts(reader, archive.central_directory_start())
+            .into_iter()
+            .map(|(_, defect)| defect),
+    );
     defects
 }
 
@@ -678,8 +696,12 @@ pub(crate) fn zip_defects<R: Read + Seek>(
 /// collides with a file. The walk stops at the first record that is not
 /// a central header, so a comment or trailing data cannot desynchronize
 /// it, and it allocates one entry per central record — the same bound
-/// the index itself would reach.
-fn duplicate_parts<R: Read + Seek>(reader: &mut R, mut at: u64) -> Vec<ZipDefect> {
+/// the index itself would reach. Each defect pairs with the second
+/// entry's decoded name — the spelling `PartFs`'s typed refusal names.
+pub(crate) fn duplicate_parts<R: Read + Seek>(
+    reader: &mut R,
+    mut at: u64,
+) -> Vec<(String, ZipDefect)> {
     let mut defects = Vec::new();
     let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for index in 0usize.. {
@@ -712,18 +734,26 @@ fn duplicate_parts<R: Read + Seek>(reader: &mut R, mut at: u64) -> Vec<ZipDefect
                 seen.insert(identity, name);
             }
             Some(first) if *first == name => {
-                defects.push(ZipDefect {
-                    kind: ZipDefectKind::DuplicatePart,
-                    detail: format!("two ZIP entries have the same name '{name}' (entry {index})"),
-                });
+                defects.push((
+                    name.clone(),
+                    ZipDefect {
+                        kind: ZipDefectKind::DuplicatePart,
+                        detail: format!(
+                            "two ZIP entries have the same name '{name}' (entry {index})"
+                        ),
+                    },
+                ));
             }
             Some(first) => {
-                defects.push(ZipDefect {
-                    kind: ZipDefectKind::DuplicatePart,
-                    detail: format!(
-                        "'{first}' and '{name}' name the same part (entry {index}; part names ignore case)"
-                    ),
-                });
+                defects.push((
+                    name.clone(),
+                    ZipDefect {
+                        kind: ZipDefectKind::DuplicatePart,
+                        detail: format!(
+                            "'{first}' and '{name}' name the same part (entry {index}; part names ignore case)"
+                        ),
+                    },
+                ));
             }
         }
     }
