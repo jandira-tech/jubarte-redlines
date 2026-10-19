@@ -55,6 +55,20 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A whole-paragraph edit follows a paragraph the settle merged alone
+  (#1269).** Under a plan that settles revisions, `delete_paragraph`,
+  `rewrite` and the other whole-paragraph operations were refused
+  `PARAGRAPH_RESOLVED` for every paragraph that merged, in words that could
+  repeat one id (`p0 merged into p0`). Now they apply when the merged
+  paragraph has no other source. When it has, the message names each
+  paragraph in its view (`p3 (as read) merges into p2 (after the plan's
+  revisions settle) together with p4`), leaves out a settled id spelled
+  like a source id it names, and gives a route that reaches the merged
+  paragraph: a `contains` selector quoting its text (in a first-version
+  `--plan`), or the `jubarte accept` or `jubarte reject` that settles the
+  source as the plan does. A neighbour whose own text the settle changes
+  still counts as a source of the merge, so an operation on one paragraph
+  never removes another's words.
 - **An insertion stays beside the bookmark, comment and permission markers
   it meets (#1156).** Before, an `insert` before a bookmarked word put the
   bookmark's start inside the new `w:ins`, and the edit was refused

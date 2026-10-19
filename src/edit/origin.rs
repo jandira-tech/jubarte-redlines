@@ -234,6 +234,9 @@ pub(super) struct Origin {
     paragraph_nodes: Vec<NodeId>,
     paragraph_story: Vec<(usize, usize)>,
     fates: Vec<Fate>,
+    /// `accept` or `reject` when the plan settles every revision that way,
+    /// so one command settles the source as the plan does.
+    settles_all: Option<&'static str>,
     /// Strict tag correspondence, without the legacy text-based merge inference.
     exact: Vec<Option<usize>>,
     /// The source's body content controls, by id (`p3.cc0`, `cc1`).
@@ -354,6 +357,7 @@ impl Origin {
             paragraph_nodes,
             paragraph_story,
             fates,
+            settles_all: settles_all(plan),
             exact,
             control_ids,
             control_fates,
@@ -407,26 +411,60 @@ impl Origin {
     }
 
     /// The settled paragraph source paragraph `source` became. A merged
-    /// paragraph is only followed when `merged_ok` (an edit that finds its
-    /// text there); `settled_id` names a settled paragraph.
+    /// paragraph is followed when it has no other source, or when
+    /// `merged_ok` (an edit that finds its text there); `settled_id` names
+    /// a settled paragraph, and `by_text` gives the selector that reaches
+    /// one by its text, when the plan's syntax has one.
     pub(super) fn follow(
         &self,
         source: usize,
         merged_ok: bool,
         settled_id: impl Fn(usize) -> String,
+        by_text: impl Fn(usize) -> Option<String>,
     ) -> Result<usize, Miss> {
-        let id = self.ids().id(source);
+        let ids = self.ids();
+        let id = ids.id(source);
         match self.fates[source] {
             Fate::Kept(post) => Ok(post),
-            Fate::Merged(post) if merged_ok => Ok(post),
-            Fate::Merged(post) => Err((
-                "PARAGRAPH_RESOLVED".into(),
-                format!(
-                    "{id} merged into {} when the plan's revisions were settled; an operation on a whole paragraph needs its settled id, so give a find, or settle the revisions first and read the document again",
-                    settled_id(post)
-                ),
-                0,
-            )),
+            Fate::Merged(post) => {
+                let others: Vec<String> = (0..self.fates.len())
+                    .filter(|&g| g != source && self.fates[g] == Fate::Merged(post))
+                    .map(|g| ids.id(g))
+                    .collect();
+                if merged_ok || others.is_empty() {
+                    return Ok(post);
+                }
+                let with = join_ids(&others);
+                let settled = settled_id(post);
+                // A settled id spelled like a source id in the message
+                // would read as that paragraph: it is left out.
+                let head = if settled == id || others.contains(&settled) {
+                    format!("{id} (as read) merges with {with} when the plan's revisions settle")
+                } else {
+                    format!(
+                        "{id} (as read) merges into {settled} (after the plan's revisions settle) together with {with}"
+                    )
+                };
+                let settle = match self.settles_all {
+                    Some(verb) => format!(
+                        "{verb} the revisions first (`jubarte {verb} FILE -o OUT.docx`) and edit OUT.docx"
+                    ),
+                    None => "settle the plan's revisions first and edit the result".to_string(),
+                };
+                let route = match by_text(post) {
+                    Some(selector) => {
+                        format!("select it by its text instead ({selector}), or {settle}")
+                    }
+                    None => settle,
+                };
+                Err((
+                    "PARAGRAPH_RESOLVED".into(),
+                    format!(
+                        "{head}; an operation on a whole paragraph needs a paragraph with one source, so {route}"
+                    ),
+                    0,
+                ))
+            }
             Fate::Gone => Err((
                 "PARAGRAPH_RESOLVED".into(),
                 format!("{id} is gone once the plan's revisions are settled: its text was removed"),
@@ -457,6 +495,37 @@ impl Origin {
                 (to.as_deref() != Some(from.as_str())).then_some(super::ParagraphMove { from, to })
             })
             .collect()
+    }
+}
+
+/// `p4`, `p4 and p6`, `p4, p6 and p7`.
+fn join_ids(ids: &[String]) -> String {
+    match ids {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
+/// `accept` when settling `plan`'s revisions accepts every one, `reject`
+/// when it rejects every one, `None` when it accepts some and rejects
+/// others, or rejects visibly.
+fn settles_all(plan: &EditPlan) -> Option<&'static str> {
+    use super::ExistingRevisions as E;
+    let every = |filter: Option<&crate::changes::ChangeFilter>| {
+        filter.is_some_and(|f| f.ids.is_none() && f.authors.is_none() && f.kinds.is_none())
+    };
+    let resolve = plan.resolve_revisions.as_ref();
+    let accept = resolve.and_then(|r| r.accept.as_ref());
+    let reject = resolve.and_then(|r| r.reject.as_ref());
+    if resolve.is_some_and(|r| r.reject_visible) {
+        None
+    } else if reject.is_none() && (plan.existing_revisions == E::Accept || every(accept)) {
+        Some("accept")
+    } else if accept.is_none() && (plan.existing_revisions == E::Reject || every(reject)) {
+        Some("reject")
+    } else {
+        None
     }
 }
 
@@ -710,9 +779,12 @@ fn exact_correspondence(
 /// settled paragraph carries (`tags`). A tagged paragraph is kept. Between
 /// two kept paragraphs, the source paragraphs whose tags vanished map in
 /// order onto the untagged paragraphs of their story: each to the first
-/// one, at or after the last match, that holds its text. One with no text,
-/// or whose text no merge holds, is gone. A merge of a single paragraph
-/// whose text did not change is that paragraph, kept.
+/// one, at or after the last match, that holds its text. One whose own
+/// text the settle changed is found by its side instead: it belongs to the
+/// merge beside it when that merge holds text its found members do not
+/// explain on that side. One with no text, or that no merge holds, is
+/// gone. A merge of a single paragraph whose text did not change is that
+/// paragraph, kept.
 fn fates(
     tags: &[Option<usize>],
     source_story: impl Fn(usize) -> String,
@@ -737,6 +809,8 @@ fn fates(
     // Merges concatenate their members in order: the last match, as (gap
     // start, settled paragraph, end of the text it took there).
     let mut cursor: Option<(usize, usize, usize)> = None;
+    // Where each found member's text sits in its merge.
+    let mut spans: Vec<Option<(usize, usize)>> = vec![None; count];
     for g in 0..count {
         if kept[g] != Fate::Gone {
             continue;
@@ -763,7 +837,32 @@ fn fates(
         });
         if let Some((post, end)) = hit {
             fates[g] = Fate::Merged(post);
+            spans[g] = Some((end - text.len(), end));
             cursor = Some((from, post, end));
+        }
+    }
+    let found = fates.clone();
+    for h in 0..count {
+        if found[h] != Fate::Gone || source_text(h).is_empty() {
+            continue;
+        }
+        let story = source_story(h);
+        let near = |g: &usize| found[*g] != Fate::Gone && source_story(*g) == story;
+        let before = (0..h).rev().find(near);
+        let after = (h + 1..count).find(near);
+        let merged_at = |g: Option<usize>| match g.map(|g| (found[g], spans[g])) {
+            Some((Fate::Merged(post), Some(span))) => Some((post, span)),
+            _ => None,
+        };
+        let post = match (merged_at(before), merged_at(after)) {
+            (Some((a, (_, end))), Some((b, (start, _)))) if a == b => (end < start).then_some(a),
+            (before, after) => before
+                .filter(|&(post, (_, end))| end < settled_text(post).len())
+                .or_else(|| after.filter(|&(_, (start, _))| start > 0))
+                .map(|(post, _)| post),
+        };
+        if let Some(post) = post {
+            fates[h] = Fate::Merged(post);
         }
     }
     for post in 0..tags.len() {
@@ -820,6 +919,7 @@ mod tests {
             paragraph_nodes,
             paragraph_story,
             fates: vec![Fate::Kept(0), Fate::Kept(2), Fate::Kept(3)],
+            settles_all: None,
             exact: exact_correspondence(
                 &[Some(0), None, Some(1), Some(2)],
                 &[false; 4],
@@ -1066,6 +1166,45 @@ mod tests {
     }
 
     #[test]
+    fn settles_all_names_one_command_only_when_every_revision_goes_one_way() {
+        let plan = |settle: &str| {
+            EditPlan::from_json(&format!(
+                r#"{{"schema_version":1,"author":"A",{settle}"operations":[]}}"#
+            ))
+            .unwrap()
+        };
+        for (settle, verb) in [
+            (r#""existing_revisions":"accept","#, Some("accept")),
+            (r#""existing_revisions":"reject","#, Some("reject")),
+            (r#""resolve_revisions":{"accept":{}},"#, Some("accept")),
+            (r#""resolve_revisions":{"reject":{}},"#, Some("reject")),
+            (
+                r#""existing_revisions":"accept","resolve_revisions":{"accept":{"ids":["r1"]}},"#,
+                Some("accept"),
+            ),
+            (r#""resolve_revisions":{"accept":{"ids":["r1"]}},"#, None),
+            (
+                r#""existing_revisions":"accept","resolve_revisions":{"reject":{"ids":["r1"]}},"#,
+                None,
+            ),
+            (
+                r#""existing_revisions":"keep","resolve_revisions":{"reject":{"visible":true}},"#,
+                None,
+            ),
+        ] {
+            assert_eq!(settles_all(&plan(settle)), verb, "{settle}");
+        }
+    }
+
+    #[test]
+    fn join_ids_lists_them_as_prose() {
+        let ids = |all: &[&str]| all.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(join_ids(&ids(&["p4"])), "p4");
+        assert_eq!(join_ids(&ids(&["p4", "p6"])), "p4 and p6");
+        assert_eq!(join_ids(&ids(&["p4", "p6", "p7"])), "p4, p6 and p7");
+    }
+
+    #[test]
     fn untagged_paragraphs_are_merges_of_the_text_that_vanished_around_them() {
         let story = |_: usize| "body".to_string();
         fn texts(all: &'static [&'static str]) -> impl Fn(usize) -> String {
@@ -1141,6 +1280,85 @@ mod tests {
                 2
             ),
             [Fate::Kept(0), Fate::Gone]
+        );
+    }
+
+    #[test]
+    fn a_paragraph_whose_text_the_settle_changed_joins_the_merge_beside_it() {
+        let story = |_: usize| "body".to_string();
+        fn texts(all: &'static [&'static str]) -> impl Fn(usize) -> String {
+            move |i| all[i].to_string()
+        }
+        let check = |source: &'static [&'static str],
+                     settled: &'static [&'static str],
+                     tags: &[Option<usize>]| {
+            fates(
+                tags,
+                story,
+                story,
+                texts(source),
+                texts(settled),
+                source.len(),
+            )
+        };
+        // 2 lost its "Y": the merge holds " four" after 1's text.
+        assert_eq!(
+            check(
+                &["Zero.", "Three", " fourY", "Five."],
+                &["Zero.", "Three four", "Five."],
+                &[Some(0), None, Some(3)]
+            ),
+            [
+                Fate::Kept(0),
+                Fate::Merged(1),
+                Fate::Merged(1),
+                Fate::Kept(2)
+            ]
+        );
+        // 1 lost its "X": the merge holds "three" before 2's text.
+        assert_eq!(
+            check(
+                &["A", "Xthree", "four", "D"],
+                &["A", "threefour", "D"],
+                &[Some(0), None, Some(3)]
+            ),
+            [
+                Fate::Kept(0),
+                Fate::Merged(1),
+                Fate::Merged(1),
+                Fate::Kept(2)
+            ]
+        );
+        // Between two found members, only text between them takes it.
+        assert_eq!(
+            check(
+                &["A", "x", "Qy", "z", "D"],
+                &["A", "xyz", "D"],
+                &[Some(0), None, Some(4)]
+            ),
+            [
+                Fate::Kept(0),
+                Fate::Merged(1),
+                Fate::Merged(1),
+                Fate::Merged(1),
+                Fate::Kept(2)
+            ]
+        );
+        // 1 was removed whole: the merge holds nothing but 2's text, which
+        // stays one paragraph kept.
+        assert_eq!(
+            check(
+                &["Zero.", "One gone.", "Three", "", "Five."],
+                &["Zero.", "Three", "Five."],
+                &[Some(0), None, Some(4)]
+            ),
+            [
+                Fate::Kept(0),
+                Fate::Gone,
+                Fate::Kept(1),
+                Fate::Gone,
+                Fate::Kept(2)
+            ]
         );
     }
 }

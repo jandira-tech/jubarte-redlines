@@ -1664,7 +1664,7 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
                 // removed comment target, keep Origin's settlement cause.
                 if matches!(operation, v2::Operation::Comment { .. })
                     && let Some(origin) = &tx.origin
-                    && let Err(cause) = origin.follow(g, true, |p| tx.paragraph_id(p))
+                    && let Err(cause) = origin.follow(g, true, |p| tx.paragraph_id(p), |_| None)
                 {
                     e = miss(cause);
                     e.message.push_str(&format!(

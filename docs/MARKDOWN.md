@@ -1112,6 +1112,32 @@ slips apply as meant, each with a `note:` line on stderr and in the
 on the struck words, in the redline only, and a rewrite's covers the
 paragraph. `text` on `replace` stays an error, naming `replacement`.
 
+### Ids across a settle
+
+A plan that settles revisions first (`existing_revisions` `accept` or
+`reject`, or `resolve_revisions`) still names the paragraphs as its author
+read them: `p3` is the source's `p3` even when settling moves it. A
+paragraph whose mark the settle removes merges with its neighbour. An edit
+that finds its text there follows it. A whole-paragraph operation
+(`delete_paragraph`, `rewrite`, …) follows it when the merged paragraph
+has no other source. When it has, the refusal names each paragraph in
+its view and a route that reaches the merged one:
+
+```text
+error: PARAGRAPH_RESOLVED (op-1): p3 (as read) merges into p2 (after the plan's revisions settle) together with p4; an operation on a whole paragraph needs a paragraph with one source, so select it by its text instead ({"contains":"Three four."}), or accept the revisions first (`jubarte accept FILE -o OUT.docx`) and edit OUT.docx
+```
+
+The settled id is left out when it reads like one of the source ids the
+message names (`p0 (as read) merges with p1 when the plan's revisions
+settle`). The text route is offered to a `--plan` of the first version
+only, quoting words no other paragraph of the story holds; a plan that
+settles some revisions and keeps or rejects others gets "settle the
+plan's revisions first and edit the result" instead of one command. A
+paragraph whose text the settle removes is refused as gone. One whose own
+text the settle changes (rejecting an insertion inside it, say) is still a
+source of the merge that holds its words: an operation on its neighbour is
+refused, not applied to both.
+
 ### Partial runs
 
 A plan is applied whole or refused whole. `--skip-failed` applies every
