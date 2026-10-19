@@ -1440,15 +1440,55 @@ fn delete_paragraph_maps_source_target_through_settlement() {
 }
 
 #[test]
-fn delete_paragraph_with_kept_tracked_changes_refuses() {
+fn delete_paragraph_with_kept_tracked_changes_nests_in_their_insertion() {
+    // #1136: the paragraph goes; Other's "45" keeps its insertion with the
+    // deletion nested in it.
     let s = source();
+    let q = plan(&s, json!([{"kind":"delete_paragraph","target":p(0)}]));
+    let out = run(&s, &q).unwrap();
+    assert_word_valid_package(&out.redline);
+    let red = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(
+        red.contains(r#"<w:ins w:id="7" w:author="Other""#)
+            && red.contains("<w:delText>45</w:delText>"),
+        "{red}"
+    );
+    let rejected = reject_changes(
+        &out.redline,
+        &ChangeFilter {
+            authors: Some(vec![out.report.author.clone()]),
+            ..ChangeFilter::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        paragraphs(&rejected).unwrap()[0].text,
+        paragraphs(&s).unwrap()[0].text
+    );
+}
+
+#[test]
+fn delete_paragraph_holding_a_move_names_it_in_v2_syntax() {
+    let s = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:moveTo w:id="7" {STAMP}><w:r><w:t>45</w:t></w:r></w:moveTo></w:p>{}"#,
+        para("Last.")
+    ));
     let q = plan(&s, json!([{"kind":"delete_paragraph","target":p(0)}]));
     let e = run(&s, &q).unwrap_err();
     assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
     assert_eq!(e.operation.as_deref(), Some("/operations/0"));
     assert!(
+        e.message.starts_with(
+            r#"under keep, a paragraph that holds a move cannot be deleted yet: the move is r7, "45" moved here by "Other"."#
+        ),
+        "{}",
         e.message
-            .contains("holds tracked changes cannot be deleted")
+    );
+    assert!(
+        e.message
+            .contains(r#"{"short_id":"r7","long_id":"document.w:moveTo.w:id.7"}"#),
+        "{}",
+        e.message
     );
 }
 
@@ -3461,5 +3501,23 @@ mod generator {
             "--json",
         ]);
         assert!(!both.status.success(), "--find with --regex must refuse");
+    }
+}
+
+#[test]
+fn deleting_all_of_their_insertion_lands_tracked_and_direct() {
+    // The direct copy has no carrier left for Other's "45"; the tracked one
+    // keeps it with the deletion nested in it.
+    let s = source();
+    for track in ["on", "off"] {
+        let mut q = plan(&s, json!([replace(0, "45", "")]));
+        q["policy"]["track"] = json!(track);
+        let out = run(&s, &q).unwrap_or_else(|e| panic!("track {track}: {e}"));
+        assert_word_valid_package(&out.redline);
+        assert_eq!(
+            paragraphs(&out.clean).unwrap()[0].text,
+            "Pay  days, Delaware law.",
+            "track {track}"
+        );
     }
 }

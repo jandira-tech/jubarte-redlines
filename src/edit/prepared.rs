@@ -973,6 +973,7 @@ pub(crate) mod tests {
                 existing_revisions: ExistingRevisions::Refuse,
                 resolved_revisions: Default::default(),
                 paragraph_ids: Vec::new(),
+                split_revisions: Vec::new(),
                 paragraphs: ParagraphDelta::default(),
                 operations: Vec::new(),
                 comments_added: 0,

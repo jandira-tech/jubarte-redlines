@@ -2282,7 +2282,25 @@ fn exact_rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)> {
 /// projection nodes themselves are mutated by `apply`.
 fn edited_insertions(tx: &Transaction<'_>) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
+    let dom = &tx.opened.dom;
     for (_, resolved) in &tx.resolved {
+        // A deleted paragraph deletes inside every insertion of its runs
+        // (#1136); its mark's own revision is not text.
+        if let Resolved::DeleteParagraph { para } = resolved {
+            let story = &tx.stories[tx.paragraph_story[*para].0].id;
+            let node = tx.paragraph_nodes[*para];
+            for ins in dom.descendants(node, Some(&W::ins())) {
+                let in_mark = dom
+                    .ancestors(ins, None)
+                    .into_iter()
+                    .take_while(|&a| a != node)
+                    .any(|a| dom.name_is(a, &W::p_pr()));
+                if !in_mark && let Some(wid) = dom.attribute(ins, &W::id()) {
+                    ids.insert(crate::ids::ChangeId::new(story, wid).short());
+                }
+            }
+            continue;
+        }
         let Resolved::Text {
             para,
             start,
@@ -2433,8 +2451,10 @@ fn compare_history(
         if c.kind == ChangeKind::Insertion && c.target == "text" && edited.contains(&c.id) {
             if let Some(new) = after.iter().find(|new| new.id == c.id) {
                 c.text.clone_from(&new.text);
-            } else if c.author.as_deref() == Some(author) {
-                // Deleting one's entire insertion removes its carrier.
+            } else if c.author.as_deref() == Some(author) || !tracked {
+                // Deleting one's entire insertion removes its carrier; so
+                // does a direct edit that takes every word of another
+                // author's (`check_dom_realized` holds the text).
                 return false;
             }
         }

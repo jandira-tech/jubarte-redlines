@@ -847,8 +847,14 @@ note.
 
 Text inside another author's insertion is editable: the edit nests in
 their insertion, and Accept All and Reject All give what each would
-without it. Text another author deleted or moved, and a paragraph or run
-whose mark or formatting change is still tracked, is not. The refusal
+without it. Their insertion splits around the edit, and the report's
+`summary` line names the pieces under its source id
+(`"split_revisions":[{"from":"r3","to":["r3","r9"]}]`). Deleting a
+paragraph nests the deletion in their insertions, leaves their deletions
+as they are, and removes your own pending insertion outright. Text
+another author deleted or moved, a paragraph holding a move, and a
+paragraph or run whose mark or formatting change is still tracked, are
+not. The refusal
 (`UNSUPPORTED_STRUCTURE`, exit 3) names that revision by id, author and
 text, then each way around it with what that way costs, in the syntax the
 command used:

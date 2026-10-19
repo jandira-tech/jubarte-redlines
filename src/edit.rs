@@ -152,6 +152,16 @@ pub struct ParagraphMove {
     pub to: Option<String>,
 }
 
+/// Another author's insertion the plan split to edit inside it (#1136):
+/// its source id and the ids its pieces carry in the redline.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevisionSplit {
+    /// The insertion's id in the source (`r3`).
+    pub from: String,
+    /// Its pieces' ids in the redline, in id order (`r3`, `r9`).
+    pub to: Vec<String>,
+}
+
 /// The changes `resolve_revisions` resolved, by id.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedRevisions {
@@ -1036,6 +1046,9 @@ pub struct EditReport {
     /// source's ids; the output documents carry these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paragraph_ids: Vec<ParagraphMove>,
+    /// Other authors' insertions the redline splits, by source id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub split_revisions: Vec<RevisionSplit>,
     /// Body paragraph count before and after.
     pub paragraphs: ParagraphDelta,
     /// One outcome per operation, in plan order.
@@ -1120,7 +1133,7 @@ impl EditReport {
             .filter(|o| o.status == "failed")
             .count();
         let ok = self.operations.iter().filter(|o| o.status == "ok").count();
-        push(serde_json::json!({
+        let mut summary = serde_json::json!({
             "ev": "summary",
             "status": if self.ok { "ok" } else { "failed" },
             "ops": {"ok": ok, "failed": failed},
@@ -1128,7 +1141,14 @@ impl EditReport {
                       "d": self.paragraphs.to as i64 - self.paragraphs.from as i64},
             "revs": self.revisions,
             "comments": {"added": self.comments_added},
-        }));
+        });
+        if !self.split_revisions.is_empty() {
+            summary.as_object_mut().expect("object").insert(
+                "split_revisions".into(),
+                serde_json::to_value(&self.split_revisions).expect("serializes"),
+            );
+        }
+        push(summary);
         out
     }
 }
@@ -2372,6 +2392,7 @@ impl<'p> Transaction<'p> {
                 .as_ref()
                 .map(|o| o.moves(|p| self.paragraph_id(p)))
                 .unwrap_or_default(),
+            split_revisions: Vec::new(),
             paragraphs: ParagraphDelta {
                 from: self.body_paragraph_count(),
                 to: self.body_paragraph_count(),

@@ -131,11 +131,11 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
         let message = match resolved {
             Resolved::DeleteParagraph { para } => {
                 let node = tx.paragraph_nodes[*para];
-                if holds_revision(dom, node) {
-                    Some(
-                        "under keep, a paragraph that holds tracked changes cannot be deleted; resolve them first with resolve_revisions"
-                            .to_string(),
-                    )
+                if let Some(moved) = moved_in(dom, node) {
+                    Some(named(
+                        "under keep, a paragraph that holds a move cannot be deleted yet: the move is",
+                        moved,
+                    ))
                 } else if dom
                     .next_element(node)
                     .is_none_or(|n| !dom.name_is(n, &W::p()))
@@ -238,6 +238,7 @@ pub(super) fn result_v2_with_paragraphs(
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
+    report.split_revisions = splits(&paragraphs.insertion_origins);
     Ok((
         EditResult {
             clean,
@@ -253,12 +254,13 @@ fn result_with_order(
     clean: Vec<u8>,
     array_order: bool,
 ) -> Result<EditResult, EditError> {
-    let (redline, floor, _) = redline(tx, array_order, false)?;
+    let (redline, floor, paragraphs) = redline(tx, array_order, false)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
+    report.split_revisions = splits(&paragraphs.insertion_origins);
     Ok(EditResult {
         clean,
         redline,
@@ -363,6 +365,36 @@ fn redline(
             insertion_origins,
         },
     ))
+}
+
+/// The source insertions the emission split, from each emitted piece's
+/// origin: a source id with more than one piece, or whose one piece took a
+/// new id.
+fn splits(origins: &BTreeMap<String, String>) -> Vec<super::RevisionSplit> {
+    let mut pieces: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (emitted, source) in origins {
+        pieces.entry(source).or_default().push(emitted);
+    }
+    // `r9` before `r10`: the number, then the text for an id without one.
+    let order = |id: &str| {
+        (
+            crate::ids::change_id(id).and_then(|c| c.wid.parse::<u64>().ok()),
+            id.to_string(),
+        )
+    };
+    let mut out: Vec<super::RevisionSplit> = pieces
+        .into_iter()
+        .filter(|(source, to)| to.len() > 1 || to.first() != Some(source))
+        .map(|(source, mut to)| {
+            to.sort_by_key(|id| order(id));
+            super::RevisionSplit {
+                from: source.to_string(),
+                to: to.into_iter().map(str::to_string).collect(),
+            }
+        })
+        .collect();
+    out.sort_by_key(|split| order(&split.from));
+    out
 }
 
 /// Counts of the redline's changes stamped with `author` and `date` whose
@@ -1336,6 +1368,9 @@ fn rename_deleted_text(dom: &mut Dom, run: NodeId) {
 
 /// Every run of `container`, at any depth of hyperlinks, content controls,
 /// smart tags and simple fields, inside a `w:del`; consecutive runs share one.
+/// Under `keep` (#1136), another author's insertion keeps its words with
+/// the deletion nested in it, the plan author's own pending insertion goes,
+/// and a deletion stays as it is.
 fn delete_runs(dom: &mut Dom, container: NodeId, stamp: &mut Stamp<'_>) {
     let mut group: Vec<NodeId> = Vec::new();
     for child in dom.elements(container, None) {
@@ -1356,10 +1391,57 @@ fn delete_runs(dom: &mut Dom, container: NodeId, stamp: &mut Stamp<'_>) {
                     delete_runs(dom, content, stamp);
                 }
             }
+            "ins" if dom.attribute(child, &W::author()) == Some(stamp.author) => {
+                remove_own_insertion(dom, child, stamp);
+            }
+            "ins" => delete_runs(dom, child, stamp),
             _ => {}
         }
     }
     wrap_deleted(dom, group, stamp);
+}
+
+/// What a run may hold and still go outright: text Word types, nothing a
+/// field or a note needs.
+const TYPED: [&str; 9] = [
+    "rPr",
+    "t",
+    "tab",
+    "br",
+    "cr",
+    "sym",
+    "noBreakHyphen",
+    "softHyphen",
+    "lastRenderedPageBreak",
+];
+
+/// The plan author's own pending insertion, deleted: its typed runs go
+/// outright, a run holding a field character or a reference is deleted
+/// inside it so no field or note loses a part, and the markers it held
+/// (bookmarks, comment ranges) stay where they were.
+fn remove_own_insertion(dom: &mut Dom, ins: NodeId, stamp: &mut Stamp<'_>) {
+    for run in dom.elements(ins, Some(&W::r())) {
+        if dom
+            .elements(run, None)
+            .into_iter()
+            .all(|c| is_one_of(dom, c, &TYPED))
+        {
+            dom.remove(run);
+        }
+    }
+    delete_runs(dom, ins, stamp);
+    let left = dom.elements(ins, None);
+    if left.iter().all(|&c| {
+        is_one_of(dom, c, &RANGE_STARTS)
+            || is_one_of(dom, c, &RANGE_ENDS)
+            || is_one_of(dom, c, &["commentRangeEnd"])
+    }) {
+        for marker in left {
+            dom.remove(marker);
+            dom.add_before_self(ins, marker);
+        }
+        dom.remove(ins);
+    }
 }
 
 fn wrap_deleted(dom: &mut Dom, group: Vec<NodeId>, stamp: &mut Stamp<'_>) {
@@ -1403,12 +1485,12 @@ fn paragraph_format_change(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
         .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
 }
 
-/// Whether `paragraph` holds an inserted, deleted or moved run or mark.
-fn holds_revision(dom: &Dom, paragraph: NodeId) -> bool {
-    dom.descendants(paragraph, None).into_iter().any(|n| {
-        dom.name(n)
-            .is_some_and(|n| n.namespace_name() == W::URI && TRACKED.contains(&n.local_name()))
-    })
+/// The first move (`w:moveFrom`, `w:moveTo`) `node` holds, in its runs or
+/// its mark.
+fn moved_in(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    dom.descendants(node, None)
+        .into_iter()
+        .find(|&n| is_one_of(dom, n, &["moveFrom", "moveTo"]))
 }
 
 /// The paragraph right before `node` among its siblings.
@@ -1527,7 +1609,7 @@ mod tests {
         assert_eq!(names, ["ins", "del"]);
         assert_eq!(stamp.next_id, 7);
         assert!(mark_has(&dom, p, &DELETED));
-        assert!(!holds_revision(&dom, dom.elements(p, Some(&W::r()))[0]));
+        assert!(moved_in(&dom, dom.elements(p, Some(&W::r()))[0]).is_none());
     }
 
     #[test]

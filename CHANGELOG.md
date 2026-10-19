@@ -162,7 +162,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `existing_revisions: keep`, a replace, deletion or insertion in text
   another author inserted nests in their insertion: Accept All keeps the
   edit, Reject All removes their insertion with it. An edit inside your own
-  insertion rewrites it in place.
+  insertion rewrites it in place. `delete_paragraph` of a paragraph holding
+  revisions nests the deletion in other authors' insertions, leaves
+  deletions as they are and removes your own pending insertion outright; a
+  paragraph holding a move is still refused. The report's `summary` names
+  the pieces of each split insertion under its source id
+  (`split_revisions`, `EditReport::split_revisions`).
 
 - **A refusal names the revision in the way and every route around it
   (#1108).** Text another author deleted or moved, and a paragraph or run

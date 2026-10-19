@@ -1078,3 +1078,323 @@ fn word_fixture_split_keeps_existing_nested_deletion_in_order() {
     let rejected = text(&reject_changes(WORD, &ChangeFilter::default()).unwrap());
     settled(&out, &accepted, &rejected);
 }
+
+/// Word 16: Alma Sato Reyes inserted the paragraph and its mark (r0, r1).
+const STEP1: &[u8] = include_bytes!("fixtures/re-dialect/step1.docx");
+const ALMA: &str = "Alma Sato Reyes";
+
+fn delete_p0(source: &[u8], author: &str) -> jubarte::edit::EditResult {
+    let out = apply_plan(
+        source,
+        &plan(
+            author,
+            json!([{"kind":"delete_paragraph","paragraph":"p0"}]),
+        ),
+    );
+    assert!(out.is_ok(), "the delete must land: {:?}", out.err());
+    let out = out.unwrap();
+    validate_output(&out.redline);
+    validate_output(&out.clean);
+    out
+}
+
+/// The `w:pPr/w:rPr` revisions of `p`, as `local:author`.
+fn mark_labels(dom: &Dom, p: NodeId) -> Vec<String> {
+    dom.element(p, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .map(|rpr| {
+            dom.elements(rpr, None)
+                .into_iter()
+                .filter(|&c| dom.name_is(c, &W::ins()) || dom.name_is(c, &W::del()))
+                .map(|c| {
+                    format!(
+                        "{}:{}",
+                        dom.name(c).unwrap().local_name(),
+                        dom.attribute(c, &W::author()).unwrap()
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn delete_paragraph_under_keep_nests_in_their_insertion() {
+    let out = delete_p0(STEP1, "Carol Diaz");
+    let (dom, p) = tree(&out.redline);
+    let theirs = revision(
+        &dom,
+        p,
+        "ins",
+        "1",
+        ALMA,
+        "2026-10-17T23:44:00Z",
+        "The parties agree to pay the bankers a pro-rata amount by the end of the month.",
+    );
+    let del = dom.elements(theirs, Some(&W::del()));
+    assert_eq!(del.len(), 1, "{}", dom.serialize_element(p));
+    assert_eq!(dom.attribute(del[0], &W::author()), Some("Carol Diaz"));
+    assert!(dom.descendants(theirs, Some(&W::t())).is_empty());
+    assert!(
+        dom.elements(p, Some(&W::r())).is_empty(),
+        "no plain run is left: {}",
+        dom.serialize_element(p)
+    );
+    assert_eq!(
+        mark_labels(&dom, p),
+        [format!("ins:{ALMA}"), "del:Carol Diaz".into()]
+    );
+    settled(&out.redline, "", "");
+}
+
+#[test]
+fn delete_paragraph_of_own_insertion_removes_it_outright() {
+    let out = delete_p0(STEP1, ALMA);
+    let (dom, p) = tree(&out.redline);
+    assert!(
+        dom.descendants(p, Some(&W::ins()))
+            .into_iter()
+            .all(|n| dom.parent(n).is_some_and(|r| dom.name_is(r, &W::r_pr()))),
+        "only the mark keeps its insertion: {}",
+        dom.serialize_element(p)
+    );
+    assert!(dom.descendants(p, Some(&W::del_text())).is_empty());
+    assert!(dom.descendants(p, Some(&W::t())).is_empty());
+    assert_eq!(
+        mark_labels(&dom, p),
+        [format!("ins:{ALMA}"), format!("del:{ALMA}")]
+    );
+    settled(&out.redline, "", "");
+}
+
+#[test]
+fn delete_paragraph_under_keep_leaves_their_deletion_and_nests_their_insertion() {
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">plain </w:t></w:r><w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t xml:space="preserve">added </w:t></w:r></w:ins><w:del w:id="7" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:delText xml:space="preserve">gone </w:delText></w:r></w:del><w:ins w:id="8" w:author="Carol Diaz" w:date="{OLD_DATE}"><w:r><w:t>mine</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>next</w:t></w:r></w:p>"#
+    ));
+    let out = delete_p0(&source, "Carol Diaz");
+    let (dom, p) = tree(&out.redline);
+    let labels: Vec<String> = dom
+        .elements(p, None)
+        .into_iter()
+        .filter(|&c| !dom.name_is(c, &W::p_pr()))
+        .map(|c| {
+            let inner: Vec<String> = dom
+                .elements(c, None)
+                .into_iter()
+                .map(|n| dom.name(n).unwrap().local_name().to_string())
+                .collect();
+            format!(
+                "{}:{}:{}",
+                dom.name(c).unwrap().local_name(),
+                dom.attribute(c, &W::author()).unwrap_or("-"),
+                inner.join("+")
+            )
+        })
+        .collect();
+    assert_eq!(
+        labels,
+        ["del:Carol Diaz:r", "ins:Alice:del", "del:Bob:r",],
+        "{}",
+        dom.serialize_element(p)
+    );
+    assert_eq!(mark_labels(&dom, p), ["del:Carol Diaz"]);
+    settled(&out.redline, "next", "plain gone \nnext");
+}
+
+#[test]
+fn delete_paragraph_holding_a_move_is_refused_with_the_move_named() {
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">alpha </w:t></w:r><w:moveTo w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t>beta</w:t></w:r></w:moveTo></w:p><w:p><w:r><w:t>next</w:t></w:r></w:p>"#
+    ));
+    let e = apply_plan(
+        &source,
+        &plan(
+            "Carol Diaz",
+            json!([{"kind":"delete_paragraph","paragraph":"p0"}]),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    assert_eq!(
+        e.message.lines().next().unwrap(),
+        r#"under keep, a paragraph that holds a move cannot be deleted yet: the move is r6, "beta" moved here by "Alice"."#
+    );
+    assert!(e.message.contains("keep the move:"), "{e}");
+}
+
+#[test]
+fn report_lists_the_split_pieces() {
+    // Carol's replacement splits Alice's r6: its head keeps r6, its tail
+    // after Carol's r7 (deletion) and r8 (insertion) takes r9.
+    let out = apply_plan(
+        &source("Alice"),
+        &plan("Carol Diaz", replace("beta", "NEW")),
+    )
+    .unwrap();
+    let pieces = &out.report.split_revisions;
+    assert_eq!(pieces.len(), 1, "{pieces:?}");
+    assert_eq!(pieces[0].from, "r6");
+    assert_eq!(pieces[0].to, ["r6", "r9"]);
+    let summary: Value =
+        serde_json::from_str(out.report.to_jsonl().lines().last().unwrap()).unwrap();
+    assert_eq!(summary["ev"], "summary");
+    assert_eq!(
+        summary["split_revisions"],
+        json!([{"from":"r6","to":["r6","r9"]}])
+    );
+}
+
+#[test]
+fn an_edit_that_splits_nothing_reports_no_pieces() {
+    let out = apply_plan(
+        &source("Carol Diaz"),
+        &plan("Carol Diaz", replace("beta", "NEW")),
+    )
+    .unwrap();
+    assert!(out.report.split_revisions.is_empty());
+    assert!(!out.report.to_jsonl().contains("split_revisions"));
+}
+
+#[test]
+fn own_insertion_is_edited_in_place() {
+    // Word 16's Step 1: Alma Sato Reyes typed the sentence as r1; she now
+    // corrects her own word, which Word folds into r1.
+    let out = run(STEP1, ALMA, replace("bankers", "insurers"));
+    let (dom, p) = tree(&out);
+    revision(
+        &dom,
+        p,
+        "ins",
+        "1",
+        ALMA,
+        "2026-10-17T23:44:00Z",
+        "The parties agree to pay the insurers a pro-rata amount by the end of the month.",
+    );
+    assert_eq!(dom.elements(p, Some(&W::ins())).len(), 1);
+    assert!(dom.descendants(p, Some(&W::del())).is_empty());
+}
+
+#[test]
+fn the_change_listing_names_the_insertion_our_deletion_sits_in() {
+    let out = run(&source("Alice"), "Carol Diaz", replace("beta", "NEW"));
+    let changes = jubarte::changes::list_changes(&out).unwrap();
+    let ours = changes
+        .iter()
+        .find(|c| c.author.as_deref() == Some("Carol Diaz") && c.text == "beta")
+        .unwrap_or_else(|| panic!("{changes:#?}"));
+    assert_eq!(ours.inside.as_deref(), Some("r6"), "{ours:#?}");
+}
+
+/// Each change of `bytes` by an author other than `except`, as
+/// `kind target author: text`, with neighbouring pieces of one change kind
+/// and author joined: a split insertion reads as the one it was.
+fn others(bytes: &[u8], except: &str) -> Vec<String> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for c in jubarte::changes::list_changes(bytes).unwrap() {
+        let author = c.author.clone().unwrap_or_default();
+        if author == except {
+            continue;
+        }
+        let key = format!("{:?} {} {author}", c.kind, c.target);
+        match out.last_mut() {
+            Some((last, text)) if *last == key => text.push_str(&c.text),
+            _ => out.push((key, c.text.clone())),
+        }
+    }
+    out.into_iter().map(|(k, t)| format!("{k}: {t}")).collect()
+}
+
+/// Every edit of `kind` the step family's first paragraph takes once: each
+/// word that occurs once replaced, deleted, or followed by an insertion.
+fn step_edits(visible: &str, kind: &str) -> Vec<Value> {
+    let mut edits = Vec::new();
+    for word in visible.split_whitespace() {
+        let word = word.trim_end_matches('.');
+        if word.is_empty() || visible.matches(word).count() != 1 {
+            continue;
+        }
+        edits.push(match kind {
+            "replace" => json!({"kind":"replace","paragraph":"p0","find":word,"replacement":"XX"}),
+            "delete" => json!({"kind":"replace","paragraph":"p0","find":word,"replacement":""}),
+            _ => json!({"kind":"insert","paragraph":"p0","after":word,"text":" YY"}),
+        });
+    }
+    edits
+}
+
+const STEP2_UNTRACKED: &[u8] = include_bytes!("fixtures/re-dialect/step2-untracked.docx");
+
+/// Each edit of `kind` on `source` under `keep`: rejecting Carol gives the
+/// source's text and leaves the other authors' changes as they were, and
+/// accepting everything gives the same edit made on the accepted source.
+fn step_family(name: &str, source: &[u8], kind: &str) {
+    let carol = ChangeFilter {
+        authors: Some(vec!["Carol Diaz".into()]),
+        ..ChangeFilter::default()
+    };
+    let visible = paragraphs(source).unwrap()[0].text.clone();
+    let plain = accept_changes(source, &ChangeFilter::default()).unwrap();
+    let edits = step_edits(&visible, kind);
+    assert!(edits.len() > 6, "{name}: only {} edits", edits.len());
+    for edit in edits {
+        let what = format!("{name}: {edit}");
+        let out = apply_plan(source, &plan("Carol Diaz", json!([edit.clone()])))
+            .unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_word_valid_package(&out.redline);
+        let rejected = reject_changes(&out.redline, &carol).unwrap();
+        assert_eq!(text(&rejected), text(source), "{what}: reject ours");
+        assert_eq!(
+            others(&rejected, "Carol Diaz"),
+            others(source, "Carol Diaz"),
+            "{what}: their changes"
+        );
+        let mut direct = json!({"schema_version":1,"author":"Carol Diaz","date":DATE,
+            "operations":[]});
+        direct["operations"] = json!([edit]);
+        let edited =
+            apply_plan(&plain, &EditPlan::from_json(&direct.to_string()).unwrap()).unwrap();
+        assert_eq!(
+            text(&accept_changes(&out.redline, &ChangeFilter::default()).unwrap()),
+            text(&edited.clean),
+            "{what}: accept all"
+        );
+    }
+}
+
+#[test]
+fn step1_replacements_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step1", STEP1, "replace");
+}
+#[test]
+fn step1_deletions_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step1", STEP1, "delete");
+}
+#[test]
+fn step1_insertions_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step1", STEP1, "insert");
+}
+#[test]
+fn step2_tracked_replacements_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step2-tracked", WORD, "replace");
+}
+#[test]
+fn step2_tracked_deletions_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step2-tracked", WORD, "delete");
+}
+#[test]
+fn step2_tracked_insertions_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step2-tracked", WORD, "insert");
+}
+#[test]
+fn step2_untracked_replacements_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step2-untracked", STEP2_UNTRACKED, "replace");
+}
+#[test]
+fn step2_untracked_deletions_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step2-untracked", STEP2_UNTRACKED, "delete");
+}
+#[test]
+fn step2_untracked_insertions_reject_to_the_source_and_accept_to_the_plain_edit() {
+    step_family("step2-untracked", STEP2_UNTRACKED, "insert");
+}
