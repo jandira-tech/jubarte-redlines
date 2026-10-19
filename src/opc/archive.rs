@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, SeekFrom};
 
 use zip::ZipArchive;
 use zip::read::{ArchiveOffset, Config};
@@ -30,23 +30,96 @@ pub(crate) fn open_archive_unchecked<R: Read + Seek + Clone>(
 }
 
 /// The package open every reader shares: [`open_archive_unchecked`], then
-/// zip 9.0.5's [`ZipArchive::validate_header_consistency`]. A local file
-/// header that disagrees with the central directory — a dual-header "zip
-/// cloaking" package, GHSA-m665-v7pm-7grj — fails the open. The error
-/// text carries `admit`'s `ZIP_HEADER_MISMATCH` code so an agent sees the
-/// same refusal whichever route met the file.
+/// [`local_name_mismatch`]. A local file header that names its entry
+/// differently than the central directory — a dual-header "zip cloaking"
+/// package, GHSA-m665-v7pm-7grj — fails the open. The error text carries
+/// `admit`'s `ZIP_HEADER_MISMATCH` code so an agent sees the same refusal
+/// whichever route met the file.
 pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipArchive<R>> {
-    let mut archive = open_archive_unchecked(reader)?;
-    archive.validate_header_consistency().map_err(|e| {
-        ZipError::Io(std::io::Error::new(
+    let mut headers = reader.clone();
+    let archive = open_archive_unchecked(reader)?;
+    if let Some(detail) = local_name_mismatch(&archive, &mut headers) {
+        return Err(ZipError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
-                "{}: local and central headers disagree: {e}",
+                "{}: local and central headers disagree: {detail}",
                 crate::admission::AdmissionErrorKind::ZipHeaderMismatch.code()
             ),
-        ))
-    })?;
+        )));
+    }
     Ok(archive)
+}
+
+/// A header's signature, the offset of its two-byte name length, and the
+/// offset its name starts at: the central record (`PK\1\2`) and the
+/// local file header (`PK\3\4`), per APPNOTE 4.3.7 and 4.3.12.
+type HeaderShape = (&'static [u8; 4], usize, usize);
+const CENTRAL_HEADER: HeaderShape = (b"PK\x01\x02", 28, 46);
+const LOCAL_HEADER: HeaderShape = (b"PK\x03\x04", 26, 30);
+
+/// The raw name bytes of the header at `at`, or `None` when no header of
+/// that shape is there.
+fn raw_name<R: Read + Seek>(reader: &mut R, at: u64, shape: HeaderShape) -> Option<Vec<u8>> {
+    let (signature, length_at, name_at) = shape;
+    let mut head = vec![0u8; name_at];
+    reader.seek(SeekFrom::Start(at)).ok()?;
+    reader.read_exact(&mut head).ok()?;
+    if head.get(..4)? != signature.as_slice() {
+        return None;
+    }
+    let &[low, high, ..] = head.get(length_at..)? else {
+        return None;
+    };
+    let length = u16::from_le_bytes([low, high]);
+    let mut name = vec![0; usize::from(length)];
+    reader.read_exact(&mut name).ok()?;
+    Some(name)
+}
+
+/// The first entry whose local file header names it differently than its
+/// central record, described for a refusal (GHSA-m665-v7pm-7grj): a
+/// scanner that trusts local headers would read another package than the
+/// central directory's. The raw name bytes are read from both records in
+/// `reader` (the package [`ZipArchive`] opened), because zip replaces an
+/// entry's name with a central Unicode Path field's. Only the names are
+/// compared: a local time, or a Unicode Path field only the central
+/// record carries (APPNOTE-legal), hides no content, and Word opens such
+/// packages (#594). The content fields — method, flags, CRC, sizes and
+/// extents — are #644's. An entry zip cannot index is left to the read
+/// that will refuse it.
+pub(crate) fn local_name_mismatch<R: Read + Seek>(
+    archive: &ZipArchive<R>,
+    reader: &mut R,
+) -> Option<String> {
+    for i in 0..archive.len() {
+        // The central metadata only: `by_index_raw` would read the local
+        // header itself and fail on the very entry this check must name.
+        let Ok(entry) = archive.by_index_data(i) else {
+            continue;
+        };
+        let (central_at, local_at) = (entry.central_header_start(), entry.header_start());
+        let Some(central) = raw_name(reader, central_at, CENTRAL_HEADER) else {
+            return Some(format!(
+                "entry {i} has no central record at offset {central_at}"
+            ));
+        };
+        let shown = String::from_utf8_lossy(&central).into_owned();
+        match raw_name(reader, local_at, LOCAL_HEADER) {
+            Some(local) if local == central => {}
+            Some(local) => {
+                return Some(format!(
+                    "entry {i} is '{shown}' in the central directory but '{}' in its local header",
+                    String::from_utf8_lossy(&local)
+                ));
+            }
+            None => {
+                return Some(format!(
+                    "entry {i} ('{shown}') has no local header at offset {local_at}"
+                ));
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -180,6 +253,55 @@ mod tests {
         let err = open_archive(Cursor::new(&package)).expect_err("refused");
         assert!(err.to_string().contains("ZIP_HEADER_MISMATCH"), "{err}");
         assert!(open_archive_unchecked(Cursor::new(&package)).is_ok());
+    }
+
+    /// Change only the local header's last-modified time (`+10`), as a
+    /// tool that rewrites the central record can leave it.
+    fn retime_local_header(bytes: &mut [u8], name: &str) {
+        let at = {
+            let mut archive = ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+            archive.by_name(name).unwrap().header_start() as usize
+        };
+        assert_eq!(&bytes[at..at + 4], b"PK\x03\x04");
+        bytes[at + 10] ^= 0x5a;
+        bytes[at + 11] ^= 0x21;
+    }
+
+    /// A local time that disagrees with the central record hides no
+    /// content, and Word opens such files (three real inputs carry one on
+    /// `word/document.xml`). Only the names must agree (#594); the
+    /// content fields are #644's.
+    #[test]
+    fn open_archive_accepts_a_local_time_mismatch() {
+        let mut package = stored_package(b"payload");
+        retime_local_header(&mut package, "payload.bin");
+        let mut archive =
+            open_archive(Cursor::new(&package)).expect("a time mismatch is not cloaking");
+        let mut actual = Vec::new();
+        archive
+            .by_name("payload.bin")
+            .unwrap()
+            .read_to_end(&mut actual)
+            .unwrap();
+        assert_eq!(actual, b"payload");
+    }
+
+    /// A central record pointing at bytes that are no local file header is
+    /// refused too: a scanner walking local headers would not find it.
+    #[test]
+    fn open_archive_refuses_a_central_record_without_its_local_header() {
+        let mut package = stored_package(b"payload");
+        let at = {
+            let mut archive = ZipArchive::new(Cursor::new(&package)).unwrap();
+            archive.by_name("payload.bin").unwrap().header_start() as usize
+        };
+        package[at + 2] = b'X';
+        let err = open_archive(Cursor::new(&package)).expect_err("refused");
+        assert!(
+            err.to_string()
+                .contains("ZIP_HEADER_MISMATCH: local and central headers disagree: entry 0 ('payload.bin') has no local header at offset 0"),
+            "{err}"
+        );
     }
 
     /// The header check refuses only headers that disagree: every `.docx`

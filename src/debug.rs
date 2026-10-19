@@ -209,12 +209,13 @@ impl Package {
         crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
         let mut zip = crate::opc::open_archive_unchecked(Cursor::new(bytes))
             .map_err(|e| format!("not a zip: {e}"))?;
-        let header_mismatch = zip.validate_header_consistency().err().map(|e| {
-            format!(
-                "{}: local and central headers disagree: {e}",
-                crate::admission::AdmissionErrorKind::ZipHeaderMismatch.code()
-            )
-        });
+        let header_mismatch =
+            crate::opc::local_name_mismatch(&zip, &mut Cursor::new(bytes)).map(|detail| {
+                format!(
+                    "{}: local and central headers disagree: {detail}",
+                    crate::admission::AdmissionErrorKind::ZipHeaderMismatch.code()
+                )
+            });
         let mut entries = Vec::with_capacity(zip.len());
         let mut total = 0u64;
         for i in 0..zip.len() {
@@ -2872,7 +2873,12 @@ mod tests {
         rename_local_header(&mut pkg, b"word/document.xml", b"w0rd/document.xml");
         let out = report(&pkg, None, &Options::default()).unwrap();
         assert!(out.contains("zip-header-mismatch: 1\n"), "{out}");
-        assert!(out.contains("Local file header filename mismatch"), "{out}");
+        assert!(
+            out.contains(
+                "'word/document.xml' in the central directory but 'w0rd/document.xml' in its local header"
+            ),
+            "{out}"
+        );
         let found = findings(&pkg).unwrap();
         assert!(
             found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
