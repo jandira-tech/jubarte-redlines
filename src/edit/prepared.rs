@@ -213,17 +213,10 @@ pub fn prepare(
     options: &PrepareOptions,
 ) -> Result<PreparedEdit, EditError> {
     if options.skip_failed {
+        // Each attempt comes back here with `skip_failed` off: the whole
+        // plan, refused at its first failure.
         return super::skip::prepare_skipping(source, plan, options);
     }
-    prepare_once(source, plan, options)
-}
-
-/// [`prepare`] of the whole plan: the first failure refuses it.
-pub(super) fn prepare_once(
-    source: &[u8],
-    plan: &EditPlan,
-    options: &PrepareOptions,
-) -> Result<PreparedEdit, EditError> {
     check_update_fields(plan)?;
     let lowered = super::visible::lower(source, plan)?;
     let plan = lowered.as_ref().unwrap_or(plan);

@@ -11,7 +11,7 @@
 //! unit. A failure no operation is blamed for (`STALE_SOURCE`, a
 //! `resolve_revisions` error, a plan-level refusal) is never skipped.
 
-use super::prepared::{PrepareOptions, PreparedEdit, prepare_once};
+use super::prepared::{PrepareOptions, PreparedEdit, prepare};
 use super::{EditError, EditOutcome, EditPlan, ExistingRevisions, Operation, kind_name};
 use std::collections::BTreeSet;
 
@@ -56,7 +56,7 @@ pub(super) fn prepare_skipping(
             operations: live.iter().map(|&i| named.operations[i].clone()).collect(),
             ..named.clone()
         };
-        let mut e = match prepare_once(source, &attempt, &once) {
+        let mut e = match prepare(source, &attempt, &once) {
             Ok(prepared) => return Ok(merged(prepared, skipped)),
             Err(e) => e,
         };

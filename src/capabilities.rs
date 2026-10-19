@@ -196,6 +196,12 @@ pub struct Operations {
     /// a11y,style,structure`).
     #[serde(default)]
     pub audit: bool,
+    /// Edit plans run with `--skip-failed`
+    /// ([`crate::edit::PrepareOptions::skip_failed`]): the operations that
+    /// pass are applied, and the failed ones are written as a plan of
+    /// their own.
+    #[serde(default)]
+    pub edit_skip_failed: bool,
 }
 
 impl Operations {
@@ -228,6 +234,7 @@ impl Operations {
             fields,
             scrub,
             audit,
+            edit_skip_failed,
         } = self;
         vec![
             ("compare", *compare),
@@ -255,6 +262,7 @@ impl Operations {
             ("fields", *fields),
             ("scrub", *scrub),
             ("audit", *audit),
+            ("edit_skip_failed", *edit_skip_failed),
         ]
     }
 }
@@ -411,6 +419,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             fields: true,
             scrub: true,
             audit: true,
+            edit_skip_failed: true,
         },
         edit_plan_versions: dispatched_plan_versions(runtime),
         edit_operations: crate::edit::dispatched_operation_kinds(),

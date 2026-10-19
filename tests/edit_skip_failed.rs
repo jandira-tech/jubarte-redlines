@@ -30,7 +30,7 @@ fn plan(ops: &Value) -> EditPlan {
 }
 
 /// Five operations; the third is `bad`.
-fn five(bad: Value) -> Value {
+fn five(bad: &Value) -> Value {
     json!([
         {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
         {"kind":"replace","paragraph":"p1","find":"fee is payable","replacement":"fee is owed"},
@@ -70,7 +70,7 @@ fn texts(docx: &[u8]) -> Vec<String> {
 
 #[test]
 fn skip_failed_writes_the_survivors_byte_for_byte() {
-    let ops = five(missing());
+    let ops = five(&missing());
     let skipped = prepare(SOURCE, &plan(&ops), &skipping()).unwrap();
     let mut four = ops.as_array().unwrap().clone();
     four.remove(2);
@@ -108,7 +108,7 @@ fn skip_failed_writes_the_survivors_byte_for_byte() {
 
 #[test]
 fn without_skip_failed_the_plan_stays_atomic() {
-    let e = prepare(SOURCE, &plan(&five(missing())), &PrepareOptions::default()).unwrap_err();
+    let e = prepare(SOURCE, &plan(&five(&missing())), &PrepareOptions::default()).unwrap_err();
     assert_eq!(e.code, "ANCHOR_NOT_FOUND", "{e}");
 }
 
@@ -163,7 +163,7 @@ fn a_group_without_skip_failed_changes_nothing() {
 
 #[test]
 fn resolve_revisions_failure_is_never_skipped() {
-    let mut wire = request(&five(missing()));
+    let mut wire = request(&five(&missing()));
     wire["resolve_revisions"] = json!({"accept":{"ids":["r9"]}});
     let plan = EditPlan::from_json(&wire.to_string()).unwrap();
     let e = prepare(SOURCE, &plan, &skipping()).unwrap_err();
@@ -172,7 +172,7 @@ fn resolve_revisions_failure_is_never_skipped() {
 
 #[test]
 fn stale_source_is_never_skipped() {
-    let mut wire = request(&five(missing()));
+    let mut wire = request(&five(&missing()));
     wire["source_sha256"] = json!("0".repeat(64));
     let plan = EditPlan::from_json(&wire.to_string()).unwrap();
     let e = prepare(SOURCE, &plan, &skipping()).unwrap_err();
@@ -193,7 +193,7 @@ fn all_failed_is_refused_under_skip_failed() {
 
 #[test]
 fn the_failed_plan_is_a_runnable_plan_of_the_failures() {
-    let ops = five(missing());
+    let ops = five(&missing());
     let original = plan(&ops);
     let prepared = prepare(SOURCE, &original, &skipping()).unwrap();
     let output = source_sha256(&prepared.result.redline);
@@ -339,7 +339,7 @@ fn workspace(ops: &Value) -> tempfile::TempDir {
 
 #[test]
 fn the_cli_skips_and_writes_the_failed_plan_beside_the_plan() {
-    let dir = workspace(&five(missing()));
+    let dir = workspace(&five(&missing()));
     let out = cli(
         dir.path(),
         &[
@@ -498,6 +498,26 @@ fn dry_run_prints_the_next_command() {
         "{}",
         stderr(&out)
     );
+    // An apostrophe closes the quote, escapes itself and reopens it.
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "O'Brien.docx",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        stderr(&out).contains(&format!(
+            "next: {bin} edit in.docx --plan plan.json -o 'O'\\''Brien.docx'"
+        )),
+        "{}",
+        stderr(&out)
+    );
     // --quiet drops it.
     let out = cli(
         dir.path(),
@@ -514,7 +534,7 @@ fn dry_run_prints_the_next_command() {
     );
     assert!(!stderr(&out).contains("next:"), "{}", stderr(&out));
     // A refused dry run has no next command.
-    let dir = workspace(&five(missing()));
+    let dir = workspace(&five(&missing()));
     let out = cli(
         dir.path(),
         &[
@@ -603,4 +623,15 @@ fn every_write_prints_the_sha256() {
         ],
     );
     assert!(!stderr(&out).contains("sha256:"), "{}", stderr(&out));
+}
+
+#[test]
+fn the_manifest_says_edit_skips_failed_operations() {
+    let manifest = jubarte::capabilities::capabilities("cli");
+    assert!(manifest.operations.edit_skip_failed);
+    let json: Value =
+        serde_json::from_str(&jubarte::capabilities::capabilities_json("cli")).unwrap();
+    assert_eq!(json["operations"]["edit_skip_failed"], true);
+    let text = jubarte::capabilities::capabilities_text(&manifest);
+    assert!(text.contains("\nedit_skip_failed: yes\n"), "{text}");
 }

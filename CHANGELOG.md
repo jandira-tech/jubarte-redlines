@@ -32,6 +32,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **`edit::PrepareOptions` has a `syntax` field** (`PlanSyntax`: `V1`,
   `Flags`, `V2`), the request syntax a refusal quotes. A struct literal adds
   `..PrepareOptions::default()`.
+- **`--skip-failed` adds library fields (#1253).** `edit::PrepareOptions`
+  has `skip_failed`, `edit::Operation` an optional `group`,
+  `edit::EditReport` `skipped` and `output_sha256`, `edit::PreparedEdit`
+  `skipped`, and `capabilities::Operations` `edit_skip_failed`. A struct
+  literal adds the field (`skip_failed: false`, `group: None`) or
+  `..Default::default()`.
 
 ### Fixed
 
@@ -46,6 +52,20 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **`edit --skip-failed` applies what passes (#1253).** Every operation
+  that passes is applied and the failed ones are left out: the output is
+  the bytes the plan without them writes, exit 0. stderr says `skipped 2 of
+  14 operations; the fixes are in PLAN.failed.json`, a plan of the failed
+  operations to fix and run on the output (its `source_sha256`, the run's
+  `date`, a `why` on each operation that the parser ignores). Operations
+  sharing a `"group"` stand or fall together (`GROUP_FAILED`). The report's
+  `summary` says `"status":"partial"` with `ops.skipped`. `STALE_SOURCE`, a
+  failing `resolve_revisions` and a plan whose every operation fails are
+  never skipped. The manifest's `operations.edit_skip_failed` says whether
+  a build has it (the CLI; not yet the Python and WASM bindings).
+- **Every edit write prints `sha256: <hex>`** of the primary output, also
+  the `summary` event's `output_sha256`, and a `--dry-run` that passes
+  whole ends with `next:`, the command that writes it (#1253).
 - **Visible rejects: `strike` and `restore` (#1252).** `edit FILE -p r12
   --strike` deletes another author's insertion with your tracked deletion
   inside it; `-p r12 --restore` leaves their deletion and inserts a copy of

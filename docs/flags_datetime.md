@@ -495,7 +495,8 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
 | `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
 | `--force` |  |  | false |  |  | Replace an existing output (the bundle directory's files) |
-| `--dry-run` |  |  | false |  |  | Resolve and report only; write nothing |
+| `--dry-run` |  |  | false |  |  | Resolve and report only; write nothing. When every operation passes, stderr ends with the command that applies it (`next:`) |
+| `--skip-failed` |  |  | false |  |  | Apply every operation that passes; leave out the ones that fail and every operation of their "group". Exit 0 when one landed. The failed ones go to PLAN.failed.json (FILE_plan.failed.json for operation flags): a plan to fix and run on the output |
 | `--require-change` |  |  | false |  |  | Refuse when the edit would change nothing in the document (NO_CHANGES_REQUESTED); reports, renders and bundles do not count as a change |
 | `--pdf` |  |  | false |  |  | Also write the PDF beside the document (the bundle: redline.pdf and clean.pdf) |
 | `--png` |  |  | false |  |  | Also write PNG pages beside the document, STEM-page-NN.png (the bundle: redline-page-NN.png and clean-page-NN.png) |
@@ -796,6 +797,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--scholar` | convert | `default=false values=` |
 | `--section-break` | append | `<SECTION_BREAK> default=next-page values=next-page, continuous, none` |
 | `--select` | (shorthand), __edit-template template, compare, read | **differs**: `-p <SPEC> default= values= alias of --paragraphs` on (shorthand), compare, read; `<IDS> default= values=` on __edit-template template |
+| `--skip-failed` | edit | `default=false values=` |
 | `--story` | __edit-v2 replace, __edit-template template | **differs**: `<STORY> default= values=` on __edit-v2 replace; `<STORY> default=all values=` on __edit-template template |
 | `--strict` | validate | `default=false values=` |
 | `--strike` | edit | `default= values=` |

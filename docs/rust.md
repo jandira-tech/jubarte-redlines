@@ -1233,7 +1233,14 @@ Options:
           Replace an existing output (the bundle directory's files)
 
       --dry-run
-          Resolve and report only; write nothing
+          Resolve and report only; write nothing. When every operation passes, stderr
+          ends with the command that applies it (`next:`)
+
+      --skip-failed
+          Apply every operation that passes; leave out the ones that fail and every
+          operation of their "group". Exit 0 when one landed. The failed ones go to
+          PLAN.failed.json (FILE_plan.failed.json for operation flags): a plan to fix
+          and run on the output
 
       --require-change
           Refuse when the edit would change nothing in the document
