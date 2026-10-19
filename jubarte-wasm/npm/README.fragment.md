@@ -80,7 +80,7 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `capabilityQuery`, `capabilityQueryText`, `changesText`, `commentsText`, `tablesText`, `tablesView`, `readJson`, `wantsJson`, `runtimeJsonError`, `wroteLine`, `changeFilter`, `refusedInput`, `planError`) |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (so also `inspectDocument`, `readView`, `changedView`, `flagPlan`, `recordPlan`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`, `capabilitiesText`, `capabilityQuery`, `capabilityQueryText`, `changesText`, `commentsText`, `tablesText`, `tablesView`, `readJson`, `wantsJson`, `runtimeJsonError`, `inputNotice`, `wroteLine`, `changeFilter`, `refusedInput`, `planError`) |
 | `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf`, `pdfPageCount`, `updateFields`, `renderPdf` and `convertMarkdown` (same export set as `node-slim`) |
 
 ## API
@@ -148,6 +148,7 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `listComments` | `(docx, author?, latest?) → string` | Every comment with its thread (`parent`, `done`), its short `ref` (`c5`) and anchor text, as a JSON array string. |
 | `commentsText` | `(docx, author?, latest?) → string` | The listing `jubarte comments` prints: a line per comment with its short id (`c5`), paragraph, author, text and anchor, then `N comment(s)`. |
 | `validateDocument` | `(docx) → string` | Word-validity findings beyond the schema as a JSON array (`code`, `set`, `severity`, `part`, `location`, `ref`, `message`, `word_fatal`, `repairable`); `[]` is a pass. |
+| `inputNotice` | `(docx, file) → string \| undefined` | The one stderr line `jubarte read` and `changes` print for an input with validity findings, `input has 2 validity warnings; jubarte validate FILE lists them` (`FILE` is `file`, shell-quoted when it needs to be); `undefined` when there are none, or the package cannot be validated. |
 | `repairDocument` | `(docx) → RepairOutput` | The package with every repairable finding fixed: `docx`, and `json` with what was fixed and what remains. |
 | `auditTracked` | `(original, edited, author) → string` | Every text change must be a revision by `author`: `UNTRACKED_EDIT` and `FOREIGN_AUTHOR` findings as JSON. |
 | `auditDocument` | `(docx, rules?) → string` | Accessibility, style and structure findings, JSON `{findings, rules, layout}`; `rules` is a comma-separated list of sets or codes. |

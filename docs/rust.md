@@ -195,7 +195,8 @@ Options:
   -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
                  `edit`/`add` changed. Files are still written; a reading task (`read`,
                  `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-                 what it read, and warnings and errors still print
+                 what it read, and warnings and errors still print. `read`, `changes`
+                 and `comments` drop their one line naming the input's validity findings
   -h, --help     Print help
   -V, --version  Print version
 
@@ -269,7 +270,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -482,7 +484,8 @@ Options:
   -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
                `edit`/`add` changed. Files are still written; a reading task (`read`,
                `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-               what it read, and warnings and errors still print
+               what it read, and warnings and errors still print. `read`, `changes` and
+               `comments` drop their one line naming the input's validity findings
   -h, --help   Print help
 ```
 
@@ -526,7 +529,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -611,7 +615,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -765,7 +770,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -880,7 +886,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -989,7 +996,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1245,7 +1253,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1418,7 +1427,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1453,7 +1463,9 @@ Options:
                                view of what `edit`/`add` changed. Files are still
                                written; a reading task (`read`, `changes`, `compare`
                                without -o, `diff`, `capabilities`) still prints what it
-                               read, and warnings and errors still print
+                               read, and warnings and errors still print. `read`,
+                               `changes` and `comments` drop their one line naming the
+                               input's validity findings
   -h, --help                   Print help
 ```
 
@@ -1479,7 +1491,8 @@ Options:
                        what `edit`/`add` changed. Files are still written; a reading
                        task (`read`, `changes`, `compare` without -o, `diff`,
                        `capabilities`) still prints what it read, and warnings and
-                       errors still print
+                       errors still print. `read`, `changes` and `comments` drop their
+                       one line naming the input's validity findings
   -h, --help           Print help
 
 Rendering:
@@ -1518,7 +1531,8 @@ Options:
                        what `edit`/`add` changed. Files are still written; a reading
                        task (`read`, `changes`, `compare` without -o, `diff`,
                        `capabilities`) still prints what it read, and warnings and
-                       errors still print
+                       errors still print. `read`, `changes` and `comments` drop their
+                       one line naming the input's validity findings
   -h, --help           Print help
 ```
 
@@ -1566,7 +1580,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1625,7 +1640,8 @@ Check Word validity, tracked edits, accessibility, style and structure; or repai
 validity.
 
 A word or edits finding fails the run (exit 2), and so does any error; --strict fails on
-warnings too. An unreadable file exits 1.
+warnings too. With --baseline, only the findings the baseline lacks count. An unreadable
+file exits 1.
 
 Usage: jubarte validate [OPTIONS] <FILE>
 
@@ -1647,12 +1663,18 @@ Options:
       --repair <FILE>
           Write the repaired package here; remaining findings still fail
 
+      --baseline <FILE>
+          The document the edits started from: its findings print as already in the
+          input (not yours), and only new ones fail the run. A finding is new by
+          identity (code, part, place and message), never by count. With --author and no
+          --original, the edits are checked against it too
+
       --original <FILE>
           Check tracked edits: every text change against ORIGINAL must be a revision by
           --author
 
       --author <NAME>
-          The author every change must carry (with --original)
+          The author every change must carry (with --original or --baseline)
 
       --force
           Replace an existing --repair output
@@ -1661,7 +1683,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1671,10 +1694,11 @@ Examples:
   jubarte validate contract.docx --json
   jubarte validate contract.docx --repair fixed.docx
   jubarte validate review/redline.docx --original contract.docx --author Claude
+  jubarte validate review/redline.docx --baseline contract.docx
   jubarte validate contract.docx --rules word,a11y,style,structure --strict
 
-Rule sets: word (default: Word validity), edits (with --original and --author), a11y,
-style, structure.
+Rule sets: word (default: Word validity), edits (with --author, and --original or
+--baseline), a11y, style, structure.
 Audit codes (code, set, severity):
   HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,
   TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,
@@ -1713,7 +1737,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1765,7 +1790,8 @@ Options:
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          read, and warnings and errors still print. `read`, `changes` and `comments`
+          drop their one line naming the input's validity findings
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1832,7 +1858,9 @@ Options:
                            view of what `edit`/`add` changed. Files are still written; a
                            reading task (`read`, `changes`, `compare` without -o,
                            `diff`, `capabilities`) still prints what it read, and
-                           warnings and errors still print
+                           warnings and errors still print. `read`, `changes` and
+                           `comments` drop their one line naming the input's validity
+                           findings
   -h, --help               Print help
 
 Examples:
