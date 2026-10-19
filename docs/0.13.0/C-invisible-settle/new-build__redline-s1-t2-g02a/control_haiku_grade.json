@@ -1,0 +1,111 @@
+{
+  "task_id": 19,
+  "scenario_id": 1,
+  "side": "B",
+  "level": 2,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.0,
+    "earned_weight": 0,
+    "penalty_weight": 0,
+    "total_weight": 74,
+    "n_pass": 0,
+    "n_total": 10,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1778877464218_z0tg3",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts in Section 1.15, \"provided, however, that Provider Technology expressly excludes LargeCo Data, AI Inputs, AI Outputs, and Deliverables.\"",
+        "justification": "No tracked insertion of the 'provided, however, that Provider Technology expressly excludes LargeCo Data, AI Inputs, AI Outputs, and Deliverables' proviso appears in the Provider Technology definition (p-020)."
+      },
+      {
+        "rubric_id": "rubric_1778878266859_zrw1r",
+        "verdict": "FAIL",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts as Section 1.18 the definition of \"Term\" as \"the duration of this Agreement, commencing on the Effective Date and continuing until all applicable Order Forms have expired or been terminated in accordance with this Agreement\".",
+        "justification": "No tracked insertion of a 'Term' definition appears in the Section 1 definitions (p-006 to p-024)."
+      },
+      {
+        "rubric_id": "rubric_1778878281848_bbb7v",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 9.2 AgentCo's deletion, \u201cuse, store, copy, analyze, monitor, create Derivative Works from\u201d",
+        "justification": "Section 9.2 (p-054) shows no tracked restoration of 'use, store, copy, analyze, monitor, create Derivative Works from'; the tracked-change record has no entry for that paragraph."
+      },
+      {
+        "rubric_id": "rubric_1778878281672_a64fn",
+        "verdict": "FAIL",
+        "weight": 6,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 10.1 AgentCo's insertion, \u201cThe written notice will detail the nature of the dispute.\u00a0 Any part of the invoice that is not in dispute shall be paid within the standard thirty (30) day payment period. Only the disputed portion of the invoice may be withheld until such time as the dispute is resolved.\u00a0 The parties agree to work in good faith to resolve any dispute. Upon resolution of the dispute, LargeCo shall pay the resolved amount by the later of the original thirty (30) day due date or seven (7) business days from the date of the resolution of the dispute.\u201d",
+        "justification": "The AgentCo dispute-process language in p-058 is left in place untouched with no strike-through, and the comments say it was accepted."
+      },
+      {
+        "rubric_id": "rubric_1778878281268_yoavp",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 13.1(e) AgentCo's insertion, \u201cto the best of Provider\u2019s knowledge,\u201d",
+        "justification": "The phrase 'to the best of Provider's knowledge,' remains unstruck in 13.1(e) (p-069), so AgentCo's insertion was not rejected."
+      },
+      {
+        "rubric_id": "rubric_1778878280778_unkv7",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 13.1(l) AgentCo's insertion, \u201cProvider makes commercially reasonably efforts in providing\u201d",
+        "justification": "Section 13.1(l) (p-076) keeps 'Provider makes commercially reasonable efforts' with no strike-through, and the comments accept it."
+      },
+      {
+        "rubric_id": "rubric_1778878280625_elvbd",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 15.1 AgentCo's insertion, \u201c, provided, however,\u00a0 in no event will AgentCo be liable for any indirect, special, incidental, exemplary punitive, treble, or consequential damages (including, without limitation, loss of business, revenue, profits, staff time, goodwill, use, data, or other economic advantage).\u201d",
+        "justification": "The consequential-damages exclusion for AgentCo's liability does not appear in the redline, and no tracked deletion of it exists."
+      },
+      {
+        "rubric_id": "rubric_1778878280463_qh6r6",
+        "verdict": "FAIL",
+        "weight": 6,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts in Section 15.2 AgentCo's insertion, \u201cLargeCo will defend AgentCo against any third-party claim arising out of\u201d",
+        "justification": "The LargeCo defense-of-AgentCo insertion is absent from the document; the comments say the LargeCo indemnity was removed, so it was not accepted."
+      },
+      {
+        "rubric_id": "rubric_1778878280044_h6g0m",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 16.3  AgentCo's insertion of \u201cCustomer.\"",
+        "justification": "No tracked rejection of AgentCo's 'Customer.' insertion appears in Section 16.3."
+      },
+      {
+        "rubric_id": "rubric_1778878279499_7nbgz",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Inserts in Section 13.1(l), \"Except as expressly set forth in this Agreement,\" ",
+        "justification": "No tracked insertion of 'Except as expressly set forth in this Agreement,' appears in Section 13.1(l) (p-076)."
+      }
+    ]
+  }
+}

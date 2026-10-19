@@ -1,0 +1,78 @@
+build task                     orig   ctrl    cmp  settle-items PASS (orig->cmp)
+old   redline-s1-t3-g14a      0.643  0.643  0.622  0/1 -> 1/1 (ctrl 0/1)
+old   redline-s2-t4-g09a      0.000  0.000  0.349  0/3 -> 3/3 (ctrl 0/3)
+old   redline-s3-t4-g02a      0.463  0.463  0.512  0/1 -> 1/1 (ctrl 0/1)
+new   redline-s1-t2-g02a      0.000  0.000  0.243  0/2 -> 2/2 (ctrl 0/2)
+new   redline-s1-t2-g02c      0.080  0.080  0.506  0/4 -> 3/4 (ctrl 0/4)
+new   redline-s1-t3-g12a      0.493  0.597  0.627  0/1 -> 1/1 (ctrl 1/1)
+new   redline-s1-t4-g10a      0.565  0.565  0.681  0/1 -> 1/1 (ctrl 0/1)
+new   redline-s1-t4-g12a      0.543  0.543  0.771  0/1 -> 1/1 (ctrl 0/1)
+new   redline-s2-t2-g02a      0.407  0.496  0.504  0/1 -> 1/1 (ctrl 0/1)
+new   redline-s2-t2-g03c      0.094  0.094  0.333  0/3 -> 3/3 (ctrl 0/3)
+new   redline-s2-t2-g04c      0.446  0.446  0.535  0/1 -> 1/1 (ctrl 0/1)
+new   redline-s2-t4-g06a      0.104  0.493  0.493  0/1 -> 1/1 (ctrl 1/1)
+new   redline-s3-t2-g03b      0.614  0.693  0.557  0/1 -> 1/1 (ctrl 1/1)
+
+mean over 13: orig 0.342  control 0.393  compare 0.518
+
+verdict flips where orig and control agree but compare differs:
+  new redline-s1-t2-g02a rubric_1778878281848_bbb7v FAIL->PASS w=8 settle-item=True :: Rejects in Section 9.2 AgentCo's deletion, “use, store, copy, analyze, monitor, create Derivative Works from”
+      judge: Section 9.2 (p-055) restores 'use, store, copy, analyze, monitor, create Derivative Works from' as a tracked insertion, reinstating the language AgentCo deleted.
+  new redline-s1-t2-g02a rubric_1778878280625_elvbd FAIL->PASS w=10 settle-item=True :: Rejects in Section 15.1 AgentCo's insertion, “, provided, however,  in no event will AgentCo be liable for any
+      judge: The consequential-damages carve-out in the indemnity clause (p-083) is struck through as a tracked deletion, rejecting AgentCo's insertion.
+  new redline-s1-t2-g02c rubric_1778180043064_lbbip FAIL->PASS w=8 settle-item=False :: Inserts in Section 9.2 language which limits AgentCo's use of LargeCo's Confidential Information as "...Provid
+      judge: Insertion at p-055 adds 'use, store, copy, analyze, monitor, create Derivative Works from' to the Provider restrictions on LargeCo Confidential Information, matching the rubric language.
+  new redline-s1-t2-g02c rubric_1778181202803_exs8i FAIL->PASS w=6 settle-item=True :: Removes in Section 17.5 the Use of Name as follows: "Customer grants AgentCo the right to identify Customer as
+      judge: Section 17.5 Use of Name is fully struck through at p-092 (rev-81, rev-82), removing the logo grant.
+  new redline-s1-t2-g02c rubric_1779119053315_okwfd FAIL->PASS w=7 settle-item=True :: Deletes in Section 17 "for customers located in the EEA, Switzerland, or the United Kingdom, the dispute will 
+      judge: The EEA/UK London ICC sole-arbitrator sentence in 17.7.1 is struck through at p-095 (rev-86).
+  new redline-s1-t2-g02c rubric_1779119049828_kqjlg FAIL->PASS w=7 settle-item=True :: Removes Section 17.7.2 "where the amount in controversy exceeds $150,000, the dispute will be heard by a panel
+      judge: The three-arbitrator panel provision for claims over $150,000 in 17.7.2 is struck through at p-096 (rev-88).
+  new redline-s1-t2-g02c rubric_1779119046341_lielv FAIL->PASS w=9 settle-item=False :: Rejects in Exhibit A, Section 5(a) AgentCo's deletion of a monthly calculation for Service Credits.
+      judge: Exhibit A Service Credits monthly 5% calculation is reinserted as tracked text at p-131, reversing AgentCo's deletion.
+  new redline-s1-t3-g12a rubric_1778701614650_utujh FAIL->PASS w=2 settle-item=False :: Rejects in Section 14 LargeCo's deletion of "in writing"
+      judge: "in writing" is reinserted as a tracked insertion in the carve-out paragraph p-098.
+  new redline-s1-t4-g10a rubric_1779827548276_vv79r FAIL->PASS w=8 settle-item=True :: Rejects in Section 3.2 AgentCo’s insertion of “Conditioned on LargeCo’s compliance with the terms of this agre
+      judge: LargeCo's tracked deletion (rev-12) strikes 'Conditioned on LargeCo's compliance...' in Section 3.2 (p-027), rejecting AgentCo's insertion.
+  new redline-s1-t4-g12a rubric_1780592596755_owcfb FAIL->PASS w=8 settle-item=True :: Rejects in Section 16 AgentCo’s deletion of “and excluding Provider’s indemnification obligations”.
+      judge: The 'and excluding Provider's indemnification obligations' phrase is kept as a tracked insertion (p-103), reversing AgentCo's deletion, though it sits in §17.1 rather than §16.
+  new redline-s2-t2-g02a rubric_1779828873879_10fz8 FAIL->PASS w=9 settle-item=True :: Rejects in Section 9.1 the change of language from "warrants" to "represents, to the best of Customer's knowle
+      judge: §9.1 tracked change strikes "represents, to the best of Customer's knowledge" and reinserts "warrants," rejecting the knowledge qualifier.
+  new redline-s2-t2-g03c rubric_1780009542535_n6qnc FAIL->PASS w=9 settle-item=True :: Rejects in Section 8.1 the insertion of "and each of their respective parents, subsidiaries, affiliates, spons
+      judge: "each of their respective parents, subsidiaries, affiliates, sponsors, advertising agencies" is struck in Section 8.1 (p-057).
+  new redline-s2-t2-g03c rubric_1780511842857_0rsw4 FAIL->PASS w=5 settle-item=True :: Rejects in Section 8.1 the insertion of "except as otherwise expressly stated in this Agreement or to the exte
+      judge: The "except as otherwise expressly stated" combination qualifier is struck in Section 8.1(C) at p-057 (rev-62).
+  new redline-s2-t2-g03c rubric_1780512119706_9fgsf FAIL->PASS w=9 settle-item=True :: Rejects in Section 10.2 the insertion of "AgentCo’s breach of its confidentiality obligations, AgentCo’s breac
+      judge: The confidentiality and data-security breach carve-in is struck in Section 10.2 at p-066 (rev-74).
+  new redline-s2-t2-g04c rubric_1780542389313_kvpil FAIL->PASS w=9 settle-item=True :: Rejects in Section 8.1 the insertion of "or (ii) a breach by AgentCo of any term of this Agreement,".
+      judge: Section 8.1 (p-051) strikes through "or (ii) a breach by AgentCo of any term of this Agreement,", removing the added breach-based indemnity.
+  new redline-s2-t2-g04c rubric_1780542615549_7se3o FAIL->PASS w=10 settle-item=False :: Rejects in Section 8.1 the replacement of "finally awarded" with "in the defense". 
+      judge: Section 8.1 (p-051) reverses the opposing swap, striking "in the defense" and reinstating "finally awarded".
+  old redline-s1-t3-g14a rubric_1780284640376_zpswg FAIL->PASS w=5 settle-item=True :: Rejects in Section 17.1 the insertion of "and excluding Provider’s indemnification obligations".
+      judge: Section 17.1 (p-101) strikes the inserted 'and excluding Provider's indemnification obligations' (rev-45), rejecting the opposing insertion.
+  old redline-s2-t4-g09a rubric_1780507830732_emswr FAIL->PASS w=5 settle-item=True :: Deletes from Section 9.3 ", representations, covenants, indemnities, Service Level Agreement obligations, priv
+      judge: Section 9.3 tracked deletion strikes 'express warranties, representations, covenants, indemnities, SLA obligations, privacy/data security, no-training, malware, and DPA obligations' as required.
+  old redline-s2-t4-g09a rubric_1780508137168_94bw4 FAIL->PASS w=5 settle-item=True :: Deletes from Section 8.1 "; (b) AgentCo's breach of its representations, warranties, covenants, or obligations
+      judge: Section 8.1 deletion strikes '(b) AgentCo's breach of its representations, warranties, covenants, or obligations under this Agreement;' as required.
+  old redline-s2-t4-g09a rubric_1780508195855_dbgh2 FAIL->PASS w=5 settle-item=True :: Deletes from Section 8.1 "(c) AgentCo's breach of applicable law;".
+      judge: Section 8.1 deletion strikes '(c) AgentCo's breach of applicable law;' within the larger tracked deletion.
+  old redline-s3-t4-g02a rubric_1780178145299_zvmmk FAIL->PASS w=9 settle-item=False :: Accepts in Article 6, Section 6.1 AgentCo’s insertion of “candidate-material summaries and interview-note draf
+      judge: The 'candidate-material summaries and interview-note drafting' language at p-087 remains unstruck and intact as inserted.
+  old redline-s3-t4-g02a rubric_1780178229200_6q2kg FAIL->PASS w=9 settle-item=True :: Rejects in Article 7, Section 7.5 AgentCo’s insertion of “at mutual locations”
+      judge: At p-100 'at mutual locations' is struck through (rev-30), rejecting AgentCo's insertion.
+  new redline-s2-t2-g02a rubric_1779804274540_c9pnk PASS->FAIL w=8 settle-item=False :: Accepts in Section 2.13 the deletion of the definition of Protected Health Information.
+      judge: No tracked deletion of a Protected Health Information definition appears in §2.13 or elsewhere; the redline does not reflect the deletion.
+  new redline-s2-t2-g04c rubric_1780540379015_9pzow PASS->FAIL w=10 settle-item=False :: Accepts in Section 2 the deletion of the definition of "Protected Health Information" in its entirety.
+      judge: No "Protected Health Information" definition or tracked deletion of it appears anywhere in the redlined document.
+  new redline-s3-t2-g03b rubric_1780260780923_md87t PASS->FAIL w=3 settle-item=False :: Deletes in Section 4.8 GiantCo's right to damages for delay. 
+      judge: No tracked deletion of GiantCo's right to damages for delay appears in §4.8 (p-090) or elsewhere in the delay provisions.
+  new redline-s3-t2-g03b rubric_1780261807269_dc7r9 PASS->FAIL w=9 settle-item=False :: Accepts in Section 9.1 the deletion of payment obligations on an hourly basis.
+      judge: §9.1 (p-092) still reads 'a fixed price or hourly compensation' untracked; no accepted deletion of hourly payment obligations is shown.
+  old redline-s1-t3-g14a rubric_1780281373484_65otk PASS->FAIL w=5 settle-item=False :: Accepts in Section 1.12 the deletion of "Confidential Information (as defined herein),".
+      judge: The phrase 'Confidential Information (as defined herein),' does not appear in the Section 1.12 Intellectual Property definition (p-018) or anywhere else in the document.
+  old redline-s1-t3-g14a rubric_1780282131495_vjspp PASS->FAIL w=2 settle-item=False :: Accepts in Section 2.3.1 the replacement of "performance of" with "connection with".
+      judge: No 'performance of' to 'connection with' replacement appears in Section 2.3.1 (p-031); the AI definitions carry no such tracked change.
+  old redline-s3-t4-g02a rubric_1780178120084_sgbs7 PASS->FAIL w=6 settle-item=False :: Accepts in Article 5, Section 5.1 AgentCo’s insertion of “applicable”
+      judge: At p-065 the word 'applicable' is struck through (rev-8), so AgentCo's insertion is not accepted.
+  old redline-s3-t4-g02a rubric_1780178175444_2xdok PASS->FAIL w=8 settle-item=False :: Rejects in Article 6, Section 6.1 AgentCo’s insertion of “(collectively the “Services)”
+      judge: At p-087 the '(collectively...the Services)' definition is restructured but retained, not rejected; the defined term survives.

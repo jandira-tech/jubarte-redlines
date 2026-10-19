@@ -1,0 +1,5 @@
+r13	deletion	text	Trainer 1 - LargeCo	p23	""
+wrote out/item10.docx (docx, 111027 bytes)
+accepted r13 in p23: "{----}" > ""
+c5	p23	Trainer 1 - LargeCo	"See revised language for clarity"	on "“Term” This Agreement shall commence on "
+  COMMENT_METADATA_MISMATCH	warning	word/commentsExtended.xml#	commentsExtended paraIdParent '706324C5' does not resolve

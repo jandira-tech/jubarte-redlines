@@ -1,0 +1,156 @@
+{
+  "task_id": 140,
+  "scenario_id": 2,
+  "side": "A",
+  "level": 2,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.44554455445544555,
+    "earned_weight": 45,
+    "penalty_weight": 0,
+    "total_weight": 101,
+    "n_pass": 7,
+    "n_total": 15,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780453824620_7xr9v",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts the insertion of a preamble identifying the parties to the agreement. ",
+        "justification": "LargeCo's preamble insertions at p-003 and p-004 remain intact with no AgentCo strike-through or modification."
+      },
+      {
+        "rubric_id": "rubric_1780539665658_iagou",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 2.4 the insertion of \"as mutually agreed to by the parties.",
+        "justification": "The ', as mutually agreed to by the parties' insertion in Section 2.4 (p-013) is left untouched."
+      },
+      {
+        "rubric_id": "rubric_1780539959235_vs8k8",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2 the insertion of the definition of \"Customer Data\" in its entirety. ",
+        "justification": "The Customer Data definition at p-018 is retained as an insertion (narrowed by AgentCo) rather than rejected in its entirety."
+      },
+      {
+        "rubric_id": "rubric_1780540226429_147xv",
+        "verdict": "PASS",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 2.10 the insertion of \"is executed by both Parties.\"",
+        "justification": "The 'is executed by both Parties' insertion in Section 2.10 (p-021) is left intact with no contradicting change."
+      },
+      {
+        "rubric_id": "rubric_1780540379015_9pzow",
+        "verdict": "PASS",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 2 the deletion of the definition of \"Protected Health Information\" in its entirety.",
+        "justification": "The PHI definition deletion at p-026 remains in place as a tracked deletion, not reversed."
+      },
+      {
+        "rubric_id": "rubric_1780540561641_ca1kc",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 5.2 the deletion of \"worldwide\".",
+        "justification": "The deletion of 'worldwide' in Section 5.2 (p-041) is not rejected; it remains struck through."
+      },
+      {
+        "rubric_id": "rubric_1780540890915_50htl",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 6.1  insertion of \", and, for the avoidance of doubt, Customer shall have no obligation for payment of any invoice that is submitted by AgentCo more than ninety (90) days after the date the Service was provided.\"",
+        "justification": "The ninety-day invoice bar in Section 6.1 (p-043) remains as LargeCo inserted it; AgentCo's comment accepts billing changes without striking it."
+      },
+      {
+        "rubric_id": "rubric_1780541247680_zpgmi",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section  6.3 the deletion of \"Past-due undisputed amounts may bear a finance charge on the unpaid balance, accruing daily and compounding monthly, at the prevailing Federal Funds Rate (floored at zero) plus 1.5% per annum.\"",
+        "justification": "The finance-charge sentence in Section 6.3 (p-045) remains struck through; no tracked change reinstates it."
+      },
+      {
+        "rubric_id": "rubric_1780541536947_uacwr",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 6.3 the insertion of \"and provided Customer with at least fifteen (15) business days to cure any outstanding past due amount(s).\"",
+        "justification": "The cure-period insertion in Section 6.3 (p-045) is left intact with no contradicting change."
+      },
+      {
+        "rubric_id": "rubric_1780541653236_7ist5",
+        "verdict": "FAIL",
+        "weight": 4,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 6.3 the deletion of \"In any billing dispute, all undisputed amounts must be paid in full when due.\"",
+        "justification": "The deletion of the billing-dispute payment sentence in Section 6.3 (p-045) is not reversed; it remains struck."
+      },
+      {
+        "rubric_id": "rubric_1780542138307_ii2wa",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Replaces in Section 7.1 the ten day notice period for LargeCo to terminate for convenience with thirty days notice.",
+        "justification": "Section 7.1 (p-047) strikes 'ten (10) days' and inserts 'thirty (30) days' notice', replacing the ten-day period."
+      },
+      {
+        "rubric_id": "rubric_1780542243776_bh8zw",
+        "verdict": "FAIL",
+        "weight": 4,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 7.4 the deletion of \"and unpaid\".",
+        "justification": "The deletion of 'and unpaid' in Section 7.4 (p-051) remains in place; no tracked change restores it."
+      },
+      {
+        "rubric_id": "rubric_1780542389313_kvpil",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 8.1 the insertion of \"or (ii) a breach by AgentCo of any term of this Agreement,\".",
+        "justification": "No tracked change in Section 8.1 (p-053) strikes the 'or (ii) a breach by AgentCo' insertion; the clause is absent from the redline."
+      },
+      {
+        "rubric_id": "rubric_1780542615549_7se3o",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 8.1 the replacement of \"finally awarded\" with \"in the defense\". ",
+        "justification": "Section 8.1 (p-053) shows no tracked change rejecting the 'in the defense' replacement; the original 'finally awarded' is unmarked, with no rejection edit."
+      },
+      {
+        "rubric_id": "rubric_1780542919102_1zo34",
+        "verdict": "PASS",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 10.2 the insertion of \", a party\u2019s confidentiality obligations under Section 11.5, AgentCo\u2019s breach of data security,\".",
+        "justification": "Section 10.2 (p-062) strikes the inserted 'a party's confidentiality obligations under Section 11.5,' and 'breach of data security,' language, rejecting that insertion."
+      }
+    ]
+  }
+}

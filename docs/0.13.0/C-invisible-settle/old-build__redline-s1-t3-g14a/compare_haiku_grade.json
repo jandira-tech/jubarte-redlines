@@ -1,0 +1,165 @@
+{
+  "task_id": 124,
+  "scenario_id": 1,
+  "side": "A",
+  "level": 3,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.6224489795918368,
+    "earned_weight": 61,
+    "penalty_weight": 0,
+    "total_weight": 98,
+    "n_pass": 10,
+    "n_total": 16,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780245756651_xwtwt",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 1.6 the replacement of \"from the definition of\" with \"to the extent included in any\".",
+        "justification": "Section 1.6 (p-012) reads 'excluded to the extent included in any Deliverable' with no tracked change against the replacement language."
+      },
+      {
+        "rubric_id": "rubric_1780281373484_65otk",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 1.12 the deletion of \"Confidential Information (as defined herein),\".",
+        "justification": "The phrase 'Confidential Information (as defined herein),' does not appear in the Section 1.12 Intellectual Property definition (p-018) or anywhere else in the document."
+      },
+      {
+        "rubric_id": "rubric_1780281825277_g71o8",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 1.16 the deletion of \"and is limited to, two components of Provider\u2019s software-as-a-service offering \u201cTalentFlow\u201d, namely an AI-agent platform that performs the following tasks: (1) candidate material summaries for human review; and (2) interview note-drafting for human review.  TalentFlow does not enable autonomous decisions on the hiring or rejection of candidates, compensation, promotion, termination, ranking, filtering or scoring of candidates.\"",
+        "justification": "The TalentFlow limitation in Services (p-022, rev-1) remains as a tracked insertion and is not struck, so the deletion is effectively rejected."
+      },
+      {
+        "rubric_id": "rubric_1780282131495_vjspp",
+        "verdict": "FAIL",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 2.3.1 the replacement of \"performance of\" with \"connection with\".",
+        "justification": "No 'performance of' to 'connection with' replacement appears in Section 2.3.1 (p-031); the AI definitions carry no such tracked change."
+      },
+      {
+        "rubric_id": "rubric_1780282601449_xvost",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 4.1 the deletion of \"or indirectly\". ",
+        "justification": "'or indirectly' remains as a tracked insertion in the Section 4.1 Restrictions lead-in (p-039) and is not deleted."
+      },
+      {
+        "rubric_id": "rubric_1780282944765_fs8kj",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 6.4 the replacement of how Usage Data will be used with \"Usage Data (i.e., aggregated, de-identified technical and operational data about access to and use of the Service) solely to develop, improve, support, and operate the Service. Provider will not include in Usage Data any information that identifies LargeCo, any LargeCo data subject, or any LargeCo Confidential Information. Provider will not share Usage Data with any third party other than (i) as permitted under this Agreement, or (ii) where the Usage Data has been aggregated and anonymized.\"",
+        "justification": "Section 6.4 Usage Data (p-053) reflects the proposed aggregated, de-identified, solely-to-operate language as untracked accepted text (cmt-789 accepted)."
+      },
+      {
+        "rubric_id": "rubric_1780283243311_ab0px",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 8.1 the re insertion of \"and (ii) the disclosure does not include information that could identify any particular individual or device\".",
+        "justification": "The '(ii) the disclosure does not include information that could identify any particular individual or device' language appears untracked and intact in Section 8.1 (p-057)."
+      },
+      {
+        "rubric_id": "rubric_1780283480087_6ll1p",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 10.2 the deletion of \"10.2.\tPast-due undisputed amounts may bear a finance charge on the unpaid balance, accruing daily and compounding monthly, at the prevailing Federal Funds Rate (floored at zero) plus 1.5% per annum. Provider may suspend LargeCo\u2019s access to the Service if any undisputed Fee remains past due, after providing LargeCo with written notice of the late payment. In any billing dispute, all undisputed amounts must be paid in full when due.\"",
+        "justification": "No Section 10.2 finance-charge language exists in the document; the Fees section (p-062) has only one paragraph and nothing is reinserted."
+      },
+      {
+        "rubric_id": "rubric_1780283885017_i8thb",
+        "verdict": "FAIL",
+        "weight": 7,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 13.1(e) the deletion of \"as of the Effective Date, Provider does not appear on any U.S. government restricted-party list, and to its knowledge, none\".",
+        "justification": "The restricted-party language in 13.1(e) (p-074) is tracked as an insertion, reinstating rather than accepting its deletion, and reads 'nonenone'."
+      },
+      {
+        "rubric_id": "rubric_1780284277903_yb5aj",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 14, the deletion of \"This Section 15 and Section 16.1(b), below, does not apply to any portion or component of the Service: (A) not developed by Provider, including Customer Data; (B) modified by anyone other than Provider where the alleged infringement relates to that modification; (C) combined with products, processes, or materials not approved by Provider in writing where the alleged infringement relates to that combination; (D) used by LargeCo after Provider has notified LargeCo of the alleged infringement or has provided modifications that would have avoided it; or (E) used in a manner inconsistent with this Agreement.\"",
+        "justification": "The exclusions carve-out text remains as a tracked insertion (rev-34, p-094) and is not struck, so the deletion is rejected."
+      },
+      {
+        "rubric_id": "rubric_1780284640376_zpswg",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 17.1 the insertion of \"and excluding Provider\u2019s indemnification obligations\".",
+        "justification": "Section 17.1 (p-101) strikes the inserted 'and excluding Provider's indemnification obligations' (rev-45), rejecting the opposing insertion."
+      },
+      {
+        "rubric_id": "rubric_1780284764076_er63y",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 17.2 the insertion of \"breach of Confidentiality, or breach of the Data Processing Addendum\".",
+        "justification": "Section 17.2 (p-102) strikes 'breach of Confidentiality, or breach of the Data Processing Addendum' (rev-46), rejecting rather than accepting the insertion."
+      },
+      {
+        "rubric_id": "rubric_1780285139376_yhpe2",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 17.2 the replacement of the cap being equal to the amounts paid in the 12 months preceding the cap with 3 times the amount of Service fees owed.",
+        "justification": "Section 17.2 (p-102) keeps a 12-month paid-fees cap and deletes the 3X tier, contrary to accepting a 3x Service-fees cap."
+      },
+      {
+        "rubric_id": "rubric_1780285375352_1x7bs",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 18.4 changing the governing law from \"California\" to \"Delaware\".",
+        "justification": "Section 18.4 (p-107) reads Delaware governing law with no tracked change reverting it to California."
+      },
+      {
+        "rubric_id": "rubric_1780285488540_yewfh",
+        "verdict": "PASS",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts the 18.5 deletion of the \"Arbitration\" clause.",
+        "justification": "No arbitration clause remains in Section 18 and no reinstating tracked change appears, so the 18.5 deletion stands (weak evidence; no tracked deletion marker)."
+      },
+      {
+        "rubric_id": "rubric_1780285659656_ms376",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 2 of Exhibit A the replacement of \"97.5%\" with \"99.5%\"",
+        "justification": "Exhibit A Section 2 (p-134) carries 99.5% uptime with no reversion to 97.5%, though the surrounding text is malformed with stray characters."
+      }
+    ]
+  }
+}

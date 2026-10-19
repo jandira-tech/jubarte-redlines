@@ -1,0 +1,111 @@
+{
+  "task_id": 112,
+  "scenario_id": 2,
+  "side": "A",
+  "level": 4,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.4925373134328358,
+    "earned_weight": 33,
+    "penalty_weight": 0,
+    "total_weight": 67,
+    "n_pass": 5,
+    "n_total": 10,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1780090680657_728le",
+        "verdict": "PASS",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Deal-closing Orientation",
+        "criteria": "Accepts insertion of Preamble.",
+        "justification": "Preamble at p-002 carries no tracked change, so the opposing insertion is left structurally intact."
+      },
+      {
+        "rubric_id": "rubric_1780101645079_sm2qz",
+        "verdict": "FAIL",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2.7 the addition of \"provided by Customer\" and \"provided by the Service\".",
+        "justification": "Section 2.7 (p-014) contains no tracked deletion of \"provided by Customer\" or \"provided by the Service\"; the text is untouched."
+      },
+      {
+        "rubric_id": "rubric_1780101762220_6bfrz",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2.9 the insertion of the definition for \"Customer Data\". ",
+        "justification": "Section 2.9 \"Customer Data\" definition (p-017) is left unredlined with no tracked deletion of the inserted definition."
+      },
+      {
+        "rubric_id": "rubric_1780101856895_lu531",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Replaces in Section 2.16 definition of \"Intellectual Property\" as proprietary or intellectual property rights with intellectual and industrial property rights\"",
+        "justification": "Section 2.16 (p-026) still reads \"proprietary or intellectual property rights\" with no tracked replacement to \"intellectual and industrial property rights.\""
+      },
+      {
+        "rubric_id": "rubric_1780102928407_gu2wc",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 7.1 insertion of \"Customer may terminate this Agreement upon thirty (30) days\u2019 written notice to AgentCo, so long as all outstanding Fees for work completed prior to the termination date, including the $40,000 implementation fee, become immediately due and payable, with no right to refund.\"",
+        "justification": "Section 7.1 (p-053) termination-for-convenience insertion is left intact with no contradicting tracked change; comment 350 accepts it."
+      },
+      {
+        "rubric_id": "rubric_1780103606714_ejd2g",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 8.1 the addition of a breach of Applicable law, breach of confidentiality, and gross negligence or willful misconduct indemnification. ",
+        "justification": "Section 8.1 (p-059) tracked deletion rev-20 strikes the Applicable Law, confidentiality, and gross negligence/willful misconduct indemnity prongs (c)\u2013(e)."
+      },
+      {
+        "rubric_id": "rubric_1780168783837_lbv3c",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 8.1  the addition of \"and each of their respective parents, subsidiaries, affiliates, sponsors, advertising agencies...clients, customers, successors, and assigns.",
+        "justification": "Section 8.1 (p-059) tracked deletions rev-3 and rev-6 strike the expanded affiliate, sponsor, agency, client, customer, successor, and assign language."
+      },
+      {
+        "rubric_id": "rubric_1780103795158_rduad",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 8.1 the insertion of \"and such modification was without AgentCo\u2019s knowledge or consent\".",
+        "justification": "Section 8.1 (p-059) strikes through \"and such modification was without AgentCo's knowledge or consent\" (rev-24), rejecting rather than accepting that insertion."
+      },
+      {
+        "rubric_id": "rubric_1780104041354_ognyj",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 8.1 the addition of \", except as otherwise expressly stated in this Agreement or to the extent such combination is necessary or reasonably contemplated for the use of the Service.\"",
+        "justification": "Section 8.1 (p-059) tracked deletion rev-25 strikes the \"except as otherwise expressly stated\" combination qualifier."
+      },
+      {
+        "rubric_id": "rubric_1780104678824_xmpyl",
+        "verdict": "FAIL",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Rejects in Section 10.1 the insertion of \"Other than the parties\u2019 obligations under Section 8 (Indemnification),  Section 11.5 (Confidentiality), and a party\u2019s breach of its data and information security obligations as set forth herein,\".",
+        "justification": "Section 10.1 (p-067) carve-out for Section 8, 11.5, and data-security breaches is left untouched; comment 351 accepts it rather than rejecting it."
+      }
+    ]
+  }
+}

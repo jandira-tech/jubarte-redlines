@@ -1,0 +1,78 @@
+### B1 delete paragraph (clean doc) touches next paragraph
+r1	deletion	paragraph_mark	Ana Lee	p14	""
+r3	insertion	text	Ana Lee	p14	"“"
+r2	deletion	text	Ana Lee	p14	"“Feedback” means any suggestions, ideas, enhancement request"
+r4	deletion	text	Ana Lee	p14	" with respect to Provider and/or all or any part of the Serv"
+r5	deletion	text	Ana Lee	p15	"“"
+5 change(s)
+9. ““**LargeCo System**” means: (a) any LargeCo file computi
+### B2 replace: whole replacement takes first run's formatting (clean + keep paths)
+r1	formatting	properties	Ana Lee	p6	"Affiliates"
+r2	insertion	text	Ana Lee	p6	"each"
+r3	deletion	text	Ana Lee	p6	"any"
+3 change(s)
+r1	insertion	text	Ana Lee	p6	"Affiliated Entities"
+r2	deletion	text	Ana Lee	p6	"Affiliates"
+r3	formatting	properties	Ana Lee	p6	"” means"
+3 change(s)
+11.3. Severability and {--Interpretation<b>.</b> If any--}{>>r524 @AL<<}{++Construction. If any++}{>>r525 @AL<<} provision of these Terms is
+### B3 lenient anchor match rewrites curly quotes / nbsp
+r1	insertion	text	Ana Lee	p6	"\""
+r2	deletion	text	Ana Lee	p6	"“"
+r3	formatting	properties	Ana Lee	p6	"Affiliates"
+r4	insertion	text	Ana Lee	p6	"\""
+r5	deletion	text	Ana Lee	p6	"”"
+r6	insertion	text	Ana Lee	p6	"each"
+r7	deletion	text	Ana Lee	p6	"any"
+7 change(s)
+r1	insertion	text	Ana Lee	p16	") every"
+r2	deletion	text	Ana Lee	p16	")\u{a0}any"
+2 change(s)
+### B4 insert_paragraph + edit in next paragraph steals the opening quote
+r1	insertion	paragraph_mark	Ana Lee	p23	""
+r2	insertion	text	Ana Lee	p23	"Subscription Term” means the period stated in an Order Form."
+r3	insertion	text	Ana Lee	p24	"“"
+r4	insertion	text	Ana Lee	p24	"individuals"
+r5	deletion	text	Ana Lee	p24	"users"
+5 change(s)
+18. “{++“++}{>>r3 @AL<<}**User**” means {~~users~>individual
+### B5 insert_paragraph with style after numbered heading stays numbered
+<!-- p25 justify, num "3." -->
+3. **SERVICES AND SUPPORT**
+--
+<!-- p26 justify, num "4.", break-ins r1 @AL -->
+4. {++**Unnumbered para after heading.**++}{>>r2 @AL<<}
+--
+   <!-- p27 justify, num "4.1." -->
+   1. <u>Services</u>. Provider shall comply and provide all Services in accordance with a
+### B6 new paragraph after a paragraph whose mark is a pending deletion gets merged on Accept All
+'o be legally bound, agree as follows:NEW PARAGRAPH AFTER P3.'
+### B7 accept/reject (no filter) renumber comment ids
+c7	p5	Trainer 1 - GiantCo	"Accepted."	on "Services,  including the expansion int
+c9	p14	Trainer 1 - AgentCo	"Not applicable"	on ""
+c6	p5	Trainer 1 - GiantCo	"Accepted."	on "Services,  including the expansion int
+c7	p13	Trainer 1 - AgentCo	"Not applicable"	on "Co-Consultant:  Other consultant
+### B8 edit/delete another author's comment silently
+c106	p29	Trainer 1 - LargeCo	"We will share PHI with AgentCo."	on ""
+1 comment(s)
+### B9 read view pairs cross-author ins/del into a fake substitution
+Affiliates a {--worldwide, royalty-free, --}{>>r140 @TX<<}{~~non-exclusive~>limited, ~~}{>>r524 @AL<<}{>>r141 @TX<<}{++nonexclusive++}{>>r525 @AL<<} right to process Customer Data and
+### B10 read view drops 'on rN' for a deletion inside a multi-run insertion
+3. “**Applicable Law**” means all{++ ++}{>>r13 @TX<<}{=={--applicable--}{>>r16 @TX2<<}==}{=={-- material--}{>>r18 @TX2 on r17 @TX<<}{-- --}{>>r19 @TX2<<}federal==}{>>c14 @TX2: <<}{>>c15 @TX2: Adding a
+r13	insertion	text	Trainer 1 - AgentCo	p8	" applicable"
+r16	deletion	text	Trainer 1 - LargeCo	p8	"applicable"	inside r13
+r17	insertion	text	Trainer 1 - AgentCo	p8	" material"
+r18	deletion	text	Trainer 1 - LargeCo	p8	" material"	inside r17
+### B11 comparer edit remaps numbering of untouched paragraphs + duplicate num durableIds
+   1 	
+   1 deletion	text
+  17 formatting	properties
+   1 insertion	text
+<w:num w:numId="11" w16cid:durableId="1629627248"
+<w:num w:numId="12" w16cid:durableId="1045594108"
+<w:num w:numId="13" w16cid:durableId="1365978621"
+<w:num w:numId="14" w16cid:durableId="38555171"
+### B12 changes text drops tabs
+{"id":"r2","ref":"r2","kind":"insertion","target":"text","author":"Ana Lee","date":"2026-01-02T03:04:05Z","text":"Position: Position","paragraph":"p86"}
+{"id":"r1","ref":"r1","kind":"deletion","target":"text","author":"Ana Lee","date":"2026-01-02T03:04:05Z","text":"Title: ","paragraph":"p86"}
+{"id":"r3","ref":"r3","kind":"deletion","target":"text","author":"Ana Lee","date":"2026-01-02T03:04:05Z","text":"Title","paragraph":"p86"}

@@ -1,0 +1,147 @@
+{
+  "task_id": 57,
+  "scenario_id": 1,
+  "side": "A",
+  "level": 3,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": true
+  },
+  "score": {
+    "weighted": 0.6268656716417911,
+    "earned_weight": 42,
+    "penalty_weight": 0,
+    "total_weight": 67,
+    "n_pass": 10,
+    "n_total": 14,
+    "per_rubric": [
+      {
+        "rubric_id": "rubric_1778633056474_vp3nu",
+        "verdict": "FAIL",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 2.2  LargeCo's deletion of the word \"license\"",
+        "justification": "Section 2.2 (p-028) has no tracked change restoring \"license\"; the word stays absent and no rejection edit appears."
+      },
+      {
+        "rubric_id": "rubric_1778699999746_37d7z",
+        "verdict": "PASS",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Counterparty Acceptance Prediction",
+        "criteria": "Accepts in Section 2.3.2 LargeCo's insertion of \"and AI Outputs in accordance with this Agreement\" for disposal purposes.",
+        "justification": "The disposal sentence in p-032 reads \"in accordance with this Agreement\" with no strike or contradicting edit; the comment only offers to discuss."
+      },
+      {
+        "rubric_id": "rubric_1778700177331_t1va7",
+        "verdict": "FAIL",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Inserts in Section 2.3.5 \"(i) will render accurate and reliable results with human review aligned with industry best practice\"",
+        "justification": "In p-035 the redline deletes \"render\" and \"with human review aligned with industry best practice\" and replaces them with draft-output language, the opposite of the required insertion."
+      },
+      {
+        "rubric_id": "rubric_1778700383061_t7nu1",
+        "verdict": "PASS",
+        "weight": 5,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Accepts in Section 6.1 LargeCo's re-insertion of \"and license to use\".",
+        "justification": "\"right and license to use\" in p-050 appears as plain text with no tracked strike or modification, so it is left intact."
+      },
+      {
+        "rubric_id": "rubric_1778700473661_276a6",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 13 (k) LargeCo's deletion of  \"substantially\"",
+        "justification": "In p-081(k), \"substantially\" is reinserted as a tracked insertion (rev-42/43), reversing the deletion of the word."
+      },
+      {
+        "rubric_id": "rubric_1778700754552_1o8re",
+        "verdict": "PASS",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 13.3 LargeCo's deletion of \"PROVIDER MAKES NO WARRANTY OF ANY KIND THAT THE SERVICE WILL MEET LARGECO\u2019S OR ANY OTHER PERSON'S REQUIREMENTS, OPERATE WITHOUT INTERRUPTION, ACHIEVE ANY INTENDED RESULT, BE COMPATIBLE WITH ANY SYSTEM, OR BE SECURE, ACCURATE, COMPLETE, FREE OF HARMFUL CODE, OR ERROR FREE\"",
+        "justification": "The no-warranty disclaimer sentence in p-094 is restored as a tracked insertion, reversing the deletion."
+      },
+      {
+        "rubric_id": "rubric_1778701346742_w4owt",
+        "verdict": "PASS",
+        "weight": 4,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 14 the unilateral ability of LargeCo to terminate the agreement if Intellectual Property infringement cannot be cured.",
+        "justification": "The IP-infringement termination in p-097 changes \"LargeCo\" to \"either Party\", removing LargeCo's unilateral termination right."
+      },
+      {
+        "rubric_id": "rubric_1778701614650_utujh",
+        "verdict": "PASS",
+        "weight": 2,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Rejects in Section 14 LargeCo's deletion of \"in writing\"",
+        "justification": "\"in writing\" is reinserted as a tracked insertion in the carve-out paragraph p-098."
+      },
+      {
+        "rubric_id": "rubric_1778701745139_ruryh",
+        "verdict": "PASS",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 14 LargeCo's deletion of  \"(E) used in a manner inconsistent with this Agreement.\"",
+        "justification": "\"or (E) used in a manner inconsistent with this Agreement\" is reinserted as a tracked insertion in p-098 (rev-81)."
+      },
+      {
+        "rubric_id": "rubric_1778702033030_u6ykw",
+        "verdict": "PASS",
+        "weight": 9,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Rejects in Section 15.2 LargeCo's deletion of \"(c) LargeCo\u2019s breach of its confidentiality obligations set forth in Section 9\"",
+        "justification": "Indemnity clause (c), LargeCo's breach of its confidentiality obligations under Section 9, is reinserted as a tracked insertion in p-102."
+      },
+      {
+        "rubric_id": "rubric_1778702198312_biymx",
+        "verdict": "FAIL",
+        "weight": 10,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Replaces in Section 17.2 \"Section 5.1\" with \"Section 8 or 12\".",
+        "justification": "In p-107 the redline adds \"6, and LargeCo's breach of Section 5.1\" but never replaces \"Section 5.1\" with \"Section 8 or 12\"."
+      },
+      {
+        "rubric_id": "rubric_1778702505043_pytwh",
+        "verdict": "PASS",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Commercial Context",
+        "criteria": "Accepts in Section 18 LargeCo's deletion of Section 18.5 \"Arbitration\" clause.",
+        "justification": "No tracked change restores the Section 18.5 arbitration clause, so LargeCo's deletion is left in place (p-112 goes from 18.4 to 18.6)."
+      },
+      {
+        "rubric_id": "rubric_1778702574324_7oozw",
+        "verdict": "PASS",
+        "weight": 1,
+        "is_penalty": false,
+        "category": "Negotiation Quality",
+        "criteria": "Accepts in Section 18.10 LargeCo's deletion of \"blockages or embargos; riots\"",
+        "justification": "The force majeure paragraph p-117 has no \"blockages or embargos; riots\" text and no restoring insertion, so the deletion is accepted."
+      },
+      {
+        "rubric_id": "rubric_1778702763047_esiha",
+        "verdict": "FAIL",
+        "weight": 8,
+        "is_penalty": false,
+        "category": "Legal correctness",
+        "criteria": "Inserts the Section 19 \"Term and Termination\" clause.",
+        "justification": "Only the heading \"19. Term and Termination.\" is inserted at p-118; no substantive term and termination clause body is added."
+      }
+    ]
+  }
+}

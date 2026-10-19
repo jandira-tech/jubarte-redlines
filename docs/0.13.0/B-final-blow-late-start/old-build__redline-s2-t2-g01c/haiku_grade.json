@@ -1,0 +1,14 @@
+{
+  "task_id": 68,
+  "model": "muse-spark-1.3-contributor",
+  "judge_model": "openai/anthropic/claude-haiku-5.5",
+  "gate": {
+    "passed": false,
+    "reason": "no tracked changes or comments by author 'Reviewing Counsel (AgentCo)' found (1148 revisions / 3 comments by other authors)"
+  },
+  "score": {
+    "weighted": 0.0,
+    "per_rubric": []
+  },
+  "gate_failure": true
+}
