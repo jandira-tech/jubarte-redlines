@@ -341,7 +341,8 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them; ignored with --json, --tables and --for-edit
+          paragraph that holds them; ignored by --json, --for-edit and the --tables
+          grids
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -351,12 +352,12 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp); ignored with --json, --tables and
-          --for-edit
+          header shows an author's single timestamp); ignored by --json, --for-edit and
+          the --tables grids
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines; ignored with --json, --tables and --for-edit
+          M -->` lines; ignored by --json, --for-edit and the --tables grids
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
@@ -390,8 +391,9 @@ Read options:
       --tables
           Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells. N counts nested tables too; `-p t1` prints the view's t1 and
-          the tables nested in it
+          `ids=text` cells. N counts nested tables too. With -p, the tables the view's
+          selection reaches (`t1`; a pN inside a table, that table), each with the
+          tables nested in it, then an empty line and the view of that selection
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -1007,7 +1009,8 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them; ignored with --json, --tables and --for-edit
+          paragraph that holds them; ignored by --json, --for-edit and the --tables
+          grids
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -1017,12 +1020,12 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp); ignored with --json, --tables and
-          --for-edit
+          header shows an author's single timestamp); ignored by --json, --for-edit and
+          the --tables grids
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines; ignored with --json, --tables and --for-edit
+          M -->` lines; ignored by --json, --for-edit and the --tables grids
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
@@ -1056,8 +1059,9 @@ Read options:
       --tables
           Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells. N counts nested tables too; `-p t1` prints the view's t1 and
-          the tables nested in it
+          `ids=text` cells. N counts nested tables too. With -p, the tables the view's
+          selection reaches (`t1`; a pN inside a table, that table), each with the
+          tables nested in it, then an empty line and the view of that selection
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
