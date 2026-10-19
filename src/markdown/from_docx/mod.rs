@@ -19,7 +19,7 @@ pub(crate) mod drawing;
 mod header;
 mod media;
 mod mermaid;
-mod ooxml;
+pub(crate) mod ooxml;
 mod revise;
 
 use critic::{Change, Critic, Mark};
