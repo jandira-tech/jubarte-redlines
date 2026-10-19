@@ -88,16 +88,22 @@ header: a local header that names the entry differently, or is missing,
 fails the open and every caller reports `ZIP_HEADER_MISMATCH`. zip
 9.0.5's own `ZipArchive::validate_header_consistency` is not used: it
 also refuses a local time or a central-only Unicode Path field, which hide
-no content and which real Word-opened inputs carry. The remaining
-content fields (method, flags, CRC, sizes, extents) are ZIP-17's (#644). Admission keeps the typed
+no content and which real Word-opened inputs carry. The same pass (#644)
+compares the remaining content fields — compression method, flag bits
+0/3/11, and with bit 3 clear the CRC-32 and ZIP64-resolved sizes — as
+`ZIP_HEADER_MISMATCH`, refuses entries whose extents overlap or reach
+into the central directory and data descriptors that disagree with the
+central record as `INVALID_PACKAGE`, and validates directory payloads
+through the bounded CRC stream. Admission keeps the typed
 `AdmissionErrorKind::ZipHeaderMismatch` refusal for the same check, and
 existing duplicate-part identity checks retain `DUPLICATE_PART`. The
 `self_update` updater path is covered below.
 
 `jubarte debug`, the maintainer triage tool, is the one deliberate
 exception: it opens through `open_archive_unchecked` and prints the
-disagreement as a `zip-header-mismatch` finding instead of refusing, so a
-file every reader rejects can still be inspected.
+disagreement as a `zip-header-mismatch` finding — and each #644 defect
+as a `zip-extent`, `zip-descriptor` or `zip-directory-payload` finding —
+instead of refusing, so a file every reader rejects can still be inspected.
 
 The Windows updater delegates unpacking to `self_update::Extract::extract_file`;
 its ZIP arm opens a `ZipArchive`, selects the binary with `by_name`, checks
