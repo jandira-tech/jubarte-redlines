@@ -159,7 +159,11 @@ impl AnnotationIds {
     /// Apply the allocation, without allocating or renumbering a second time.
     pub(crate) fn apply(&self, pkg: &mut PartFs) {
         let mut parts = super::revision_bearing_parts(pkg);
-        parts.push((FAMILY[0].0.into(), false));
+        // The comments part is a revision-bearing part since #1223; visiting
+        // it twice would map every comment id twice (1 → 0, then 0 → …).
+        if !parts.iter().any(|(part, _)| part == FAMILY[0].0) {
+            parts.push((FAMILY[0].0.into(), false));
+        }
         for (part, styles) in parts {
             if styles {
                 continue;
