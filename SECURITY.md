@@ -82,10 +82,14 @@ floor and every committed lockfile hold 9.0.5.
 
 Call paths here: the engine reads packages in memory through `ZipArchive`
 and writes them with `ZipWriter`. Every production package open goes
-through `crate::opc::open_archive` (`src/opc/archive.rs`), which runs zip
-9.0.5's `ZipArchive::validate_header_consistency`: a local header that
-disagrees with the central directory fails the open and every caller
-reports `ZIP_HEADER_MISMATCH`. Admission keeps the typed
+through `crate::opc::open_archive` (`src/opc/archive.rs`), which reads
+each entry's raw name from its central record and from its local file
+header: a local header that names the entry differently, or is missing,
+fails the open and every caller reports `ZIP_HEADER_MISMATCH`. zip
+9.0.5's own `ZipArchive::validate_header_consistency` is not used: it
+also refuses a local time or a central-only Unicode Path field, which hide
+no content and which real Word-opened inputs carry. The remaining
+content fields (method, flags, CRC, sizes, extents) are ZIP-17's (#644). Admission keeps the typed
 `AdmissionErrorKind::ZipHeaderMismatch` refusal for the same check, and
 existing duplicate-part identity checks retain `DUPLICATE_PART`. The
 `self_update` updater path is covered below.

@@ -423,17 +423,17 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
     // GHSA-m665-v7pm-7grj (zip <= 9.0.4): a local header may name an entry
     // differently than the central directory. `ZipArchive` reads names and
     // content through the central directory, but a scanner trusting local
-    // headers would see a different package, so the two must agree: zip
-    // 9.0.5's `validate_header_consistency` compares each local header's
-    // name, Unicode Path field, compression method, flags and sizes with
-    // the central record, and refuses duplicate names and overlapping
-    // entries.
-    archive.validate_header_consistency().map_err(|e| {
-        AdmissionError::new(
+    // headers would see a different package, so the raw names of the two
+    // records must agree (`local_name_mismatch`; the content fields are
+    // #644's). zip 9.0.5's own `validate_header_consistency` is stricter
+    // than the format: it also refuses a local time or a central-only
+    // Unicode Path field, both of which real Word-opened files carry.
+    if let Some(detail) = crate::opc::local_name_mismatch(&archive, &mut Cursor::new(bytes)) {
+        return Err(AdmissionError::new(
             K::ZipHeaderMismatch,
-            format!("local and central headers disagree: {e}"),
-        )
-    })?;
+            format!("local and central headers disagree: {detail}"),
+        ));
+    }
 
     let mut canonical = HashSet::new();
     for i in 0..archive.len() {
@@ -1019,7 +1019,7 @@ pub(crate) mod zip_names {
                 // local and central extra data disagree, which header
                 // consistency refuses.
                 options
-                    .add_extra_field(0x7075, field.as_slice(), false)
+                    .add_extra_field(0x7075, field.as_slice(), true)
                     .expect("write 0x7075 extra field");
             }
             writer
