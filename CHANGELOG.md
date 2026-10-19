@@ -49,8 +49,30 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `skipped`, and `capabilities::Operations` `edit_skip_failed`. A struct
   literal adds the field (`skip_failed: false`, `group: None`) or
   `..Default::default()`.
+- **`inspect::Snapshot` has a `track_changes` field (#1255)**
+  (`Option<Settle>`), the choice `inspect::settled_snapshot` read the text
+  under. A struct literal adds `track_changes: None`.
 
 ### Fixed
+
+- **`read --json` and `--tables` take the view's options (#1158, #1255).**
+  `--comments` and `--dates` were refused with `--json`, `--tables`,
+  `--for-edit` and `-o FILE.json`, and `--no-page-markers` was dropped
+  with a warning that broke `2>&1 | jq`; they shape only
+  the view, so these take them and change nothing (the output is byte for
+  byte the same). `--track-changes accept|reject` with `--json`,
+  `-o FILE.json` or `--tables` settles the text of every paragraph and cell
+  (`reject` reads the text and formatting Word's Reject All leaves: a
+  `w:rPrChange` or `w:pPrChange` gives back what it replaced), keeps every
+  id, and the snapshot names the choice in a top-level `track_changes`.
+  `--tables -p` reads the selection as the view does (#1161): `t1` is the
+  view's `t1`, a `pN` or a range inside a table reaches that table, and it
+  prints the grids of the tables reached, each with the tables nested in
+  it, then an empty line and `read -p` of the same selection, unchanged. A
+  pick that reaches no table exits 2 (`p0 is not in a table; --tables -p
+  takes tN, or a pN inside a table`); what the view refuses fails as
+  `read -p` does. `jubarte FILE -p q7` (the one-document shorthand) exits 2
+  for a selection that does not parse, as `jubarte read FILE -p q7` does.
 
 - **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
 - **Duplicate ZIP and OPC part identities are refused on every route**
@@ -142,6 +164,25 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **With `--json`, an error is a JSON object on stdout too (#1255).** A
+  usage error prints `{"error":{"code":"USAGE","message":"…","usage":"jubarte
+  read [OPTIONS] <FILE>"}}`, a runtime error `{"error":{"code":…,"message":…}}`
+  (its code the message's leading `CODE:`, else `ERROR`), on one line, beside
+  the same text on stderr and the same exit code; `jubarte read x.docx --json
+  --bogus | jq .error.code` prints `"USAGE"`. A message clap spreads over
+  lines is joined on one, and `usage` keeps each form clap prints, a line
+  per form; a removed spelling's line (`--date is removed; use
+  --datetime`) carries the usage too. The npm and Python CLIs print the
+  same: WASM `wantsJson` and `runtimeJsonError`, Python `wants_json` and
+  `runtime_json_error` (a `--json` that is an option's value, as in `edit
+  replace … --text --json`, asks for none), and `parseCli` results carry a
+  usage error's line as `json`. `--track-changes` also takes `accepted` and
+  `rejected`. WASM `tablesText` and `readJson`, and Python `tables_text`
+  and `read_json`, take the `trackChanges`/`track_changes` the CLI does;
+  WASM `tablesView` and Python `tables_view` print `read --tables` whole,
+  `-p` and the view's options included, as `{markdown, warnings}` and a
+  `(markdown, warnings)` pair; a pick that reaches no table raises
+  `USAGE: …`.
 - **`edit --skip-failed` applies what passes (#1253).** Every operation
   that passes is applied and the failed ones are left out: the output is
   the bytes the plan without them writes, exit 0. stderr says `skipped 2 of

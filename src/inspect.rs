@@ -134,6 +134,10 @@ pub struct Snapshot {
     pub schema_version: u32,
     /// SHA-256 of the inspected bytes.
     pub source_sha256: String,
+    /// The choice [`settled_snapshot`] read the text under; absent from a
+    /// plain snapshot, whose text is the accepted one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_changes: Option<Settle>,
     /// Package facts.
     pub summary: Summary,
     /// Body paragraphs.
@@ -148,6 +152,18 @@ pub struct Snapshot {
     pub changes: Vec<crate::changes::Change>,
     /// Comments, as [`crate::comments::list_comments`] lists them.
     pub comments: Vec<crate::comments::CommentRecord>,
+}
+
+/// How [`settled_snapshot`] settles the tracked changes before it reads
+/// the text (`read --json --track-changes`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Settle {
+    /// Every change accepted: the text a plain snapshot reads.
+    Accept,
+    /// Every change rejected, as Word's Reject All leaves the text:
+    /// insertions gone, deletions back.
+    Reject,
 }
 
 impl Snapshot {
@@ -299,7 +315,7 @@ pub(crate) fn paragraphs_and_stories_within(
     let opened = Opened::open_within(docx, limits)?;
     Ok((
         body_paragraphs(&opened.dom, opened.body),
-        opened.stories_within(limits)?,
+        opened.stories_within(limits, false)?,
     ))
 }
 
@@ -393,6 +409,7 @@ pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
     Ok(Snapshot {
         schema_version: SNAPSHOT_SCHEMA_VERSION,
         source_sha256: source_sha256(docx),
+        track_changes: None,
         summary,
         paragraphs,
         stories,
@@ -401,6 +418,111 @@ pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
         changes,
         comments,
     })
+}
+
+/// [`snapshot`] with every tracked change settled by `settle`, and
+/// `track_changes` saying how. The paragraphs, cells and controls of the
+/// body and of every story read the settled text and keep their ids: the
+/// paragraphs, rows and cells a choice would remove stay, with the text it
+/// leaves them (often none). `summary`, `changes` and `comments` describe
+/// the file as stored, every revision still listed: the facts of what
+/// `track_changes` settles.
+///
+/// # Errors
+///
+/// As [`snapshot`].
+pub fn settled_snapshot(docx: &[u8], settle: Settle) -> Result<Snapshot, InspectError> {
+    let mut snapshot = snapshot(docx)?;
+    snapshot.track_changes = Some(settle);
+    if settle == Settle::Reject {
+        // The comment scan marks up the DOM it reads, so the rejected text
+        // comes from a second open of its own.
+        let mut opened = Opened::open(docx)?;
+        reject_text(&mut opened.dom, opened.body);
+        snapshot.paragraphs = body_paragraphs(&opened.dom, opened.body);
+        snapshot.tables = tables::body_tables(&opened.dom, opened.body);
+        snapshot.controls = collect_controls(&opened.dom, opened.body);
+        snapshot.stories = opened.stories_within(crate::admission::InputLimits::default(), true)?;
+    }
+    Ok(snapshot)
+}
+
+/// [`tables`], with every change rejected when `settle` says so, each
+/// beside the number of its table in `read`'s view: the `tN` of the table
+/// outside every cell that is it or holds it, as `read -p tN` picks it.
+///
+/// # Errors
+///
+/// As [`tables`].
+pub fn view_tables(
+    docx: &[u8],
+    settle: Option<Settle>,
+) -> Result<Vec<(usize, Table)>, InspectError> {
+    let mut opened = Opened::open(docx)?;
+    if settle == Some(Settle::Reject) {
+        reject_text(&mut opened.dom, opened.body);
+    }
+    // `body_tables` lists the tables the view numbers, each under its `tN`.
+    Ok(tables::body_tables(&opened.dom, opened.body)
+        .into_iter()
+        .map(|table| (table.index, table))
+        .collect())
+}
+
+/// Word's Reject All on the text under `root`, in place: inserted and
+/// moved-to runs go, deleted and moved-from runs come back, their
+/// `w:delText` read as `w:t`, and a formatting change gives back the
+/// properties it replaced. Paragraph marks, rows and cells stay (their
+/// own revisions hold no text), so every paragraph keeps its id.
+fn reject_text(dom: &mut Dom, root: NodeId) {
+    // A paragraph's old base properties are in its `w:pPrChange`; its
+    // mark's `w:rPr` and its `w:sectPr` are not, and stay. A run's (or a
+    // mark's) old properties are the whole `w:rPr` of its `w:rPrChange`.
+    for (change, kept) in [
+        ("pPrChange", &["rPr", "sectPr"][..]),
+        ("rPrChange", &[][..]),
+    ] {
+        for node in dom.descendants(root, Some(&W::name(change))) {
+            let Some(properties) = dom.parent(node) else {
+                continue;
+            };
+            let old = dom
+                .elements(node, None)
+                .first()
+                .map(|&old| {
+                    let kids = dom.nodes(old);
+                    dom.remove_nodes(old);
+                    kids
+                })
+                .unwrap_or_default();
+            let stay: Vec<NodeId> = dom
+                .elements(properties, None)
+                .into_iter()
+                .filter(|&e| kept.iter().any(|k| dom.name_is(e, &W::name(k))))
+                .collect();
+            dom.remove_nodes(properties);
+            for kid in old.into_iter().chain(stay) {
+                dom.add(properties, kid);
+            }
+        }
+    }
+    for local in ["ins", "moveTo"] {
+        for node in dom.descendants(root, Some(&W::name(local))) {
+            dom.remove(node);
+        }
+    }
+    for local in ["del", "moveFrom"] {
+        for node in dom.descendants(root, Some(&W::name(local))) {
+            let kids = dom.nodes(node);
+            dom.remove_nodes(node);
+            dom.replace_with(node, &kids);
+        }
+    }
+    for (from, to) in [("delText", "t"), ("delInstrText", "instrText")] {
+        for node in dom.descendants(root, Some(&W::name(from))) {
+            dom.set_name(node, W::name(to));
+        }
+    }
 }
 
 /// [`snapshot`] as JSON.
@@ -741,17 +863,23 @@ impl Opened {
     }
 
     fn stories(&self) -> Result<Vec<Story>, InspectError> {
-        self.stories_within(crate::admission::InputLimits::default())
+        self.stories_within(crate::admission::InputLimits::default(), false)
     }
 
+    /// [`Self::stories`] under `limits`, every change rejected when
+    /// `reject` is set.
     fn stories_within(
         &self,
         limits: crate::admission::InputLimits,
+        reject: bool,
     ) -> Result<Vec<Story>, InspectError> {
         self.story_parts()
             .into_iter()
             .map(|(id, kind, part)| {
-                let (dom, _, root) = parse_part_within(&self.pkg, &part, limits)?;
+                let (mut dom, _, root) = parse_part_within(&self.pkg, &part, limits)?;
+                if reject {
+                    reject_text(&mut dom, root);
+                }
                 let paragraphs = paragraphs_of(&dom, story_paragraph_nodes(&dom, root), &id);
                 Ok(Story {
                     id,

@@ -358,28 +358,32 @@ fn table_inventory_refuses_mixed_table_and_non_table_items() {
 }
 
 #[test]
-fn table_inventory_refuses_the_first_non_table_paragraph_in_a_range() {
-    refused_inventory(
-        "p4-p8",
-        "p6 is not in a table; --tables -p takes tN, or a pN inside a table",
-    );
+fn table_inventory_range_selects_every_table_it_reaches() {
+    // p6 lies between the tables: a range reaches the tables that hold its
+    // paragraphs, as the view reads it (#1255).
+    selected_inventory("p4-p8", &[1, 2]);
+}
+
+/// What `read -p SPEC` refuses, `read --tables -p SPEC` refuses alike: the
+/// same diagnosis and the same exit code, nothing on stdout.
+fn refused_as_the_view(spec: &str) {
+    let view = read_table_fixture(&three_tables(), false, &["-p", spec]);
+    assert!(!view.status.success(), "{spec}: {view:?}");
+    let out = read_table_fixture(&three_tables(), false, &["--tables", "-p", spec]);
+    assert_eq!(out.status.code(), view.status.code(), "{spec}: {out:?}");
+    assert_eq!(out.stderr, view.stderr, "{spec}");
+    assert!(out.stdout.is_empty(), "{out:?}");
 }
 
 #[test]
 fn table_inventory_refuses_missing_tables_with_the_view_diagnosis() {
-    let view = read_table_fixture(&three_tables(), false, &["-p", "t9"]);
-    let stderr = String::from_utf8(view.stderr).unwrap();
-    let diagnosis = stderr.trim().strip_prefix("error: ").unwrap();
-    refused_inventory("t9", diagnosis);
+    refused_as_the_view("t9");
 }
 
 #[test]
 fn table_inventory_refuses_invalid_selection_grammar() {
     for spec in ["t0-t2", "p5-p4", "Alice", "p99", ","] {
-        let view = read_table_fixture(&three_tables(), false, &["-p", spec]);
-        let stderr = String::from_utf8(view.stderr).unwrap();
-        let diagnosis = stderr.trim().strip_prefix("error: ").unwrap();
-        refused_inventory(spec, diagnosis);
+        refused_as_the_view(spec);
     }
 }
 
@@ -447,7 +451,7 @@ fn table_inventory_refuses_a_nested_inventory_index_as_a_view_table() {
     let view = read_table_fixture(&source, false, &["-p", "t1"]);
     assert_eq!(view.status.code(), Some(1), "{view:?}");
     let out = read_table_fixture(&source, false, &["--tables", "-p", "t1"]);
-    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert_eq!(out.status.code(), view.status.code(), "{out:?}");
     assert_eq!(out.stderr, view.stderr);
     assert!(out.stdout.is_empty());
 }

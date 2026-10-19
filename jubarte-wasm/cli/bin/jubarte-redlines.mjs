@@ -126,9 +126,10 @@ function wrote(o, file, format, size, pages) {
   if (!o.quiet) console.error(wasm.wroteLine(file, format, size, pages));
 }
 
-/** The read options that select paragraphs, as `readJson` takes them. */
+/** The read options that select paragraphs, and the text --track-changes
+ * settles, as `readJson` takes them. */
 function selection(o = {}) {
-  return { paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
+  return { trackChanges: o.track_changes ?? undefined, paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
 }
 
 /** `-o` in the format its extension names, as the binary's writer: the Word
@@ -228,7 +229,26 @@ const COMMANDS = {
   reject: resolution(false),
   read: {
     run(_, [file], o) {
-      if (o.tables) return void process.stdout.write(wasm.tablesText(read(file)));
+      if (o.tables) {
+        // (A binding older than #1255 has no tablesView; its parser
+        // refuses -p and --track-changes here.)
+        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(read(file)));
+        // With -p, the grids of the tables it reaches, then its view; a
+        // pick that reaches no table is a usage error.
+        let view;
+        try {
+          view = JSON.parse(wasm.tablesView(read(file), JSON.stringify({
+            trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
+            pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined, source: path.basename(file),
+          })));
+        } catch (e) {
+          const usage = /^jubarte-wasm: USAGE: (.*)$/s.exec(String(e?.message ?? e));
+          if (usage) throw new UsageError(usage[1]);
+          throw e;
+        }
+        for (const warning of view.warnings) console.error(`warning: ${warning}`);
+        return void process.stdout.write(view.markdown);
+      }
       if (o.output != null) return void writeResult(o, read(file), path.basename(file), o);
       if (o.json) return void console.log(wasm.readJson(read(file), JSON.stringify({ ...selection(o), source: path.basename(file) })));
       printView(read(file), o, path.basename(file));
@@ -755,11 +775,13 @@ function validateHost(name, o) {
   }
 }
 
+/** `--json` before any `--`: an error prints on stdout as JSON too. */
 function main(argv) {
   try {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(argv), PROG, JSON.stringify(Object.keys(COMMANDS))));
     if ("text" in parsed) {
       for (const note of parsed.notes ?? []) console.error(note);
+      if (parsed.json != null) process.stdout.write(parsed.json);
       (parsed.stream === "stderr" ? process.stderr : process.stdout).write(parsed.text);
       return parsed.exit_code;
     }
@@ -769,8 +791,11 @@ function main(argv) {
     const positionals = name === "compare" ? [o.original, o.modified] : name === "diff" ? [o.old, o.new] : o.file == null ? [] : [o.file];
     return COMMANDS[name].run(name, positionals, o) ?? EXIT_OK;
   } catch (e) {
+    const code = e instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
+    // A binding older than #1255 has no runtimeJsonError: stdout stays empty.
+    if (wasm.runtimeJsonError && wasm.wantsJson(argv)) process.stdout.write(wasm.runtimeJsonError(messageOf(e), code));
     console.error(`error: ${messageOf(e)}`);
-    return e instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
+    return code;
   }
 }
 
