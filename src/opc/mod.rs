@@ -83,9 +83,12 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 mod archive;
+mod zip32;
 pub(crate) use archive::{
     ZipDefect, ZipDefectKind, open_archive, open_archive_unchecked, zip_defects,
 };
+pub use zip32::Zip32Limit;
+pub(crate) use zip32::zip32_plan;
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
@@ -417,6 +420,17 @@ enum ZipEntry<'a> {
     Part(&'a [u8]),
 }
 
+impl ZipEntry<'_> {
+    /// The uncompressed byte length of the entry's content.
+    fn len(&self) -> u64 {
+        match self {
+            // Serialized at plan time; a rels part never nears the boundary.
+            ZipEntry::Rels(rels) => rels.to_xml().map_or(0, |x| x.len() as u64),
+            ZipEntry::Part(data) => data.len() as u64,
+        }
+    }
+}
+
 // Retain the OPC metadata budget independently of the parser upgrade that
 // fixed RUSTSEC-2026-0194/0195. Direct Relationships::from_xml callers use
 // patched quick-xml through oxml-opc 0.14.2; package admission also bounds the
@@ -596,19 +610,13 @@ impl PartFs {
     /// Every entry is dated 1980-01-01 00:00, as Office dates its own, so the
     /// same input writes the same bytes.
     pub fn to_zip(&self) -> Result<Vec<u8>, OpcError> {
-        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .compression_level(Some(1))
             .last_modified_time(zip::DateTime::default());
 
         let ct_xml = self.pkg.content_types.to_xml()?;
-        zip.start_file("[Content_Types].xml", options)?;
-        zip.write_all(&ct_xml)?;
-
         let pkg_rels_xml = self.package_rels.to_xml()?;
-        zip.start_file("_rels/.rels", options)?;
-        zip.write_all(&pkg_rels_xml)?;
 
         // Source entries keep their places; added ones follow, by name.
         let mut entries: Vec<(Cow<str>, ZipEntry)> = self
@@ -629,6 +637,26 @@ impl PartFs {
             let rank = |name: &str| self.source_order.get(name).copied().unwrap_or(usize::MAX);
             (rank(a), a).cmp(&(rank(b), b))
         });
+        // jubarte writes ZIP32 only (ZIP-10/#604): a package that would
+        // need ZIP64 is refused before `ZipWriter::new`, not mid-write.
+        let plan: Vec<(&str, u64)> = [
+            ("[Content_Types].xml", ct_xml.len() as u64),
+            ("_rels/.rels", pkg_rels_xml.len() as u64),
+        ]
+        .into_iter()
+        .chain(
+            entries
+                .iter()
+                .map(|(name, entry)| (name.as_ref(), entry.len())),
+        )
+        .collect();
+        zip32_plan(&plan).map_err(refused)?;
+
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        zip.start_file("[Content_Types].xml", options)?;
+        zip.write_all(&ct_xml)?;
+        zip.start_file("_rels/.rels", options)?;
+        zip.write_all(&pkg_rels_xml)?;
         for (name, entry) in &entries {
             zip.start_file(name.as_ref(), options)?;
             match entry {
@@ -1641,5 +1669,113 @@ mod bounded_input_tests {
     fn exact_budget_control() {
         let bytes = fixture::package();
         assert!(PartFs::open_within(&bytes, fixture::limits()).is_ok());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod zip32_tests {
+    use super::*;
+    use zip::ZipArchive;
+
+    /// `(name, local version-needed, central version-needed, local extra
+    /// length, central extra length)` for every entry, read from the raw
+    /// headers — the local field at +4 (APPNOTE 4.3.7), the central one at
+    /// +6 (APPNOTE 4.3.12).
+    fn header_versions(bytes: &[u8]) -> Vec<(String, u16, u16, u16, u16)> {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        (0..archive.len())
+            .map(|i| {
+                let entry = archive.by_index(i).unwrap();
+                let local_at = usize::try_from(entry.header_start()).unwrap();
+                let central_at = usize::try_from(entry.central_header_start()).unwrap();
+                let u16_at = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+                (
+                    entry.name().unwrap().into_owned(),
+                    u16_at(local_at + 4),
+                    u16_at(central_at + 6),
+                    u16_at(local_at + 28),
+                    u16_at(central_at + 30),
+                )
+            })
+            .collect()
+    }
+
+    /// ZIP-10 (#604): `to_zip` writes Deflated entries, and a Deflated
+    /// entry's version-needed is 20 (zip's `get_version_needed`), in both
+    /// headers — never a hardcoded value, never the 45 a ZIP64 record
+    /// carries. No extra fields means no 0x0001 ZIP64 field, and no ZIP64
+    /// end record or locator follows.
+    #[test]
+    fn to_zip_entries_carry_version_20_and_no_zip64() {
+        let mut fs = PartFs::open(&crate::admission::zip_names::docx_package("", &[])).unwrap();
+        fs.set_part("word/media/logo.png", vec![7u8; 300]);
+        let bytes = fs.to_zip().unwrap();
+        let versions = header_versions(&bytes);
+        assert!(versions.len() >= 4, "{versions:?}");
+        for (name, local, central, local_extra, central_extra) in &versions {
+            assert_eq!(
+                (*local, *central),
+                (20, 20),
+                "{name}: a Deflated entry needs version 20 in both headers"
+            );
+            assert_eq!(
+                (*local_extra, *central_extra),
+                (0, 0),
+                "{name}: no extra fields means no 0x0001 ZIP64 field"
+            );
+        }
+        assert!(
+            !bytes
+                .windows(4)
+                .any(|w| w == b"PK\x06\x06" || w == b"PK\x06\x07"),
+            "no ZIP64 end record or locator"
+        );
+    }
+
+    /// The version-needed values differ by what the entry is, which is why
+    /// no assertion may hardcode 20 (ZIP-10/#604): a Stored file needs 10
+    /// (zip's `MIN_VERSION`), a Stored directory needs 20
+    /// (`get_version_needed` raises a directory to 20), and a forced
+    /// `large_file(true)` entry needs 45 and carries the 0x0001 ZIP64
+    /// field — the record shape `zip32_plan` refuses to emit.
+    #[test]
+    fn version_needed_distinguishes_stored_deflate_and_zip64() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        writer.start_file("stored.bin", stored).unwrap();
+        writer.write_all(b"raw").unwrap();
+        writer.add_directory("dir/", stored).unwrap();
+        writer
+            .start_file(
+                "wide.bin",
+                SimpleFileOptions::default()
+                    .compression_method(CompressionMethod::Stored)
+                    .large_file(true),
+            )
+            .unwrap();
+        writer.write_all(b"wide").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let versions = header_versions(&bytes);
+        let find = |name: &str| {
+            versions
+                .iter()
+                .find(|(n, ..)| n == name)
+                .unwrap_or_else(|| panic!("{name} in {versions:?}"))
+        };
+        let (_, local, central, ..) = find("stored.bin");
+        assert_eq!((*local, *central), (10, 10), "a Stored file needs 10");
+        let (_, local, central, ..) = find("dir/");
+        assert_eq!(
+            (*local, *central),
+            (20, 20),
+            "a Stored directory needs 20, not 10"
+        );
+        let (_, local, central, local_extra, central_extra) = find("wide.bin");
+        assert_eq!((*local, *central), (45, 45), "a ZIP64 entry needs 45");
+        assert!(
+            *local_extra > 0 && *central_extra > 0,
+            "a forced ZIP64 entry carries the 0x0001 field"
+        );
     }
 }

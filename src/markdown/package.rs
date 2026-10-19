@@ -1779,11 +1779,7 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
     let app = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
         <Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">\
         <Application>jubarte</Application></Properties>";
-    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .last_modified_time(zip::DateTime::default());
-    for (name, body) in [
+    let parts = [
         ("[Content_Types].xml", content_types.to_string()),
         ("_rels/.rels", package_rels),
         ("word/document.xml", document),
@@ -1792,8 +1788,21 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
         ("word/settings.xml", settings),
         ("docProps/core.xml", core.to_string()),
         ("docProps/app.xml", app.to_string()),
-    ] {
-        zip.start_file(name, options)?;
+    ];
+    // jubarte writes ZIP32 only (ZIP-10/#604): the template cannot exceed
+    // the boundary, but the plan proves it before `ZipWriter::new`.
+    let plan: Vec<(&str, u64)> = parts
+        .iter()
+        .map(|(name, body)| (*name, body.len() as u64))
+        .collect();
+    crate::opc::zip32_plan(&plan)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::default());
+    for (name, body) in &parts {
+        zip.start_file(*name, options)?;
         zip.write_all(body.as_bytes())?;
     }
     Ok(zip.finish()?.into_inner())
