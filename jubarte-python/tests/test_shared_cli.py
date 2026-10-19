@@ -314,24 +314,27 @@ def test_read_json_and_tables_take_the_view_options(tmp_path, capsys):
     plain = capsys.readouterr().out
     assert _main(["read", file, "--json"]) == 0
     assert capsys.readouterr().out == plain
-    # --tables -p tN: the view's tN, with the tables nested in it.
-    assert _main(["read", file, "--tables"]) == 0
-    every = capsys.readouterr().out
-    assert _main(["read", file, "--tables", "-p", "t1"]) == 0
-    second = capsys.readouterr().out
-    assert second.startswith("table 2: ") and "second" in second and "inner" not in second
-    assert _main(["read", file, "--tables", "-p", "t0"]) == 0
-    first = capsys.readouterr().out
-    assert [line[:8] for line in first.splitlines() if line.startswith("table ")] == ["table 0:", "table 1:"]
-    assert _main(["read", file, "--tables", "--select", "t1,t0"]) == 0
-    assert capsys.readouterr().out == every
-    assert _main(["read", file, "--tables", "--track-changes", "reject", "-p", "t0"]) == 0
-    assert "keep old" in capsys.readouterr().out
+    # --tables -p: the grids of the tables the view's pick reaches, each
+    # with the tables nested in it, an empty line, then that view (#1161).
+    def out(*arguments):
+        assert _main(["read", file, *arguments]) == 0
+        return capsys.readouterr().out
+
+    every = out("--tables")
+    grids = [f"table {chunk}" for chunk in every.split("table ") if chunk]
+    assert len(grids) == 3 and "inner" in grids[1] and "second" in grids[2]
+    for pick, kept in (("t1", [2]), ("t0", [0, 1]), ("t1,t0", [0, 1, 2]), ("p2", [0, 1]), ("p1-p5", [0, 1, 2])):
+        assert out("--tables", "-p", pick) == "".join(grids[i] for i in kept) + "\n" + out("-p", pick), pick
+    rejected = out("--tables", "--track-changes", "reject", "-p", "t0")
+    assert "keep old" in rejected.split("\n---\n")[0]
+    # The view's own refusal is the view's; a pick outside every table is a
+    # usage error.
     assert _main(["read", file, "--tables", "-p", "t5"]) == 1
-    assert "t5 is not a table of this document (2 tables)" in capsys.readouterr().err
-    assert _main(["read", file, "--tables", "-p", "p0"]) == 2
+    missing = capsys.readouterr()
+    assert "t5 is not a table of this document" in missing.err and "(2 tables)" not in missing.err
+    assert _main(["read", file, "--tables", "-p", "p4"]) == 2
     refused = capsys.readouterr()
-    assert "--tables -p takes tables (t0, t1)" in refused.err and refused.out == ""
+    assert "p4 is not in a table; --tables -p takes tN, or a pN inside a table" in refused.err and refused.out == ""
 
 
 def test_an_error_under_json_is_a_json_line_on_stdout(tmp_path, capsys):

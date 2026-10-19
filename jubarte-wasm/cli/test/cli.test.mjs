@@ -1510,10 +1510,21 @@ test("read --json and --tables take the view's options; errors under --json are 
   const error = JSON.parse(usage.out).error;
   assert.equal(error.code, "USAGE");
   assert.equal(error.usage, "jubarte-redlines read [OPTIONS] <FILE>");
-  const pick = run("read", untracked, "--tables", "-p", "p0");
-  assert.equal(pick.code, 2);
-  assert.match(pick.err, /--tables -p takes tables \(t0, t1\), not paragraphs/);
+  // #1161: the grids of the tables -p reaches, an empty line, its view.
+  const grids = run("read", untracked, "--tables");
+  const view = run("read", untracked, "-p", "t0");
   const table = run("read", untracked, "--tables", "-p", "t0");
   assert.equal(table.code, 0, table.err);
   assert.match(table.out, /^table 0: /);
+  assert.ok(table.out.endsWith(`\n${view.out}`), table.out);
+  assert.ok(grids.out.startsWith(table.out.slice(0, -view.out.length - 1)), table.out);
+  // p5 is a cell of t0; p0 is outside every table.
+  assert.equal(run("read", untracked, "--tables", "-p", "p5").out, `${grids.out}\n${run("read", untracked, "-p", "p5").out}`);
+  const outside = run("read", untracked, "--tables", "-p", "p0");
+  assert.equal(outside.code, 2);
+  assert.match(outside.err, /p0 is not in a table; --tables -p takes tN, or a pN inside a table/);
+  assert.equal(outside.out, "");
+  const missing = run("read", untracked, "--tables", "-p", "t9");
+  assert.equal(missing.code, run("read", untracked, "-p", "t9").code);
+  assert.match(missing.err, /t9 is not a table of this document/);
 });

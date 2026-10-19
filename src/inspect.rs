@@ -408,7 +408,8 @@ pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
 /// body and of every story read the settled text and keep their ids: the
 /// paragraphs, rows and cells a choice would remove stay, with the text it
 /// leaves them (often none). `summary`, `changes` and `comments` describe
-/// the document as it is.
+/// the file as stored, every revision still listed: the facts of what
+/// `track_changes` settles.
 ///
 /// # Errors
 ///
@@ -453,9 +454,41 @@ pub fn view_tables(
 
 /// Word's Reject All on the text under `root`, in place: inserted and
 /// moved-to runs go, deleted and moved-from runs come back, their
-/// `w:delText` read as `w:t`. Paragraph marks, rows and cells stay (their
+/// `w:delText` read as `w:t`, and a formatting change gives back the
+/// properties it replaced. Paragraph marks, rows and cells stay (their
 /// own revisions hold no text), so every paragraph keeps its id.
 fn reject_text(dom: &mut Dom, root: NodeId) {
+    // A paragraph's old base properties are in its `w:pPrChange`; its
+    // mark's `w:rPr` and its `w:sectPr` are not, and stay. A run's (or a
+    // mark's) old properties are the whole `w:rPr` of its `w:rPrChange`.
+    for (change, kept) in [
+        ("pPrChange", &["rPr", "sectPr"][..]),
+        ("rPrChange", &[][..]),
+    ] {
+        for node in dom.descendants(root, Some(&W::name(change))) {
+            let Some(properties) = dom.parent(node) else {
+                continue;
+            };
+            let old = dom
+                .elements(node, None)
+                .first()
+                .map(|&old| {
+                    let kids = dom.nodes(old);
+                    dom.remove_nodes(old);
+                    kids
+                })
+                .unwrap_or_default();
+            let stay: Vec<NodeId> = dom
+                .elements(properties, None)
+                .into_iter()
+                .filter(|&e| kept.iter().any(|k| dom.name_is(e, &W::name(k))))
+                .collect();
+            dom.remove_nodes(properties);
+            for kid in old.into_iter().chain(stay) {
+                dom.add(properties, kid);
+            }
+        }
+    }
     for local in ["ins", "moveTo"] {
         for node in dom.descendants(root, Some(&W::name(local))) {
             dom.remove(node);

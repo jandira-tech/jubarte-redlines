@@ -50,12 +50,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   the view, so these take them and change nothing (the output is byte for
   byte the same). `--track-changes accept|reject` with `--json`,
   `-o FILE.json` or `--tables` settles the text of every paragraph and cell
-  (`reject` reads what Word's Reject All leaves), keeps every id, and the
-  snapshot names the choice in a top-level `track_changes`. `--tables -p
-  t1` prints the view's `t1` and the tables nested in it; a paragraph pick
-  there is a usage error that says so (#1161). `jubarte FILE -p q7` (the
-  one-document shorthand) exits 2 for a selection that does not parse, as
-  `jubarte read FILE -p q7` does.
+  (`reject` reads the text and formatting Word's Reject All leaves: a
+  `w:rPrChange` or `w:pPrChange` gives back what it replaced), keeps every
+  id, and the snapshot names the choice in a top-level `track_changes`.
+  `--tables -p` reads the selection as the view does (#1161): `t1` is the
+  view's `t1`, a `pN` or a range inside a table reaches that table, and it
+  prints the grids of the tables reached, each with the tables nested in
+  it, then an empty line and `read -p` of the same selection, unchanged. A
+  pick that reaches no table exits 2 (`p0 is not in a table; --tables -p
+  takes tN, or a pN inside a table`); what the view refuses fails as
+  `read -p` does. `jubarte FILE -p q7` (the one-document shorthand) exits 2
+  for a selection that does not parse, as `jubarte read FILE -p q7` does.
 
 - **Fractional plain values on table and frame geometry are rounded in
   redline output — a validity repair.** A gdocs-style fractional dxa
@@ -75,14 +80,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   the same text on stderr and the same exit code; `jubarte read x.docx --json
   --bogus | jq .error.code` prints `"USAGE"`. A message clap spreads over
   lines is joined on one, and `usage` keeps each form clap prints, a line
-  per form. The npm and Python CLIs print the same: WASM `wantsJson`,
-  `runtimeJsonError` and `tablesUsage`, Python `wants_json`,
-  `runtime_json_error` and `tables_usage` (a `--json` that is an option's
-  value, as in `edit replace … --text --json`, asks for none), and
-  `parseCli` results carry a usage error's line as `json`.
-  `--track-changes` also takes `accepted` and `rejected`. WASM `tablesText`
-  and `readJson`, and Python `tables_text` and `read_json`, take the
-  `trackChanges`/`track_changes` and table selection the CLI does.
+  per form; a removed spelling's line (`--date is removed; use
+  --datetime`) carries the usage too. The npm and Python CLIs print the
+  same: WASM `wantsJson` and `runtimeJsonError`, Python `wants_json` and
+  `runtime_json_error` (a `--json` that is an option's value, as in `edit
+  replace … --text --json`, asks for none), and `parseCli` results carry a
+  usage error's line as `json`. `--track-changes` also takes `accepted` and
+  `rejected`. WASM `tablesText` and `readJson`, and Python `tables_text`
+  and `read_json`, take the `trackChanges`/`track_changes` the CLI does;
+  WASM `tablesView` and Python `tables_view` print `read --tables` whole,
+  `-p` and the view's options included, as `{markdown, warnings}` and a
+  `(markdown, warnings)` pair; a pick that reaches no table raises
+  `USAGE: …`.
 - **`edit --skip-failed` applies what passes (#1253).** Every operation
   that passes is applied and the failed ones are left out: the output is
   the bytes the plan without them writes, exit 0. stderr says `skipped 2 of

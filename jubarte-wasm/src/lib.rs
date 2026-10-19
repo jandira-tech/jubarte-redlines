@@ -349,11 +349,7 @@ fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
         Some(json) => serde_json::from_str(json).map_err(|e| format!("readView options: {e}"))?,
         None => ReadViewOptions::default(),
     };
-    let track_changes = match options.track_changes.as_deref() {
-        None => jubarte::markdown::TrackChanges::All,
-        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
-            .ok_or("trackChanges must be all, accept or reject")?,
-    };
+    let track_changes = track_changes_of(options.track_changes.as_deref())?;
     let comments = match options.comments.as_deref() {
         None | Some("inline") => true,
         Some("none") => false,
@@ -396,12 +392,11 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
     read_view_json(docx, options_json.as_deref()).map_err(js_err)
 }
 
-/// `tablesText` options: `read --tables`'s `-p tN` and `--track-changes`.
+/// `tablesText` options: `read --tables`'s `--track-changes`.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 struct TablesTextOptions {
     track_changes: Option<String>,
-    paragraphs: Option<String>,
 }
 
 fn tables_text_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
@@ -409,50 +404,96 @@ fn tables_text_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
         Some(json) => serde_json::from_str(json).map_err(|e| format!("tablesText options: {e}"))?,
         None => TablesTextOptions::default(),
     };
-    let track_changes = match options.track_changes.as_deref() {
-        None => jubarte::markdown::TrackChanges::All,
-        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
-            .ok_or("trackChanges must be all, accept or reject")?,
-    };
-    let select = jubarte::markdown::Select::from_flags(
-        options.paragraphs.as_deref(),
-        None,
-        None,
-        false,
-        None,
-    )?;
     let options = jubarte::markdown::ReadOptions {
-        track_changes,
-        select,
+        track_changes: track_changes_of(options.track_changes.as_deref())?,
         ..jubarte::markdown::ReadOptions::default()
     };
-    jubarte::markdown::read_tables(docx, &options).map_err(|e| e.to_string())
+    jubarte::markdown::read_tables(docx, &options)
+        .map(|view| view.markdown)
+        .map_err(|e| e.to_string())
+}
+
+/// `trackChanges` as the view reads it: `all` (the default), `accept` or
+/// `reject`, with their `accepted` and `rejected` spellings.
+fn track_changes_of(choice: Option<&str>) -> Result<jubarte::markdown::TrackChanges, String> {
+    match choice {
+        None => Ok(jubarte::markdown::TrackChanges::All),
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or_else(|| "trackChanges must be all, accept or reject".to_string()),
+    }
 }
 
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
 /// body table, then a line per row of `ids=text` cells; `no tables` when
-/// there are none. Options (JSON, all optional): `paragraphs` (`t0,t2`:
-/// the view's tables, each with the tables nested in it) and
-/// `trackChanges` (`reject` reads the rejected text).
+/// there are none. Options (JSON, all optional): `trackChanges` (`reject`
+/// reads the rejected text).
 ///
-/// Mirrors `jubarte::markdown::read_tables`.
+/// Mirrors `jubarte::markdown::read_tables` without a selection.
 #[wasm_bindgen(js_name = tablesText)]
 pub fn tables_text(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
     tables_text_of(docx, options_json.as_deref()).map_err(js_err)
 }
 
-/// Why `read --tables -p SPEC` is a usage error (a paragraph pick, or a
-/// selection that does not parse), or `None` when it is not: what the CLI
-/// refuses before it reads the document.
-#[wasm_bindgen(js_name = tablesUsage)]
-pub fn tables_usage(paragraphs: Option<String>) -> Option<String> {
-    let select =
-        match jubarte::markdown::Select::from_flags(paragraphs.as_deref(), None, None, false, None)
-        {
-            Ok(select) => select,
-            Err(e) => return Some(e),
-        };
-    jubarte::markdown::table_picks(select.as_ref()).err()
+/// `tablesView` options: `read --tables` with the view's options.
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+struct TablesViewOptions {
+    track_changes: Option<String>,
+    comments: Option<String>,
+    dates: bool,
+    page_markers: Option<bool>,
+    paragraphs: Option<String>,
+    source: Option<String>,
+}
+
+fn tables_view_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: TablesViewOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("tablesView options: {e}"))?,
+        None => TablesViewOptions::default(),
+    };
+    let comments = match options.comments.as_deref() {
+        None | Some("inline") => true,
+        Some("none") => false,
+        Some(other) => return Err(format!("comments must be inline or none, not {other:?}")),
+    };
+    let view = jubarte::markdown::read_tables(
+        docx,
+        &jubarte::markdown::ReadOptions {
+            track_changes: track_changes_of(options.track_changes.as_deref())?,
+            comments,
+            dates: options.dates,
+            page_markers: options.page_markers.unwrap_or(true),
+            select: jubarte::markdown::Select::from_flags(
+                options.paragraphs.as_deref(),
+                None,
+                None,
+                false,
+                None,
+            )?,
+            source: options.source,
+        },
+    )
+    .map_err(|e| match e {
+        jubarte::markdown::TablesError::Usage(message) => format!("USAGE: {message}"),
+        jubarte::markdown::TablesError::Read(e) => e.to_string(),
+    })?;
+    Ok(serde_json::json!({ "markdown": view.markdown, "warnings": view.warnings }).to_string())
+}
+
+/// What `jubarte read --tables` prints, as JSON `{markdown, warnings}`:
+/// the grids (`tablesText`), or with `paragraphs` (`"t0"`, `"p11"`,
+/// `"p3-p20"`) the grids of the tables the view's selection reaches (a
+/// `pN` inside a table, that table), each with the tables nested in it,
+/// then an empty line and the view `readView` prints of that selection.
+/// Options (JSON, all optional): `trackChanges`, `comments`, `dates`,
+/// `pageMarkers`, `paragraphs`, `source`, as `readView` reads them. A pick
+/// that reaches no table throws `jubarte-wasm: USAGE: …`, as the CLI
+/// exits 2.
+///
+/// Mirrors `jubarte::markdown::read_tables`.
+#[wasm_bindgen(js_name = tablesView)]
+pub fn tables_view(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
+    tables_view_of(docx, options_json.as_deref()).map_err(js_err)
 }
 
 /// Whether a command line (without the program name) asks for JSON: a
@@ -502,11 +543,7 @@ fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Strin
         options.changed,
         options.by.as_deref(),
     )?;
-    let track_changes = match options.track_changes.as_deref() {
-        None => jubarte::markdown::TrackChanges::All,
-        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
-            .ok_or("trackChanges must be all, accept or reject")?,
-    };
+    let track_changes = track_changes_of(options.track_changes.as_deref())?;
     let options = jubarte::markdown::ReadOptions {
         track_changes,
         select,
@@ -2223,42 +2260,63 @@ mod tests {
 
     #[test]
     fn tables_take_the_view_picks_and_the_rejected_text() {
-        // #1255: `--tables -p tN` and `--track-changes reject`, as the CLI.
+        // #1255, #1161: `--tables -p` reads the view's selection, as the CLI.
         let docx =
             word("| A | B |\n|---|---|\n| {~~30~>45~~} | 2 |\n\nBetween.\n\n| C |\n|---|\n| 3 |\n");
+        let markdown = |json: &str| -> String {
+            let view: serde_json::Value =
+                serde_json::from_str(&tables_view_of(&docx, Some(json)).unwrap()).unwrap();
+            view["markdown"].as_str().unwrap().to_string()
+        };
+        let view = |json: &str| -> String {
+            let view: serde_json::Value =
+                serde_json::from_str(&read_view_json(&docx, Some(json)).unwrap()).unwrap();
+            view["markdown"].as_str().unwrap().to_string()
+        };
         let all = tables_text_of(&docx, None).unwrap();
-        let second = tables_text_of(&docx, Some(r#"{"paragraphs":"t1"}"#)).unwrap();
+        assert_eq!(markdown("{}"), all);
+        let grids: Vec<&str> = all.split_inclusive('\n').collect();
+        let (first, second) = (grids[..3].concat(), grids[3..].concat());
         assert!(
             second.starts_with("table 1: ") && second.contains('C'),
-            "{second}"
+            "{all}"
         );
-        assert!(!second.contains("45"), "{second}");
-        let both = tables_text_of(&docx, Some(r#"{"paragraphs":"t1,t0"}"#)).unwrap();
-        assert_eq!(both, all);
-        let rejected = tables_text_of(
-            &docx,
-            Some(r#"{"paragraphs":"t0","trackChanges":"reject"}"#),
-        )
-        .unwrap();
+        // The grids it reaches, an empty line, then the view of the pick.
+        for (pick, grids) in [
+            ("t1", second.clone()),
+            ("t1,t0", all.clone()),
+            ("p2", first.clone()),
+            ("p3-p5", all.clone()),
+        ] {
+            let json = format!(r#"{{"paragraphs":"{pick}","pageMarkers":false}}"#);
+            assert_eq!(
+                markdown(&json),
+                format!("{grids}\n{}", view(&json)),
+                "{pick}"
+            );
+        }
+        let rejected = markdown(r#"{"paragraphs":"t0","trackChanges":"reject"}"#);
+        let (grids, _) = rejected.split_once("\n---\n").unwrap();
+        assert!(grids.contains("30") && !grids.contains("45"), "{rejected}");
+        // A pick that reaches no table is a usage error; the view's own
+        // refusal is the view's.
+        let outside = tables_view_of(&docx, Some(r#"{"paragraphs":"p4"}"#)).unwrap_err();
+        assert_eq!(
+            outside,
+            "USAGE: p4 is not in a table; --tables -p takes tN, or a pN inside a table"
+        );
+        let missing = tables_view_of(&docx, Some(r#"{"paragraphs":"t5"}"#)).unwrap_err();
+        assert!(
+            missing.ends_with("t5 is not a table of this document") && !missing.contains("USAGE"),
+            "{missing}"
+        );
+        assert!(tables_view_of(&docx, Some(r#"{"bogus":1}"#)).is_err());
+        assert!(tables_text_of(&docx, Some(r#"{"paragraphs":"t0"}"#)).is_err());
+        let rejected = tables_text_of(&docx, Some(r#"{"trackChanges":"reject"}"#)).unwrap();
         assert!(
             rejected.contains("30") && !rejected.contains("45"),
             "{rejected}"
         );
-        let missing = tables_text_of(&docx, Some(r#"{"paragraphs":"t5"}"#)).unwrap_err();
-        assert!(
-            missing.contains("t5 is not a table of this document (2 tables)"),
-            "{missing}"
-        );
-        assert!(tables_text_of(&docx, Some(r#"{"bogus":1}"#)).is_err());
-        // What the CLI refuses before it reads: a paragraph, or no selection.
-        assert!(
-            tables_usage(Some("p0".into()))
-                .unwrap()
-                .contains("--tables -p takes tables")
-        );
-        assert!(tables_usage(Some("q7".into())).is_some());
-        assert_eq!(tables_usage(Some("t0,t1".into())), None);
-        assert_eq!(tables_usage(None), None);
     }
 
     #[test]

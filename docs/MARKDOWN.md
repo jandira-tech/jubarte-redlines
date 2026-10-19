@@ -324,22 +324,33 @@ recorded date forms differ, including offsets for the same instant.
 
 `--json` prints the snapshot and `--tables` the grids instead of the
 view. Both read the accepted text; `--track-changes reject` reads the
-text Word's Reject All leaves (`accepted` and `rejected` spell the two
-choices too), every paragraph, row and cell keeping its id, and the
-snapshot names an `accept` or `reject` in a top-level `track_changes`
-(its `summary.track_changes` still says whether the document tracks
-changes). `--comments`, `--dates` and `--no-page-markers` shape only the
-view, so `--json`, `--tables` and `--for-edit` take them and change
-nothing. `--tables -p t1` prints the view's `t1` and the tables nested in
-it; the grids' `table N` counts nested tables too, so it can differ from
-`t1`. A paragraph pick under `--tables` is a usage error.
+text and formatting Word's Reject All leaves (`accepted` and `rejected`
+spell the two choices too), every paragraph, row and cell keeping its id,
+and the snapshot names an `accept` or `reject` in a top-level
+`track_changes` (its `summary.track_changes` still says whether the
+document tracks changes; `summary`, `changes` and `comments` describe the
+file as stored). `--comments`, `--dates` and `--no-page-markers` shape
+only the view, so `--json`, `--for-edit` and the grids of `--tables` take
+them and change nothing.
+
+`--tables -p` reads the selection as the view does: `t1` is the view's
+`t1`, and a `pN` or a range inside a table reaches that table. It prints
+the grids of the tables the selection reaches, each with the tables
+nested in it, once and in document order, then an empty line and what
+`read -p` prints for the same selection, unchanged. The grids' `table N`
+counts nested tables too, so it can differ from `t1`. A pick that reaches
+no table is a usage error (`p0 is not in a table; --tables -p takes tN,
+or a pN inside a table`); what the view refuses (`t9 is not a table of
+this document`) fails as `read -p` does.
 
 With `--json` on the command line, an error also prints on stdout as one
 line, `{"error":{"code":"USAGE","message":"unexpected argument '--bogus'
 found","usage":"jubarte read [OPTIONS] <FILE>"}}`, so `2>&1 | jq` or
-`| jq .error.code` reads it; stderr and the exit code stay as they are. A
-usage error's code is `USAGE`; a runtime error's is the message's leading
-code (`STALE_SOURCE`), else `ERROR`.
+`| jq .error.code` reads it; stderr and the exit code stay as they are.
+Its `usage` is the task's, a line per form; the `Usage:` line on stderr is
+clap's, which names the flags given. The code is the message's leading
+code (`STALE_SOURCE`), else `USAGE` for an exit 2 and `ERROR` for any
+other.
 
 ### Id lines
 

@@ -796,23 +796,31 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
     format!("{stem}-page-{:0width$}.png", index + 1)
 }
 
-/// `read --tables`: each body table as a grid; `-p tN` keeps the view's
-/// table tN and the tables nested in it, and `--track-changes reject`
-/// reads the rejected text.
+/// `read --tables`: each body table as a grid; with `-p` the grids of the
+/// tables the view's selection reaches, then that view (#1161), and
+/// `--track-changes reject` reads the rejected text. A pick that reaches
+/// no table exits 2; what the view refuses, as `read -p` does.
 fn run_read_tables(file: &Path, args: &ReadArgs) -> Result<(), ConvertFailure> {
-    let select = selection(args).map_err(usage_failure)?;
-    jubarte::markdown::table_picks(select.as_ref()).map_err(usage_failure)?;
     let bytes = read_word(file)?;
-    let grids = jubarte::markdown::read_tables(
+    let view = jubarte::markdown::read_tables(
         &bytes,
         &jubarte::markdown::ReadOptions {
             track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
-            select,
-            ..jubarte::markdown::ReadOptions::default()
+            comments: args.comments == CommentsArg::Inline,
+            dates: args.dates,
+            page_markers: !args.no_page_markers,
+            select: selection(args).map_err(usage_failure)?,
+            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
         },
     )
-    .map_err(|e| e.to_string())?;
-    Ok(write_stdout(grids)?)
+    .map_err(|e| match e {
+        jubarte::markdown::TablesError::Usage(message) => usage_failure(message),
+        jubarte::markdown::TablesError::Read(e) => e.to_string().into(),
+    })?;
+    for warning in &view.warnings {
+        eprintln!("warning: {warning}");
+    }
+    Ok(write_stdout(view.markdown)?)
 }
 
 /// A usage error: exit 2.
@@ -3383,7 +3391,9 @@ fn cli_main() -> ExitCode {
             let removed = jubarte::cli::removed_error(old, now);
             if jubarte::cli::wants_json(&argv) {
                 let message = removed.strip_prefix("error: ").unwrap_or(&removed);
-                let _ = write_stdout(jubarte::cli::json_error("USAGE", message, None));
+                let _ = write_stdout(jubarte::cli::removed_json_error(
+                    &error, &argv, "jubarte", message,
+                ));
             }
             eprintln!("{removed}");
             std::process::exit(2);

@@ -230,11 +230,24 @@ const COMMANDS = {
   read: {
     run(_, [file], o) {
       if (o.tables) {
-        // A paragraph pick is a usage error, before any I/O. (A binding
-        // older than #1255 has no tablesUsage; its parser refuses -p here.)
-        const refused = wasm.tablesUsage?.(o.paragraphs ?? undefined);
-        if (refused != null) throw new UsageError(refused);
-        return void process.stdout.write(wasm.tablesText(read(file), JSON.stringify({ trackChanges: o.track_changes ?? undefined, paragraphs: o.paragraphs ?? undefined })));
+        // (A binding older than #1255 has no tablesView; its parser
+        // refuses -p and --track-changes here.)
+        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(read(file)));
+        // With -p, the grids of the tables it reaches, then its view; a
+        // pick that reaches no table is a usage error.
+        let view;
+        try {
+          view = JSON.parse(wasm.tablesView(read(file), JSON.stringify({
+            trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
+            pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined, source: path.basename(file),
+          })));
+        } catch (e) {
+          const usage = /^jubarte-wasm: USAGE: (.*)$/s.exec(String(e?.message ?? e));
+          if (usage) throw new UsageError(usage[1]);
+          throw e;
+        }
+        for (const warning of view.warnings) console.error(`warning: ${warning}`);
+        return void process.stdout.write(view.markdown);
       }
       if (o.output != null) return void writeResult(o, read(file), path.basename(file), o);
       if (o.json) return void console.log(wasm.readJson(read(file), JSON.stringify({ ...selection(o), source: path.basename(file) })));

@@ -67,8 +67,8 @@ pub struct ReadArgs {
     #[arg(long, value_enum, value_name = "CHOICE", help_heading = "Read options")]
     pub track_changes: Option<TrackChanges>,
     /// Comments inline (default) or hidden, with their ids on the id line
-    /// of the paragraph that holds them; ignored with --json, --tables and
-    /// --for-edit.
+    /// of the paragraph that holds them; ignored by --json, --for-edit and
+    /// the --tables grids.
     #[arg(
         long,
         value_enum,
@@ -78,13 +78,13 @@ pub struct ReadArgs {
     )]
     pub comments: CommentsArg,
     /// Timestamps on the notes of an author whose changes do not all share
-    /// one (the header shows an author's single timestamp); ignored with
-    /// --json, --tables and --for-edit.
+    /// one (the header shows an author's single timestamp); ignored by
+    /// --json, --for-edit and the --tables grids.
     #[arg(long, help_heading = "Read options")]
     pub dates: bool,
     /// Skip the layout pass; page count from Word's cached breaks, no
-    /// `<!-- page N of M -->` lines; ignored with --json, --tables and
-    /// --for-edit.
+    /// `<!-- page N of M -->` lines; ignored by --json, --for-edit and the
+    /// --tables grids.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
     /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
@@ -140,8 +140,10 @@ pub struct ReadArgs {
     pub json: bool,
     /// Print each body table as a grid instead of the view: a `table N:
     /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
-    /// tab-separated `ids=text` cells. N counts nested tables too; `-p t1`
-    /// prints the view's t1 and the tables nested in it.
+    /// tab-separated `ids=text` cells. N counts nested tables too. With -p,
+    /// the tables the view's selection reaches (`t1`; a pN inside a table,
+    /// that table), each with the tables nested in it, then an empty line
+    /// and the view of that selection.
     #[arg(
         long,
         conflicts_with_all = ["json", "head", "tail", "changed", "by"],
@@ -3442,6 +3444,29 @@ pub fn runtime_json_error(message: &str, exit: u8) -> String {
 /// names the flags given, when no task is named), a line per form. `None`
 /// for help and version, which are not errors.
 pub fn usage_json_error(error: &clap::Error, argv: &[String], program: &str) -> Option<String> {
+    let (message, usage) = usage_parts(error, argv, program)?;
+    Some(json_error("USAGE", &message, usage.as_deref()))
+}
+
+/// The [`json_error`] line of a removed spelling's error, `message` being
+/// what follows `error: ` ([`removed_error`]), with the usage
+/// [`usage_json_error`] gives clap's `error` for the same `argv`.
+pub fn removed_json_error(
+    error: &clap::Error,
+    argv: &[String],
+    program: &str,
+    message: &str,
+) -> String {
+    let usage = usage_parts(error, argv, program).and_then(|(_, usage)| usage);
+    json_error("USAGE", message, usage.as_deref())
+}
+
+/// [`usage_json_error`]'s message and usage.
+fn usage_parts(
+    error: &clap::Error,
+    argv: &[String],
+    program: &str,
+) -> Option<(String, Option<String>)> {
     if !error.use_stderr() {
         return None;
     }
@@ -3489,7 +3514,7 @@ pub fn usage_json_error(error: &clap::Error, argv: &[String], program: &str) -> 
         message.push_str(&format!(" (tip: {tip})"));
     }
     let usage = task_usage(argv, program).or_else(|| (!usage.is_empty()).then(|| usage.join("\n")));
-    Some(json_error("USAGE", &message, usage.as_deref()))
+    Some((message, usage))
 }
 
 /// The usage of the task `argv` names (`jubarte read [OPTIONS] <FILE>`), a
@@ -3780,7 +3805,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 // Under --json, the line a host prints on stdout too.
                 if wants_json(arguments) {
                     let message = removed.strip_prefix("error: ").unwrap_or(&removed);
-                    value["json"] = json_error("USAGE", message, None).into();
+                    value["json"] = removed_json_error(&error, arguments, program, message).into();
                 }
                 value.to_string()
             }

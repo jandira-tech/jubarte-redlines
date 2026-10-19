@@ -132,52 +132,87 @@ fn no_page_markers_with_json_is_byte_identical() {
 fn tables_with_paragraph_selects_the_table() {
     let (dir, file) = fixture("d.docx", &document());
     let file = file.to_str().unwrap();
-    let all = ok(&jubarte(&["read", file, "--tables"], dir.path()));
-    let heads: Vec<&str> = all.lines().filter(|l| l.starts_with("table ")).collect();
-    assert_eq!(heads.len(), 3, "{all}");
+    let run = |args: &[&str]| jubarte(&[&["read", file][..], args].concat(), dir.path());
+    // The grids of `--tables`, one `table N:` line each with the rows under
+    // it.
+    let grids = |extra: &[&str]| {
+        let mut grids: Vec<String> = Vec::new();
+        for line in ok(&run(&[&["--tables"][..], extra].concat())).lines() {
+            if line.starts_with("table ") {
+                grids.push(String::new());
+            }
+            let grid = grids.last_mut().unwrap();
+            grid.push_str(line);
+            grid.push('\n');
+        }
+        grids
+    };
+    let all = grids(&[]);
+    assert_eq!(all.len(), 3, "{all:?}");
+    assert!(
+        all[1].contains("inner") && all[2].contains("second"),
+        "{all:?}"
+    );
+    // `--tables -p SPEC`: the grids of the tables the view's selection
+    // reaches, each with the tables nested in it, in document order and
+    // once, an empty line, then `read -p SPEC` unchanged (#1161).
+    let picked = |spec: &str, kept: &[usize], extra: &[&str]| {
+        let out = ok(&run(&[&["--tables", "-p", spec][..], extra].concat()));
+        let view = ok(&run(&[&["-p", spec][..], extra].concat()));
+        let all = grids(extra);
+        let grids: String = kept.iter().map(|&g| all[g].as_str()).collect();
+        assert_eq!(out, format!("{grids}\n{view}"), "-p {spec}");
+    };
     // The view's t1 is the second top-level table: the grids' table 2,
     // the nested table counted before it.
-    let second = ok(&jubarte(
-        &["read", file, "--tables", "-p", "t1"],
-        dir.path(),
-    ));
-    assert!(second.starts_with("table 2: "), "{second}");
-    assert!(second.contains("second"), "{second}");
-    assert!(!second.contains("inner"), "{second}");
+    picked("t1", &[2], &[]);
     // t0 is the outer table with the one nested in it.
-    let first = ok(&jubarte(
-        &["read", file, "--tables", "-p", "t0"],
-        dir.path(),
-    ));
-    let heads: Vec<&str> = first.lines().filter(|l| l.starts_with("table ")).collect();
-    assert_eq!(heads.len(), 2, "{first}");
-    assert!(heads[0].starts_with("table 0: ") && heads[1].starts_with("table 1: "));
-    assert!(!first.contains("second"), "{first}");
-    // Both, in document order, whatever order they are named in.
-    let both = ok(&jubarte(
-        &["read", file, "--tables", "--select", "t1,t0"],
-        dir.path(),
-    ));
-    assert_eq!(both, all);
-    // A table the view does not have fails as the view's `-p t5` does; a
-    // paragraph pick is a usage error that says what -p takes here.
-    let out = jubarte(&["read", file, "--tables", "-p", "t5"], dir.path());
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("t5 is not a table of this document (2 tables)"),
-        "{}",
-        stderr(&out)
-    );
-    let view = jubarte(&["read", file, "-p", "t5", "--no-page-markers"], dir.path());
-    assert_eq!(view.status.code(), Some(1), "{}", stderr(&view));
-    let out = jubarte(&["read", file, "--tables", "-p", "p0"], dir.path());
-    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("--tables -p takes tables (t0, t1)"),
-        "{}",
-        stderr(&out)
-    );
-    assert!(stdout(&out).is_empty());
+    picked("t0", &[0, 1], &[]);
+    picked("t1,t0", &[0, 1, 2], &[]);
+    // A paragraph inside a table reaches the table that holds it, nested
+    // or not; a range reaches every table it touches.
+    picked("p1", &[0, 1], &[]);
+    picked("p2", &[0, 1], &[]);
+    picked("t0,p1", &[0, 1], &[]);
+    picked("p5", &[2], &[]);
+    picked("p0-p1", &[0, 1], &[]);
+    picked("p1-p5", &[0, 1, 2], &[]);
+    // The view's options shape the view after the grids.
+    picked("t1", &[2], &["--no-page-markers", "--comments", "none"]);
+    picked("p1", &[0, 1], &["--track-changes", "reject"]);
+    // A pick that reaches no table is a usage error that says what -p
+    // takes here, in its own spelling.
+    for (spec, spelled) in [("p0", "p0"), ("t0,p0", "p0"), ("p4", "p4")] {
+        let out = run(&["--tables", "-p", spec]);
+        assert_eq!(out.status.code(), Some(2), "{spec}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains(&format!(
+                "{spelled} is not in a table; --tables -p takes tN, or a pN inside a table"
+            )),
+            "{spec}: {}",
+            stderr(&out)
+        );
+        assert!(stdout(&out).is_empty(), "{spec}");
+    }
+    // An error of the view itself is the view's: its text, its exit code.
+    for spec in ["t5", "p99"] {
+        let out = run(&["--tables", "-p", spec]);
+        let view = run(&["-p", spec]);
+        assert_eq!(out.status.code(), view.status.code(), "{spec}");
+        assert_eq!(stderr(&out), stderr(&view), "{spec}");
+        assert!(stdout(&out).is_empty(), "{spec}");
+    }
+    // The text alias and the shorthand read it the same.
+    let read = run(&["--tables", "-p", "p1"]);
+    for alias in [
+        jubarte(&["text", file, "--tables", "-p", "p1"], dir.path()),
+        jubarte(&[file, "--tables", "-p", "p1"], dir.path()),
+    ] {
+        assert_eq!(
+            (alias.status.code(), stdout(&alias)),
+            (read.status.code(), stdout(&read))
+        );
+    }
 }
 
 #[test]
@@ -359,7 +394,7 @@ fn help_says_ignored_with_json() {
             .collect::<Vec<_>>()
             .join(" ");
         assert!(
-            entry.contains("ignored with --json, --tables and --for-edit"),
+            entry.contains("ignored by --json, --for-edit and the --tables grids"),
             "{flag}: {entry}"
         );
     }
@@ -426,4 +461,106 @@ fn a_runtime_error_takes_its_leading_code() {
     assert_eq!(code("Contract.docx: not a Word document", 1), "ERROR");
     assert_eq!(code("IO: short", 1), "ERROR");
     assert_eq!(code("the range runs backwards", 2), "USAGE");
+}
+
+/// Reject takes back what a formatting change did, as Word's Reject All
+/// does: a run's old properties (`w:rPrChange`), a paragraph's old style
+/// and numbering (`w:pPrChange`, its mark's properties and section kept),
+/// and a move goes back where it came from. Accept reads them as they are.
+#[test]
+fn reject_takes_back_formatting_and_moves() {
+    let by = r#"w:author="Ann" w:date="2026-10-01T00:00:00Z""#;
+    let body = [
+        format!(
+            r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="1" {by}><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>styled</w:t></w:r></w:p>"#
+        ),
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:rPr><w:b/></w:rPr><w:pPrChange w:id="2" {by}><w:pPr><w:pStyle w:val="Title"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>restyled</w:t></w:r></w:p>"#
+        ),
+        format!(
+            r#"<w:p><w:moveFrom w:id="3" {by}><w:r><w:t>moved</w:t></w:r></w:moveFrom><w:r><w:t xml:space="preserve"> from</w:t></w:r></w:p>"#
+        ),
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">to </w:t></w:r><w:moveTo w:id="4" {by}><w:r><w:t>moved</w:t></w:r></w:moveTo></w:p>"#
+        ),
+    ]
+    .concat();
+    let (dir, path) = fixture("formatted.docx", &docx(&body));
+    let file = path.to_str().unwrap();
+    let read = |choice: &str| {
+        json(&jubarte(
+            &["read", file, "--json", "--track-changes", choice],
+            dir.path(),
+        ))
+    };
+    let (accepted, rejected) = (read("accept"), read("reject"));
+    let run = |snapshot: &Value, flag: &str| snapshot["paragraphs"][0]["runs"][0][flag].clone();
+    assert_eq!(
+        (run(&accepted, "bold"), run(&accepted, "italic")),
+        (true.into(), false.into())
+    );
+    assert_eq!(
+        (run(&rejected, "bold"), run(&rejected, "italic")),
+        (false.into(), true.into())
+    );
+    let restyled = |snapshot: &Value| {
+        let p = &snapshot["paragraphs"][1];
+        (p["style"].clone(), p["numbered"].clone(), p["text"].clone())
+    };
+    assert_eq!(
+        restyled(&accepted),
+        ("Heading1".into(), true.into(), "restyled".into())
+    );
+    assert_eq!(
+        restyled(&rejected),
+        ("Title".into(), false.into(), "restyled".into())
+    );
+    let texts = |snapshot: &Value| {
+        [2, 3].map(|i| {
+            snapshot["paragraphs"][i]["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+    };
+    assert_eq!(texts(&accepted), [" from", "to moved"]);
+    assert_eq!(texts(&rejected), ["moved from", "to "]);
+    // The ids hold either way.
+    for i in 0..4 {
+        assert_eq!(
+            accepted["paragraphs"][i]["id"],
+            rejected["paragraphs"][i]["id"]
+        );
+    }
+}
+
+/// A removed spelling's JSON error carries the task's usage, as every
+/// other usage error under --json does (#1290 review).
+#[test]
+fn a_removed_spelling_under_json_carries_the_usage() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = jubarte(
+        &["compare", "a.docx", "b.docx", "--date=foo", "--json"],
+        dir.path(),
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    let line: Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(line["error"]["code"], "USAGE");
+    assert_eq!(
+        line["error"]["message"],
+        "--date is removed; use --datetime"
+    );
+    assert!(
+        line["error"]["usage"]
+            .as_str()
+            .is_some_and(|usage| usage.starts_with("jubarte compare ")),
+        "{line}"
+    );
+    // The host parser hands its host the same line.
+    let args: Vec<String> = ["compare", "a.docx", "b.docx", "--date=foo", "--json"]
+        .map(String::from)
+        .to_vec();
+    let parsed: Value =
+        serde_json::from_str(&jubarte::cli::parse_json(&args, "jubarte", &[])).unwrap();
+    assert_eq!(parsed["json"].as_str().unwrap(), stdout(&out));
 }

@@ -277,12 +277,27 @@ def cmd_read(args: argparse.Namespace) -> int:
     from . import _native
 
     if args.tables:
-        # A paragraph pick is a usage error, refused before the read.
-        refused = _native.tables_usage(args.paragraphs)
-        if refused is not None:
-            _error(refused, EXIT_USAGE)
-            raise SystemExit(EXIT_USAGE)
-        sys.stdout.write(_native.tables_text(_read(args.file).to_bytes(), track_changes=args.track_changes, paragraphs=args.paragraphs))
+        # With -p, the grids of the tables it reaches, then its view; a
+        # pick that reaches no table is a usage error.
+        try:
+            markdown, warnings = _native.tables_view(
+                _read(args.file).to_bytes(),
+                track_changes=args.track_changes,
+                comments=args.comments == "inline",
+                dates=bool(args.dates),
+                page_markers=not args.no_page_markers,
+                paragraphs=args.paragraphs,
+                source=args.file.name,
+            )
+        except _native.JubarteError as exc:
+            usage = str(exc).removeprefix("USAGE: ")
+            if usage == str(exc):
+                raise
+            _error(usage, EXIT_USAGE)
+            raise SystemExit(EXIT_USAGE) from exc
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        sys.stdout.write(markdown)
         return EXIT_OK
     if args.output is not None:
         _write_result(args, _read(args.file).to_bytes(), source=args.file.name, view=vars(args))
