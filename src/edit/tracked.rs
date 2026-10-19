@@ -903,6 +903,11 @@ fn thread_markers(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>) {
 /// example, `month.` -> `month, in cash.` only inserts `, in cash` and
 /// preserves both the word and period. A `whole` replacement bypasses this.
 fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> Vec<ScheduledEdit> {
+    // A formatted replacement formats every word of it, the ones it keeps
+    // too, as the clean copy does: one deletion, one insertion.
+    if edit.format.is_some() {
+        return vec![edit.clone()];
+    }
     let projection = project_paragraph(dom, paragraph);
     let touched: Vec<_> = projection
         .segments
@@ -1152,14 +1157,35 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
     }
 }
 
+/// The range openers an insertion can hold: they travel with the words to
+/// their right.
+const RANGE_STARTS: [&str; 5] = [
+    "bookmarkStart",
+    "commentRangeStart",
+    "permStart",
+    "moveFromRangeStart",
+    "moveToRangeStart",
+];
+/// The range closers that travel with the words to their left; a comment's
+/// end also takes its reference, so it is read on its own.
+const RANGE_ENDS: [&str; 4] = [
+    "bookmarkEnd",
+    "permEnd",
+    "moveFromRangeEnd",
+    "moveToRangeEnd",
+];
+
+/// Whether `node` is a `w:` element named one of `locals`.
+fn is_one_of(dom: &Dom, node: NodeId, locals: &[&str]) -> bool {
+    dom.name(node)
+        .is_some_and(|n| n.namespace_name() == W::URI && locals.contains(&n.local_name()))
+}
+
 /// Opening markers travel with the words to their right, closing markers
 /// with the words to their left. A comment reference stays with its end.
 fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, before: bool) -> usize {
     if before {
-        while at > 0
-            && (dom.name_is(children[at - 1], &W::bookmark_start())
-                || dom.name_is(children[at - 1], &W::name("commentRangeStart")))
-        {
+        while at > 0 && is_one_of(dom, children[at - 1], &RANGE_STARTS) {
             at -= 1;
         }
         return at;
@@ -1170,7 +1196,7 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
             if let Some(id) = dom.attribute(child, &W::id()) {
                 closed_comments.insert(id);
             }
-        } else if !dom.name_is(child, &W::bookmark_end()) {
+        } else if !is_one_of(dom, child, &RANGE_ENDS) {
             if !dom.name_is(child, &W::r()) {
                 break;
             }
@@ -1194,7 +1220,7 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
 }
 
 /// Empty run shells must not keep an otherwise deleted own insertion alive.
-fn remove_empty_insertion(dom: &mut Dom, ins: NodeId) {
+pub(super) fn remove_empty_insertion(dom: &mut Dom, ins: NodeId) {
     for run in dom.elements(ins, Some(&W::r())) {
         if dom.elements(run, None).iter().all(|&c| {
             dom.name_is(c, &W::r_pr()) || (dom.name_is(c, &W::t()) && dom.value(c).is_empty())

@@ -4770,6 +4770,20 @@ impl<'p> Transaction<'p> {
             // Apply in reverse so earlier source offsets stay valid.
             for edit in edits.iter().rev() {
                 let projection = project_paragraph(&self.opened.dom, node);
+                // The insertions the edit reaches into: one it empties goes,
+                // as in the redline.
+                let mut carriers: Vec<NodeId> = projection
+                    .segments
+                    .iter()
+                    .filter(|s| s.start < edit.end && edit.start < s.end)
+                    .filter_map(|s| {
+                        self.opened
+                            .dom
+                            .parent(run_of(&s.piece))
+                            .filter(|&n| self.opened.dom.name_is(n, &W::ins()))
+                    })
+                    .collect();
+                carriers.dedup();
                 apply_text_edit(
                     &mut self.opened.dom,
                     &projection,
@@ -4778,6 +4792,9 @@ impl<'p> Transaction<'p> {
                     &edit.replacement,
                     edit.attach_before,
                 );
+                for ins in carriers {
+                    tracked::remove_empty_insertion(&mut self.opened.dom, ins);
+                }
             }
             // Formatting of new text, in new coordinates.
             for edit in &edits {
@@ -5733,6 +5750,8 @@ fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
         if node == target {
             return (fields == 0).then_some(ins);
         }
+        // Markers in removed text count too: Word's Accept All takes the
+        // words between a deleted `begin` and `end` with the field.
         if dom.name_is(node, &W::name("fldChar")) {
             match dom.attribute(node, &W::name("fldCharType")) {
                 Some("begin") => fields += 1,

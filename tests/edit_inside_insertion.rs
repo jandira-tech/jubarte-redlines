@@ -677,6 +677,11 @@ fn range_source(kind: &str, word: usize) -> Vec<u8> {
             r#"<w:commentRangeEnd w:id="0"/>"#,
             r#"<w:r><w:commentReference w:id="0"/></w:r>"#,
         ),
+        "permission" => (
+            r#"<w:permStart w:id="40" w:edGrp="everyone"/>"#,
+            r#"<w:permEnd w:id="40"/>"#,
+            "",
+        ),
         _ => unreachable!(),
     };
     let mut content = String::new();
@@ -741,11 +746,16 @@ fn child_labels(dom: &Dom, parent: NodeId) -> Vec<String> {
 }
 
 fn range_labels(kind: &str, text: &str) -> Vec<String> {
-    if kind == "bookmark" {
+    if kind == "bookmark" || kind == "permission" {
+        let (start, end) = if kind == "bookmark" {
+            ("bookmarkStart", "bookmarkEnd")
+        } else {
+            ("permStart", "permEnd")
+        };
         vec![
-            "bookmarkStart:40".into(),
+            format!("{start}:40"),
             format!("r:{text}"),
-            "bookmarkEnd:40".into(),
+            format!("{end}:40"),
         ]
     } else {
         vec![
@@ -764,7 +774,7 @@ fn replacement_keeps_ranges(kind: &str, word: usize) {
         replace("beta", "NEW"),
     );
     let (dom, p) = tree(&out);
-    let first_id = if kind == "bookmark" { 41 } else { 7 };
+    let first_id = if kind == "comment" { 7 } else { 41 };
     let head = revision(&dom, p, "ins", "6", "Alice", OLD_DATE, "alpha beta");
     let inserted = revision(
         &dom,
@@ -852,7 +862,7 @@ fn insertion_keeps_range(kind: &str, before: bool) {
     operation[if before { "before" } else { "after" }] = json!("beta");
     let out = run(&range_source(kind, 1), "Carol Diaz", json!([operation]));
     let (dom, p) = tree(&out);
-    let first_id = if kind == "bookmark" { 41 } else { 7 };
+    let first_id = if kind == "comment" { 7 } else { 41 };
     let head = revision(
         &dom,
         p,
@@ -921,6 +931,95 @@ fn split_insertion_before_comment_keeps_new_words_outside() {
 #[test]
 fn split_insertion_after_comment_keeps_new_words_outside() {
     insertion_keeps_range("comment", false);
+}
+// Codex P2 on #1143: a permission range split like a bookmark, not left
+// open in the head around the new words.
+#[test]
+fn split_keeps_permission_around_words_before_anchor() {
+    replacement_keeps_ranges("permission", 0);
+}
+#[test]
+fn split_keeps_permission_around_anchor() {
+    replacement_keeps_ranges("permission", 1);
+}
+#[test]
+fn split_keeps_permission_around_words_after_anchor() {
+    replacement_keeps_ranges("permission", 2);
+}
+#[test]
+fn split_insertion_before_permission_keeps_new_words_outside() {
+    insertion_keeps_range("permission", true);
+}
+#[test]
+fn split_insertion_after_permission_keeps_new_words_outside() {
+    insertion_keeps_range("permission", false);
+}
+
+/// The text of every run with italic on, in document order.
+fn italic_text(bytes: &[u8]) -> String {
+    let (dom, p) = tree(bytes);
+    dom.descendants(p, Some(&W::r()))
+        .into_iter()
+        .filter(|&r| {
+            dom.element(r, &W::r_pr())
+                .is_some_and(|rpr| dom.element(rpr, &W::name("i")).is_some())
+        })
+        .map(|r| dom.value(r))
+        .collect()
+}
+
+#[test]
+fn a_formatted_replacement_formats_every_word_it_keeps() {
+    // Codex P2 on #1143: the word split kept "beta" as it was and set the
+    // format only on the words it inserted, so Accept All differed from the
+    // clean copy.
+    let out = apply_plan(
+        &source("Alice"),
+        &plan(
+            "Carol Diaz",
+            json!([{"kind":"replace","paragraph":"p0","find":"beta","replacement":"beta delta","format":{"italic":true}}]),
+        ),
+    )
+    .unwrap();
+    validate_output(&out.redline);
+    let accepted = accept_changes(&out.redline, &ChangeFilter::default()).unwrap();
+    assert_eq!(text(&accepted), "[alpha beta delta gamma]");
+    assert_eq!(italic_text(&out.clean), "beta delta");
+    assert_eq!(italic_text(&accepted), "beta delta");
+}
+
+#[test]
+fn own_insertion_deleted_whole_leaves_no_empty_carrier_in_the_clean_copy() {
+    // Codex P2 on #1143: the direct path cleared the text but kept the
+    // `w:ins` around an empty run.
+    let out = apply_plan(
+        &source("Carol Diaz"),
+        &plan("Carol Diaz", replace("alpha beta gamma", "")),
+    )
+    .unwrap();
+    validate_output(&out.clean);
+    for bytes in [&out.clean, &out.redline] {
+        let (dom, p) = tree(bytes);
+        assert!(
+            dom.elements(p, Some(&W::ins())).is_empty(),
+            "{}",
+            dom.serialize_element(p)
+        );
+    }
+}
+
+#[test]
+fn words_between_deleted_field_markers_stay_the_field_result() {
+    // Codex P2 on #1143 read these words as plain text, since the view
+    // skips the deleted markers. Word 16 does not: Accept All of this very
+    // source drops "alpha beta gamma" with the field, so an edit there is
+    // an edit of the field result, refused as one.
+    let source = docx(&format!(
+        r#"<w:p><w:del w:id="1" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText xml:space="preserve"> TITLE </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:del><w:ins w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:t>alpha beta gamma</w:t></w:r></w:ins><w:del w:id="2" w:author="Bob" w:date="{OLD_DATE}"><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p>"#
+    ));
+    let e = apply_plan(&source, &plan("Carol Diaz", replace("beta", "delta"))).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    assert!(e.message.contains("the result of a field"), "{e}");
 }
 
 #[test]
