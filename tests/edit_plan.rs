@@ -1993,7 +1993,6 @@ fn rewrite_refuses_what_replace_refuses() {
     let source = docx(body);
     for ops in [
         r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"jubarte.law site"}]"#,
-        r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"into an empty paragraph"}]"#,
         r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"bell\u0007"}]"#,
     ] {
         let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
@@ -2012,6 +2011,17 @@ fn rewrite_refuses_what_replace_refuses() {
     )
     .unwrap();
     assert_eq!(texts(&result.clean)[0], "arthur.law website");
+    // An empty paragraph takes the text in a new run (#1263).
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"into an empty paragraph"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean)[1], "into an empty paragraph");
+    assert_word_valid_package(&result.redline);
     let unknown = EditPlan::from_json(
         r#"{"schema_version":1,"author":"a","operations":[{"kind":"rewrite","paragraph":{"index":0},"text":"x","find":"y"}]}"#,
     );

@@ -55,6 +55,20 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Text goes into an empty paragraph (#1263).** `edit FILE -p p9
+  --content "text"`, an `insert` at `position` `start` or `end`, and a
+  `rewrite` (in a first-version `--plan` and in `edit apply`) were refused
+  `cannot insert text into an empty paragraph; use insert_paragraph`. Now
+  they write one new run in your insertion, formatted as the paragraph
+  mark (its `w:pPr/w:rPr` without the mark's own revisions or `w:oMath`,
+  which only a mark takes), and leave the paragraph's properties as they
+  were, under `keep` and through the comparer alike, in the body, a table
+  cell, a header or a footer. An insert at `start`, a rewrite and
+  `--content` go before a field or a bookmark the paragraph holds, an
+  insert at `end` after it; several inserts keep their edges, each edge in
+  plan order (#1303). Checked in Word: the redline opens; Accept All
+  leaves one plain paragraph with the text, Reject All the empty
+  paragraph.
 - **A whole-paragraph edit follows a paragraph the settle merged alone
   (#1269).** Under a plan that settles revisions, `delete_paragraph`,
   `rewrite` and the other whole-paragraph operations were refused

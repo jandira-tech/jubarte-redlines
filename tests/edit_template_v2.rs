@@ -1235,15 +1235,24 @@ fn unknown_comment_targets_refuse_before_any_candidate() {
 }
 
 #[test]
-fn empty_source_paragraph_keeps_existing_structure_refusal() {
-    // The existing engine deliberately gates insertion into an empty source
-    // paragraph. An attachment must not bypass that structural restriction.
+fn empty_source_paragraph_takes_the_text_and_its_attached_comment() {
+    // An empty source paragraph takes text as Word types it (#1263), and
+    // the attached comment covers the new words.
     let s = docx(&para(""));
     let mut op = rewrite(0, "", "New paragraph text");
     op["attached_comment"] = json!({"text":"Complete paragraph"});
-    let error = run(&s, &plan(&s, json!([op]))).unwrap_err();
-    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE");
-    assert!(error.message.contains("empty paragraph"), "{error}");
+    let out = run(&s, &plan(&s, json!([op]))).unwrap();
+    assert_eq!(texts(&out.clean), ["New paragraph text"]);
+    let comments = jubarte::comments::list_comments(&out.redline).unwrap();
+    assert_eq!(
+        comments
+            .iter()
+            .map(|c| (c.text.as_str(), c.anchor_text.as_str()))
+            .collect::<Vec<_>>(),
+        [("Complete paragraph", "New paragraph text")]
+    );
+    assert_word_valid_package(&out.redline);
+    assert_word_valid_package(&out.clean);
 }
 
 #[test]

@@ -480,9 +480,9 @@ enum ExpectedScope {
 /// requested text itself — so a requested change the algorithm normalizes
 /// away is detected instead of passing as a no-op.
 fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText)> {
-    /// `para` → (first op id, `(start, end, replacement, op, restore)`
-    /// spans).
-    type Spans = (String, Vec<(usize, usize, String, usize, bool)>);
+    /// `para` → (first op id, `(start, end, replacement, op, restore,
+    /// attach_before)` spans).
+    type Spans = (String, Vec<(usize, usize, String, usize, bool, bool)>);
     let mut edits: BTreeMap<usize, Spans> = BTreeMap::new();
     let mut merges = Vec::new();
     let mut filled: HashSet<usize> = HashSet::new();
@@ -495,21 +495,27 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
                 start,
                 end,
                 replacement,
+                attach_before,
                 ..
             } => {
                 let entry = edits
                     .entry(*para)
                     .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
-                entry
-                    .1
-                    .push((*start, *end, replacement.clone(), *op, false));
+                entry.1.push((
+                    *start,
+                    *end,
+                    replacement.clone(),
+                    *op,
+                    false,
+                    *attach_before,
+                ));
             }
             // A restore's copy is text inserted where the deletion is.
             Resolved::Restore { para, at, text, .. } => {
                 let entry = edits
                     .entry(*para)
                     .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
-                entry.1.push((*at, *at, text.clone(), *op, true));
+                entry.1.push((*at, *at, text.clone(), *op, true, false));
             }
             Resolved::MergeParagraphs {
                 para,
@@ -544,8 +550,11 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         let rewrite_op = rewrite.as_ref().map(|&(op, _)| op);
         let base = &tx.projections[para].text;
         // A restore's copy follows its deletion, ahead of the visible text
-        // that starts where the deletion is; other spans keep their order.
-        spans.sort_by_key(|&(start, .., restore)| (start, !restore));
+        // that starts where the deletion is; other spans keep their order,
+        // but in an empty paragraph the start edge's text comes first, as
+        // `sort_edits` applies it (#1303).
+        let empty = base.is_empty();
+        spans.sort_by_key(|&(start, .., restore, after)| (start, !restore, empty && after));
         let mut text = String::with_capacity(base.len());
         // The rewrite's own spans alone, composed on the base: a rewrite
         // beside co-resident edits must still realize its request, or the
@@ -553,7 +562,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         let mut own = String::with_capacity(base.len());
         let mut at = 0;
         let mut own_at = 0;
-        for (start, end, replacement, span_op, _) in spans {
+        for (start, end, replacement, span_op, ..) in spans {
             text.push_str(&base[at..start]);
             text.push_str(&replacement);
             at = end;
