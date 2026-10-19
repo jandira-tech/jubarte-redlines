@@ -261,7 +261,7 @@ pub struct AdmissionError {
 }
 
 impl AdmissionError {
-    fn new(kind: AdmissionErrorKind, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: AdmissionErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -420,19 +420,20 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             "two ZIP entries have the same name",
         ));
     }
-    // GHSA-m665-v7pm-7grj (zip <= 9.0.4): a local header may name an entry
-    // differently than the central directory. `ZipArchive` reads names and
-    // content through the central directory, but a scanner trusting local
-    // headers would see a different package, so the raw names of the two
-    // records must agree (`local_name_mismatch`; the content fields are
-    // #644's). zip 9.0.5's own `validate_header_consistency` is stricter
-    // than the format: it also refuses a local time or a central-only
-    // Unicode Path field, both of which real Word-opened files carry.
-    if let Some(detail) = crate::opc::local_name_mismatch(&archive, &mut Cursor::new(bytes)) {
-        return Err(AdmissionError::new(
-            K::ZipHeaderMismatch,
-            format!("local and central headers disagree: {detail}"),
-        ));
+    // GHSA-m665-v7pm-7grj (zip <= 9.0.4) and ZIP-17 (#644): a local header
+    // may disagree with the central directory — a scanner trusting local
+    // headers would see a different package — and an entry's extent may
+    // overlap another's or reach into the central directory. `ZipArchive`
+    // reads names and content through the central directory, so the two
+    // records must agree (`zip_defects`). zip 9.0.5's own
+    // `validate_header_consistency` is stricter than the format: it also
+    // refuses a local time or a central-only Unicode Path field, both of
+    // which real Word-opened files carry.
+    if let Some(defect) = crate::opc::zip_defects(&archive, &mut Cursor::new(bytes))
+        .into_iter()
+        .next()
+    {
+        return Err(defect.refusal());
     }
 
     let mut canonical = HashSet::new();
@@ -484,9 +485,9 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         let mut entry = archive
             .by_index(i)
             .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
-        if entry.is_dir() {
-            continue;
-        }
+        // A directory entry's payload is validated through the same bounded
+        // CRC stream and charged to the budgets like any entry's (#644);
+        // it just contributes no part to the kept map.
         let name = zip_entry_name(
             entry.name_raw(),
             entry.flags().as_u16(),
@@ -1082,6 +1083,208 @@ pub(crate) mod zip_names {
                 at += 1;
             }
         }
+    }
+    /// A local file header (`PK\3\4`) for `name`, as a record in a
+    /// hand-built package reads: version 20, `flags`, stored method, no
+    /// time, and the given CRC-32, sizes and extra bytes.
+    pub fn local_header(
+        name: &[u8],
+        flags: u16,
+        crc32: u32,
+        compressed_size: u32,
+        uncompressed_size: u32,
+        extra: &[u8],
+    ) -> Vec<u8> {
+        let mut header = vec![0x50, 0x4b, 0x03, 0x04];
+        header.extend_from_slice(&20u16.to_le_bytes());
+        header.extend_from_slice(&flags.to_le_bytes());
+        header.extend_from_slice(&0u16.to_le_bytes());
+        header.extend_from_slice(&[0; 4]);
+        header.extend_from_slice(&crc32.to_le_bytes());
+        header.extend_from_slice(&compressed_size.to_le_bytes());
+        header.extend_from_slice(&uncompressed_size.to_le_bytes());
+        header.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+        header.extend_from_slice(&u16::try_from(extra.len()).unwrap().to_le_bytes());
+        header.extend_from_slice(name);
+        header.extend_from_slice(extra);
+        header
+    }
+
+    /// A ZIP64 extended information extra field (0x0001) carrying both
+    /// sizes, the shape a local header always writes.
+    pub fn zip64_extra(uncompressed_size: u64, compressed_size: u64) -> Vec<u8> {
+        let mut field = vec![0x01, 0x00, 16, 0];
+        field.extend_from_slice(&uncompressed_size.to_le_bytes());
+        field.extend_from_slice(&compressed_size.to_le_bytes());
+        field
+    }
+
+    /// The shape of a data descriptor (APPNOTE 4.3.9): signed with
+    /// `PK\7\8` or bare — both are legal.
+    #[derive(Clone, Copy)]
+    pub enum Descriptor {
+        /// `PK\7\8` then CRC-32 and the two sizes.
+        Signed,
+        /// CRC-32 and the two sizes, no signature.
+        Unsigned,
+    }
+
+    /// An entry for [`assembled`]: raw name bytes, payload, an optional
+    /// trailing data descriptor (which sets bit 3 in both headers and
+    /// writes zeros — ZIP64 placeholders plus the extra field when
+    /// `zip64` — for the local CRC and sizes), and whether the record is
+    /// ZIP64-formed.
+    pub struct AssembledEntry<'a> {
+        /// The exact header name bytes.
+        pub name: &'a [u8],
+        /// The stored payload.
+        pub data: Vec<u8>,
+        /// General-purpose bits ORed into both headers.
+        pub flags: u16,
+        /// The descriptor trailing the payload, if any.
+        pub descriptor: Option<Descriptor>,
+        /// ZIP64 headers: 0xFFFFFFFF sizes plus the 0x0001 extra field.
+        pub zip64: bool,
+    }
+
+    impl<'a> AssembledEntry<'a> {
+        /// A plain stored entry.
+        pub fn plain(name: &'a [u8], data: &[u8]) -> Self {
+            Self {
+                name,
+                data: data.to_vec(),
+                flags: 0,
+                descriptor: None,
+                zip64: false,
+            }
+        }
+
+        /// Trail the payload with a data descriptor of the given shape.
+        pub fn with_descriptor(mut self, descriptor: Descriptor) -> Self {
+            self.descriptor = Some(descriptor);
+            self
+        }
+
+        /// Force the entry's headers into ZIP64 form.
+        pub const fn zip64(mut self) -> Self {
+            self.zip64 = true;
+            self
+        }
+    }
+
+    /// A package assembled record by record: `prefix`, each entry's
+    /// local header, payload and descriptor in order, the central
+    /// records — in `central_order` indices, entry order when `None` —
+    /// and the EOCD with `comment`. The shapes no stock writer
+    /// expresses: bit-3 descriptors, forced ZIP64 records and a central
+    /// order different from the physical one. With a `prefix`, offsets
+    /// are relative to the archive start, as prepended-data packages
+    /// carry them.
+    pub fn assembled(
+        prefix: &[u8],
+        entries: &[AssembledEntry<'_>],
+        central_order: Option<&[usize]>,
+        comment: &[u8],
+    ) -> Vec<u8> {
+        let base = u64::try_from(prefix.len()).unwrap();
+        let mut out = prefix.to_vec();
+        let mut offsets = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let crc = crc32(&entry.data);
+            let size = u64::try_from(entry.data.len()).unwrap();
+            offsets.push(u64::try_from(out.len()).unwrap() - base);
+            let flags = entry.flags
+                | if entry.descriptor.is_some() {
+                    0x0008
+                } else {
+                    0
+                };
+            let (local_crc, local_sizes, extra) = if entry.zip64 {
+                let local = if entry.descriptor.is_some() { 0 } else { crc };
+                (local, (u32::MAX, u32::MAX), zip64_extra(size, size))
+            } else if entry.descriptor.is_some() {
+                (0, (0, 0), Vec::new())
+            } else {
+                (
+                    crc,
+                    (u32::try_from(size).unwrap(), u32::try_from(size).unwrap()),
+                    Vec::new(),
+                )
+            };
+            out.extend_from_slice(&local_header(
+                entry.name,
+                flags,
+                local_crc,
+                local_sizes.0,
+                local_sizes.1,
+                &extra,
+            ));
+            out.extend_from_slice(&entry.data);
+            if let Some(shape) = entry.descriptor {
+                if matches!(shape, Descriptor::Signed) {
+                    out.extend_from_slice(&[0x50, 0x4b, 0x07, 0x08]);
+                }
+                out.extend_from_slice(&crc.to_le_bytes());
+                if entry.zip64 {
+                    out.extend_from_slice(&size.to_le_bytes());
+                    out.extend_from_slice(&size.to_le_bytes());
+                } else {
+                    out.extend_from_slice(&u32::try_from(size).unwrap().to_le_bytes());
+                    out.extend_from_slice(&u32::try_from(size).unwrap().to_le_bytes());
+                }
+            }
+        }
+        let central_at = u64::try_from(out.len()).unwrap() - base;
+        let order: Vec<usize> = central_order
+            .map(<[_]>::to_vec)
+            .unwrap_or_else(|| (0..entries.len()).collect());
+        for &index in &order {
+            let entry = &entries[index];
+            let crc = crc32(&entry.data);
+            let size = u64::try_from(entry.data.len()).unwrap();
+            let flags = entry.flags
+                | if entry.descriptor.is_some() {
+                    0x0008
+                } else {
+                    0
+                };
+            let (compressed, uncompressed, extra) = if entry.zip64 {
+                (u32::MAX, u32::MAX, zip64_extra(size, size))
+            } else {
+                (
+                    u32::try_from(size).unwrap(),
+                    u32::try_from(size).unwrap(),
+                    Vec::new(),
+                )
+            };
+            out.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+            out.extend_from_slice(&45u16.to_le_bytes());
+            out.extend_from_slice(&45u16.to_le_bytes());
+            out.extend_from_slice(&flags.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&[0; 4]);
+            out.extend_from_slice(&crc.to_le_bytes());
+            out.extend_from_slice(&compressed.to_le_bytes());
+            out.extend_from_slice(&uncompressed.to_le_bytes());
+            out.extend_from_slice(&u16::try_from(entry.name.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(&u16::try_from(extra.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&[0; 8]);
+            out.extend_from_slice(&u32::try_from(offsets[index]).unwrap().to_le_bytes());
+            out.extend_from_slice(entry.name);
+            out.extend_from_slice(&extra);
+        }
+        let central_size = u64::try_from(out.len()).unwrap() - base - central_at;
+        out.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        out.extend_from_slice(&[0; 4]);
+        let count = u16::try_from(entries.len()).unwrap();
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(central_size).unwrap().to_le_bytes());
+        out.extend_from_slice(&u32::try_from(central_at).unwrap().to_le_bytes());
+        out.extend_from_slice(&u16::try_from(comment.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(comment);
+        out
     }
 }
 
@@ -1808,6 +2011,214 @@ mod tests {
         // Codes are whole segments, never substrings.
         assert_eq!(code_first("INPUT_LIMITS: x"), None);
         assert_eq!(code_first("no code here"), None);
+    }
+
+    /// An entry's local-header and central-record offsets, located
+    /// through the reader rather than by scanning for signatures.
+    fn header_offsets(bytes: &[u8], name: &str) -> (usize, usize) {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let entry = archive.by_name(name).unwrap();
+        (
+            usize::try_from(entry.header_start()).unwrap(),
+            usize::try_from(entry.central_header_start()).unwrap(),
+        )
+    }
+
+    /// ZIP-17 item 1 (#644): a local header whose content fields
+    /// disagree with the central record describes a different entry to
+    /// a scanner trusting local headers — the same class of defect as a
+    /// name mismatch (#594). One case per patched field; the central
+    /// record keeps the true values, so today's reader admits them all.
+    #[test]
+    fn zip17_rejects_local_header_disagreement() {
+        for (offset, width, value) in [
+            (6usize, 2usize, [0x08, 0x00, 0, 0]), // flags: set bit 3 locally
+            (8, 2, [0x08, 0x00, 0, 0]),           // method: deflate vs stored
+            (14, 4, [0xef, 0xbe, 0xad, 0xde]),    // CRC-32
+            (18, 4, [2, 0, 0, 0]),                // compressed size
+            (22, 4, [2, 0, 0, 0]),                // uncompressed size
+        ] {
+            let mut bytes =
+                zip_names::docx_package("", &[zip_names::RawEntry::raw(b"x.bin", b"x")]);
+            let (lfh, _) = header_offsets(&bytes, "x.bin");
+            bytes[lfh + offset..lfh + offset + width].copy_from_slice(&value[..width]);
+            let err = admit(&bytes, InputLimits::default())
+                .expect_err("a local field that disagrees must refuse");
+            assert_eq!(
+                err.kind,
+                AdmissionErrorKind::ZipHeaderMismatch,
+                "offset {offset}: {err}"
+            );
+        }
+    }
+
+    /// ZIP-17 item 2: a central record whose local header lives inside
+    /// another entry's payload is refused even though every compared
+    /// field — name, method, flags, CRC-32, sizes — matches.
+    #[test]
+    fn zip17_rejects_nested_entry_with_matching_names() {
+        let mut embedded = zip_names::local_header(b"b.bin", 0, zip_names::crc32(b"x"), 1, 1, &[]);
+        assert_eq!(embedded.len(), 35);
+        embedded.push(b'x');
+        let mut bytes = zip_names::docx_package(
+            "",
+            &[
+                zip_names::RawEntry::raw(b"a.bin", &embedded),
+                zip_names::RawEntry::raw(b"b.bin", b"x"),
+            ],
+        );
+        // a.bin's payload opens with the embedded header at its data start.
+        let (a_lfh, _) = header_offsets(&bytes, "a.bin");
+        let embedded_at = a_lfh + 30 + b"a.bin".len();
+        assert_eq!(&bytes[embedded_at..embedded_at + 4], b"PK\x03\x04");
+        let (_, b_central) = header_offsets(&bytes, "b.bin");
+        bytes[b_central + 42..b_central + 46]
+            .copy_from_slice(&u32::try_from(embedded_at).unwrap().to_le_bytes());
+        // b.bin's original, now-unreferenced local header is merely a gap.
+        assert_eq!(
+            kind(&bytes, InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+    }
+
+    /// ZIP-17 item 2: a local header placed after the central directory —
+    /// inside the archive comment — is outside every legal extent.
+    #[test]
+    fn zip17_rejects_entry_inside_central_directory() {
+        let mut bytes = zip_names::docx_package("", &[zip_names::RawEntry::raw(b"c.bin", b"x")]);
+        let (_, c_central) = header_offsets(&bytes, "c.bin");
+        let comment_at = bytes.len();
+        // The EOCD comment starts right after the 22-byte record.
+        let comment_len_at = bytes.len() - 2;
+        bytes[comment_len_at..comment_len_at + 2].copy_from_slice(&39u16.to_le_bytes());
+        let mut comment = zip_names::local_header(b"c.bin", 0, zip_names::crc32(b"x"), 1, 1, &[]);
+        comment.extend_from_slice(b"x");
+        comment.resize(39, 0);
+        bytes.extend_from_slice(&comment);
+        bytes[c_central + 42..c_central + 46]
+            .copy_from_slice(&u32::try_from(comment_at).unwrap().to_le_bytes());
+        assert_eq!(
+            kind(&bytes, InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+    }
+
+    /// The mandatory parts plus `extra`, assembled record by record.
+    fn assembled_docx(extra: &[zip_names::AssembledEntry<'_>]) -> Vec<u8> {
+        let mut entries = vec![
+            zip_names::AssembledEntry::plain(b"[Content_Types].xml", TYPES.as_bytes()),
+            zip_names::AssembledEntry::plain(b"_rels/.rels", RELS.as_bytes()),
+            zip_names::AssembledEntry::plain(b"word/document.xml", DOC.as_bytes()),
+        ];
+        entries.extend(extra.iter().map(|entry| zip_names::AssembledEntry {
+            name: entry.name,
+            data: entry.data.clone(),
+            flags: entry.flags,
+            descriptor: entry.descriptor,
+            zip64: entry.zip64,
+        }));
+        zip_names::assembled(b"", &entries, None, b"")
+    }
+
+    /// ZIP-17 item 3: a descriptor whose CRC-32 disagrees with the
+    /// central record is refused — today the seeking reader never
+    /// validates the descriptor it walks past.
+    #[test]
+    fn zip17_rejects_descriptor_disagreement() {
+        let entry = zip_names::AssembledEntry::plain(b"x.bin", b"payload")
+            .with_descriptor(zip_names::Descriptor::Signed);
+        let mut bytes = assembled_docx(&[entry]);
+        let signature = bytes
+            .windows(4)
+            .position(|w| w == b"PK\x07\x08")
+            .expect("signed descriptor");
+        bytes[signature + 4] ^= 0xff;
+        assert_eq!(
+            kind(&bytes, InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+    }
+
+    /// ZIP-17 items 2-3 controls: signed and unsigned ZIP32 descriptors,
+    /// a small forced-ZIP64 descriptor, a descriptor followed
+    /// immediately by the next local header, a package with a prefix and
+    /// one whose central order differs from its physical order all admit.
+    #[test]
+    fn zip17_accepts_legitimate_descriptor_and_layout_shapes() {
+        for shape in [
+            zip_names::Descriptor::Signed,
+            zip_names::Descriptor::Unsigned,
+        ] {
+            // The descriptor entry first: the next local header follows it.
+            let entries = vec![
+                zip_names::AssembledEntry::plain(b"x.bin", b"payload").with_descriptor(shape),
+                zip_names::AssembledEntry::plain(b"[Content_Types].xml", TYPES.as_bytes()),
+                zip_names::AssembledEntry::plain(b"_rels/.rels", RELS.as_bytes()),
+                zip_names::AssembledEntry::plain(b"word/document.xml", DOC.as_bytes()),
+            ];
+            let bytes = zip_names::assembled(b"", &entries, None, b"");
+            admit(&bytes, InputLimits::default()).expect("descriptor package admits");
+            // The same package with a prefix and a reversed central order.
+            let shuffled =
+                zip_names::assembled(b"JUNKJUNK", &entries, Some(&[3, 2, 1, 0]), b"no comment");
+            admit(&shuffled, InputLimits::default()).expect("prefix and reorder admit");
+        }
+        let zip64 = zip_names::AssembledEntry::plain(b"x.bin", b"payload")
+            .with_descriptor(zip_names::Descriptor::Signed)
+            .zip64();
+        admit(&assembled_docx(&[zip64]), InputLimits::default())
+            .expect("a ZIP64 descriptor package admits");
+        let unsigned64 = zip_names::AssembledEntry::plain(b"x.bin", b"payload")
+            .with_descriptor(zip_names::Descriptor::Unsigned)
+            .zip64();
+        admit(&assembled_docx(&[unsigned64]), InputLimits::default())
+            .expect("an unsigned ZIP64 descriptor package admits");
+        // A bit-3 entry without its descriptor refuses.
+        let missing = zip_names::AssembledEntry {
+            flags: 0x0008,
+            ..zip_names::AssembledEntry::plain(b"x.bin", b"payload")
+        };
+        assert_eq!(
+            kind(&assembled_docx(&[missing]), InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+    }
+
+    /// ZIP-17 item 4: a directory entry's payload goes through the same
+    /// bounded CRC stream — a corrupt one is INVALID_PACKAGE — and its
+    /// actual bytes charge both budgets, not an early skip.
+    #[test]
+    fn zip17_checks_directory_crc_and_accounting() {
+        let directory = zip_names::RawEntry::raw(b"word/media/", b"x");
+        let mut bytes = zip_names::docx_package("", std::slice::from_ref(&directory));
+        let (lfh, _) = header_offsets(&bytes, "word/media/");
+        let payload_at = lfh + 30 + b"word/media/".len();
+        assert_eq!(bytes[payload_at], b'x');
+        bytes[payload_at] = b'y';
+        assert_eq!(
+            kind(&bytes, InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+        // Uncorrupted: the directory's byte joins inflated_bytes …
+        let admitted = admit(
+            &zip_names::docx_package("", std::slice::from_ref(&directory)),
+            InputLimits::default(),
+        )
+        .expect("a valid directory payload admits");
+        let ordinary = admit(&zip_names::docx_package("", &[]), InputLimits::default())
+            .unwrap()
+            .inflated_bytes;
+        assert_eq!(admitted.inflated_bytes, ordinary + 1);
+        // … and the aggregate budget counts it: exactly the ordinary
+        // parts' total leaves no room for the directory's byte.
+        let exact = InputLimits {
+            max_uncompressed_bytes: ordinary,
+            ..InputLimits::default()
+        };
+        assert_eq!(
+            kind(&zip_names::docx_package("", &[directory]), exact),
+            AdmissionErrorKind::InputLimit
+        );
     }
 
     /// Word's own `o:gfxdata` VML attribute lives in `word/header*.xml`
