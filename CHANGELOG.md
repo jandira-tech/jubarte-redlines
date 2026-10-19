@@ -44,6 +44,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 ### Fixed
 
 - Enforce XML tag policy at package admission and checked XML APIs with active limits: defaults of 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags, plus duplicate expanded-name refusal. Preserve permissive comparison tree construction and linear bulk attribute insertion. Markdown conversion enforces explicit `MarkdownOptions::input_limits`, including on best-effort auxiliary parts; comparison-to-Markdown carries active limits. Ring-1 reports Word-fatal `DUPLICATE_EXPANDED_ATTRIBUTE` with part and element (#650).
+- **Package writes plan against ZIP32 and never write ZIP64** (#604).
+  Every writer — `PartFs::to_zip`, the Strict→Transitional repack, the
+  Markdown default template — runs `zip32_plan` on the names and
+  uncompressed lengths it is about to write, before `ZipWriter::new`.
+  A package that would need ZIP64 — a part, a header offset or a
+  central-directory size reaching `0xFFFFFFFF`, or 65,535 entries (the
+  ZIP64 count marker) — is refused up front with `OUTPUT_LIMIT` instead
+  of failing after the bytes are written. The Strict→Transitional
+  normalizer now returns `Result<Vec<u8>, opc::Zip32Limit>` (a breaking
+  change for Rust callers of `strict_to_transitional_docx` and
+  `strict_to_transitional_docx_within`) so the
+  refusal reaches the caller rather than handing back untranslated
+  bytes; its zero-churn pass-through is unchanged. Written entries stay
+  Deflated with version-needed 20 and no ZIP64 fields, asserted per
+  entry in both headers.
 
 - **Dual-header ZIP packages are refused** (#594, GHSA-m665-v7pm-7grj). zip is bumped to 9.0.5, and every package open compares each entry's raw name in its local file header with its central record. A disagreement, or a central record with no local header, is `ZIP_HEADER_MISMATCH` on every route. `jubarte debug` reports it as a finding instead of refusing. A local time that differs from the central record is still accepted, as Word accepts it.
 
