@@ -2329,12 +2329,7 @@ mod tests {
     /// Overwrite `entry`'s central record: `version_made_by` at +4 (host
     /// byte high, spec low) and the external attributes at +38. The local
     /// header has neither field, so nothing else needs patching.
-    fn set_central_attributes(
-        bytes: &mut [u8],
-        entry: &str,
-        version_made_by: u16,
-        external: u32,
-    ) {
+    fn set_central_attributes(bytes: &mut [u8], entry: &str, version_made_by: u16, external: u32) {
         let at = {
             let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
             usize::try_from(archive.by_name(entry).unwrap().central_header_start()).unwrap()
@@ -2359,9 +2354,11 @@ mod tests {
             (0x0314, 0o160644, "x.bin", "160000"),
             (0x0314, 0o040755, "x.bin", "directory"),
         ] {
+            // The Unix mode is the high 16 bits of the external attributes.
+            let external = mode << 16;
             let mut bytes =
                 zip_names::docx_package("", &[zip_names::RawEntry::raw(name.as_bytes(), b"x")]);
-            set_central_attributes(&mut bytes, name, version_made_by, mode);
+            set_central_attributes(&mut bytes, name, version_made_by, external);
             let err =
                 admit(&bytes, InputLimits::default()).expect_err("a special entry must be refused");
             assert_eq!(
@@ -2377,7 +2374,8 @@ mod tests {
         }
         // The DOS directory attribute on any host, without a trailing slash.
         for version_made_by in [0x0014u16, 0x0a14, 0x0314] {
-            let mut bytes = zip_names::docx_package("", &[zip_names::RawEntry::raw(b"x.bin", b"x")]);
+            let mut bytes =
+                zip_names::docx_package("", &[zip_names::RawEntry::raw(b"x.bin", b"x")]);
             set_central_attributes(&mut bytes, "x.bin", version_made_by, 0x10);
             assert_eq!(
                 kind(&bytes, InputLimits::default()),
@@ -2394,20 +2392,20 @@ mod tests {
     /// carry the DOS directory bit).
     #[test]
     fn zip16_admits_recorded_entry_types() {
-        for (version_made_by, mode, name) in [
-            (0x0314u16, 0o100644u32, "x.bin"), // Info-ZIP file
-            (0x0314, 0o040755, "word/media/"), // Info-ZIP directory
-            (0x1314, 0o100600, "x.bin"),       // an OS X host record
-            (0x0014, 0x20, "x.bin"),           // DOS archive bit
-            (0x0014, 0, "x.bin"),              // attributes 0
-            (0x0314, 0o100644, "x.bin"),       // Archive Utility file
-            (0x0314, 0o040755 | 0x10, "word/media/"), // … and its directory
+        for (version_made_by, external, name) in [
+            (0x0314u16, 0o100644u32 << 16, "x.bin"), // Info-ZIP file
+            (0x0314, 0o040755 << 16, "word/media/"), // Info-ZIP directory
+            (0x1314, 0o100600 << 16, "x.bin"),       // an OS X host record
+            (0x0014, 0x20, "x.bin"),                 // DOS archive bit
+            (0x0014, 0, "x.bin"),                    // attributes 0
+            (0x0314, 0o100644 << 16, "x.bin"),       // Archive Utility file
+            (0x0314, 0o040755 << 16 | 0x10, "word/media/"), // … and its directory
         ] {
             let mut bytes =
                 zip_names::docx_package("", &[zip_names::RawEntry::raw(name.as_bytes(), b"")]);
-            set_central_attributes(&mut bytes, name, version_made_by, mode);
+            set_central_attributes(&mut bytes, name, version_made_by, external);
             admit(&bytes, InputLimits::default())
-                .unwrap_or_else(|err| panic!("{version_made_by:#06x}/{mode:o} {name}: {err}"));
+                .unwrap_or_else(|err| panic!("{version_made_by:#06x}/{external:o} {name}: {err}"));
         }
     }
 }

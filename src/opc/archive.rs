@@ -34,8 +34,9 @@ pub(crate) fn open_archive_unchecked<R: Read + Seek + Clone>(
 /// The package open every reader shares: [`open_archive_unchecked`], then
 /// [`zip_defects`]. A package whose two headers describe an entry
 /// differently — a dual-header "zip cloaking" package,
-/// GHSA-m665-v7pm-7grj — or whose entries overlap or reach into the
-/// central directory fails the open. The error carries `admit`'s typed
+/// GHSA-m665-v7pm-7grj — whose entries overlap or reach into the
+/// central directory, or that records an entry as a non-regular type
+/// fails the open. The error carries `admit`'s typed
 /// [`crate::admission::AdmissionError`] as its source, so the refusal
 /// code reads the same whichever route met the file.
 pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipArchive<R>> {
@@ -54,9 +55,12 @@ pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipAr
 /// pass reads: general-purpose flags, compression method, CRC-32, the
 /// two sizes, and the name and extra-field lengths. The central record
 /// (`PK\1\2`, APPNOTE 4.3.12) and the local file header (`PK\3\4`,
-/// APPNOTE 4.3.7) lay the same fields out at different offsets.
+/// APPNOTE 4.3.7) lay the same fields out at different offsets; the
+/// central-only fields — `version_made_by` and the external attributes —
+/// are `None` offsets on the local shape.
 struct HeaderShape {
     signature: &'static [u8; 4],
+    version_made_by: Option<usize>,
     flags: usize,
     method: usize,
     crc32: usize,
@@ -64,11 +68,13 @@ struct HeaderShape {
     uncompressed_size: usize,
     name_length: usize,
     extra_length: usize,
+    external_attributes: Option<usize>,
     name: usize,
 }
 
 const CENTRAL_HEADER: HeaderShape = HeaderShape {
     signature: b"PK\x01\x02",
+    version_made_by: Some(4),
     flags: 8,
     method: 10,
     crc32: 16,
@@ -76,10 +82,12 @@ const CENTRAL_HEADER: HeaderShape = HeaderShape {
     uncompressed_size: 24,
     name_length: 28,
     extra_length: 30,
+    external_attributes: Some(38),
     name: 46,
 };
 const LOCAL_HEADER: HeaderShape = HeaderShape {
     signature: b"PK\x03\x04",
+    version_made_by: None,
     flags: 6,
     method: 8,
     crc32: 14,
@@ -87,12 +95,14 @@ const LOCAL_HEADER: HeaderShape = HeaderShape {
     uncompressed_size: 22,
     name_length: 26,
     extra_length: 28,
+    external_attributes: None,
     name: 30,
 };
 
 /// The fields of one record, parsed in place: the bytes the structural
 /// pass compares, plus the raw name and extra bytes.
 struct HeaderFields {
+    version_made_by: Option<u16>,
     flags: u16,
     method: u16,
     crc32: u32,
@@ -100,6 +110,7 @@ struct HeaderFields {
     uncompressed_size: u32,
     name_length: u16,
     extra_length: u16,
+    external_attributes: Option<u32>,
     name: Vec<u8>,
     extra: Vec<u8>,
 }
@@ -150,6 +161,7 @@ fn header_fields<R: Read + Seek>(
     let name = variable(shape.name_length);
     let extra = variable(shape.extra_length);
     Some(HeaderFields {
+        version_made_by: shape.version_made_by.and_then(|at| read_u16(&head, at)),
         flags: read_u16(&head, shape.flags)?,
         method: read_u16(&head, shape.method)?,
         crc32: read_u32(&head, shape.crc32)?,
@@ -157,6 +169,7 @@ fn header_fields<R: Read + Seek>(
         uncompressed_size: read_u32(&head, shape.uncompressed_size)?,
         name_length: read_u16(&head, shape.name_length)?,
         extra_length: read_u16(&head, shape.extra_length)?,
+        external_attributes: shape.external_attributes.and_then(|at| read_u32(&head, at)),
         name,
         extra,
     })
@@ -297,10 +310,11 @@ pub(crate) struct ZipDefect {
 /// The class of a [`ZipDefect`]. `HeaderMismatch` is the dual-header
 /// class (`ZIP_HEADER_MISMATCH`, GHSA-m665-v7pm-7grj and the #644 field
 /// comparison); `Extent` and `Descriptor` are the structural classes
-/// (`INVALID_PACKAGE`); `DirectoryPayload` and `EntryRead` are
-/// unreadable payloads and unopenable entries, which only `debug`
-/// constructs — every reading route refuses them through its own
-/// CRC stream or open.
+/// (`INVALID_PACKAGE`); `SpecialEntry` is a non-regular entry type
+/// (`UNSUPPORTED_PACKAGE`, ZIP-16/#639); `DirectoryPayload` and
+/// `EntryRead` are unreadable payloads and unopenable entries, which
+/// only `debug` constructs — every reading route refuses them through
+/// its own CRC stream or open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ZipDefectKind {
     /// A local file header field disagrees with the central record.
@@ -309,6 +323,9 @@ pub(crate) enum ZipDefectKind {
     Extent,
     /// A bit-3 entry's data descriptor is missing, truncated or wrong.
     Descriptor,
+    /// An entry is recorded as a non-regular type — a link, a device, a
+    /// pipe — or a directory on a name without a trailing `/`.
+    SpecialEntry,
     /// A directory entry's payload cannot be read (`debug` findings only).
     DirectoryPayload,
     /// An entry cannot be opened or its payload read (`debug` findings
@@ -332,6 +349,9 @@ impl ZipDefect {
             | ZipDefectKind::EntryRead => {
                 AdmissionError::new(K::InvalidPackage, self.detail.clone())
             }
+            ZipDefectKind::SpecialEntry => {
+                AdmissionError::new(K::UnsupportedPackage, self.detail.clone())
+            }
         }
     }
 
@@ -341,6 +361,7 @@ impl ZipDefect {
             ZipDefectKind::HeaderMismatch => "zip-header-mismatch",
             ZipDefectKind::Extent => "zip-extent",
             ZipDefectKind::Descriptor => "zip-descriptor",
+            ZipDefectKind::SpecialEntry => "zip-special-entry",
             ZipDefectKind::DirectoryPayload => "zip-directory-payload",
             ZipDefectKind::EntryRead => "zip-entry-read",
         }
@@ -362,9 +383,64 @@ const COMPARED_FLAGS: u16 = 0x0001 | 0x0008 | 0x0800;
 /// holds a byte at or above 0x80 (see [`COMPARED_FLAGS`]).
 const UTF8_FLAG: u16 = 0x0800;
 
+/// The entry type recorded in the central record (ZIP-16/#639). When
+/// the version-made-by host byte is 3 (Unix) or 19 (OS X), the Unix
+/// mode is the high 16 bits of the external attributes and its type is
+/// `mode & 0o170000`: type 0 (none recorded) and `0o100000` (regular)
+/// admit, `0o040000` admits only on a name ending in `/`, and every
+/// other type — link, device, pipe, socket — is refused. On any host,
+/// the DOS directory attribute `0x10` on a non-slash name is refused.
+/// Permission and owner bits never matter. The raw fields are read
+/// rather than zip's `is_symlink`, which is a bit-mask test that reads
+/// a mode only for the Unix host.
+fn special_entry(index: usize, name: &[u8], central: &HeaderFields) -> Option<ZipDefect> {
+    let shown = String::from_utf8_lossy(name).into_owned();
+    let slash = name.ends_with(b"/");
+    let defect = |detail: String| ZipDefect {
+        kind: ZipDefectKind::SpecialEntry,
+        detail,
+    };
+    let external = central.external_attributes.unwrap_or(0);
+    if matches!(central.version_made_by.unwrap_or(0) >> 8, 3 | 19) {
+        // The entry type is the mode's file-type bits; the permission,
+        // setuid, setgid and sticky bits below it never matter.
+        let kind = external >> 16 & 0o170000;
+        match kind {
+            0 | 0o100000 => {}
+            0o040000 if slash => {}
+            0o040000 => {
+                return Some(defect(format!(
+                    "entry {index} ('{shown}') is a directory on a name without a trailing '/'"
+                )));
+            }
+            _ => {
+                let what = match kind {
+                    0o010000 => "FIFO".to_string(),
+                    0o020000 => "character device".to_string(),
+                    0o060000 => "block device".to_string(),
+                    0o120000 => "symlink".to_string(),
+                    0o140000 => "socket".to_string(),
+                    other => format!("Unix type 0o{other:o}"),
+                };
+                return Some(defect(format!("entry {index} ('{shown}') is a {what}")));
+            }
+        }
+    }
+    if external & 0x10 != 0 && !slash {
+        return Some(defect(format!(
+            "entry {index} ('{shown}') is a directory on a name without a trailing '/'"
+        )));
+    }
+    None
+}
+
 /// Every structural disagreement between what the central directory
 /// declares and what the package's bytes carry, in archive order
 /// (GHSA-m665-v7pm-7grj, ZIP-17/#644):
+///
+/// - the type the central record's version-made-by host byte and
+///   external attributes record: only a regular file, or a directory on
+///   a `/`-terminated name, is a part payload (ZIP-16/#639);
 ///
 /// - the raw entry name plus the fields a scanner trusting local headers
 ///   would read — compression method, the [`COMPARED_FLAGS`] bits, and,
@@ -405,6 +481,9 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             continue;
         };
         let shown = String::from_utf8_lossy(&central.name).into_owned();
+        if let Some(defect) = special_entry(i, &central.name, &central) {
+            defects.push(defect);
+        }
         let mismatch = |detail: String| ZipDefect {
             kind: ZipDefectKind::HeaderMismatch,
             detail,
