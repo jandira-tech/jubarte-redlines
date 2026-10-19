@@ -611,9 +611,10 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
 
 
 def _edit_notes(notes: list[str], result: EditResult) -> list[str]:
-    """The ``note:`` lines of an applied edit: the flags' notes, then each
-    anchor read without its Markdown marks."""
-    lines = [f"note: {note}" for note in notes]
+    """The ``note:`` lines of an applied edit: the flags' notes, the plan's
+    (a field read as another), then each anchor read without its Markdown
+    marks."""
+    lines = [f"note: {note}" for note in (*notes, *result.report.notes)]
     for outcome in result.report.operations:
         if outcome.anchor_given is not None and outcome.anchor_read_as is not None:
             given, read_as = json.dumps(outcome.anchor_given, ensure_ascii=False), json.dumps(outcome.anchor_read_as, ensure_ascii=False)

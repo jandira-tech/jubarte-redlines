@@ -647,11 +647,12 @@ function printResolutionOrView(docx, planJson, result, editing, shown) {
   printChangedView(result, editing, shown);
 }
 
-/** The `note:` lines of an applied edit: the flags' notes, then each anchor
- * read without its Markdown marks. */
+/** The `note:` lines of an applied edit: the flags' notes, the plan's (a field
+ * read as another), then each anchor read without its Markdown marks. */
 function editNotes(notes, result) {
-  const lines = notes.map((note) => `note: ${note}`);
-  for (const outcome of JSON.parse(result.json).operations ?? []) {
+  const report = JSON.parse(result.json);
+  const lines = [...notes, ...(report.notes ?? [])].map((note) => `note: ${note}`);
+  for (const outcome of report.operations ?? []) {
     if (outcome.anchor_given != null && outcome.anchor_read_as != null) {
       lines.push(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
     }

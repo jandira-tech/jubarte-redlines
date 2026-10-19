@@ -1094,8 +1094,11 @@ fn edit_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<EditOutco
 #[pyfunction]
 fn preview_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<(bool, String)> {
     let result = py.detach(|| {
-        let plan = jubarte::edit::EditPlan::from_json(plan_json)?;
-        jubarte::edit::preview_plan(docx, &plan)
+        let (plan, notes) = jubarte::edit::EditPlan::from_json_with_notes(plan_json)?;
+        jubarte::edit::preview_plan(docx, &plan).map(|mut report| {
+            report.notes = notes;
+            report
+        })
     });
     Ok(match result {
         Ok(report) => (true, serde_json::to_string(&report).map_err(err)?),

@@ -285,12 +285,10 @@ fn v1_plan_and_v2_schema_do_not_change_each_other() {
     assert_eq!(v1.source_sha256, None);
     assert_eq!(v1.date, None);
     assert!(!SCHEMA.is_valid(&serde_json::from_str(legacy).unwrap()));
-    assert_eq!(
-        jubarte::edit::EditPlan::from_json(GENERATED)
-            .unwrap_err()
-            .code,
-        "INVALID_PLAN"
-    );
+    // The version is read before the fields: the v1 parser names it.
+    let e = jubarte::edit::EditPlan::from_json(GENERATED).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_SCHEMA");
+    assert_eq!(e.message, "schema_version 2 is not supported (expected 1)");
     agrees(&base(), true);
 }
 

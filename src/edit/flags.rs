@@ -523,6 +523,7 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
             paragraph: paragraph(),
             find: anchor.clone(),
             occurrence: None,
+            comment: None,
         },
         (Verb::Edit, None, Some(anchor), None) => match (run_format, paragraph_style) {
             (Some(format), None) => K::FormatRun {
@@ -540,6 +541,7 @@ fn flag_operation(verb: Verb, op: &FlagOp) -> Result<(OperationKind, Option<Stri
             K::Rewrite {
                 paragraph: paragraph(),
                 text,
+                comment: None,
             }
         }
         (Verb::Edit, None, None, Some(_)) => {

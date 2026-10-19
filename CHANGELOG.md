@@ -185,6 +185,28 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **A plan error teaches (#1258).** An `INVALID_PLAN` for an operation names it
+  (its `id`, else `op-N`), its kind, the field, the nearest field the kind takes
+  and the list of its fields; an unknown kind lists the kinds; a missing
+  `schema_version`, characters after the plan, a bare number for `paragraph` and
+  a string for `resolve_revisions.*.ids` each say what to write, as do an `id`
+  that is no string and an alias beside the field it is read as. A byte order
+  mark before the plan is ignored. Two slips apply as meant, each with a
+  `note:` line on stderr and in the `summary` event's new `notes`, present
+  when one applies (`EditReport.notes`, `EditPlan::from_json_with_notes`):
+  `anchor` for `find` on `replace`, `delete` and `comment`, and `comment` for
+  `text` on `comment` and `reply_comment`. `delete` and `rewrite` take a
+  `comment`: a deletion's sits on the struck words in the redline only, and a
+  rewrite's covers the paragraph. The version is read first: a plan whose
+  `schema_version` this build does not read is `UNSUPPORTED_SCHEMA` before
+  its fields are checked (a v2 plan given to `EditPlan::from_json` was
+  `INVALID_PLAN` for its v2 fields). `edit apply` says a plan that is an
+  array, a string or a number is one JSON object, instead of asking for its
+  `schema_version`. Under a plan that settles revisions, a deletion's
+  comment lands on the paragraph the deletion names as read. When the
+  comparer deletes the same words elsewhere, the refusal says so and gives
+  `"existing_revisions": "keep"` (`--existing-revisions keep`), which writes
+  the deletion as given.
 - **`validate OUT --baseline IN` names only the edit's findings (#1256).**
   The findings IN already has print as `already in the input: N (not
   yours)` after the new ones (`new: none`, or `new: N` and their lines),

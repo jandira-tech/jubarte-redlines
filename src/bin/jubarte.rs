@@ -1289,21 +1289,34 @@ const EXIT_PLAN_REFUSED: u8 = 3;
 /// Exit 2: the operation flags do not describe an operation.
 const EXIT_USAGE: u8 = 2;
 
-/// The plan of an `edit` or `add` invocation and the notes its flags left:
-/// `--plan`'s file, or the plan the operation flags describe.
+/// The plan of an `edit` or `add` invocation, with its notes.
+struct PlanInput {
+    plan: jubarte::edit::EditPlan,
+    /// The notes the operation flags left.
+    notes: Vec<String>,
+    /// The plan's own notes: a field `--plan`'s file names another way.
+    plan_notes: Vec<String>,
+}
+
+/// The plan of an `edit` or `add` invocation: `--plan`'s file, or the plan
+/// the operation flags describe.
 fn edit_plan(
     verb: jubarte::edit::flags::Verb,
     plan: Option<&Path>,
     operations: &[FlagOp],
     options: &EditOptions,
     source: &[u8],
-) -> Result<(jubarte::edit::EditPlan, Vec<String>), (u8, String)> {
+) -> Result<PlanInput, (u8, String)> {
     if let Some(path) = plan {
         let json = std::fs::read_to_string(path)
             .map_err(|e| (1, format!("reading {}: {e}", path.display())))?;
-        let plan = jubarte::edit::EditPlan::from_json(&json)
+        let (plan, plan_notes) = jubarte::edit::EditPlan::from_json_with_notes(&json)
             .map_err(|e| (EXIT_PLAN_REFUSED, e.to_string()))?;
-        return Ok((plan, Vec::new()));
+        return Ok(PlanInput {
+            plan,
+            notes: Vec::new(),
+            plan_notes,
+        });
     }
     let built = jubarte::edit::flags::plan_from_flags(
         verb,
@@ -1314,7 +1327,11 @@ fn edit_plan(
         source,
     )
     .map_err(|m| (EXIT_USAGE, m))?;
-    Ok((built.plan, built.notes))
+    Ok(PlanInput {
+        plan: built.plan,
+        notes: built.notes,
+        plan_notes: Vec::new(),
+    })
 }
 
 /// Prepare `plan` on `source` and publish it as `job` says. The number of
@@ -1325,6 +1342,7 @@ fn run_edit(
     plan: &jubarte::edit::EditPlan,
     source: &[u8],
     notes: &[String],
+    plan_notes: &[String],
 ) -> Result<usize, (u8, String)> {
     let fail = |m: String| (1u8, m);
     // Dry run and apply share one preparation path (V2-08): the dry run
@@ -1350,7 +1368,9 @@ fn run_edit(
         refused(&e.with_revision_syntax(syntax), job.file, source)
     };
     if job.dry_run {
-        let report = jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
+        let mut report =
+            jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
+        report.notes = plan_notes.to_vec();
         write_stdout(report.to_jsonl()).map_err(fail)?;
         // A clean dry run says how to apply it: the same command, with the
         // --force an output already there needs. An output --force cannot
@@ -1374,7 +1394,7 @@ fn run_edit(
     // outputs (D15).
     let prepared = jubarte::edit::prepare(source, plan, &options).map_err(refuse)?;
     let skipped = prepared.skipped.len();
-    publish_edit(job, plan, source, notes, prepared).map(|()| skipped)
+    publish_edit(job, plan, source, notes, plan_notes, prepared).map(|()| skipped)
 }
 
 /// Write what `prepared` holds where `job` says, with its status lines.
@@ -1383,10 +1403,12 @@ fn publish_edit(
     plan: &jubarte::edit::EditPlan,
     source: &[u8],
     notes: &[String],
+    plan_notes: &[String],
     prepared: jubarte::edit::PreparedEdit,
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
     let mut result = prepared.result;
+    result.report.notes = plan_notes.to_vec();
     let primary = match job.mode {
         Mode::Suggesting => &result.redline,
         Mode::Editing => &result.clean,
@@ -2134,15 +2156,20 @@ fn settlement_notes(
     lines
 }
 
-/// The `note:` lines of an applied edit: the flags' notes, then each
-/// anchor that matched as the paragraph reads rather than as typed. A kept
-/// comment names its paragraph in `published`, the copy the mode writes.
+/// The `note:` lines of an applied edit: the flags' notes, the plan's (a
+/// field read as another), then each anchor that matched as the paragraph
+/// reads rather than as typed. A kept comment names its paragraph in
+/// `published`, the copy the mode writes.
 fn edit_notes(
     notes: &[String],
     result: &jubarte::edit::EditResult,
     published: &[u8],
 ) -> Vec<String> {
-    let mut lines: Vec<String> = notes.iter().map(|note| format!("note: {note}")).collect();
+    let mut lines: Vec<String> = notes
+        .iter()
+        .chain(&result.report.notes)
+        .map(|note| format!("note: {note}"))
+        .collect();
     let decision = if result.report.resolved_revisions.rejected.is_empty() {
         "acceptance"
     } else {
@@ -2509,7 +2536,11 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         }
         None => None,
     };
-    let (plan, notes) = edit_plan(
+    let PlanInput {
+        plan,
+        notes,
+        plan_notes,
+    } = edit_plan(
         flags.verb,
         flags.plan,
         flags.operations,
@@ -2544,7 +2575,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         revisions: flags.revisions,
         quiet: flags.quiet,
     };
-    let skipped = run_edit(&job, &plan, &source, &notes)?;
+    let skipped = run_edit(&job, &plan, &source, &notes, &plan_notes)?;
     if let Some((path, _)) = consumed.as_ref().filter(|_| skipped > 0) {
         // Even under -q: the caller asked for the plan gone. The skip line
         // can send them back to it.
