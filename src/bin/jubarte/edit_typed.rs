@@ -466,6 +466,7 @@ fn prepare_and_publish(
                 exact_text: matches!(request, Request::V2(_)),
                 role: PrimaryRole::Clean,
                 syntax,
+                ..PrepareOptions::default()
             },
         )
         .map_err(|e| {

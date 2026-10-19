@@ -1163,10 +1163,16 @@ fn scrub_json(py: Python<'_>, docx: &[u8], options_json: &str) -> PyResult<Py<Py
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+/// This build's manifest (`runtime: "python"`): an edit plan here takes
+/// no `--skip-failed`, as the shared manifest says.
+fn manifest() -> jubarte::capabilities::Capabilities {
+    jubarte::capabilities::capabilities("python")
+}
+
 /// What this build can do (`runtime: "python"`).
 #[pyfunction]
 fn capabilities_json() -> String {
-    jubarte::capabilities::capabilities_json("python")
+    serde_json::to_string_pretty(&manifest()).expect("manifest serializes")
 }
 
 /// Focused edit discovery, or the edit support matrix when both filters are absent.
@@ -1185,7 +1191,7 @@ fn capabilities_text(operation: Option<&str>, field: Option<&str>, matrix: bool)
             "python", operation, field,
         ))
     } else {
-        jubarte::capabilities::capabilities_text(&jubarte::capabilities::capabilities("python"))
+        jubarte::capabilities::capabilities_text(&manifest())
     }
 }
 

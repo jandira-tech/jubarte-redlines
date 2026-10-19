@@ -222,6 +222,9 @@ impl Transaction<'_> {
         };
         let (what, hits): (String, Vec<usize>) = match selector {
             ControlSelector::Name(given) | ControlSelector::Id { id: given } => {
+                if let Some(refused) = super::origin::source_only(given) {
+                    return Err(("ANCHOR_NOT_FOUND", refused, 0));
+                }
                 // The spec's cell spelling `t0.row1.cell2.cc0` names a
                 // control of the cell's first paragraph, `p40.cc0`.
                 let spelled = self.cell_control(given);

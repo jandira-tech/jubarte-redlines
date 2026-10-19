@@ -1200,7 +1200,7 @@ Options:
 
       --consume
           Delete PLAN.json once it has been applied and the outputs are written (with
-          --plan and no operation flags)
+          --plan and no operation flags). Kept when --skip-failed left operations out
 
   -p, --location <WHERE>
           Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the
@@ -1280,7 +1280,14 @@ Options:
           Replace an existing output (the bundle directory's files)
 
       --dry-run
-          Resolve and report only; write nothing
+          Resolve and report only; write nothing. When every operation passes, stderr
+          ends with the command that applies it (`next:`)
+
+      --skip-failed
+          Apply every operation that passes; leave out the ones that fail and every
+          operation of their "group". Exit 0 when one landed. The failed ones go to
+          PLAN.failed.json (FILE_plan.failed.json for operation flags): a plan to fix
+          and run on the output
 
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files

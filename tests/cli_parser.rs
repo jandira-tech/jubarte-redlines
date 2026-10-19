@@ -2719,3 +2719,37 @@ fn read_view_conflict_usage_is_shared_with_bindings() {
         }
     }
 }
+
+#[test]
+fn edit_takes_skip_failed_and_add_does_not() {
+    let result = parse(
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "p.json",
+            "--skip-failed",
+            "-o",
+            "b.docx",
+        ],
+        &[],
+    );
+    assert_eq!(result["exit_code"], 0, "{result}");
+    assert_eq!(result["args"]["skip_failed"], true, "{result}");
+    let result = parse(&["edit", "a.docx", "--plan", "p.json"], &[]);
+    assert_eq!(result["args"]["skip_failed"], false, "{result}");
+    // `add` writes one paragraph or comment: nothing to skip.
+    let result = parse(
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p0",
+            "--content",
+            "x",
+            "--skip-failed",
+        ],
+        &[],
+    );
+    assert_ne!(result["exit_code"], 0, "{result}");
+}
