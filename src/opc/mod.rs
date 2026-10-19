@@ -83,7 +83,9 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 mod archive;
-pub(crate) use archive::{local_name_mismatch, open_archive, open_archive_unchecked};
+pub(crate) use archive::{
+    ZipDefect, ZipDefectKind, open_archive, open_archive_unchecked, zip_defects,
+};
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
@@ -283,9 +285,6 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
     let mut total = 0u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        if entry.is_dir() {
-            continue;
-        }
         // zip 8's name decode (bit 11/CP437, 0x7075 override): the same one
         // `admit` applies, so both readers see one name per entry (#524).
         let name = crate::admission::zip_entry_name(
@@ -293,13 +292,16 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
             entry.flags().as_u16(),
             crate::admission::unicode_path_fields(entry.extra_data_fields().cloned()),
         )?;
-        source_order.insert(name.clone(), index);
+        let directory = entry.is_dir();
+        if !directory {
+            source_order.insert(name.clone(), index);
+        }
         // OPC part names are case-insensitive: two entries whose decoded
         // names collide (a legacy CP437 alias or an ASCII case pair) are the
         // same part, and the second insert used to overwrite the first
         // silently. Upstream's reader refuses `DuplicatePartName`; so does
         // the compatibility loader, so no part is lost.
-        if !identities.insert(name.to_ascii_lowercase()) {
+        if !directory && !identities.insert(name.to_ascii_lowercase()) {
             return Err(OpcError::DuplicatePartName(name));
         }
         if entry.size() > limits.max_part_bytes {
@@ -313,14 +315,34 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
             .max_part_bytes
             .min(limits.max_uncompressed_bytes.saturating_sub(total));
         let mut data = Vec::new();
-        let read = u64::try_from(
-            (&mut entry)
-                .take(cap.saturating_add(1))
-                .read_to_end(&mut data)?,
-        )
-        .unwrap_or(u64::MAX);
+        // A directory entry's payload is drained too: the CRC stream is the
+        // only check on bytes nobody else reads, and the inflated count
+        // still charges the same budgets (#644). A corrupt directory
+        // payload is INVALID_PACKAGE, as it is in `admit`.
+        let read = if directory {
+            std::io::copy(
+                &mut (&mut entry).take(cap.saturating_add(1)),
+                &mut std::io::sink(),
+            )
+            .map_err(|e| {
+                refused(crate::admission::AdmissionError {
+                    kind: crate::admission::AdmissionErrorKind::InvalidPackage,
+                    message: format!("{name}: {e}"),
+                })
+            })?
+        } else {
+            u64::try_from(
+                (&mut entry)
+                    .take(cap.saturating_add(1))
+                    .read_to_end(&mut data)?,
+            )
+            .unwrap_or(u64::MAX)
+        };
         crate::admission::account_inflated(&mut total, read, &name, cap, &limits)
             .map_err(refused)?;
+        if directory {
+            continue;
+        }
         if name == "[Content_Types].xml" || name.ends_with(".rels") {
             check_opc_attributes(&data)?;
         }
