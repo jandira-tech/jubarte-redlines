@@ -665,10 +665,9 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             });
         }
     }
-    for pair in extents.windows(2) {
-        let [(index, name, _, end), (_, other, other_start, _)] = pair else {
-            unreachable!("windows(2) yields pairs")
-        };
+    for (&(index, ref name, _, end), &(_, ref other, other_start, _)) in
+        extents.iter().zip(extents.iter().skip(1))
+    {
         if end > other_start {
             defects.push(ZipDefect {
                 kind: ZipDefectKind::Extent,

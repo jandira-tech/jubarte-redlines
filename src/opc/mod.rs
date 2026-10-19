@@ -601,14 +601,9 @@ impl PartFs {
                 .into_iter()
                 .map(|id| (String::new(), id))
                 .collect();
-        let mut owners: Vec<&String> = fs.part_rels.keys().collect();
-        owners.sort();
-        let owners: Vec<String> = owners.into_iter().cloned().collect();
-        for owner in owners {
-            let rels = fs
-                .part_rels
-                .get_mut(&owner)
-                .expect("owner names a part_rels entry");
+        let mut owners: Vec<(&String, &mut Relationships)> = fs.part_rels.iter_mut().collect();
+        owners.sort_by(|a, b| a.0.cmp(b.0));
+        for (owner, rels) in owners {
             let part = owner.trim_start_matches('/').to_string();
             repaired_duplicate_ids.extend(
                 drop_repeated_relationships(rels)?
@@ -930,20 +925,19 @@ impl PartFs {
         let Some(key) = self.part_rels_key(source_part).cloned() else {
             return;
         };
-        let Some(target) = self.part_rels.get(&key).and_then(|rels| {
-            rels.items
-                .iter()
-                .find(|r| r.id == rel_id && r.target_mode.as_deref() != Some("External"))
-                .map(|r| r.target.clone())
-        }) else {
+        let Some(rels) = self.part_rels.get_mut(&key) else {
             return;
         };
-        let part = self.resolve_rel_target(source_part, &target);
-        self.part_rels
-            .get_mut(&key)
-            .expect("the index names a rels entry")
+        let Some(target) = rels
             .items
-            .retain(|r| r.id != rel_id);
+            .iter()
+            .find(|r| r.id == rel_id && r.target_mode.as_deref() != Some("External"))
+            .map(|r| r.target.clone())
+        else {
+            return;
+        };
+        rels.items.retain(|r| r.id != rel_id);
+        let part = self.resolve_rel_target(source_part, &target);
         self.remove_untargeted_part(&part);
     }
 
@@ -1059,12 +1053,9 @@ impl PartFs {
     ) -> String {
         let rels = self.part_rels_mut(source_part);
         let id = rels.add(rel_type, target);
-        let r = rels
-            .items
-            .iter_mut()
-            .find(|r| r.id == id)
-            .expect("add returned the id it inserted");
-        r.target_mode = Some("External".to_string());
+        if let Some(r) = rels.items.iter_mut().find(|r| r.id == id) {
+            r.target_mode = Some("External".to_string());
+        }
         id
     }
 
