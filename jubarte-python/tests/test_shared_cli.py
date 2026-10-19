@@ -268,4 +268,89 @@ def test_an_unreadable_word_input_reads_as_the_binary_says(tmp_path, monkeypatch
         assert code == 1, arguments
         captured = capsys.readouterr()
         assert captured.err == expected, (arguments, captured.err)
-        assert captured.out == "", arguments
+        if "--json" in arguments:
+            # With --json, stdout says it as JSON too (#1255).
+            message = expected.removeprefix("error: ").rstrip("\n")
+            line = {"error": {"code": message.split(": ", 1)[0], "message": message}}
+            assert json.loads(captured.out) == line, arguments
+        else:
+            assert captured.out == "", arguments
+
+
+REVISED = ('<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
+           '<w:ins w:id="1" w:author="Ann" w:date="2026-10-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>'
+           '<w:del w:id="2" w:author="Ann" w:date="2026-10-01T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del></w:p>')
+
+
+def _grid(cell: str) -> str:
+    return ('<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr>'
+            f'<w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl>')
+
+
+def _tables_document(tmp_path) -> Path:
+    """p0, t0 (a revised cell over a nested table), p3, t1."""
+    outer = _grid(REVISED + _grid(para("inner")) + "<w:p/>")
+    path = tmp_path / "d.docx"
+    path.write_bytes(docx(REVISED + outer + para("between") + _grid(para("second"))))
+    return path
+
+
+def _main(arguments) -> int:
+    try:
+        return main(arguments)
+    except SystemExit as exit:
+        return exit.code
+
+
+def test_read_json_and_tables_take_the_view_options(tmp_path, capsys):
+    # #1255: what the binary does, from the Python CLI.
+    file = str(_tables_document(tmp_path))
+    for spelling, choice, text in (("accepted", "accept", "keep new"), ("reject", "reject", "keep old")):
+        assert _main(["read", file, "--json", "--track-changes", spelling]) == 0
+        snapshot = json.loads(capsys.readouterr().out)
+        assert snapshot["track_changes"] == choice
+        assert snapshot["paragraphs"][0]["text"] == snapshot["paragraphs"][1]["text"] == text
+    assert _main(["read", file, "--json", "--no-page-markers", "--dates"]) == 0
+    plain = capsys.readouterr().out
+    assert _main(["read", file, "--json"]) == 0
+    assert capsys.readouterr().out == plain
+    # --tables -p tN: the view's tN, with the tables nested in it.
+    assert _main(["read", file, "--tables"]) == 0
+    every = capsys.readouterr().out
+    assert _main(["read", file, "--tables", "-p", "t1"]) == 0
+    second = capsys.readouterr().out
+    assert second.startswith("table 2: ") and "second" in second and "inner" not in second
+    assert _main(["read", file, "--tables", "-p", "t0"]) == 0
+    first = capsys.readouterr().out
+    assert [line[:8] for line in first.splitlines() if line.startswith("table ")] == ["table 0:", "table 1:"]
+    assert _main(["read", file, "--tables", "--select", "t1,t0"]) == 0
+    assert capsys.readouterr().out == every
+    assert _main(["read", file, "--tables", "--track-changes", "reject", "-p", "t0"]) == 0
+    assert "keep old" in capsys.readouterr().out
+    assert _main(["read", file, "--tables", "-p", "t5"]) == 1
+    assert "t5 is not a table of this document (2 tables)" in capsys.readouterr().err
+    assert _main(["read", file, "--tables", "-p", "p0"]) == 2
+    refused = capsys.readouterr()
+    assert "--tables -p takes tables (t0, t1)" in refused.err and refused.out == ""
+
+
+def test_an_error_under_json_is_a_json_line_on_stdout(tmp_path, capsys):
+    # #1255: a usage error carries the task's usage; stderr stays as it is.
+    file = str(_tables_document(tmp_path))
+    assert _main(["read", file, "--json", "--tables"]) == 2
+    captured = capsys.readouterr()
+    line = json.loads(captured.out)
+    assert line["error"]["code"] == "USAGE"
+    assert "--tables" in line["error"]["message"]
+    assert line["error"]["usage"] == "jubarte-redlines read [OPTIONS] <FILE>"
+    assert captured.err.startswith("error: ")
+    assert _main(["read", "missing.docx", "--json"]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["error"]["code"] == "ERROR"
+    assert captured.err.startswith("error: ")
+    # Help is no error; nor is a --json that is an option's value.
+    assert _main(["read", "--json", "--help"]) == 0
+    assert capsys.readouterr().out.startswith("Read the agent view")
+    assert _native.wants_json(["read", "f.docx", "--json"])
+    assert not _native.wants_json(["edit", "replace", "f.docx", "--find", "x", "--text", "--json"])
+    assert not _native.wants_json(["read", "f.docx", "--", "--json"])

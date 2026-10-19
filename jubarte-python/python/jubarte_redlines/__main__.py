@@ -48,6 +48,22 @@ EXIT_PLAN_REFUSED = 3
 EXIT_PAGES_DIFFER = 5
 EXIT_FINDINGS = 2
 
+# Whether the command line asks for JSON (`_native.wants_json`): an error
+# then prints its JSON line on stdout too, as the binary's does (#1255).
+_JSON_ERRORS = False
+
+
+def _error(message: str, exit: int) -> None:
+    """``error: MESSAGE`` on stderr, and under ``--json`` first its
+    ``{"error":…}`` line on stdout: what the binary says for an error that
+    exits with ``exit``."""
+    if _JSON_ERRORS:
+        from . import _native
+
+        sys.stdout.write(_native.runtime_json_error(message, exit))
+        sys.stdout.flush()
+    print(f"error: {message}", file=sys.stderr)
+
 
 class CliError(Exception):
     """A user-facing failure; the message is printed as ``error: ...``."""
@@ -215,8 +231,10 @@ def _view_text(docx: bytes, options: dict, source: str) -> str:
 
 
 def _selection(options: dict) -> dict:
-    """The read options that select paragraphs, as ``read_json`` takes them."""
+    """The read options that select paragraphs, and the text
+    ``--track-changes`` settles, as ``read_json`` takes them."""
     return {
+        "track_changes": options.get("track_changes"),
         "paragraphs": options.get("paragraphs"),
         "head": options.get("head"),
         "tail": options.get("tail"),
@@ -259,21 +277,18 @@ def cmd_read(args: argparse.Namespace) -> int:
     from . import _native
 
     if args.tables:
-        sys.stdout.write(_native.tables_text(_read(args.file).to_bytes()))
+        # A paragraph pick is a usage error, refused before the read.
+        refused = _native.tables_usage(args.paragraphs)
+        if refused is not None:
+            _error(refused, EXIT_USAGE)
+            raise SystemExit(EXIT_USAGE)
+        sys.stdout.write(_native.tables_text(_read(args.file).to_bytes(), track_changes=args.track_changes, paragraphs=args.paragraphs))
         return EXIT_OK
     if args.output is not None:
         _write_result(args, _read(args.file).to_bytes(), source=args.file.name, view=vars(args))
         return EXIT_OK
     if args.json:
-        snapshot = _native.read_json(
-            _read(args.file).to_bytes(),
-            paragraphs=args.paragraphs,
-            head=args.head,
-            tail=args.tail,
-            changed=bool(args.changed),
-            by=args.by,
-            source=args.file.name,
-        )
+        snapshot = _native.read_json(_read(args.file).to_bytes(), **_selection(vars(args)), source=args.file.name)
         print(snapshot)
         return EXIT_OK
     return _print_view(_read(args.file).to_bytes(), vars(args), args.file.name)
@@ -301,7 +316,7 @@ def _edit_plan(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str,
             existing=args.existing_revisions,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _error(str(exc), EXIT_USAGE)
         raise SystemExit(EXIT_USAGE) from exc
     return plan, list(notes)
 
@@ -324,7 +339,7 @@ def _print_refusal(exc: EditPlanError) -> None:
         print(_jsonl(row))
     print(_jsonl({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}))
     sys.stdout.flush()
-    print(f"error: plan refused: {exc}", file=sys.stderr)
+    _error(f"plan refused: {exc}", EXIT_PLAN_REFUSED)
 
 
 def _jsonl(row: dict) -> str:
@@ -387,10 +402,10 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
             _native.record_plan(verb, json.dumps(args.operations, ensure_ascii=False), doc.to_bytes(), json.dumps(options), held=held)
         )
     except _native.JubarteError as exc:
-        print(f"error: {plan}: {exc}", file=sys.stderr)
+        _error(f"{plan}: {exc}", EXIT_PLAN_REFUSED)
         return EXIT_PLAN_REFUSED
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _error(str(exc), EXIT_USAGE)
         raise SystemExit(EXIT_USAGE) from exc
     try:
         doc.preview(recorded["plan"])
@@ -427,7 +442,7 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
     plan = _spelled(args, "plan") if getattr(args, "plan", None) is not None else ""
     if getattr(args, "consume", False) and not getattr(args, "dry_run", False):
         if os.path.islink(plan):
-            print(f"error: --consume deletes {plan}, a symbolic link; pass the file it names", file=sys.stderr)
+            _error(f"--consume deletes {plan}, a symbolic link; pass the file it names", EXIT_USAGE)
             raise SystemExit(EXIT_USAGE)
         try:
             with open(plan, "rb") as f:
@@ -459,7 +474,7 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     # count; a plan that does not parse is reported as INVALID_PLAN below.
     conflict = _native.editing_mode_conflict(plan_text, doc.to_bytes()) if editing else None
     if conflict:
-        print(f"error: {conflict}", file=sys.stderr)
+        _error(str(conflict), EXIT_USAGE)
         raise SystemExit(EXIT_USAGE)
     dry_run = bool(getattr(args, "dry_run", False))
     pdf, png = bool(getattr(args, "pdf", False)), bool(getattr(args, "png", False))
@@ -618,7 +633,7 @@ def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, note
     # replaced only with --force (D15). The PNG names wait for the page count.
     for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
         if taken.exists() and not args.force:
-            print(f"error: output '{taken}' already exists (use --force to overwrite)", file=sys.stderr)
+            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
             raise SystemExit(EXIT_USAGE)
     pages, png_count = None, 0
     if pdf or png:
@@ -634,7 +649,7 @@ def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, note
     # The PNG names are known only now: nothing is written over a file.
     for taken, _ in outputs:
         if taken.exists() and not args.force:
-            print(f"error: output '{taken}' already exists (use --force to overwrite)", file=sys.stderr)
+            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
             raise SystemExit(EXIT_USAGE)
     for output, data in outputs:
         _write(output, data)
@@ -711,7 +726,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
     else:
         if args.output_format == "docx" and not args.update_fields:
             # A name that said nothing; its bytes are Word.
-            print(f"error: {_DOCX_NEEDS_MARKDOWN}", file=sys.stderr)
+            _error(_DOCX_NEEDS_MARKDOWN, EXIT_USAGE)
             raise SystemExit(EXIT_USAGE)
         doc = Document(source, args.file.name)
         if args.track_changes == "accept":
@@ -776,7 +791,7 @@ def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
     output: Path | None = args.output
     if output is None:
         # As the binary: Word from Word goes to a named file, never stdout.
-        print("error: --output is required to write Word from Word", file=sys.stderr)
+        _error("--output is required to write Word from Word", EXIT_ERROR)
         return EXIT_ERROR
     if args.report is not None:
         _check_side_file(args.report, "--report", ((output, "Word output"), (args.file, "input")), args.force)
@@ -861,7 +876,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         # A .md of two Markdown documents is CriticMarkup; of anything else,
         # the redline's view.
         if args.view_given:
-            print("error: read options shape the view; two Markdown documents write CriticMarkup to a .md", file=sys.stderr)
+            _error("read options shape the view; two Markdown documents write CriticMarkup to a .md", EXIT_USAGE)
             raise SystemExit(EXIT_USAGE)
         _ensure_writable(output, args.force)
         critic = diff(original, modified, format="critic", author=args.author, date=args.datetime).text
@@ -944,7 +959,7 @@ def _resolution(args: argparse.Namespace, accept: bool) -> int:
         result = doc.accept(**selection) if accept else doc.reject(**selection)
     except ValueError as exc:
         # An id that is no change id, or names two: a usage error, as the binary's.
-        print(f"error: {exc}", file=sys.stderr)
+        _error(str(exc), EXIT_USAGE)
         raise SystemExit(EXIT_USAGE) from exc
     except _native.JubarteError as exc:
         raise CliError(f"{'accept' if accept else 'reject'} failed: {exc}") from exc
@@ -1016,17 +1031,22 @@ class SharedParser:
     supported = tuple(_HANDLERS)
 
     def error(self, message: str) -> None:
-        print(f"error: {message}", file=sys.stderr)
+        _error(message, EXIT_USAGE)
         raise SystemExit(2)
 
     def parse_args(self, argv: Sequence[str] | None = None) -> argparse.Namespace:
         from . import _native
 
+        global _JSON_ERRORS
         arguments = list(sys.argv[1:] if argv is None else argv)
+        _JSON_ERRORS = _native.wants_json(arguments)
         parsed = json.loads(_native.parse_cli_json(arguments, program="jubarte-redlines", supported=list(self.supported)))
         if "text" in parsed:
             for note in parsed.get("notes", ()):
                 print(note, file=sys.stderr)
+            if "json" in parsed:
+                sys.stdout.write(parsed["json"])
+                sys.stdout.flush()
             stream = sys.stderr if parsed["stream"] == "stderr" else sys.stdout
             stream.write(parsed["text"])
             raise SystemExit(parsed["exit_code"])
@@ -1093,10 +1113,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except CliError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _error(str(exc), EXIT_ERROR)
         return EXIT_ERROR
     except Exception as exc:  # engine errors (JubarteError) and I/O surprises
-        print(f"error: {exc}", file=sys.stderr)
+        _error(str(exc), EXIT_ERROR)
         return EXIT_ERROR
 
 

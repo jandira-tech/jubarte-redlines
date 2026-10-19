@@ -396,21 +396,92 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
     read_view_json(docx, options_json.as_deref()).map_err(js_err)
 }
 
-/// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
-/// body table, then a line per row of `ids=text` cells; `no tables` when
-/// there are none.
-///
-/// Mirrors `jubarte::inspect::tables_text`.
-#[wasm_bindgen(js_name = tablesText)]
-pub fn tables_text(docx: &[u8]) -> Result<String, JsValue> {
-    let tables = jubarte::inspect::tables(docx).map_err(js_err)?;
-    Ok(jubarte::inspect::tables_text(&tables))
+/// `tablesText` options: `read --tables`'s `-p tN` and `--track-changes`.
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+struct TablesTextOptions {
+    track_changes: Option<String>,
+    paragraphs: Option<String>,
 }
 
-/// `readJson` options: the `read` command's selection.
+fn tables_text_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: TablesTextOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("tablesText options: {e}"))?,
+        None => TablesTextOptions::default(),
+    };
+    let track_changes = match options.track_changes.as_deref() {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or("trackChanges must be all, accept or reject")?,
+    };
+    let select = jubarte::markdown::Select::from_flags(
+        options.paragraphs.as_deref(),
+        None,
+        None,
+        false,
+        None,
+    )?;
+    let options = jubarte::markdown::ReadOptions {
+        track_changes,
+        select,
+        ..jubarte::markdown::ReadOptions::default()
+    };
+    jubarte::markdown::read_tables(docx, &options).map_err(|e| e.to_string())
+}
+
+/// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
+/// body table, then a line per row of `ids=text` cells; `no tables` when
+/// there are none. Options (JSON, all optional): `paragraphs` (`t0,t2`:
+/// the view's tables, each with the tables nested in it) and
+/// `trackChanges` (`reject` reads the rejected text).
+///
+/// Mirrors `jubarte::markdown::read_tables`.
+#[wasm_bindgen(js_name = tablesText)]
+pub fn tables_text(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
+    tables_text_of(docx, options_json.as_deref()).map_err(js_err)
+}
+
+/// Why `read --tables -p SPEC` is a usage error (a paragraph pick, or a
+/// selection that does not parse), or `None` when it is not: what the CLI
+/// refuses before it reads the document.
+#[wasm_bindgen(js_name = tablesUsage)]
+pub fn tables_usage(paragraphs: Option<String>) -> Option<String> {
+    let select =
+        match jubarte::markdown::Select::from_flags(paragraphs.as_deref(), None, None, false, None)
+        {
+            Ok(select) => select,
+            Err(e) => return Some(e),
+        };
+    jubarte::markdown::table_picks(select.as_ref()).err()
+}
+
+/// Whether a command line (without the program name) asks for JSON: a
+/// real `--json` flag before any `--`, read as the binary reads it (the
+/// `--json` in `--text --json` is a value). An error then prints its
+/// [`runtime_json_error`] line on stdout too.
+///
+/// Mirrors `jubarte::cli::wants_json`.
+#[wasm_bindgen(js_name = wantsJson)]
+pub fn wants_json(arguments: Vec<String>) -> bool {
+    jubarte::cli::wants_json(&arguments)
+}
+
+/// The line an error prints on stdout under `--json`:
+/// `{"error":{"code":…,"message":…}}`, its code the message's leading
+/// `CODE:`, else `USAGE` for an exit 2 and `ERROR` for any other.
+///
+/// Mirrors `jubarte::cli::runtime_json_error`.
+#[wasm_bindgen(js_name = runtimeJsonError)]
+pub fn runtime_json_error(message: &str, exit: u8) -> String {
+    jubarte::cli::runtime_json_error(message, exit)
+}
+
+/// `readJson` options: the `read` command's selection, and the text its
+/// `--track-changes` settles.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 struct ReadJsonOptions {
+    track_changes: Option<String>,
     paragraphs: Option<String>,
     head: Option<usize>,
     tail: Option<usize>,
@@ -431,7 +502,13 @@ fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Strin
         options.changed,
         options.by.as_deref(),
     )?;
+    let track_changes = match options.track_changes.as_deref() {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or("trackChanges must be all, accept or reject")?,
+    };
     let options = jubarte::markdown::ReadOptions {
+        track_changes,
         select,
         source: options.source,
         ..jubarte::markdown::ReadOptions::default()
@@ -443,8 +520,9 @@ fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Strin
 /// The snapshot `jubarte read --json` prints, with its `changes` and
 /// `comments`. Options (JSON, all optional) select as in
 /// [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
-/// `source` names the document. The snapshot keeps the selected paragraphs
-/// and their changes and comments.
+/// `source` names the document; `trackChanges` `accept` or `reject`
+/// settles the text and names the choice in `track_changes`. The snapshot
+/// keeps the selected paragraphs and their changes and comments.
 ///
 /// Mirrors `jubarte::markdown::read_snapshot`.
 #[wasm_bindgen(js_name = readJson)]
@@ -2134,10 +2212,77 @@ mod tests {
             changes.contains("\"30\"") && changes.ends_with("2 change(s)\n"),
             "{changes}"
         );
-        let tables = tables_text(&docx).unwrap();
+        let tables = tables_text(&docx, None).unwrap();
         assert!(tables.starts_with("table 0: 2x2"), "{tables}");
-        assert_eq!(tables_text(&word("No grid.\n")).unwrap(), "no tables\n");
+        assert_eq!(
+            tables_text(&word("No grid.\n"), None).unwrap(),
+            "no tables\n"
+        );
         assert_eq!(comments_text(&docx, None, None).unwrap(), "0 comment(s)\n");
+    }
+
+    #[test]
+    fn tables_take_the_view_picks_and_the_rejected_text() {
+        // #1255: `--tables -p tN` and `--track-changes reject`, as the CLI.
+        let docx =
+            word("| A | B |\n|---|---|\n| {~~30~>45~~} | 2 |\n\nBetween.\n\n| C |\n|---|\n| 3 |\n");
+        let all = tables_text_of(&docx, None).unwrap();
+        let second = tables_text_of(&docx, Some(r#"{"paragraphs":"t1"}"#)).unwrap();
+        assert!(
+            second.starts_with("table 1: ") && second.contains('C'),
+            "{second}"
+        );
+        assert!(!second.contains("45"), "{second}");
+        let both = tables_text_of(&docx, Some(r#"{"paragraphs":"t1,t0"}"#)).unwrap();
+        assert_eq!(both, all);
+        let rejected = tables_text_of(
+            &docx,
+            Some(r#"{"paragraphs":"t0","trackChanges":"reject"}"#),
+        )
+        .unwrap();
+        assert!(
+            rejected.contains("30") && !rejected.contains("45"),
+            "{rejected}"
+        );
+        let missing = tables_text_of(&docx, Some(r#"{"paragraphs":"t5"}"#)).unwrap_err();
+        assert!(
+            missing.contains("t5 is not a table of this document (2 tables)"),
+            "{missing}"
+        );
+        assert!(tables_text_of(&docx, Some(r#"{"bogus":1}"#)).is_err());
+        // What the CLI refuses before it reads: a paragraph, or no selection.
+        assert!(
+            tables_usage(Some("p0".into()))
+                .unwrap()
+                .contains("--tables -p takes tables")
+        );
+        assert!(tables_usage(Some("q7".into())).is_some());
+        assert_eq!(tables_usage(Some("t0,t1".into())), None);
+        assert_eq!(tables_usage(None), None);
+    }
+
+    #[test]
+    fn json_errors_read_the_command_line_as_the_binary_does() {
+        let args = |a: &[&str]| a.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+        assert!(wants_json(args(&["read", "f.docx", "--json"])));
+        assert!(!wants_json(args(&["read", "f.docx"])));
+        assert!(!wants_json(args(&["read", "f.docx", "--", "--json"])));
+        assert!(!wants_json(args(&[
+            "edit", "replace", "f.docx", "--find", "x", "--text", "--json"
+        ])));
+        let line: serde_json::Value = serde_json::from_str(&runtime_json_error(
+            "INVALID_PACKAGE: f.docx is not a ZIP file",
+            1,
+        ))
+        .unwrap();
+        assert_eq!(line["error"]["code"], "INVALID_PACKAGE");
+        assert_eq!(
+            line["error"]["message"],
+            "INVALID_PACKAGE: f.docx is not a ZIP file"
+        );
+        let usage: serde_json::Value =
+            serde_json::from_str(&runtime_json_error("bad -p", 2)).unwrap();
+        assert_eq!(usage["error"]["code"], "USAGE");
     }
 
     #[test]

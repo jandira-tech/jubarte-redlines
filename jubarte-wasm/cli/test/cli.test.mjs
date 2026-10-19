@@ -23,6 +23,10 @@ const pair = path.join(repo, "tests/corpus/batch_to_fix/pairs/41_heading_1_bold_
 const tracked = path.join(repo, "tests/fixtures/from-docx/critic/tracked-changes.docx");
 const untracked = path.join(repo, "tests/fixtures/from-docx/critic/no-tracked-changes.docx");
 let tmp;
+// The checked-in binding has #1255's JSON errors and table picks once it is
+// rebuilt from a source that has them; until then their tests skip.
+const binding = createRequire(import.meta.url)(path.join(cliDir, "..", "npm"));
+const jsonErrors = typeof binding.runtimeJsonError === "function";
 
 before(() => {
   // The published package resolves jubarte-wasm from npm; here it is the
@@ -121,7 +125,9 @@ test("removed command help and legacy listing flags are unavailable", () => {
     const result = run(...args);
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading|ENOENT/);
-    assert.equal(result.out, "");
+    // Under --json the usage error is a JSON line on stdout too (#1255).
+    if (jsonErrors && args.includes("--json")) assert.equal(JSON.parse(result.out).error.code, "USAGE");
+    else assert.equal(result.out, "");
     assert.ok(!fs.existsSync(path.join(tmp, "unused.docx")));
   }
   // A retired name keeps its note when the run fails: npm has no validate.
@@ -336,7 +342,12 @@ test("an unreadable input reads as the binary says, on every task (#454)", () =>
     const r = run(...args);
     assert.equal(r.code, 1, args.join(" "));
     assert.equal(r.err, expected, args.join(" "));
-    assert.equal(r.out, "", args.join(" "));
+    if (args.includes("--json") && jsonErrors) {
+      // With --json, stdout says it as JSON too (#1255).
+      assert.deepEqual(JSON.parse(r.out), { error: { code: "INVALID_PACKAGE", message: expected.slice("error: ".length, -1) } });
+    } else {
+      assert.equal(r.out, "", args.join(" "));
+    }
   }
   // A Word 97-2003 file names its code first, as the binary does.
   fs.writeFileSync(path.join(tmp, "old.docx"), Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(512)]));
@@ -1483,4 +1494,26 @@ test("edit -p rN --accept/--reject prints the resolved changes, as the binary do
   const pair = run("edit", src, "-p", "r1+2", "--accept", "-o", path.join(tmp, "resolve-pair.docx"), "--datetime", "2026-10-11T00:00:00Z");
   assert.equal(pair.code, 0, pair.err);
   assert.equal(pair.out, 'accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"\n');
+});
+
+test("read --json and --tables take the view's options; errors under --json are JSON (#1255)", { skip: !jsonErrors && "the checked-in binding predates #1255" }, () => {
+  const plain = run("read", tracked, "--json");
+  assert.equal(plain.code, 0, plain.err);
+  for (const extra of [["--no-page-markers"], ["--comments", "none"], ["--dates"]]) {
+    assert.equal(run("read", tracked, "--json", ...extra).out, plain.out, extra.join(" "));
+  }
+  const rejected = JSON.parse(run("read", tracked, "--json", "--track-changes", "rejected").out);
+  assert.equal(rejected.track_changes, "reject");
+  assert.equal(rejected.paragraphs.length, JSON.parse(plain.out).paragraphs.length);
+  const usage = run("read", tracked, "--json", "--bogus");
+  assert.equal(usage.code, 2);
+  const error = JSON.parse(usage.out).error;
+  assert.equal(error.code, "USAGE");
+  assert.equal(error.usage, "jubarte-redlines read [OPTIONS] <FILE>");
+  const pick = run("read", untracked, "--tables", "-p", "p0");
+  assert.equal(pick.code, 2);
+  assert.match(pick.err, /--tables -p takes tables \(t0, t1\), not paragraphs/);
+  const table = run("read", untracked, "--tables", "-p", "t0");
+  assert.equal(table.code, 0, table.err);
+  assert.match(table.out, /^table 0: /);
 });

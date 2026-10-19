@@ -205,24 +205,42 @@ fn comments_text(
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
 /// body table, then a line per row of `ids=text` cells; `no tables` when
 /// there are none.
+/// `paragraphs` (`t0,t2`) keeps the view's tables it names, each with the
+/// tables nested in it; `track_changes` `reject` reads the rejected text.
 #[pyfunction]
-fn tables_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
-    py.detach(|| {
-        jubarte::inspect::tables(docx)
-            .map(|tables| jubarte::inspect::tables_text(&tables))
-            .map_err(|e| e.to_string())
-    })
-    .map_err(|e: String| err(e))
+#[pyo3(signature = (docx, *, track_changes = None, paragraphs = None))]
+fn tables_text(
+    py: Python<'_>,
+    docx: &[u8],
+    track_changes: Option<&str>,
+    paragraphs: Option<&str>,
+) -> PyResult<String> {
+    let track_changes = match track_changes {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or_else(|| err("track_changes must be all, accept or reject"))?,
+    };
+    let select =
+        jubarte::markdown::Select::from_flags(paragraphs, None, None, false, None).map_err(err)?;
+    let options = jubarte::markdown::ReadOptions {
+        track_changes,
+        select,
+        ..jubarte::markdown::ReadOptions::default()
+    };
+    py.detach(|| jubarte::markdown::read_tables(docx, &options).map_err(|e| e.to_string()))
+        .map_err(|e: String| err(e))
 }
 
 /// The snapshot `jubarte read --json` prints, with its `changes` and
 /// `comments`. `paragraphs`, `head`, `tail`, `changed` and `by` select as in
 /// [`read_view`]; the snapshot keeps the selected paragraphs and their
-/// changes and comments.
+/// changes and comments. `track_changes` `accept` or `reject` settles the
+/// text and names the choice in `track_changes`.
 #[pyfunction]
 #[pyo3(signature = (
     docx,
     *,
+    track_changes = None,
     paragraphs = None,
     head = None,
     tail = None,
@@ -237,6 +255,7 @@ fn tables_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
 fn read_json(
     py: Python<'_>,
     docx: &[u8],
+    track_changes: Option<&str>,
     paragraphs: Option<&str>,
     head: Option<usize>,
     tail: Option<usize>,
@@ -244,9 +263,15 @@ fn read_json(
     by: Option<&str>,
     source: Option<String>,
 ) -> PyResult<String> {
+    let track_changes = match track_changes {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or_else(|| err("track_changes must be all, accept or reject"))?,
+    };
     let select =
         jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
     let options = jubarte::markdown::ReadOptions {
+        track_changes,
         select,
         source,
         ..jubarte::markdown::ReadOptions::default()
@@ -657,6 +682,36 @@ fn diff_view(
 #[pyo3(signature = (arguments, program = "jubarte-redlines", supported = None))]
 fn parse_cli_json(arguments: Vec<String>, program: &str, supported: Option<Vec<String>>) -> String {
     jubarte::cli::parse_json(&arguments, program, &supported.unwrap_or_default())
+}
+
+/// Whether a command line (arguments exclude argv0) asks for JSON: a real
+/// `--json` flag before any `--`, read as the binary reads it (the `--json`
+/// in `--text --json` is a value). An error then prints its
+/// [`runtime_json_error`] line on stdout too.
+#[pyfunction]
+fn wants_json(arguments: Vec<String>) -> bool {
+    jubarte::cli::wants_json(&arguments)
+}
+
+/// The line an error prints on stdout under `--json`:
+/// `{"error":{"code":…,"message":…}}`, its code the message's leading
+/// `CODE:`, else `USAGE` for an exit 2 and `ERROR` for any other.
+#[pyfunction]
+fn runtime_json_error(message: &str, exit: u8) -> String {
+    jubarte::cli::runtime_json_error(message, exit)
+}
+
+/// Why `read --tables -p SPEC` is a usage error (a paragraph pick, or a
+/// selection that does not parse), or `None` when it is not: what the CLI
+/// refuses before it reads the document.
+#[pyfunction]
+#[pyo3(signature = (paragraphs = None))]
+fn tables_usage(paragraphs: Option<&str>) -> Option<String> {
+    let select = match jubarte::markdown::Select::from_flags(paragraphs, None, None, false, None) {
+        Ok(select) => select,
+        Err(e) => return Some(e),
+    };
+    jubarte::markdown::table_picks(select.as_ref()).err()
 }
 
 /// Word or Markdown sides as a Word tracked-changes document.
@@ -1319,6 +1374,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
     m.add_function(wrap_pyfunction!(diff_view, m)?)?;
     m.add_function(wrap_pyfunction!(parse_cli_json, m)?)?;
+    m.add_function(wrap_pyfunction!(wants_json, m)?)?;
+    m.add_function(wrap_pyfunction!(runtime_json_error, m)?)?;
+    m.add_function(wrap_pyfunction!(tables_usage, m)?)?;
     m.add_function(wrap_pyfunction!(redline_documents, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
