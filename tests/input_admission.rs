@@ -778,6 +778,34 @@ fn directory_probe() -> Vec<u8> {
     bytes
 }
 
+/// Overwrite `entry`'s central record: `version_made_by` at +4 and the
+/// external attributes at +38 (#639).
+fn set_central_attributes(bytes: &mut [u8], entry: &str, version_made_by: u16, external: u32) {
+    let at = {
+        let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+        usize::try_from(archive.by_name(entry).unwrap().central_header_start()).unwrap()
+    };
+    assert_eq!(&bytes[at..at + 4], b"PK\x01\x02");
+    bytes[at + 4..at + 6].copy_from_slice(&version_made_by.to_le_bytes());
+    bytes[at + 38..at + 42].copy_from_slice(&external.to_le_bytes());
+}
+
+/// A valid package whose `x.bin` central record marks it a Unix symlink
+/// (#639).
+fn special_entry_probe() -> Vec<u8> {
+    let mut bytes = package(|writer, options| {
+        writer
+            .start_file(
+                "x.bin",
+                options.compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"link-target").unwrap();
+    });
+    set_central_attributes(&mut bytes, "x.bin", 0x0314, 0o120777);
+    bytes
+}
+
 /// ZIP-17 (#644): every public route applies the structural refusals the
 /// bounded constructor owns — direct admission, the package
 /// constructor, scrub/leaks, the Markdown reader — while `debug`
@@ -803,6 +831,12 @@ fn zip17_public_boundaries() {
             directory_probe(),
             "INVALID_PACKAGE",
             "ZIP_DIRECTORY_PAYLOAD",
+        ),
+        (
+            "special entry",
+            special_entry_probe(),
+            "UNSUPPORTED_PACKAGE",
+            "ZIP_SPECIAL_ENTRY",
         ),
     ] {
         let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
