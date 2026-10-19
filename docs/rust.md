@@ -329,7 +329,10 @@ Rendering (-o FILE.pdf or FILE.png):
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected (also spelled accepted, rejected); the id lines then list
+          what changed. --json and --tables read the accepted text, or under reject the
+          rejected one, every paragraph keeping its id; the snapshot names an accept or
+          a reject in `track_changes`
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -338,7 +341,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; ignored with --json, --tables and --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -348,16 +351,18 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); ignored with --json, --tables and
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; ignored with --json, --tables and --for-edit
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, only tables: `t1` is
+          the view's t1, with the tables nested in it
 
           [alias: --select]
 
@@ -379,12 +384,14 @@ Read options:
           `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
           `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body
           paragraphs they select, and every change and comment that starts in one of
-          them, whoever made it; the rest of the snapshot stays whole
+          them, whoever made it; the rest of the snapshot stays whole. --track-changes
+          accept or reject settles the text
 
       --tables
           Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          `ids=text` cells. N counts nested tables too; `-p t1` prints the view's t1 and
+          the tables nested in it
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -988,7 +995,10 @@ Options:
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected (also spelled accepted, rejected); the id lines then list
+          what changed. --json and --tables read the accepted text, or under reject the
+          rejected one, every paragraph keeping its id; the snapshot names an accept or
+          a reject in `track_changes`
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -997,7 +1007,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; ignored with --json, --tables and --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -1007,16 +1017,18 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); ignored with --json, --tables and
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; ignored with --json, --tables and --for-edit
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, only tables: `t1` is
+          the view's t1, with the tables nested in it
 
           [alias: --select]
 
@@ -1038,12 +1050,14 @@ Read options:
           `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`, `controls`,
           `changes` and `comments`. -p, --head, --tail, --changed and --by keep the body
           paragraphs they select, and every change and comment that starts in one of
-          them, whoever made it; the rest of the snapshot stays whole
+          them, whoever made it; the rest of the snapshot stays whole. --track-changes
+          accept or reject settles the text
 
       --tables
           Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
           header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          `ids=text` cells. N counts nested tables too; `-p t1` prints the view's t1 and
+          the tables nested in it
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired

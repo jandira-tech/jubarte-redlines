@@ -24,7 +24,7 @@ Read from `src/` (`scripts/cli_id_sources.py`), not from `--help`. A flag with n
 
 | Owner | Field | Flag | Value | value_parser | Read by (CLI layer) | Doc |
 |-|-|-|-|-|-|-|
-| ReadArgs | `paragraphs` | `-p, --paragraphs` | SPEC | (none) | `bin::jubarte::run_for_edit`, `bin::jubarte::selection` | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`). |
+| ReadArgs | `paragraphs` | `-p, --paragraphs` | SPEC | (none) | `bin::jubarte::run_for_edit`, `bin::jubarte::selection` | Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` / `-p3` spellings still parse, transitionally; the 17 October 2026 contract retires them — spell the end, `p17-p20`). With --tables, only tables: `t1` is the view's t1, with the tables nested in it. |
 | ReadArgs | `accept_change` | `--accept-change` | ID | (none) | `bin::jubarte::edit_template::generate`, `bin::jubarte::run_for_edit` | --for-edit: the working view after accepting this revision (repeatable; it does not modify FILE). |
 | ReadArgs | `reject_change` | `--reject-change` | ID | (none) | `bin::jubarte::edit_template::generate`, `bin::jubarte::run_for_edit` | --for-edit: the working view after rejecting this revision (repeatable; it does not modify FILE). |
 | Command::Edit | `location` | `-p, --location` | WHERE | (none) | `cli::flag_operations`, `bin::jubarte::edit_typed::prepare_and_publish` | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept, --reject, --strike or --restore). Each -p starts an operation; the flags after it belong to it. |
