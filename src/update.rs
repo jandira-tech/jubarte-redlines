@@ -14,7 +14,7 @@
 //! (`preflight`). The signature rule lives in `signature_required`,
 //! split out so it is unit-tested without I/O.
 //!
-//! Entry points: `run` for the command itself, `plan` /
+//! Entry points: `run` for the command itself, `plan` / `step` /
 //! `preflight` / `signature_required` for the decisions.
 
 use std::io::{BufRead, IsTerminal, Write};
@@ -161,6 +161,45 @@ pub fn plan(current: &str, target: &str, requested: bool) -> Result<Plan, String
     })
 }
 
+/// What `run` does once the release is resolved: report and stop, or ask
+/// (unless `--yes`) and install. Pure, so the "`--check` never installs"
+/// rule is unit-tested without the network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// Print `text` and stop. Nothing is downloaded or replaced.
+    Report {
+        /// The line to print.
+        text: String,
+    },
+    /// Confirm unless `opts.yes`, then replace the running binary.
+    Install {
+        /// The installed version.
+        from: String,
+        /// The release to install.
+        to: String,
+    },
+}
+
+/// `decision` is [`plan`]'s answer; `resolved` is the bare release version
+/// the lookup returned (the up-to-date message quotes it).
+#[must_use]
+pub fn step(opts: &Options, decision: &Plan, resolved: &str) -> Step {
+    match decision {
+        Plan::UpToDate { current } => Step::Report {
+            text: format!("jubarte {current} is up to date (latest release {resolved})."),
+        },
+        Plan::Install { from, to } if opts.check => Step::Report {
+            text: format!(
+                "jubarte {from} is installed; {to} is available. Run `jubarte self-update` to install it."
+            ),
+        },
+        Plan::Install { from, to } => Step::Install {
+            from: from.clone(),
+            to: to.clone(),
+        },
+    }
+}
+
 /// `jubarte self-update`. `Ok` means the run finished without error: the
 /// binary is replaced only when an install completes, and `--check`, an
 /// up-to-date release or a declined prompt leave it as it was. On failure
@@ -168,9 +207,9 @@ pub fn plan(current: &str, target: &str, requested: bool) -> Result<Plan, String
 /// stdout, the prompt to stderr, and reads the answer from stdin.
 ///
 /// The flow is: [`preflight`] → resolve the release for this platform
-/// ([`asset_target`]) → decide ([`plan`]) → optional prompt → optional
-/// signature rule ([`signature_required`]) → `self_update` install. A prompt
-/// `y` / `Y` / `yes` confirms; anything else is "no".
+/// ([`asset_target`]) → decide ([`plan`]) → act ([`step`]) → optional prompt
+/// → optional signature rule ([`signature_required`]) → `self_update`
+/// install. A prompt `y` / `Y` / `yes` confirms; anything else is "no".
 ///
 /// # Errors
 ///
@@ -220,22 +259,13 @@ pub fn run(opts: &Options) -> Result<(), String> {
     .ok_or("GitHub lists no release")?;
 
     let decision = plan(current, release.version(), opts.version.is_some())?;
-    let (from, to) = match decision {
-        Plan::UpToDate { current } => {
-            println!(
-                "jubarte {current} is up to date (latest release {}).",
-                bare(release.version())
-            );
+    let (from, to) = match step(opts, &decision, bare(release.version())) {
+        Step::Report { text } => {
+            println!("{text}");
             return Ok(());
         }
-        Plan::Install { from, to } => (from, to),
+        Step::Install { from, to } => (from, to),
     };
-    if opts.check {
-        println!(
-            "jubarte {from} is installed; {to} is available. Run `jubarte self-update` to install it."
-        );
-        return Ok(());
-    }
     if !opts.yes && !confirm(&from, &to)? {
         println!("Nothing changed.");
         return Ok(());
@@ -350,6 +380,62 @@ mod tests {
             ..Options::default()
         };
         assert!(preflight(&pinned, false).is_err());
+    }
+
+    #[test]
+    fn check_reports_and_never_installs() {
+        let install = Plan::Install {
+            from: "0.10.0".into(),
+            to: "0.11.0".into(),
+        };
+        // --check turns an install decision into a report: Step::Install is
+        // unreachable with check set, so nothing is ever downloaded or replaced.
+        let look = Options {
+            check: true,
+            ..Options::default()
+        };
+        assert_eq!(
+            step(&look, &install, "0.11.0"),
+            Step::Report {
+                text: "jubarte 0.10.0 is installed; 0.11.0 is available. Run `jubarte self-update` to install it.".into()
+            }
+        );
+        // --check wins over --yes too: an explicit look never installs.
+        let look_yes = Options {
+            check: true,
+            yes: true,
+            ..Options::default()
+        };
+        assert!(matches!(
+            step(&look_yes, &install, "0.11.0"),
+            Step::Report { .. }
+        ));
+        // Without --check the same decision installs.
+        assert_eq!(
+            step(&Options::default(), &install, "0.11.0"),
+            Step::Install {
+                from: "0.10.0".into(),
+                to: "0.11.0".into()
+            }
+        );
+        // An up-to-date binary reports and stops whatever the flags say.
+        let up_to_date = Plan::UpToDate {
+            current: "0.11.0".into(),
+        };
+        for opts in [
+            look,
+            look_yes,
+            Options {
+                yes: true,
+                ..Options::default()
+            },
+            Options::default(),
+        ] {
+            assert!(matches!(
+                step(&opts, &up_to_date, "0.11.0"),
+                Step::Report { .. }
+            ));
+        }
     }
 
     #[test]
