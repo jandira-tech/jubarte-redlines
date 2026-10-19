@@ -308,6 +308,53 @@ fn consume_keeps_the_plan_until_it_has_been_applied() {
     );
 }
 
+/// #933: apply consumes a plan only — a plain apply records nothing into
+/// the plan and deletes none of it.
+#[test]
+fn a_plain_apply_leaves_the_plan_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Sections 1(g), 2(e), 3 survive.");
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let held = std::fs::read(dir.join("plan.json")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(dir.join("out.docx").is_file(), "the edit was written");
+    assert!(dir.join("plan.json").is_file(), "the plan still exists");
+    assert_eq!(
+        std::fs::read(dir.join("plan.json")).unwrap(),
+        held,
+        "apply leaves the plan byte-identical"
+    );
+    let (_, view, _) = run(dir, &["read", "out.docx"]);
+    assert!(view.contains("{~~his or her~>their~~}"), "{view}");
+}
+
 /// zcode review 06b F3, F4, F6, F8, F9.
 #[test]
 fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
