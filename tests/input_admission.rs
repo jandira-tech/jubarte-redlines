@@ -12,10 +12,10 @@
 
 use std::io::{Cursor, Write};
 
-use jubarte::WmlDocument;
 use jubarte::admission::InputLimits;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::{compare_documents, compare_documents_with_settings};
+use jubarte::WmlDocument;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -655,4 +655,194 @@ fn an_explicit_roomier_count_budget_survives_identical_compare() {
         .expect("all constructor calls must preserve the caller's admitted budget");
     jubarte::document_comparer::get_revisions(&docx, &settings)
         .expect("revision listing keeps the caller's budget too");
+}
+
+/// CRC-32 (IEEE, reflected) as the ZIP format writes it.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let bit = crc & 1;
+            crc >>= 1;
+            if bit != 0 {
+                crc ^= 0xEDB8_8320;
+            }
+        }
+    }
+    !crc
+}
+
+/// A local file header (`PK\3\4`) for `name`: version 20, `flags`,
+/// stored method, no time, the given CRC-32 and sizes.
+fn local_header(name: &[u8], flags: u16, crc: u32, sizes: (u32, u32)) -> Vec<u8> {
+    let mut header = vec![0x50, 0x4b, 0x03, 0x04];
+    header.extend_from_slice(&20u16.to_le_bytes());
+    header.extend_from_slice(&flags.to_le_bytes());
+    header.extend_from_slice(&0u16.to_le_bytes());
+    header.extend_from_slice(&[0; 4]);
+    header.extend_from_slice(&crc.to_le_bytes());
+    header.extend_from_slice(&sizes.0.to_le_bytes());
+    header.extend_from_slice(&sizes.1.to_le_bytes());
+    header.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+    header.extend_from_slice(&0u16.to_le_bytes());
+    header.extend_from_slice(name);
+    header
+}
+
+/// The entry's local-header and central-record offsets.
+fn header_offsets(bytes: &[u8], name: &str) -> (usize, usize) {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let entry = archive.by_name(name).unwrap();
+    (
+        usize::try_from(entry.header_start()).unwrap(),
+        usize::try_from(entry.central_header_start()).unwrap(),
+    )
+}
+
+/// A valid package whose `word/document.xml` local header declares a
+/// different compression method than its central record (#644 item 1).
+fn header_disagreement_probe() -> Vec<u8> {
+    let mut bytes = package(|_, _| {});
+    let (lfh, _) = header_offsets(&bytes, "word/document.xml");
+    bytes[lfh + 8] ^= 0x08;
+    bytes
+}
+
+/// A valid package whose `b.bin` central record points at a local header
+/// embedded in `a.bin`'s payload, with all compared fields matching
+/// (#644 item 2).
+fn extent_probe() -> Vec<u8> {
+    let mut embedded = local_header(b"b.bin", 0, crc32(b"x"), (1, 1));
+    embedded.extend_from_slice(b"x");
+    let mut bytes = package(|writer, options| {
+        let stored = options.compression_method(CompressionMethod::Stored);
+        for (name, data) in [("a.bin", embedded.as_slice()), ("b.bin", b"x" as &[u8])] {
+            writer.start_file(name, stored).unwrap();
+            writer.write_all(data).unwrap();
+        }
+    });
+    let (a_lfh, _) = header_offsets(&bytes, "a.bin");
+    let embedded_at = a_lfh + 30 + b"a.bin".len();
+    assert_eq!(&bytes[embedded_at..embedded_at + 4], b"PK\x03\x04");
+    let (_, b_central) = header_offsets(&bytes, "b.bin");
+    bytes[b_central + 42..b_central + 46]
+        .copy_from_slice(&u32::try_from(embedded_at).unwrap().to_le_bytes());
+    bytes
+}
+
+/// A package whose entries carry data descriptors, the last one with a
+/// corrupted CRC-32 (#644 item 3).
+fn descriptor_probe(corrupt: bool) -> Vec<u8> {
+    let mut writer = ZipWriter::new_stream(Vec::new());
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (name, body) in [
+        ("[Content_Types].xml", CONTENT_TYPES),
+        ("_rels/.rels", PACKAGE_RELS),
+        ("word/document.xml", DOCUMENT),
+    ] {
+        writer.start_file(name, options).unwrap();
+        writer.write_all(body.as_bytes()).unwrap();
+    }
+    let mut bytes = writer.finish().unwrap().into_inner();
+    if corrupt {
+        let last = bytes
+            .windows(4)
+            .rposition(|w| w == b"PK\x07\x08")
+            .expect("signed descriptor");
+        bytes[last + 4] ^= 0xff;
+    }
+    bytes
+}
+
+/// A package whose directory entry carries a payload with a corrupt
+/// CRC-32 (#644 item 4).
+fn directory_probe() -> Vec<u8> {
+    let mut bytes = package(|writer, options| {
+        writer
+            .start_file(
+                "word/medi0",
+                options.compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"0").unwrap();
+    });
+    // Rename "word/medi0" to "word/medi/" in both headers.
+    let (lfh, central) = header_offsets(&bytes, "word/medi0");
+    bytes[lfh + 30..lfh + 40].copy_from_slice(b"word/medi/");
+    bytes[central + 46..central + 56].copy_from_slice(b"word/medi/");
+    let at = lfh + 30 + b"word/medi/".len();
+    bytes[at] = b'7';
+    bytes
+}
+
+/// ZIP-17 (#644): every public route applies the structural refusals the
+/// bounded constructor owns — direct admission, the package
+/// constructor, scrub/leaks, the Markdown reader — while `debug`
+/// reports each defect as a finding so a refused file can be triaged.
+#[test]
+fn zip17_public_boundaries() {
+    for (what, bytes, code, finding) in [
+        (
+            "header field",
+            header_disagreement_probe(),
+            "ZIP_HEADER_MISMATCH",
+            "ZIP_HEADER_MISMATCH",
+        ),
+        ("extent", extent_probe(), "INVALID_PACKAGE", "ZIP_EXTENT"),
+        (
+            "descriptor",
+            descriptor_probe(true),
+            "INVALID_PACKAGE",
+            "ZIP_DESCRIPTOR",
+        ),
+        (
+            "directory payload",
+            directory_probe(),
+            "INVALID_PACKAGE",
+            "ZIP_DIRECTORY_PAYLOAD",
+        ),
+    ] {
+        let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
+            .expect_err("{what} probe must be refused");
+        assert_eq!(err.code(), code, "{what}: {err}");
+        for route in [
+            jubarte::opc::PartFs::open(&bytes)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+                .expect_err("{what} PartFs"),
+            jubarte::scrub::scrub(&bytes, &jubarte::scrub::ScrubOptions::default())
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+                .expect_err("{what} scrub"),
+            jubarte::markdown::docx_to_markdown(
+                &bytes,
+                &jubarte::markdown::MarkdownOptions::default(),
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+            .expect_err("{what} markdown"),
+        ] {
+            assert!(route.contains(code), "{what}: {route}");
+        }
+        let found = jubarte::scrub::leaks(&bytes, "no-such-text-occurs-here");
+        assert!(!found.is_empty(), "{what}: leaks must fail closed");
+        let findings =
+            jubarte::debug::findings(&bytes).expect("debug opens a package every route refuses");
+        assert!(
+            findings.iter().any(|f| f.code == finding),
+            "{what}: {findings:?}"
+        );
+    }
+    // The retained positive row: a valid descriptor package opens
+    // through every route.
+    let control = descriptor_probe(false);
+    jubarte::admission::admit(&control, jubarte::admission::InputLimits::compare())
+        .expect("a descriptor package admits");
+    jubarte::opc::PartFs::open(&control).expect("PartFs opens it");
+    jubarte::scrub::scrub(&control, &jubarte::scrub::ScrubOptions::default())
+        .expect("scrub opens it");
+    jubarte::markdown::docx_to_markdown(&control, &jubarte::markdown::MarkdownOptions::default())
+        .expect("markdown opens it");
+    jubarte::debug::findings(&control).expect("debug opens it");
 }
