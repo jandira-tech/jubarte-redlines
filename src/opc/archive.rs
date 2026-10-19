@@ -69,6 +69,8 @@ struct HeaderShape {
     name_length: usize,
     extra_length: usize,
     external_attributes: Option<usize>,
+    /// The central record's file-comment length; a local header has none.
+    comment_length: Option<usize>,
     name: usize,
 }
 
@@ -83,6 +85,7 @@ const CENTRAL_HEADER: HeaderShape = HeaderShape {
     name_length: 28,
     extra_length: 30,
     external_attributes: Some(38),
+    comment_length: Some(32),
     name: 46,
 };
 const LOCAL_HEADER: HeaderShape = HeaderShape {
@@ -96,6 +99,7 @@ const LOCAL_HEADER: HeaderShape = HeaderShape {
     name_length: 26,
     extra_length: 28,
     external_attributes: None,
+    comment_length: None,
     name: 30,
 };
 
@@ -111,6 +115,7 @@ struct HeaderFields {
     name_length: u16,
     extra_length: u16,
     external_attributes: Option<u32>,
+    comment_length: u16,
     name: Vec<u8>,
     extra: Vec<u8>,
 }
@@ -170,6 +175,10 @@ fn header_fields<R: Read + Seek>(
         name_length: read_u16(&head, shape.name_length)?,
         extra_length: read_u16(&head, shape.extra_length)?,
         external_attributes: shape.external_attributes.and_then(|at| read_u32(&head, at)),
+        comment_length: shape
+            .comment_length
+            .and_then(|at| read_u16(&head, at))
+            .unwrap_or(0),
         name,
         extra,
     })
@@ -332,6 +341,10 @@ pub(crate) enum ZipDefectKind {
     /// only): a `debug` report keeps going where a reading route
     /// refuses, so the failure is named for the entry instead (#644).
     EntryRead,
+    /// Two central records name one OPC part — byte-equal or under
+    /// ASCII case (ZIP-15/#600) — which the reader's name index would
+    /// collapse, silently keeping the second copy.
+    DuplicatePart,
 }
 
 impl ZipDefect {
@@ -352,6 +365,9 @@ impl ZipDefect {
             ZipDefectKind::SpecialEntry => {
                 AdmissionError::new(K::UnsupportedPackage, self.detail.clone())
             }
+            ZipDefectKind::DuplicatePart => {
+                AdmissionError::new(K::DuplicatePart, self.detail.clone())
+            }
         }
     }
 
@@ -364,6 +380,7 @@ impl ZipDefect {
             ZipDefectKind::SpecialEntry => "zip-special-entry",
             ZipDefectKind::DirectoryPayload => "zip-directory-payload",
             ZipDefectKind::EntryRead => "zip-entry-read",
+            ZipDefectKind::DuplicatePart => "zip-duplicate-part",
         }
     }
 }
@@ -645,6 +662,69 @@ pub(crate) fn zip_defects<R: Read + Seek>(
                     "entry {index} ('{name}') ends at {end}, inside entry '{other}' starting at {other_start}"
                 ),
             });
+        }
+    }
+    defects.extend(duplicate_parts(reader, archive.central_directory_start()));
+    defects
+}
+
+/// Two central records naming one OPC part (`DUPLICATE_PART`, ZIP-15/#600,
+/// ECMA-376 Part 2 §6.2.2.3 M1.12). The reader's name index collapses a
+/// byte-equal duplicate (and Word refuses the file either way — probes
+/// p1/p2/p6/p7/p9), so the check walks the raw central records instead of
+/// the index: each record's name decodes exactly as `zip_entry_name`
+/// resolves it for the readers, and two decoded names equal under ASCII
+/// case are one part. A directory entry (`word/`) is not a part and never
+/// collides with a file. The walk stops at the first record that is not
+/// a central header, so a comment or trailing data cannot desynchronize
+/// it, and it allocates one entry per central record — the same bound
+/// the index itself would reach.
+fn duplicate_parts<R: Read + Seek>(reader: &mut R, mut at: u64) -> Vec<ZipDefect> {
+    let mut defects = Vec::new();
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for index in 0usize.. {
+        let Some(central) = header_fields(reader, at, &CENTRAL_HEADER) else {
+            break;
+        };
+        let step = u64::from(central.name_length)
+            .saturating_add(u64::from(central.extra_length))
+            .saturating_add(u64::from(central.comment_length));
+        let Some(next) = at
+            .checked_add(CENTRAL_HEADER.name as u64)
+            .and_then(|at| at.checked_add(step))
+        else {
+            break;
+        };
+        at = next;
+        if central.name.ends_with(b"/") {
+            continue;
+        }
+        // The per-entry read refuses an archive whose name fails to decode
+        // with the same error; it needs no second finding here.
+        let Ok(name) =
+            crate::admission::zip_entry_name_raw(&central.name, central.flags, &central.extra)
+        else {
+            continue;
+        };
+        let identity = name.to_ascii_lowercase();
+        match seen.get(&identity) {
+            None => {
+                seen.insert(identity, name);
+            }
+            Some(first) if *first == name => {
+                defects.push(ZipDefect {
+                    kind: ZipDefectKind::DuplicatePart,
+                    detail: format!("two ZIP entries have the same name '{name}' (entry {index})"),
+                });
+            }
+            Some(first) => {
+                defects.push(ZipDefect {
+                    kind: ZipDefectKind::DuplicatePart,
+                    detail: format!(
+                        "'{first}' and '{name}' name the same part (entry {index}; part names ignore case)"
+                    ),
+                });
+            }
         }
     }
     defects

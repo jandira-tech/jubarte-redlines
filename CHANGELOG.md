@@ -44,6 +44,16 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 ### Fixed
 
 - **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
+- **Duplicate ZIP and OPC part identities are refused on every route**
+  (#600). OPC part names compare ASCII-case-insensitively (ECMA-376
+  Part 2 §6.2.2.3 M1.12), so two entries naming one part — a byte-equal
+  duplicate or a case alias of the main part, `[Content_Types].xml` or
+  `_rels/.rels` — are refused with `DUPLICATE_PART` before the name
+  index can collapse them; Word refuses the same packages. A single
+  case-variant name is the part, exactly as Word opens it: every lookup
+  resolves under the one identity, `set_part` replaces while keeping the
+  stored spelling, and `to_zip` writes one entry per identity (reserved
+  parts under their canonical spelling).
 - Enforce XML tag policy at package admission and checked XML APIs with active limits: defaults of 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags, plus duplicate expanded-name refusal. Preserve permissive comparison tree construction and linear bulk attribute insertion. Markdown conversion enforces explicit `MarkdownOptions::input_limits`, including on best-effort auxiliary parts; comparison-to-Markdown carries active limits. Ring-1 reports Word-fatal `DUPLICATE_EXPANDED_ATTRIBUTE` with part and element (#650).
 - **Package writes plan against ZIP32 and never write ZIP64** (#604).
   Every writer — `PartFs::to_zip`, the Strict→Transitional repack, the

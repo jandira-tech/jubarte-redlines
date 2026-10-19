@@ -28,13 +28,13 @@
 //! [`crate::comparer::WmlComparerSettings::input_limits`] overrides.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{Cursor, Read};
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use zip::{CompressionMethod, ZipArchive};
+use zip::CompressionMethod;
 
 /// Resource budgets. The defaults are a product policy, not a proof against
 /// every denial of service.
@@ -441,19 +441,12 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
 
     sniff(bytes)?;
 
-    let declared = preindex_budget(bytes, limits)?;
+    preindex_budget(bytes, limits)?;
     // The shared open (`crate::opc::open_archive`) runs this same check, but
     // as a plain zip error; admission opens unchecked so the refusal keeps
     // its typed kind.
     let mut archive = crate::opc::open_archive_unchecked(Cursor::new(bytes))
         .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("not a ZIP file: {e}")))?;
-    // The reader keys entries by name, so exact duplicates collapse into one.
-    if (archive.len() as u64) < declared {
-        return Err(AdmissionError::new(
-            K::DuplicatePart,
-            "two ZIP entries have the same name",
-        ));
-    }
     // GHSA-m665-v7pm-7grj (zip <= 9.0.4) and ZIP-17 (#644): a local header
     // may disagree with the central directory — a scanner trusting local
     // headers would see a different package — and an entry's extent may
@@ -462,7 +455,10 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
     // records must agree (`zip_defects`). zip 9.0.5's own
     // `validate_header_consistency` is stricter than the format: it also
     // refuses a local time or a central-only Unicode Path field, both of
-    // which real Word-opened files carry.
+    // which real Word-opened files carry. `zip_defects` also walks the raw
+    // central directory, so two records naming one part — an exact
+    // duplicate the index would collapse, or an ASCII-case alias — refuse
+    // here with `DUPLICATE_PART` (ZIP-15/#600).
     if let Some(defect) = crate::opc::zip_defects(&archive, &mut Cursor::new(bytes))
         .into_iter()
         .next()
@@ -470,7 +466,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         return Err(defect.refusal());
     }
 
-    let mut canonical = HashSet::new();
+    let mut names: Vec<String> = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
         let entry = archive
             .by_index_raw(i)
@@ -484,12 +480,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         )
         .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
         check_part_name(&name)?;
-        if !canonical.insert(name.to_ascii_lowercase()) {
-            return Err(AdmissionError::new(
-                K::DuplicatePart,
-                format!("{name} appears twice (part names ignore case)"),
-            ));
-        }
+        names.push(name.clone());
         if entry.encrypted() {
             return Err(AdmissionError::new(
                 K::UnsupportedPackage,
@@ -553,7 +544,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         account_inflated(&mut total, read, &name, cap, &limits)?;
     }
 
-    let main_part = main_part(&archive, &kept)?;
+    let main_part = main_part(&names, &kept)?;
     // The scan above is by extension; the main part is parsed whatever it is
     // called, so one named otherwise is read once more for its depth.
     let lower = main_part.to_ascii_lowercase();
@@ -676,6 +667,85 @@ pub(crate) fn unicode_path_fields(
     fields.filter_map(|field| match field {
         zip::ExtraField::UnicodePath(unicode) => Some(unicode),
         _ => None,
+    })
+}
+
+/// CRC-32 (IEEE, reflected), as the ZIP format and the Info-ZIP Unicode
+/// Path extra field checksum use it.
+pub(crate) fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let bit = crc & 1;
+            crc >>= 1;
+            if bit != 0 {
+                crc ^= 0xEDB8_8320;
+            }
+        }
+    }
+    !crc
+}
+
+/// The same name [`zip_entry_name`] resolves, decoded from a raw central
+/// record's fields — the header name bytes, the general-purpose flags and
+/// the extra-field block — where no [`zip::read::ZipFile`] exists to ask
+/// (the pre-index identity walk of ZIP-15/#600). zip 9 adopts each 0x7075
+/// field whose CRC32 matches the ORIGINAL header name and whose content is
+/// UTF-8, setting bit 11 (`zip-9.0.5/src/extra_fields/extra_field.rs`
+/// 291-300); [`zip_entry_name`] then refuses a field whose CRC matches the
+/// adopted name but whose content differs — the shape a non-UTF-8 adopted
+/// name produces — and the same refusal is applied here.
+pub(crate) fn zip_entry_name_raw(
+    raw: &[u8],
+    flags: u16,
+    extra: &[u8],
+) -> Result<String, zip::result::ZipError> {
+    // (crc32, content) of each Info-ZIP Unicode Path (0x7075) field:
+    // version byte, CRC32 of the header name, UTF-8 content.
+    let mut fields: Vec<(u32, &[u8])> = Vec::new();
+    let mut rest = extra;
+    while let Some((header, head_tail)) = rest.split_at_checked(4) {
+        rest = head_tail;
+        let tag = u16::from_le_bytes(header.first_chunk::<2>().copied().unwrap_or_default());
+        let len = usize::from(u16::from_le_bytes(
+            header.last_chunk::<2>().copied().unwrap_or_default(),
+        ));
+        let Some((body, tail)) = rest.split_at_checked(len) else {
+            break;
+        };
+        rest = tail;
+        if tag == 0x7075 && body.len() >= 5 {
+            fields.push((
+                u32::from_le_bytes(
+                    body.get(1..5)
+                        .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                        .unwrap_or_default(),
+                ),
+                body.get(5..).unwrap_or_default(),
+            ));
+        }
+    }
+    let original_crc = crc32(raw);
+    let mut name: Vec<u8> = raw.to_vec();
+    let mut utf8 = flags & 0x0800 != 0;
+    for &(crc, content) in &fields {
+        if crc == original_crc && std::str::from_utf8(content).is_ok() {
+            name = content.to_vec();
+            utf8 = true;
+        }
+    }
+    for &(crc, content) in &fields {
+        if crc == crc32(&name) && content != name.as_slice() {
+            return Err(zip::result::ZipError::InvalidArchive(
+                "Info-ZIP Unicode Path extra field content is not UTF-8".into(),
+            ));
+        }
+    }
+    Ok(if utf8 {
+        String::from_utf8_lossy(&name).into_owned()
+    } else {
+        cp437_name(&name)
     })
 }
 
@@ -824,11 +894,11 @@ fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), Ad
 
 /// The main document part from the package relationships (falling back to
 /// `word/document.xml`, as the reader does), checked against its declared
-/// content type.
-fn main_part<R: Read + std::io::Seek>(
-    archive: &ZipArchive<R>,
-    kept: &BTreeMap<String, Vec<u8>>,
-) -> Result<String, AdmissionError> {
+/// content type. `names` holds every entry's decoded name: OPC part names
+/// ignore ASCII case (M1.12), so a rels target spelled differently than
+/// the stored entry still names it, and the stored spelling is what the
+/// main part reports (ZIP-15/#600, Word's p3 probe).
+fn main_part(names: &[String], kept: &BTreeMap<String, Vec<u8>>) -> Result<String, AdmissionError> {
     use AdmissionErrorKind as K;
     let types = kept
         .get("[content_types].xml")
@@ -851,12 +921,16 @@ fn main_part<R: Read + std::io::Seek>(
             })
     });
     let main = from_rels.unwrap_or_else(|| "word/document.xml".to_string());
-    if archive.index_for_name(&main).is_none() {
+    let Some(main) = names
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case(&main))
+        .cloned()
+    else {
         return Err(AdmissionError::new(
             K::UnsupportedPackage,
             format!("main document part {main} is missing"),
         ));
-    }
+    };
     if let Some(content_type) = content_type_of(types, &main)
         && !MAIN_CONTENT_TYPES.contains(&content_type.as_str())
     {
@@ -1389,10 +1463,13 @@ mod tests {
             kind(&aliased, InputLimits::default()).code(),
             "DUPLICATE_PART"
         );
-        assert!(matches!(
-            crate::opc::PartFs::open(&aliased),
-            Err(oxml_opc::OpcError::DuplicatePartName(_))
-        ));
+        let opc = crate::opc::PartFs::open(&aliased)
+            .err()
+            .expect("the constructor must refuse the same aliases");
+        assert!(
+            opc.to_string().contains("DUPLICATE_PART"),
+            "the constructor refusal must carry the admission code, got: {opc}"
+        );
 
         // Row 2: a flag-clear CP437 media name and the relationship that
         // names its CP437 spelling — both readers admit the package under the
@@ -2443,6 +2520,103 @@ mod tests {
             admit(&bytes, InputLimits::default())
                 .unwrap_or_else(|err| panic!("{version_made_by:#06x}/{external:o} {name}: {err}"));
         }
+    }
+
+    /// ZIP-15 (#600): two central records naming one part — byte-equal or
+    /// an ASCII-case alias — is `DUPLICATE_PART` on every route, found by
+    /// a raw walk of the central directory before any index collapses the
+    /// second record. Word refuses each of these packages.
+    #[test]
+    fn duplicate_zip_identities_refuse_with_both_spellings() {
+        for (alias, first, second) in [
+            (false, "word/document.xml", "word/document.xml"),
+            (true, "word/document.xml", "word/Document.xml"),
+            (true, "word/document.xml", "WORD/document.xml"),
+            (true, "[Content_Types].xml", "[content_types].xml"),
+            (true, "_rels/.rels", "_RELS/.rels"),
+        ] {
+            let bytes = zip_names::docx_package(
+                "",
+                &[zip_names::RawEntry::raw(second.as_bytes(), b"SECOND")],
+            );
+            let err = admit(&bytes, InputLimits::default())
+                .expect_err("a second entry of one part must be refused");
+            assert_eq!(
+                err.kind,
+                AdmissionErrorKind::DuplicatePart,
+                "{first}/{second}"
+            );
+            assert!(err.message.contains(first), "{err}");
+            assert!(err.message.contains(second), "{err}");
+            if !alias {
+                assert!(err.message.contains("same name"), "{err}");
+            } else {
+                assert!(err.message.contains("ignore case"), "{err}");
+            }
+            // The package constructor refuses through the same defect, so
+            // the typed code travels as the io error's source.
+            let opc = crate::opc::PartFs::open(&bytes)
+                .err()
+                .expect("the constructor must refuse the same shape");
+            let text = opc.to_string();
+            assert!(text.contains("DUPLICATE_PART"), "{first}/{second}: {text}");
+        }
+    }
+
+    /// A directory entry is not a part: `word/` beside `word/document.xml`
+    /// (probe p8, which Word opens) and two directory spellings of one
+    /// folder admit, where two FILE entries of one identity refuse.
+    #[test]
+    fn directory_entries_are_not_part_identities() {
+        for extra in [
+            zip_names::RawEntry::raw(b"word/", b""),
+            zip_names::RawEntry::raw(b"WORD/", b""),
+        ] {
+            let bytes = zip_names::docx_package("", &[extra]);
+            admit(&bytes, InputLimits::default())
+                .expect("directory entries never collide with parts");
+        }
+        let both = zip_names::docx_package(
+            "",
+            &[
+                zip_names::RawEntry::raw(b"word/", b""),
+                zip_names::RawEntry::raw(b"WORD/", b""),
+            ],
+        );
+        admit(&both, InputLimits::default()).expect("two spellings of one directory");
+    }
+
+    /// One case-variant name is the part (ECMA-376 Part 2 §6.2.2.3
+    /// M1.12): Word opens `word/Document.xml`, `[content_types].xml` and
+    /// `_RELS/.RELS` as the only spellings of the reserved and main parts
+    /// (probes p3, p4, p5), so admission resolves them by identity and
+    /// reports the stored spelling as the main part.
+    #[test]
+    fn a_case_variant_name_is_the_part() {
+        let bytes = zip_names::zip(&[
+            zip_names::RawEntry::raw(b"[Content_Types].xml", TYPES.as_bytes()),
+            zip_names::RawEntry::raw(b"_rels/.rels", RELS.as_bytes()),
+            zip_names::RawEntry::raw(b"word/Document.xml", DOC.as_bytes()),
+        ]);
+        let admitted = admit(&bytes, InputLimits::default())
+            .expect("the case-variant main part is the part the rels target names");
+        assert_eq!(admitted.main_part, "word/Document.xml");
+
+        let lower_types = zip_names::zip(&[
+            zip_names::RawEntry::raw(b"[content_types].xml", TYPES.as_bytes()),
+            zip_names::RawEntry::raw(b"_rels/.rels", RELS.as_bytes()),
+            zip_names::RawEntry::raw(b"word/document.xml", DOC.as_bytes()),
+        ]);
+        admit(&lower_types, InputLimits::default())
+            .expect("the case-variant [Content_Types].xml is the content types");
+
+        let upper_rels = zip_names::zip(&[
+            zip_names::RawEntry::raw(b"[Content_Types].xml", TYPES.as_bytes()),
+            zip_names::RawEntry::raw(b"_RELS/.RELS", RELS.as_bytes()),
+            zip_names::RawEntry::raw(b"word/document.xml", DOC.as_bytes()),
+        ]);
+        admit(&upper_rels, InputLimits::default())
+            .expect("the case-variant _RELS/.RELS is the package relationships");
     }
 }
 
