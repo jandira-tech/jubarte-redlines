@@ -382,3 +382,218 @@ fn md_roundtrip_sample_matches_docx_route_after_resolve() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+/// Issue #1240's 175-case matrix: the CriticMark spec's formatting
+/// table, generated in Rust as `matrix-gen.py` builds it — seven
+/// containers (`*…*`, `_…_`, `**…**`, `__…__`, `~~…~~`, `***…***`,
+/// `[…](u)`) crossed with six body formats, each as an insertion, a
+/// deletion and a substitution in the middle, the container's own
+/// format at the start and at the end, and a substitution whose old
+/// side is formatted. Both decisions: 350 outcomes, each asserting
+/// `canon(md→md) == docx route`.
+#[test]
+fn md_and_docx_routes_resolve_the_format_matrix_alike() {
+    let containers: &[(&str, &str)] = &[
+        ("*", "*"),
+        ("_", "_"),
+        ("**", "**"),
+        ("__", "__"),
+        ("~~", "~~"),
+        ("***", "***"),
+        ("[", "](https://example.com)"),
+    ];
+    let inners = ["*b*", "_b_", "**b**", "~~b~~", "`b`", "b"];
+    let marks = |body: &str| {
+        [
+            format!("{{++{body}++}}"),
+            format!("{{--{body}--}}"),
+            format!("{{~~x~>{body}~~}}"),
+        ]
+    };
+    let mut cases: Vec<String> = Vec::new();
+    for &(open, close) in containers {
+        let same = if open == "[" {
+            "b".to_string()
+        } else {
+            format!("{open}b{close}")
+        };
+        for inner in inners {
+            for mark in marks(inner) {
+                cases.push(format!("Say {open}a{mark}c{close} now.\n"));
+            }
+        }
+        for mark in marks(&same) {
+            cases.push(format!("Say {open}{mark}c{close} now.\n"));
+            cases.push(format!("Say {open}a{mark}{close} now.\n"));
+        }
+        cases.push(format!("Say {open}a{{~~{same}~>y~~}}c{close} now.\n"));
+    }
+    assert_eq!(cases.len(), 175, "the matrix is 175 cases");
+    let mut failures = Vec::new();
+    for input in &cases {
+        for choice in [TrackChanges::Accept, TrackChanges::Reject] {
+            let resolved = resolve_critic(input, choice);
+            let md_route = canon(&resolved, false);
+            let want = docx_route(input, choice);
+            if md_route != want {
+                failures.push(format!(
+                    "input={input:?} {choice:?}\n  resolved {resolved:?}\n  md  {md_route:?}\n  doc {want:?}",
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of 350 outcomes disagree\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Issue #1240's property test: random inline trees of depth at most
+/// three — text, emphasis and strong in both delimiter flavours,
+/// strikethrough, code spans and links — with one mark of any kind at
+/// any position, resolved both ways. The generator is a small seeded
+/// xorshift, no dependency; the seed prints on failure. Text leaves
+/// stay alphanumeric so the cases isolate delimiter interplay.
+#[test]
+fn md_and_docx_routes_resolve_random_inline_trees_alike() {
+    /// The children of a node, and the mark one of them may hold.
+    enum Node {
+        Text(String),
+        /// `(open, close)` around the children.
+        Span(&'static str, &'static str, Vec<Node>),
+        /// `{++…++}`, `{--…--}` or `{~~…~>…~~}`: kind 0, 1 or 2; a
+        /// substitution keeps `old` before `~>` and `new` after it.
+        Mark(usize, Vec<Node>, Vec<Node>),
+        Link(Vec<Node>),
+    }
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+    const SPANS: &[(&str, &str)] = &[
+        ("*", "*"),
+        ("_", "_"),
+        ("**", "**"),
+        ("__", "__"),
+        ("~~", "~~"),
+        ("`", "`"),
+    ];
+    fn tree(rng: &mut Rng, depth: u32) -> Vec<Node> {
+        let mut nodes = Vec::new();
+        for _ in 0..=rng.below(3) {
+            if depth == 0 || rng.below(3) == 0 {
+                let text = (b'a' + rng.below(26) as u8) as char;
+                nodes.push(Node::Text(text.to_string()));
+                continue;
+            }
+            let n = rng.below(7);
+            let node = if n == 6 {
+                Node::Link(tree(rng, depth - 1))
+            } else {
+                let (open, close) = SPANS[n as usize];
+                Node::Span(open, close, tree(rng, depth - 1))
+            };
+            nodes.push(node);
+        }
+        if nodes.is_empty() {
+            nodes.push(Node::Text("t".to_string()));
+        }
+        nodes
+    }
+    fn marked(rng: &mut Rng, depth: u32) -> Vec<Node> {
+        let mut nodes = tree(rng, depth);
+        let kind = rng.below(3) as usize;
+        let body = tree(rng, depth.saturating_sub(1));
+        let other = tree(rng, depth.saturating_sub(1));
+        let mark = Node::Mark(kind, body, other);
+        let at = rng.below(nodes.len() as u64 + 1) as usize;
+        nodes.insert(at, mark);
+        nodes
+    }
+    fn write(nodes: &[Node], out: &mut String) {
+        for node in nodes {
+            match node {
+                Node::Text(text) => out.push_str(text),
+                Node::Span(open, close, children) => {
+                    out.push_str(open);
+                    write(children, out);
+                    out.push_str(close);
+                }
+                Node::Mark(0, body, _) => {
+                    out.push_str("{++");
+                    write(body, out);
+                    out.push_str("++}");
+                }
+                Node::Mark(1, body, _) => {
+                    out.push_str("{--");
+                    write(body, out);
+                    out.push_str("--}");
+                }
+                Node::Mark(_, old, new) => {
+                    out.push_str("{~~");
+                    write(old, out);
+                    out.push_str("~>");
+                    write(new, out);
+                    out.push_str("~~}");
+                }
+                Node::Link(children) => {
+                    out.push('[');
+                    write(children, out);
+                    out.push_str("](u)");
+                }
+            }
+        }
+    }
+    let seed = std::env::var("MATRIX_SEED")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0x1240_5eed_u64);
+    let mut rng = Rng(seed | 1);
+    let mut failures = Vec::new();
+    for case in 0..2000u64 {
+        let nodes = marked(&mut rng, 3);
+        let mut input = String::from("Say ");
+        write(&nodes, &mut input);
+        input.push_str(" now.\n");
+        for choice in [TrackChanges::Accept, TrackChanges::Reject] {
+            let input = input.clone();
+            let resolved = std::panic::catch_unwind(|| resolve_critic(&input, choice));
+            let Ok(resolved) = resolved else {
+                failures.push(format!(
+                    "case {case} input={input:?} {choice:?}: resolve panicked"
+                ));
+                continue;
+            };
+            let md_route = canon(&resolved, false);
+            let want = docx_route(&input, choice);
+            if md_route != want {
+                failures.push(format!(
+                    "case {case} input={input:?} {choice:?}\n  resolved {resolved:?}\n  md  {md_route:?}\n  doc {want:?}",
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "seed {seed:#x}: {} failing outcomes of 4000\n{}",
+        failures.len(),
+        failures
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
