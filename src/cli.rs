@@ -1120,9 +1120,16 @@ pub enum Command {
         #[command(flatten)]
         #[serde(flatten)]
         options: EditOptions,
-        /// Resolve and report only; write nothing.
+        /// Resolve and report only; write nothing. When every operation
+        /// passes, stderr ends with the command that applies it (`next:`).
         #[arg(long)]
         dry_run: bool,
+        /// Apply every operation that passes; leave out the ones that fail
+        /// and every operation of their "group". Exit 0 when one landed.
+        /// The failed ones go to PLAN.failed.json (FILE_plan.failed.json for
+        /// operation flags): a plan to fix and run on the output.
+        #[arg(long)]
+        skip_failed: bool,
         /// Refuse when the edit would change nothing in the document
         /// (NO_CHANGES_REQUESTED); reports, renders and bundles do not
         /// count as a change.

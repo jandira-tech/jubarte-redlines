@@ -1555,7 +1555,11 @@ impl SourceModel {
             ));
         }
         Ok(Mapped {
-            legacy: Operation { id: None, kind },
+            legacy: Operation {
+                id: None,
+                group: None,
+                kind,
+            },
             paragraphs,
         })
     }

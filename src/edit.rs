@@ -52,6 +52,7 @@ pub mod resolution;
 mod rewrite;
 mod runs;
 mod sections;
+mod skip;
 mod structural;
 mod tracked;
 mod visible;
@@ -90,6 +91,8 @@ pub use prepared::{
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
 /// `section` values.
 pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
+/// `--skip-failed`: what was left out, and the plan to fix and run.
+pub use skip::{SkippedOperation, failed_plan_json};
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,6 +261,11 @@ pub struct Operation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Caller-chosen operation id echoed in the report.
     pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Operations sharing a group stand or fall together under
+    /// `--skip-failed` ([`PrepareOptions::skip_failed`]); without it a
+    /// group changes nothing.
+    pub group: Option<String>,
     #[serde(flatten)]
     /// The operation.
     pub kind: OperationKind,
@@ -1147,6 +1155,18 @@ pub struct EditReport {
     /// Fields whose results `update_fields` wrote into the clean copy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<crate::fields::FieldUpdate>,
+    /// Operations `--skip-failed` left out (status `skipped`); `ok` is
+    /// false whenever one was.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skipped: usize,
+    /// SHA-256 of the document written, set by whoever writes it (the
+    /// CLI): the bytes a follow-up plan binds to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_sha256: Option<String>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 impl EditReport {
@@ -1220,10 +1240,21 @@ impl EditReport {
             .filter(|o| o.status == "failed")
             .count();
         let ok = self.operations.iter().filter(|o| o.status == "ok").count();
+        // Under --skip-failed the operations that passed landed: partial.
+        let status = match (self.ok, self.skipped) {
+            (true, _) => "ok",
+            (false, 0) => "failed",
+            (false, _) if ok > 0 => "partial",
+            (false, _) => "failed",
+        };
+        let mut ops = serde_json::json!({"ok": ok, "failed": failed});
+        if self.skipped > 0 {
+            ops["skipped"] = self.skipped.into();
+        }
         let mut summary = serde_json::json!({
             "ev": "summary",
-            "status": if self.ok { "ok" } else { "failed" },
-            "ops": {"ok": ok, "failed": failed},
+            "status": status,
+            "ops": ops,
             "paras": {"from": self.paragraphs.from, "to": self.paragraphs.to,
                       "d": self.paragraphs.to as i64 - self.paragraphs.from as i64},
             "revs": self.revisions,
@@ -1234,6 +1265,9 @@ impl EditReport {
                 "split_revisions".into(),
                 serde_json::to_value(&self.split_revisions).expect("serializes"),
             );
+        }
+        if let Some(digest) = &self.output_sha256 {
+            summary["output_sha256"] = digest.clone().into();
         }
         push(summary);
         out
@@ -1575,6 +1609,16 @@ impl EditPlan {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| err("INVALID_PLAN", None, e.to_string()))?;
         check_operation_keys(&value)?;
+        let mut value = value;
+        // A failed plan's `why` is a note for whoever fixes the operation.
+        if let Some(ops) = value
+            .get_mut("operations")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for op in ops.iter_mut().filter_map(serde_json::Value::as_object_mut) {
+                op.remove("why");
+            }
+        }
         let plan: Self =
             serde_json::from_value(value).map_err(|e| err("INVALID_PLAN", None, e.to_string()))?;
         if plan.schema_version != SCHEMA_VERSION {
@@ -1619,6 +1663,12 @@ pub fn operation_schemas() -> &'static [serde_json::Value] {
             .clone();
         for variant in &mut variants {
             variant["properties"]["id"] = common["properties"]["id"].clone();
+            variant["properties"]["group"] = common["properties"]["group"].clone();
+            // A failed plan's note; read and ignored.
+            variant["properties"]["why"] = serde_json::json!({
+                "type": "string",
+                "description": "Why `--skip-failed` left this operation out; ignored."
+            });
             // Closed as `check_operation_keys` is: a key outside these
             // properties (besides the flattened `id`) is an error, not a
             // silently ignored extra.
@@ -1684,7 +1734,7 @@ fn exactly_one(fields: &[&str]) -> serde_json::Value {
 /// Allowed keys per operation kind; serde's `flatten` cannot deny unknown
 /// fields itself, and a misspelled key must not silently change meaning.
 fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
-    const COMMON: &[&str] = &["id", "kind"];
+    const COMMON: &[&str] = &["id", "kind", "group", "why"];
     let Some(ops) = plan.get("operations").and_then(|o| o.as_array()) else {
         return Ok(());
     };
@@ -2534,6 +2584,8 @@ impl<'p> Transaction<'p> {
             comments_added: self.comments_added,
             revisions: RevisionCounts::default(),
             fields: Vec::new(),
+            skipped: 0,
+            output_sha256: None,
         }
     }
 
@@ -5402,6 +5454,7 @@ impl<'p> Transaction<'p> {
                 };
                 Some(Operation {
                     id: operation.id.clone(),
+                    group: operation.group.clone(),
                     kind: OperationKind::Comment {
                         paragraph: paragraph.clone(),
                         find: None,
@@ -7641,6 +7694,7 @@ mod deeper_boundary_tests {
                     };
                     Operation {
                         id: Some(format!("case-{i}")),
+                        group: None,
                         kind,
                     }
                 })

@@ -145,6 +145,12 @@ pub struct PrepareOptions {
     /// The request syntax a refusal hint quotes: a flags-built plan names
     /// flags, a JSON plan names JSON (#1108).
     pub syntax: super::PlanSyntax,
+    /// `--skip-failed` (#1253): leave out every operation that fails, and
+    /// every operation of its `group`, instead of refusing the plan; the
+    /// rest is applied as a plan of its own. [`PreparedEdit::skipped`]
+    /// lists what was left out. A failure no operation is blamed for is
+    /// never skipped, and a plan whose every operation fails is refused.
+    pub skip_failed: bool,
 }
 
 impl Default for PrepareOptions {
@@ -154,6 +160,7 @@ impl Default for PrepareOptions {
             exact_text: false,
             role: PrimaryRole::Clean,
             syntax: super::PlanSyntax::V1,
+            skip_failed: false,
         }
     }
 }
@@ -183,6 +190,9 @@ pub struct PreparedEdit {
     /// comparer redline with no tracked correspondence: a v1 plan plus
     /// `--expect` refuses instead of guessing.
     pub correspondence: Option<crate::expect::SourceToOutputCorrespondence>,
+    /// The operations [`PrepareOptions::skip_failed`] left out, in plan
+    /// order; empty otherwise.
+    pub skipped: Vec<super::SkippedOperation>,
 }
 
 /// Run the shared preparation: resolve, apply, choose the primary bytes,
@@ -198,6 +208,18 @@ pub struct PreparedEdit {
 /// introduces a blocking finding, and `NO_CHANGES_REQUESTED` under
 /// [`PrepareOptions::require_change`] when the primary is unchanged.
 pub fn prepare(
+    source: &[u8],
+    plan: &EditPlan,
+    options: &PrepareOptions,
+) -> Result<PreparedEdit, EditError> {
+    if options.skip_failed {
+        return super::skip::prepare_skipping(source, plan, options);
+    }
+    prepare_once(source, plan, options)
+}
+
+/// [`prepare`] of the whole plan: the first failure refuses it.
+pub(super) fn prepare_once(
     source: &[u8],
     plan: &EditPlan,
     options: &PrepareOptions,
@@ -240,6 +262,7 @@ pub fn prepare(
         primary_effect: effect,
         checks,
         correspondence: None,
+        skipped: Vec::new(),
     })
 }
 
@@ -961,6 +984,7 @@ pub fn prepare_v2(
         result,
         checks,
         correspondence: Some(applied.correspondence),
+        skipped: Vec::new(),
     })
 }
 
@@ -993,6 +1017,8 @@ pub(crate) mod tests {
                 comments_added: 0,
                 revisions: Default::default(),
                 fields: Vec::new(),
+                skipped: 0,
+                output_sha256: None,
             },
         }
     }

@@ -1005,6 +1005,8 @@ struct EditJob<'a> {
     target: &'a EditTarget,
     mode: Mode,
     dry_run: bool,
+    /// `--skip-failed`: where the plan of the failed operations goes.
+    skip_failed: Option<PathBuf>,
     /// `--require-change`: refuse when the primary has no document effect.
     require_change: bool,
     force: bool,
@@ -1068,20 +1070,55 @@ fn run_edit(
         } else {
             jubarte::edit::PlanSyntax::Flags
         },
+        skip_failed: job.skip_failed.is_some(),
         ..jubarte::edit::PrepareOptions::default()
     };
     if job.dry_run {
         let report =
             jubarte::edit::preview_plan_with(source, plan, &options).map_err(|e| refused(&e))?;
-        return write_stdout(report.to_jsonl()).map_err(fail);
+        write_stdout(report.to_jsonl()).map_err(fail)?;
+        // A clean dry run says how to apply it: the same command.
+        if report.ok && !job.quiet {
+            edit_status(format_args!("next: {}", next_command()));
+        }
+        return Ok(());
     }
     // The plan first: a refused plan prints its whole report, whatever the
     // outputs (D15).
-    let result = jubarte::edit::prepare(source, plan, &options)
-        .map_err(|e| refused(&e))?
-        .result;
+    let prepared = jubarte::edit::prepare(source, plan, &options).map_err(|e| refused(&e))?;
+    let mut result = prepared.result;
+    let primary = match job.mode {
+        Mode::Suggesting => &result.redline,
+        Mode::Editing => &result.clean,
+    };
+    let digest = jubarte::inspect::source_sha256(primary);
+    result.report.output_sha256 = Some(digest.clone());
+    // The failed operations, as a plan bound to the document written:
+    // under suggesting mode that is a redline, whose tracked changes are
+    // the plan's own, so the plan keeps them.
+    let failed = job
+        .skip_failed
+        .as_ref()
+        .filter(|_| !prepared.skipped.is_empty())
+        .map(|path| {
+            let existing = match job.mode {
+                Mode::Suggesting => jubarte::edit::ExistingRevisions::Keep,
+                Mode::Editing => plan.existing_revisions,
+            };
+            let json = jubarte::edit::failed_plan_json(
+                plan,
+                &prepared.skipped,
+                &result.report.date,
+                &digest,
+                existing,
+            );
+            (path.clone(), json.into_bytes())
+        });
+    let result = result;
     let dir = match job.target {
-        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source, plan),
+        EditTarget::Single(path) => {
+            return write_edited(job, path, &result, failed.as_ref(), notes, source, plan);
+        }
         EditTarget::Bundle(dir) => dir,
     };
     let input_dir = job
@@ -1165,6 +1202,15 @@ fn run_edit(
         ],
         Mode::Editing => vec![("clean.docx".into(), result.clean.clone())],
     };
+    // The failed plan goes with the document it binds to.
+    let failed = failed.map(|(path, bytes)| {
+        let name = path.file_name().map_or_else(
+            || "plan.failed.json".into(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        outputs.push((name.clone(), bytes));
+        out_dir.join(name)
+    });
     for (name, rendered) in renders {
         if let Some(pdf) = rendered.pdf {
             outputs.push((format!("{name}.pdf"), pdf));
@@ -1245,6 +1291,7 @@ fn run_edit(
             names.len(),
             names.join(", ")
         ));
+        written_status(&result, failed.as_deref());
         for note in edit_notes(notes, &result) {
             edit_status(format_args!("{note}"));
         }
@@ -1259,6 +1306,7 @@ fn run_edit(
         names.len(),
         names.join(", ")
     ));
+    written_status(&result, failed.as_deref());
     for note in edit_notes(notes, &result) {
         edit_status(format_args!("{note}"));
     }
@@ -1776,6 +1824,7 @@ fn write_edited(
     job: &EditJob<'_>,
     path: &Path,
     result: &jubarte::edit::EditResult,
+    failed: Option<&(PathBuf, Vec<u8>)>,
     notes: &[String],
     source: &[u8],
     plan: &jubarte::edit::EditPlan,
@@ -1786,6 +1835,11 @@ fn write_edited(
         Mode::Editing => &result.clean,
     };
     let mut outputs: Vec<(PathBuf, &[u8])> = vec![(path.to_path_buf(), document)];
+    // `--skip-failed`: the plan of what was left out, published with the
+    // document it binds to.
+    if let Some((failed, bytes)) = failed {
+        outputs.push((failed.clone(), bytes));
+    }
     // Render before writing, so a failed render writes nothing.
     let rendered = if job.pdf || job.png {
         let options = jubarte::convert::PdfOptions {
@@ -1878,6 +1932,7 @@ fn write_edited(
             wrote_png_line(&pattern, png_count, job.dpi)
         ));
     }
+    written_status(result, failed.map(|(path, _)| path.as_path()));
     for note in edit_notes(notes, result) {
         edit_status(format_args!("{note}"));
     }
@@ -1907,6 +1962,56 @@ fn write_edited(
     }
 }
 
+/// The status lines after a write: the written document's SHA-256, then
+/// what `--skip-failed` left out and where its plan went.
+fn written_status(result: &jubarte::edit::EditResult, failed: Option<&Path>) {
+    if let Some(digest) = &result.report.output_sha256 {
+        edit_status(format_args!("sha256: {digest}"));
+    }
+    if let Some(path) = failed {
+        edit_status(format_args!(
+            "skipped {} of {} operations; the fixes are in {}",
+            result.report.skipped,
+            result.report.operations.len(),
+            slash_path(path)
+        ));
+    }
+}
+
+/// Where `--skip-failed` writes the failed operations: beside the plan as
+/// `PLAN.failed.json`, or beside FILE as `FILE_plan.failed.json` (the name
+/// `--plan` records under, D16) when operation flags made the plan.
+fn failed_plan_path(plan: Option<&Path>, file: &Path) -> PathBuf {
+    let stem = |path: &Path| {
+        path.file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned())
+    };
+    match plan {
+        Some(plan) => plan.with_file_name(format!("{}.failed.json", stem(plan))),
+        None => file.with_file_name(format!("{}_plan.failed.json", stem(file))),
+    }
+}
+
+/// This invocation without `--dry-run`, quoted for a POSIX shell: what a
+/// clean dry run prints as its `next:` command.
+fn next_command() -> String {
+    std::env::args_os()
+        .filter(|arg| arg != "--dry-run")
+        .map(|arg| shell_quoted(&arg.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `arg` as a POSIX shell reads it back: bare when it holds only safe
+/// characters, else single-quoted.
+fn shell_quoted(arg: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
+    if !arg.is_empty() && arg.chars().all(safe) {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
 /// One `edit` or `add` invocation, parsed.
 struct EditFlags<'a> {
     verb: jubarte::edit::flags::Verb,
@@ -1918,6 +2023,8 @@ struct EditFlags<'a> {
     operations: &'a [FlagOp],
     options: &'a EditOptions,
     dry_run: bool,
+    /// `--skip-failed` (`edit` only; `add` passes false).
+    skip_failed: bool,
     /// `--require-change` (`edit` only; `add` passes false).
     require_change: bool,
     pdf: bool,
@@ -1938,6 +2045,12 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
+        if flags.skip_failed {
+            return Err((
+                EXIT_USAGE,
+                "--skip-failed applies operations; with --plan, operation flags record into the plan instead".into(),
+            ));
+        }
         return record_plan(flags, path, &source);
     }
     // What --consume deletes once the edit is written: the plan file as it
@@ -1983,6 +2096,9 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
             Mode::Suggesting
         },
         dry_run: flags.dry_run,
+        skip_failed: flags
+            .skip_failed
+            .then(|| failed_plan_path(flags.plan, flags.file)),
         require_change: flags.require_change,
         force: flags.options.force,
         pdf: flags.pdf,
@@ -3284,6 +3400,7 @@ fn cli_main() -> ExitCode {
             consume,
             options,
             dry_run,
+            skip_failed,
             require_change,
             pdf,
             png,
@@ -3306,6 +3423,7 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run,
+                skip_failed,
                 require_change,
                 pdf,
                 png,
@@ -3333,6 +3451,7 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run: false,
+                skip_failed: false,
                 require_change: false,
                 pdf: false,
                 png: false,

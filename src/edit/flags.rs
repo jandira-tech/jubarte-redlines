@@ -114,12 +114,20 @@ pub fn plan_from_flags(
                             super::visible::reject_kind(listed, revision, comment)
                         }
                     };
-                    operations.push(Operation { id: None, kind });
+                    operations.push(Operation {
+                        id: None,
+                        group: None,
+                        kind,
+                    });
                 }
             }
             Group::Operation => {
                 let (kind, note) = flag_operation(verb, op)?;
-                operations.push(Operation { id: None, kind });
+                operations.push(Operation {
+                    id: None,
+                    group: None,
+                    kind,
+                });
                 notes.extend(note.map(|n| format!("op-{}: {n}", operations.len())));
             }
         }

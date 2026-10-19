@@ -576,6 +576,7 @@ fn operations(
                 if !whole.contains(&entry) {
                     operations.push(Operation {
                         id,
+                        group: None,
                         kind: OperationKind::Rewrite {
                             paragraph: at(p),
                             text: rewritten(paragraph, block),
@@ -596,10 +597,12 @@ fn operations(
                 };
                 operations.push(Operation {
                     id: Some(format!("edit:{entry}:new")),
+                    group: None,
                     kind,
                 });
                 operations.push(Operation {
                     id,
+                    group: None,
                     kind: OperationKind::DeleteParagraph {
                         paragraph: at(p),
                         comment: None,
@@ -619,7 +622,11 @@ fn operations(
                         comment: None,
                     }
                 };
-                operations.push(Operation { id, kind });
+                operations.push(Operation {
+                    id,
+                    group: None,
+                    kind,
+                });
             }
             Edit::Insert(b, after) => {
                 let block = &blocks[b];
@@ -631,7 +638,11 @@ fn operations(
                     Edit::Insert(..) => None,
                 });
                 if let Some(kind) = insert(block, after, next) {
-                    operations.push(Operation { id, kind });
+                    operations.push(Operation {
+                        id,
+                        group: None,
+                        kind,
+                    });
                 }
             }
         }
