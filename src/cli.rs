@@ -603,56 +603,6 @@ fn verbatim_head(_component: Option<std::path::Component>) -> Option<(PathBuf, b
     None
 }
 
-#[cfg(test)]
-mod slash_path_tests {
-    use super::{slash_path, unverbatimed};
-    use std::path::Path;
-
-    #[test]
-    fn slash_path_uses_forward_slashes() {
-        assert_eq!(slash_path(Path::new(r"dir\sub\name.md")), "dir/sub/name.md");
-        assert_eq!(slash_path(Path::new("plain")), "plain");
-    }
-
-    #[test]
-    fn unverbatimed_keeps_every_nonverbatim_path() {
-        // The parsed-component contract, portable: only a Windows verbatim
-        // prefix is ever stripped. (A `\\?\…` literal parses as an ordinary
-        // name off Windows, so it also stays.)
-        for path in ["plain", r"dir\sub", r"\\?\C:\a\b", r"\\?\UNC\s\sh\x"] {
-            assert_eq!(unverbatimed(Path::new(path)), None, "{path}");
-        }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unverbatimed_strips_every_verbatim_prefix_kind() {
-        for (path, stripped) in [
-            (r"\\?\C:\a\b", "C:/a/b"),
-            (r"\\?\c:\a", "C:/a"),
-            (r"\\?\C:", "C:"),
-            (r"\\?\UNC\server\share\x", "//server/share/x"),
-            (r"\\?\GLOBALROOT\Device\Foo", "GLOBALROOT/Device/Foo"),
-        ] {
-            assert_eq!(slash_path(Path::new(path)), stripped, "{path}");
-            assert!(!slash_path(Path::new(path)).contains("//?"), "{path}");
-        }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unverbatimed_returns_the_stripped_components() {
-        assert_eq!(
-            unverbatimed(Path::new(r"\\?\C:\a\b")).as_deref(),
-            Some(Path::new(r"C:\a\b"))
-        );
-        assert_eq!(
-            unverbatimed(Path::new(r"\\?\UNC\server\share\x")).as_deref(),
-            Some(Path::new(r"\\server\share\x"))
-        );
-    }
-}
-
 /// `--plan` without a value (D16) is `<FILE's dir>/<stem>_plan.json`.
 fn resolve_plan(task: &mut Command) {
     let (Command::Edit {
@@ -3799,5 +3749,55 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 value.to_string()
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod slash_path_tests {
+    use super::{slash_path, unverbatimed};
+    use std::path::Path;
+
+    #[test]
+    fn slash_path_uses_forward_slashes() {
+        assert_eq!(slash_path(Path::new(r"dir\sub\name.md")), "dir/sub/name.md");
+        assert_eq!(slash_path(Path::new("plain")), "plain");
+    }
+
+    #[test]
+    fn unverbatimed_keeps_every_nonverbatim_path() {
+        // The parsed-component contract, portable: only a Windows verbatim
+        // prefix is ever stripped. (A `\\?\…` literal parses as an ordinary
+        // name off Windows, so it also stays.)
+        for path in ["plain", r"dir\sub", r"\\?\C:\a\b", r"\\?\UNC\s\sh\x"] {
+            assert_eq!(unverbatimed(Path::new(path)), None, "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unverbatimed_strips_every_verbatim_prefix_kind() {
+        for (path, stripped) in [
+            (r"\\?\C:\a\b", "C:/a/b"),
+            (r"\\?\c:\a", "C:/a"),
+            (r"\\?\C:", "C:"),
+            (r"\\?\UNC\server\share\x", "//server/share/x"),
+            (r"\\?\GLOBALROOT\Device\Foo", "GLOBALROOT/Device/Foo"),
+        ] {
+            assert_eq!(slash_path(Path::new(path)), stripped, "{path}");
+            assert!(!slash_path(Path::new(path)).contains("//?"), "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unverbatimed_returns_the_stripped_components() {
+        assert_eq!(
+            unverbatimed(Path::new(r"\\?\C:\a\b")).as_deref(),
+            Some(Path::new(r"C:\a\b"))
+        );
+        assert_eq!(
+            unverbatimed(Path::new(r"\\?\UNC\server\share\x")).as_deref(),
+            Some(Path::new(r"\\server\share\x"))
+        );
     }
 }
