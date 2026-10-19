@@ -267,7 +267,7 @@ use std::any::Any;
 use std::collections::HashMap;
 
 // N01 mechanism counter (tests only): attribute-name comparisons the DOM
-// performs. Incremental `set_attribute_value` insertion pays one Vec scan
+// performs (bulk index lookups count once per incoming name). Incremental `set_attribute_value` insertion pays one Vec scan
 // per name (quadratic in a tag's width); the parser's bulk
 // `set_attributes` probes a hash index instead. Per thread, so tests
 // running side by side in one `cargo test` process do not count each
@@ -944,6 +944,8 @@ impl Dom {
             index.entry(a.name.clone()).or_insert(i);
         }
         for (name, value) in attrs {
+            #[cfg(test)]
+            bump_attr_name_probes();
             match index.get(&name) {
                 Some(&i) => data.attrs[i].value = value,
                 None => {

@@ -23,7 +23,7 @@
 //!   part: tolerates missing closing tags, unquoted / mixed-quote
 //!   attributes, and similar WW-isms in real-world .docx files.
 //!
-//!   It refuses nothing, so its input is expected to have passed a
+//!   Tag-policy violations panic; its input should have passed a
 //!   gate first: [`validate_xml`], or the package admission scan
 //!   (`admission::check_xml_depth`), which applies the same tag and
 //!   namespace budgets. A caller holding unchecked XML uses
@@ -38,33 +38,23 @@
 
 use std::collections::HashMap;
 
+use crate::admission::InputLimits;
+
 use super::{Dom, NodeId, XDeclaration, XName, XNamespace};
 
 // ── tag policy budgets (N01/N02) ────────────────────────────────────────────
-// The permissive DOM parser cannot refuse input (its contract predates
-// admission), so every checked entry path — `validate_xml`, the package
-// admission scan (`admission::check_xml_depth`), and `try_parse_xdocument` —
-// enforces these bounds *before* a DOM node or attribute is constructed.
-// The attribute-count and name caps stop quadratic width (N01). The value
-// and tag-byte caps sit at the part budget because Word's own `o:gfxdata`
-// reaches 366 KiB in the corpus and a long value costs linear time already
-// bounded by `InputLimits::max_part_bytes`.
+// One policy is shared by admission, strict validation and DOM construction.
+// Defaults come from the measured Word corpus, with headroom for extensions.
 
-/// Attributes (namespace declarations included) on one element. 256 matches
-/// quick-xml's namespace-declaration default and the OPC metadata budget.
-pub(crate) const MAX_ELEMENT_ATTRIBUTES: usize = 256;
-/// Bytes in one element or attribute name.
+/// Attributes (namespace declarations included) on one element.
+pub(crate) const MAX_ELEMENT_ATTRIBUTES: usize = 1024;
+/// Bytes in an element name (the existing element-name budget).
 pub(crate) const MAX_NAME_BYTES: usize = 4096;
-/// Bytes in one attribute value: a fixed cap, the size of the default
-/// `InputLimits::max_part_bytes` (64 MiB) and well above Word's own
-/// `o:gfxdata` (≈366 KiB in the corpus). It does not follow the active
-/// limits: under `InputLimits::compare()` (512 MiB parts) or a host
-/// override, a part can be admitted by size and still be refused for one
-/// wider value. Deriving the cap from the active limits is #1077's
-/// option B.
+/// UTF-8 bytes in a qualified attribute name.
+pub(crate) const MAX_ATTRIBUTE_NAME_BYTES: usize = 1024;
+/// Bytes in one raw or decoded attribute value (64 MiB).
 pub(crate) const MAX_ATTRIBUTE_VALUE_BYTES: usize = 64 * 1024 * 1024;
-/// Total attribute bytes (names + values) on one element. Twice the value
-/// cap, so one value at its cap plus its name fits inside the tag cap.
+/// Complete start-tag bytes, including whitespace, quotes and delimiters.
 pub(crate) const MAX_TAG_ATTRIBUTE_BYTES: usize = 128 * 1024 * 1024;
 /// Bytes in one namespace URI.
 pub(crate) const MAX_NAMESPACE_URI_BYTES: usize = 8192;
@@ -98,12 +88,21 @@ fn bump_ns_scope_declared_bytes(by: usize) {
 /// the module-level docs. A leading UTF-8 BOM is stripped before parsing
 /// so a BOM-prefixed input still yields a document with a root.
 ///
-/// This parser refuses nothing: run [`validate_xml`] (or package
-/// admission) on `xml` first, or call [`try_parse_xdocument`], which does.
+/// Run [`validate_xml`] (or package admission) on `xml` first, or call
+/// [`try_parse_xdocument`] to receive errors.
+///
+/// # Panics
+///
+/// Panics when a tag violates the default attribute or namespace policy.
 ///
 /// `xml` may be a complete document (prolog + root + children) or a
 /// fragment; the result is wrapped in a fresh Document node.
 pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId {
+    parse_with_limits(dom, xml, InputLimits::default())
+        .expect("XML tag policy refused input; use try_parse_xdocument for errors")
+}
+
+fn parse_with_limits(dom: &mut Dom, xml: &str, limits: InputLimits) -> Result<NodeId, String> {
     // Strip a leading UTF-8 BOM (U+FEFF): char::is_whitespace() excludes it,
     // so skip_ws() cannot, and an unstripped BOM leaves the document with no root.
     let xml = xml.strip_prefix('\u{feff}').unwrap_or(xml);
@@ -112,6 +111,7 @@ pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId {
         dom,
         c: chars,
         pos: 0,
+        limits,
     };
     p.parse_document()
 }
@@ -125,14 +125,29 @@ pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId {
 ///
 /// Returns the [`validate_xml`] error string unchanged.
 pub fn try_parse_xdocument(dom: &mut Dom, xml: &str) -> Result<NodeId, String> {
-    validate_xml(xml)?;
-    Ok(parse_xdocument(dom, xml))
+    try_parse_xdocument_with_limits(dom, xml, InputLimits::default())
+}
+
+/// Checked parse under explicit input budgets. No DOM node is built until
+/// validation succeeds; only XML-related fields of `limits` are used.
+///
+/// # Errors
+///
+/// Returns the same error strings as [`validate_xml_with_limits`].
+pub fn try_parse_xdocument_with_limits(
+    dom: &mut Dom,
+    xml: &str,
+    limits: InputLimits,
+) -> Result<NodeId, String> {
+    validate_xml_with_limits(xml, limits)?;
+    parse_with_limits(dom, xml, limits)
 }
 
 struct Parser<'a> {
     dom: &'a mut Dom,
     c: Vec<char>,
     pos: usize,
+    limits: InputLimits,
 }
 
 /// In-scope namespace bindings as an overlay stack (N02): one `HashMap`
@@ -200,6 +215,7 @@ impl NsScope {
 /// duplicate detection. Shared by `validate_xml` and the package admission
 /// scan; `try_parse_xdocument` gets it through `validate_xml`.
 pub(crate) struct TagPolicy {
+    limits: InputLimits,
     scope: NsScope,
     /// Undo marks of open elements, parallel to the reader's depth.
     marks: Vec<usize>,
@@ -208,17 +224,21 @@ pub(crate) struct TagPolicy {
     /// Read attributes with quick-xml's HTML rules, which also accept
     /// unquoted (`w:val=on`) and valueless (`compact`) attributes.
     html_attributes: bool,
+    /// Only the legacy DOM API tolerates an incomplete attribute tail.
+    legacy_attributes: bool,
 }
 
 impl TagPolicy {
     /// The strict gate's policy: every attribute must be well-formed XML,
     /// quoted and with a value.
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(limits: InputLimits) -> Self {
         TagPolicy {
+            limits,
             scope: NsScope::default(),
             marks: Vec::new(),
             declared_bytes: 0,
             html_attributes: false,
+            legacy_attributes: false,
         }
     }
 
@@ -226,10 +246,10 @@ impl TagPolicy {
     /// permissive parser, which reads unquoted and valueless attributes, so
     /// those pass here; the budgets and the duplicate checks still apply to
     /// them.
-    pub(crate) fn tolerant() -> Self {
+    pub(crate) fn tolerant(limits: InputLimits) -> Self {
         TagPolicy {
             html_attributes: true,
-            ..Self::new()
+            ..Self::new(limits)
         }
     }
 
@@ -239,8 +259,18 @@ impl TagPolicy {
     ///
     /// A `String` naming the budget or rule the tag violates.
     pub(crate) fn open(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+        self.enter(tag, 2)
+    }
+
+    fn enter(
+        &mut self,
+        tag: &quick_xml::events::BytesStart<'_>,
+        delimiters: usize,
+    ) -> Result<(), String> {
         let mark = self.scope.mark();
-        self.check_tag(tag).inspect_err(|_| self.scope.pop(mark))?;
+        self.check_tag(tag, delimiters)
+            .map_err(|why| format!("element <{}>: {why}", tag.name().as_ref()))
+            .inspect_err(|_| self.scope.pop(mark))?;
         self.marks.push(mark);
         Ok(())
     }
@@ -252,7 +282,9 @@ impl TagPolicy {
     /// As [`Self::open`].
     pub(crate) fn empty(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
         let mark = self.scope.mark();
-        let result = self.check_tag(tag);
+        let result = self
+            .check_tag(tag, 3)
+            .map_err(|why| format!("element <{}>: {why}", tag.name().as_ref()));
         self.scope.pop(mark);
         result
     }
@@ -265,13 +297,22 @@ impl TagPolicy {
         }
     }
 
-    fn check_tag(&mut self, tag: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+    fn check_tag(
+        &mut self,
+        tag: &quick_xml::events::BytesStart<'_>,
+        delimiters: usize,
+    ) -> Result<(), String> {
         let tag_name = tag.name();
         if tag_name.as_ref().len() > MAX_NAME_BYTES {
             return Err(format!("XML name exceeds {MAX_NAME_BYTES} bytes"));
         }
         let mut count = 0usize;
-        let mut tag_bytes = tag_name.as_ref().len();
+        if tag.len().saturating_add(delimiters) > self.limits.max_start_tag_bytes {
+            return Err(format!(
+                "start tag exceeds {} bytes",
+                self.limits.max_start_tag_bytes
+            ));
+        }
         // Raw keys for a second pass after the declarations land in scope.
         let mut seen: Vec<String> = Vec::new();
         // Both iterators refuse a repeated raw name (`AttrError::Duplicated`).
@@ -281,33 +322,22 @@ impl TagPolicy {
             tag.attributes()
         };
         for attribute in attributes {
-            let attribute = attribute.map_err(|e| e.to_string())?;
+            let attribute = match attribute {
+                Ok(attribute) => attribute,
+                Err(error @ quick_xml::events::attributes::AttrError::Duplicated(..)) => {
+                    return Err(error.to_string());
+                }
+                Err(_) if self.legacy_attributes => break,
+                Err(error) => return Err(error.to_string()),
+            };
             count += 1;
-            if count > MAX_ELEMENT_ATTRIBUTES {
-                return Err(format!(
-                    "element exceeds {MAX_ELEMENT_ATTRIBUTES} attributes"
-                ));
-            }
+            self.check_attribute(count, attribute.key.as_ref().len(), attribute.value.len())?;
             let key = attribute.key.as_ref().to_string();
-            if key.len() > MAX_NAME_BYTES {
-                return Err(format!("XML name exceeds {MAX_NAME_BYTES} bytes"));
-            }
             // A valueless attribute normalizes to an empty value.
             let value = attribute
                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .map_err(|e| e.to_string())?;
-            let value_len = value.len();
-            if value_len > MAX_ATTRIBUTE_VALUE_BYTES {
-                return Err(format!(
-                    "attribute value exceeds {MAX_ATTRIBUTE_VALUE_BYTES} bytes"
-                ));
-            }
-            tag_bytes += key.len() + value_len;
-            if tag_bytes > MAX_TAG_ATTRIBUTE_BYTES {
-                return Err(format!(
-                    "element exceeds {MAX_TAG_ATTRIBUTE_BYTES} attribute bytes"
-                ));
-            }
+            self.check_attribute(count, key.len(), value.len())?;
             if key == "xmlns" {
                 self.declare("", &value)?;
             } else if let Some(prefix) = key.strip_prefix("xmlns:") {
@@ -316,13 +346,42 @@ impl TagPolicy {
             seen.push(key);
         }
         // Two differently-spelled attributes that expand to the same name
-        // collapse in the DOM (and confuse every downstream differ) — a
-        // shape Word also rejects.
+        // collapse in the DOM (and confuse every downstream differ) —
+        // malformed XML under Namespaces in XML 1.0 section 6.3.
         let mut expanded = std::collections::HashSet::with_capacity(seen.len());
         for key in &seen {
             if !expanded.insert(self.expand(key)) {
                 return Err(format!("attribute {key} repeats an expanded name"));
             }
+        }
+        Ok(())
+    }
+
+    /// The same width check also protects attributes recovered by the
+    /// legacy parser from an incomplete tag that quick-xml cannot iterate.
+    fn check_attribute(
+        &self,
+        count: usize,
+        name_bytes: usize,
+        value_bytes: usize,
+    ) -> Result<(), String> {
+        if count > self.limits.max_element_attributes {
+            return Err(format!(
+                "element exceeds {} attributes",
+                self.limits.max_element_attributes
+            ));
+        }
+        if name_bytes > self.limits.max_attribute_name_bytes {
+            return Err(format!(
+                "attribute name exceeds {} bytes",
+                self.limits.max_attribute_name_bytes
+            ));
+        }
+        if value_bytes > self.limits.max_attribute_value_bytes {
+            return Err(format!(
+                "attribute value exceeds {} bytes",
+                self.limits.max_attribute_value_bytes
+            ));
         }
         Ok(())
     }
@@ -452,11 +511,12 @@ impl<'a> Parser<'a> {
         self.slice(start, self.pos)
     }
 
-    fn parse_document(&mut self) -> NodeId {
+    fn parse_document(&mut self) -> Result<NodeId, String> {
         let doc = self.dom.new_document();
         // N02: one overlay stack serves every top-level element; marks are
         // balanced, so it is empty again between roots.
-        let mut scope = NsScope::default();
+        let mut policy = TagPolicy::tolerant(self.limits);
+        policy.legacy_attributes = true;
         let len = self.len();
         while self.pos < len {
             self.skip_ws();
@@ -498,19 +558,39 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let el = self.parse_element(&mut scope);
+                let el = self.parse_element(&mut policy)?;
                 self.dom.add(doc, el);
                 continue;
             }
             break;
         }
-        doc
+        Ok(doc)
     }
 
-    fn parse_element(&mut self, scope: &mut NsScope) -> NodeId {
+    fn parse_element(&mut self, policy: &mut TagPolicy) -> Result<NodeId, String> {
         // at '<'
         self.pos += 1; // consume '<'
+        let tag_start = self.pos;
         let raw_name = self.read_name();
+        // Scan the raw start tag before allocating or decoding any DOM
+        // attribute. Quotes protect embedded '>'; UTF-8 byte lengths are
+        // measured by the shared policy, not by this character cursor.
+        let mut end = self.pos;
+        let mut quote = None;
+        while end < self.len() {
+            let ch = self.c[end];
+            match quote {
+                Some(q) if ch == q => quote = None,
+                None if ch == '\'' || ch == '"' => quote = Some(ch),
+                None if ch == '>' => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        let empty = end > tag_start && self.c[end - 1] == '/';
+        let content = self.slice(tag_start, end - usize::from(empty));
+        let tag = quick_xml::events::BytesStart::from_content(content, raw_name.len());
+        policy.enter(&tag, if empty { 3 } else { 2 })?;
         let mut raw_attrs: Vec<(String, String)> = Vec::new();
         loop {
             self.skip_ws();
@@ -538,6 +618,9 @@ impl<'a> Parser<'a> {
                 avalue = self.slice(vstart, self.pos);
                 self.pos += 1; // closing quote
             }
+            policy
+                .check_attribute(raw_attrs.len() + 1, aname.len(), avalue.len())
+                .map_err(|why| format!("element <{raw_name}>: {why}"))?;
             // Normalize the RAW slice before entity decoding: literal
             // whitespace reads as space (§3.3.3) but character references
             // keep the characters they name.
@@ -547,34 +630,21 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        // N02: this element's xmlns / xmlns:* attributes push onto the
-        // overlay scope (marks restore them on every return path below) —
-        // no parent-map clone, and shadowing is last-declaration-wins, as
-        // the cloned HashMap gave before.
-        let mark = scope.mark();
-        for (name, value) in &raw_attrs {
-            if name == "xmlns" {
-                scope.push("", value);
-            } else if let Some(prefix) = name.strip_prefix("xmlns:") {
-                scope.push(prefix, value);
-            }
-        }
-
-        let el_name = resolve(&raw_name, false, scope);
+        let el_name = resolve(&raw_name, false, &policy.scope);
         let el = self.dom.new_element(el_name);
         // N01: one bulk insert — a hash index of the expanded names — rather
         // than N calls each re-scanning the growing attribute Vec.
         let attrs: Vec<(XName, String)> = raw_attrs
             .iter()
-            .map(|(name, value)| (resolve(name, true, scope), value.clone()))
+            .map(|(name, value)| (resolve(name, true, &policy.scope), value.clone()))
             .collect();
         self.dom.set_attributes(el, attrs);
 
         self.skip_ws();
         if self.cur() == '/' {
             self.pos += 2; // '/' '>'
-            scope.pop(mark);
-            return el;
+            policy.close();
+            return Ok(el);
         }
         self.pos += 1; // '>'
 
@@ -613,7 +683,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let child = self.parse_element(scope);
+                let child = self.parse_element(policy)?;
                 self.dom.add(el, child);
                 continue;
             }
@@ -629,8 +699,8 @@ impl<'a> Parser<'a> {
                 self.dom.add(el, t);
             }
         }
-        scope.pop(mark);
-        el
+        policy.close();
+        Ok(el)
     }
 
     /// Parse a processing instruction (`<?target data?>`) into a `Pi` node.
@@ -863,13 +933,22 @@ fn normalize_raw_text_end_of_line(text: String) -> String {
 /// - `"missing or incomplete XML root"` when no root was opened by EOF
 ///   or depth was non-zero at EOF.
 pub fn validate_xml(xml: &str) -> Result<(), String> {
+    validate_xml_with_limits(xml, InputLimits::default())
+}
+
+/// Validate XML under explicit XML-related [`InputLimits`].
+///
+/// # Errors
+///
+/// Returns the same structural and tag-policy errors as [`validate_xml`].
+pub fn validate_xml_with_limits(xml: &str, limits: InputLimits) -> Result<(), String> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
-    const MAX_DEPTH: usize = 256;
+    let max_depth = limits.max_xml_depth;
     let mut reader = Reader::from_str(xml);
     reader.config_mut().check_end_names = true;
-    let mut policy = TagPolicy::new();
+    let mut policy = TagPolicy::new(limits);
     let mut depth = 0usize;
     let mut roots = 0usize;
     loop {
@@ -883,8 +962,8 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
                     roots += 1;
                 }
                 depth += 1;
-                if depth > MAX_DEPTH {
-                    return Err(format!("XML nesting exceeds {MAX_DEPTH} elements"));
+                if depth > max_depth {
+                    return Err(format!("XML nesting exceeds {max_depth} elements"));
                 }
             }
             Event::Empty(e) => {
@@ -1176,7 +1255,7 @@ mod tag_policy_tests {
             per_value < MAX_ATTRIBUTE_VALUE_BYTES,
             "fixture relies on per_value staying under the value cap"
         );
-        let attrs = (0..MAX_ELEMENT_ATTRIBUTES)
+        let attrs = (0..256)
             .map(|i| format!(" a{i}='{}'", "v".repeat(per_value)))
             .collect::<String>();
         assert!(validate_xml(&format!("<a{attrs}/>")).is_err());
@@ -1253,10 +1332,12 @@ mod tag_policy_tests {
         let overhead = "<a a0='' a1='' a2=''/>".len();
         let budget = MAX_TAG_ATTRIBUTE_BYTES - overhead;
         let xml = |extra| {
-            let attrs: String = (0..3).map(|i| {
-                let length = budget / 3 + if i == 2 { budget % 3 + extra } else { 0 };
-                format!(" a{i}='{}'", "v".repeat(length))
-            }).collect();
+            let attrs: String = (0..3)
+                .map(|i| {
+                    let length = budget / 3 + if i == 2 { budget % 3 + extra } else { 0 };
+                    format!(" a{i}='{}'", "v".repeat(length))
+                })
+                .collect();
             format!("<a{attrs}/>")
         };
         let at_cap = xml(0);
@@ -1265,7 +1346,10 @@ mod tag_policy_tests {
         let over = xml(1);
         assert_eq!(over.len(), MAX_TAG_ATTRIBUTE_BYTES + 1);
         let error = validate_xml(&over).expect_err("one start-tag byte over cap must refuse");
-        assert!(error.contains(&format!("{MAX_TAG_ATTRIBUTE_BYTES}")), "{error}");
+        assert!(
+            error.contains(&format!("{MAX_TAG_ATTRIBUTE_BYTES}")),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1362,7 +1446,10 @@ mod tag_policy_tests {
         let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             parse_xdocument(&mut dom, xml);
         }));
-        assert!(refused.is_err(), "the infallible parser must refuse aliased duplicates");
+        assert!(
+            refused.is_err(),
+            "the infallible parser must refuse aliased duplicates"
+        );
     }
 
     #[test]
@@ -1393,9 +1480,15 @@ mod tag_policy_tests {
 
     #[test]
     fn issue650_dom_parser_enforces_width_limits() {
-        for xml in [xml_with_attrs(1025), format!("<r {}='v'/>", "n".repeat(1025))] {
+        for xml in [
+            xml_with_attrs(1025),
+            format!("<r {}='v'/>", "n".repeat(1025)),
+        ] {
             let refused = std::panic::catch_unwind(|| parse_xdocument(&mut Dom::new(), &xml));
-            assert!(refused.is_err(), "DOM parser must refuse oversized attributes");
+            assert!(
+                refused.is_err(),
+                "DOM parser must refuse oversized attributes"
+            );
         }
     }
 
@@ -1418,7 +1511,12 @@ mod tag_policy_tests {
             assert!(result.is_ok(), "{n} attributes must parse: {result:?}");
             counts.push(ATTR_NAME_PROBES.with(|c| c.get()) - before);
         }
+        assert!(
+            counts[0] > 0,
+            "the probe counter must measure bulk insertion: {counts:?}"
+        );
         assert!(counts[2] <= 16 * counts[0], "probes: {counts:?}");
+        println!("attribute probes at 64, 256, 1024: {counts:?}");
     }
 
     #[test]
