@@ -72,7 +72,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   reads directory payloads through the bounded CRC stream so a corrupt
   one refuses and its bytes count against the budgets. `jubarte debug`
   reports each class as a `zip-header-mismatch`, `zip-extent`,
-  `zip-descriptor` or `zip-directory-payload` finding instead of refusing.
+  `zip-descriptor` or `zip-directory-payload` finding instead of
+  refusing, and an entry whose open or payload read still fails becomes
+  a `zip-entry-read` finding of its own, so the structural findings
+  always reach the report.
 
 - **`accept`/`reject` settle tracked changes inside comment bodies**
   (`word/comments.xml`), as Word's Accept/Reject All do. An `--author` or

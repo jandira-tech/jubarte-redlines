@@ -297,9 +297,10 @@ pub(crate) struct ZipDefect {
 /// The class of a [`ZipDefect`]. `HeaderMismatch` is the dual-header
 /// class (`ZIP_HEADER_MISMATCH`, GHSA-m665-v7pm-7grj and the #644 field
 /// comparison); `Extent` and `Descriptor` are the structural classes
-/// (`INVALID_PACKAGE`); `DirectoryPayload` is a directory entry's
-/// unreadable payload, which only `debug` constructs — every reading
-/// route refuses it through its own CRC stream.
+/// (`INVALID_PACKAGE`); `DirectoryPayload` and `EntryRead` are
+/// unreadable payloads and unopenable entries, which only `debug`
+/// constructs — every reading route refuses them through its own
+/// CRC stream or open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ZipDefectKind {
     /// A local file header field disagrees with the central record.
@@ -310,6 +311,10 @@ pub(crate) enum ZipDefectKind {
     Descriptor,
     /// A directory entry's payload cannot be read (`debug` findings only).
     DirectoryPayload,
+    /// An entry cannot be opened or its payload read (`debug` findings
+    /// only): a `debug` report keeps going where a reading route
+    /// refuses, so the failure is named for the entry instead (#644).
+    EntryRead,
 }
 
 impl ZipDefect {
@@ -321,7 +326,10 @@ impl ZipDefect {
                 K::ZipHeaderMismatch,
                 format!("local and central headers disagree: {}", self.detail),
             ),
-            ZipDefectKind::Extent | ZipDefectKind::Descriptor | ZipDefectKind::DirectoryPayload => {
+            ZipDefectKind::Extent
+            | ZipDefectKind::Descriptor
+            | ZipDefectKind::DirectoryPayload
+            | ZipDefectKind::EntryRead => {
                 AdmissionError::new(K::InvalidPackage, self.detail.clone())
             }
         }
@@ -334,6 +342,7 @@ impl ZipDefect {
             ZipDefectKind::Extent => "zip-extent",
             ZipDefectKind::Descriptor => "zip-descriptor",
             ZipDefectKind::DirectoryPayload => "zip-directory-payload",
+            ZipDefectKind::EntryRead => "zip-entry-read",
         }
     }
 }

@@ -213,11 +213,35 @@ impl Package {
         let mut entries = Vec::with_capacity(zip.len());
         let mut total = 0u64;
         for i in 0..zip.len() {
-            let mut f = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
-            let name = f
-                .name()
-                .map_err(|e| format!("zip entry {i} name: {e}"))?
-                .into_owned();
+            // Every read failure is a finding named for the entry: where
+            // a reading route refuses, triage keeps going so the
+            // structural findings collected above still reach the
+            // report (#644). `by_index` borrows `zip` mutably while its
+            // result lives, so the central name is resolved first.
+            let shown = zip
+                .name_for_index(i)
+                .and_then(Result::ok)
+                .map_or_else(|| "unnamed".to_string(), |name| format!("'{name}'"));
+            let mut f = match zip.by_index(i) {
+                Ok(f) => f,
+                Err(error) => {
+                    defects.push(crate::opc::ZipDefect {
+                        kind: crate::opc::ZipDefectKind::EntryRead,
+                        detail: format!("entry {i} ({shown}) cannot be opened: {error}"),
+                    });
+                    continue;
+                }
+            };
+            let name = match f.name() {
+                Ok(name) => name.into_owned(),
+                Err(error) => {
+                    defects.push(crate::opc::ZipDefect {
+                        kind: crate::opc::ZipDefectKind::EntryRead,
+                        detail: format!("entry {i} ({shown}) has an unreadable name: {error}"),
+                    });
+                    continue;
+                }
+            };
             if f.size() > limits.max_part_bytes {
                 return Err(
                     crate::admission::part_declared_over(&name, f.size(), &limits).to_string(),
@@ -229,9 +253,6 @@ impl Package {
             let mut data = Vec::with_capacity(
                 usize::try_from(f.size().min(cap).min(16 * 1024 * 1024)).unwrap_or(0),
             );
-            // A directory's payload is read too: where a reading route
-            // refuses its failed CRC with INVALID_PACKAGE, triage keeps
-            // the entry out and reports the payload as a finding (#644).
             let read = match (&mut f).take(cap.saturating_add(1)).read_to_end(&mut data) {
                 Ok(read) => read,
                 Err(error) if f.is_dir() => {
@@ -243,7 +264,13 @@ impl Package {
                     });
                     continue;
                 }
-                Err(error) => return Err(format!("{name}: {error}")),
+                Err(error) => {
+                    defects.push(crate::opc::ZipDefect {
+                        kind: crate::opc::ZipDefectKind::EntryRead,
+                        detail: format!("entry '{name}' has an unreadable payload: {error}"),
+                    });
+                    continue;
+                }
             };
             crate::admission::account_inflated(&mut total, read as u64, &name, cap, &limits)
                 .map_err(|e| e.to_string())?;
@@ -2994,6 +3021,138 @@ mod tests {
         let found = findings(&pkg).unwrap();
         assert!(
             found.iter().any(|f| f.code == "ZIP_DIRECTORY_PAYLOAD"),
+            "{found:?}"
+        );
+    }
+
+    /// The report or its refusal message, so a package `debug` cannot
+    /// open fails the finding assertion instead of panicking (#644).
+    fn debug_output(pkg: &[u8]) -> String {
+        report(pkg, None, &Options::default()).unwrap_or_else(|e| e)
+    }
+
+    /// A minimal package whose one binary entry is easy to corrupt:
+    /// stored, no extra fields, so extents are plain arithmetic.
+    fn bin_package() -> Vec<u8> {
+        zip_names::docx_package("", &[zip_names::RawEntry::raw(b"z.bin", b"payload")])
+    }
+
+    /// The offset of `name`'s central record, located through the reader.
+    fn central_header_at(bytes: &[u8], name: &str) -> usize {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        usize::try_from(archive.by_name(name).unwrap().central_header_start()).unwrap()
+    }
+
+    /// Set `name`'s central-record compressed size (the field at +20),
+    /// which both the extent pass and the payload read follow.
+    fn set_central_compressed_size(bytes: &mut [u8], name: &str, size: u32) {
+        assert_ne!(size, u32::MAX, "0xFFFFFFFF is the ZIP64 placeholder");
+        let at = central_header_at(bytes, name);
+        bytes[at + 20..at + 24].copy_from_slice(&size.to_le_bytes());
+    }
+
+    /// ZIP-17 (#644): an entry whose extent reaches past the central
+    /// directory fails its read on every route — `debug` still reports
+    /// the structural finding, and the failed read is a finding of its
+    /// own rather than the end of the report.
+    #[test]
+    fn an_extent_past_the_directory_reports_a_finding_instead_of_refusing() {
+        let mut pkg = bin_package();
+        let reach = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
+            let start = archive.by_name("z.bin").unwrap().header_start();
+            archive.central_directory_start() - start + 1
+        };
+        set_central_compressed_size(&mut pkg, "z.bin", u32::try_from(reach).unwrap());
+        let out = debug_output(&pkg);
+        assert!(out.contains("zip-extent: 1\n"), "{out}");
+        assert!(out.contains("reaches past the central directory"), "{out}");
+        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(found.iter().any(|f| f.code == "ZIP_EXTENT"), "{found:?}");
+    }
+
+    /// ZIP-17 (#644): the same defect one byte into the central
+    /// directory, the smallest overlapping extent.
+    #[test]
+    fn an_extent_one_byte_into_the_directory_reports_a_finding() {
+        let mut pkg = bin_package();
+        let reach = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
+            let start = archive.by_name("z.bin").unwrap().data_start().unwrap();
+            archive.central_directory_start() - start + 1
+        };
+        set_central_compressed_size(&mut pkg, "z.bin", u32::try_from(reach).unwrap());
+        let out = debug_output(&pkg);
+        assert!(out.contains("zip-extent: 1\n"), "{out}");
+        assert!(out.contains("reaches past the central directory"), "{out}");
+        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
+    }
+
+    /// ZIP-17 (#644): the first entry's extent ends inside the second
+    /// entry's local record — an overlap finding, even though reading
+    /// the first entry fails.
+    #[test]
+    fn an_extent_over_the_next_entry_reports_a_finding_instead_of_refusing() {
+        let mut pkg = zip_names::docx_package("", &[]);
+        let reach = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
+            let next = archive.by_name("_rels/.rels").unwrap().header_start();
+            let start = archive
+                .by_name("[Content_Types].xml")
+                .unwrap()
+                .data_start()
+                .unwrap();
+            next - start + 1
+        };
+        set_central_compressed_size(
+            &mut pkg,
+            "[Content_Types].xml",
+            u32::try_from(reach).unwrap(),
+        );
+        let out = debug_output(&pkg);
+        assert!(out.contains("zip-extent: 1\n"), "{out}");
+        assert!(out.contains("inside entry '_rels/.rels'"), "{out}");
+        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(found.iter().any(|f| f.code == "ZIP_EXTENT"), "{found:?}");
+    }
+
+    /// ZIP-17 (#644): a central record that points inside another
+    /// entry's payload has no local header there — a header-mismatch
+    /// finding, and the failed open of the entry is a finding too.
+    #[test]
+    fn a_central_record_inside_a_payload_reports_a_finding_instead_of_refusing() {
+        let mut pkg = bin_package();
+        let inside =
+            local_header_at(&pkg, "word/document.xml") + 30 + b"word/document.xml".len() + 1;
+        let at = central_header_at(&pkg, "z.bin");
+        pkg[at + 42..at + 46].copy_from_slice(&u32::try_from(inside).unwrap().to_le_bytes());
+        let out = debug_output(&pkg);
+        assert!(out.contains("zip-header-mismatch: 1\n"), "{out}");
+        assert!(out.contains("has no local header"), "{out}");
+        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(
+            found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
+            "{found:?}"
+        );
+    }
+
+    /// ZIP-17 (#644): an entry whose payload fails its CRC, with no
+    /// structural defect behind it, is a `zip-entry-read` finding — the
+    /// same triage a directory's payload already gets.
+    #[test]
+    fn a_corrupt_entry_payload_reports_a_finding_instead_of_refusing() {
+        let mut pkg = bin_package();
+        let at = local_header_at(&pkg, "z.bin") + 30 + b"z.bin".len();
+        pkg[at] = b'X';
+        let out = debug_output(&pkg);
+        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
+        assert!(out.contains("'z.bin'"), "{out}");
+        let found = findings(&pkg).unwrap();
+        assert!(
+            found.iter().any(|f| f.code == "ZIP_ENTRY_READ"),
             "{found:?}"
         );
     }

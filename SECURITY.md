@@ -103,7 +103,8 @@ existing duplicate-part identity checks retain `DUPLICATE_PART`. The
 `jubarte debug`, the maintainer triage tool, is the one deliberate
 exception: it opens through `open_archive_unchecked` and prints the
 disagreement as a `zip-header-mismatch` finding — and each #644 defect
-as a `zip-extent`, `zip-descriptor` or `zip-directory-payload` finding —
+as a `zip-extent`, `zip-descriptor`, `zip-directory-payload` or
+`zip-entry-read` finding —
 instead of refusing, so a file every reader rejects can still be inspected.
 
 The Windows updater delegates unpacking to `self_update::Extract::extract_file`;
