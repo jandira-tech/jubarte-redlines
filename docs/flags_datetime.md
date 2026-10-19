@@ -468,14 +468,14 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 
 ## jubarte edit
 
-Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
+Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply, --accept, --reject, --strike, --restore or --style (several -p per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The source document (.docx). Never modified |
 | `--plan` |  | [<PLAN.json>] |  |  |  | Edit plan JSON: batches and the other operation kinds (see `jubarte capabilities --json`). Alone, it is applied to FILE; with operation flags, they are recorded into it (created on first use) and FILE is left as it is. Without a value: FILE_plan.json beside FILE |
 | `--consume` |  |  | false |  |  | Delete PLAN.json once it has been applied and the outputs are written (with --plan and no operation flags) |
-| `-p, --location` |  | <WHERE> |  |  | append | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept or --reject). Each -p starts an operation; the flags after it belong to it |
+| `-p, --location` |  | <WHERE> |  |  | append | Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the text c5 covers) or r12 (a revision, with --accept, --reject, --strike or --restore). Each -p starts an operation; the flags after it belong to it |
 | `--anchor` |  | <TEXT> |  |  | append | Text inside WHERE the operation applies to (must occur once) |
 | `--content` |  | <TEXT> |  |  | append | New text: replaces the anchor; rewrites the paragraph without one; on c5, the comment's new text |
 | `--delete` |  |  |  |  | append | Delete the anchor, or the whole paragraph (or comment) without one |
@@ -483,6 +483,9 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5), as `add -p c5 --content` |
 | `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
+| `--strike` |  |  |  |  | append | Strike another author's insertion r12 (with -p r12): our tracked deletion inside it, so the decision shows. --content is a comment on the struck words |
+| `--restore` |  |  |  |  | append | Restore another author's deletion r12 (with -p r12): their deletion stays and our tracked insertion of its words follows it. --content is a comment on the restored words |
+| `--visible` |  |  |  |  | append | With --reject: strike each insertion and restore each deletion instead of removing the change without a trace |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
 | `-a, --author` |  | <NAME> | Redline |  |  | Author of the changes and comments (operation flags; a plan names its own) |
 | `-d, --datetime` |  | <ISO8601> |  |  |  | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
@@ -784,6 +787,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--require-change` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, edit | `default=false values=` |
 | `--resolve` | edit | `default= values=` |
 | `--resource-path` | (shorthand), compare, convert | `<DIR> default= values=` |
+| `--restore` | edit | `default= values=` |
 | `--revision-palette` | (shorthand), compare, accept, reject, convert, edit, append, scrub | `<SPEC> default= values=` |
 | `--revisions` | (shorthand), compare, accept, reject, convert, edit, append, scrub | `<REVISIONS> default=conventional values=conventional, word, custom` |
 | `--rsids` | scrub | `default=false values=` |
@@ -794,6 +798,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--select` | (shorthand), __edit-template template, compare, read | **differs**: `-p <SPEC> default= values= alias of --paragraphs` on (shorthand), compare, read; `<IDS> default= values=` on __edit-template template |
 | `--story` | __edit-v2 replace, __edit-template template | **differs**: `<STORY> default= values=` on __edit-v2 replace; `<STORY> default=all values=` on __edit-template template |
 | `--strict` | validate | `default=false values=` |
+| `--strike` | edit | `default= values=` |
 | `--style` | edit, add, debug diff | **differs**: `<NAME> default= values=` on debug diff; `<SPEC> default= values=` on edit, add |
 | `--suggesting-mode` | edit, add | `default=false values=` |
 | `--tables` | (shorthand), compare, read | `default=false values=` |
@@ -806,6 +811,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--track-changes` | (shorthand), compare, convert, read | **differs**: `<CHOICE> default= values=all, accept, reject` on (shorthand), compare, read; `<CHOICE> default=all values=all, accept, reject` on convert |
 | `--tracking` | convert | `<SWITCH> default= values=on, off` |
 | `--update-fields` | convert | `default=false values=` |
+| `--visible` | edit | `default= values=` |
 | `--whole-block` | __edit-v2 delete | `default=false values=` |
 | `--yes` | self-update | `-y default=false values=` |
 

@@ -173,9 +173,9 @@ Tasks:
   read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
                 comments with ids
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
-                --reply, --accept, --reject or --style (several -p per command), or a
-                JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
-                prints the changed paragraphs as the agent view (a pure
+                --reply, --accept, --reject, --strike, --restore or --style (several -p
+                per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
+                bundle), then prints the changed paragraphs as the agent view (a pure
                 --accept/--reject prints the resolved changes; refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
                 -p per command). Writes FILE_modified.docx, as edit does, and prints the
@@ -1114,9 +1114,10 @@ Read options:
 ```text
 $ jubarte edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
---accept, --reject or --style (several -p per command), or a JSON plan. Writes
-FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
-agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
+--accept, --reject, --strike, --restore or --style (several -p per command), or a JSON
+plan. Writes FILE_modified.docx (--out-dir: the bundle), then prints the changed
+paragraphs as the agent view (a pure --accept/--reject prints the resolved changes;
+refusal: exit 3)
 
 Usage: jubarte edit [OPTIONS] <FILE>
 
@@ -1137,8 +1138,8 @@ Options:
 
   -p, --location <WHERE>
           Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment), c5.text (the
-          text c5 covers) or r12 (a revision, with --accept or --reject). Each -p starts
-          an operation; the flags after it belong to it
+          text c5 covers) or r12 (a revision, with --accept, --reject, --strike or
+          --restore). Each -p starts an operation; the flags after it belong to it
 
       --anchor <TEXT>
           Text inside WHERE the operation applies to (must occur once)
@@ -1163,6 +1164,19 @@ Options:
       --reject
           Reject revision r12 (with -p r12; r1+2 for several); prints the resolved
           change (`rejected r0 in p3: "from" > "to"`)
+
+      --strike
+          Strike another author's insertion r12 (with -p r12): our tracked deletion
+          inside it, so the decision shows. --content is a comment on the struck words
+
+      --restore
+          Restore another author's deletion r12 (with -p r12): their deletion stays and
+          our tracked insertion of its words follows it. --content is a comment on the
+          restored words
+
+      --visible
+          With --reject: strike each insertion and restore each deletion instead of
+          removing the change without a trace
 
       --style <SPEC>
           Formatting for the anchored text: bold, italic, underline, strike, caps,
@@ -1209,17 +1223,17 @@ Options:
           report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
           `<FILE's directory>/<stem>.edit`)
 
-      --force
-          Replace an existing output (the bundle directory's files)
-
-      --dry-run
-          Resolve and report only; write nothing
-
   -q, --quiet
           No status on success: no `wrote` lines, and no summary or view of what
           `edit`/`add` changed. Files are still written; a reading task (`read`,
           `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
           read, and warnings and errors still print
+
+      --force
+          Replace an existing output (the bundle directory's files)
+
+      --dry-run
+          Resolve and report only; write nothing
 
       --require-change
           Refuse when the edit would change nothing in the document
