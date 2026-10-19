@@ -802,7 +802,7 @@ fn special_entry_probe() -> Vec<u8> {
             .unwrap();
         writer.write_all(b"link-target").unwrap();
     });
-    set_central_attributes(&mut bytes, "x.bin", 0x0314, 0o120777);
+    set_central_attributes(&mut bytes, "x.bin", 0x0314, 0o120777 << 16);
     bytes
 }
 

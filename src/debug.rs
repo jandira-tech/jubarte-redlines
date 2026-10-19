@@ -3173,9 +3173,10 @@ mod tests {
             .unwrap()
         };
         assert_eq!(&pkg[at..at + 4], b"PK\x01\x02");
-        // version_made_by = Unix host, external attributes = S_IFLNK mode.
+        // version_made_by = Unix host, S_IFLNK mode in the high 16 bits
+        // of the external attributes.
         pkg[at + 4..at + 6].copy_from_slice(&0x0314u16.to_le_bytes());
-        pkg[at + 38..at + 42].copy_from_slice(&0o120777u32.to_le_bytes());
+        pkg[at + 38..at + 42].copy_from_slice(&(0o120777u32 << 16).to_le_bytes());
         let out = report(&pkg, None, &Options::default()).unwrap();
         assert!(out.contains("zip-special-entry: 1\n"), "{out}");
         let found = findings(&pkg).unwrap();
