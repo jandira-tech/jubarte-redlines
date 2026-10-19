@@ -118,6 +118,24 @@ readers; the delegated updater's `extract_file` does not opt in. Its
 single-entry central-directory lookup does not cross into a streaming
 extractor. See the [repository advisory](https://github.com/zip-rs/zip2/security/advisories/GHSA-m665-v7pm-7grj).
 
+**ZIP-16 — symlink and special file metadata** (#639): the same
+`zip_defects` pass reads the raw central record's `version_made_by` and
+external attributes. When the host byte is Unix (3) or OS X (19), the
+mode `external attributes >> 16` must record a regular file — or a
+directory on a `/`-terminated name — and on any host the DOS directory
+attribute `0x10` demands the same. A symlink, device, FIFO, socket, any
+other non-zero type, or a directory type on a file name is refused as
+`UNSUPPORTED_PACKAGE` (the encryption/unsupported-compression class), and
+`jubarte debug` reports it as a `zip-special-entry` finding. Permission,
+setuid, setgid and sticky bits never matter, and the check reads the raw
+fields itself because zip's `is_symlink` is a bit-mask test that reads a
+mode only for the Unix host. For the updater, `self_update`'s single-file
+zip path already refuses a symlink entry (`extract_file`), but its tar
+path delegates to `tar`'s `unpack_in`, which restores a symlink whose
+target is not confined to the staging directory; `src/update.rs`
+registers a `verify_binary` hook that lstats the extracted binary and
+refuses anything that is not a regular file before the swap.
+
 Why the watch stayed green: this is a repository advisory on zip-rs/zip2,
 not an entry in the RustSec database `cargo-deny` reads
 (`scripts/security-check.sh`), so the daily advisory watch reported
