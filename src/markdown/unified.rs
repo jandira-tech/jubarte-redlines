@@ -288,7 +288,7 @@ pub fn patch_redline(docx: &[u8], options: &PatchOptions) -> Result<Patch, Markd
     let package = |error: crate::opc::OpcError| MarkdownError::Package(error.to_string());
     let old = reject_revisions(docx).map_err(package)?;
     let new = accept_revisions(docx).map_err(package)?;
-    patch_word(docx, &old, &new, None, options)
+    patch_word(docx, &old, &new, None, options, &MarkdownOptions::default())
 }
 
 /// [`patch_redline`] for the owner's own changes: every change by
@@ -356,14 +356,18 @@ pub fn patch_documents(
         Source::Docx(docx) => docx.to_vec(),
         Source::Markdown(_) => accept_revisions(&docx).map_err(package)?,
     };
-    let known = segments(&docx_to_markdown(&old, &MarkdownOptions::default())?.markdown)
+    let markdown_options = MarkdownOptions {
+        input_limits: compared.settings.input_limits,
+        ..MarkdownOptions::default()
+    };
+    let known = segments(&docx_to_markdown(&old, &markdown_options)?.markdown)
         .into_iter()
         .filter_map(|segment| match segment {
             Segment::Note(note, _) => Some(note),
             _ => None,
         })
         .collect();
-    patch_word(&docx, &old, &new, Some(&known), options)
+    patch_word(&docx, &old, &new, Some(&known), options, &markdown_options)
 }
 
 /// The redline's patch with each hunk at the paragraph of `old` or `new`
@@ -374,10 +378,14 @@ fn patch_word(
     new: &[u8],
     known: Option<&HashSet<String>>,
     options: &PatchOptions,
+    markdown_options: &MarkdownOptions,
 ) -> Result<Patch, MarkdownError> {
-    let critic = docx_to_markdown(docx, &MarkdownOptions::default())?.markdown;
+    let critic = docx_to_markdown(docx, markdown_options)?.markdown;
     let (mut patch, texts) = build_with(&critic, options, known);
-    let (old, new) = (word_paragraphs(old)?, word_paragraphs(new)?);
+    let (old, new) = (
+        word_paragraphs(old, markdown_options.input_limits)?,
+        word_paragraphs(new, markdown_options.input_limits)?,
+    );
     // Every paragraph is looked for, changed or not, so the search follows
     // the document; text found in no paragraph is in a text box, and goes
     // to the paragraph found last, the one that holds the box.
@@ -438,10 +446,12 @@ impl<'a> Search<'a> {
 
 /// The body's paragraphs, then the headers', footers' and notes', as
 /// `jubarte text` lists them.
-fn word_paragraphs(docx: &[u8]) -> Result<Vec<WordParagraph>, MarkdownError> {
+fn word_paragraphs(
+    docx: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<Vec<WordParagraph>, MarkdownError> {
     let error = |error: inspect::InspectError| MarkdownError::Docx(error.to_string());
-    let body = inspect::paragraphs(docx).map_err(error)?;
-    let stories = inspect::stories(docx).map_err(error)?;
+    let (body, stories) = inspect::paragraphs_and_stories_within(docx, limits).map_err(error)?;
     let all = body.into_iter().map(|p| ("body".to_string(), p)).chain(
         stories
             .into_iter()

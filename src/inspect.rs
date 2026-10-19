@@ -290,6 +290,19 @@ pub fn paragraphs(docx: &[u8]) -> Result<Vec<Paragraph>, InspectError> {
     Ok(body_paragraphs(&opened.dom, opened.body))
 }
 
+/// Paragraph locations for a comparison rendered under its active budget.
+/// One admitted open serves both the body and its related stories.
+pub(crate) fn paragraphs_and_stories_within(
+    docx: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<(Vec<Paragraph>, Vec<Story>), InspectError> {
+    let opened = Opened::open_within(docx, limits)?;
+    Ok((
+        body_paragraphs(&opened.dom, opened.body),
+        opened.stories_within(limits)?,
+    ))
+}
+
 /// Package facts, following OPC relationships for related parts.
 ///
 /// # Errors
@@ -590,15 +603,22 @@ pub(crate) struct Opened {
 
 impl Opened {
     pub(crate) fn open(bytes: &[u8]) -> Result<Self, InspectError> {
+        Self::open_within(bytes, crate::admission::InputLimits::default())
+    }
+
+    fn open_within(
+        bytes: &[u8],
+        limits: crate::admission::InputLimits,
+    ) -> Result<Self, InspectError> {
         #[cfg(test)]
         bump_reopened_packages();
-        crate::admission::admit(bytes, crate::admission::InputLimits::default())
-            .map_err(InspectError::Admission)?;
-        let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);
-        let pkg =
-            PartFs::open(&normalized).map_err(|error| InspectError::Package(error.to_string()))?;
+        crate::admission::admit(bytes, limits).map_err(InspectError::Admission)?;
+        let normalized =
+            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits);
+        let pkg = PartFs::open_within(&normalized, limits)
+            .map_err(|error| InspectError::Package(error.to_string()))?;
         let main = main_part(&pkg)?;
-        let (dom, document, root) = parse_part(&pkg, &main)?;
+        let (dom, document, root) = parse_part_within(&pkg, &main, limits)?;
         let body = dom
             .element(root, &W::body())
             .ok_or(InspectError::MissingDocument)?;
@@ -720,10 +740,17 @@ impl Opened {
     }
 
     fn stories(&self) -> Result<Vec<Story>, InspectError> {
+        self.stories_within(crate::admission::InputLimits::default())
+    }
+
+    fn stories_within(
+        &self,
+        limits: crate::admission::InputLimits,
+    ) -> Result<Vec<Story>, InspectError> {
         self.story_parts()
             .into_iter()
             .map(|(id, kind, part)| {
-                let (dom, _, root) = parse_part(&self.pkg, &part)?;
+                let (dom, _, root) = parse_part_within(&self.pkg, &part, limits)?;
                 let paragraphs = paragraphs_of(&dom, story_paragraph_nodes(&dom, root), &id);
                 Ok(Story {
                     id,
@@ -760,12 +787,20 @@ fn main_part(pkg: &PartFs) -> Result<String, InspectError> {
 
 /// Parse one XML part through the checked reader: `(dom, document, root)`.
 pub(crate) fn parse_part(pkg: &PartFs, name: &str) -> Result<(Dom, NodeId, NodeId), InspectError> {
+    parse_part_within(pkg, name, crate::admission::InputLimits::default())
+}
+
+fn parse_part_within(
+    pkg: &PartFs,
+    name: &str,
+    limits: crate::admission::InputLimits,
+) -> Result<(Dom, NodeId, NodeId), InspectError> {
     let bytes = pkg
         .part_bytes(name)
         .ok_or_else(|| InspectError::Invalid(format!("missing related part {name}")))?;
     let xml = std::str::from_utf8(bytes)
         .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
-    crate::xmllinq::parse::validate_xml(xml)
+    crate::xmllinq::parse::validate_xml_with_limits(xml, limits)
         .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
     let mut dom = Dom::new();
     let document = dom.parse_xdocument(xml);

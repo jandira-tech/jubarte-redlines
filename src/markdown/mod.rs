@@ -304,6 +304,8 @@ impl std::fmt::Debug for DocxOptions<'_> {
 /// lines from Word's cached breaks come only with `ids` (the agent view).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkdownOptions {
+    /// Active XML tag and attribute budgets, checked before tree construction.
+    pub input_limits: crate::admission::InputLimits,
     /// `All` writes tracked changes and comments as CriticMarkup; `Accept`
     /// and `Reject` write the text after Word's Accept All or Reject All,
     /// without comments.
@@ -340,6 +342,7 @@ pub struct MarkdownOptions {
 impl Default for MarkdownOptions {
     fn default() -> Self {
         Self {
+            input_limits: crate::admission::InputLimits::default(),
             track_changes: TrackChanges::All,
             extract_media: None,
             ids: false,
@@ -649,7 +652,8 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     // listing can inflate it. Full admission also checks all XML syntax;
     // this view intentionally tolerates parts it can skip (such as a broken
     // styles part), so use the bounded OPC constructor here instead.
-    crate::opc::PartFs::open(docx).map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
+    crate::opc::PartFs::open_within(docx, options.input_limits)
+        .map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
     let revisions = match options.track_changes {
         TrackChanges::All => from_docx::Revisions::Markup,
         TrackChanges::Accept => from_docx::Revisions::Accept,
@@ -658,6 +662,7 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     let converted = from_docx::convert(
         docx,
         &from_docx::Options {
+            input_limits: options.input_limits,
             revisions,
             media_dir: options.extract_media.clone(),
             ids: options.ids,
@@ -787,6 +792,7 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
             page_markers: options.page_markers,
             dates: options.dates,
             select: options.select.clone(),
+            ..MarkdownOptions::default()
         },
     )?;
     Ok(ReadView {

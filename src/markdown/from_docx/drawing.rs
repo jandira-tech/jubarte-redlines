@@ -616,7 +616,9 @@ impl Deps<'_> {
                 self.failed = Some(format!(
                     "{target} has more than {MAX_DEP_RELS} relationships"
                 ));
-            } else if let Ok(mut root) = parse_xml(&bytes) {
+            } else if let Ok(mut root) =
+                super::ooxml::parse_xml_with_limits(&bytes, package.input_limits)
+            {
                 let scope = tree_scope(&root);
                 let sym = format!("d{index}.");
                 symbolize(package, self, &mut root, &scope, &rels, &sym, &mut pay_rels);

@@ -14,6 +14,9 @@ use std::sync::Arc;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
+use crate::admission::InputLimits;
+use crate::xmllinq::parse::TagPolicy;
+
 use super::ConvertError;
 use super::critic::{self, Change};
 use super::media::Extracted;
@@ -33,6 +36,7 @@ pub(crate) fn invalid(message: impl std::fmt::Display) -> ConvertError {
 pub(crate) struct Package<'a> {
     archive: zip::ZipArchive<Cursor<&'a [u8]>>,
     names: Vec<String>,
+    pub(crate) input_limits: InputLimits,
 }
 
 impl<'a> Package<'a> {
@@ -45,7 +49,41 @@ impl<'a> Package<'a> {
             .map(|name| name.map(|name| name.into_owned()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(invalid)?;
-        Ok(Self { archive, names })
+        Ok(Self {
+            archive,
+            names,
+            input_limits: InputLimits::default(),
+        })
+    }
+
+    /// Policy refusals are fatal even for auxiliary parts the renderer would
+    /// silently skip. Syntax failures keep the existing best-effort behavior.
+    pub(crate) fn check_tag_policy(&mut self) -> Result<(), ConvertError> {
+        for name in self.names.clone() {
+            if !name.ends_with(".xml") && !name.ends_with(".rels") {
+                continue;
+            }
+            let Some(bytes) = self.read(&name)? else {
+                continue;
+            };
+            let text = decode(&bytes);
+            let mut reader = Reader::from_str(&text);
+            let mut policy = TagPolicy::tolerant(self.input_limits);
+            loop {
+                let result = match reader.read_event() {
+                    Ok(Event::Start(tag)) => policy.open(&tag),
+                    Ok(Event::Empty(tag)) => policy.empty(&tag),
+                    Ok(Event::End(_)) => {
+                        policy.close();
+                        Ok(())
+                    }
+                    Ok(Event::Eof) | Err(_) => break,
+                    Ok(_) => Ok(()),
+                };
+                result.map_err(|why| invalid(format!("INVALID_XML: {name}: {why}")))?;
+            }
+        }
+        Ok(())
     }
 
     fn resolve_name(&self, name: &str) -> Option<String> {
@@ -93,7 +131,7 @@ impl<'a> Package<'a> {
     /// Read and parse an XML entry, or `None` when it does not exist.
     pub(crate) fn xml(&mut self, name: &str) -> Result<Option<Element>, ConvertError> {
         match self.read(name)? {
-            Some(bytes) => parse_xml(&bytes)
+            Some(bytes) => parse_xml_with_limits(&bytes, self.input_limits)
                 .map(Some)
                 .map_err(|e| invalid(format!("{name}: {e}"))),
             None => Ok(None),
@@ -397,10 +435,14 @@ impl Element {
 }
 
 /// Parse XML bytes into an element tree (the document element).
-/// Input policy belongs to admission with the caller's active limits, not
-/// to this internal builder. The tolerant converter also uses this builder
-/// without full XML admission; do not impose stricter default width caps here.
+/// Internal fragments use the default budgets; package parts use the active
+/// limits through `parse_xml_with_limits`.
 pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
+    parse_xml_with_limits(bytes, InputLimits::default())
+}
+
+pub(crate) fn parse_xml_with_limits(bytes: &[u8], limits: InputLimits) -> Result<Element, String> {
+    let mut policy = TagPolicy::new(limits);
     let text = decode(bytes);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().trim_text(false);
@@ -411,6 +453,9 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
             .map_err(|e| format!("malformed XML at byte {}: {e}", reader.buffer_position()))?;
         match event {
             Event::Start(start) => {
+                policy
+                    .open(&start)
+                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 if stack.len() > MAX_DEPTH {
                     return Err("XML nesting too deep".into());
                 }
@@ -420,11 +465,15 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
                 )?);
             }
             Event::Empty(start) => {
+                policy
+                    .empty(&start)
+                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 let element =
                     element_from(&start, &stack.last().expect("document scope").namespaces)?;
                 push_child(&mut stack, Node::Element(element));
             }
             Event::End(_) => {
+                policy.close();
                 if stack.len() <= 1 {
                     return Err("unbalanced end tag".into());
                 }
@@ -1443,11 +1492,17 @@ mod tests {
     }
 
     #[test]
-    fn issue650_converter_tree_preserves_attribute_width() {
+    fn issue650_converter_tree_preserves_attribute_width_with_raised_limits() {
         for count in [1024, 1025, 2000] {
             let attrs: String = (0..count).map(|i| format!(" a{i}='v{i}'")).collect();
             let xml = format!("<r{attrs}/>");
-            let parsed = parse_xml(xml.as_bytes());
+            let parsed = parse_xml_with_limits(
+                xml.as_bytes(),
+                InputLimits {
+                    max_element_attributes: 4096,
+                    ..InputLimits::default()
+                },
+            );
             assert!(
                 parsed.is_ok(),
                 "converter must preserve count {count}: {parsed:?}"
@@ -1462,10 +1517,16 @@ mod tests {
     }
 
     #[test]
-    fn issue650_converter_tree_preserves_long_names() {
+    fn issue650_converter_tree_preserves_long_names_with_raised_limits() {
         let name = "n".repeat(1025);
         let xml = format!("<r {name}='Alice'/>");
-        let parsed = parse_xml(xml.as_bytes());
+        let parsed = parse_xml_with_limits(
+            xml.as_bytes(),
+            InputLimits {
+                max_attribute_name_bytes: 4096,
+                ..InputLimits::default()
+            },
+        );
         assert!(
             parsed.is_ok(),
             "converter must preserve long names: {parsed:?}"
@@ -1474,13 +1535,13 @@ mod tests {
     }
 
     #[test]
-    fn issue650_converter_tree_leaves_alias_policy_to_admission() {
+    fn issue650_converter_tree_refuses_aliased_duplicate() {
         let parsed = parse_xml(b"<r xmlns:a='urn:x' xmlns:b='urn:x' a:x='1' b:x='2'/>");
         assert!(
-            parsed.is_ok(),
-            "converter must leave policy to admission: {parsed:?}"
+            parsed.is_err(),
+            "converter must refuse aliased duplicate: {parsed:?}"
         );
-        assert_eq!(parsed.unwrap().attrs.len(), 4);
+        assert!(parsed.unwrap_err().contains("expanded name"));
         assert!(parse_xml(b"<r xmlns:a='urn:x' x='1' a:x='2'/>").is_ok());
     }
 
