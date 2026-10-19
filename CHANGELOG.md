@@ -64,7 +64,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `ZIP_HEADER_MISMATCH`); validates every entry's extent — local header,
   payload and data descriptor — for overlaps and placement before the
   central directory (`INVALID_PACKAGE`); checks each data descriptor,
-  signed or unsigned, in the width the entry's ZIP64 form selects; and
+  signed or unsigned, in the width the local header's ZIP64 form
+  prescribes — a 0x0001 extra field alone prescribes 8-byte sizes — or
+  the other width when only it matches the central record; and
   reads directory payloads through the bounded CRC stream so a corrupt
   one refuses and its bytes count against the budgets. `jubarte debug`
   reports each class as a `zip-header-mismatch`, `zip-extent`,

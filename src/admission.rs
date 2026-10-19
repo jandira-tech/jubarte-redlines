@@ -1120,13 +1120,20 @@ pub(crate) mod zip_names {
     }
 
     /// The shape of a data descriptor (APPNOTE 4.3.9): signed with
-    /// `PK\7\8` or bare — both are legal.
+    /// `PK\7\8` or bare — both are legal. APPNOTE 4.3.9.2 makes the
+    /// sizes 8 bytes when the local header carries a 0x0001 ZIP64
+    /// field, whatever the entry's size, so width is the variant's,
+    /// not the entry's.
     #[derive(Clone, Copy)]
     pub enum Descriptor {
-        /// `PK\7\8` then CRC-32 and the two sizes.
+        /// `PK\7\8` then CRC-32 and the two 4-byte sizes.
         Signed,
-        /// CRC-32 and the two sizes, no signature.
+        /// CRC-32 and the two 4-byte sizes, no signature.
         Unsigned,
+        /// `PK\7\8` then CRC-32 and the two 8-byte sizes.
+        SignedZip64,
+        /// CRC-32 and the two 8-byte sizes, no signature.
+        UnsignedZip64,
     }
 
     /// An entry for [`assembled`]: raw name bytes, payload, an optional
@@ -1145,6 +1152,8 @@ pub(crate) mod zip_names {
         pub descriptor: Option<Descriptor>,
         /// ZIP64 headers: 0xFFFFFFFF sizes plus the 0x0001 extra field.
         pub zip64: bool,
+        /// Local extra-field bytes; `zip64` writes the 0x0001 field instead.
+        pub local_extra: &'a [u8],
     }
 
     impl<'a> AssembledEntry<'a> {
@@ -1156,6 +1165,7 @@ pub(crate) mod zip_names {
                 flags: 0,
                 descriptor: None,
                 zip64: false,
+                local_extra: b"",
             }
         }
 
@@ -1203,12 +1213,12 @@ pub(crate) mod zip_names {
                 let local = if entry.descriptor.is_some() { 0 } else { crc };
                 (local, (u32::MAX, u32::MAX), zip64_extra(size, size))
             } else if entry.descriptor.is_some() {
-                (0, (0, 0), Vec::new())
+                (0, (0, 0), entry.local_extra.to_vec())
             } else {
                 (
                     crc,
                     (u32::try_from(size).unwrap(), u32::try_from(size).unwrap()),
-                    Vec::new(),
+                    entry.local_extra.to_vec(),
                 )
             };
             out.extend_from_slice(&local_header(
@@ -1221,11 +1231,11 @@ pub(crate) mod zip_names {
             ));
             out.extend_from_slice(&entry.data);
             if let Some(shape) = entry.descriptor {
-                if matches!(shape, Descriptor::Signed) {
+                if matches!(shape, Descriptor::Signed | Descriptor::SignedZip64) {
                     out.extend_from_slice(&[0x50, 0x4b, 0x07, 0x08]);
                 }
                 out.extend_from_slice(&crc.to_le_bytes());
-                if entry.zip64 {
+                if matches!(shape, Descriptor::SignedZip64 | Descriptor::UnsignedZip64) {
                     out.extend_from_slice(&size.to_le_bytes());
                     out.extend_from_slice(&size.to_le_bytes());
                 } else {
@@ -2116,6 +2126,7 @@ mod tests {
             flags: entry.flags,
             descriptor: entry.descriptor,
             zip64: entry.zip64,
+            local_extra: entry.local_extra,
         }));
         zip_names::assembled(b"", &entries, None, b"")
     }
@@ -2164,12 +2175,12 @@ mod tests {
             admit(&shuffled, InputLimits::default()).expect("prefix and reorder admit");
         }
         let zip64 = zip_names::AssembledEntry::plain(b"x.bin", b"payload")
-            .with_descriptor(zip_names::Descriptor::Signed)
+            .with_descriptor(zip_names::Descriptor::SignedZip64)
             .zip64();
         admit(&assembled_docx(&[zip64]), InputLimits::default())
             .expect("a ZIP64 descriptor package admits");
         let unsigned64 = zip_names::AssembledEntry::plain(b"x.bin", b"payload")
-            .with_descriptor(zip_names::Descriptor::Unsigned)
+            .with_descriptor(zip_names::Descriptor::UnsignedZip64)
             .zip64();
         admit(&assembled_docx(&[unsigned64]), InputLimits::default())
             .expect("an unsigned ZIP64 descriptor package admits");
@@ -2180,6 +2191,45 @@ mod tests {
         };
         assert_eq!(
             kind(&assembled_docx(&[missing]), InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+    }
+
+    /// #644 fix round: APPNOTE 4.3.9.2 sizes a descriptor by the local
+    /// header's 0x0001 field — present at all, whatever its values — not
+    /// by 0xFFFFFFFF placeholders or 4-GiB sizes alone. The prescribed
+    /// width wins when both match; a CRC or size that disagrees in both
+    /// widths still refuses.
+    #[test]
+    fn zip17_descriptor_width_follows_the_local_zip64_extra() {
+        let extra = zip_names::zip64_extra(0, 0);
+        let wide = zip_names::AssembledEntry {
+            local_extra: extra.as_slice(),
+            ..zip_names::AssembledEntry::plain(b"x.bin", b"payload")
+                .with_descriptor(zip_names::Descriptor::SignedZip64)
+        };
+        admit(
+            &assembled_docx(std::slice::from_ref(&wide)),
+            InputLimits::default(),
+        )
+        .expect("a 24-byte descriptor behind a ZIP64 local extra admits");
+        // A writer that got the width wrong still admits through the
+        // other width: the CRC and both sizes must match either way.
+        let narrow = zip_names::AssembledEntry {
+            local_extra: extra.as_slice(),
+            ..zip_names::AssembledEntry::plain(b"x.bin", b"payload")
+                .with_descriptor(zip_names::Descriptor::Signed)
+        };
+        admit(&assembled_docx(&[narrow]), InputLimits::default())
+            .expect("a 16-byte descriptor behind a ZIP64 local extra admits");
+        let mut bytes = assembled_docx(std::slice::from_ref(&wide));
+        let signature = bytes
+            .windows(4)
+            .position(|w| w == b"PK\x07\x08")
+            .expect("signed descriptor");
+        bytes[signature + 4] ^= 0xff;
+        assert_eq!(
+            kind(&bytes, InputLimits::default()),
             AdmissionErrorKind::InvalidPackage
         );
     }
