@@ -38,6 +38,8 @@ pub struct Cli {
     /// what `edit`/`add` changed. Files are still written; a reading task
     /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
     /// still prints what it read, and warnings and errors still print.
+    /// `read`, `changes` and `comments` drop their one line naming the
+    /// input's validity findings.
     #[arg(
         short = 'q',
         long,
@@ -1396,22 +1398,25 @@ pub enum Command {
     /// structure; or repair Word validity.
     ///
     /// A word or edits finding fails the run (exit 2), and so does any
-    /// error; --strict fails on warnings too. An unreadable file exits 1.
+    /// error; --strict fails on warnings too. With --baseline, only the
+    /// findings the baseline lacks count. An unreadable file exits 1.
     #[command(alias = "audit")]
     #[command(after_help = "Examples:\n  \
         jubarte validate contract.docx\n  \
         jubarte validate contract.docx --json\n  \
         jubarte validate contract.docx --repair fixed.docx\n  \
         jubarte validate review/redline.docx --original contract.docx --author Claude\n  \
+        jubarte validate review/redline.docx --baseline contract.docx\n  \
         jubarte validate contract.docx --rules word,a11y,style,structure --strict\n\n\
-        Rule sets: word (default: Word validity), edits (with --original and \
-        --author), a11y, style, structure.\n\
+        Rule sets: word (default: Word validity), edits (with --author, and \
+        --original or --baseline), a11y, style, structure.\n\
         Audit codes (code, set, severity):\n  \
         HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,\n  \
         TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,\n  \
         LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,\n  \
         DIRECT_FORMATTING_OVERRIDES_STYLE style info,\n  \
         STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info")]
+    #[command(group(clap::ArgGroup::new("edits_against").args(["original", "baseline"]).multiple(true)))]
     Validate {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -1429,12 +1434,20 @@ pub enum Command {
         /// Write the repaired package here; remaining findings still fail.
         #[arg(long, value_name = "FILE")]
         repair: Option<PathBuf>,
+        /// The document the edits started from: its findings print as
+        /// already in the input (not yours), and only new ones fail the run.
+        /// A finding is new by identity (code, part, place and message),
+        /// never by count. With --author and no --original, the edits are
+        /// checked against it too.
+        #[arg(long, value_name = "FILE", conflicts_with = "repair")]
+        baseline: Option<PathBuf>,
         /// Check tracked edits: every text change against ORIGINAL must be a
         /// revision by --author.
         #[arg(long, value_name = "FILE", requires = "author")]
         original: Option<PathBuf>,
-        /// The author every change must carry (with --original).
-        #[arg(long, value_name = "NAME", requires = "original")]
+        /// The author every change must carry (with --original or
+        /// --baseline).
+        #[arg(long, value_name = "NAME", requires = "edits_against")]
         author: Option<String>,
         /// Replace an existing --repair output.
         #[arg(long)]
@@ -2242,6 +2255,16 @@ fn spellings_in<'a>(
     found
 }
 
+/// `arg` as a POSIX shell reads it back: bare when it holds only safe
+/// characters, else single-quoted.
+pub fn shell_word(arg: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
+    if !arg.is_empty() && arg.chars().all(safe) {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
 /// What a retired spelling still means once parsed: `audit` with no
 /// `--rules` checks `a11y,style,structure`, as the retired task did, not
 /// `validate`'s default `word`.
@@ -2873,13 +2896,13 @@ fn validate_matches(
         && args
             .get_many::<String>("rules")
             .is_some_and(|mut rules| rules.any(|rule| rule == "edits"))
-        && !args.contains_id("original")
+        && !args.contains_id("author")
     {
         let mut task = command.find_subcommand(name).expect("parsed task").clone();
         task.set_bin_name(format!("{} {name}", command.get_name()));
         return Err(task.error(
             ErrorKind::MissingRequiredArgument,
-            "--rules edits needs --original and --author",
+            "--rules edits needs --author, and --original or --baseline",
         ));
     }
     if name == "compare"
