@@ -1,0 +1,353 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! What a refusal says when another author's revision holds the text
+//! (#1108): the revision by id, author and text, then each way around it
+//! with what that way costs, quoted in the syntax the caller wrote.
+
+use crate::namespaces::W;
+use crate::xmllinq::{Dom, NodeId};
+
+/// The request syntax a refusal quotes, so a hint never names a form the
+/// caller's parser would reject.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlanSyntax {
+    /// A `schema_version: 1` JSON plan (`edit --plan`, the library).
+    #[default]
+    V1,
+    /// The operation flags (`edit FILE -p p3 --anchor … --content …`).
+    Flags,
+    /// A `schema_version: 2` plan (`edit apply`).
+    V2,
+}
+
+impl PlanSyntax {
+    /// Every syntax, for the tests that check each one's fragments.
+    pub const ALL: [Self; 3] = [Self::V1, Self::Flags, Self::V2];
+}
+
+/// What another author's revision did to the text it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Held {
+    Inserted,
+    Deleted,
+    MovedHere,
+    MovedAway,
+    /// A tracked formatting change (`w:pPrChange`, `w:rPrChange`).
+    Formatted,
+}
+
+impl Held {
+    /// The kind of `node`, a `w:ins`, `w:del`, `w:moveTo`, `w:moveFrom`,
+    /// `w:pPrChange` or `w:rPrChange`.
+    pub(super) fn of(dom: &Dom, node: NodeId) -> Option<Self> {
+        [
+            ("ins", Self::Inserted),
+            ("del", Self::Deleted),
+            ("moveTo", Self::MovedHere),
+            ("moveFrom", Self::MovedAway),
+            ("pPrChange", Self::Formatted),
+            ("rPrChange", Self::Formatted),
+        ]
+        .into_iter()
+        .find(|(local, _)| dom.name_is(node, &W::name(local)))
+        .map(|(_, held)| held)
+    }
+
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Inserted => "inserted",
+            Self::Deleted => "deleted",
+            Self::MovedHere => "moved here",
+            Self::MovedAway => "moved away",
+            Self::Formatted => "reformatted",
+        }
+    }
+
+    /// The accept and reject routes, each with what it costs.
+    fn settles(self) -> [(&'static str, &'static str); 2] {
+        match self {
+            Self::Deleted => [
+                ("let it go", "their words leave the document for good"),
+                (
+                    "put it back silently",
+                    "their deletion disappears, no trace",
+                ),
+            ],
+            Self::Inserted => [
+                ("keep it", "their words stay, unmarked"),
+                (
+                    "take it out silently",
+                    "their insertion disappears, no trace",
+                ),
+            ],
+            Self::MovedHere | Self::MovedAway => [
+                ("keep the move", "the words stay where they moved, unmarked"),
+                (
+                    "undo it silently",
+                    "the words go back where they were, no trace",
+                ),
+            ],
+            Self::Formatted => [
+                ("keep their formatting", "their formatting stays, unmarked"),
+                (
+                    "undo it silently",
+                    "the old formatting comes back, no trace",
+                ),
+            ],
+        }
+    }
+}
+
+/// One revision a refused edit touched, as the hint names it.
+pub(super) struct Holder<'a> {
+    pub(super) held: Held,
+    /// The printed id (`r12`, `header1.r3`).
+    pub(super) id: &'a str,
+    /// The revision's long id, which a v2 plan's target carries.
+    pub(super) long_id: &'a str,
+    pub(super) author: &'a str,
+    /// The revision's text; empty for a paragraph mark.
+    pub(super) text: &'a str,
+    /// The printed id of the paragraph that holds it (`p160`).
+    pub(super) paragraph: &'a str,
+    /// What the refused edit touched, up to the revision's id: `the text is
+    /// inside`, `…cannot be merged: that mark is`.
+    pub(super) lead: &'a str,
+}
+
+/// The `w:del` or `w:moveFrom` of `paragraph` whose text `find` reaches
+/// into, reading the paragraph's visible and removed text in document
+/// order: an anchor copied from another author's deletion misses the
+/// visible text, and the hint should name the deletion, not the miss.
+pub(super) fn removed_holder(dom: &Dom, paragraph: NodeId, find: &str) -> Option<NodeId> {
+    if find.is_empty() {
+        return None;
+    }
+    let mut text = String::new();
+    let mut removed: Vec<(usize, usize, NodeId)> = Vec::new();
+    for node in dom.descendants(paragraph, None) {
+        let is_text = dom.name_is(node, &W::t()) || dom.name_is(node, &W::del_text());
+        // Text of a paragraph nested in a text box belongs to that one.
+        if !is_text || dom.ancestors(node, Some(&W::p())).first() != Some(&paragraph) {
+            continue;
+        }
+        let start = text.len();
+        text.push_str(&dom.value(node));
+        let holder = dom
+            .ancestors(node, None)
+            .into_iter()
+            .find(|&a| matches!(Held::of(dom, a), Some(Held::Deleted | Held::MovedAway)));
+        if let Some(holder) = holder {
+            removed.push((start, text.len(), holder));
+        }
+    }
+    let plain = crate::markdown::plain_anchor(find);
+    [find, plain.as_str()]
+        .into_iter()
+        .filter(|needle| !needle.is_empty())
+        .flat_map(|needle| {
+            text.match_indices(needle)
+                .map(|(at, hit)| (at, at + hit.len()))
+                .collect::<Vec<_>>()
+        })
+        .find_map(|(start, end)| {
+            removed
+                .iter()
+                .find(|&&(s, e, _)| s < end && start < e)
+                .map(|&(.., holder)| holder)
+        })
+}
+
+/// The longest stretch of a revision's text the hint quotes.
+const QUOTED: usize = 60;
+
+/// The refusal for an edit on text `holder` holds: what holds it, then
+/// accept, reject and a comment, each a fragment the caller can paste.
+pub(super) fn settle_hint(holder: &Holder<'_>, syntax: PlanSyntax) -> String {
+    let id = holder.id;
+    let text = if holder.text.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", quoted(holder.text))
+    };
+    let mut lines = vec![format!(
+        "{} {id}, {text}{} by {:?}.",
+        holder.lead,
+        holder.held.verb(),
+        holder.author
+    )];
+    let [accept, reject] = holder.held.settles();
+    let routes = [
+        (accept.0, settle(syntax, "accept", holder), Some(accept.1)),
+        (reject.0, settle(syntax, "reject", holder), Some(reject.1)),
+        ("or comment on it", comment(syntax, holder.paragraph), None),
+    ];
+    let width = routes.iter().map(|r| r.0.len()).max().unwrap_or(0) + 1;
+    let fragment = routes
+        .iter()
+        .filter(|r| r.2.is_some())
+        .map(|r| r.1.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (name, quote, cost) in routes {
+        let name = format!("{name}:");
+        lines.push(match cost {
+            Some(cost) => {
+                let pad = " ".repeat(fragment - quote.chars().count());
+                format!("  {name:<width$} {quote}{pad} ({cost})")
+            }
+            None => format!("  {name:<width$} {quote}"),
+        });
+    }
+    lines.join("\n")
+}
+
+/// `verb` (`accept` or `reject`) of the revision, as `syntax` spells it.
+fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
+    let id = holder.id;
+    match syntax {
+        PlanSyntax::V1 => format!(r#""resolve_revisions":{{"{verb}":{{"ids":["{id}"]}}}}"#),
+        PlanSyntax::Flags => format!("-p {id} --{verb}"),
+        PlanSyntax::V2 => format!(
+            r#""resolve_revisions":{{"{verb}":[{{"short_id":"{id}","long_id":"{}"}}]}}"#,
+            holder.long_id
+        ),
+    }
+}
+
+/// A comment on the paragraph, as `syntax` spells it.
+fn comment(syntax: PlanSyntax, paragraph: &str) -> String {
+    match syntax {
+        PlanSyntax::V1 => {
+            format!(r#"{{"kind":"comment","paragraph":"{paragraph}","find":"…","text":"…"}}"#)
+        }
+        PlanSyntax::Flags => format!(r#"add -p {paragraph} --anchor "…" --content "…""#),
+        PlanSyntax::V2 => {
+            r#"{"kind":"comment","target":<this operation's target>,"find":"…","text":"…"}"#
+                .to_string()
+        }
+    }
+}
+
+/// `text` in quotes, cut to [`QUOTED`] characters with the cut said.
+fn quoted(text: &str) -> String {
+    if text.chars().count() <= QUOTED {
+        return format!("{text:?}");
+    }
+    let head: String = text.chars().take(QUOTED).collect();
+    format!("{head:?}…")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn holder(held: Held) -> Holder<'static> {
+        Holder {
+            held,
+            id: "r12",
+            long_id: "document.w:del.w:id.12",
+            author: "Bob Lee",
+            text: "the bankers",
+            paragraph: "p3",
+            lead: "the text is inside",
+        }
+    }
+
+    #[test]
+    fn a_deletion_offers_both_settles_and_a_comment_with_their_cost() {
+        assert_eq!(
+            settle_hint(&holder(Held::Deleted), PlanSyntax::V1),
+            [
+                r#"the text is inside r12, "the bankers" deleted by "Bob Lee"."#,
+                r#"  let it go:            "resolve_revisions":{"accept":{"ids":["r12"]}} (their words leave the document for good)"#,
+                r#"  put it back silently: "resolve_revisions":{"reject":{"ids":["r12"]}} (their deletion disappears, no trace)"#,
+                r#"  or comment on it:     {"kind":"comment","paragraph":"p3","find":"…","text":"…"}"#,
+            ]
+            .join("\n")
+        );
+    }
+
+    #[test]
+    fn each_syntax_quotes_its_own_fragments() {
+        for syntax in PlanSyntax::ALL {
+            let hint = settle_hint(&holder(Held::Deleted), syntax);
+            let (wanted, foreign): (&[&str], &[&str]) = match syntax {
+                PlanSyntax::V1 => (
+                    &[r#"{"ids":["r12"]}"#, r#""paragraph":"p3""#],
+                    &["--accept", "short_id"],
+                ),
+                PlanSyntax::Flags => (
+                    &["-p r12 --accept", "-p r12 --reject", "add -p p3 --anchor"],
+                    &["resolve_revisions"],
+                ),
+                PlanSyntax::V2 => (
+                    &[
+                        r#""accept":[{"short_id":"r12","long_id":"document.w:del.w:id.12"}]"#,
+                        r#""target":"#,
+                    ],
+                    &[r#""ids""#, "--accept", r#""paragraph""#],
+                ),
+            };
+            for want in wanted {
+                assert!(hint.contains(want), "{syntax:?} lacks {want}: {hint}");
+            }
+            for not in foreign {
+                assert!(!hint.contains(not), "{syntax:?} quotes {not}: {hint}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_kind_names_what_the_revision_did() {
+        for (held, says, first) in [
+            (Held::Inserted, "inserted by", "keep it:"),
+            (Held::Deleted, "deleted by", "let it go:"),
+            (Held::MovedHere, "moved here by", "keep the move:"),
+            (Held::MovedAway, "moved away by", "keep the move:"),
+            (Held::Formatted, "reformatted by", "keep their formatting:"),
+        ] {
+            let hint = settle_hint(&holder(held), PlanSyntax::V1);
+            assert!(hint.lines().next().unwrap().contains(says), "{hint}");
+            assert!(
+                hint.lines().nth(1).unwrap().trim_start().starts_with(first),
+                "{hint}"
+            );
+            assert!(!hint.contains("settle it first"), "{hint}");
+        }
+    }
+
+    #[test]
+    fn a_mark_without_text_is_named_without_quotes() {
+        let hint = settle_hint(
+            &Holder {
+                text: "",
+                lead: "that mark is",
+                ..holder(Held::Inserted)
+            },
+            PlanSyntax::V1,
+        );
+        assert_eq!(
+            hint.lines().next().unwrap(),
+            r#"that mark is r12, inserted by "Bob Lee"."#
+        );
+    }
+
+    #[test]
+    fn a_long_revision_is_quoted_with_the_cut_said() {
+        let text = "x".repeat(QUOTED + 5);
+        let hint = settle_hint(
+            &Holder {
+                text: &text,
+                ..holder(Held::Deleted)
+            },
+            PlanSyntax::V1,
+        );
+        assert!(
+            hint.contains(&format!("\"{}\"…", "x".repeat(QUOTED))),
+            "{hint}"
+        );
+    }
+}

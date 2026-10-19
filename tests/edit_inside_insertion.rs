@@ -343,27 +343,37 @@ fn word_fixture_add_inside_insertion() {
         &text(&reject_changes(WORD, &ChangeFilter::default()).unwrap()),
     );
 }
+fn refused_inside(kind: &str, t: &str) -> jubarte::edit::EditError {
+    let s = docx(&format!(
+        r#"<w:p><w:{kind} w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:{t}>beta</w:{t}></w:r></w:{kind}></w:p>"#
+    ));
+    apply_plan(&s, &plan("Carol Diaz", replace("beta", "new"))).unwrap_err()
+}
 #[test]
-fn moves_and_deletions_stay_uneditable() {
-    for (kind, t) in [("del", "delText"), ("moveFrom", "delText"), ("moveTo", "t")] {
-        let s = docx(&format!(
-            r#"<w:p><w:{kind} w:id="6" w:author="Alice" w:date="{OLD_DATE}"><w:r><w:{t}>beta</w:{t}></w:r></w:{kind}></w:p>"#
-        ));
-        let e = apply_plan(&s, &plan("Carol Diaz", replace("beta", "new"))).unwrap_err();
-        assert_eq!(
-            e.code,
-            if kind == "moveTo" {
-                "UNSUPPORTED_STRUCTURE"
-            } else {
-                "ANCHOR_NOT_FOUND"
-            }
+fn edit_inside_their_deletion_is_refused() {
+    let e = refused_inside("del", "delText");
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{e}");
+    assert!(
+        e.message
+            .starts_with(r#"the text is inside r6, "beta" deleted by "Alice"."#),
+        "{e}"
+    );
+    assert!(!e.message.contains("settle it first"), "{e}");
+}
+#[test]
+fn edit_inside_move_is_refused_until_probed() {
+    for (kind, t, verb) in [
+        ("moveFrom", "delText", "moved away"),
+        ("moveTo", "t", "moved here"),
+    ] {
+        let e = refused_inside(kind, t);
+        assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{kind}: {e}");
+        assert!(
+            e.message.starts_with(&format!(
+                r#"the text is inside r6, "beta" {verb} by "Alice"."#
+            )),
+            "{kind}: {e}"
         );
-        if kind == "moveTo" {
-            assert!(
-                e.message
-                    .contains("a tracked move by \"Alice\"; settle it first")
-            );
-        }
     }
 }
 fn cli_route(route: &str) {

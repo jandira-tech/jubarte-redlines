@@ -1062,6 +1062,12 @@ fn run_edit(
     // publication.
     let options = jubarte::edit::PrepareOptions {
         require_change: job.require_change,
+        // Refusal hints quote the flags a flags-built plan came from.
+        syntax: if job.plan.is_some() {
+            jubarte::edit::PlanSyntax::V1
+        } else {
+            jubarte::edit::PlanSyntax::Flags
+        },
         ..jubarte::edit::PrepareOptions::default()
     };
     if job.dry_run {

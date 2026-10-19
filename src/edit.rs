@@ -40,6 +40,7 @@ mod anchor;
 mod anchor_error;
 mod controls;
 pub mod flags;
+mod hint;
 mod images;
 mod notes;
 mod origin;
@@ -78,6 +79,8 @@ pub use anchor::{v2_candidates, v2_select, v2_select_all};
 pub use anchor_error::{AnchorRefusal, Working, v2_resolve, v2_resolve_all};
 /// Which content control a `fill_control` operation fills.
 pub use controls::ControlSelector;
+/// The request syntax a refusal hint quotes (#1108).
+pub use hint::PlanSyntax;
 /// The shared preparation path [`apply_plan`] and [`preview_plan`] run.
 pub use prepared::{
     CandidateChecks, PrepareOptions, PreparedEdit, PrimaryBytes, PrimaryRole, introduced_findings,
@@ -1932,6 +1935,8 @@ struct Transaction<'p> {
     /// its paragraph's projection the comment covers. Anchors are looked
     /// up there only.
     anchor_window: std::cell::Cell<Option<(u32, usize, usize)>>,
+    /// The request syntax refusals quote (#1108).
+    syntax: PlanSyntax,
     comments: Vec<(u32, String)>,
     /// `(comment id, operation)` of each commented paragraph deletion.
     deletion_comments: Vec<(u32, usize)>,
@@ -2073,6 +2078,7 @@ impl<'p> Transaction<'p> {
             outcomes: Vec::new(),
             resolved: Vec::new(),
             anchor_window: std::cell::Cell::new(None),
+            syntax: PlanSyntax::default(),
             comments: Vec::new(),
             deletion_comments: Vec::new(),
             preset_comment_ids: Vec::new(),
@@ -3932,13 +3938,21 @@ impl<'p> Transaction<'p> {
         occurrence: Option<usize>,
         outcome: &mut EditOutcome,
     ) -> Result<(usize, usize), (String, String)> {
-        let (start, end) = locate(
+        let (start, end) = match locate(
             projection,
             find,
             occurrence,
             outcome,
             self.anchor_window.get(),
-        )?;
+        ) {
+            Err((code, message)) if code == "ANCHOR_NOT_FOUND" => {
+                return Err(match self.removed_anchor(projection, find) {
+                    Some(hint) => ("UNSUPPORTED_STRUCTURE".into(), hint),
+                    None => (code, message),
+                });
+            }
+            found => found?,
+        };
         self.check_range(projection, start, end)
             .map_err(|m| ("UNSUPPORTED_STRUCTURE".to_string(), m))?;
         Ok((start, end))
@@ -3954,10 +3968,7 @@ impl<'p> Transaction<'p> {
                 continue;
             }
             if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-                return Err(format!(
-                    "the text sits inside {}",
-                    self.opaque_structure(run_of(&seg.piece))
-                ));
+                return Err(self.refuse_opaque(run_of(&seg.piece), "the text"));
             }
             if is_symbol(projection, seg) {
                 return Err("the text crosses a symbol".into());
@@ -3980,39 +3991,39 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
-    /// What holds `run`, a run no edit may touch, and the way around it:
-    /// a revision by id and author first (settling it frees the text), else
-    /// the innermost hyperlink, field or content control.
+    /// Why `subject` (the text, the insertion point) in `run` cannot be
+    /// edited, and the way around it: another author's move or deletion by
+    /// id, author and text, with each route around it (#1108); else the
+    /// innermost hyperlink, field or content control. An insertion is
+    /// editable (#1136), so what refuses inside one is the structure
+    /// around or inside it.
+    fn refuse_opaque(&self, run: NodeId, subject: &str) -> String {
+        let dom = &self.opened.dom;
+        let revision = dom
+            .ancestors(run, None)
+            .into_iter()
+            .take_while(|&n| !dom.name_is(n, &W::p()))
+            .find(|&n| hint::Held::of(dom, n).is_some_and(|held| held != hint::Held::Inserted));
+        match revision {
+            Some(revision) => self.revision_hint(revision, &format!("{subject} is inside")),
+            None => format!("{subject} sits inside {}", self.opaque_structure(run)),
+        }
+    }
+
+    /// The innermost hyperlink, field or content control that holds `run`,
+    /// and the way around it.
     fn opaque_structure(&self, run: NodeId) -> String {
         let dom = &self.opened.dom;
         let ancestors = dom.ancestors(run, None);
-        let story = self
-            .stories
-            .iter()
-            .find(|s| ancestors.contains(&s.root))
-            .map_or("body", |s| s.id.as_str());
         let mut inner: Option<String> = None;
         for &node in &ancestors {
             if dom.name_is(node, &W::p()) {
                 break;
             }
-            let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
-            for (local, kind) in [
-                ("ins", "insertion"),
-                ("moveTo", "move"),
-                ("del", "deletion"),
-            ] {
-                if dom.name_is(node, &W::name(local)) {
-                    let id = crate::ids::ChangeId::new(story, attr("id")).short();
-                    return format!(
-                        "{id}, a tracked {kind} by {:?}; settle it first (\"resolve_revisions\": {{\"accept\": {{\"ids\": [\"{id}\"]}}}}, or reject), or comment on it",
-                        attr("author")
-                    );
-                }
-            }
             if inner.is_some() {
                 continue;
             }
+            let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
             if dom.name_is(node, &W::name("hyperlink")) {
                 inner = Some(
                     "a hyperlink; edit the text on either side of it, or comment on it".into(),
@@ -4045,6 +4056,80 @@ impl<'p> Transaction<'p> {
         })
     }
 
+    /// The refusal for an edit `revision` holds (a `w:ins`, `w:del`,
+    /// `w:moveTo`, `w:moveFrom`, `w:pPrChange` or `w:rPrChange`): `lead`
+    /// says what was refused up to the revision's id, then the revision and
+    /// its routes in the plan's syntax.
+    fn revision_hint(&self, revision: NodeId, lead: &str) -> String {
+        let dom = &self.opened.dom;
+        let ancestors = dom.ancestors(revision, None);
+        let story = self.stories.iter().find(|s| ancestors.contains(&s.root));
+        let wid = dom.attribute(revision, &W::id()).unwrap_or_default();
+        let story_id = story.map_or("body", |s| s.id.as_str());
+        let id = crate::ids::ChangeId::new(story_id, wid).short();
+        let local = dom.name(revision).map(|n| n.local_name().to_string());
+        let long_id = v2_apply::revision_long_id(
+            story.map_or("word/document.xml", |s| s.part.as_str()),
+            local.as_deref().unwrap_or("ins"),
+            story_id,
+            wid,
+        );
+        let held = hint::Held::of(dom, revision).unwrap_or(hint::Held::Inserted);
+        // A formatting change holds the text of the run or paragraph it
+        // formats; a mark revision holds none.
+        let owner = if held == hint::Held::Formatted {
+            ancestors
+                .iter()
+                .copied()
+                .find(|&n| dom.name_is(n, &W::r()) || dom.name_is(n, &W::p()))
+                .unwrap_or(revision)
+        } else {
+            revision
+        };
+        let text: String = dom
+            .descendants(owner, None)
+            .into_iter()
+            .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
+            .map(|n| dom.value(n))
+            .collect();
+        let paragraph = ancestors
+            .iter()
+            .find(|&&n| dom.name_is(n, &W::p()))
+            .and_then(|p| self.paragraph_nodes.iter().position(|n| n == p))
+            .map_or_else(String::new, |para| self.paragraph_id(para));
+        hint::settle_hint(
+            &hint::Holder {
+                held,
+                id: &id,
+                long_id: &long_id,
+                author: dom.attribute(revision, &W::author()).unwrap_or_default(),
+                text: &text,
+                paragraph: &paragraph,
+                lead,
+            },
+            self.syntax,
+        )
+    }
+
+    /// When `find` misses `projection`'s visible text but reaches into text
+    /// another author deleted or moved away, the refusal that names that
+    /// revision; the anchor is otherwise just not there.
+    fn removed_anchor(&self, projection: &Projection, find: &str) -> Option<String> {
+        // The projections are the transaction's own, one per paragraph.
+        let para = self
+            .projections
+            .iter()
+            .position(|p| std::ptr::eq(p, projection))?;
+        self.removed_anchor_in(para, find)
+    }
+
+    /// [`Self::removed_anchor`] for paragraph `para`.
+    fn removed_anchor_in(&self, para: usize, find: &str) -> Option<String> {
+        let dom = &self.opened.dom;
+        hint::removed_holder(dom, self.paragraph_nodes[para], find)
+            .map(|revision| self.revision_hint(revision, "the text is inside"))
+    }
+
     fn check_insert_position(
         &self,
         projection: &Projection,
@@ -4057,10 +4142,7 @@ impl<'p> Transaction<'p> {
         let seg = attach_segment(projection, pos, attach_before)
             .ok_or_else(|| "no run holds the insertion point".to_string())?;
         if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-            return Err(format!(
-                "the insertion point sits inside {}",
-                self.opaque_structure(run_of(&seg.piece))
-            ));
+            return Err(self.refuse_opaque(run_of(&seg.piece), "the insertion point"));
         }
         if is_symbol(projection, seg) {
             return Err("the insertion point touches a symbol".into());

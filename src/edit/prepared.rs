@@ -142,6 +142,9 @@ pub struct PrepareOptions {
     /// serialized-story postcondition describes and the receipt digest
     /// names, so a redline-only defect cannot slip through.
     pub role: PrimaryRole,
+    /// The request syntax a refusal hint quotes: a flags-built plan names
+    /// flags, a JSON plan names JSON (#1108).
+    pub syntax: super::PlanSyntax,
 }
 
 impl Default for PrepareOptions {
@@ -150,6 +153,7 @@ impl Default for PrepareOptions {
             require_change: false,
             exact_text: false,
             role: PrimaryRole::Clean,
+            syntax: super::PlanSyntax::V1,
         }
     }
 }
@@ -200,6 +204,7 @@ pub fn prepare(
 ) -> Result<PreparedEdit, EditError> {
     check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
+    tx.syntax = options.syntax;
     tx.resolve()?;
     tracked::check(&tx)?;
     let emit = tx.emits_directly()?;

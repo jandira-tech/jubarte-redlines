@@ -482,6 +482,7 @@ fn cli_v2_rows_match_prepare_v2_and_bindings_stay_on_v1() {
                     require_change: false,
                     exact_text: true,
                     role: jubarte::edit::PrimaryRole::Clean,
+                    syntax: jubarte::edit::PlanSyntax::V1,
                 },
             );
             let row_name = format!(

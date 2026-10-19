@@ -843,6 +843,33 @@ content operation) prints one line per resolved change instead
 Anchors match literally first, then without their Markdown marks, with a
 note.
 
+### Refusals
+
+Text inside another author's insertion is editable: the edit nests in
+their insertion, and Accept All and Reject All give what each would
+without it. Text another author deleted or moved, and a paragraph or run
+whose mark or formatting change is still tracked, is not. The refusal
+(`UNSUPPORTED_STRUCTURE`, exit 3) names that revision by id, author and
+text, then each way around it with what that way costs, in the syntax the
+command used:
+
+```text
+error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text is inside r4, "bankers" deleted by "Bob".
+  let it go:            -p r4 --accept (their words leave the document for good)
+  put it back silently: -p r4 --reject (their deletion disappears, no trace)
+  or comment on it:     add -p p0 --anchor "…" --content "…"
+```
+
+Either route goes in the same command, before the edit
+(`edit FILE -p r4 --reject -p p0 --anchor bankers --content brokers`). A
+`--plan` quotes `"resolve_revisions":{"reject":{"ids":["r4"]}}` and a
+`{"kind":"comment",…}` operation instead; `edit apply` quotes the
+revision's `short_id` and `long_id`. An anchor that misses the visible
+text but reaches into a deletion gets the same refusal, not
+`ANCHOR_NOT_FOUND`. A move offers "keep the move" and "undo it silently";
+a formatting change, "keep their formatting" and "undo it silently". A
+field, hyperlink or content control names itself instead.
+
 ### Limits of the agent view
 
 - Tracked paragraph marks inside comment bodies are not shown.

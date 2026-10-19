@@ -29,6 +29,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   | Inserted paragraph mark | `<!-- p0 break-ins r7 @AL -->` on an id line | Inline `¶{r7 @AL}` at the paragraph end |
   | Literal escape | Attribution-shaped text after a closer was unprotected | Escape the opening brace, as in `{++new++}\{r1 @AL}` and `¶\{` |
 
+- **`edit::PrepareOptions` has a `syntax` field** (`PlanSyntax`: `V1`,
+  `Flags`, `V2`), the request syntax a refusal quotes. A struct literal adds
+  `..PrepareOptions::default()`.
 
 ### Fixed
 
@@ -154,6 +157,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   say, in the binary and in both hosts.
 
 ### Changed
+
+- **Edits inside another author's insertion land (#1136).** Under
+  `existing_revisions: keep`, a replace, deletion or insertion in text
+  another author inserted nests in their insertion: Accept All keeps the
+  edit, Reject All removes their insertion with it. An edit inside your own
+  insertion rewrites it in place.
+
+- **A refusal names the revision in the way and every route around it
+  (#1108).** Text another author deleted or moved, and a paragraph or run
+  whose mark or formatting change is tracked, are refused with the
+  revision's id, author and text, then accept, reject and a comment, each
+  with what it costs, quoted in the syntax the caller wrote (operation
+  flags, a v1 plan, or an `edit apply` plan). An anchor that reaches into
+  another author's deletion gets this refusal instead of
+  `ANCHOR_NOT_FOUND`. No refusal says to resolve the change first.
 
 - **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
   `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`

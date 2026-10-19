@@ -168,6 +168,7 @@ pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditErro
     execution.operations = mapped.iter().map(|m| m.legacy.clone()).collect();
     // Always use the preserving engine path. Tracking controls only the new edits.
     let mut tx = Transaction::start(&working, &execution)?;
+    tx.syntax = super::PlanSyntax::V2;
     if selected_report.is_empty() && remaining_revisions.is_empty() {
         tx.origin = None;
     } else {
@@ -703,24 +704,7 @@ impl SourceIndex {
                 continue;
             };
             for story in &stories {
-                // The carrier long ID follows the shared native-key policy:
-                // a `w:id` Word could have written (an `i32`) is its own
-                // form, anything else travels as its printed `j:short`.
-                let carrier = if super::native_keys::revision_id(wid).is_some() {
-                    format!(
-                        "{}.w:{}.w:id.{}",
-                        part_token(part),
-                        name.local_name(),
-                        encode(wid)
-                    )
-                } else {
-                    format!(
-                        "{}.w:{}.j:short.{}",
-                        part_token(part),
-                        name.local_name(),
-                        crate::ids::ChangeId::new(story.clone(), wid).short()
-                    )
-                };
+                let carrier = revision_long_id(part, name.local_name(), story, wid);
                 self.revision_carriers
                     .entry((story.clone(), wid.to_string()))
                     .or_default()
@@ -729,6 +713,22 @@ impl SourceIndex {
         }
     }
 }
+/// The long id of the revision carrier `w:{local}` with `w:id` `wid` in
+/// `part`, as `story` prints it. It follows the shared native-key policy:
+/// a `w:id` Word could have written (an `i32`) is its own form, anything
+/// else travels as its printed `j:short`.
+pub(super) fn revision_long_id(part: &str, local: &str, story: &str, wid: &str) -> String {
+    if super::native_keys::revision_id(wid).is_some() {
+        format!("{}.w:{local}.w:id.{}", part_token(part), encode(wid))
+    } else {
+        format!(
+            "{}.w:{local}.j:short.{}",
+            part_token(part),
+            crate::ids::ChangeId::new(story, wid).short()
+        )
+    }
+}
+
 #[derive(Clone)]
 enum Entity {
     Paragraph(usize),
@@ -2031,6 +2031,18 @@ fn resolve_operation(
     let occurrence = |n: Option<u64>| n.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
     let note = |c: &Option<AttachedComment>| c.as_ref().map(|c| c.text.clone());
     let p = p.unwrap_or(0);
+    // A miss that reaches into another author's deletion names it (#1108).
+    let select = |old: &str, needle: &str, n: Option<u64>| {
+        anchor::v2_select(old, needle, occurrence(n)).map_err(|e| {
+            match (e.code == "ANCHOR_NOT_FOUND")
+                .then(|| tx.removed_anchor_in(p, needle))
+                .flatten()
+            {
+                Some(hint) => err("UNSUPPORTED_STRUCTURE", None, hint),
+                None => e,
+            }
+        })
+    };
     o.paragraph = (!m.paragraphs.is_empty()).then(|| tx.paragraph_id(p));
     o.matches = 1;
     match operation {
@@ -2042,7 +2054,7 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
-            let (start, end) = anchor::v2_select(&old, find, occurrence(*n))?;
+            let (start, end) = select(&old, find, *n)?;
             if &old[start..end] == text {
                 comment_component(tx, p, start, end, note(attached_comment))
             } else {
@@ -2063,7 +2075,7 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
-            let (start, end) = anchor::v2_select(&old, find, occurrence(*n))?;
+            let (start, end) = select(&old, find, *n)?;
             Ok(vec![text_component(tx, p, start, end, "", None, true)?])
         }
         V::Insert {
@@ -2077,12 +2089,8 @@ fn resolve_operation(
         } => {
             let old = exact(p)?;
             let (at, attach) = match (before_text, after_text, edge) {
-                (Some(anchor), None, None) => {
-                    (anchor::v2_select(&old, anchor, occurrence(*n))?.0, false)
-                }
-                (None, Some(anchor), None) => {
-                    (anchor::v2_select(&old, anchor, occurrence(*n))?.1, true)
-                }
+                (Some(anchor), None, None) => (select(&old, anchor, *n)?.0, false),
+                (None, Some(anchor), None) => (select(&old, anchor, *n)?.1, true),
                 (None, None, Some(super::Edge::Start)) => (0, false),
                 (None, None, Some(super::Edge::End)) => (old.len(), true),
                 _ => {
@@ -2141,7 +2149,7 @@ fn resolve_operation(
         } => {
             let (start, end) = if let Some(find) = find {
                 let old = exact(p)?;
-                anchor::v2_select(&old, find, occurrence(*n))?
+                select(&old, find, *n)?
             } else {
                 (0, tx.projections[p].text.len())
             };
