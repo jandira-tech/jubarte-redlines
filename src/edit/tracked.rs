@@ -1196,6 +1196,16 @@ fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut
             Some((ins, false, tail))
         });
     let (anchor, before) = split.map_or((anchor, before), |(ins, before, _)| (Some(ins), before));
+    // New words meet no range they were not typed in: past the openers
+    // before them, past the closers after them (#1156). A replacement takes
+    // the place of words its ranges cover, and stays beside its deletion.
+    let anchor = anchor.map(|anchor| {
+        if start == end {
+            outside_ranges(dom, anchor, before)
+        } else {
+            anchor
+        }
+    });
     let mut last = anchor;
     if !replacement.is_empty() {
         let run = dom.new_element(W::r());
@@ -1259,7 +1269,7 @@ pub(super) fn insertion_boundary_anchor(dom: &Dom, run: NodeId, before: bool) ->
 
 /// The range openers an insertion can hold: they travel with the words to
 /// their right.
-const RANGE_STARTS: [&str; 5] = [
+pub(super) const RANGE_STARTS: [&str; 5] = [
     "bookmarkStart",
     "commentRangeStart",
     "permStart",
@@ -1268,17 +1278,42 @@ const RANGE_STARTS: [&str; 5] = [
 ];
 /// The range closers that travel with the words to their left; a comment's
 /// end also takes its reference, so it is read on its own.
-const RANGE_ENDS: [&str; 4] = [
+pub(super) const RANGE_ENDS: [&str; 4] = [
     "bookmarkEnd",
     "permEnd",
     "moveFromRangeEnd",
     "moveToRangeEnd",
 ];
 
+/// A comment range's closer: it travels with the words to its left, and
+/// takes its reference along.
+pub(super) const COMMENT_RANGE_END: &str = "commentRangeEnd";
+
 /// Whether `node` is a `w:` element named one of `locals`.
 fn is_one_of(dom: &Dom, node: NodeId, locals: &[&str]) -> bool {
     dom.name(node)
         .is_some_and(|n| n.namespace_name() == W::URI && locals.contains(&n.local_name()))
+}
+
+/// The sibling of `anchor` that new words go `before` (or after) so they
+/// join no range they meet: the first of the openers right before
+/// `anchor`, or the last of the closers right after it, a comment's end
+/// with its reference. `anchor` itself when no marker is in the way. Body-
+/// level markers are no siblings of a run and stay where they are.
+pub(super) fn outside_ranges(dom: &Dom, anchor: NodeId, before: bool) -> NodeId {
+    let Some(parent) = dom.parent(anchor) else {
+        return anchor;
+    };
+    let children = dom.elements(parent, None);
+    let Some(index) = children.iter().position(|&n| n == anchor) else {
+        return anchor;
+    };
+    let at = insertion_split_boundary(dom, &children, index + usize::from(!before), before);
+    if before {
+        children[at]
+    } else {
+        children[at - 1]
+    }
 }
 
 /// Opening markers travel with the words to their right, closing markers
@@ -1292,7 +1327,7 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
     }
     let mut closed_comments = BTreeSet::new();
     while let Some(&child) = children.get(at) {
-        if dom.name_is(child, &W::name("commentRangeEnd")) {
+        if dom.name_is(child, &W::name(COMMENT_RANGE_END)) {
             if let Some(id) = dom.attribute(child, &W::id()) {
                 closed_comments.insert(id);
             }
@@ -1536,7 +1571,7 @@ fn remove_own_insertion(dom: &mut Dom, ins: NodeId, stamp: &mut Stamp<'_>) {
     if left.iter().all(|&c| {
         is_one_of(dom, c, &RANGE_STARTS)
             || is_one_of(dom, c, &RANGE_ENDS)
-            || is_one_of(dom, c, &["commentRangeEnd"])
+            || is_one_of(dom, c, &[COMMENT_RANGE_END])
     }) {
         for marker in left {
             dom.remove(marker);

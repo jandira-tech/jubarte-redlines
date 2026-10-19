@@ -986,6 +986,28 @@ They remain present in `text`; other characters, including punctuation and
 soft hyphens, stay distinct. Typed v2 edits still require literal anchors.
 The existing v1 Markdown/lookalike fallback keeps its versioned behavior;
 near reporting adds no new successful match.
+
+New words join no range they were not typed in. At a bookmark, a comment's
+range or a permission range, an insertion goes before the markers that
+open a range there and after the markers that close one, so in the clean
+copy, after Accept All and after Reject All each range covers the words it
+covered in the source. Words typed inside a range join it. A replacement
+takes the place of words its range covers, and stays in that range. A
+range at body level holds whole paragraphs, and its markers stay between
+them. The redline of such an edit is written directly, as under `keep`.
+A plan with `update_fields` goes through Compare, as before: a heading a
+TOC lists holds its `_Toc` bookmark around its text, and words typed
+before it refresh the TOC. So does a plan that also holds an operation
+that cannot be written as a tracked change (`page_setup`,
+`insert_footnote`, `insert_image`, `fill_control`). Compare can carry the
+marker into the insertion, and the edit is then refused with
+`CANDIDATE_INVALID`. Under `update_fields` it is refused too when Reject
+All of the redline would drop a bookmark, a comment's range or a
+permission range the source holds: a heading replaced whole loses its
+`_Toc` bookmark that way, and the TOC would read "Error! Bookmark not
+defined.". The refusal adds the route: drop `update_fields` and run
+`jubarte convert FILE --update-fields` afterwards.
+
 ### Visible rejects
 
 `--reject` is Word's Reject: another author's insertion vanishes and their

@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::tracked::{COMMENT_RANGE_END, RANGE_ENDS, RANGE_STARTS};
 use super::{
     EditError, EditOutcome, ExistingRevisions, Resolution, Resolved, Transaction, check_text, err,
     excerpt,
@@ -558,13 +559,10 @@ fn fill(dom: &mut Dom, sdt: NodeId, block: bool, value: &FillValue) {
     write_content(dom, content, block, rpr, &text);
 }
 
-/// Range markers a fill carries over: starts go before the new run, ends
-/// after it, so bookmarks, comment ranges and permissions keep both halves.
-const RANGE_STARTS: &[&str] = &["bookmarkStart", "commentRangeStart", "permStart"];
-const RANGE_ENDS: &[&str] = &["bookmarkEnd", "commentRangeEnd", "permEnd"];
-
 /// The range markers under `content`, detached: `(starts, ends)` in
-/// document order.
+/// document order. A fill puts the starts before its new run and the ends
+/// after it, so bookmarks, comment ranges, permissions and move ranges keep
+/// both halves: the markers an insertion beside them reads (#1156).
 fn take_range_markers(dom: &mut Dom, content: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
     let (mut starts, mut ends) = (Vec::new(), Vec::new());
     for node in dom.descendants(content, None) {
@@ -574,7 +572,8 @@ fn take_range_markers(dom: &mut Dom, content: NodeId) -> (Vec<NodeId>, Vec<NodeI
         }
         if RANGE_STARTS.contains(&name.local_name()) {
             starts.push(node);
-        } else if RANGE_ENDS.contains(&name.local_name()) {
+        } else if RANGE_ENDS.contains(&name.local_name()) || name.local_name() == COMMENT_RANGE_END
+        {
             ends.push(node);
         }
     }

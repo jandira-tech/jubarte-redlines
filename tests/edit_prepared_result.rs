@@ -318,8 +318,12 @@ fn introduced_bookmark_crossing_fails_the_candidate() {
             .all(|f| !f.code.starts_with("BOOKMARK_")),
         "the source carries no bookmark finding to begin with"
     );
+    // The page setup is no change the emitter writes, so the plan's redline
+    // comes from the comparer, which rewrites "beta" whole and takes the
+    // bookmark's end into the insertion (#1293). Alone, the replacement is
+    // emitted and keeps the end outside it (#1156).
     let plan = plan(
-        r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"}]}"#,
+        r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"},{"kind":"page_setup","section":"all","orientation":"landscape"}]}"#,
     );
     let e = prepare(&source, &plan, &DEFAULT).unwrap_err();
     assert_eq!(e.code, "CANDIDATE_INVALID");
