@@ -882,3 +882,86 @@ fn zip17_public_boundaries() {
         .expect("markdown opens it");
     jubarte::debug::findings(&control).expect("debug opens it");
 }
+
+#[test]
+fn issue650_defaults_and_overrides_reach_admission() {
+    use jubarte::admission::{admit, AdmissionErrorKind, InputLimitOverrides};
+    for count in [1024, 1025] {
+        let attrs: String = (0..count).map(|i| format!(" a{i}='v'")).collect();
+        let xml = DOCUMENT.replace("<w:p>", &format!("<w:p{attrs}>"));
+        let bytes = package_with_document(&xml);
+        let result = admit(&bytes, InputLimits::default());
+        assert_eq!(result.is_ok(), count == 1024, "count {count}: {result:?}");
+        if let Err(err) = result {
+            assert_eq!(err.kind, AdmissionErrorKind::InvalidXml);
+            assert!(err.to_string().contains("word/document.xml"));
+            assert!(err.to_string().contains("w:p"));
+            assert!(err.to_string().contains("1024"));
+        }
+    }
+    let overrides = InputLimitOverrides::from_json(r#"{"max_element_attributes": 3,"max_attribute_name_bytes": 8,"max_attribute_value_bytes": 100,"max_start_tag_bytes": 600}"#);
+    assert!(overrides.is_ok(), "attribute budgets must be configurable: {overrides:?}");
+    let limits = overrides.unwrap().apply(InputLimits::default());
+    let xml = DOCUMENT.replace("<w:p>", "<w:p a='1' b='2' c='3' d='4'>");
+    let err = admit(&package_with_document(&xml), limits).unwrap_err();
+    assert_eq!(err.kind, AdmissionErrorKind::InvalidXml);
+    assert!(err.to_string().contains("w:p"));
+    assert!(err.to_string().contains("3 attributes"));
+}
+
+fn issue650_byte_boundary(key: &str, cap: usize) {
+    use jubarte::admission::{admit, InputLimitOverrides};
+    {
+        let json = format!(r#"{{"{key}":{cap}}}"#);
+        // The fallback keeps the red test compilable before the new override exists.
+        let limits = InputLimitOverrides::from_json(&json).unwrap_or_default().apply(InputLimits::default());
+        for extra in [0, 1] {
+            let tag = match key {
+                "max_attribute_name_bytes" => format!("<w:p {}='v'>", "n".repeat(cap + extra)),
+                "max_attribute_value_bytes" => format!("<w:p a='{}'>", "v".repeat(cap + extra)),
+                _ => format!("<w:p a='{}'>", "v".repeat(cap + extra - 10)),
+            };
+            let xml = DOCUMENT.replace("<w:p>", &tag);
+            let result = admit(&package_with_document(&xml), limits);
+            assert_eq!(result.is_ok(), extra == 0, "{key} at {}: {result:?}", cap + extra);
+        }
+    }
+}
+
+#[test]
+fn issue650_configurable_name_boundary() { issue650_byte_boundary("max_attribute_name_bytes", 100); }
+#[test]
+fn issue650_configurable_value_boundary() { issue650_byte_boundary("max_attribute_value_bytes", 100); }
+#[test]
+fn issue650_configurable_tag_boundary() { issue650_byte_boundary("max_start_tag_bytes", 600); }
+
+#[test]
+fn issue650_cli_read_and_validate_enforce_attribute_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    for (label, attributes, accepted) in [
+        ("wide", (0..1024).map(|i| format!(" a{i}='v{i}'")).collect::<String>(), true),
+        ("over-count", (0..1025).map(|i| format!(" a{i}='v{i}'")).collect(), false),
+        ("over-name", format!(" {}='v'", "n".repeat(1025)), false),
+        ("alias", " xmlns:a='urn:x' xmlns:b='urn:x' a:x='1' b:x='2'".to_string(), false),
+    ] {
+        let xml = DOCUMENT.replace("<w:p>", &format!("<w:p{attributes}>"));
+        let file = format!("{label}.docx");
+        std::fs::write(dir.path().join(&file), package_with_document(&xml)).unwrap();
+        for command in ["read", "validate"] {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+                .current_dir(dir.path()).args([command, &file, "--json"]).output().unwrap();
+            let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert_eq!(output.status.success(), accepted, "{command} {label}: {text}");
+            if !accepted { assert!(text.contains("INVALID_XML"), "{command} {label}: {text}"); }
+        }
+    }
+}
+
+#[test]
+fn issue650_attribute_overrides_are_recognized() {
+    for key in ["max_element_attributes", "max_attribute_name_bytes", "max_attribute_value_bytes", "max_start_tag_bytes"] {
+        let json = format!(r#"{{"{key}":1024}}"#);
+        let parsed = jubarte::admission::InputLimitOverrides::from_json(&json);
+        assert!(parsed.is_ok(), "{key} must be configurable: {parsed:?}");
+    }
+}

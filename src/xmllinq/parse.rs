@@ -1246,50 +1246,26 @@ mod tag_policy_tests {
         );
     }
 
-    /// The exact-boundary contract for the new tag-byte cap: attribute bytes
-    /// totalling exactly `MAX_TAG_ATTRIBUTE_BYTES` are admitted; one byte
-    /// more is refused while every individual value stays under the value
-    /// cap. Three values of ≈MAX_TAG_ATTRIBUTE_BYTES / 3 ≈ 43 MiB each
-    /// cost the tag cap together but no individual attribute trips the
-    /// value cap.
+    /// The complete start tag, including spaces, quotes and delimiters,
+    /// has an inclusive byte cap independent of each value's cap.
     #[test]
     fn a_tag_at_the_attribute_byte_cap_is_admitted_one_more_refused() {
-        // Three keys (`a0`, `a1`, `a2`, 2 bytes each) plus one tag name byte
-        // leave the per-value headroom so the three values fit under the tag
-        // cap exactly. Each value stays well below the value cap.
-        let per_value = (MAX_TAG_ATTRIBUTE_BYTES - 7) / 3;
-        assert!(
-            per_value + 1 < MAX_ATTRIBUTE_VALUE_BYTES,
-            "fixture relies on per_value staying under the value cap"
-        );
-        let attrs: String = (0..3)
-            .map(|i| format!(" a{i}='{}'", "v".repeat(per_value)))
-            .collect();
-        let at_cap = format!("<a{attrs}/>");
-        assert_eq!(
-            validate_xml(&at_cap),
-            Ok(()),
-            "tag at MAX_TAG_ATTRIBUTE_BYTES must be admitted"
-        );
-        // Bump the third value enough to exceed the tag cap by at least one
-        // byte while every individual value is still well below
-        // MAX_ATTRIBUTE_VALUE_BYTES. `per_value` rounded down leaves a
-        // remainder in the per-byte budget, so two extra bytes is enough.
-        let remainder = (MAX_TAG_ATTRIBUTE_BYTES - 7) % 3;
-        let bump = remainder + 1;
-        let over_attrs: String = (0..3)
-            .map(|i| {
-                let extra = if i == 2 { bump } else { 0 };
-                format!(" a{i}='{}'", "v".repeat(per_value + extra))
-            })
-            .collect();
-        let just_over = format!("<a{over_attrs}/>");
-        let err = validate_xml(&just_over)
-            .expect_err("one tag-byte over MAX_TAG_ATTRIBUTE_BYTES must refuse");
-        assert!(
-            err.contains(&format!("{MAX_TAG_ATTRIBUTE_BYTES} attribute bytes")),
-            "expected gate error naming the tag cap, got {err:?}"
-        );
+        let overhead = "<a a0='' a1='' a2=''/>".len();
+        let budget = MAX_TAG_ATTRIBUTE_BYTES - overhead;
+        let xml = |extra| {
+            let attrs: String = (0..3).map(|i| {
+                let length = budget / 3 + if i == 2 { budget % 3 + extra } else { 0 };
+                format!(" a{i}='{}'", "v".repeat(length))
+            }).collect();
+            format!("<a{attrs}/>")
+        };
+        let at_cap = xml(0);
+        assert_eq!(at_cap.len(), MAX_TAG_ATTRIBUTE_BYTES);
+        assert_eq!(validate_xml(&at_cap), Ok(()));
+        let over = xml(1);
+        assert_eq!(over.len(), MAX_TAG_ATTRIBUTE_BYTES + 1);
+        let error = validate_xml(&over).expect_err("one start-tag byte over cap must refuse");
+        assert!(error.contains(&format!("{MAX_TAG_ATTRIBUTE_BYTES}")), "{error}");
     }
 
     #[test]
@@ -1379,27 +1355,70 @@ mod tag_policy_tests {
     }
 
     #[test]
-    fn duplicate_expanded_names_keep_declaration_order_and_last_value_wins() {
+    fn duplicate_expanded_names_refuse_in_the_dom_parser() {
+        let xml = "<r xmlns:p='urn:x' xmlns:q='urn:x' p:a='first' q:a='second'/>";
+        assert!(validate_xml(xml).is_err());
         let mut dom = Dom::new();
-        let document = parse_xdocument(
-            &mut dom,
-            "<r xmlns:p='urn:x' xmlns:q='urn:x' p:a='first' q:a='second'/>",
-        );
-        let root = dom.root(document).unwrap();
-        // q:a expands to the same {urn:x}a, so it folds into p:a's slot —
-        // same outcome as sequential set_attribute_value calls.
-        assert_eq!(dom.attr_count(root), 3);
-        let name = crate::xmllinq::XName::get("a", "urn:x");
-        assert_eq!(dom.attribute(root, &name), Some("second"));
-        // Declaration order is kept for the surviving attributes.
-        let locals: Vec<String> = (0..dom.attr_count(root))
-            .map(|i| dom.attr_at(root, i).0.local_name().to_string())
-            .collect();
-        assert_eq!(locals, ["p", "q", "a"]);
-        // The checked path refuses the same document.
-        assert!(
-            validate_xml("<r xmlns:p='urn:x' xmlns:q='urn:x' p:a='first' q:a='second'/>").is_err()
-        );
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            parse_xdocument(&mut dom, xml);
+        }));
+        assert!(refused.is_err(), "the infallible parser must refuse aliased duplicates");
+    }
+
+    #[test]
+    fn issue650_wide_tag_preserves_names_values_and_order() {
+        let xml = xml_with_attrs(1024);
+        assert_eq!(validate_xml(&xml), Ok(()), "1024 attributes must parse");
+        let mut dom = Dom::new();
+        let doc = try_parse_xdocument(&mut dom, &xml).unwrap();
+        let root = dom.root(doc).unwrap();
+        assert_eq!(dom.attr_count(root), 1024);
+        for i in 0..1024 {
+            let (name, value) = dom.attr_at(root, i);
+            assert_eq!(name.local_name(), format!("a{i}"));
+            assert_eq!(name.namespace_name(), "");
+            assert_eq!(value, format!("v{i}"));
+        }
+        assert!(validate_xml(&xml_with_attrs(1025)).is_err());
+    }
+
+    #[test]
+    fn issue650_attribute_name_byte_boundary() {
+        for (length, accepted) in [(1024, true), (1025, false)] {
+            let xml = format!("<r {}='v'/>", "n".repeat(length));
+            assert_eq!(validate_xml(&xml).is_ok(), accepted, "name bytes: {length}");
+            assert_eq!(try_parse_xdocument(&mut Dom::new(), &xml).is_ok(), accepted);
+        }
+    }
+
+    #[test]
+    fn issue650_dom_parser_enforces_width_limits() {
+        for xml in [xml_with_attrs(1025), format!("<r {}='v'/>", "n".repeat(1025))] {
+            let refused = std::panic::catch_unwind(|| parse_xdocument(&mut Dom::new(), &xml));
+            assert!(refused.is_err(), "DOM parser must refuse oversized attributes");
+        }
+    }
+
+    #[test]
+    fn issue650_unprefixed_attribute_has_no_default_namespace() {
+        let xml = "<r xmlns='urn:x' xmlns:a='urn:x' x='1' a:x='2'/>";
+        let mut dom = Dom::new();
+        let doc = try_parse_xdocument(&mut dom, xml).unwrap();
+        let root = dom.root(doc).unwrap();
+        assert_eq!(dom.attribute(root, &XName::get("x", "")), Some("1"));
+        assert_eq!(dom.attribute(root, &XName::get("x", "urn:x")), Some("2"));
+    }
+
+    #[test]
+    fn issue650_attribute_probes_scale_linearly() {
+        let mut counts = Vec::new();
+        for n in [64, 256, 1024] {
+            let before = ATTR_NAME_PROBES.with(|c| c.get());
+            let result = try_parse_xdocument(&mut Dom::new(), &xml_with_attrs(n));
+            assert!(result.is_ok(), "{n} attributes must parse: {result:?}");
+            counts.push(ATTR_NAME_PROBES.with(|c| c.get()) - before);
+        }
+        assert!(counts[2] <= 16 * counts[0], "probes: {counts:?}");
     }
 
     #[test]
