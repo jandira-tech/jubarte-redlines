@@ -741,6 +741,18 @@ A comment is `{==anchored text==}{>>c5 @AC: text<<}`; a reply names its
 thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
 `{>>c5 @AC resolved: text<<}`.
 
+A note that prints outside the change holding its comment's reference
+mark names that change last: `{==Kept.==}{>>c5 @AC in r13: text<<}{-- Gone.--}{r13 @JD}`,
+or `<!-- p1 rev-del r13 @JD -->` with `{==text==}{>>c5 @AC in r13: text<<}`
+when r13 holds nothing but the mark. Accepting a deletion that holds the
+mark removes the thread, as Word does; rejecting an insertion that holds
+it does the same. Converting back puts the mark inside r13 again. A note
+inside its change (`{--{==Gone.==}{>>c5 @AC: text<<}--}{r13 @JD}`) needs no
+`in`; neither does a mark outside any change. The view names one change:
+a mark inside a move or inside two nested changes prints no `in`, and a
+note whose paragraph has no r13 keeps its mark after its text, with a
+warning.
+
 A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
 header's `authors:` line gives each handle's name, counts and its

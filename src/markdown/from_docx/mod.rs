@@ -403,6 +403,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         comments: HashMap::new(),
         notes: HashMap::new(),
         referenced: HashSet::new(),
+        held_marks: HashMap::new(),
         noted_at_end: HashSet::new(),
         noted_at_reference: HashSet::new(),
         open_comments: Vec::new(),
@@ -447,6 +448,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .filter_map(|r| r.attr("id"))
         .map(str::to_string)
         .collect();
+    if writer.agent {
+        writer.held_marks = held_marks(&document);
+    }
     let body = document.child("body").unwrap_or(&document);
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
@@ -2225,6 +2229,63 @@ fn printed_code(instruction: &str) -> Option<String> {
 /// A revision element (`w:ins`, `w:del`, `w:moveTo`, `w:moveFrom`) as a tracked
 /// change. Insertions and move destinations are insertions; deletions and move
 /// sources are deletions (the representation pandiff uses too).
+/// Comment id → the `w:id` of the one insertion or deletion in the body
+/// that holds the comment's reference mark: settling it settles the
+/// thread. A mark outside any change, inside a move, or inside two nested
+/// changes names none; so does an id the view would not print as is.
+fn held_marks(document: &Element) -> HashMap<String, u32> {
+    fn walk(
+        element: &Element,
+        open: &mut Vec<Option<u32>>,
+        found: &mut HashMap<String, Option<u32>>,
+    ) {
+        for child in element.elements() {
+            match child.local() {
+                "ins" | "del" | "moveFrom" | "moveTo" => {
+                    let id = matches!(child.local(), "ins" | "del")
+                        .then(|| child.attr("id"))
+                        .flatten()
+                        .and_then(|id| id.parse::<u32>().ok().filter(|n| n.to_string() == id))
+                        .filter(|&id| id <= crate::markdown::view_notes::MOST_ID);
+                    open.push(id);
+                    walk(child, open, found);
+                    open.pop();
+                }
+                "commentReference" => {
+                    if let Some(id) = child.attr("id") {
+                        let holder = match open.as_slice() {
+                            [one] => *one,
+                            _ => None,
+                        };
+                        // A reference twice (an `mc:Fallback` twin) names its
+                        // holder only when both agree.
+                        found
+                            .entry(id.to_string())
+                            .and_modify(|seen| {
+                                if *seen != holder {
+                                    *seen = None;
+                                }
+                            })
+                            .or_insert(holder);
+                    }
+                }
+                "rPr" | "pPr" => {}
+                _ => walk(child, open, found),
+            }
+        }
+    }
+    let mut found = HashMap::new();
+    walk(
+        document.child("body").unwrap_or(document),
+        &mut Vec::new(),
+        &mut found,
+    );
+    found
+        .into_iter()
+        .filter_map(|(id, holder)| holder.map(|holder| (id, holder)))
+        .collect()
+}
+
 fn change_of(element: &Element, story: Option<&str>) -> Change {
     let mark = if matches!(element.local(), "ins" | "moveTo") {
         Mark::Insertion
@@ -2357,6 +2418,9 @@ struct Writer<'a> {
     /// Comments with a `commentReference`, where their note goes. Others get
     /// their note where their range ends.
     referenced: HashSet<String>,
+    /// Agent view: comment id → the `w:id` of the one insertion or
+    /// deletion holding its reference ([`held_marks`]).
+    held_marks: HashMap<String, u32>,
     /// Comments whose note followed their range's end, inside a paragraph
     /// and outside any change: there Word puts the reference, and the
     /// writer takes the note back as the range's own comment. Their
@@ -2574,7 +2638,9 @@ impl Writer<'_> {
                             !self.referenced.contains(id)
                         };
                         if unprinted && let Some(note) = self.note(id) {
-                            out.comment(&note);
+                            // Outside any change: the one that holds the
+                            // reference is named (`in r13`).
+                            out.comment(&self.held_note(id, note));
                             self.noted_at_end.insert(id.to_string());
                         }
                     }
@@ -3899,22 +3965,7 @@ impl Writer<'_> {
         self.revisions = revisions;
         self.open_comments = open_comments;
         let note = if self.agent {
-            let date = self
-                .handles
-                .needs_date(comment.attr("author"), self.dates)
-                .then(|| comment.comment_date())
-                .flatten();
-            let head = |text: String| {
-                let mut inner = agent::comment_head(
-                    id,
-                    comment.attr("author"),
-                    date,
-                    &self.handles,
-                    &self.threads,
-                );
-                inner.push_str(&text);
-                inner
-            };
+            let head = |text: String| self.agent_head(id, &comment, None) + &text;
             critic::Note {
                 prose: head(prose),
                 code: head(code),
@@ -3927,6 +3978,41 @@ impl Writer<'_> {
         };
         self.notes.insert(id.to_string(), note.clone());
         Some(note)
+    }
+
+    /// The agent view's head of comment `id`'s note ([`agent::comment_head`]).
+    fn agent_head(&self, id: &str, comment: &Element, held: Option<u32>) -> String {
+        let date = self
+            .handles
+            .needs_date(comment.attr("author"), self.dates)
+            .then(|| comment.comment_date())
+            .flatten();
+        agent::comment_head(
+            id,
+            comment.attr("author"),
+            date,
+            &self.handles,
+            &self.threads,
+            held,
+        )
+    }
+
+    /// `note`, its head naming the change that holds comment `id`'s
+    /// reference (`c0 @B in r13: `), when one does.
+    fn held_note(&self, id: &str, note: critic::Note) -> critic::Note {
+        let (Some(&held), Some(comment)) = (self.held_marks.get(id), self.comments.get(id)) else {
+            return note;
+        };
+        let plain = self.agent_head(id, comment, None);
+        let named = self.agent_head(id, comment, Some(held));
+        let swap = |text: String| match text.strip_prefix(&plain) {
+            Some(rest) => format!("{named}{rest}"),
+            None => text,
+        };
+        critic::Note {
+            prose: swap(note.prose),
+            code: swap(note.code),
+        }
     }
 
     /// The note's paragraphs as one line of text. `code` renders them as

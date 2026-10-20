@@ -443,7 +443,8 @@ change), `header1.r1`. A change that holds a comment's reference mark ends
 its line with `holds comment c4's mark` (`holds comment marks c4, c5` for a
 thread's reply too), and `--json` lists them in `holds_comments`: resolving
 the change so its content goes (accepting a deletion, rejecting an
-insertion) removes those threads, as Word does.
+insertion) removes those threads, as Word does. The `read` view says so on
+the note: `{>>c4 @AC in r13: …<<}` when the note prints outside r13.
 
 
 With human-readable CLI output, every command that writes a DOCX from a

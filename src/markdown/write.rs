@@ -1870,6 +1870,10 @@ struct Writer<'o, 'a> {
     /// The header's `unplaced:` marks, by the paragraph they are in: a cell
     /// paragraph has no id line to name them.
     unplaced: HashMap<usize, Vec<(&'static str, view_notes::Tag)>>,
+    /// Notes that say which change holds their comment's reference
+    /// (`{>>c0 @B in r13: …<<}`): the comment's id, its view number and
+    /// the change's `w:id`s.
+    held_in: Vec<(u32, u32, Vec<u32>)>,
     run_after_close: bool,
     scope: Option<(usize, usize)>,
     groups: usize,
@@ -1990,6 +1994,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             range_end_at: None,
             shared_range: None,
             unplaced: HashMap::new(),
+            held_in: Vec::new(),
             id_line: None,
             paragraph_in_comments: None,
             page_break_due: false,
@@ -3828,6 +3833,18 @@ impl<'o, 'a> Writer<'o, 'a> {
             comment.number = Some(head.number).filter(|&n| n <= view_notes::MOST_ID);
             comment.parent = head.reply_to.filter(|&n| n <= view_notes::MOST_ID);
             comment.done = head.resolved;
+            if !head.held_in.is_empty() {
+                if self.target.is_none() {
+                    self.held_in
+                        .push((comment.id, head.number, head.held_in.clone()));
+                } else {
+                    self.document.warnings.push(format!(
+                        "c{} is in {}: a note's comment holds no change's mark; its mark stays after its text",
+                        head.number,
+                        held_tag(&head.held_in)
+                    ));
+                }
+            }
             if let Some(handle) = &head.handle {
                 let (author, date) = self.view_author(handle, head.date.as_deref());
                 comment.by = Some((author, date));
@@ -4899,6 +4916,115 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// The notes that say `in r13` put their comment's reference back
+    /// inside r13: the paragraph's runs of it, or the mark its id line
+    /// names when r13 holds nothing else (`rev-del r13 @D`), as Word wrote
+    /// it. A paragraph without r13 keeps the reference after the text,
+    /// with a warning.
+    fn named_held_marks(&mut self) {
+        let mut bound: HashMap<(usize, Vec<u32>), (Kind, u32)> = HashMap::new();
+        let mut paragraphs = Vec::new();
+        for (comment, number, ids) in std::mem::take(&mut self.held_in) {
+            let reference = self
+                .body
+                .iter()
+                .position(|item| matches!(item, Item::CommentReference(id) if *id == comment));
+            let start = reference.and_then(|at| {
+                self.body[..at]
+                    .iter()
+                    .rposition(|item| matches!(item, Item::Paragraph(_)))
+            });
+            let (Some(at), Some(start)) = (reference, start) else {
+                continue;
+            };
+            let end = self.body[at..]
+                .iter()
+                .position(|item| matches!(item, Item::ParagraphEnd))
+                .map_or(self.body.len(), |skip| at + skip);
+            let change = bound.get(&(start, ids.clone())).copied().or_else(|| {
+                self.body[start..end].iter().find_map(|item| match item {
+                    Item::Run(run) => run.change.filter(|(_, serial)| {
+                        // A merged tag (`r13+14`) holds each of its ids.
+                        self.document
+                            .revision_ids
+                            .get(serial)
+                            .is_some_and(|named| ids.iter().all(|id| named.contains(id)))
+                    }),
+                    _ => None,
+                })
+            });
+            let change = change.or_else(|| {
+                let &[id] = ids.as_slice() else {
+                    return None;
+                };
+                let Some(Item::Paragraph(paragraph)) = self.body.get_mut(start) else {
+                    return None;
+                };
+                let found = paragraph
+                    .unshown
+                    .iter()
+                    .position(|(_, mark)| mark.id == Some(id))?;
+                let (inserted, mark) = paragraph.unshown.remove(found);
+                self.serial += 1;
+                let serial = self.serial;
+                self.document
+                    .attributions
+                    .insert(serial, (mark.author, mark.date));
+                self.name_revision(serial, vec![id]);
+                Some((if inserted { Kind::Insert } else { Kind::Delete }, serial))
+            });
+            let Some(change) = change else {
+                self.document.warnings.push(format!(
+                    "c{number} is in {}, which its paragraph does not have: its mark stays after its text",
+                    held_tag(&ids)
+                ));
+                continue;
+            };
+            bound.insert((start, ids), change);
+            self.document.note_changes.insert(comment, (change, false));
+            paragraphs.push(start);
+        }
+        for start in paragraphs {
+            self.gather_held_references(start);
+        }
+    }
+
+    /// The comment ends between references that go inside one change
+    /// (`{==a==}{>>c0 in r13<<}{>>c1 re c0 in r13<<}`) come before them,
+    /// so the references stay in one mark, as Word writes them.
+    fn gather_held_references(&mut self, start: usize) {
+        let notes = &self.document.note_changes;
+        let held = |item: &Item| match item {
+            Item::CommentReference(id) => notes.get(id).filter(|(_, end)| !end).map(|(c, _)| *c),
+            _ => None,
+        };
+        let mut at = start;
+        while at < self.body.len() && !matches!(self.body[at], Item::ParagraphEnd) {
+            let Some(change) = held(&self.body[at]) else {
+                at += 1;
+                continue;
+            };
+            // The references to `change` from here, and the range ends
+            // between them.
+            let window = self.body[at..]
+                .iter()
+                .take_while(|item| matches!(item, Item::RangeEnd(_)) || held(item) == Some(change))
+                .count();
+            let last = self.body[at..at + window]
+                .iter()
+                .rposition(|item| held(item) == Some(change))
+                .map_or(at, |skip| at + skip);
+            let (ends, references): (Vec<Item>, Vec<Item>) = self.body[at..=last]
+                .iter()
+                .cloned()
+                .partition(|item| matches!(item, Item::RangeEnd(_)));
+            let count = last + 1 - at;
+            self.body
+                .splice(at..=last, ends.into_iter().chain(references));
+            at += count;
+        }
+    }
+
     fn finish(mut self) -> Document {
         self.end_paragraph();
         self.textless_paragraph();
@@ -4955,6 +5081,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         self.box_frames();
         self.text_boxes();
+        self.named_held_marks();
         self.held_comment_marks();
         let mut body = std::mem::take(&mut self.body);
         clear_continued_marks(&mut body, &self.document);
@@ -5517,6 +5644,12 @@ impl Writer<'_, '_> {
 /// a reply's `re c5` and every later `c5` still name the same comment; one
 /// with no number, or with a number an earlier comment took, gets the
 /// lowest free one. Replies then name their parent by its `w:id`.
+/// The view's tag for a change's `w:id`s: `r13`, `r4+5`.
+fn held_tag(ids: &[u32]) -> String {
+    let ids: Vec<String> = ids.iter().map(u32::to_string).collect();
+    format!("r{}", ids.join("+"))
+}
+
 fn renumber_comments(document: &mut Document) {
     let mut taken = HashSet::new();
     let claimed: Vec<Option<u32>> = document

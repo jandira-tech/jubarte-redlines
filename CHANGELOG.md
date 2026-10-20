@@ -446,7 +446,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   comment marks c4, c5`) when it holds a comment's reference mark, and
   `--json` lists them in `holds_comments` (Python `Change.holds_comments`):
   accepting that deletion, or rejecting that insertion, removes the
-  threads. Every `removed_comments` record says `why`, `anchor removed by
+  threads. The agent view says it too: a note printed outside the change
+  that holds its mark names it last, `{>>c4 @AC in r13: …<<}`, and
+  converting the view back puts the mark inside r13 again (before, it came
+  back outside, so accepting r13 no longer removed the thread). Every
+  `removed_comments` record says `why`, `anchor removed by
   accepting r13`. A reply to a comment whose paragraph the same plan
   deletes is no longer refused as `OVERLAPPING_EDITS`: it goes on the
   deleted text beside its parent, where Word shows the thread; a v2 plan

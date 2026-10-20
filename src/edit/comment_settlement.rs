@@ -158,7 +158,11 @@ fn why_removed(
     };
     let holder = std::iter::once(id)
         .chain(replies.iter().map(String::as_str))
-        .find_map(|c| changes.iter().find(|ch| ch.holds_comments.iter().any(|h| h == c)));
+        .find_map(|c| {
+            changes
+                .iter()
+                .find(|ch| ch.holds_comments.iter().any(|h| h == c))
+        });
     match holder {
         Some(change) => format!("anchor removed by {verb} {}", change.id),
         None => format!("anchor removed by {verb} the changes that held all its text"),
