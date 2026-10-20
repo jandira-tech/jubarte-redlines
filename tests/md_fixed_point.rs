@@ -547,14 +547,35 @@ fn in_dialect(part: &str, rest: &str) -> Option<String> {
     Some(CELLS_SHD.replace_all(rest, "").into_owned())
 }
 
-/// The docx a committed view was read from (`views.txt`), by file name.
-fn view_sources() -> HashMap<String, PathBuf> {
+/// A `views.txt` entry's last word when the committed view is the second
+/// read: the view of the docx `convert` writes from the docx's first view.
+const SECOND_READ: &str = " second-read";
+
+/// The `views.txt` entries: each view's file name, the docx it was read
+/// from, and whether it is that docx's second read.
+fn view_entries() -> Vec<(String, PathBuf, bool)> {
     std::fs::read_to_string(Path::new(FIXTURES).join("views.txt"))
         .unwrap()
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
         .filter_map(|l| l.split_once(' '))
-        .map(|(md, docx)| (md.to_string(), PathBuf::from(docx.trim())))
+        .map(|(md, rest)| {
+            let rest = rest.trim();
+            let docx = rest.strip_suffix(SECOND_READ);
+            (
+                md.to_string(),
+                PathBuf::from(docx.unwrap_or(rest).trim()),
+                docx.is_some(),
+            )
+        })
+        .collect()
+}
+
+/// The docx a committed view was read from (`views.txt`), by file name.
+fn view_sources() -> HashMap<String, PathBuf> {
+    view_entries()
+        .into_iter()
+        .map(|(md, docx, _)| (md, docx))
         .collect()
 }
 
@@ -974,12 +995,20 @@ fn offset_namespace_declaration_preserves_opaque_drawing_bytes() {
 fn committed_views_match_the_view() {
     let bless = std::env::var_os("JUBARTE_BLESS").is_some();
     let mut stale = Vec::new();
-    let mut sources: Vec<(String, PathBuf)> = view_sources().into_iter().collect();
+    let mut sources = view_entries();
     sources.sort();
-    for (md, docx) in &sources {
+    for (md, docx, second_read) in &sources {
         let dir = tempfile::tempdir().unwrap();
         std::fs::copy(docx, dir.path().join("source.docx")).unwrap();
-        let raw = jubarte(dir.path(), &["read", "source.docx", "--no-page-markers"]).unwrap();
+        let mut raw = jubarte(dir.path(), &["read", "source.docx", "--no-page-markers"]).unwrap();
+        if *second_read {
+            // The source gives one revision id to marks that `convert`
+            // must number apart (#1137), so its first view is no fixed
+            // point: the committed view is the docx `convert` writes from
+            // it, read back (#1414).
+            let back = to_docx(dir.path(), &comparable(&raw), "first").unwrap();
+            raw = jubarte(dir.path(), &["read", &back, "--no-page-markers"]).unwrap();
+        }
         let got = comparable(&raw);
         if bless {
             // Keep measured page facts; only source identity is fixture-local.
