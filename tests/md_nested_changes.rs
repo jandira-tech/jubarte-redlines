@@ -1880,6 +1880,69 @@ fn a_nest_then_the_next_mark_of_its_change_writes_each_mark_once() {
     }
 }
 
+/// Two nests in one mark, then the change's next mark with a nest of its
+/// own (#1353 review, F1): `r7+8` has two ids, and the piece after the
+/// nests takes the second, so `x` and `y` stay in mark 7 with `a` and
+/// mark 8 holds `b` and `z`, as the source does. The spare id goes to the
+/// piece after a nest before it splits two nests apart.
+#[test]
+fn two_nests_then_the_next_mark_keep_their_own_marks() {
+    let paragraph = r#"<w:p><w:r><w:t xml:space="preserve">K </w:t></w:r>
+      <w:ins w:id="7" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:t>a</w:t></w:r>
+      <w:del w:id="9" w:author="Alice" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:del>
+      <w:del w:id="10" w:author="Alice" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>y</w:delText></w:r></w:del></w:ins>
+      <w:ins w:id="8" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:t>b</w:t></w:r>
+      <w:del w:id="11" w:author="Alice" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>z</w:delText></w:r></w:del></w:ins>
+      <w:r><w:t xml:space="preserve"> T.</w:t></w:r></w:p>"#;
+    let source = docx(paragraph);
+    let tree = [
+        ("w:ins", "7", None),
+        ("w:del", "9", Some("7")),
+        ("w:del", "10", Some("7")),
+        ("w:ins", "8", None),
+        ("w:del", "11", Some("8")),
+    ];
+    assert_nested_round_trip(
+        &source,
+        &["{--y--}{r9+10+11 @A re r7+8 @B}{++b++}{r7+8 @B}"],
+        &tree,
+    );
+    for kind in ["header", "footer"] {
+        let note = format!("{{--z--}}{{{kind}1.r9+10+11 @A re {kind}1.r7+8 @B}}");
+        assert_story_nested_round_trip(&source, kind, &[&note], &tree);
+    }
+}
+
+/// A nest in one mark, then the next mark with two nests (#1353 review,
+/// F1): mark 8 starts at `b` and holds both `y` and `z`.
+#[test]
+fn a_nest_then_a_mark_with_two_nests_keep_their_own_marks() {
+    let paragraph = r#"<w:p><w:r><w:t xml:space="preserve">K </w:t></w:r>
+      <w:ins w:id="7" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:t>a</w:t></w:r>
+      <w:del w:id="9" w:author="Alice" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:del></w:ins>
+      <w:ins w:id="8" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:t>b</w:t></w:r>
+      <w:del w:id="10" w:author="Alice" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>y</w:delText></w:r></w:del>
+      <w:del w:id="11" w:author="Alice" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>z</w:delText></w:r></w:del></w:ins>
+      <w:r><w:t xml:space="preserve"> T.</w:t></w:r></w:p>"#;
+    let source = docx(paragraph);
+    let tree = [
+        ("w:ins", "7", None),
+        ("w:del", "9", Some("7")),
+        ("w:ins", "8", None),
+        ("w:del", "10", Some("8")),
+        ("w:del", "11", Some("8")),
+    ];
+    assert_nested_round_trip(
+        &source,
+        &["{--x--}{r9+10+11 @A re r7+8 @B}{++b++}{r7+8 @B}"],
+        &tree,
+    );
+    for kind in ["header", "footer"] {
+        let note = format!("{{--z--}}{{{kind}1.r9+10+11 @A re {kind}1.r7+8 @B}}");
+        assert_story_nested_round_trip(&source, kind, &[&note], &tree);
+    }
+}
+
 /// The body and the footnotes number their marks apart (#1355): the
 /// body's `r7+8` and a footnote's `footnotes.r7+8` are two changes, each
 /// of its own two marks.

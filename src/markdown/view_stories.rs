@@ -280,9 +280,10 @@ fn reads(text: &str, out: &mut Vec<Read>) {
 /// the mark every piece and `re` takes. As in the body
 /// (`Writer::share_pooled_ids`): a piece split around a nest in it goes
 /// on with its mark, and so does the nest; a piece of another kind is
-/// another mark; a nest right after a nest is the next mark while the
-/// ids last; and a change with ids to spare starts its next marks at the
-/// pieces right after a nest, the first ones first (#1354).
+/// another mark; a change with ids to spare starts its next marks at the
+/// pieces right after a nest, the first ones first (#1354); and a nest
+/// right after a nest is the next mark when the ids left suffice for
+/// every such nest.
 fn pools(read: &[Read]) -> HashMap<Vec<u32>, Pool> {
     let mut notes: HashMap<&[u32], usize> = HashMap::new();
     for one in read {
@@ -352,13 +353,14 @@ fn pools(read: &[Read]) -> HashMap<Vec<u32>, Pool> {
         }
         found
     };
-    let apart = place(&|_| true, &|_| 0);
-    let split = |ids: &[u32]| apart.get(ids).is_none_or(|pool| ids.len() >= pool.slots);
+    let fewest = place(&|_| false, &|_| 0);
     let spare = |ids: &[u32]| {
-        apart
+        fewest
             .get(ids)
             .map_or(0, |pool| ids.len().saturating_sub(pool.slots))
     };
+    let apart = place(&|_| true, &spare);
+    let split = |ids: &[u32]| apart.get(ids).is_none_or(|pool| ids.len() >= pool.slots);
     place(&split, &spare)
 }
 

@@ -123,8 +123,15 @@ fn printed_tags(body: &str) -> Vec<(String, usize)> {
         r"(\+\+\}}|--\}}|~~\}})[*_`]*\{{({part}(?:; {part})*(?: re {part})*)\}}"
     ))
     .unwrap();
+    // A piece of one mark split around a change nested in it goes on with
+    // that mark: the one-mark piece read last, while the changes right
+    // after it name it with `re`, and whether one has. Pieces of one id
+    // touching with no nest between are two marks (a repeated id).
+    let mut split: Option<((String, usize), bool)> = None;
+    let mut last_end = None;
     for cap in inline.captures_iter(body) {
-        if !visible(cap.get(0).unwrap().start()) {
+        let whole = cap.get(0).unwrap();
+        if !visible(whole.start()) {
             continue;
         }
         let kind = match &cap[1] {
@@ -132,7 +139,24 @@ fn printed_tags(body: &str) -> Vec<(String, usize)> {
             "--}" => 1,
             _ => 2,
         };
-        let own_tags = cap[2].split(" re ").next().unwrap();
+        let opener = ["{++", "{--", "{~~"][kind];
+        let touches = body[..whole.start()]
+            .rfind(opener)
+            .is_some_and(|at| Some(at) == last_end);
+        last_end = Some(whole.end());
+        let mut chain = cap[2].split(" re ");
+        let own_tags = chain.next().unwrap();
+        let parents: Vec<String> = chain.map(own).collect();
+        let piece = (!own_tags.contains("; ") && !own(own_tags).contains('+'))
+            .then(|| (own(own_tags), kind));
+        match &mut split {
+            Some((was, nest)) if *nest && touches && piece.as_ref() == Some(was) => {
+                *nest = false;
+                continue;
+            }
+            Some(((id, _), nest)) if touches && parents.contains(id) => *nest = true,
+            _ => split = piece.map(|piece| (piece, false)),
+        }
         match own_tags.split("; ").collect::<Vec<_>>().as_slice() {
             // A substitution of two tags is a deletion and an insertion.
             [old, new] if kind == 2 => {

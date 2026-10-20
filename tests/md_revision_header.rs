@@ -487,6 +487,56 @@ fn a_move_beside_an_insertion_counts_each_change_once() {
     assert_summary(&view);
 }
 
+/// A mark the view splits around a change nested in it is one change
+/// (#1353 review, F3): Bob's insertion `r7` prints on both sides of
+/// Alice's deletion inside it and counts once, as `jubarte changes` lists
+/// it. One id on two marks with text between (a broken file repeating an
+/// id) is two changes, as `changes` lists them.
+#[test]
+fn a_mark_split_by_a_nest_counts_once() {
+    let split = agent(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">K </w:t></w:r><w:ins w:id="7" w:author="Bob" w:date="2026-10-16T10:00:00Z"><w:r><w:t>a</w:t></w:r>{}<w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> T.</w:t></w:r></w:p>"#,
+        revision("del", 9, "Alice", "x")
+    ));
+    assert!(
+        split.contains("K {++a++}{r7 @B}{--x--}{r9 @A re r7 @B}{++b++}{r7 @B} T."),
+        "{split}"
+    );
+    assert!(
+        revisions_line(&split).ends_with("# 2 marks shown as 2 changes: 1 insertion, 1 deletion"),
+        "{split}"
+    );
+    assert_summary(&split);
+    let apart = agent(&format!(
+        r#"<w:p>{}<w:r><w:t xml:space="preserve"> mid </w:t></w:r>{}</w:p>"#,
+        revision("ins", 5, "Bob", "a"),
+        revision("ins", 5, "Bob", "b")
+    ));
+    assert!(
+        apart.contains("{++a++}{r5 @B} mid {++b++}{r5 @B}"),
+        "{apart}"
+    );
+    assert!(
+        revisions_line(&apart).ends_with("# 2 marks shown as 2 changes: 2 insertions"),
+        "{apart}"
+    );
+    assert_summary(&apart);
+    // Touching, with no nest between: still two marks.
+    let touching = agent(&format!(
+        r#"<w:p>{}<w:ins w:id="5" w:author="Bob" w:date="2026-10-16T10:00:00Z"><w:r><w:rPr><w:b/></w:rPr><w:t>b</w:t></w:r></w:ins></w:p>"#,
+        revision("ins", 5, "Bob", "a")
+    ));
+    assert!(
+        touching.contains("{++a++}{r5 @B}{++**b**++}{r5 @B}"),
+        "{touching}"
+    );
+    assert!(
+        revisions_line(&touching).ends_with("# 2 marks shown as 2 changes: 2 insertions"),
+        "{touching}"
+    );
+    assert_summary(&touching);
+}
+
 #[test]
 fn raw_total_counts_substitution_sides_story_ids_and_paragraph_marks() {
     let view = "---\nrevisions: 4 # 4 marks shown as 3 changes: 1 insertion, 1 substitution, 1 paragraph mark\n---\n{++x++}{header1.r1 @AL}{~~old~>new~~}{header1.r2+3 @AL}¶{r4 @AL}\n";

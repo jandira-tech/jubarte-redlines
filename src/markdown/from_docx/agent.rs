@@ -2368,7 +2368,10 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
     use crate::markdown::view_notes;
 
     // A change of several marks once, however many pieces print its joined
-    // id (#1261); a span of one mark counts each time it prints, as before.
+    // id (#1261); a span of one mark counts each time it prints, but for a
+    // piece the view split from it around a change nested in it
+    // (`{++a++}{r7 @B}{--x--}{r9 @A re r7 @B}{++b++}{r7 @B}`: one
+    // insertion, as `changes` lists it).
     let mut out: Vec<(Vec<Vec<u32>>, &'static str)> = Vec::new();
     let mut add = |tags: &[&view_notes::Tag], kind: &'static str| {
         let ids: Vec<Vec<u32>> = tags.iter().map(|tag| tag.ids.clone()).collect();
@@ -2378,9 +2381,15 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             None => out.push((ids, kind)),
         }
     };
-    for (token, note) in crate::markdown::critic::attributed_notes(shown) {
-        let own = note.split(" re ").next().unwrap_or_default();
+    // The one-mark piece read last, while the changes touching it are
+    // nested in it, and whether one has been: two pieces of one id that
+    // touch with no nest between are two marks (a file repeating an id),
+    // as `changes` lists them.
+    let mut split: Option<((Vec<u32>, &'static str), bool)> = None;
+    for (token, note, touches) in crate::markdown::critic::touching_notes(shown) {
+        let (own, parents) = note.split_once(" re ").unwrap_or((note.as_str(), ""));
         let Some(tags) = view_notes::revision_tags(own) else {
+            split = None;
             continue;
         };
         if own.split("; ").any(|tag| {
@@ -2390,6 +2399,7 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
                         .map_or(true, |ids| ids.iter().any(|id| id.story != "body"))
             })
         }) {
+            split = None;
             continue;
         }
         use crate::markdown::critic::Token;
@@ -2401,6 +2411,24 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             Token::SubstituteEnd => "sub",
             _ => INSERTED_MARK,
         };
+        let piece = match tags.as_slice() {
+            [tag] if tag.ids.len() == 1 => Some((tag.ids.clone(), kind)),
+            _ => None,
+        };
+        let nested_in = |ids: &[u32]| {
+            parents.split(" re ").any(|parent| {
+                view_notes::revision_tags(parent)
+                    .is_some_and(|tags| tags.iter().any(|tag| tag.ids == ids))
+            })
+        };
+        match &mut split {
+            Some((was, nest)) if *nest && touches && piece.as_ref() == Some(was) => {
+                *nest = false;
+                continue;
+            }
+            Some(((ids, _), nest)) if touches && nested_in(ids) => *nest = true,
+            _ => split = piece.map(|piece| (piece, false)),
+        }
         match (kind, tags.as_slice()) {
             // A substitution of two tags is two changes, its deleted side's
             // and its inserted side's (`{r3 @A; r5+6 @B}`); a joined one

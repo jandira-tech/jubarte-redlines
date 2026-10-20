@@ -5704,17 +5704,19 @@ impl Writer<'_, '_> {
                 pool_of.insert(serial, at);
             }
         }
-        // A nest right after another nest in the same change sits in the
-        // mark the first one sits in, or in the change's next mark
-        // (`{--a--}{r3+4 @B re r1+2 @A}{--b--}{r3+4 @B re r1+2 @A}`): the
-        // change's ids say which, a mark each while they last.
-        // A change with more ids than that finds pieces has a mark that
+        // A change with more ids than its fewest marks need has a mark that
         // starts after a nest (`{++a ++}{r7+9 @B}{--b--}{r8 @A re r7+9
         // @B}{++ c++}{r7+9 @B}`: ` c` is mark 9, #1354): its next ids start
-        // one at each piece that follows a nest, the first ones first. Any
-        // still left start a mark at a nest that follows a piece: a mark
-        // that holds only the nest (`{++a ++}{r7+9+11 @B}{--x--}{r8 @Z re
-        // r7+9+11 @B}{++ b++}{r7+9+11 @B}`: mark 9 holds the deletion 8).
+        // one at each piece that follows a nest, the first ones first.
+        // With ids still left for every nest right after another nest in
+        // the same change, each of those starts the change's next mark
+        // (`{--a--}{r3+4 @B re r1+2 @A}{--b--}{r3+4 @B re r1+2 @A}`);
+        // without, it sits in the mark the first one sits in (`{++a++}{r7+8
+        // @B}{--x--}{r9+10+11 @A re r7+8 @B}{--y--}{…}{++b++}{r7+8 @B}`:
+        // `x` and `y` in mark 7, `b` mark 8). Any still left start a mark
+        // at a nest that follows a piece: a mark that holds only the nest
+        // (`{++a ++}{r7+9+11 @B}{--x--}{r8 @Z re r7+9+11 @B}{++ b++}{r7+9+11
+        // @B}`: mark 9 holds the deletion 8).
         let none = vec![0; pools.len()];
         let spare_of = |counts: &[usize]| -> Vec<usize> {
             pools
@@ -5723,13 +5725,14 @@ impl Writer<'_, '_> {
                 .map(|((ids, _), &count)| ids.len().saturating_sub(count))
                 .collect()
         };
-        let (_, apart) = self.pool_pieces(&pool_of, &vec![true; pools.len()], &none, &none);
+        let (_, fewest) = self.pool_pieces(&pool_of, &vec![false; pools.len()], &none, &none);
+        let spare = spare_of(&fewest);
+        let (_, apart) = self.pool_pieces(&pool_of, &vec![true; pools.len()], &spare, &none);
         let split: Vec<bool> = pools
             .iter()
             .zip(&apart)
             .map(|((ids, _), &count)| ids.len() >= count)
             .collect();
-        let spare = spare_of(&apart);
         let (_, after) = self.pool_pieces(&pool_of, &split, &spare, &none);
         let (piece, pieces) = self.pool_pieces(&pool_of, &split, &spare, &spare_of(&after));
         for (pool, (ids, serials)) in pools.iter().enumerate() {
