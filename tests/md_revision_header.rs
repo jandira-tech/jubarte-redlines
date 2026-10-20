@@ -287,11 +287,15 @@ fn agent_fixtures(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// A blessed view's header counts the changes `changes` lists for the
-/// document the view writes back to (#1356): the body's tags are a proxy,
-/// and a table row printed as its cells' text counts as the row it is.
-/// Bless only the descriptive `shown as` summary, preserving the raw
-/// revision, formatting and story counts. Regenerate with
+/// A blessed view's header counts the changes `changes` lists (#1356) for
+/// the DOCX a committed view was read from, and for the document a
+/// hand-authored view writes back to: the body's tags are a proxy, and a
+/// table row printed as its cells' text counts as the row it is. A view
+/// of a source that repeats an id need not write back the changes it
+/// read, so a committed view answers to its source. Bless only the
+/// hand-authored views' descriptive `shown as` summary, preserving the
+/// raw revision, formatting and story counts (`md_fixed_point` blesses
+/// the committed ones). Regenerate with
 /// `JUBARTE_BLESS=1 ... every_blessed_agent_view_header_matches_its_body`.
 #[test]
 fn every_blessed_agent_view_header_matches_its_body() {
@@ -303,6 +307,17 @@ fn every_blessed_agent_view_header_matches_its_body() {
     for path in paths {
         let mut view = std::fs::read_to_string(&path).unwrap();
         eprintln!("checking {}", path.display());
+        let source = view_source(&path);
+        if let Some(docx) = &source {
+            assert_eq!(
+                shown_summary(&view),
+                changes_summary(&std::fs::read(docx).unwrap()),
+                "{} (the view of {})",
+                path.display(),
+                docx.display()
+            );
+            continue;
+        }
         if std::env::var_os("JUBARTE_BLESS").is_some()
             && !path
                 .components()
@@ -389,6 +404,24 @@ fn every_blessed_agent_view_header_matches_its_body() {
             );
         }
     }
+}
+
+/// The DOCX a committed view under `tests/fixtures/md-roundtrip` was read
+/// from, as `views.txt` names it, when it is at hand.
+fn view_source(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = std::path::Path::new("tests/fixtures/md-roundtrip");
+    if path.parent()? != dir {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?;
+    std::fs::read_to_string(dir.join("views.txt"))
+        .ok()?
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.split_once(' '))
+        .find(|(md, _)| *md == name)
+        .map(|(_, docx)| std::path::PathBuf::from(docx.trim()))
+        .filter(|docx| docx.exists())
 }
 
 /// The changes `changes` lists for the document `view` writes back to.
