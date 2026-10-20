@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 67                      # 67 marks shown as 67 changes: 53 insertions, 14 deletions
+revisions: 67                      # 67 marks shown as 65 changes: 52 insertions, 13 deletions
 comments: 0
 authors:
   document_owner: html-to-docx     # dc:creator

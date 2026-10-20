@@ -4,7 +4,7 @@
 //! The revisions summary describes the printed changes, including nested ones.
 mod common;
 
-use common::revision_summary::{KINDS, assert_summary, printed_counts};
+use common::revision_summary::{assert_summary, printed_counts};
 use jubarte::markdown::{MarkdownOptions, TrackChanges, docx_to_markdown};
 use regex::Regex;
 
@@ -287,9 +287,12 @@ fn agent_fixtures(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// The printed body is the source of truth. Bless only its descriptive
-/// `shown as` summary, preserving the raw revision, formatting and story counts.
-/// Regenerate with `JUBARTE_BLESS=1 ... every_blessed_agent_view_header_matches_its_body`.
+/// A blessed view's header counts the changes `changes` lists for the
+/// document the view writes back to (#1356): the body's tags are a proxy,
+/// and a table row printed as its cells' text counts as the row it is.
+/// Bless only the descriptive `shown as` summary, preserving the raw
+/// revision, formatting and story counts. Regenerate with
+/// `JUBARTE_BLESS=1 ... every_blessed_agent_view_header_matches_its_body`.
 #[test]
 fn every_blessed_agent_view_header_matches_its_body() {
     let mut paths = Vec::new();
@@ -313,15 +316,9 @@ fn every_blessed_agent_view_header_matches_its_body() {
                     format!("{{{}}}", cap[1].replace(" on ", " re "))
                 })
                 .into_owned();
+            let listed = written_changes(&view);
             let (_, rest) = view.split_once("---\n").unwrap();
-            let (header, body) = rest.split_once("---\n").unwrap();
-            let counts = if header.lines().any(|line| {
-                line.starts_with("view: accept-all") || line.starts_with("view: reject-all")
-            }) {
-                [0; 6]
-            } else {
-                printed_counts(body)
-            };
+            let (header, _) = rest.split_once("---\n").unwrap();
             let line = header
                 .lines()
                 .find(|line| line.starts_with("revisions:"))
@@ -362,21 +359,12 @@ fn every_blessed_agent_view_header_matches_its_body() {
                     marks = format!("{raw} mark{}", if raw == 1 { "" } else { "s" });
                 }
             }
-            let n: usize = counts.iter().sum();
-            if n > 0 {
-                let kinds = counts
-                    .iter()
-                    .zip(KINDS)
-                    .filter(|(n, _)| **n > 0)
-                    .map(|(n, kind)| format!("{n} {kind}{}", if *n == 1 { "" } else { "s" }))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+            if !listed.starts_with("0 ") {
                 parts.insert(
                     0,
                     format!(
-                        "{} shown as {n} change{}: {kinds}",
-                        if marks.is_empty() { "0 marks" } else { &marks },
-                        if n == 1 { "" } else { "s" }
+                        "{} shown as {listed}",
+                        if marks.is_empty() { "0 marks" } else { &marks }
                     ),
                 );
             } else if !marks.is_empty() {
@@ -388,14 +376,29 @@ fn every_blessed_agent_view_header_matches_its_body() {
                 format!("{key:<35}# {}", parts.join("; "))
             };
             let blessed = view.replacen(line, &replacement, 1);
-            assert_summary(&blessed);
+            assert_eq!(shown_summary(&blessed), listed, "{}", path.display());
             if blessed != view {
                 std::fs::write(&path, blessed).unwrap();
             }
         } else {
-            assert_summary(&view);
+            assert_eq!(
+                shown_summary(&view),
+                written_changes(&view),
+                "{}",
+                path.display()
+            );
         }
     }
+}
+
+/// The changes `changes` lists for the document `view` writes back to.
+fn written_changes(view: &str) -> String {
+    use jubarte::markdown::{DocxOptions, markdown_to_docx};
+    changes_summary(
+        &markdown_to_docx(view, &DocxOptions::default())
+            .unwrap()
+            .docx,
+    )
 }
 
 #[test]
