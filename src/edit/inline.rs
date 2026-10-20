@@ -353,6 +353,7 @@ pub fn compile(
         },
         resolve_revisions: v2::RevisionDecisions { accept, reject },
         removed_anchor_comments: Default::default(),
+        rewrite_others_comments: None,
         author: inline.author.clone(),
         date: inline
             .datetime

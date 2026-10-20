@@ -139,6 +139,12 @@ pub struct EditPlan {
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
+    /// Let `edit_comment` change a comment another author wrote; the
+    /// comment keeps its author, and the report notes each one. Without
+    /// it such an edit is refused (`COMMENT_NOT_YOURS`): a reply is how
+    /// one author answers another.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rewrite_others_comments: bool,
 }
 
 /// Treatment of comment anchors removed by a plan's revision settlement.
@@ -1922,6 +1928,7 @@ const PLAN_FIELDS: &[&str] = &[
     "operations",
     "removed_anchor_comments",
     "resolve_revisions",
+    "rewrite_others_comments",
     "schema_version",
     "source_sha256",
     "update_fields",
@@ -2259,8 +2266,9 @@ pub fn apply_plan_json_with(
     plan_json: &str,
     options: &PrepareOptions,
 ) -> Result<EditResult, EditError> {
-    let (plan, notes) = EditPlan::from_json_with_notes(plan_json)?;
+    let (plan, mut notes) = EditPlan::from_json_with_notes(plan_json)?;
     let mut result = prepared::prepare(source, &plan, options)?.result;
+    notes.append(&mut result.report.notes);
     result.report.notes = notes;
     Ok(result)
 }
@@ -2615,6 +2623,9 @@ struct Transaction<'p> {
     family: Option<crate::comments::CommentFamily>,
     /// Comment replied to, by the reply's new id.
     reply_parents: BTreeMap<u32, u32>,
+    /// Another author's comments `edit_comment` rewrites under
+    /// `rewrite_others_comments`: (outcome index, comment id, author).
+    rewritten: Vec<(usize, u32, String)>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
     /// The body's content controls, in document order.
@@ -2677,6 +2688,7 @@ impl<'p> Transaction<'p> {
             ));
         }
         let source_bytes = source;
+        let source_comment_max = existing_comment_ids(&probe);
         let Settled {
             mut base,
             mut opened,
@@ -2723,7 +2735,11 @@ impl<'p> Transaction<'p> {
                 .collect::<String>()
                 .to_uppercase()
         });
-        let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| u64::from(max) + 1);
+        // Above the source's ids too: an id the settling removed never
+        // names a new comment in the same report (#1264).
+        let next_comment_id = existing_comment_ids(&opened)
+            .max(source_comment_max)
+            .map_or(0, |max| u64::from(max) + 1);
         let controls = crate::inspect::body_control_nodes(&opened.dom, opened.body);
         let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
         let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
@@ -2759,6 +2775,7 @@ impl<'p> Transaction<'p> {
             needed_styles: std::collections::BTreeSet::new(),
             family: Some(family),
             reply_parents: BTreeMap::new(),
+            rewritten: Vec::new(),
             watermark: None,
             controls,
             control_records,
@@ -3160,9 +3177,34 @@ impl<'p> Transaction<'p> {
             revisions: RevisionCounts::default(),
             fields: Vec::new(),
             skipped: 0,
-            notes: Vec::new(),
+            notes: self.rewrite_notes(),
             output_sha256: None,
         }
+    }
+
+    /// New comments take ids above every comment `source` defines, as
+    /// [`Self::start`] does when it settles the source itself.
+    fn skip_comment_ids_of(&mut self, source: &[u8]) -> Result<(), EditError> {
+        let opened = Opened::open(source).map_err(open_error)?;
+        if let Some(max) = existing_comment_ids(&opened) {
+            self.next_comment_id = self.next_comment_id.max(u64::from(max) + 1);
+        }
+        Ok(())
+    }
+
+    /// One note per comment of another author an `edit_comment` rewrote
+    /// under `rewrite_others_comments`: their name now carries our words.
+    fn rewrite_notes(&self) -> Vec<String> {
+        self.rewritten
+            .iter()
+            .filter_map(|(i, comment, author)| {
+                let outcome = self.outcomes.get(*i).filter(|o| o.status == "ok")?;
+                Some(format!(
+                    "{} (edit_comment): c{comment} is by {author:?}; their words were changed under their name",
+                    outcome.id
+                ))
+            })
+            .collect()
     }
 
     /// Resolve every operation against the untouched source; the first
@@ -3322,6 +3364,21 @@ impl<'p> Transaction<'p> {
                     outcome.id = id;
                     outcome.kind = kind;
                     outcome.status = "ok".into();
+                    for r in &resolved {
+                        if let Resolved::Thread {
+                            op: ThreadOp::Edit { id: comment, .. },
+                            ..
+                        } = r
+                            && let Some(author) = self
+                                .family
+                                .as_ref()
+                                .and_then(|f| f.author(*comment))
+                                .filter(|&a| a != self.plan.author)
+                        {
+                            let author = author.to_string();
+                            self.rewritten.push((self.outcomes.len(), *comment, author));
+                        }
+                    }
                     self.outcomes.push(outcome);
                     self.resolved
                         .extend(resolved.into_iter().map(|resolved| (i, resolved)));
@@ -4325,6 +4382,29 @@ impl<'p> Transaction<'p> {
         }
         if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
             check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        }
+        // A comment speaks for its author: another author answers it.
+        if let ThreadOp::Edit { id, .. } = op
+            && !self.plan.rewrite_others_comments
+            && let Some(author) = family.author(id).filter(|&a| a != self.plan.author)
+        {
+            let (reply, rewrite) = match self.syntax {
+                PlanSyntax::Flags | PlanSyntax::Typed => (
+                    format!("-p c{id} --reply TEXT"),
+                    "--rewrite-others-comments",
+                ),
+                PlanSyntax::V1 | PlanSyntax::V2 => (
+                    "reply_comment".to_string(),
+                    r#""rewrite_others_comments": true"#,
+                ),
+            };
+            return Err(fail(
+                "COMMENT_NOT_YOURS",
+                format!(
+                    "c{id} is by {author:?}; reply instead ({reply}), or pass {rewrite} to change their words under their name"
+                ),
+                outcome,
+            ));
         }
         let ids = match &op {
             ThreadOp::Delete { id } => family.with_replies(*id),
@@ -6337,6 +6417,7 @@ impl<'p> Transaction<'p> {
             existing_revisions: ExistingRevisions::default(),
             operations,
             update_fields: false,
+            rewrite_others_comments: self.plan.rewrite_others_comments,
         };
         let mut tx = Transaction::start(&self.base, &plan)?;
         tx.preset_comment_ids = self
@@ -8249,6 +8330,7 @@ mod tests {
             existing_revisions: ExistingRevisions::Keep,
             operations: Vec::new(),
             update_fields: true,
+            rewrite_others_comments: true,
         };
         let value = serde_json::to_value(&plan).unwrap();
         let written: Vec<&str> = value

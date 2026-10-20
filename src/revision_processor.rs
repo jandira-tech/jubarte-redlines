@@ -5,8 +5,8 @@
 //! Revision accept / reject pipeline (M3).
 //!
 //! Port of `RevisionProcessor.ts` — the byte-level accept / reject facade
-//! (`accept_revisions_package`, `accept_revisions_package_keeping_ids`,
-//! `reject_revisions_package`) and the A.0–A.11 transforms that compose
+//! (`accept_revisions_package`, `reject_revisions_package`) and the
+//! A.0–A.11 transforms that compose
 //! them: paragraph / block-content iteration, paragraph-mark and
 //! content-control re-wrap, moveFrom / moveTo, deleted-cell merging,
 //! adjacent-table merging, and the reject path (revert → reverse →
@@ -17,8 +17,6 @@
 //! the per-subtree entry the M4 compare pipeline calls to hash the
 //! accepted / rejected projections before correlating them.
 
-mod annotation_ids;
-pub(crate) use annotation_ids::AnnotationIds;
 mod bookmarks;
 pub(crate) mod comments;
 mod notes;
@@ -3755,12 +3753,6 @@ pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
     resolve_package(pkg, Resolution::Accept, None);
 }
 
-/// [`accept_revisions_package`] without renumbering bookmarks and comments,
-/// for a document about to be compared: the redline keeps its comment ids.
-pub fn accept_revisions_package_keeping_ids(pkg: &mut crate::opc::PartFs) {
-    resolve(pkg, Resolution::Accept, None, false);
-}
-
 /// A.11 — `RejectRevisions` (:31) at package scope: per content part, the
 /// revert → reverse → rsid-strip → full-accept composition (the C# phases the
 /// same steps across all parts; parts are independent, so per-part composition
@@ -3852,29 +3844,19 @@ pub(crate) fn clone_with_fresh_property_ids(
 /// is resolved; renames the revisions to keep into [`FROZEN_NS`].
 pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
 
-/// Accept or reject every revision `freeze` leaves in place. Annotation ids
-/// are renumbered only when no revision is left, so the ids of the ones kept
-/// still name them. Return the removed comments' original ids.
+/// Accept or reject every revision `freeze` leaves in place. Bookmark and
+/// comment ids are identifiers: the ones kept keep their ids, whatever is
+/// left (#1264). Return the removed comments' original ids.
 pub(crate) fn resolve_package(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
 ) -> Vec<String> {
-    resolve(pkg, resolution, freeze, true)
+    resolve_with_comments(pkg, resolution, freeze, false, &mut Vec::new())
 }
 
-fn resolve(
-    pkg: &mut crate::opc::PartFs,
-    resolution: Resolution,
-    freeze: Option<Freeze<'_>>,
-    renumber: bool,
-) -> Vec<String> {
-    resolve_with_comments(pkg, resolution, freeze, renumber, false, &mut Vec::new())
-}
-
-/// Edit plans retain annotation ids so subsequent operations still address the
-/// snapshot they read. The edit result renumbers once all operations finish.
-/// Only this entry point can rescue removed anchors.
+/// [`resolve_package`] for an edit plan, the only entry point that can
+/// rescue removed anchors.
 pub(crate) fn resolve_package_for_edit(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
@@ -3882,7 +3864,7 @@ pub(crate) fn resolve_package_for_edit(
     keep_comments: bool,
 ) -> (Vec<String>, Vec<String>) {
     let mut kept = Vec::new();
-    let removed = resolve_with_comments(pkg, resolution, freeze, false, keep_comments, &mut kept);
+    let removed = resolve_with_comments(pkg, resolution, freeze, keep_comments, &mut kept);
     (removed, kept)
 }
 
@@ -3890,7 +3872,6 @@ fn resolve_with_comments(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
-    renumber: bool,
     keep_comments: bool,
     kept_comments: &mut Vec<String>,
 ) -> Vec<String> {
@@ -3900,7 +3881,6 @@ fn resolve_with_comments(
         .and_then(|p| pkg.part_string(&p))
         .map(|xml| style_records::Levels::parse(&xml))
         .unwrap_or_default();
-    let mut kept = false;
     for (part, is_styles) in parts.clone() {
         process_part(pkg, &part, |dom, root| {
             if let Some(freeze) = freeze {
@@ -3932,36 +3912,19 @@ fn resolve_with_comments(
                     })
                 }
             }?;
-            kept |= thaw(dom, resolved);
+            thaw(dom, resolved);
             Some(resolved)
         });
     }
     let stories = story_parts(&parts);
     let removed_comments = comments::prune_orphan_comments(pkg, &stories);
     notes::prune_orphan_notes(pkg, &stories);
-    if renumber && !kept {
-        let _ = annotation_ids::renumber(pkg, &stories);
-    }
     word_save::tidy(pkg, &stories);
     removed_comments
 }
 
-/// Canonicalize annotation ids after every operation of an edit plan has run.
-/// Pending revisions keep their snapshot ids, just as selective settlement does.
-pub(crate) fn renumber_settled_annotations(pkg: &mut crate::opc::PartFs) -> Option<AnnotationIds> {
-    let parts = revision_bearing_parts(pkg);
-    if parts.iter().any(|(part, _)| {
-        comments::Parsed::load(pkg, part)
-            .is_some_and(|p| element_has_tracked_revisions(&p.dom, p.root))
-    }) {
-        return None;
-    }
-    Some(annotation_ids::renumber_with_map(pkg, &story_parts(&parts)))
-}
-
-/// Rename every frozen revision element under `root` back into `w:`; true
-/// when there was one.
-fn thaw(dom: &mut Dom, root: NodeId) -> bool {
+/// Rename every frozen revision element under `root` back into `w:`.
+fn thaw(dom: &mut Dom, root: NodeId) {
     let frozen: Vec<(NodeId, String)> = dom
         .descendants_and_self(root, None)
         .into_iter()
@@ -3973,7 +3936,6 @@ fn thaw(dom: &mut Dom, root: NodeId) -> bool {
     for (e, local) in &frozen {
         dom.set_name(*e, W::name(local));
     }
-    !frozen.is_empty()
 }
 
 /// The content parts of [`revision_bearing_parts`] (styles left out).

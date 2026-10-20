@@ -558,6 +558,12 @@ impl CommentFamily {
         self.meta.contains_key(&id)
     }
 
+    /// The `w:author` comment `id` is recorded under, when it names one.
+    pub(crate) fn author(&self, id: u32) -> Option<&str> {
+        let meta = self.meta.get(&id)?;
+        self.dom.attribute(meta.node, &W::name("author"))
+    }
+
     /// Comment ids in `comments.xml` order.
     pub(crate) fn order(&self) -> Vec<u32> {
         let Some(comments) = &self.parts[0] else {

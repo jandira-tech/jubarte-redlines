@@ -17,6 +17,10 @@
       "enum": ["remove", "keep"],
       "default": "remove"
     },
+    "rewrite_others_comments": {
+      "type": "boolean",
+      "default": false
+    },
     "schema_version": {
       "const": 2
     },

@@ -157,6 +157,7 @@ pub fn plan_from_flags(
             existing_revisions: existing,
             operations,
             update_fields: false,
+            rewrite_others_comments: false,
         },
         notes,
     })
@@ -763,6 +764,8 @@ pub fn record_into(plan: Option<EditPlan>, more: EditPlan) -> Result<EditPlan, S
         }
     }
     plan.operations.extend(more.operations);
+    // A permission recorded once holds for the whole plan.
+    plan.rewrite_others_comments |= more.rewrite_others_comments;
     // The merged plan is previewed against `more`'s source before it is
     // written, so an unpinned plan may take that pin.
     plan.source_sha256 = plan.source_sha256.or(more.source_sha256);
