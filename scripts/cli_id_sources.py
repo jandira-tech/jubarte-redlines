@@ -196,10 +196,26 @@ def link_calls(fns: dict[str, Fn]) -> None:
                 elif re.search(
                     rf"(?<![.\w]){name}\s*\(|::{name}\b(?!::)|value_parser\s*=\s*{name}\b|{name}\"", body
                 ):
-                    same_file = [t for t in by_name[name] if not t.impl and t.file == fn.file]
+                    free = [t for t in by_name[name] if not t.impl]
+                    same_file = [t for t in free if t.file == fn.file]
                     pathed = re.search(rf"\b{target.module.split('::')[-1]}::{name}\b", body)
-                    if target in same_file or pathed or len([t for t in by_name[name] if not t.impl]) == 1:
+                    if target in same_file or pathed or len(free) == 1 or target is in_scope(fn, free):
                         fn.calls.add(target.key)
+
+
+def in_scope(caller: Fn, candidates: list[Fn]) -> Fn | None:
+    """The namesake a bare call means when several free functions share its
+    name: the one in the caller's own module, else its nearest enclosing
+    module (what `super::` and `use super::*` reach). A private function in
+    a sibling module is not in scope."""
+    module = caller.module
+    while True:
+        for candidate in candidates:
+            if candidate.module == module:
+                return candidate
+        if not module:
+            return None
+        module = module.rpartition("::")[0]
 
 
 def attribute_uses(root: Path, name: str) -> list[str]:
