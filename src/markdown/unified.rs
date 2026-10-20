@@ -385,9 +385,11 @@ fn patch_word(
     for block in texts {
         let old_at = sides[0].next(&block.old);
         let new_at = sides[1].next(&block.new);
+        eprintln!("TRACE: old_at={old_at:?} new_at={new_at:?} block.old={:?} block.new={:?}", block.old, block.new);
         if let Some(hunk) = block.hunk.and_then(|i| patch.hunks.get_mut(i)) {
             let at = if hunk.removed { old_at } else { new_at };
             if let Some(at) = at {
+                eprintln!("TRACE: hunk.removed={} -> at={at:?}", hunk.removed);
                 hunk.at = at;
             }
         }
@@ -525,7 +527,9 @@ fn build_with(
     known: Option<&HashSet<String>>,
 ) -> (Patch, Vec<Paragraphs>) {
     let critic = critic.replace("\r\n", "\n");
-    let blocks = blocks(detach_breaks(attribute(segments(&critic))));
+    let segs_for_debug = segments(&critic);
+    eprintln!("TRACE SEGS: {segs_for_debug:?}");
+    let blocks = blocks(detach_breaks(attribute(segs_for_debug)));
     let owner = &options.owner;
     let mut hunks = Vec::new();
     let mut texts = Vec::new();
