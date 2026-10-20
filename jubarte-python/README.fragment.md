@@ -160,7 +160,9 @@ tracked changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` shows the
 changed paragraphs between two documents — or a document and Markdown text —
-as `[-old-]{+new+}` marks (`format="critic"` for CriticMarkup):
+as `[-old-]{+new+}` marks (`format="critic"` for CriticMarkup). Between two
+Word documents a replacement keeps Word Compare's order, the insertion first:
+`{+new+}[-old-]`.
 
 ```python
 print(diff(read("v1.docx"), read("v2.docx")))

@@ -1543,7 +1543,8 @@ changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` (since 0.11.0) shows the changed paragraphs
 between two documents — or a document and Markdown text — as `[-old-]{+new+}`
-marks (`format="critic"` for CriticMarkup):
+marks (`format="critic"` for CriticMarkup). Between two Word documents a
+replacement keeps Word Compare's order, the insertion first: `{+new+}[-old-]`.
 
 ```python
 from jubarte_redlines import diff, read
@@ -1582,12 +1583,16 @@ cutover and retires the transitional spellings — `noid`, colon ids
 (`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
 the fields the wire carries today are the ones named above.
 
-> **Stale-artifact note (2026-10-19).** The `--help` blocks above are
-> generated from the installed 0.12.0 wheel and still advertise
-> `p17-`/`-p3` in `read -p`'s spelling list. Current source no longer
-> advertises them (`src/cli.rs`; they still parse transitionally, but the
-> contract retires them — spell the end, `p17-p20`); the block refreshes
-> on the next wheel rebuild.
+The OPC constructor enforces `InputLimits::compare()`:
+512 MiB compressed, 10,000 declared ZIP entries, 512 MiB per inflated part,
+and 2 GiB inflated in total. `scrub` and the maintainer `debug` command now
+refuse packages over those ceilings with `INPUT_LIMIT`; Markdown reads use
+the same bounded constructor. Entry counts are checked before indexing,
+and actual inflation is capped even when ZIP size declarations lie.
+`scrub` still applies its existing validation limits as well. A leak scan
+that exceeds a budget or cannot read a part reports a finding; editing a
+redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
+incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
 Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.12.0`).
@@ -1621,17 +1626,6 @@ output. `input_limits` overrides the admission budget key by key
 (`max_compressed_bytes`, `max_entries`, `max_part_bytes`,
 `max_uncompressed_bytes`, `max_xml_depth`); a package past it raises
 `JubarteError` with `INPUT_LIMIT`.
-
-The OPC constructor enforces `InputLimits::compare()`:
-512 MiB compressed, 10,000 declared ZIP entries, 512 MiB per inflated part,
-and 2 GiB inflated in total. `scrub` and the maintainer `debug` command now
-refuse packages over those ceilings with `INPUT_LIMIT`; Markdown reads use
-the same bounded constructor. Entry counts are checked before indexing,
-and actual inflation is capped even when ZIP size declarations lie.
-`scrub` still applies its existing validation limits as well. A leak scan
-that exceeds a budget or cannot read a part reports a finding; editing a
-redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
-incomplete scan. Comparer settings continue to supply their own limits.
 
 ### `docx_to_pdf`
 

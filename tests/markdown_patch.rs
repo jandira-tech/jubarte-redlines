@@ -127,6 +127,62 @@ fn a_paragraph_changed_with_its_mark_is_a_hunk_of_its_own() {
     assert_eq!(merged.hunks[0].at, Locator::Line(1));
 }
 
+/// A redline whose body holds `first`, then `second` and `third` as
+/// Word writes the last of them deleted (`ins` false) or inserted: its
+/// text in the change `r2`, and, the last paragraph's mark being the
+/// story's, the mark before it in the change `r1`.
+fn last_paragraph_change(ins: bool) -> Vec<u8> {
+    let (kind, text) = if ins {
+        ("ins", "t")
+    } else {
+        ("del", "delText")
+    };
+    let by = r#"w:author="Claude" w:date="2026-09-25T12:00:00Z""#;
+    common::docx::docx(&format!(
+        r#"<w:p><w:r><w:t>Heading</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:{kind} w:id="1" {by}/></w:rPr></w:pPr><w:r><w:t>Kept.</w:t></w:r></w:p><w:p><w:{kind} w:id="2" {by}><w:r><w:{text}>Last.</w:{text}></w:r></w:{kind}></w:p>"#
+    ))
+}
+
+/// The last paragraph of a story, deleted or inserted, is a hunk of its
+/// own: the view writes its text and the mark before it as two changes
+/// (`r1`, `r2`), and the break still leads the paragraph it ends.
+#[test]
+fn a_story_s_last_paragraph_changed_with_the_mark_before_it_is_a_hunk_of_its_own() {
+    // Claude's own changes: the hunks carry no author note.
+    let options = PatchOptions {
+        owner: Attribution {
+            author: "Claude".to_string(),
+            date: "2026-09-25T12:00:00Z".to_string(),
+        },
+        ..options("a.docx", "b.docx")
+    };
+    let deleted = jubarte::markdown::patch_redline(&last_paragraph_change(false), &options)
+        .expect("the redline patches");
+    let at = |index| Locator::Paragraph {
+        story: "body".to_string(),
+        index,
+    };
+    let hunks: Vec<(Locator, bool, &str)> = deleted
+        .hunks
+        .iter()
+        .map(|h| (h.at.clone(), h.removed, h.text.as_str()))
+        .collect();
+    assert_eq!(hunks, [(at(2), true, "[-Last.-]")], "{}", deleted.render(0));
+    let inserted = jubarte::markdown::patch_redline(&last_paragraph_change(true), &options)
+        .expect("the redline patches");
+    let hunks: Vec<(Locator, bool, &str)> = inserted
+        .hunks
+        .iter()
+        .map(|h| (h.at.clone(), h.removed, h.text.as_str()))
+        .collect();
+    assert_eq!(
+        hunks,
+        [(at(2), false, "{+Last.+}")],
+        "{}",
+        inserted.render(0)
+    );
+}
+
 const AGREEMENT: &str = "# Agreement
 
 2.1 Closing. The Closing shall take place on {~~04/20/26~>10/30/26~~}{>>Arthur Rodrigues (2026-09-30T14:05:00Z): Buyer needs time.<<}, or at such other time.
