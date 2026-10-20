@@ -467,6 +467,60 @@ fn a_clean_input_reads_zero_findings() {
     assert_eq!(out, "{\"input_validity\":{\"errors\":0,\"warnings\":0}}\n");
 }
 
+/// `read --for-edit` prints JSON, so it is a JSON read too: its result
+/// carries the input's validity and it prints no stderr line, `-q` or
+/// not. `-o FILE.json` writes the bytes it prints and keeps the notice,
+/// as `read -o FILE.json` does. The library's result has no such field;
+/// only the CLI read the input (#1340).
+#[test]
+fn the_for_edit_read_carries_the_input_validity() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), comment_graph("20000002")).unwrap();
+    std::fs::write(dir.path().join("clean.docx"), docx(&para("x"))).unwrap();
+    let for_edit = |file: &str, quiet: bool| {
+        let mut args = vec!["read", file, "--for-edit"];
+        if quiet {
+            args.push("-q");
+        }
+        let (code, out, err) = run(dir.path(), &args);
+        assert_eq!(code, 0, "{args:?}: {err}");
+        assert_eq!(err, "", "{args:?}");
+        let json: serde_json::Value =
+            serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+        (out, json["input_validity"].clone())
+    };
+    let wanted = serde_json::json!({"errors":0,"warnings":2,"next":"jubarte validate in.docx"});
+    for quiet in [false, true] {
+        assert_eq!(for_edit("in.docx", quiet).1, wanted, "quiet {quiet}");
+    }
+    assert_eq!(
+        for_edit("clean.docx", false).1,
+        serde_json::json!({"errors":0,"warnings":0})
+    );
+    let (printed, _) = for_edit("in.docx", false);
+    let (code, out, err) = run(
+        dir.path(),
+        &["read", "in.docx", "--for-edit", "-o", "e.json"],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("e.json")).unwrap(),
+        printed
+    );
+    assert!(
+        err.starts_with("input has 2 validity warnings; jubarte validate in.docx lists them\n"),
+        "{err}"
+    );
+    let library = jubarte::edit::for_edit::for_edit(
+        &comment_graph("20000002"),
+        &jubarte::edit::for_edit::ForEditRequest::default(),
+    )
+    .unwrap();
+    let library = serde_json::to_value(&library).unwrap();
+    assert!(library.get("input_validity").is_none(), "{library}");
+}
+
 /// IN and OUT in a fresh directory.
 fn pair(input: &[u8], output: &[u8]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();

@@ -1004,13 +1004,20 @@ fn run_for_edit(
             message: format!("{e}"),
         }
     };
-    let bytes = read_input(file, quiet).map_err(ConvertFailure::from)?;
+    // A JSON read: the result carries the input's findings (#1340).
+    let (bytes, validity) = read_input_json(file).map_err(ConvertFailure::from)?;
     warn_nested_text_boxes(&bytes);
-    let result = for_edit(&bytes, &request).map_err(refused)?;
+    let mut result = for_edit(&bytes, &request).map_err(refused)?;
+    let notice = jubarte::validate::input_notice_of(&validity);
+    result.input_validity = Some(validity);
     let json =
         serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
     if let Some(path) = output {
         ensure_writable(path, force)?;
+        // A file leaves stdout free, so the notice stays, as at `read -o FILE.json`.
+        if !quiet && let Some(line) = notice {
+            eprintln!("{line}");
+        }
         publish_file(path, json.as_bytes(), force).map_err(ConvertFailure::from)?;
         if !quiet {
             eprintln!("{}", wrote_line(path, Format::Json, json.len(), None));

@@ -435,6 +435,11 @@ pub struct ForEdit {
     /// Continuation token; `null` when the selection is exhausted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// The input's validity findings, as `read --json` carries them in
+    /// `summary.input_validity`: set only by the CLI, which read the file
+    /// (#1340); absent from the library's result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_validity: Option<crate::validate::InputValidity>,
 }
 
 fn existing_revisions_name(policy: ExistingRevisions) -> &'static str {
@@ -1793,6 +1798,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         source_context: context_rows,
         comments: comment_list,
         next_cursor,
+        input_validity: None,
     })
 }
 

@@ -380,8 +380,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `{"errors":0,"warnings":2,"next":"jubarte validate FILE"}` (a clean input
   `{"errors":0,"warnings":0}`), and `changes --json` and `comments --json`
   end with one `{"input_validity":{…}}` line, always, `-q` or not, so
-  `--json 2>&1 | jq` stays JSON. `read -o FILE.json` writes what `read
-  --json` prints and keeps the stderr line. Library:
+  `--json 2>&1 | jq` stays JSON. `read --for-edit` prints JSON too, so its
+  result carries the same `input_validity` (#1340). `read -o FILE.json`
+  writes what `read --json` prints and keeps the stderr line, and `read
+  --for-edit -o FILE.json` likewise. Library:
   `validate::{InputValidity, input_validity, input_validity_of,
   input_validity_line, input_notice_of}`, `Summary::input_validity`;
   Python `read_json(validity_file=)` and `input_validity_line`, WASM
