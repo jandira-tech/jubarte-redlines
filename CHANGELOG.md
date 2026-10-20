@@ -271,7 +271,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   flags, including flags recorded into a plan; a v1 plan; an `edit apply`
   plan; or a typed command, whose routes are its own `--accept-change ID`
   and `--reject-change ID` (#1310)). The structured `next_actions` (#1147)
-  come with every such refusal, a v2 insertion-side one included. Each JSON route pastes into
+  come with every such refusal, a v2 insertion-side one included, and with
+  no other error: an anchor that merely quotes a refusal's words gets none.
+  The `revision_refusals` data records the syntax its message quotes,
+  `typed_action` for a typed command. Each JSON route pastes into
   its plan as written: ids are JSON-escaped, an `edit apply` route names
   both `accept` and `reject` lists, and its comment carries the refused
   operation's own `target`. An anchor that reaches into another author's

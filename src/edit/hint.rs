@@ -28,6 +28,17 @@ pub enum PlanSyntax {
 impl PlanSyntax {
     /// Every syntax, for the tests that check each one's fragments.
     pub const ALL: [Self; 4] = [Self::V1, Self::Flags, Self::V2, Self::Typed];
+
+    /// The same choice as a refusal's data records it.
+    pub(super) const fn revision(self) -> super::refusal::RevisionSyntax {
+        use super::refusal::RevisionSyntax;
+        match self {
+            Self::V1 => RevisionSyntax::V1Plan,
+            Self::Flags => RevisionSyntax::LegacyFlags,
+            Self::V2 => RevisionSyntax::V2Plan,
+            Self::Typed => RevisionSyntax::TypedAction,
+        }
+    }
 }
 
 /// What another author's revision did to the text it holds.

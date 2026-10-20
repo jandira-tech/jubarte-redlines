@@ -11,6 +11,10 @@ use crate::namespaces::W;
 use crate::result::NextAction;
 use crate::xmllinq::NodeId;
 
+/// What v2 puts before a refusal it cannot place on the requested side of
+/// an insertion point (`UNSUPPORTED_INSERTION_SIDE`).
+pub(super) const INSERTION_SIDE_PREFIX: &str = "requested insertion side cannot be preserved: ";
+
 /// The syntax the caller can use to resolve a blocking revision.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -116,7 +120,8 @@ impl RevisionRefusal {
         Self {
             reason: reason.into(),
             revisions,
-            syntax: RevisionSyntax::V1Plan,
+            // The message quotes its routes in the transaction's syntax.
+            syntax: tx.syntax.revision(),
         }
     }
 
@@ -153,13 +158,16 @@ impl EditError {
     #[must_use]
     pub fn revision_next_actions(&self, source_path: &str, source_digest: &str) -> Vec<NextAction> {
         // Only the refusal the message names: a revision another operation
-        // met must not answer for a refusal of a different kind.
-        // The message's first line names the refusal's lead and its first
-        // revision, after any diagnostic prefix (v2's insertion side).
+        // met must not answer for a refusal of a different kind. The
+        // message's first line starts with the refusal's lead and its first
+        // revision, after v2's insertion-side prefix; an error of another
+        // kind may quote text shaped like it (an anchor the caller typed),
+        // and those choices are not its own.
         let header = self.message.lines().next().unwrap_or_default();
+        let header = header.strip_prefix(INSERTION_SIDE_PREFIX).unwrap_or(header);
         let Some(refusal) = self.revision_refusals.first().filter(|refusal| {
             refusal.revisions.first().is_some_and(|first| {
-                header.contains(&format!("{} {}", refusal.reason, first.target.short_id))
+                header.starts_with(&format!("{} {}", refusal.reason, first.target.short_id))
             }) && refusal
                 .revisions
                 .iter()

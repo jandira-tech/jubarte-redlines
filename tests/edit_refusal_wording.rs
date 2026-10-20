@@ -162,7 +162,10 @@ fn case(site: &str) -> Case {
                         )
                 }
             };
-            c.body = format!("<w:p>{content}</w:p>{}", para("Tail."));
+            // Bob's insertion outside the deleted paragraph stays.
+            c.body = format!(
+                r#"<w:p>{content}</w:p><w:p><w:ins w:id="9" w:author="Bob" w:date="2026-10-17T00:00:00Z"><w:r><w:t>Tail.</w:t></w:r></w:ins></w:p>"#
+            );
         }
         "last_paragraph" | "merge_mark" | "merge_insertion_mark" => {
             c.body = format!(
@@ -548,17 +551,22 @@ fn check(site: &str, syntax: &str) {
                 std::fs::remove_file(dir.path().join("settled.docx")).unwrap();
             }
         }
-        // The typed options parse on the refused command itself.
+        // The typed options run on the refused command itself and settle
+        // the revision: the refusal never comes back (#1308 review).
         _ => {
             for (_, fragment, _) in &wanted[..2] {
                 let mut args: Vec<&str> = args(&c, syntax, false);
                 args.extend(fragment.split(' '));
                 let output = run(dir.path(), &args);
-                assert_ne!(
-                    output.status.code(),
-                    Some(2),
-                    "{args:?}: {}",
+                let said = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
+                );
+                assert_ne!(output.status.code(), Some(2), "{args:?}: {said}");
+                assert!(
+                    !said.contains(&header(&c, syntax)),
+                    "{args:?} left the refusal in place: {said}"
                 );
             }
         }
@@ -671,6 +679,34 @@ fn deletes(site: &str, syntax: &str) {
         texts(&reject_changes(&redline, &all).unwrap()),
         texts(&reject_changes(&source, &all).unwrap())
     );
+    if syntax == "library" {
+        // The clean output loses the deleted paragraph with its revisions,
+        // and keeps every revision outside it (#1308 review).
+        let outside: Vec<_> = list_changes(&source)
+            .unwrap()
+            .into_iter()
+            .filter(|old| old.paragraph.as_deref() == Some("p1"))
+            .map(|old| (old.kind, old.author, old.text))
+            .collect();
+        assert_eq!(outside.len(), 1, "{outside:?}");
+        let v1 = EditPlan::from_json(&plan(&c, &source, false).to_string()).unwrap();
+        let v2 = PlanV2::from_json(&plan(&c, &source, true).to_string()).unwrap();
+        for clean in [
+            apply_plan(&source, &v1).unwrap().clean,
+            jubarte::edit::v2_apply::apply_plan(&source, &v2)
+                .unwrap()
+                .clean,
+        ] {
+            assert_word_valid_package(&clean);
+            let kept: Vec<_> = list_changes(&clean)
+                .unwrap()
+                .into_iter()
+                .map(|new| (new.kind, new.author, new.text))
+                .collect();
+            assert_eq!(kept, outside);
+            assert_eq!(texts(&clean), ["Tail."]);
+        }
+    }
 }
 macro_rules! site_tests {
     ($check:ident, $site:literal; $($test:ident => $syntax:literal),+ $(,)?) => {$ (#[test] fn $test(){$check($site,$syntax);})+};
@@ -932,6 +968,80 @@ fn primary_nonrevision_error_has_no_secondary_review_choices() {
         error.get("next_actions").is_none(),
         "a secondary revision must not supply the primary error's review choices: {error}"
     );
+}
+
+/// An anchor the caller typed may read like a refusal's header: the error
+/// it gets is still no revision refusal, and carries no review choices
+/// (#1308 review).
+#[test]
+fn an_anchor_quoting_a_refusal_header_has_no_review_choices() {
+    let c = case("range_move");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), docx(&c.body)).unwrap();
+    let quoted = format!("{} {}", c.lead, short(&c));
+    let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args([
+            "edit",
+            "in.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            &quoted,
+            "--content",
+            "new",
+            "-p",
+            "p0",
+            "--anchor",
+            "beta",
+            "--content",
+            "new",
+            "--author",
+            "Carol Diaz",
+            "--datetime",
+            DATE,
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let error: Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(error["code"], "ANCHOR_NOT_FOUND");
+    let first = error["message"].as_str().unwrap().lines().next().unwrap();
+    assert!(first.contains(&quoted), "{error}");
+    assert!(error.get("next_actions").is_none(), "{error}");
+}
+
+/// The refusal's data names the syntax its message quotes, whoever builds
+/// the transaction (#1308 review): a typed command's prepared plan records
+/// `typed_action` without its caller restating it.
+#[test]
+fn the_refusal_data_records_the_quoted_syntax() {
+    let c = case("range_move");
+    let source = source(&c);
+    let syntax_of = |e: jubarte::edit::EditError| {
+        serde_json::to_value(&e).unwrap()["revision_refusals"][0]["syntax"].clone()
+    };
+    let v2 = PlanV2::from_json(&plan(&c, &source, true).to_string()).unwrap();
+    let typed = jubarte::edit::prepare_v2(
+        &source,
+        &v2,
+        &jubarte::edit::PrepareOptions {
+            syntax: jubarte::edit::PlanSyntax::Typed,
+            ..jubarte::edit::PrepareOptions::default()
+        },
+    )
+    .expect_err("refused");
+    assert_eq!(syntax_of(typed), "typed_action");
+    let plain = jubarte::edit::v2_apply::apply_plan(&source, &v2).expect_err("refused");
+    assert_eq!(syntax_of(plain), "v2_plan");
+    let v1 = EditPlan::from_json(&plan(&c, &source, false).to_string()).unwrap();
+    let flags = jubarte::edit::check_plan_quoting(&source, &v1, jubarte::edit::PlanSyntax::Flags)
+        .expect_err("refused");
+    assert_eq!(syntax_of(flags), "legacy_flags");
+    let v1 = apply_plan(&source, &v1).expect_err("refused");
+    assert_eq!(syntax_of(v1), "v1_plan");
 }
 
 fn loss_source() -> Vec<u8> {

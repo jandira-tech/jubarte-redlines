@@ -88,12 +88,8 @@ pub(super) fn apply_quoting(
     plan: &PlanV2,
     syntax: super::PlanSyntax,
 ) -> Result<V2EditResult, EditError> {
-    apply_bound(source, plan, syntax).map_err(|e| {
-        with_operation_targets(
-            e.with_revision_syntax(super::refusal::RevisionSyntax::V2Plan),
-            plan,
-        )
-    })
+    // The refusals record `syntax` themselves (`RevisionRefusal::new`).
+    apply_bound(source, plan, syntax).map_err(|e| with_operation_targets(e, plan))
 }
 
 /// A refusal's comment route on the refused operation's own target: the
@@ -2295,7 +2291,7 @@ fn text_component(
                 err(
                     "UNSUPPORTED_INSERTION_SIDE",
                     None,
-                    format!("requested insertion side cannot be preserved: {m}"),
+                    format!("{}{m}", super::refusal::INSERTION_SIDE_PREFIX),
                 )
             })?;
     } else {
