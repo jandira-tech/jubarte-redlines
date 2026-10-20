@@ -459,8 +459,7 @@ pub(crate) fn leaks_within(
                 break;
             }
         };
-        if let Err(error) =
-            crate::admission::account_inflated(&mut total, read, &name, cap, &limits)
+        if let Err(error) = crate::admission::tally_inflated(&mut total, read, &name, cap, &limits)
         {
             found.insert(format!("{name} ({error})"));
             break;

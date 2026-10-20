@@ -275,7 +275,7 @@ impl Package {
                     continue;
                 }
             };
-            crate::admission::account_inflated(&mut total, read as u64, &name, cap, &limits)
+            crate::admission::tally_inflated(&mut total, read as u64, &name, cap, &limits)
                 .map_err(|e| e.to_string())?;
             entries.push(Entry {
                 name,
