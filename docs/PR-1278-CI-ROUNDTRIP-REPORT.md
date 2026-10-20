@@ -102,9 +102,19 @@ structure and an explicit subsequent text edit.
   fails two Node CLI tests. The committed WASM package is stamped
   `edec90334de92f5b1d2c9eee8b5caa2d568e3da9`: it returns snapshot schema 1
   and older revision markup, while the current source returns schema 2.
-  Rebuild the generated WASM package from source; do not lower the schema
-  assertion or patch generated JavaScript/WASM by hand. API/CLI documentation
-  must then be regenerated from the refreshed artifacts as well.
+  All four package variants were rebuilt with `jubarte-wasm/build-npm.sh`
+  from clean source commit `41019ae16a6123f0273af0ca997901c85437be12`. Each
+  variant initializes and returns schema 2 with the expected document text.
+  The schema assertion remains unchanged. API/CLI documentation was
+  regenerated from the refreshed artifacts with `scripts/gen_docs.sh`.
+  Existing hand-written audit/admission explanations were moved outside
+  generated blocks so regeneration preserves them.
+- With the refreshed package, two other CLI assertions expected the older
+  substitution/deletion-first spelling of a Word comparison. A direct native
+  replay produces `Due in {++45++}{r1 @R}{--30--}{r2 @R} days.` in the agent
+  view and `Due in {+45+}[-30-] days.` in a Word-input diff. The WASM output
+  agrees. Those assertions now check this precise ordering and attribution.
+  The plain-Markdown diff and CriticMarkup expectations remain unchanged.
 - Both Jules failures are the same service-side session-creation rejection:
   `POST https://jules.googleapis.com/v1alpha/sessions` returns
   `400 FAILED_PRECONDITION`, in both agentic and fallback modes. The
@@ -175,3 +185,15 @@ this report, so the package/render diagnostics are not a Word-parity claim.
 - The focused Rust runs cover 24.43% of the whole engine's lines and 16.30%
   of its branches; `from_docx/drawing.rs` is 40.12% / 18.34%. These are narrow
   test selections, not a claim about full-suite coverage or release readiness.
+
+Rust formatting, clippy with `-D warnings`, native and WASM CLI `--help`,
+and REUSE licensing checks pass. The existing Python formatter also reports
+unrelated formatting drift elsewhere in `harness/grading.py`; its lint check
+passes, and only the redundant expression is changed.
+
+The final full WASM CLI rerun passes all 62 tests (zero failures), including
+the unchanged schema-2 assertion, comment-target editing, and both corrected
+Word-order expectations. V8 reports 82.85% JavaScript line / 66.44% branch
+coverage, including generated glue; that does not measure WASM instructions.
+The Node, Node slim, browser-module and browser-module slim initialization
+smokes also each verify schema 2 and real document text.
