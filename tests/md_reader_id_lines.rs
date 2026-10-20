@@ -909,6 +909,42 @@ fn a_note_inserted_or_deleted_with_its_reference_keeps_words_shape() {
     assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
 }
 
+/// A note's own marks keep the ids its id line names whatever the body
+/// numbers (#1353 review): the body's `r12+13` and the note's
+/// `footnotes.r12+13` are two changes, so the body's pieces never take the
+/// note's ids, nor the note the body's.
+#[test]
+fn a_note_rebuilt_from_its_id_line_keeps_its_ids_apart_from_the_body() {
+    let note = "<!-- footnotes.p0 -->\n{++[^1]: An inserted note.++}{r10 @AC} \
+                <!-- rev footnotes.r11 @AC; footnotes.r12+13 @AC -->\n";
+    let marks = |ids: &str| {
+        let body = format!(
+            "<!-- p0 -->\nAdded{{++[^1]++}}{{r10 @AC}} and {{++x++}}{{r{ids} @AC}} then \
+             {{++y++}}{{r{ids} @AC}}.\n\n{note}"
+        );
+        let docx = markdown_to_docx(
+            &as_view(&format!("{AUTHORS}{body}")),
+            &DocxOptions::default(),
+        )
+        .expect("the view reads")
+        .docx;
+        assert_word_valid_package(&docx);
+        let ids = |part: &str| -> Vec<String> {
+            let xml = part_string(&docx, part).unwrap();
+            xml.split("<w:ins w:id=\"")
+                .skip(1)
+                .filter_map(|rest| rest.split('"').next())
+                .map(str::to_string)
+                .collect()
+        };
+        (ids("word/document.xml"), ids("word/footnotes.xml"))
+    };
+    let (body, notes) = marks("12+13");
+    assert_eq!(body, ["10", "12", "13"]);
+    assert_eq!(notes, marks("42+43").1);
+    assert_eq!(notes, ["11", "12", "13"]);
+}
+
 #[test]
 fn a_tracked_note_reads_with_one_space_after_its_label() {
     // Word's text after the reference mark starts with a space (` An

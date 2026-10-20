@@ -10,6 +10,8 @@
 //! as an allocation abort or a panic, because the Python wheel and the WASM
 //! build cannot catch either.
 
+mod common;
+
 use std::io::{Cursor, Write};
 
 use jubarte::WmlDocument;
@@ -252,6 +254,76 @@ fn reading_without_layout_refuses_a_dual_header_package() {
         panic!("reading without layout must refuse a dual-header package");
     };
     assert!(err.to_string().contains("ZIP_HEADER_MISMATCH"), "{err}");
+}
+
+/// A part nested past the depth budget is refused with an error, never a
+/// stack overflow (#1353 review): the view lists its changes with the
+/// permissive parser, so only a package the tag policy admitted reaches
+/// it. Release 0.12.0 refused this file the same way.
+#[test]
+fn reading_refuses_xml_nested_past_the_depth_budget() {
+    let open = "<w:sdt><w:sdtContent>".repeat(60_000);
+    let close = "</w:sdtContent></w:sdt>".repeat(60_000);
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{open}<w:p><w:r><w:t>x</w:t></w:r></w:p>{close}</w:body></w:document>"#
+    );
+    let bytes = package_with_document(&document);
+    let options = jubarte::markdown::ReadOptions {
+        page_markers: false,
+        ..Default::default()
+    };
+    let Err(err) = jubarte::markdown::read(&bytes, &options) else {
+        panic!("reading must refuse XML nested past the depth budget");
+    };
+    assert!(err.to_string().contains("nesting too deep"), "{err}");
+}
+
+/// A header or a footnote nested as deep is refused the same way: the
+/// view's change listing reads every story (release 0.12.0 overflowed
+/// its stack on these).
+#[test]
+fn reading_refuses_a_story_nested_past_the_depth_budget() {
+    use common::docx::{Part, W_NS, docx_with, docx_with_sect};
+    let open = "<w:sdt><w:sdtContent>".repeat(60_000);
+    let close = "</w:sdtContent></w:sdt>".repeat(60_000);
+    let deep = format!("{open}<w:p><w:r><w:t>x</w:t></w:r></w:p>{close}");
+    let header = format!(r#"<w:hdr xmlns:w="{W_NS}">{deep}</w:hdr>"#);
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="1">{deep}</w:footnote></w:footnotes>"#
+    );
+    let with_header = docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let with_note = docx_with(
+        r#"<w:p><w:r><w:t>See</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+            xml: &footnotes,
+        }],
+    );
+    let options = jubarte::markdown::ReadOptions {
+        page_markers: false,
+        ..Default::default()
+    };
+    for (part, bytes) in [("header1", with_header), ("footnotes", with_note)] {
+        let Err(err) = jubarte::markdown::read(&bytes, &options) else {
+            panic!("reading must refuse a {part} nested past the depth budget");
+        };
+        let err = err.to_string();
+        assert!(
+            err.contains(&format!("word/{part}.xml: XML nesting too deep")),
+            "{err}"
+        );
+    }
 }
 
 #[test]

@@ -4626,6 +4626,16 @@ impl<'o, 'a> Writer<'o, 'a> {
         serial
     }
 
+    /// [`Self::tag_serial`] for the tags of note `label`'s id line, which
+    /// [`Self::finish`] reads once the note is closed: they pool with the
+    /// note's story, not the body's (#1355).
+    fn note_serials(&mut self, label: &str, tags: &[view_notes::Tag]) -> Vec<u32> {
+        let target = self.target.replace(label.to_string());
+        let serials = tags.iter().map(|tag| self.tag_serial(tag)).collect();
+        self.target = target;
+        serials
+    }
+
     /// A note naming `ids` names `serials` ([`Self::pools`]).
     fn pool(&mut self, ids: &[u32], serials: &[u32]) {
         if ids.len() < 2 || serials.is_empty() {
@@ -5303,7 +5313,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 && in_one_change(&items, kind)
                 && own.len() == paragraphs(&items)
             {
-                let serials: Vec<u32> = own.iter().map(|tag| self.tag_serial(tag)).collect();
+                let serials = self.note_serials(&label, &own);
                 let mut next = serials.iter().copied();
                 let mut runs = None;
                 for item in &mut items {
@@ -5319,7 +5329,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 && in_one_change(&items, kind)
                 && own.len() == 2 * paragraphs(&items)
             {
-                let serials: Vec<u32> = own.iter().map(|tag| self.tag_serial(tag)).collect();
+                let serials = self.note_serials(&label, &own);
                 own_note_marks(&mut items, kind, &serials);
                 change = serials.get(1).map(|&first| (kind, first));
             } else if let Some((kind, _)) = change

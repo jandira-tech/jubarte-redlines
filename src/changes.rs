@@ -614,11 +614,26 @@ pub(crate) fn list_logical_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, 
     Ok(logical_changes_in(&tolerant(docx)?))
 }
 
-/// The package a view reads, opened without admission.
+/// The package a view reads, opened without admission. Its parts parse
+/// permissively, so one nesting deeper than the view reads is refused
+/// before the parser recurses into it (#1353 review).
 fn tolerant(docx: &[u8]) -> Result<PartFs, ChangeError> {
+    use crate::xmllinq::parse::{PERMISSIVE_MAX_DEPTH, nests_deeper};
+
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))
+    let pkg = PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
+    for (part, _) in revision_bearing_parts(&pkg) {
+        if pkg
+            .part_string(&part)
+            .is_some_and(|xml| nests_deeper(&xml, PERMISSIVE_MAX_DEPTH))
+        {
+            return Err(ChangeError::Package(format!(
+                "{part}: XML nesting too deep"
+            )));
+        }
+    }
+    Ok(pkg)
 }
 
 /// The changes of an opened (transitional) package, as [`list_changes`]

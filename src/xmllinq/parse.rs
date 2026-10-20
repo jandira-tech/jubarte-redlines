@@ -88,6 +88,8 @@ fn bump_ns_scope_declared_bytes(by: usize) {
 /// so a BOM-prefixed input still yields a document with a root.
 ///
 /// This parser does not enforce input policy or panic on policy violations.
+/// It recurses once per nesting level: a caller that admitted nothing first
+/// bounds the depth with [`nests_deeper`] and [`PERMISSIVE_MAX_DEPTH`].
 /// Run [`validate_xml_with_limits`] (or package admission) with the active
 /// limits first, or call [`try_parse_xdocument_with_limits`] to receive errors.
 /// Attributes retain their order; repeated expanded names keep the first
@@ -133,6 +135,36 @@ pub fn try_parse_xdocument_with_limits(
 ) -> Result<NodeId, String> {
     validate_xml_with_limits(xml, limits)?;
     Ok(parse_xdocument(dom, xml))
+}
+
+/// The deepest nesting a package part may have where nothing admitted it
+/// first: the agent view reads that deep, and [`parse_xdocument`] recurses
+/// through it safely.
+pub(crate) const PERMISSIVE_MAX_DEPTH: usize = 512;
+
+/// Whether `xml` nests deeper than `limit` elements. The scan forgives
+/// what the permissive parser forgives (an end tag naming another
+/// element); it stops at text it cannot read.
+pub(crate) fn nests_deeper(xml: &str, limit: usize) -> bool {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().check_end_names = false;
+    let mut depth = 0usize;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(_)) => {
+                depth += 1;
+                if depth > limit {
+                    return true;
+                }
+            }
+            Ok(Event::End(_)) => depth = depth.saturating_sub(1),
+            Ok(Event::Eof) | Err(_) => return false,
+            Ok(_) => {}
+        }
+    }
 }
 
 struct Parser<'a> {

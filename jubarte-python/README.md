@@ -132,7 +132,8 @@ result = doc.render(pdf=True, png_dpi=144)  # Rendered: pdf, pngs, page report
 
 The snapshot uses `schema_version: 3`. `changes` lists logical changes:
 a change Word wrote as several marks is one entry with its `members`,
-and a deletion followed by its author's insertion is one `replacement`.
+and a deletion and an insertion by one author that touch, in either
+order, are one `replacement`.
 `summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
