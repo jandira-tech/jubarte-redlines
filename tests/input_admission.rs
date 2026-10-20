@@ -326,6 +326,40 @@ fn reading_refuses_a_story_nested_past_the_depth_budget() {
     }
 }
 
+/// Markup a strict reader stops at, nested as deep, is refused the same
+/// way and never reaches the permissive parser's recursion (#1353 review):
+/// inside an element that parser reads `<!x>` as a child element.
+#[test]
+fn reading_refuses_unreadable_markup_nested_past_the_depth_budget() {
+    use common::docx::{Part, W_NS, docx_with_sect};
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p>{}</w:p></w:hdr>"#,
+        "<!x>".repeat(60_000)
+    );
+    let bytes = docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let options = jubarte::markdown::ReadOptions {
+        page_markers: false,
+        ..Default::default()
+    };
+    let Err(err) = jubarte::markdown::read(&bytes, &options) else {
+        panic!("reading must refuse a header nested past the depth budget");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("word/header1.xml: XML nesting too deep"),
+        "{err}"
+    );
+}
+
 #[test]
 fn compare_refuses_a_part_that_inflates_past_the_part_budget() {
     let settings = WmlComparerSettings {

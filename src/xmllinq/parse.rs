@@ -142,29 +142,21 @@ pub fn try_parse_xdocument_with_limits(
 /// through it safely.
 pub(crate) const PERMISSIVE_MAX_DEPTH: usize = 512;
 
-/// Whether `xml` nests deeper than `limit` elements. The scan forgives
-/// what the permissive parser forgives (an end tag naming another
-/// element); it stops at text it cannot read.
+/// Whether `xml` nests deeper than `limit` elements, read the way
+/// [`parse_xdocument`] reads it. The scan shares the parser's start-tag
+/// reader (names, quoted values) and walks its grammar (comments, CDATA,
+/// processing instructions, a `<!x>` inside an element as an element), so
+/// markup a strict reader stops at counts as deep as the parser would
+/// recurse into it (#1353 review). It keeps a counter, not a stack.
 pub(crate) fn nests_deeper(xml: &str, limit: usize) -> bool {
-    use quick_xml::Reader;
-    use quick_xml::events::Event;
-
-    let mut reader = Reader::from_str(xml);
-    reader.config_mut().check_end_names = false;
-    let mut depth = 0usize;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(_)) => {
-                depth += 1;
-                if depth > limit {
-                    return true;
-                }
-            }
-            Ok(Event::End(_)) => depth = depth.saturating_sub(1),
-            Ok(Event::Eof) | Err(_) => return false,
-            Ok(_) => {}
-        }
-    }
+    let xml = xml.strip_prefix('\u{feff}').unwrap_or(xml);
+    let mut dom = Dom::new();
+    let mut p = Parser {
+        dom: &mut dom,
+        c: xml.chars().collect(),
+        pos: 0,
+    };
+    p.nests_deeper(limit)
 }
 
 struct Parser<'a> {
@@ -518,6 +510,12 @@ impl<'a> Parser<'a> {
 
     /// readName — consume until whitespace, '/', '>', or '='.
     fn read_name(&mut self) -> String {
+        let (start, end) = self.name_span();
+        self.slice(start, end)
+    }
+
+    /// The span [`Self::read_name`] consumes.
+    fn name_span(&mut self) -> (usize, usize) {
         let start = self.pos;
         while self.pos < self.len() {
             let ch = self.cur();
@@ -526,7 +524,131 @@ impl<'a> Parser<'a> {
             }
             self.pos += 1;
         }
-        self.slice(start, self.pos)
+        (start, self.pos)
+    }
+
+    /// A start tag from its `<` through `>` or `/>`: the raw name's span,
+    /// each attribute's raw name and value spans handed to `attribute` in
+    /// order, and whether the tag closed itself. Both the parser and the
+    /// depth scan read tags here, so they agree where every tag ends.
+    fn start_tag(
+        &mut self,
+        mut attribute: impl FnMut(&Self, (usize, usize), (usize, usize)),
+    ) -> ((usize, usize), bool) {
+        self.pos += 1; // consume '<'
+        let name = self.name_span();
+        loop {
+            self.skip_ws();
+            if self.pos >= self.len() || self.cur() == '/' || self.cur() == '>' {
+                break;
+            }
+            let aname = self.name_span();
+            if aname.0 == aname.1 {
+                // Malformed delimiter (`<p a='x' ?>`): the permissive parser
+                // must still advance instead of spinning on the same byte.
+                break;
+            }
+            self.skip_ws();
+            let mut value = (self.pos, self.pos);
+            if self.cur() == '=' {
+                self.pos += 1; // '='
+                self.skip_ws();
+                let quote = self.cur();
+                self.pos += 1; // opening quote
+                let vstart = self.pos;
+                while self.pos < self.len() && self.cur() != quote {
+                    self.pos += 1;
+                }
+                value = (vstart, self.pos);
+                self.pos += 1; // closing quote
+            }
+            attribute(self, aname, value);
+        }
+        self.skip_ws();
+        if self.cur() == '/' {
+            self.pos += 2; // '/' '>'
+            return (name, true);
+        }
+        self.pos += 1; // '>'
+        (name, false)
+    }
+
+    /// [`nests_deeper`]'s walk: [`Self::parse_document`]'s loop at the top
+    /// level, [`Self::parse_element`]'s inside an element, with a depth
+    /// count where they recurse.
+    fn nests_deeper(&mut self, limit: usize) -> bool {
+        let len = self.len();
+        let mut depth = 0usize;
+        while self.pos < len {
+            if depth == 0 {
+                self.skip_ws();
+                if self.starts_with("<?xml") {
+                    let after = self.pos + 5;
+                    let is_declaration = after >= len
+                        || self
+                            .c
+                            .get(after)
+                            .is_none_or(|&ch| ch.is_whitespace() || ch == '?');
+                    if is_declaration {
+                        let end = self.index_of("?>", self.pos);
+                        self.pos = end.map(|e| e + 2).unwrap_or(len);
+                        continue;
+                    }
+                }
+                if self.starts_with("<?") {
+                    self.pi_spans();
+                    continue;
+                }
+                if self.starts_with("<!--") {
+                    self.pos = self.index_of("-->", self.pos).map_or(len, |e| e + 3);
+                    continue;
+                }
+                if self.starts_with("<!") {
+                    self.pos = self.index_of(">", self.pos).map_or(len, |e| e + 1);
+                    continue;
+                }
+                if self.cur() != '<' {
+                    break;
+                }
+            } else {
+                if self.starts_with("</") {
+                    self.pos += 2;
+                    self.name_span();
+                    self.skip_ws();
+                    if self.cur() == '>' {
+                        self.pos += 1;
+                    }
+                    depth -= 1;
+                    continue;
+                }
+                if self.starts_with("<!--") {
+                    self.pos = self.index_of("-->", self.pos).map_or(len, |e| e + 3);
+                    continue;
+                }
+                if self.starts_with("<![CDATA[") {
+                    self.pos = self.index_of("]]>", self.pos).map_or(len, |e| e + 3);
+                    continue;
+                }
+                if self.starts_with("<?") {
+                    self.pi_spans();
+                    continue;
+                }
+                if self.cur() != '<' {
+                    while self.pos < len && self.cur() != '<' {
+                        self.pos += 1;
+                    }
+                    continue;
+                }
+            }
+            let (_, closed) = self.start_tag(|_, _, _| {});
+            if !closed {
+                depth += 1;
+                if depth > limit {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn parse_document(&mut self) -> NodeId {
@@ -586,43 +708,17 @@ impl<'a> Parser<'a> {
 
     fn parse_element(&mut self, scope: &mut NsScope) -> NodeId {
         // at '<'
-        self.pos += 1; // consume '<'
-        let raw_name = self.read_name();
         let mut raw_attrs: Vec<(String, String)> = Vec::new();
-        loop {
-            self.skip_ws();
-            if self.pos >= self.len() || self.cur() == '/' || self.cur() == '>' {
-                break;
-            }
-            let before_name = self.pos;
-            let aname = self.read_name();
-            if self.pos == before_name {
-                // Malformed delimiter (`<p a='x' ?>`): the permissive parser
-                // must still advance instead of spinning on the same byte.
-                break;
-            }
-            self.skip_ws();
-            let mut avalue = String::new();
-            if self.cur() == '=' {
-                self.pos += 1; // '='
-                self.skip_ws();
-                let quote = self.cur();
-                self.pos += 1; // opening quote
-                let vstart = self.pos;
-                while self.pos < self.len() && self.cur() != quote {
-                    self.pos += 1;
-                }
-                avalue = self.slice(vstart, self.pos);
-                self.pos += 1; // closing quote
-            }
+        let ((name_start, name_end), closed) = self.start_tag(|p, (a0, a1), (v0, v1)| {
             // Normalize the RAW slice before entity decoding: literal
             // whitespace reads as space (§3.3.3) but character references
             // keep the characters they name.
             raw_attrs.push((
-                aname,
-                unescape_xml_text(&normalize_raw_attribute_whitespace(avalue)),
+                p.slice(a0, a1),
+                unescape_xml_text(&normalize_raw_attribute_whitespace(p.slice(v0, v1))),
             ));
-        }
+        });
+        let raw_name = self.slice(name_start, name_end);
 
         // N02: this element's xmlns / xmlns:* attributes push onto the
         // overlay scope (marks restore them on every return path below) —
@@ -647,13 +743,10 @@ impl<'a> Parser<'a> {
             .collect();
         self.dom.set_attributes(el, attrs);
 
-        self.skip_ws();
-        if self.cur() == '/' {
-            self.pos += 2; // '/' '>'
+        if closed {
             scope.pop(mark);
             return el;
         }
-        self.pos += 1; // '>'
 
         let len = self.len();
         while self.pos < len {
@@ -713,6 +806,15 @@ impl<'a> Parser<'a> {
     /// Parse a processing instruction (`<?target data?>`) into a `Pi` node.
     /// `self.pos` is on `<?`.
     fn parse_pi_node(&mut self) -> NodeId {
+        let (target_start, target_end, data_end) = self.pi_spans();
+        let target = self.slice(target_start, target_end);
+        let data = self.slice(target_end, data_end);
+        self.dom.new_pi(&target, &data)
+    }
+
+    /// Consume a processing instruction (`self.pos` on `<?`): where its
+    /// target starts and ends, and where its data ends.
+    fn pi_spans(&mut self) -> (usize, usize, usize) {
         let len = self.len();
         self.pos += 2; // consume "<?"
         let target_start = self.pos;
@@ -723,11 +825,10 @@ impl<'a> Parser<'a> {
             }
             self.pos += 1;
         }
-        let target = self.slice(target_start, self.pos);
+        let target_end = self.pos;
         let end = self.index_of("?>", self.pos);
-        let data = self.slice(self.pos, end.unwrap_or(len));
         self.pos = end.map(|e| e + 2).unwrap_or(len);
-        self.dom.new_pi(&target, &data)
+        (target_start, target_end, end.unwrap_or(len))
     }
 }
 
@@ -1003,6 +1104,79 @@ pub fn validate_xml_with_limits(xml: &str, limits: InputLimits) -> Result<(), St
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod depth_scan_tests {
+    use super::{Dom, NodeId, nests_deeper, parse_xdocument};
+
+    /// The deepest element of the tree `parse_xdocument` builds.
+    fn built_depth(xml: &str) -> usize {
+        let mut dom = Dom::new();
+        let doc = parse_xdocument(&mut dom, xml);
+        let mut deepest = 0;
+        let mut stack: Vec<(NodeId, usize)> = vec![(doc, 0)];
+        while let Some((node, depth)) = stack.pop() {
+            deepest = deepest.max(depth);
+            stack.extend(dom.elements(node, None).into_iter().map(|c| (c, depth + 1)));
+        }
+        deepest
+    }
+
+    /// The deepest nesting the scan reports: the least limit it keeps
+    /// within.
+    fn scanned_depth(xml: &str) -> usize {
+        (0..=xml.len())
+            .find(|&limit| !nests_deeper(xml, limit))
+            .unwrap_or(usize::MAX)
+    }
+
+    /// The scan measures the tree the parser builds, malformed input
+    /// included: the two cannot drift apart unnoticed. It counts the
+    /// elements open around a point, as the view's reader does, so a
+    /// self-closed leaf (`<c/>`) is the one level it does not count.
+    #[test]
+    fn the_scan_measures_the_tree_the_parser_builds() {
+        for xml in [
+            "<a><b><c/></b></a>",
+            "<a><!x><!y></a>",
+            r#"<a b="/>"><c d='>'><e/></c></a>"#,
+            "<a><!-- <b><c> --><d/></a>",
+            "<a><![CDATA[<b><c>]]><d/></a>",
+            "<a><?pi <b> ?><c/></a>",
+            "<?xml version='1.0'?><!DOCTYPE x><a><b></a>",
+            "\u{feff}<a><b><c>",
+            "<a b='x><c>",
+            "<a><b c=x d><e>",
+            "<a></><b>",
+            "<a/><b><c/></b>",
+            "<a> text <b>t</b> <c><d/></c></a>",
+            "<a><p a='x' ?><b>",
+            "<a><b",
+        ] {
+            let (built, scanned) = (built_depth(xml), scanned_depth(xml));
+            assert!(
+                scanned <= built && built <= scanned + 1,
+                "{xml:?}: the parser nests {built} deep, the scan counts {scanned}"
+            );
+        }
+    }
+
+    /// Inside an element the permissive parser reads `<!x>` as a child
+    /// element, so the scan that guards its recursion must count it too
+    /// (#1353 review): a strict reader stops at it.
+    #[test]
+    fn the_scan_counts_markup_the_permissive_parser_nests() {
+        let bangs = format!("<a>{}", "<!x>".repeat(600));
+        assert!(nests_deeper(&bangs, 512), "bang elements nest");
+        let quoted = format!("<a>{}", r#"<b c="/>">"#.repeat(600));
+        assert!(nests_deeper(&quoted, 512), "a quoted /> closes nothing");
+        assert!(!nests_deeper(
+            &format!("<a>{}</a>", "<!x/>".repeat(600)),
+            512
+        ));
     }
 }
 
