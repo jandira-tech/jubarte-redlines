@@ -114,11 +114,16 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
 }
 
 /// List the tracked changes as a JSON array string, one object per
-/// logical change, each with the id `acceptChanges` / `rejectChanges`
-/// select by (the same objects as `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
-/// `text`, `move_name`, `move_side`, `inside`, `holds_comments` when
-/// the change holds comment marks, and `members` for a change Word wrote
-/// as several marks).
+/// logical change: a change Word wrote as several marks is one object
+/// with a composite id (`r1+2`) and its `members`, and an author's
+/// deletion followed by their insertion is one `replacement`. Each `id`
+/// is one `acceptChanges` / `rejectChanges` select by. The objects are
+/// the ones `jubarte changes --json` prints: `id`, `ref` (the same id),
+/// `kind` (`insertion`, `deletion`, `move`, `formatting` or
+/// `replacement`), `target`, `author`, `date`, `text`, `paragraph`,
+/// `move_name`, `move_side`, `inside`, `holds_comments` when the change
+/// holds comment marks, and `members` (each mark's `id`, `kind`,
+/// `target`, `date` and `text`) for a change of several marks.
 ///
 /// Mirrors `jubarte::changes::list_logical_changes`.
 #[wasm_bindgen(js_name = listChanges)]
@@ -2295,17 +2300,11 @@ mod tests {
     fn listings_are_the_binary_text() {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
         let changes = changes_text(&docx).unwrap();
-        assert!(
-            // Word typing order: the deletion precedes the insertion, and
-            // the listing assigns revision ids in that document order.
-            changes.starts_with(
-                "r1\tdeletion\ttext\tRedline\tp0\t\"30\"\nr2\tinsertion\ttext\tRedline\tp0\t\"45\"\n"
-            ),
-            "{changes}"
-        );
-        assert!(
-            changes.contains("\"30\"") && changes.ends_with("2 change(s)\n"),
-            "{changes}"
+        // Word typing order writes the deletion, then the insertion; the
+        // listing is the binary's: one logical change of both marks.
+        assert_eq!(
+            changes,
+            "r1+2\treplacement\ttext\tRedline\tp0\t\"30 \u{2192} 45\"\t(2 elements)\n1 change(s)\n"
         );
         let tables = tables_text(&docx, None).unwrap();
         assert!(tables.starts_with("table 0: 2x2"), "{tables}");
@@ -2451,7 +2450,12 @@ mod tests {
         let whole: serde_json::Value =
             serde_json::from_str(&read_json_of(&docx, None).unwrap()).unwrap();
         assert_eq!(whole["paragraphs"].as_array().unwrap().len(), 2);
-        assert_eq!(whole["changes"].as_array().unwrap().len(), 2);
+        // Snapshot schema 3 lists logical changes: the substitution is one
+        // replacement of its two marks.
+        let changes = whole["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0]["kind"], "replacement");
+        assert_eq!(changes[0]["members"].as_array().unwrap().len(), 2);
         let one: serde_json::Value = serde_json::from_str(
             &read_json_of(&docx, Some(r#"{"paragraphs":"p0","source":"x.docx"}"#)).unwrap(),
         )
