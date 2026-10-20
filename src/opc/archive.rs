@@ -696,7 +696,9 @@ fn declared_records<R: Read + Seek>(reader: &mut R) -> Option<u64> {
     const EOCD64: [u8; 4] = [0x50, 0x4b, 0x06, 0x06];
     let len = reader.seek(SeekFrom::End(0)).ok()?;
     let window = len.min(22 + u64::from(u16::MAX));
-    reader.seek(SeekFrom::Start(len.checked_sub(window)?)).ok()?;
+    reader
+        .seek(SeekFrom::Start(len.checked_sub(window)?))
+        .ok()?;
     let mut tail = vec![0; usize::try_from(window).ok()?];
     reader.read_exact(&mut tail).ok()?;
     let at = (0..=tail.len().checked_sub(22)?)
