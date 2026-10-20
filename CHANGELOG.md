@@ -47,6 +47,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   them (101, 34) as it already did for indents, spacing and cell margins.
   `jubarte debug` still reports the literal value: a diagnostic describes,
   it does not repair.
+- **Writing an output works on Linux again (#1351).** cap-std opens
+  directories `O_PATH` there, and `fsync` on an `O_PATH` descriptor fails
+  with EBADF. Every write reported `Bad file descriptor (os error 9)` and
+  "durability uncertain" after the file was already in place. The
+  directory sync now opens `.` through the handle it holds, which walks no
+  path, so root confinement still holds.
 
 ### Added
 
