@@ -3819,9 +3819,16 @@ impl<'p> Transaction<'p> {
             let checked = if start == end {
                 self.check_insert_position(projection, start, attach_before)
                     .or_else(|first| {
+                        // The first side's revision record goes with its
+                        // message: dropped when the other side takes the
+                        // text, kept over the other side's when both refuse.
+                        let refused = self.revision_refusal.take();
                         self.check_insert_position(projection, start, !attach_before)
                             .map(|()| attach_before = !attach_before)
-                            .map_err(|_| first)
+                            .map_err(|_| {
+                                self.revision_refusal.replace(refused);
+                                first
+                            })
                     })
             } else {
                 self.check_range(projection, start, end)
