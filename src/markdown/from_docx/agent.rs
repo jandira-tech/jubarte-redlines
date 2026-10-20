@@ -1087,8 +1087,8 @@ pub(crate) struct LineFacts<'a> {
     /// The paragraph has no text but keeps its own line for its marks,
     /// revisions or comments: `<!-- p4 -->` followed by `¶{r3 @AC}`.
     pub empty: bool,
-    /// Tracked view: the paragraph's changes its text prints no tag for,
-    /// `true` for an insertion (see [`unshown_tags`]).
+    /// Tracked view: the printed tags of the paragraph's changes its text
+    /// prints no tag for, `true` for an insertion (see [`unshown_tags`]).
     pub unshown: &'a [(bool, String)],
 }
 
@@ -1099,8 +1099,9 @@ pub(crate) struct LineFacts<'a> {
 /// r13 @AC`), so every change reads from the view. The paragraph mark's
 /// own changes (`¶{rN @X}`, `break-del`) and formatting (`fmt`) have
 /// their own clauses; a text box renders its own blocks, and Word's
-/// Fallback copy is the Choice's twin. Each entry's `bool` says the mark
-/// inserts (`ins`, `moveTo`) rather than deletes (`del`, `moveFrom`).
+/// Fallback copy is the Choice's twin. Each entry is a printed tag
+/// ([`unshown_sides`]), its `bool` saying the mark inserts (`ins`,
+/// `moveTo`) rather than deletes (`del`, `moveFrom`).
 pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<(bool, String)> {
     fn walk(e: &Element, handles: &Handles, out: &mut Vec<(bool, String, String)>) {
         for child in shown_children(e) {
@@ -1130,15 +1131,48 @@ pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<(
         return Vec::new();
     }
     let printed = printed_wids(shown, "body");
-    // The marks of one joined change print one tag (`r3+4`), named once.
-    let mut unshown: Vec<(bool, String)> = Vec::new();
-    for (inserted, id, tag) in carriers {
-        let named = format_tag(&tag);
-        if !printed.contains(&id) && !unshown.iter().any(|(_, t)| format_tag(t) == named) {
-            unshown.push((inserted, tag));
+    unshown_sides(
+        carriers
+            .into_iter()
+            .filter(|(_, id, _)| !printed.contains(id))
+            .map(|(inserted, _, tag)| (inserted, tag)),
+    )
+}
+
+/// The printed tags of the unshown marks `carriers` (each its side, `true`
+/// inserting, and internal tag), one per side of each change, in reading
+/// order. The marks of one joined change print its tag (`r3+4`) once,
+/// unless neither side has text to wrap: a field deleted and another put
+/// in its place. Then each side names its own marks (`rev r4 @D, rev-del
+/// r3 @D`), so the writer brings each back on its side, and `accept --id`
+/// settles either side alone (#1353 review).
+fn unshown_sides(carriers: impl IntoIterator<Item = (bool, String)>) -> Vec<(bool, String)> {
+    let mut sides: Vec<(bool, String, Vec<String>)> = Vec::new();
+    for (inserted, tag) in carriers {
+        let whole = format_tag(&tag);
+        match sides
+            .iter_mut()
+            .find(|(side, named, _)| *side == inserted && *named == whole)
+        {
+            Some((_, _, own)) => own.push(tag),
+            None => sides.push((inserted, whole, vec![tag])),
         }
     }
-    unshown
+    sides
+        .iter()
+        .map(|(inserted, whole, own)| {
+            let both = sides
+                .iter()
+                .any(|(side, named, _)| side != inserted && named == whole);
+            let tag = if both {
+                // Its own marks, not their whole change's.
+                with_wholes(Wholes::new(), || format_tag(&join_tags(own)))
+            } else {
+                whole.clone()
+            };
+            (*inserted, tag)
+        })
+        .collect()
 }
 
 /// The `w:id`s of `story`'s changes the tag notes in `shown` print
@@ -1395,19 +1429,17 @@ pub(crate) fn story_unshown(
         if printed.contains(id) || skip.contains(id) {
             continue;
         }
-        let tag = format_tag(&format!(
-            "{story}#{}",
-            required_date_tag_of(carrier, handles)
-        ));
+        let tag = format!("{story}#{}", required_date_tag_of(carrier, handles));
         if formatting {
+            let tag = format_tag(&tag);
             if !fmt.iter().any(|(_, t)| *t == tag) {
                 fmt.push((at, tag));
             }
-        } else if !rev.iter().any(|(_, t)| *t == tag) {
+        } else {
             rev.push((inserted, tag));
         }
     }
-    (rev, fmt)
+    (unshown_sides(rev), fmt)
 }
 
 /// A header's or footer's paragraph marks that are tracked: `break-del
@@ -1875,22 +1907,25 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
-    let unshown: Vec<(bool, String)> = f
+    let unshown: Vec<&(bool, String)> = f
         .unshown
         .iter()
-        .filter(|(_, tag)| tracked_break.as_ref().is_none_or(|(_, b)| b != tag))
-        .cloned()
+        .filter(|(_, tag)| {
+            tracked_break
+                .as_ref()
+                .is_none_or(|(_, b)| format_tag(b) != *tag)
+        })
         .collect();
     if !f.resolved {
         for inserted in [true, false] {
-            let tags: Vec<String> = unshown
+            let tags: Vec<&str> = unshown
                 .iter()
                 .filter(|(ins, _)| *ins == inserted)
-                .map(|(_, tag)| tag.clone())
+                .map(|(_, tag)| tag.as_str())
                 .collect();
             if !tags.is_empty() {
                 let word = if inserted { "rev" } else { "rev-del" };
-                clauses.push(format!("{word} {}", format_tags(&tags)));
+                clauses.push(format!("{word} {}", tags.join("; ")));
             }
         }
     }

@@ -2693,3 +2693,85 @@ fn an_empty_paragraph_keeps_its_own_outline_level() {
     );
     assert_eq!(view, once);
 }
+
+/// Dan's replacement in a paragraph reading `text`: `carrier(false)`
+/// deleted (`r3`) and `carrier(true)` put in its place (`r4`), one change
+/// (`r3+4`) with no text on either side to wrap.
+fn unshown_replacement(text: &str, carrier: impl Fn(bool) -> String) -> String {
+    let dan = r#"w:author="Dan" w:date="2026-10-18T12:00:00Z""#;
+    format!(
+        r#"<w:p><w:r><w:t>{text}</w:t></w:r><w:del w:id="3" {dan}>{}</w:del><w:ins w:id="4" {dan}>{}</w:ins></w:p>"#,
+        carrier(false),
+        carrier(true)
+    )
+}
+
+/// A field with no result: the body's view shows nothing of it.
+fn page_field(inserted: bool) -> String {
+    let instr = if inserted {
+        "instrText"
+    } else {
+        "delInstrText"
+    };
+    format!(
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:{instr} xml:space="preserve"> PAGE </w:{instr}></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    )
+}
+
+/// Each change's kind, by id: the id line names its clauses in its own
+/// order (`rev` before `rev-del`), and an empty mark has no text to order.
+fn kinds(docx: &[u8]) -> std::collections::BTreeMap<String, jubarte::changes::ChangeKind> {
+    jubarte::changes::list_changes(docx)
+        .expect("the changes list")
+        .into_iter()
+        .map(|c| (c.id, c.kind))
+        .collect()
+}
+
+#[test]
+fn an_unshown_replacement_names_each_side_by_its_own_marks() {
+    // Neither side has text to wrap, so the id line names both (#1353
+    // review): one tag for the whole would bring the insertion back as a
+    // deletion. Each side names its own marks, which `accept --id` takes.
+    let docx = common::docx::docx(&unshown_replacement("Kept.", page_field));
+    let (view, again, _) = docx_round_trip(&docx);
+    assert!(
+        view.contains("<!-- p0 rev r4 @D, rev-del r3 @D -->\nKept."),
+        "{view}"
+    );
+    assert_eq!(kinds(&again), kinds(&docx));
+    for side in ["r4", "r3"] {
+        let filter = jubarte::changes::ChangeFilter::ids([side]);
+        if let Err(e) = jubarte::changes::accept_changes(&docx, &filter) {
+            panic!("accept --id {side}: {e}");
+        }
+    }
+}
+
+#[test]
+fn an_unshown_replacement_in_a_header_names_each_side_by_its_own_marks() {
+    let header = format!(
+        "<w:hdr xmlns:w=\"{}\">{}</w:hdr>",
+        common::docx::W_NS,
+        // A header shows a field's code (`{PAGE}`), and no soft hyphen.
+        unshown_replacement("Head.", |_| "<w:r><w:softHyphen/></w:r>".to_string())
+    );
+    let docx = common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[common::docx::Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let (view, again, _) = docx_round_trip(&docx);
+    assert!(
+        view.lines()
+            .any(|l| l.contains("header1.r4 @D") && l.contains("del header1.r3 @D")),
+        "{view}"
+    );
+    assert!(!view.contains("header1.r3+4"), "{view}");
+    assert_eq!(kinds(&again), kinds(&docx));
+}

@@ -478,7 +478,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   A paragraph joined into the one before it hands its revisions over. In
   the tracked view, the insertions, deletions and moves its text has no
   tag for: a deleted picture, line break, field character or empty run
-  (a tracked page break has its own clause).
+  (a tracked page break has its own clause); `rev-del` names the
+  deletions among them. A replacement with no text on either side (a
+  field deleted and another put in its place) names each side by its own
+  marks, `rev r4 @D, rev-del r3 @D`: either side is one `accept --id`
+  takes.
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
 - `in c5`: with comments inline, the comment threads whose range runs on

@@ -36,7 +36,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   agent view tags every piece of a change with its joined id
   (`{++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}`, `¶{r5+6 @AC}` when it
   ends its paragraph), and the writer gives each piece back its own
-  mark; the header counts such a change once (`2 marks shown as 1
+  mark; a replacement with no text on either side names each side by its
+  own marks on its id line (`rev r4 @D, rev-del r3 @D`); the header counts such a change once (`2 marks shown as 1
   change`), and each other story counts its changes as `jubarte
   changes` lists them, with its marks when they differ (`3 in header1
   (7 marks)`).
