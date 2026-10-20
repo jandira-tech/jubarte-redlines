@@ -322,8 +322,9 @@ def test_read_json_and_tables_take_the_view_options(tmp_path, capsys):
 
     every = out("--tables")
     grids = [f"table {chunk}" for chunk in every.split("table ") if chunk]
-    assert len(grids) == 3 and "inner" in grids[1] and "second" in grids[2]
-    for pick, kept in (("t1", [2]), ("t0", [0, 1]), ("t1,t0", [0, 1, 2]), ("p2", [0, 1]), ("p1-p5", [0, 1, 2])):
+    # Schema 2: the nested table prints under its cell row, inside t0's grid.
+    assert len(grids) == 2 and "nested in t0.row0.cell0" in grids[0] and "inner" in grids[0] and "second" in grids[1]
+    for pick, kept in (("t1", [1]), ("t0", [0]), ("t1,t0", [0, 1]), ("p2", [0]), ("p1-p5", [0, 1])):
         assert out("--tables", "-p", pick) == "".join(grids[i] for i in kept) + "\n" + out("-p", pick), pick
     rejected = out("--tables", "--track-changes", "reject", "-p", "t0")
     assert "keep old" in rejected.split("\n---\n")[0]
