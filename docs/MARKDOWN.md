@@ -492,9 +492,18 @@ stays unambiguous — and the writer writes no comma into a style's
 `w:name` (Word forbids one, reading it as an alias list): the comma
 becomes a space, and the conversion says so in a warning.
 When the tables differ the legend is plural, one entry per style in
-first-use order (`tables: TableNormal, Ledger, borders vary`), each
-entry saying what the singular `table:` line says (the borders clause,
-the name). Converting the
+first-use order (`tables: TableNormal, Ledger, borders bottom double
+0.75pt`), each entry saying what the singular `table:` line says (the
+borders clause, the name). A style of the document's own whose borders
+are not one single line all round names each side it sets, in Word's
+order (top, left, bottom, right, insideH, insideV): the side, its
+`w:val`, then its size in points, `#RRGGBB` for a colour other than
+`auto` and `space Npt` for a spacing other than zero (`borders top
+single 1.5pt #FF0000 space 2pt insideH nil`, the legend value quoted
+for the `#`). Converting back writes exactly those sides. One of Word's
+own styles says `borders vary` instead, since the writer writes it as
+Word defines it; an older view's `borders vary` on another style still
+reads, and the writer warns that it writes that style without borders. Converting the
 view back defines each style as its line says, and a style Word knows
 (`ListParagraph`, `Quote`) keeps Word's own gallery settings.
 

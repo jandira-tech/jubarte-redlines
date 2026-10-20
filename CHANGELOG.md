@@ -43,6 +43,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A table style whose borders vary keeps them through Markdown** (#1419).
+  The view named such a style `Ledger, borders vary`, which the writer
+  could not rebuild, so the style came back without borders. A style of
+  the document's own now lists each side it sets
+  (`Ledger, borders bottom double 0.75pt`, with `#RRGGBB` and `space Npt`
+  when they apply), and converting back writes those sides. Word's own
+  table styles still say `borders vary`.
+
 - **A story's deleted or inserted last paragraph is a patch hunk of its own again.** The view writes that paragraph and the mark before it as separate changes, and since the settled dialect (#1135) the patch had joined them to the paragraph above (`@@ [p1] @@ Kept.[-\n\n-][-Last.-]`). `diff` and `patch_redline` now give `@@ -[p2] @@ [-Last.-]` (or `@@ [p2] @@ {+Last.+}`), also when Word split the paragraph into several marks or a line break sits in it. When another author changed the mark, accepting that change alone joins the paragraphs, so the mark stays a change named after its author.
 - **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
 - Enforce XML tag policy at package admission and checked XML APIs with active limits: defaults of 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags, plus duplicate expanded-name refusal. Preserve permissive comparison tree construction and linear bulk attribute insertion. Markdown conversion enforces explicit `MarkdownOptions::input_limits`, including on best-effort auxiliary parts; comparison-to-Markdown carries active limits. Ring-1 reports Word-fatal `DUPLICATE_EXPANDED_ATTRIBUTE` with part and element (#650).

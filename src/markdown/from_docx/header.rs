@@ -4,6 +4,7 @@
 //! The YAML header of the agent view.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 use super::agent::Handles;
 use super::ooxml::Element;
@@ -1042,8 +1043,53 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
                 pt.trim_end_matches('0').trim_end_matches('.')
             )
         }
-        _ => format!("{id}, borders vary{named}"),
+        // Word's own styles are written as Word defines them, borders
+        // and all.
+        _ if super::super::package::is_built_in_table_style(id) => {
+            format!("{id}, borders vary{named}")
+        }
+        _ => {
+            let sides: Vec<String> = sides
+                .iter()
+                .zip(super::super::view_styles::TABLE_BORDER_SIDES)
+                .filter_map(|(names, side)| {
+                    let b = names.iter().find_map(|name| borders.child(name))?;
+                    border_side(side, b)
+                })
+                .collect();
+            if sides.is_empty() {
+                format!("{id}{named}")
+            } else {
+                format!("{id}, borders {}{named}", sides.join(" "))
+            }
+        }
     }
+}
+
+/// One side of a `borders …` clause: `bottom double 0.75pt`, with
+/// `#RRGGBB` for a colour that is not `auto` and `space Npt` for a
+/// spacing that is not zero. A side with no value says nothing.
+fn border_side(side: &str, b: &Element) -> Option<String> {
+    let val = b.attr("val").filter(|v| !v.is_empty())?;
+    let mut out = format!("{side} {val}");
+    if let Some(sz) = b.attr("sz").and_then(|sz| sz.parse::<f64>().ok()) {
+        let pt = format!("{:.2}", sz / 8.0);
+        let _ = write!(out, " {}pt", pt.trim_end_matches('0').trim_end_matches('.'));
+    }
+    if let Some(color) = b
+        .attr("color")
+        .filter(|c| c.len() == 6 && c.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        let _ = write!(out, " #{color}");
+    }
+    if let Some(space) = b
+        .attr("space")
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|s| *s > 0)
+    {
+        let _ = write!(out, " space {space}pt");
+    }
+    Some(out)
 }
 
 /// The style the writer gives a `header` or `footer` paragraph the view
@@ -2057,7 +2103,10 @@ mod tests {
         let varied = borders(
             r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
         );
-        assert_eq!(table_style_line(Some(&varied), "T"), "T, borders vary");
+        assert_eq!(
+            table_style_line(Some(&varied), "T"),
+            "T, borders top single 0.5pt left single 1pt bottom single 0.5pt right single 0.5pt insideH single 0.5pt insideV single 0.5pt"
+        );
     }
 
     #[test]

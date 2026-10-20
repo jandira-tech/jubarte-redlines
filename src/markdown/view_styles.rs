@@ -349,13 +349,87 @@ fn unquote(value: &str) -> Option<String> {
     }
 }
 
-/// The styles the YAML header's `styles:` block describes: the default
-/// style's line (`Normal: …`, its id quoted when it must be), each
-/// heading's (`"#": Heading1, …`) and each other style's (`TOC2: …`), after
-/// the default's. Lines that do not read are left out.
-/// The legend's `table:` style, which every table takes: its id and, when
-/// the legend says `all borders 0.5pt`, that border in eighths of a point.
-pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<String>)> {
+/// A table style's borders as its legend entry states them.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum TableBorders {
+    /// `all borders 0.5pt`: every side one single line of this size, in
+    /// eighths of a point.
+    All(u32),
+    /// `borders bottom double 0.75pt`: each side the style sets, in Word's
+    /// order (top, left, bottom, right, insideH, insideV).
+    Sides(Vec<BorderSide>),
+}
+
+/// One side of a `borders …` clause: `top single 1.5pt #FF0000 space 2pt`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BorderSide {
+    /// `top`, `left`, `bottom`, `right`, `insideH` or `insideV`.
+    pub side: String,
+    /// The `w:val`: `single`, `double`, `nil`, …
+    pub val: String,
+    /// The `w:sz`, in eighths of a point.
+    pub size: Option<u32>,
+    /// The `w:color` when it is not `auto`.
+    pub color: Option<String>,
+    /// The `w:space`, in points, when it is not zero.
+    pub space: Option<u32>,
+}
+
+/// The sides a table style's `w:tblBorders` holds, in the order Word's
+/// schema puts them.
+pub(crate) const TABLE_BORDER_SIDES: [&str; 6] =
+    ["top", "left", "bottom", "right", "insideH", "insideV"];
+
+/// A `borders …` clause's sides (`borders bottom double 0.75pt`): a side
+/// name, its value, then a size in points, a `#RRGGBB` colour and a
+/// `space Npt`, each optional. A side the grammar does not know, or one
+/// named twice, reads as no clause.
+fn border_sides(clause: &str) -> Option<Vec<BorderSide>> {
+    let mut tokens = clause.strip_prefix("borders ")?.split(' ').peekable();
+    let mut sides: Vec<BorderSide> = Vec::new();
+    while let Some(side) = tokens.next() {
+        if !TABLE_BORDER_SIDES.contains(&side) || sides.iter().any(|s| s.side == side) {
+            return None;
+        }
+        let val = tokens
+            .next()
+            .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric()))?;
+        let mut border = BorderSide {
+            side: side.to_string(),
+            val: val.to_string(),
+            size: None,
+            color: None,
+            space: None,
+        };
+        while let Some(&token) = tokens.peek() {
+            if TABLE_BORDER_SIDES.contains(&token) {
+                break;
+            }
+            tokens.next();
+            if let Some(pt) = token.strip_suffix("pt").filter(|_| border.size.is_none()) {
+                let pt = pt
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|pt| (0.0..=255.0).contains(pt))?;
+                border.size = Some((pt * 8.0).round() as u32);
+            } else if let Some(hex) = token.strip_prefix('#').filter(|_| border.color.is_none()) {
+                (hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit())).then_some(())?;
+                border.color = Some(hex.to_string());
+            } else if token == "space" && border.space.is_none() {
+                let pt = tokens.next()?.strip_suffix("pt")?.parse::<u32>().ok()?;
+                border.space = Some(pt);
+            } else {
+                return None;
+            }
+        }
+        sides.push(border);
+    }
+    (!sides.is_empty()).then_some(sides)
+}
+
+/// The legend's `table:` style, which every table takes: its id, the
+/// borders its entry states and the name it gives the style.
+pub(super) fn table_style(yaml: &str) -> Option<(String, Option<TableBorders>, Option<String>)> {
     legend_line(yaml, "table: ")
         .as_deref()
         .and_then(table_style_entry)
@@ -367,7 +441,7 @@ pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<Str
 /// entry states.
 pub(super) fn table_legend(
     yaml: &str,
-) -> std::collections::BTreeMap<String, (Option<u32>, Option<String>)> {
+) -> std::collections::BTreeMap<String, (Option<TableBorders>, Option<String>)> {
     let mut out = std::collections::BTreeMap::new();
     let Some(value) = legend_line(yaml, "tables: ") else {
         return out;
@@ -405,7 +479,7 @@ fn legend_line(yaml: &str, key: &str) -> Option<String> {
 /// its id, the border it states and the name it gives the style, with
 /// the rest of the line after it (the `tables:` legend holds one entry
 /// per style). A clause that is none of the grammar's ends the entry.
-type TableStyleEntry = (String, Option<u32>, Option<String>);
+type TableStyleEntry = (String, Option<TableBorders>, Option<String>);
 
 fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
     let (id, mut rest) = take_clause(value);
@@ -421,7 +495,11 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
                 .and_then(|pt| pt.parse::<f64>().ok())
                 .filter(|pt| (0.25..=6.0).contains(pt))
         {
-            border = Some((pt * 8.0).round() as u32);
+            border = Some(TableBorders::All((pt * 8.0).round() as u32));
+        } else if border.is_none()
+            && let Some(sides) = border_sides(&clause)
+        {
+            border = Some(TableBorders::Sides(sides));
         } else if name.is_none()
             && let Some(named) = clause
                 .strip_prefix("named ")
