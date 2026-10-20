@@ -1543,7 +1543,8 @@ changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` (since 0.11.0) shows the changed paragraphs
 between two documents — or a document and Markdown text — as `[-old-]{+new+}`
-marks (`format="critic"` for CriticMarkup):
+marks (`format="critic"` for CriticMarkup). Between two Word documents a
+replacement keeps Word Compare's order, the insertion first: `{+new+}[-old-]`.
 
 ```python
 from jubarte_redlines import diff, read
