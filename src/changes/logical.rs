@@ -474,10 +474,20 @@ fn walk(
             | "customXmlMoveFromRangeEnd"
             | "customXmlMoveToRangeStart"
             | "customXmlMoveToRangeEnd" => {}
+            // Text that holds none, an empty run's: nothing shown, as the
+            // view prints nothing for it.
+            "t" | "delText" if empty_text(dom, child) => {}
             // Text, tabs, breaks, symbols, references, fields, drawings.
             _ => out.push(Event::Atom(stack.clone())),
         }
     }
+}
+
+/// Whether text element `node` holds no character.
+fn empty_text(dom: &Dom, node: NodeId) -> bool {
+    dom.nodes(node)
+        .into_iter()
+        .all(|n| dom.text_value(n).is_none_or(str::is_empty))
 }
 
 /// The listed carriers on paragraph `p`'s mark, in order.

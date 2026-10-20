@@ -95,7 +95,8 @@ inserted or deleted row.
 | Form | Meaning |
 | --- | --- |
 | `{++x++}{r12 @AC}` | revision r12; attribution follows the closer |
-| `{~~a~>b~~}{r1+2 @AC re r0 @JD}` | same-author deletion then insertion; parent applies to old side only |
+| `{~~a~>b~~}{r1+2 @AC re r0 @JD}` | one change: a deletion then that author's insertion touching it; parent applies to old side only |
+| `{--a--}{r1 @AC}{++b++}{r2 @AC}` | two changes, printed apart (#1363): one author's deletion and insertion with content between them (hidden text, a soft hyphen, a symbol, a page break), or a move and the insertion beside it |
 | `{++b++}{r1+2 @AC}{--a--}{r1+2 @AC}` | same-author insertion then a deletion touching it: one replacement (#1359), printed in document order, each piece naming the whole change, its ids in reading order |
 | `{++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}` | one change of two marks (#1261): each piece names the whole change, as `jubarte changes` lists it, and writes back as its own mark |
 | `{++a++}{r1 @AC}{++b++}{r2 @JD}` | different authors, or changes apart, keep their own ids |

@@ -722,11 +722,15 @@ boundaries and changes nested inside that revision. Pieces separated by live tex
 boundary take distinct OOXML ids. The writer warns with the source line
 and the replacement id; reading the DOCX back prints that new id. Reusing
 an id with a different kind, author or date also requires a new id.
-Only a deletion directly followed by a live insertion by the same author
-pairs as a substitution. Proofing markers, bookmarks that print nothing,
-and empty runs may intervene; visible text and rendered content interrupt
-adjacency. An insertion followed by a deletion stays in document order,
-one change when they touch: `{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}`.
+A substitution is one change: only a deletion directly followed by a live
+insertion of the same change, as `changes` lists it, pairs as one. Two
+changes print apart, each with its own tag (#1363): one author's deletion
+and insertion with hidden text, a soft hyphen, a symbol or a page break
+between them, or a move and the insertion beside it. Proofing markers,
+bookmarks that print nothing, and empty runs may intervene; visible text
+and rendered content interrupt adjacency. An insertion followed by a
+deletion stays in document order, one change when they touch:
+`{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}`.
 In `{~~old~>new~~}{r4+5 @B re r3 @A}`, `re` applies only to the old side;
 the new side follows the parent insertion. Story prefixes remain intact.
 

@@ -18,7 +18,9 @@ use jubarte::changes::{
     ChangeError, ChangeFilter, ChangeKind, accept_changes, accept_elements, list_changes,
     list_logical_changes, reject_changes, reject_elements,
 };
-use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
+use jubarte::markdown::{
+    DocxOptions, MarkdownOptions, TrackChanges, docx_to_markdown, markdown_to_docx,
+};
 use std::process::Command;
 
 const BOB: &str = "Bob";
@@ -859,8 +861,8 @@ fn the_header_counts_logical_changes() {
 }
 
 /// A moved word is a change of its own: replaced by Bob's new paragraph,
-/// its tag stays apart from the paragraph's (`r3 @B; r5+6 @B`), and every
-/// mark keeps its id.
+/// it prints apart from the paragraph's change, never one substitution of
+/// two changes (#1363), and every mark keeps its id.
 #[test]
 fn a_move_beside_a_change_keeps_its_own_tag() {
     let range = |tag: &str, id: u32| {
@@ -896,7 +898,7 @@ fn a_move_beside_a_change_keeps_its_own_tag() {
     let view = agent(&doc);
     assert!(
         body(&view)
-            .starts_with("<!-- p0 -->\nPay {~~General~>CONSENT~~}{r3 @B; r5+6 @B}¶{r5+6 @B}"),
+            .starts_with("<!-- p0 -->\nPay {--General--}{r3 @B}{++CONSENT++}{r5+6 @B}¶{r5+6 @B}"),
         "{view}"
     );
     let back = written(&view);
@@ -1260,4 +1262,74 @@ fn a_text_box_in_an_insertion_first_replacement_keeps_every_id() {
     assert_word_valid_package(&out.docx);
     assert_eq!(marks(&out.docx), marks(&doc), "the marks of\n{view}");
     assert_eq!(body(&agent(&out.docx)), body(&view), "agent fixed point");
+}
+
+/// #1363: content the view prints nothing for (a hidden run, a soft
+/// hyphen, a symbol, a page break) still keeps a deletion and the
+/// insertion after it two changes, as `changes` lists them; with nothing
+/// between them they are one substitution.
+#[test]
+fn a_deletion_and_an_insertion_apart_print_as_the_two_changes_they_are() {
+    let between = [
+        r#"<w:r><w:rPr><w:vanish/></w:rPr><w:t>note</w:t></w:r>"#,
+        r#"<w:r><w:softHyphen/></w:r>"#,
+        r#"<w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>"#,
+        r#"<w:r><w:br w:type="page"/></w:r>"#,
+    ];
+    for gap in between {
+        let doc = docx(&p(&[
+            kept("pay "),
+            del(1, "old", BOB, DATE),
+            gap.to_string(),
+            ins(2, "new", BOB, DATE),
+            kept(" now"),
+        ]));
+        assert_eq!(ids(&doc), ["r1", "r2"], "{gap}");
+        let view = agent(&doc);
+        let line = body(&view).lines().nth(1).unwrap_or_default();
+        assert_eq!(line, "pay {--old--}{r1 @B}{++new++}{r2 @B} now", "{gap}");
+        assert!(
+            view.contains("2 marks shown as 2 changes: 1 insertion, 1 deletion"),
+            "{gap}\n{view}"
+        );
+    }
+    let touching = docx(&p(&[
+        kept("pay "),
+        del(1, "old", BOB, DATE),
+        ins(2, "new", BOB, DATE),
+        kept(" now"),
+    ]));
+    assert_eq!(ids(&touching), ["r1+2"]);
+    assert_eq!(
+        body(&agent(&touching)),
+        "<!-- p0 -->\npay {~~old~>new~~}{r1+2 @B} now"
+    );
+}
+
+/// #1363 in a resolved view: the id line names each change `changes`
+/// lists, not a pair of them.
+#[test]
+fn a_resolved_line_names_two_changes_apart_as_two() {
+    let doc = docx(&p(&[
+        kept("pay "),
+        del(1, "old", BOB, DATE),
+        r#"<w:r><w:rPr><w:vanish/></w:rPr><w:t>note</w:t></w:r>"#.to_string(),
+        ins(2, "new", BOB, DATE),
+        kept(" now"),
+    ]));
+    let accepted = docx_to_markdown(
+        &doc,
+        &MarkdownOptions {
+            ids: true,
+            track_changes: TrackChanges::Accept,
+            page_markers: false,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(
+        body(&accepted).starts_with("<!-- p0 rev r1 @B; r2 @B -->\npay new now"),
+        "{accepted}"
+    );
 }

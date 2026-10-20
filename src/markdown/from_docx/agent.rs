@@ -456,8 +456,8 @@ pub(crate) fn format_tags(tags: &[String]) -> String {
 }
 
 /// The revisions among a paragraph's direct children, in order. Distinct
-/// ids remain separate. Only a deletion followed by a live insertion by
-/// the same author pairs as a substitution, greedily left to right.
+/// ids remain separate. Only a deletion followed by a live insertion of
+/// one change pairs as a substitution, greedily left to right (#1363).
 /// A run, comment range or printed bookmark breaks adjacency; proofing
 /// markers, unprinted bookmarks and empty runs do not. Revisions inside
 /// links, content controls and simple fields count.
@@ -559,11 +559,13 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
         };
         let next_kind = joined.get(i + 1).and_then(|n| n.as_ref()).map(|n| n.kind);
         // The replacement spelling follows source order: deletion, then
-        // insertion by the same author. The reverse order stays separate.
+        // insertion of one change (#1363). The reverse order stays separate.
         let pair = matches!((current.kind, next_kind), ("del", Some("ins")))
-            && joined[i + 1]
-                .as_ref()
-                .is_some_and(|next| current.author == next.author && current.date == next.date);
+            && joined[i + 1].as_ref().is_some_and(|next| {
+                current.author == next.author
+                    && current.date == next.date
+                    && same_change(&current.tag, &next.tag)
+            });
         if pair {
             let next = joined[i + 1].take().expect("checked above");
             let (old, new) = if current.kind == "del" {
@@ -3143,18 +3145,25 @@ mod tests {
     #[test]
     fn revision_tags_keep_distinct_ids_and_pair_a_deletion_with_the_insertion_after_it() {
         // Distinct adjacent ids stay separate. A deletion followed by an
-        // insertion by the same author forms a substitution.
+        // insertion of one change forms a substitution (#1363): `changes`
+        // groups the touching deletion 4 and insertion 5.
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:bookmarkStart w:id="9" w:name="_b"/><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:r><w:t> u </w:t></w:r><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:r><w:t> v </w:t></w:r><w:del w:id="4" w:author="Ann Counsel"><w:r><w:delText>f</w:delText></w:r></w:del><w:ins w:id="5" w:author="Ann Counsel"><w:r><w:t>g</w:t></w:r></w:ins></w:p>"#,
         );
         let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
-        let tags: Vec<String> = revision_tags(p, &handles)
-            .into_iter()
-            .map(|t| format!("{}:{}", t.kind, t.tag))
-            .collect();
+        let tags = |wholes: Wholes| -> Vec<String> {
+            with_wholes(wholes, || {
+                revision_tags(p, &handles)
+                    .into_iter()
+                    .map(|t| format!("{}:{}", t.kind, t.tag))
+                    .collect()
+            })
+        };
+        let one = ["4", "5"].map(String::from).to_vec();
+        let pair = Wholes::from([("r4".to_string(), one.clone()), ("r5".to_string(), one)]);
         assert_eq!(
-            tags,
+            tags(pair),
             [
                 "ins:0@AC",
                 "ins:2@AC",
@@ -3164,6 +3173,11 @@ mod tests {
                 "del:3@AC",
                 "sub:4+5@AC"
             ]
+        );
+        // Two changes, as `changes` would list them with content between.
+        assert_eq!(
+            &tags(Wholes::new())[5..],
+            ["del:3@AC", "del:4@AC", "ins:5@AC"]
         );
     }
 

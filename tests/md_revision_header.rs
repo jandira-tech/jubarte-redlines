@@ -465,18 +465,19 @@ fn a_point_comment_after_an_insertion_keeps_the_header_and_body_in_step() {
     assert_summary(&view);
 }
 
-/// A substitution note of two tags names two changes (#1356): Bob's
-/// move-from `r3`, whose text he replaced, and his insertion `r5+6`,
-/// whose paragraph mark prints `¶{r5+6 @B}` and is the same change,
-/// counted once. The move's other side, `r4`, is a third.
+/// Two changes side by side count as two (#1356): Bob's move-from `r3`,
+/// whose text he replaced, and his insertion `r5+6`, whose paragraph mark
+/// prints `¶{r5+6 @B}` and is the same change, counted once. They print
+/// apart, as two changes do (#1363). The move's other side, `r4`, is a
+/// third.
 #[test]
-fn a_two_tag_substitution_counts_each_side_and_a_joined_side_once() {
+fn a_move_beside_an_insertion_counts_each_change_once() {
     let at = r#"w:author="Bob" w:date="2026-10-16T10:00:00Z""#;
     let view = agent(&format!(
         r#"<w:p><w:pPr><w:rPr><w:ins w:id="6" {at}/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:moveFromRangeStart w:id="20" {at} w:name="move1"/><w:moveFrom w:id="3" {at}><w:r><w:t>General</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:ins w:id="5" {at}><w:r><w:t>CONSENT</w:t></w:r></w:ins></w:p><w:p><w:r><w:t xml:space="preserve">Then </w:t></w:r><w:moveToRangeStart w:id="21" {at} w:name="move1"/><w:moveTo w:id="4" {at}><w:r><w:t>General</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:r><w:t xml:space="preserve"> end.</w:t></w:r></w:p>"#
     ));
     assert!(
-        view.contains("Pay {~~General~>CONSENT~~}{r3 @B; r5+6 @B}¶{r5+6 @B}"),
+        view.contains("Pay {--General--}{r3 @B}{++CONSENT++}{r5+6 @B}¶{r5+6 @B}"),
         "{view}"
     );
     assert!(
