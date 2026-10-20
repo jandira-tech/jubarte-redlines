@@ -5711,28 +5711,36 @@ impl Writer<'_, '_> {
         // A change with more ids than that finds pieces has a mark that
         // starts after a nest (`{++a ++}{r7+9 @B}{--b--}{r8 @A re r7+9
         // @B}{++ c++}{r7+9 @B}`: ` c` is mark 9, #1354): its next ids start
-        // one at each piece that follows a nest, the first ones first.
+        // one at each piece that follows a nest, the first ones first. Any
+        // still left start a mark at a nest that follows a piece: a mark
+        // that holds only the nest (`{++a ++}{r7+9+11 @B}{--x--}{r8 @Z re
+        // r7+9+11 @B}{++ b++}{r7+9+11 @B}`: mark 9 holds the deletion 8).
         let none = vec![0; pools.len()];
-        let (_, apart) = self.pool_pieces(&pool_of, &vec![true; pools.len()], &none);
+        let spare_of = |counts: &[usize]| -> Vec<usize> {
+            pools
+                .iter()
+                .zip(counts)
+                .map(|((ids, _), &count)| ids.len().saturating_sub(count))
+                .collect()
+        };
+        let (_, apart) = self.pool_pieces(&pool_of, &vec![true; pools.len()], &none, &none);
         let split: Vec<bool> = pools
             .iter()
             .zip(&apart)
             .map(|((ids, _), &count)| ids.len() >= count)
             .collect();
-        let spare: Vec<usize> = pools
-            .iter()
-            .zip(&apart)
-            .map(|((ids, _), &count)| ids.len().saturating_sub(count))
-            .collect();
-        let (piece, pieces) = self.pool_pieces(&pool_of, &split, &spare);
+        let spare = spare_of(&apart);
+        let (_, after) = self.pool_pieces(&pool_of, &split, &spare, &none);
+        let (piece, pieces) = self.pool_pieces(&pool_of, &split, &spare, &spare_of(&after));
         for (pool, (ids, serials)) in pools.iter().enumerate() {
             let count = pieces[pool];
             for serial in serials {
                 let Some(&at) = piece.get(serial) else {
                     continue;
                 };
-                // A piece past the ids takes a fresh one.
-                let Some(&id) = ids.get(at) else {
+                // A piece past the ids takes the last one again, which the
+                // package then renumbers with a warning.
+                let Some(&id) = ids.get(at).or(ids.last()) else {
                     continue;
                 };
                 let mut own = vec![id];
@@ -5751,18 +5759,21 @@ impl Writer<'_, '_> {
     /// The piece of its pool each pooled serial is, in reading order, and
     /// each pool's count of pieces ([`Self::share_pooled_ids`]); `split`
     /// says, per pool, whether a nest right after a nest is a new piece,
-    /// and `spare` how many pieces right after a nest are new ones.
+    /// `spare` how many pieces right after a nest are new ones, and
+    /// `spare_nests` how many nests right after a piece are.
     fn pool_pieces(
         &self,
         pool_of: &HashMap<u32, usize>,
         split: &[bool],
         spare: &[usize],
+        spare_nests: &[usize],
     ) -> (HashMap<u32, usize>, Vec<usize>) {
         // Per pool: the pieces counted so far, the one read last with its
         // kind (none for a paragraph mark), and the spare ids taken.
         let mut pieces = vec![0usize; split.len()];
         let mut current: Vec<Option<(usize, Option<Kind>)>> = vec![None; split.len()];
         let mut spent = vec![0usize; split.len()];
+        let mut spent_nests = vec![0usize; split.len()];
         let mut piece: HashMap<u32, usize> = HashMap::new();
         let notes = self.document.notes.iter().map(|note| &note.items);
         for items in std::iter::once(&self.document.body).chain(notes) {
@@ -5774,6 +5785,7 @@ impl Writer<'_, '_> {
                 match item {
                     Item::Run(run) => {
                         let mut now = Vec::new();
+                        let mut placed: Vec<(usize, usize)> = Vec::new();
                         let mut chain: Vec<Change> = run.change.into_iter().collect();
                         while let Some(&outer) =
                             chain.last().and_then(|(_, by)| self.document.wraps.get(by))
@@ -5793,10 +5805,12 @@ impl Writer<'_, '_> {
                                 // a nest, unless split.
                                 let mut goes_on = false;
                                 let mut after_nest = false;
+                                let mut after_piece = false;
                                 for &(other, inside) in &before {
                                     if other == pool {
                                         goes_on |= nested != inside || (nested && !split[pool]);
                                         after_nest |= !nested && inside;
+                                        after_piece |= nested && !inside;
                                     }
                                 }
                                 let goes_on = current[pool]
@@ -5805,6 +5819,13 @@ impl Writer<'_, '_> {
                                 match goes_on {
                                     Some(_) if after_nest && spent[pool] < spare[pool] => {
                                         spent[pool] += 1;
+                                        pieces[pool] += 1;
+                                        pieces[pool] - 1
+                                    }
+                                    Some(_)
+                                        if after_piece && spent_nests[pool] < spare_nests[pool] =>
+                                    {
+                                        spent_nests[pool] += 1;
                                         pieces[pool] += 1;
                                         pieces[pool] - 1
                                     }
@@ -5817,6 +5838,23 @@ impl Writer<'_, '_> {
                             });
                             current[pool] = Some((at, Some(kind)));
                             now.push((pool, nested));
+                            placed.push((pool, at));
+                        }
+                        // A text box prints the change of the run it sits
+                        // in: its copy of that tag is the same piece.
+                        if let Content::Drawing(index) = &run.content {
+                            let boxes = self.document.box_stories.get(index);
+                            for item in boxes.into_iter().flatten().flat_map(|(_, items)| items) {
+                                if let Item::Run(Run {
+                                    change: Some((_, serial)),
+                                    ..
+                                }) = item
+                                    && let Some(pool) = pool_of.get(serial)
+                                    && let Some(&(_, at)) = placed.iter().find(|(p, _)| p == pool)
+                                {
+                                    piece.entry(*serial).or_insert(at);
+                                }
+                            }
                         }
                         before = now;
                     }

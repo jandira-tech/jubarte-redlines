@@ -311,6 +311,13 @@ pub(crate) fn format_tag(tag: &str) -> String {
     format_tag_by(tag, |handle| format!(" @{handle}"))
 }
 
+/// Whether two internal tags print the same ids: two marks of one
+/// logical change do (`3@B` and `4@B` both print `r3+4`).
+pub(crate) fn same_change(a: &str, b: &str) -> bool {
+    let ids = |tag: &str| format_tag_by(tag, |_| String::new());
+    ids(a) == ids(b)
+}
+
 /// A plain-view tag ([`plain_tag_of`]) as its note prints it: the ids,
 /// then the `Author (date)` note when there is one (`r1+2 Ana Lima
 /// (2026-09-29T14:05:00Z)`, `r7`).
@@ -702,6 +709,24 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
             stamp_in(child, c, handles, in_cell);
         }
     }
+}
+
+/// The tags a resolved view's id line names for `p`'s marks: each mark
+/// prints its change's id, so a change of several marks is named once
+/// (#1261).
+fn resolved_tags(p: &Element) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for (_, tag) in stamped_revs(p) {
+        let tag = format_tag(&tag);
+        let joined = tag
+            .split_whitespace()
+            .next()
+            .is_some_and(|id| id.contains('+'));
+        if !(joined && tags.contains(&tag)) {
+            tags.push(tag);
+        }
+    }
+    tags
 }
 
 /// The `kind:tag` entries stamped on a paragraph, row or cell, as (kind,
@@ -1767,19 +1792,7 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         }
     }
     if f.resolved {
-        // Each mark prints its change's id: a change of several marks is
-        // named once (#1261).
-        let mut tags: Vec<String> = Vec::new();
-        for (_, tag) in stamped_revs(p) {
-            let tag = format_tag(&tag);
-            let joined = tag
-                .split_whitespace()
-                .next()
-                .is_some_and(|id| id.contains('+'));
-            if !(joined && tags.contains(&tag)) {
-                tags.push(tag);
-            }
-        }
+        let tags = resolved_tags(p);
         if !tags.is_empty() {
             clauses.push(format!("rev {}", tags.join("; ")));
         }
@@ -2166,9 +2179,9 @@ pub(crate) fn table_line(
                 break_del.extend(del.iter().map(|t| format!("{} in p{i}", format_tag(t))));
                 if resolved {
                     revs.extend(
-                        stamped_revs(p)
+                        resolved_tags(p)
                             .into_iter()
-                            .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
+                            .map(|tag| format!("{tag} in p{i}")),
                     );
                 } else {
                     // A cell's paragraph has no id line to carry its own
@@ -2378,11 +2391,13 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             continue;
         }
         use crate::markdown::critic::Token;
+        // An inline paragraph mark is an inserted one: a deleted mark
+        // prints on its paragraph's id line.
         let kind = match token {
             Token::InsertEnd => "ins",
             Token::DeleteEnd => "del",
             Token::SubstituteEnd => "sub",
-            _ => "mark",
+            _ => INSERTED_MARK,
         };
         match (kind, tags.as_slice()) {
             // A substitution of two tags is two changes, its deleted side's
@@ -2397,8 +2412,11 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
     }
     for line in shown.lines() {
         if let Some(p) = view_notes::id_line(line) {
-            for tag in p.break_ins.iter().chain(p.break_del.iter()) {
-                add(&[tag], "mark");
+            if let Some(tag) = &p.break_ins {
+                add(&[tag], INSERTED_MARK);
+            }
+            if let Some(tag) = &p.break_del {
+                add(&[tag], DELETED_MARK);
             }
             if let Some((ins, tag)) = &p.page_break_change {
                 add(&[tag], if *ins { "ins" } else { "del" });
@@ -2414,8 +2432,15 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
                 );
             }
         } else if let Some(t) = view_notes::table_line(line) {
-            for (_, tag) in t.marks.values() {
-                add(&[tag], "mark");
+            for (inserted, tag) in t.marks.values() {
+                add(
+                    &[tag],
+                    if *inserted {
+                        INSERTED_MARK
+                    } else {
+                        DELETED_MARK
+                    },
+                );
             }
             for (_, tag) in t.row_marks.values() {
                 add(&[tag], "row");
@@ -2425,17 +2450,32 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             }
         }
     }
-    out.into_iter().map(|(_, kind)| kind).collect()
+    out.into_iter()
+        .map(|(_, kind)| match kind {
+            INSERTED_MARK | DELETED_MARK => "mark",
+            kind => kind,
+        })
+        .collect()
 }
 
+/// A paragraph mark's piece of a change, by its side: alone, either counts
+/// as a paragraph mark.
+const INSERTED_MARK: &str = "mark+";
+const DELETED_MARK: &str = "mark-";
+
 /// What one change shows as when its pieces show as `was` and `kind`: a
-/// deletion with an insertion is a substitution, a paragraph mark goes
-/// with its text's insertion or deletion.
+/// deletion with an insertion is a substitution, and so is text with a
+/// paragraph mark of the other side (#1362); a mark goes with its own
+/// side's text.
 fn joined_kind(was: &'static str, kind: &'static str) -> &'static str {
     match (was, kind) {
         (a, b) if a == b => a,
         ("sub", _) | (_, "sub") | ("ins", "del") | ("del", "ins") => "sub",
-        ("mark", other) | (other, "mark") => other,
+        (INSERTED_MARK, "del")
+        | ("del", INSERTED_MARK)
+        | (DELETED_MARK, "ins")
+        | ("ins", DELETED_MARK) => "sub",
+        (INSERTED_MARK | DELETED_MARK, other) | (other, INSERTED_MARK | DELETED_MARK) => other,
         (a, _) => a,
     }
 }

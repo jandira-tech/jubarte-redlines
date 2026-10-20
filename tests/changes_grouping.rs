@@ -209,11 +209,81 @@ fn a_replacement_is_one_change_with_members() {
     assert_eq!(json["kind"], "replacement");
 }
 
-/// The view never pairs an insertion with the deletion after it.
+/// Word, and jubarte's comparer, usually write a replacement's insertion
+/// first: one author's insertion then deletion is one replacement too,
+/// its id in reading order (#1359).
 #[test]
-fn an_insertion_then_a_deletion_stays_two() {
-    let doc = docx(&p(&[ins(1, "new ", BOB, DATE), del(2, "old", BOB, DATE)]));
-    assert_eq!(ids(&doc), ["r1", "r2"]);
+fn an_insertion_then_the_same_author_s_deletion_is_one_replacement() {
+    let doc = docx(&p(&[
+        kept("signs in "),
+        ins(1, "an", BOB, DATE),
+        del(2, "his or her", BOB, DATE),
+        kept(" capacity"),
+    ]));
+    let listed = list_logical_changes(&doc).unwrap();
+    assert_eq!(listed.len(), 1, "{listed:#?}");
+    assert_eq!(listed[0].id, "r1+2");
+    assert_eq!(listed[0].kind, ChangeKind::Replacement);
+    assert_eq!(listed[0].text, "his or her → an");
+    let members: Vec<(&str, ChangeKind)> = listed[0]
+        .members
+        .iter()
+        .map(|m| (m.id.as_str(), m.kind))
+        .collect();
+    assert_eq!(
+        members,
+        [("r1", ChangeKind::Insertion), ("r2", ChangeKind::Deletion)]
+    );
+}
+
+/// A replacement holds one run of each kind, in either order: a third
+/// run starts a change of its own, and two authors never share one.
+#[test]
+fn a_replacement_ends_at_a_third_run_or_another_author() {
+    let ins_del_ins = docx(&p(&[
+        ins(1, "a", BOB, DATE),
+        del(2, "b", BOB, DATE),
+        ins(3, "c", BOB, DATE),
+    ]));
+    assert_eq!(ids(&ins_del_ins), ["r1+2", "r3"]);
+    let del_ins_del = docx(&p(&[
+        del(1, "a", BOB, DATE),
+        ins(2, "b", BOB, DATE),
+        del(3, "c", BOB, DATE),
+    ]));
+    assert_eq!(ids(&del_ins_del), ["r1+2", "r3"]);
+    let two_authors = docx(&p(&[
+        ins(1, "new", "Carol", DATE),
+        del(2, "old", BOB, DATE),
+    ]));
+    assert_eq!(ids(&two_authors), ["r1", "r2"]);
+    // Another author's insertion between them parts an insertion from the
+    // deletion after it: the deletion is the next replacement's old side.
+    let apart = docx(&p(&[
+        ins(1, "and affiliates ", BOB, DATE),
+        ins(2, "agree to pay the ", "Carol", DATE),
+        del(3, "bankers", BOB, DATE),
+        ins(4, "insurers", BOB, DATE),
+    ]));
+    assert_eq!(ids(&apart), ["r1", "r2", "r3+4"]);
+}
+
+/// The view keeps document order (only a deletion then an insertion
+/// prints as `{~~old~>new~~}`, #1135) and tags both pieces with the
+/// replacement; writing it back gives each mark its own id again.
+#[test]
+fn an_insertion_first_replacement_prints_in_order_and_writes_back() {
+    let doc = docx(&p(&[
+        kept("signs in "),
+        ins(1, "an", BOB, DATE),
+        del(2, "his or her", BOB, DATE),
+        kept(" capacity"),
+    ]));
+    assert_eq!(
+        body(&agent(&doc)),
+        "<!-- p0 -->\nsigns in {++an++}{r1+2 @B}{--his or her--}{r1+2 @B} capacity"
+    );
+    keeps_every_mark(&doc);
 }
 
 /// A change takes its own paragraph's inserted mark and ends there: the
@@ -1082,4 +1152,112 @@ fn another_authors_edit_inside_an_insertion_among_the_marks_separates_nothing() 
             ("r7+8".to_string(), Some("r2+9".to_string())),
         ]
     );
+}
+
+/// A paragraph whose own mark Bob inserted (`ins`) or deleted (`del`) as
+/// change `mark`.
+fn p_with_mark(kind: &str, mark: u32, content: &[String]) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" w:author="{BOB}" w:date="{DATE}"/></w:rPr></w:pPr>{}</w:p>"#,
+        content.concat()
+    )
+}
+
+/// The view header's `revisions:` line.
+fn revisions_line(view: &str) -> String {
+    view.lines()
+        .find(|line| line.starts_with("revisions:"))
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// #1362: a replacement one of whose sides is its paragraph's mark counts
+/// as the substitution `changes` lists, in the body and in a cell; a mark
+/// alone still counts as a paragraph mark.
+#[test]
+fn a_replacement_with_a_paragraph_mark_side_counts_as_a_substitution() {
+    let page_break = r#"<w:ins w:id="1" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:br w:type="page"/></w:r></w:ins>"#;
+    // A cell prints no page break (the table line has no clause for one),
+    // so the break's shape is the body's only.
+    let shapes = [
+        (p_with_mark("ins", 2, &[del(1, "x", BOB, DATE)]), true),
+        (p_with_mark("del", 2, &[ins(1, "x", BOB, DATE)]), true),
+        (p_with_mark("del", 2, &[page_break.to_string()]), false),
+    ];
+    for (shape, in_cell) in &shapes {
+        let cell = format!("<w:tbl><w:tr><w:tc>{shape}</w:tc></w:tr></w:tbl>");
+        for block in std::iter::once(shape).chain(in_cell.then_some(&cell)) {
+            let doc = docx(&format!("{block}{}", p(&[kept("After.")])));
+            let listed: Vec<(String, ChangeKind)> = list_logical_changes(&doc)
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.id, c.kind))
+                .collect();
+            assert_eq!(
+                listed,
+                [("r1+2".to_string(), ChangeKind::Replacement)],
+                "{block}"
+            );
+            let view = agent(&doc);
+            assert!(
+                revisions_line(&view).ends_with("# 2 marks shown as 1 change: 1 substitution"),
+                "{block}\n{view}"
+            );
+        }
+    }
+    for kind in ["ins", "del"] {
+        let doc = docx(&format!(
+            "{}{}",
+            p_with_mark(kind, 2, &[kept("Kept.")]),
+            p(&[kept("After.")])
+        ));
+        assert!(
+            revisions_line(&agent(&doc)).ends_with("# 1 mark shown as 1 change: 1 paragraph mark"),
+            "{kind}\n{}",
+            agent(&doc)
+        );
+    }
+}
+
+/// A paragraph holding Bob's inserted text box (`w:ins` 12, its own text
+/// `w:ins` 14 and paragraph mark `w:ins` 13 inside the box), then his
+/// deletion 17 of the paragraph's text and of its mark (11).
+fn inserted_text_box_replacing_text() -> Vec<u8> {
+    let at = format!(r#"w:author="{BOB}" w:date="{DATE}""#);
+    let anchor = format!(
+        r#"<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2374265" cy="1403985"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="307" name="Text Box 2"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2374265" cy="1403985"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:pPr><w:rPr><w:ins w:id="13" {at}/></w:rPr></w:pPr><w:ins w:id="14" {at}><w:r><w:t>Datum plane</w:t></w:r></w:ins></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor>"#
+    );
+    docx(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="11" {at}/></w:rPr></w:pPr><w:ins w:id="12" {at}><w:r><w:drawing>{anchor}</w:drawing></w:r></w:ins>{}</w:p>{}"#,
+        del(17, "Gone. ", BOB, DATE),
+        p(&[kept("After.")])
+    ))
+}
+
+/// The text box's text prints its anchor's tag, the replacement's whole id
+/// (#1359); written back, that copy of the tag takes the anchor's id, so the
+/// deletion and the paragraph mark keep theirs.
+#[test]
+fn a_text_box_in_an_insertion_first_replacement_keeps_every_id() {
+    let doc = inserted_text_box_replacing_text();
+    assert_eq!(ids(&doc)[0], "r12+17+11", "{:?}", ids(&doc));
+    let view = agent(&doc);
+    assert!(
+        view.contains("{--Gone. --}{r12+17+11 @B}")
+            && view.contains("++}{r12+17+11 @B}\n\n<!-- /text-box -->"),
+        "{view}"
+    );
+    let out = markdown_to_docx(&view, &DocxOptions::default()).unwrap();
+    for id in ["r17 ", "r11 "] {
+        assert!(
+            !out.warnings
+                .iter()
+                .any(|w| w.starts_with(&format!("warning: {id}")) || w.starts_with(id)),
+            "{:?}",
+            out.warnings
+        );
+    }
+    assert_word_valid_package(&out.docx);
+    assert_eq!(marks(&out.docx), marks(&doc), "the marks of\n{view}");
+    assert_eq!(body(&agent(&out.docx)), body(&view), "agent fixed point");
 }

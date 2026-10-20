@@ -68,10 +68,20 @@ fn a_deleted_page_break_names_its_deletion() {
     assert_eq!(second, first);
 }
 
+/// The inserted break and its paragraph's deleted mark after it are one
+/// replacement (#1359), which both clauses name and the header counts as
+/// one substitution (#1362).
 #[test]
 fn an_inserted_page_break_names_its_insertion() {
     let (first, again, second) = round_trip(&break_paragraph("ins", ""));
-    assert!(first.contains("page-break-ins r5 @SW"), "{first}");
+    assert!(
+        first.contains("<!-- p0 page-break-ins r5+4 @SW, break-del r5+4 @SW -->"),
+        "{first}"
+    );
+    assert!(
+        first.contains("# 2 marks shown as 1 change: 1 substitution"),
+        "{first}"
+    );
     assert!(!first.contains("rev r5"), "{first}");
     let xml = document(&again);
     assert!(

@@ -32,13 +32,19 @@ pub struct Printed {
     pub marks: usize,
 }
 
+/// A deleted paragraph mark while pieces join: it counts as a paragraph
+/// mark ([`KINDS`]' 3, the inserted one's) once its change is known.
+const DELETED_MARK: usize = 6;
+
 /// The kind of one change whose pieces print as `was` and `kind`: a deletion
-/// with an insertion is a substitution, a paragraph mark goes with its text.
+/// with an insertion is a substitution, and so is text with a paragraph mark
+/// of the other side (#1362); a mark goes with its own side's text.
 fn joined(was: usize, kind: usize) -> usize {
     match (was, kind) {
         (a, b) if a == b => a,
         (2, _) | (_, 2) | (0, 1) | (1, 0) => 2,
-        (3, other) | (other, 3) => other,
+        (3, 1) | (1, 3) | (DELETED_MARK, 0) | (0, DELETED_MARK) => 2,
+        (3 | DELETED_MARK, other) | (other, 3 | DELETED_MARK) => other,
         (a, _) => a,
     }
 }
@@ -64,6 +70,7 @@ pub fn printed_changes(body: &str) -> Vec<Printed> {
     out.into_iter()
         .map(|(id, kind)| {
             let ids = id.map_or(1, |id| id.matches('+').count() + 1);
+            let kind = if kind == DELETED_MARK { 3 } else { kind };
             Printed {
                 kind,
                 marks: ids.max(if kind == 2 { 2 } else { 1 }),
@@ -172,7 +179,9 @@ fn printed_tags(body: &str) -> Vec<(String, usize)> {
                 if !tag.is_match(item) {
                     continue;
                 }
-                let kind = if key.starts_with("break-") {
+                let kind = if key == "break-del" {
+                    DELETED_MARK
+                } else if key == "break-ins" {
                     3
                 } else if item.contains(".cell") {
                     5

@@ -3,7 +3,7 @@ source: annex.docx
 sha256: d331cacf181cfd2cc6704a9cd0a2284ff725fbac250ecbd73ab2cb47c9919116
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 8                       # 8 marks shown as 4 changes: 2 insertions, 1 deletion, 1 substitution
+revisions: 8                       # 8 marks shown as 3 changes: 1 insertion, 2 substitutions
 comments: 0
 authors:
   document_owner: Alma Sato Reyes  # cp:lastModifiedBy; no dc:creator
@@ -18,4 +18,4 @@ styles:
 <!-- page 1 of 1 -->
 
 <!-- p0 -->
-{++The parties++}{r0+3+7 @AR}{++ and ++}{r1+2 @ASR}{++affiliates++}{r1+2 @ASR}{-- --}{r4 @ASR re r0+3+7 @AR}{++will pay the ++}{r0+3+7 @AR}{~~insurers~>bankers~~}{r5+6 @ASR re r0+3+7 @AR}{++ pro rata at the end of the month.++}{r0+3+7 @AR}
+{++The parties++}{r0+3+7 @AR}{++ and ++}{r1+2+4 @ASR}{++affiliates++}{r1+2+4 @ASR}{-- --}{r1+2+4 @ASR re r0+3+7 @AR}{++will pay the ++}{r0+3+7 @AR}{~~insurers~>bankers~~}{r5+6 @ASR re r0+3+7 @AR}{++ pro rata at the end of the month.++}{r0+3+7 @AR}

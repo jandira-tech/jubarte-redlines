@@ -1934,7 +1934,9 @@ fn review_1128_story_substitution_keeps_both_authors_and_dates() {
 }
 
 /// A same-author replacement in the body keeps each side's date: the settled
-/// dialect pairs carriers only when their dates agree (#1142).
+/// dialect pairs carriers only when their dates agree (#1142). Insertion
+/// first, it is one change (#1359) whose pieces print in document order,
+/// each with its own date, and write back as the two marks.
 #[test]
 fn review_1128_body_same_author_replacement_keeps_both_dates() {
     let source = docx(
@@ -1952,7 +1954,9 @@ fn review_1128_body_same_author_replacement_keeps_both_dates() {
     .unwrap()
     .markdown;
     assert!(
-        view.contains("{++new++}{r1 @A 2026-09-30T09:00:00Z}{--old--}{r2 @A 2026-09-29T14:05:00Z}"),
+        view.contains(
+            "{++new++}{r1+2 @A 2026-09-30T09:00:00Z}{--old--}{r1+2 @A 2026-09-29T14:05:00Z}"
+        ),
         "{view}"
     );
     let round = written(&view);
@@ -2882,4 +2886,63 @@ fn issue_1137_word_style_records_keep_their_shape() {
         "{:?}",
         out.warnings
     );
+}
+
+/// A deletion inside one mark of an insertion never pairs with the
+/// insertion's next mark: the substitution's new side would be the
+/// change its old side sits in (`r3+4 re r3+4`). The two print apart,
+/// the deletion naming its insertion, and write back as they were.
+#[test]
+fn a_deletion_in_an_insertion_never_pairs_with_more_of_that_insertion() {
+    let paragraph = r#"<w:p><w:r><w:t xml:space="preserve">A </w:t></w:r>
+      <w:ins w:id="3" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:del w:id="5" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:delText xml:space="preserve">old </w:delText></w:r></w:del></w:ins>
+      <w:ins w:id="4" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#;
+    let source = docx(paragraph);
+    let view = agent(&source);
+    assert!(
+        view.contains("A {--old --}{r5 @B re r3+4 @B}{++new++}{r3+4 @B}"),
+        "{view}"
+    );
+    let tree = [
+        ("w:ins", "3", None),
+        ("w:del", "5", Some("3")),
+        ("w:ins", "4", None),
+    ];
+    assert_nested_round_trip(&source, &["{r5 @B re r3+4 @B}"], &tree);
+    for kind in ["header", "footer"] {
+        let note = format!("{{{kind}1.r5 @B re {kind}1.r3+4 @B}}");
+        assert_story_nested_round_trip(&source, kind, &[&note], &tree);
+    }
+}
+
+/// A mark of a change can hold nothing but another author's deletion
+/// (Bob typed "x" in a session of its own, Zed deleted it): its id goes
+/// to the insertion around the nest, so each of the change's four marks
+/// writes back with its own id, the paragraph mark's too.
+#[test]
+fn a_mark_that_holds_only_a_nest_keeps_its_id() {
+    use jubarte::changes::list_changes;
+    let at = r#"w:author="Bob" w:date="2026-10-01T10:00:00Z""#;
+    let paragraph = format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="13" {at}/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Start </w:t></w:r>
+      <w:ins w:id="7" {at}><w:r><w:t xml:space="preserve">a </w:t></w:r></w:ins>
+      <w:ins w:id="9" {at}><w:del w:id="8" w:author="Zed" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:del></w:ins>
+      <w:ins w:id="11" {at}><w:r><w:t xml:space="preserve"> b</w:t></w:r></w:ins></w:p>"#
+    );
+    let source = docx(&paragraph);
+    let tree = [
+        ("w:ins", "7", None),
+        ("w:ins", "9", None),
+        ("w:del", "8", Some("9")),
+        ("w:ins", "11", None),
+    ];
+    assert_nested_round_trip(&source, &["{r8 @Z re r7+9+11+13 @B}"], &tree);
+    let marks = |doc: &[u8]| -> Vec<(String, String)> {
+        list_changes(doc)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.id, c.text))
+            .collect()
+    };
+    assert_eq!(marks(&written(&agent(&source))), marks(&source));
 }

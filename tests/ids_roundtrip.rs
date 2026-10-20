@@ -169,8 +169,9 @@ fn long_body() -> &'static [u8] {
                 inner.push_str(&ins(w, A, &format!("added{i}")));
             }
             if i == 7 {
-                // Word Compare's insertion-then-deletion order stays two
-                // separate marks; `r3+4` still selects both ids.
+                // Word Compare's insertion-then-deletion order: two marks
+                // of one replacement, printed `r4+3` in reading order
+                // (#1359); `r3+4` still selects both ids.
                 inner.push_str(&ins("4", A, "new"));
                 inner.push_str(&del("3", A, "old"));
             }
@@ -1020,7 +1021,20 @@ fn accept_by_cli(name: &str, docx: &[u8], token: &str, fails: &mut Vec<String>) 
         .iter()
         .map(ChangeId::short)
         .collect();
-    if gone != named || !after.is_subset(&before) {
+    // A change inside one the token names may go with its content: the
+    // marks in a text box whose deletion is accepted.
+    let inside: HashMap<String, String> = jubarte::changes::list_changes(docx)
+        .unwrap()
+        .into_iter()
+        .filter_map(|c| Some((c.id, c.inside?)))
+        .collect();
+    let held = |id: &str| {
+        std::iter::successors(inside.get(id), |outer| inside.get(outer.as_str()))
+            .take(inside.len())
+            .any(|outer| named.contains(outer))
+    };
+    let swept = gone.difference(&named).all(|id| held(id));
+    if !named.is_subset(&gone) || !swept || !after.is_subset(&before) {
         fails.push(format!(
             "{name}: accept --id {token} removed {gone:?}, named {named:?}"
         ));
@@ -1063,7 +1077,7 @@ fn the_long_body_round_trips_every_id_width() {
         "{r10000 @AC}",
         "{r0 @AC}",
         "{r51199 @AC}",
-        "{++new++}{r4 @AC}{--old--}{r3 @AC}",
+        "{++new++}{r4+3 @AC}{--old--}{r4+3 @AC}",
         "{>>c51000 @AC: Far away.<<}",
         "{>>c10 @JD re c9: Reply to nine.<<}",
         "{>>c99 @JD resolved: Settled.<<}",

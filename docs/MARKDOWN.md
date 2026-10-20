@@ -651,6 +651,7 @@ staged in the contract's plan, not landed.
 {++quarterly++}{r0 @AC}
 {--ninety days--}{r7 @AC}
 {~~weekly~>monthly~~}{r2+1 @AC}       one author, deleted id first
+{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}  one author, insertion first
 {--old--}{r2 @JD}{++new++}{r1 @AC}    different authors stay separate
 {++bold ++}{r7+8 @AC}{++words++}{r7+8 @AC}  one change of two marks
 {++new text++}{r5+6 @AC}¶{r5+6 @AC}  a change that ends its paragraph
@@ -699,13 +700,20 @@ plain attribution, or as a comment.
 A tag names the logical change its piece belongs to, the one `jubarte
 changes` lists (#1261): the marks Word writes for one edit (one author's
 touching insertions, or deletions, in a story, whatever their dates; a
-deletion and that author's insertion after it; the paragraph mark the
-change ends with) are one change with a joined id, and every piece prints
-it: `{++bold ++}{r7+8 @AC}{++words++}{r7+8 @AC}`. The pieces keep their
-own text, formatting and, under `--dates`, their own dates. Original text,
+deletion and that author's insertion after it; an insertion and that
+author's deletion touching it; the paragraph mark the change ends with)
+are one change with a joined id, and every piece prints it: `{++bold
+++}{r7+8 @AC}{++words++}{r7+8 @AC}`. A replacement holds one run of
+insertions and one of deletions, its ids in reading order (`r1+2` for an
+insertion first, `r2+1` for a deletion first). The pieces keep their own
+text, formatting and, under `--dates`, their own dates. Original text,
 another author's deletion, a field, a move, a table cell or the end of a
-paragraph separates two changes; another author's insertion among the
-marks does not, unless the marks were made inside it. When writing DOCX,
+paragraph separates two changes. So does original text the view prints
+nothing for: hidden text, a soft hyphen, a symbol, a page break. Another
+author's insertion among the marks does not, unless the marks were made
+inside it, or it sits between an insertion and the deletion after it,
+which touch only with nothing between them. Empty runs, bookmarks,
+comment ranges and Word's rendered-page-break hints separate nothing. When writing DOCX,
 the pieces that print one joined id take its ids in reading order, one
 each, so reading the DOCX back prints the same view. One id may appear on
 several marks. When writing DOCX, adjacent pieces with the same single id,
@@ -717,7 +725,8 @@ an id with a different kind, author or date also requires a new id.
 Only a deletion directly followed by a live insertion by the same author
 pairs as a substitution. Proofing markers, bookmarks that print nothing,
 and empty runs may intervene; visible text and rendered content interrupt
-adjacency. An insertion followed by a deletion stays in document order.
+adjacency. An insertion followed by a deletion stays in document order,
+one change when they touch: `{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}`.
 In `{~~old~>new~~}{r4+5 @B re r3 @A}`, `re` applies only to the old side;
 the new side follows the parent insertion. Story prefixes remain intact.
 

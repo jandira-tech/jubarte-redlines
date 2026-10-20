@@ -9,8 +9,11 @@
 //! session gets its own, with its own date), and records a replacement as
 //! a deletion followed by an insertion. One author's touching marks of one
 //! kind are one change, with the composite id the view prints
-//! (`r7+8+9+10`); a deletion run followed by the same author's insertion
-//! run is one replacement (`r3+4`). Dates do not split a change.
+//! (`r7+8+9+10`); a deletion run and the same author's insertion run
+//! beside it, in either order, are one replacement (`r3+4`, `r1+2`, its
+//! id in reading order: Word usually writes the insertion first). An
+//! insertion run and a deletion after it touch: nothing between them,
+//! not even text another author inserted. Dates do not split a change.
 //!
 //! What separates one author's marks is text that was there before: text
 //! no change touches, text another author deleted, and the text of an
@@ -52,6 +55,9 @@ enum Phase {
     Delete,
     /// Deletions, then insertions.
     Replace,
+    /// Insertions, then deletions: the order Word and the comparer
+    /// usually write a replacement in.
+    InsertDelete,
 }
 
 impl Phase {
@@ -64,13 +70,17 @@ impl Phase {
     }
 
     /// The phase after a mark of `kind`, or `None` when the mark starts a
-    /// new change: a deletion after an insertion.
+    /// new change: a replacement holds one run of each kind, in either
+    /// order.
     fn then(self, kind: ChangeKind) -> Option<Self> {
-        match (self, kind) {
-            (Self::Delete, ChangeKind::Deletion) => Some(Self::Delete),
-            (Self::Delete, _) => Some(Self::Replace),
-            (_, ChangeKind::Deletion) => None,
-            (phase, _) => Some(phase),
+        let deletion = kind == ChangeKind::Deletion;
+        match self {
+            Self::Delete if deletion => Some(Self::Delete),
+            Self::Delete => Some(Self::Replace),
+            Self::Insert if deletion => Some(Self::InsertDelete),
+            Self::Insert => Some(Self::Insert),
+            Self::Replace => (!deletion).then_some(Self::Replace),
+            Self::InsertDelete => deletion.then_some(Self::InsertDelete),
         }
     }
 }
@@ -174,6 +184,10 @@ fn groups(dom: &Dom, root: NodeId, carriers: &[Carrier]) -> Vec<Vec<usize>> {
     // there when the marks were made.
     let mut within: Vec<HashSet<usize>> = Vec::new();
     let mut group_of: HashMap<usize, usize> = HashMap::new();
+    // Whether content the group's author did not mark came after its last
+    // mark: an insertion and a deletion after it are one replacement only
+    // when they touch.
+    let mut apart: Vec<bool> = Vec::new();
     // Each author's change the walk is still adding to.
     let mut open: HashMap<Option<&str>, usize> = HashMap::new();
     for event in &events {
@@ -203,6 +217,11 @@ fn groups(dom: &Dom, root: NodeId, carriers: &[Carrier]) -> Vec<Vec<usize>> {
                     listed(carriers, *c).kind == ChangeKind::Insertion && !within[*g].contains(c)
                 })
         });
+        for (author, &g) in &open {
+            if !here.iter().any(|(a, _)| a == author) {
+                apart[g] = true;
+            }
+        }
         for (author, c) in here {
             let change = listed(carriers, c);
             if !groupable(change) || repeated.contains(change.id.as_str()) {
@@ -211,12 +230,16 @@ fn groups(dom: &Dom, root: NodeId, carriers: &[Carrier]) -> Vec<Vec<usize>> {
             }
             if let Some(&g) = group_of.get(&c) {
                 // More content of a carrier already placed.
+                apart[g] = false;
                 open.insert(author, g);
                 continue;
             }
-            let joined = open
-                .get(&author)
-                .and_then(|&g| Some((g, phases[g].then(change.kind)?)));
+            let joined = open.get(&author).and_then(|&g| {
+                let phase = phases[g].then(change.kind)?;
+                let touches =
+                    !(apart[g] && phase == Phase::InsertDelete && phases[g] == Phase::Insert);
+                touches.then_some((g, phase))
+            });
             let g = match joined {
                 Some((g, phase)) => {
                     phases[g] = phase;
@@ -227,9 +250,11 @@ fn groups(dom: &Dom, root: NodeId, carriers: &[Carrier]) -> Vec<Vec<usize>> {
                     groups.push(vec![c]);
                     phases.push(Phase::of(change.kind));
                     within.push(HashSet::new());
+                    apart.push(false);
                     groups.len() - 1
                 }
             };
+            apart[g] = false;
             let outside = stack.iter().take_while(|&&s| s != c);
             within[g].extend(outside);
             group_of.insert(c, g);
@@ -543,12 +568,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_deletion_after_an_insertion_starts_a_new_change() {
-        assert!(Phase::Insert.then(ChangeKind::Deletion).is_none());
-        assert!(Phase::Replace.then(ChangeKind::Deletion).is_none());
-        assert!(Phase::Delete.then(ChangeKind::Insertion) == Some(Phase::Replace));
-        assert!(Phase::Replace.then(ChangeKind::Insertion) == Some(Phase::Replace));
-        assert!(Phase::Delete.then(ChangeKind::Deletion) == Some(Phase::Delete));
+    fn a_replacement_holds_one_run_of_each_kind() {
+        use ChangeKind::{Deletion, Insertion};
+        assert!(Phase::Insert.then(Deletion) == Some(Phase::InsertDelete));
+        assert!(Phase::InsertDelete.then(Deletion) == Some(Phase::InsertDelete));
+        assert!(Phase::InsertDelete.then(Insertion).is_none());
+        assert!(Phase::Replace.then(Deletion).is_none());
+        assert!(Phase::Delete.then(Insertion) == Some(Phase::Replace));
+        assert!(Phase::Replace.then(Insertion) == Some(Phase::Replace));
+        assert!(Phase::Delete.then(Deletion) == Some(Phase::Delete));
+        assert!(Phase::Insert.then(Insertion) == Some(Phase::Insert));
     }
 
     fn change(id: &str) -> Change {

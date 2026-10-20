@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 226                     # 213 marks shown as 125 changes: 4 insertions, 87 deletions, 21 paragraph marks, 13 table rows; 5 formatting; 2 in header1; 2 in footer1; 2 in endnotes; 2 in footnotes
+revisions: 226                     # 213 marks shown as 123 changes: 2 insertions, 85 deletions, 2 substitutions, 21 paragraph marks, 13 table rows; 5 formatting; 2 in header1; 2 in footer1; 2 in endnotes; 2 in footnotes
 comments: 1 thread open, style Normal  # 1 comment: c73
 authors:
   document_owner: Un-named         # dc:creator
@@ -21,7 +21,7 @@ footers:
 ---
 
 <!-- p0 fmt r4 @ASR; r5 @ASR; r6 @ASR; r9 @ASR -->
-_file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
+_file\__{++_15_++}{r7+8 @ASR}{--**14**--}{r7+8 @ASR}_.docx_
 
 <!-- p1 -->
 {++_Verdana Italic Centered Demo_++}{r11+10 @ASR}¶{r11+10 @ASR}
@@ -29,8 +29,8 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 <!-- p2 -->
 {++_This document shows Verdana font with italic and center alignment._++}{r13+12 @ASR}¶{r13+12 @ASR}
 
-<!-- p3 break-del r16+14 @ASR -->
-{++_Verdana italic centered creates a clean and modern look._++}{r15 @ASR}{--**eigenpal/docx-editor**         --}{r16+14 @ASR}
+<!-- p3 break-del r15+16+14 @ASR -->
+{++_Verdana italic centered creates a clean and modern look._++}{r15+16+14 @ASR}{--**eigenpal/docx-editor**         --}{r15+16+14 @ASR}
 
 <!-- p4 break-del r18+17 @ASR -->
 {--Project Charter & Contributor Agreement         --}{r18+17 @ASR}

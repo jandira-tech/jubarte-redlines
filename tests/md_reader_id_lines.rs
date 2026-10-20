@@ -205,7 +205,9 @@ unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]\n---\n\n";
     .expect("the docx reads")
     .markdown;
     assert!(view.contains("unplaced: [ins r6 @AC in p1]"), "{view}");
-    assert!(view.contains("{++Boxed.¶{r5 @AC}++}{r3 @AC}"), "{view}");
+    // The anchor's insertion and the deletion after it are one
+    // replacement (#1359), which the box's text, inside the anchor, names.
+    assert!(view.contains("{++Boxed.¶{r5 @AC}++}{r3+4+2 @AC}"), "{view}");
     assert!(
         view.contains("<!-- p2 -->\nAfter."),
         "no stamp shift: {view}"
@@ -796,11 +798,16 @@ fn a_substitution_keeps_each_id_on_its_side_and_the_deletion_first() {
 
 #[test]
 fn a_bookmark_between_two_changes_stays_between_them() {
-    // `<a id>` between an insertion and a deletion: two changes, and the
-    // bookmark is in neither mark.
-    let body = "<!-- p0 -->\nK {++new++}{r1 @AC}<a id=\"mark\"></a>{--old--}{r2 @AC} \
+    // `<a id>` between an insertion and a deletion parts nothing: one
+    // replacement (#1359), and the bookmark is in neither mark.
+    let body = "<!-- p0 -->\nK {++new++}{r1+2 @AC}<a id=\"mark\"></a>{--old--}{r1+2 @AC} \
                 [go](#mark)";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
+    // Written as two changes, the marks read back as the one.
+    let apart = body
+        .replace("r1+2", "r1")
+        .replacen("{r1 @AC} [go]", "{r2 @AC} [go]", 1);
+    assert_eq!(round_trip(&format!("{AUTHORS}{apart}\n")), body);
 }
 
 #[test]
@@ -1107,9 +1114,10 @@ fn a_comment_inside_a_substitution_side_keeps_the_pair() {
 }
 
 #[test]
-fn a_heading_slug_bookmark_keeps_insertion_then_deletion_and_its_count() {
-    // The heading's own bookmark prints no anchor, and insertion followed
-    // by deletion remains two changes in both text and summary.
+fn a_heading_slug_bookmark_parts_no_insertion_from_its_deletion() {
+    // The heading's own bookmark prints no anchor and parts nothing: the
+    // insertion and the deletion after it are one replacement in both text
+    // and summary (#1359).
     let mark = |kind: &str, id: u32, text: &str| {
         let t = if kind == "del" { "delText" } else { "t" };
         format!(
@@ -1134,19 +1142,22 @@ fn a_heading_slug_bookmark_keeps_insertion_then_deletion_and_its_count() {
     .expect("the docx reads")
     .markdown;
     assert!(
-        view.contains("# {++Hello++}{r54 @AL}{--Old--}{r55 @AL}"),
+        view.contains("# {++Hello++}{r54+55 @AL}{--Old--}{r54+55 @AL}"),
         "{view}"
     );
     assert!(
-        view.contains("2 changes: 1 insertion, 1 deletion"),
+        view.contains("2 marks shown as 1 change: 1 substitution"),
         "{view}"
     );
 }
 
 #[test]
-fn a_run_that_prints_nothing_keeps_no_two_marks_apart() {
+fn an_empty_run_parts_no_marks_and_hidden_text_or_a_page_break_does() {
     // An empty run, a vanished run and a page break between an insertion
-    // and a deletion: their order remains unchanged in text and count.
+    // and a deletion: their order remains unchanged in text and count. The
+    // empty run holds nothing, so the marks are one replacement (#1359);
+    // the hidden text and the break were there before the marks, which
+    // stay two changes though the view prints neither between them.
     let mark = |kind: &str, id: u32, text: &str| {
         let t = if kind == "del" { "delText" } else { "t" };
         format!(
@@ -1183,15 +1194,23 @@ fn a_run_that_prints_nothing_keeps_no_two_marks_apart() {
     assert_eq!(view.matches("{++new++}").count(), 3, "{view}");
     assert_eq!(view.matches("{--old--}").count(), 3, "{view}");
     assert!(
-        view.contains("6 marks shown as 6 changes: 3 insertions, 3 deletions"),
+        view.contains("6 marks shown as 5 changes: 2 insertions, 2 deletions, 1 substitution"),
         "{view}"
     );
+    for line in [
+        "A {++new++}{r10+11 @AL}{--old--}{r10+11 @AL}",
+        "A {++new++}{r12 @AL}{--old--}{r13 @AL}",
+        "A {++new++}{r14 @AL}{--old--}{r15 @AL}",
+    ] {
+        assert!(view.lines().any(|l| l == line), "{line} in {view}");
+    }
 }
 
 #[test]
-fn a_header_keeps_insertion_then_deletion_apart_and_writes_back_each_mark() {
-    // As in the body: insertion then deletion remains separate, and every
-    // mark keeps its own id even beside another mark by the same author.
+fn a_header_groups_insertion_then_deletion_and_writes_back_each_mark() {
+    // As in the body: an insertion run and the same author's deletion run
+    // after it are one replacement (#1359), printed in document order, and
+    // every mark writes back with its own id.
     let mark = |kind: &str, id: u32, text: &str| {
         let t = if kind == "del" { "delText" } else { "t" };
         format!(
@@ -1230,9 +1249,10 @@ fn a_header_keeps_insertion_then_deletion_apart_and_writes_back_each_mark() {
     };
     let view = read(&docx, &options).expect("the docx reads").markdown;
     for want in [
-        "Sub {++new++}{header1.r90 @AL}{--old--}{header1.r91 @AL}.",
-        // Neighbouring marks of one kind are one change.
-        "Runs {++A++}{header1.r92+93 @AL}{++B++}{header1.r92+93 @AL}{--C--}{header1.r94+95 @AL}{--D--}{header1.r94+95 @AL}.",
+        "Sub {++new++}{header1.r90+91 @AL}{--old--}{header1.r90+91 @AL}.",
+        // Neighbouring marks of one kind are one run; the two runs, one
+        // replacement.
+        "Runs {++A++}{header1.r92+93+94+95 @AL}{++B++}{header1.r92+93+94+95 @AL}{--C--}{header1.r92+93+94+95 @AL}{--D--}{header1.r92+93+94+95 @AL}.",
     ] {
         assert!(view.contains(want), "{want} in {view}");
     }

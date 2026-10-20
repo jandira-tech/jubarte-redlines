@@ -75,6 +75,9 @@ fn mark(kind: &str, id: usize, author: &str, text: &str) -> String {
     )
 }
 
+/// Only a deletion then the same author's insertion prints as one
+/// `{~~old~>new~~}`; insertion first, the two are one replacement too
+/// (#1359), printed in document order with its id on each piece.
 #[test]
 fn neighbouring_marks_join_and_only_deletion_then_same_author_insertion_pairs() {
     let a = mark("ins", 1, "Alice", "a");
@@ -83,7 +86,9 @@ fn neighbouring_marks_join_and_only_deletion_then_same_author_insertion_pairs() 
     let new = mark("ins", 4, "Alice", "new");
     assert!(view(&format!("<w:p>{a}{b}</w:p>")).contains("{++a++}{r1+2 @A}{++b++}{r1+2 @A}"));
     assert!(view(&format!("<w:p>{old}{new}</w:p>")).contains("{~~old~>new~~}{r3+4 @A}"));
-    assert!(view(&format!("<w:p>{new}{old}</w:p>")).contains("{++new++}{r4 @A}{--old--}{r3 @A}"));
+    assert!(
+        view(&format!("<w:p>{new}{old}</w:p>")).contains("{++new++}{r4+3 @A}{--old--}{r4+3 @A}")
+    );
     let other = mark("ins", 5, "Bob", "other");
     assert!(
         view(&format!("<w:p>{old}{other}</w:p>")).contains("{--old--}{r3 @A}{++other++}{r5 @B}")

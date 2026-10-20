@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 435                     # 422 marks shown as 248 changes: 4 insertions, 175 deletions, 43 paragraph marks, 26 table rows; 5 formatting; 2 in header1; 2 in footer1; 2 in endnotes; 2 in footnotes
+revisions: 435                     # 422 marks shown as 246 changes: 2 insertions, 173 deletions, 2 substitutions, 43 paragraph marks, 26 table rows; 5 formatting; 2 in header1; 2 in footer1; 2 in endnotes; 2 in footnotes
 comments: 4 threads open, style Normal  # 6 comments: c16 (+ reply c17), c76, c207 (+ reply c208), c267
 authors:
   document_owner: Un-named         # dc:creator
@@ -21,7 +21,7 @@ footers:
 ---
 
 <!-- p0 fmt r4 @AS; r5 @AS; r6 @AS; r9 @AS -->
-<mark>file\_</mark>{++<mark>177</mark>++}{r7 @AS}{--**176**--}{r8 @AS}<mark>.docx</mark>
+<mark>file\_</mark>{++<mark>177</mark>++}{r7+8 @AS}{--**176**--}{r7+8 @AS}<mark>.docx</mark>
 
 <!-- p1 -->
 {++<mark>Yellow Highlight Demo</mark>++}{r11+10 @AS}¶{r11+10 @AS}
@@ -29,8 +29,8 @@ footers:
 <!-- p2 -->
 {++<mark>This document demonstrates yellow text highlighting.</mark>++}{r13+12 @AS}¶{r13+12 @AS}
 
-<!-- p3 break-del r18+14 @AS, in c16 -->
-{++<mark>Highlighted text stands out for easy reference and review.</mark>++}{r15 @AS}{=={--**eigenpal/docx-editor**         --}{r18+14 @AS}==}
+<!-- p3 break-del r15+18+14 @AS, in c16 -->
+{++<mark>Highlighted text stands out for easy reference and review.</mark>++}{r15+18+14 @AS}{=={--**eigenpal/docx-editor**         --}{r15+18+14 @AS}==}
 
 <!-- p4 break-del r20+19 @AS, in c16 -->
 {=={--Project Charter & Contributor Agreement         --}{r20+19 @AS}==}

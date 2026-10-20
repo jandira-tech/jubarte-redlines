@@ -90,6 +90,20 @@ fn outer_of(by: Option<&str>) -> Option<&str> {
         .map(|(_, outer)| outer)
 }
 
+/// Whether `new_by`'s change is the one `old_by`'s sits in: a deletion
+/// in one mark of an insertion never pairs with the insertion's next mark
+/// (`{--old--}{r5 @B re r3+4 @B}{++new++}{r3+4 @B}`), for the
+/// substitution's new side would be its own parent.
+fn holds(new_by: Option<&str>, old_by: Option<&str>) -> bool {
+    fn first(tagged: &str) -> &str {
+        tag_parts(tagged.split(ON).next().unwrap_or(tagged)).0
+    }
+    match (tag(new_by), outer_of(old_by)) {
+        (Some(own), Some(outer)) => super::agent::same_change(first(own), first(outer)),
+        _ => false,
+    }
+}
+
 /// The changes a note names sit behind this sentinel after the change's
 /// own tag (`\u{E000}3@BO\u{E002}1@AL`), with each tag's optional
 /// timestamp before it, exactly as [`display`] prints them: `r3 @BO re
@@ -914,6 +928,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping<'_>, ids: &mu
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
             ) if outer_of(new_by.as_deref()).is_none()
+                && !holds(new_by.as_deref(), old_by.as_deref())
                 && escaping.pairable(old_by.as_deref(), new_by.as_deref())
                 && new.iter().any(Node::has_content) =>
             {
