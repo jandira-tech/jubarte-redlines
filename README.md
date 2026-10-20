@@ -439,7 +439,11 @@ reports stable IDs while the corresponding tracked change remains present.
 The text listing prints short ids (`r12`, `header1.r1`, `footnotes.r3`);
 `--json` prints JSON Lines with the same short `id` (and `ref`). `--id`
 takes the short ids: `r12`, `r1+2` (both marks of one
-change), `header1.r1`.
+change), `header1.r1`. A change that holds a comment's reference mark ends
+its line with `holds comment c4's mark` (`holds comment marks c4, c5` for a
+thread's reply too), and `--json` lists them in `holds_comments`: resolving
+the change so its content goes (accepting a deletion, rejecting an
+insertion) removes those threads, as Word does.
 
 
 With human-readable CLI output, every command that writes a DOCX from a
@@ -979,7 +983,8 @@ Conflicting selections are rejected instead of silently choosing a side.
 
 Settling a revision that removes a comment's whole anchor removes the thread
 and its replies, as Word does. Edit receipts report each removed thread as
-`removed_comments` (using source ids `c0`, `c1`, etc.). Legacy `edit --dry-run`
+`removed_comments` (using source ids `c0`, `c1`, etc.), each saying `why`:
+`anchor removed by accepting r13`, the change that held its mark. Legacy `edit --dry-run`
 prints the JSONL preview; `edit --out-dir` writes the summary event in
 `report.jsonl`. Typed `edit apply --json` includes the same records in `data`.
 To preserve the thread, set `"removed_anchor_comments": "keep"` in a v1 or
@@ -992,6 +997,10 @@ This opt-in is a jubarte convention that Word opens with threaded balloons;
 the default `"remove"` follows Word's removal behavior. Partial overlaps
 keep the existing behavior. Unknown values are refused as `INVALID_PLAN`.
 The policy is available in plans; `accept`/`reject` keep their existing warnings.
+A reply to a comment whose paragraph the same plan deletes goes on the
+deleted text beside its parent, where Word shows the thread; a v2 plan with
+`"track": "off"` deletes the anchor outright, and is refused with
+`COMMENT_ANCHOR_REMOVED`.
 Comment and bookmark ids stay stable while a plan runs, so later operations
 still address the source comments. After all operations finish, the preserving
 path numbers the revision-free working document once; its clean copy, tracked

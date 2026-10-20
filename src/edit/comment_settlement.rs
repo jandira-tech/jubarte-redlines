@@ -15,6 +15,10 @@ pub struct RemovedComment {
     pub author: String,
     /// Removed replies, in comment order.
     pub replies: Vec<String>,
+    /// Why the thread went: `anchor removed by accepting r13`, naming the
+    /// change that held its mark in the source (#1159).
+    #[serde(default)]
+    pub why: String,
     /// The pass that removed this thread; presentation metadata, not a source id.
     #[serde(skip)]
     pub decision: Option<String>,
@@ -101,18 +105,29 @@ impl AnchorChanges {
                         .iter()
                         .filter(|c| c.id != root.id && family.contains(&c.id))
                         .map(|c| format!("c{}", c.id))
-                        .collect();
+                        .collect::<Vec<String>>();
                     (root, replies)
                 })
                 .collect::<Vec<_>>()
         };
+        let holders = if self.removed.is_empty() {
+            Vec::new()
+        } else {
+            crate::changes::list_changes_tolerant(source).unwrap_or_default()
+        };
         let removed = groups(&self.removed)
             .into_iter()
-            .map(|(c, replies)| RemovedComment {
-                id: format!("c{}", c.id),
-                author: c.author.clone(),
-                replies,
-                decision: self.decisions.get(&c.id.to_string()).cloned(),
+            .map(|(c, replies)| {
+                let decision = self.decisions.get(&c.id.to_string()).cloned();
+                let id = format!("c{}", c.id);
+                let why = why_removed(&holders, &id, &replies, decision.as_deref());
+                RemovedComment {
+                    id,
+                    author: c.author.clone(),
+                    replies,
+                    why,
+                    decision,
+                }
             })
             .collect();
         let kept = groups(&self.kept)
@@ -125,6 +140,28 @@ impl AnchorChanges {
             })
             .collect();
         Ok((removed, kept))
+    }
+}
+
+/// `anchor removed by accepting r13`: the decision, and the source change
+/// that held the mark of thread `id` (its own, else a reply's). A thread
+/// whose whole range a change removed, its mark outside it, names no change.
+fn why_removed(
+    changes: &[crate::changes::Change],
+    id: &str,
+    replies: &[String],
+    decision: Option<&str>,
+) -> String {
+    let verb = match decision {
+        Some("rejection") => "rejecting",
+        _ => "accepting",
+    };
+    let holder = std::iter::once(id)
+        .chain(replies.iter().map(String::as_str))
+        .find_map(|c| changes.iter().find(|ch| ch.holds_comments.iter().any(|h| h == c)));
+    match holder {
+        Some(change) => format!("anchor removed by {verb} {}", change.id),
+        None => format!("anchor removed by {verb} the changes that held all its text"),
     }
 }
 

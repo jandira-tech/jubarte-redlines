@@ -116,7 +116,8 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
 /// List the tracked changes one by one as a JSON array string, each with the
 /// id `acceptChanges` / `rejectChanges` select by (the same objects as
 /// `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
-/// `text`, `move_name`, `move_side`, `inside`).
+/// `text`, `move_name`, `move_side`, `inside`, and `holds_comments` when
+/// the change holds comment marks).
 ///
 /// Mirrors `jubarte::changes::list_changes`.
 #[wasm_bindgen(js_name = listChanges)]

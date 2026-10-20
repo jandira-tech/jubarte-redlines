@@ -204,6 +204,9 @@ class Change:
     one so its content goes takes this one along. ``ref`` equals ``id``: the
     short id the CLI prints and ``-p``/``--id`` take;
     ``paragraph`` is the id of the paragraph the change is in (``p3``).
+    ``holds_comments`` names the comments (``c4``, a reply's ``c5``) whose
+    reference mark the change holds: resolving it so its content goes
+    removes their threads, as Word does.
     """
 
     id: str
@@ -217,6 +220,7 @@ class Change:
     inside: str | None
     ref: str | None = None
     paragraph: str | None = None
+    holds_comments: tuple[str, ...] = ()
 
 
 class _ChangeRow(TypedDict):
@@ -233,6 +237,7 @@ class _ChangeRow(TypedDict):
     inside: NotRequired[str]
     ref: NotRequired[str]
     paragraph: NotRequired[str]
+    holds_comments: NotRequired[list[str]]
 
 
 def _decode_changes(payload: str) -> tuple[Change, ...]:
@@ -253,6 +258,7 @@ def _changes_of(rows: list[_ChangeRow]) -> tuple[Change, ...]:
             inside=row.get("inside"),
             ref=row.get("ref"),
             paragraph=row.get("paragraph"),
+            holds_comments=tuple(row.get("holds_comments", ())),
         )
         for row in rows
     )

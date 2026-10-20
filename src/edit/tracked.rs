@@ -308,7 +308,7 @@ fn redline(
     // the deleted text, instead of into a commented base for the comparer.
     let mut comments = tx.comments.clone();
     for &(id, op) in &tx.deletion_comments {
-        if let Some(text) = tx.deletion_comment(op) {
+        if let Some(text) = tx.deleted_text_comment(op) {
             comments.push((id, text.to_string()));
         }
     }

@@ -410,6 +410,20 @@ def tracked() -> Document:
     return Document.from_bytes(docx(body))
 
 
+def test_a_change_names_the_comment_marks_it_holds() -> None:
+    """Accepting r13 removes the thread whose mark it holds (#1159)."""
+    stamp = 'w:date="2020-01-01T00:00:00Z"'
+    body = (
+        '<w:p><w:r><w:t>kept</w:t></w:r>'
+        f'<w:del w:id="13" w:author="d" {stamp}>'
+        '<w:r><w:commentReference w:id="4"/></w:r>'
+        '<w:r><w:commentReference w:id="5"/></w:r></w:del></w:p>'
+    )
+    [change] = Document.from_bytes(docx(body)).changes()
+    assert (change.id, change.holds_comments) == ("r13", ("c4", "c5"))
+    assert all(c.holds_comments == () for c in tracked().changes())
+
+
 def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     doc = tracked()
     changes = doc.changes()

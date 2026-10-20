@@ -441,6 +441,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **What a settle removes is said before and after (#1159, plan 10).**
+  `changes` ends a change's line with `holds comment c4's mark` (`holds
+  comment marks c4, c5`) when it holds a comment's reference mark, and
+  `--json` lists them in `holds_comments` (Python `Change.holds_comments`):
+  accepting that deletion, or rejecting that insertion, removes the
+  threads. Every `removed_comments` record says `why`, `anchor removed by
+  accepting r13`. A reply to a comment whose paragraph the same plan
+  deletes is no longer refused as `OVERLAPPING_EDITS`: it goes on the
+  deleted text beside its parent, where Word shows the thread; a v2 plan
+  with `"track": "off"` removes the anchor and is refused with
+  `COMMENT_ANCHOR_REMOVED`, as any untracked deletion of an anchor is.
+
 - **`read`, `changes` and `comments` name the input's validity findings
   once (#1256).** An input `validate` would flag earns one stderr line,
   `input has 2 validity warnings; jubarte validate FILE lists them` (`1

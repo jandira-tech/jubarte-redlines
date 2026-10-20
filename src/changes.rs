@@ -95,6 +95,11 @@ pub struct Change {
     /// or the moved-to side) takes this one along.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inside: Option<String>,
+    /// The comments (`c4`, and a reply's `c5`) whose reference mark this
+    /// change holds: resolving it so its content goes (as for
+    /// [`Self::inside`]) removes their threads, as Word does (#1159).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holds_comments: Vec<String>,
 }
 
 /// Private audit view: public `Change` serialization stays unchanged.
@@ -438,8 +443,13 @@ pub fn changes_text(changes: &[Change]) -> String {
             .as_deref()
             .map(|id| format!("\tinside {id}"))
             .unwrap_or_default();
+        let holds = match c.holds_comments.as_slice() {
+            [] => String::new(),
+            [one] => format!("\tholds comment {one}'s mark"),
+            many => format!("\tholds comment marks {}", many.join(", ")),
+        };
         out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
+            "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}{holds}\n",
             c.r#ref,
             kind_name(c.kind),
             c.target,
@@ -902,6 +912,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
                     _ => None,
                 },
                 inside: None,
+                holds_comments: Vec::new(),
             }),
         });
     }
@@ -914,6 +925,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
     let paragraphs = (story != "styles").then(|| paragraph_index(dom, root));
     for c in &mut out {
         if let Some(change) = &mut c.change {
+            change.holds_comments = held_comment_marks(dom, c.node, change.target);
             change.inside = holder(dom, c.node, &ids);
             change.paragraph = paragraphs
                 .as_ref()
@@ -922,6 +934,32 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
         }
     }
     out
+}
+
+/// The comments whose reference mark the content of change `e` holds
+/// (`c4`, `c5`), in document order: what resolving the change so its
+/// content goes removes. A paragraph mark's or formatting change removes
+/// no content; a row's or cell's change removes the row's or cell's.
+fn held_comment_marks(dom: &Dom, e: NodeId, target: &str) -> Vec<String> {
+    let content = match target {
+        "text" => Some(e),
+        "table_row" => dom.ancestors(e, Some(&W::tr())).first().copied(),
+        "table_cell" => dom.ancestors(e, Some(&W::tc())).first().copied(),
+        _ => None,
+    };
+    let mut held = Vec::new();
+    for mark in content
+        .map(|c| dom.descendants(c, Some(&W::name("commentReference"))))
+        .unwrap_or_default()
+    {
+        if let Some(id) = dom.attribute(mark, &W::id()) {
+            let id = format!("c{id}");
+            if !held.contains(&id) {
+                held.push(id);
+            }
+        }
+    }
+    held
 }
 
 /// Word stores a text box twice, in an `mc:AlternateContent`'s `mc:Choice`

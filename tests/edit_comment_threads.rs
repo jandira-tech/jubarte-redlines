@@ -708,7 +708,9 @@ fn removed_anchor_default_reports_thread_and_still_removes_it() {
         ),
     )
     .unwrap();
-    let expected = serde_json::json!([{"id":"c0","author":"Bob","replies":["c1"]}]);
+    // Plan 10 adds why the thread went (#1159).
+    let expected = serde_json::json!([{"id":"c0","author":"Bob","replies":["c1"],
+        "why":"anchor removed by rejecting r1"}]);
     assert_eq!(
         serde_json::to_value(&out.report).unwrap()["removed_comments"],
         expected

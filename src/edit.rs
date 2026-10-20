@@ -5216,16 +5216,10 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
-                Resolved::Thread {
-                    op: ThreadOp::Reply { .. },
-                    anchor: Some(anchor),
-                    ..
-                } if deleted.contains(anchor) => {
-                    return Err(self.conflict(
-                        *i,
-                        "replies to a comment whose reference is in a deleted paragraph",
-                    ));
-                }
+                // A reply to a comment whose paragraph the plan deletes:
+                // the tracked deletion keeps the reference in struck text,
+                // where Word shows the thread (#1159). Editing mode removes
+                // the anchor, which v2's anchor check refuses.
                 Resolved::DeleteParagraph { .. }
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
@@ -5645,7 +5639,7 @@ impl<'p> Transaction<'p> {
                 })
                 .collect();
         for (i, text) in comments {
-            let id = if self.deletion_comment(i).is_some() {
+            let id = if self.deletion_comment(i).is_some() || self.reply_in_deleted(i) {
                 // Written into the source copy the comparer reads, not here.
                 let id = self.reserve_comment_id();
                 self.deletion_comments.push((id, i));
@@ -6147,8 +6141,41 @@ impl<'p> Transaction<'p> {
         }
     }
 
+    /// Whether operation `op` replies to a comment whose reference sits in
+    /// a paragraph this plan deletes: the copy loses the reference, so the
+    /// reply goes where the parent's stays, on the deleted text (#1159).
+    fn reply_in_deleted(&self, op: usize) -> bool {
+        let deleted = |p: &usize| {
+            self.resolved
+                .iter()
+                .any(|(_, r)| matches!(r, Resolved::DeleteParagraph { para } if para == p))
+        };
+        self.resolved.iter().any(|(i, r)| {
+            *i == op
+                && matches!(r, Resolved::Thread {
+                    op: ThreadOp::Reply { .. },
+                    anchor: Some(anchor),
+                    ..
+                } if deleted(anchor))
+        })
+    }
+
+    /// The text of [`Self::deletion_comment`], or of a reply
+    /// [`Self::reply_in_deleted`] names: what goes on the deleted text.
+    fn deleted_text_comment(&self, op: usize) -> Option<&str> {
+        self.deletion_comment(op).or_else(|| {
+            match &self.plan.operations[op].kind {
+                OperationKind::ReplyComment { text, .. } if self.reply_in_deleted(op) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            }
+        })
+    }
+
     /// The copy the comparer reads as the original: the base, with each
-    /// deleted paragraph's comment anchored on its whole text. The comparer
+    /// deleted paragraph's comment anchored on its whole text, and each
+    /// reply to a comment in a deleted paragraph beside its parent. The comparer
     /// carries the comment onto the deleted text of the redline. A plan's
     /// watermark is written into this copy as well, so it stays untracked.
     fn commented_base(&self) -> Result<std::borrow::Cow<'_, [u8]>, EditError> {
@@ -6188,6 +6215,10 @@ impl<'p> Transaction<'p> {
             .iter()
             .filter_map(|&(_, op)| {
                 let operation = &self.plan.operations[op];
+                // A reply sits beside its parent in the base, as in Word.
+                if matches!(operation.kind, OperationKind::ReplyComment { .. }) {
+                    return Some(operation.clone());
+                }
                 // A deleted text's comment takes the deletion's own anchor,
                 // which finds the same words in the base.
                 let (paragraph, find, occurrence, text) = match &operation.kind {
