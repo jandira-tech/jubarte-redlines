@@ -338,6 +338,12 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r0 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+1 @AC} review call.
 ```
 
+`revisions:` counts the body's marks, then the changes `jubarte changes`
+lists for the body, kind by kind (#1356). That includes a change printed
+only as another's parent (`re r7 @B`), and a row whose cells all print
+its id counts once, as a table row. A selection counts the changes whose
+ids it prints.
+
 `--track-changes accept|reject` prints the document with every change
 resolved, `--comments none` leaves the comments out of the text (their ids
 move to the id lines), `--dates` puts timestamps in notes whose author's

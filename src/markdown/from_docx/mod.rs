@@ -97,10 +97,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     // The marks Word wrote for one edit print the whole change's id, as
     // `changes` lists it (#1261). A package the listing cannot read prints
     // each mark's own.
-    let wholes = crate::changes::list_logical_changes_tolerant(bytes)
-        .map(|changes| agent::wholes_of(&changes))
-        .unwrap_or_default();
-    agent::with_wholes(wholes, || convert_marks(bytes, options))
+    let logical = crate::changes::list_logical_changes_tolerant(bytes).ok();
+    let wholes = logical.as_deref().map(agent::wholes_of).unwrap_or_default();
+    agent::with_wholes(wholes, || {
+        agent::with_logical(logical, || convert_marks(bytes, options))
+    })
 }
 
 /// [`convert`], its tags naming the changes [`agent::with_wholes`] set.
@@ -726,7 +727,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         // Resolved views name original revisions with `rev` labels, but
         // print no tracked changes. Count only what this view shows.
         let tags = if accept.is_none() {
-            agent::collect_revisions(&markdown)
+            agent::shown_changes(&markdown, range.is_none())
         } else {
             Vec::new()
         };

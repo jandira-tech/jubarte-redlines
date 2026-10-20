@@ -372,6 +372,76 @@ fn format_tag_by(tag: &str, by: impl Fn(&str) -> String) -> String {
 // notes, on id lines and in the header, names what `changes` lists.
 thread_local! {
     static WHOLES: RefCell<Rc<Wholes>> = RefCell::new(Rc::default());
+    // The logical changes themselves, for the header's count; `None` when
+    // the listing could not read the package.
+    static LOGICAL: RefCell<Rc<Option<Vec<crate::changes::Change>>>> =
+        RefCell::new(Rc::default());
+}
+
+/// Runs `print` with `changes` as the logical changes the header counts
+/// ([`shown_changes`]).
+pub(crate) fn with_logical<T>(
+    changes: Option<Vec<crate::changes::Change>>,
+    print: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Rc<Option<Vec<crate::changes::Change>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = std::mem::take(&mut self.0);
+            LOGICAL.with(|logical| *logical.borrow_mut() = previous);
+        }
+    }
+    let previous = LOGICAL.with(|l| l.replace(Rc::new(changes)));
+    let _restore = Restore(previous);
+    print()
+}
+
+/// What the view shows its body's changes as: one entry per change
+/// `jubarte changes` lists for the body, by the kind it gives it (#1356).
+/// So a change printed only as a parent (`re r7 @B`) counts, a single id
+/// printed in every cell of an inserted row counts once, as that row, and
+/// a change the header lists (`unplaced:`) counts too. A view of some
+/// blocks (`whole` false) counts the changes whose ids its blocks print.
+/// Without the listing, the count reads the printed tags
+/// ([`collect_revisions`]).
+pub(crate) fn shown_changes(shown: &str, whole: bool) -> Vec<&'static str> {
+    use crate::changes::ChangeKind;
+    let logical = LOGICAL.with(|logical| Rc::clone(&logical.borrow()));
+    let Some(changes) = logical.as_ref() else {
+        return collect_revisions(shown);
+    };
+    let printed = if whole {
+        HashSet::new()
+    } else {
+        printed_change_ids("", shown)
+    };
+    changes
+        .iter()
+        .filter(|c| {
+            c.kind != ChangeKind::Formatting
+                && crate::ids::parse_change_ids(&c.id).map_or(!c.id.contains('.'), |ids| {
+                    ids.iter().all(|id| id.story == "body")
+                })
+        })
+        .filter(|c| {
+            whole
+                || if c.members.is_empty() {
+                    printed.contains(&c.id)
+                } else {
+                    c.members.iter().any(|m| printed.contains(&m.id))
+                }
+        })
+        .map(|c| match (c.target, c.kind) {
+            ("paragraph_mark", _) => "mark",
+            ("table_row", _) => "row",
+            ("table_cell", _) => "cell",
+            (_, ChangeKind::Insertion) => "ins",
+            (_, ChangeKind::Deletion) => "del",
+            (_, ChangeKind::Move) => "move",
+            (_, ChangeKind::Formatting) => "fmt",
+            (_, ChangeKind::Replacement) => "sub",
+        })
+        .collect()
 }
 
 /// The marks of each logical change of several marks: by a mark's short
