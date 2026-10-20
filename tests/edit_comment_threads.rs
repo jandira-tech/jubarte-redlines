@@ -911,13 +911,12 @@ fn settlement_identity_plan(operations: &serde_json::Value) -> EditPlan {
 
 #[test]
 fn settlement_then_edit_addresses_source_c2() {
-    let out = apply_plan(
-        &settlement_identity_source(),
-        &settlement_identity_plan(&serde_json::json!([
-            {"kind":"edit_comment","comment_id":"c2","text":"Edited target"}
-        ])),
-    )
-    .unwrap();
+    // Carol wrote c2; Alice rewrites it on purpose (#1264).
+    let mut plan = settlement_identity_plan(&serde_json::json!([
+        {"kind":"edit_comment","comment_id":"c2","text":"Edited target"}
+    ]));
+    plan.rewrite_others_comments = true;
+    let out = apply_plan(&settlement_identity_source(), &plan).unwrap();
     for bytes in [&out.clean, &out.redline] {
         let comments = list_comments(bytes).unwrap();
         let target = comments.iter().find(|c| c.anchor_text == "Target").unwrap();
@@ -960,11 +959,18 @@ fn settlement_then_reply_addresses_source_c2() {
     }
 }
 
+/// The source's ids stay (#1264): c0 goes with r1 unless it is kept, a
+/// reply takes the next id after the source's highest (c3), and the
+/// bookmark keeps 42.
 fn assert_settled_annotation_ids(bytes: &[u8], mode: &str, replies: u32) {
     let mut ids: Vec<_> = list_comments(bytes).unwrap().iter().map(|c| c.id).collect();
     ids.sort_unstable();
-    let count = if mode == "keep" { 4 } else { 3 } + replies;
-    assert_eq!(ids, (0..count).collect::<Vec<_>>(), "final comment ids");
+    let first = if mode == "keep" { 0 } else { 1 };
+    assert_eq!(
+        ids,
+        (first..4 + replies).collect::<Vec<_>>(),
+        "final comment ids"
+    );
     let xml = part_string(bytes, "word/document.xml").unwrap();
     let mut dom = jubarte::xmllinq::Dom::new();
     let document = dom.parse_xdocument(&xml);
@@ -973,7 +979,7 @@ fn assert_settled_annotation_ids(bytes: &[u8], mode: &str, replies: u32) {
     assert_eq!(bookmarks.len(), 1);
     assert_eq!(
         dom.attribute(bookmarks[0], &jubarte::namespaces::W::id()),
-        Some(count.to_string().as_str()),
+        Some("42"),
         "final bookmark id"
     );
     assert_word_valid_package(bytes);
@@ -1001,24 +1007,24 @@ fn final_annotation_probe(mode: &str, typed: bool) {
 }
 
 #[test]
-fn settlement_renumbers_final_annotations_remove() {
+fn settlement_keeps_final_annotation_ids_remove() {
     final_annotation_probe("remove", false);
 }
 #[test]
-fn settlement_renumbers_final_annotations_keep() {
+fn settlement_keeps_final_annotation_ids_keep() {
     final_annotation_probe("keep", false);
 }
 #[test]
-fn settlement_renumbers_final_annotations_v2_remove() {
+fn settlement_keeps_final_annotation_ids_v2_remove() {
     final_annotation_probe("remove", true);
 }
 #[test]
-fn settlement_renumbers_final_annotations_v2_keep() {
+fn settlement_keeps_final_annotation_ids_v2_keep() {
     final_annotation_probe("keep", true);
 }
 
 #[test]
-fn settlement_renumbers_after_reply_and_reports_written_id() {
+fn settlement_keeps_ids_after_a_reply_and_reports_its_id() {
     let out = apply_plan(
         &settlement_identity_source(),
         &settlement_identity_plan(&serde_json::json!([

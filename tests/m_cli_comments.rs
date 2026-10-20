@@ -171,7 +171,8 @@ fn accept_warns_once_per_thread_member_using_original_ids() {
         stderr,
         "warning: accept removed comment c0 (Alice: \"Existing range\"): anchor removed by accepting the changes that held all its text\nwarning: accept removed comment c1 (Bob: \"Reply to range\"): anchor removed by accepting the changes that held all its text\n"
     );
-    dead_comments::assert_state(&output, true, &[(0, "Kept range", None)]);
+    // The comment that stays keeps its id (#1264).
+    dead_comments::assert_state(&output, true, &[(2, "Kept range", None)]);
 }
 
 #[test]

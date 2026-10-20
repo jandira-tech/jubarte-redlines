@@ -2291,8 +2291,9 @@ pub fn apply_plan_json_with(
 /// `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE` and
 /// `AMBIGUOUS_CHANGE` while settling revisions; `ANCHOR_NOT_FOUND`,
 /// `AMBIGUOUS_ANCHOR`, `INVALID_EDIT`, `UNKNOWN_STYLE`, `UNKNOWN_COMMENT`,
-/// `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`, `PARAGRAPH_RESOLVED`,
-/// `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and `UNSUPPORTED_IMAGE`
+/// `COMMENT_NOT_YOURS`, `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`,
+/// `PARAGRAPH_RESOLVED`, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and
+/// `UNSUPPORTED_IMAGE`
 /// while resolving and applying operations; `UNSUPPORTED` for a `settings`
 /// operation with a protection password. `FIELDS_FAILED` when field
 /// results cannot be refreshed, `COMPARE_FAILED` when the redline cannot be
@@ -4313,7 +4314,9 @@ impl<'p> Transaction<'p> {
     /// properties are discarded, so it may not carry a section break.
     /// `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment`:
     /// the comment must exist (`UNKNOWN_COMMENT`); a reply needs the
-    /// comment's reference to anchor on.
+    /// comment's reference to anchor on; `edit_comment` on another
+    /// author's comment needs `rewrite_others_comments`
+    /// (`COMMENT_NOT_YOURS`).
     fn resolve_thread(&self, id: &str, kind: &OperationKind) -> Resolution<Resolved> {
         let mut outcome = EditOutcome {
             id: id.to_string(),

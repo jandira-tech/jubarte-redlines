@@ -812,7 +812,7 @@ supports):
 | `rewrite` | Give a paragraph's whole new text; only the words that differ are edited |
 | `format_run` | Restyle existing text as a tracked formatting change |
 | `comment` | Comment on a match, a whole paragraph, or every paragraph up to `through` |
-| `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment` | Work on a comment thread by `comment_id` |
+| `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment` | Work on a comment thread by `comment_id`; `edit_comment` on another author's comment needs `"rewrite_others_comments": true` (it keeps their name) |
 | `strike` | Reject another author's insertion `revision` visibly: your tracked deletion inside it, with an optional `comment` on the struck words |
 | `restore` | Reject another author's deletion `revision` visibly: your tracked copy of its words right after it, with an optional `comment` |
 | `insert_paragraph` | A new paragraph after the anchor, with its properties (or those `like` selects) |

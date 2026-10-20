@@ -310,10 +310,11 @@ fn parser_operations() -> Value {
 }
 
 /// Two body paragraphs with one existing comment: `p0` "Zero" carries
-/// `c0`, `p1` "Six" is plain. Every v2 kind resolves a target on it.
+/// `c0`, `p1` "Six" is plain. Every v2 kind resolves a target on it; `c0`
+/// is the plan author's, so `edit_comment` may change it (#1264).
 fn commented_source() -> Vec<u8> {
     let comments = format!(
-        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Other"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Ann Counsel"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#
     );
     docx_with(
         &format!(

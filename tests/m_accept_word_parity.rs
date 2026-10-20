@@ -240,10 +240,11 @@ fn count(xml: &str, needle: &str) -> usize {
 
 /// R1: a comment whose reference is deleted goes with it — its anchors, its
 /// comments.xml entry and its commentsExtended/Ids/Extensible entries
-/// (29e3872eed, 145b9e67e2, 92075b7449, 01f3deda92). The comments left are
-/// numbered 0, 1, … in document order (R5).
+/// (29e3872eed, 145b9e67e2, 92075b7449, 01f3deda92). The comments left keep
+/// their ids, where Word numbers them 0, 1, … in document order (R5; #1264,
+/// `docs/WORD_DIFFERENCES.md`).
 #[test]
-fn accept_drops_comments_in_deleted_text_and_renumbers_the_rest() {
+fn accept_drops_comments_in_deleted_text_and_keeps_the_rest() {
     let body = format!(
         "<w:p>{}<w:r><w:t> and </w:t></w:r>{}</w:p><w:p>{}</w:p>",
         commented(7, "kept"),
@@ -269,16 +270,16 @@ fn accept_drops_comments_in_deleted_text_and_renumbers_the_rest() {
     ] {
         assert_eq!(count(&doc, &format!("<w:{tag} ")), n, "{tag} in {doc}");
     }
-    // Document order is 7 then 5: old 7 → 0, old 5 → 1.
+    // Document order is 7 then 5, and both keep their ids (Word: 0, 1).
     let first = doc
-        .find(r#"w:commentReference w:id="0""#)
-        .expect("7 renumbered to 0");
+        .find(r#"w:commentReference w:id="7""#)
+        .expect("7 stays 7");
     let second = doc
-        .find(r#"w:commentReference w:id="1""#)
-        .expect("5 renumbered to 1");
+        .find(r#"w:commentReference w:id="5""#)
+        .expect("5 stays 5");
     assert!(first < second, "{doc}");
     let comments = part_string(&accepted, "word/comments.xml").unwrap();
-    assert!(comments.contains(r#"w:id="0" w:author="Cy""#), "{comments}");
+    assert!(comments.contains(r#"w:id="7" w:author="Cy""#), "{comments}");
     let comments = part_string(&accepted, "word/comments.xml").unwrap();
     assert_eq!(count(&comments, "<w:comment "), 2, "{comments}");
     assert!(
@@ -336,7 +337,7 @@ fn accept_drops_the_comment_parts_when_no_comment_is_left() {
 }
 
 /// Reject All mirrors R1: a comment whose reference sits in rejected
-/// (inserted) text goes, and the rest are renumbered.
+/// (inserted) text goes, and the rest keep their ids.
 #[test]
 fn reject_drops_comments_in_inserted_text() {
     let inserted = r#"<w:commentRangeStart w:id="4"/><w:ins w:id="94" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r><w:r><w:commentReference w:id="4"/></w:r></w:ins><w:commentRangeEnd w:id="4"/>"#;
@@ -354,8 +355,8 @@ fn reject_drops_comments_in_inserted_text() {
     let doc = part_string(&rejected, "word/document.xml").unwrap();
     assert_eq!(count(&doc, "<w:commentReference "), 1, "{doc}");
     assert!(
-        doc.contains(r#"w:commentReference w:id="0""#),
-        "9 renumbered to 0: {doc}"
+        doc.contains(r#"w:commentReference w:id="9""#),
+        "9 stays 9: {doc}"
     );
     let comments = part_string(&rejected, "word/comments.xml").unwrap();
     assert!(
@@ -401,7 +402,7 @@ fn an_empty_bookmark_inside_deleted_text_survives_accept() {
     assert_word_valid_package(&accepted);
     assert_eq!(
         bookmarks(&accepted),
-        [("Anchor".to_string(), "0".to_string())]
+        [("Anchor".to_string(), "40".to_string())]
     );
     let doc = part_string(&accepted, "word/document.xml").unwrap();
     let (b, a) = (
@@ -444,15 +445,17 @@ fn a_partly_deleted_bookmark_keeps_both_markers() {
     assert_word_valid_package(&accepted);
     assert_eq!(
         bookmarks(&accepted),
-        [("Part".to_string(), "0".to_string())]
+        [("Part".to_string(), "9".to_string())]
     );
 }
 
-/// R5: after Accept All, bookmarks and comments share one id counter, dense
-/// and in document order (2288f27be1: comments 0 1, bookmarks 2–6, comments
-/// 7 8; d6b1d609c1 interleaves them).
+/// R5: after Accept All, Word numbers bookmarks and comments from one
+/// counter, dense and in document order (2288f27be1: comments 0 1,
+/// bookmarks 2–6, comments 7 8; d6b1d609c1 interleaves them). jubarte keeps
+/// every id instead, in the same order (#1264, `docs/WORD_DIFFERENCES.md`):
+/// Word would write First 1, Second 2, and the comments 0 and 3.
 #[test]
-fn accept_numbers_bookmarks_and_comments_in_one_document_order_counter() {
+fn accept_keeps_bookmark_and_comment_ids_where_word_renumbers() {
     let body = format!(
         r#"<w:p>{}<w:bookmarkStart w:id="84" w:name="First"/><w:r><w:t>x</w:t></w:r><w:bookmarkEnd w:id="84"/><w:ins w:id="1" {REV}><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:p><w:bookmarkStart w:id="12" w:name="Second"/><w:bookmarkEnd w:id="12"/>{}</w:p>"#,
         commented(38, "a"),
@@ -471,12 +474,12 @@ fn accept_numbers_bookmarks_and_comments_in_one_document_order_counter() {
     assert_eq!(
         bookmarks(&accepted),
         [
-            ("First".to_string(), "1".to_string()),
-            ("Second".to_string(), "2".to_string())
+            ("First".to_string(), "84".to_string()),
+            ("Second".to_string(), "12".to_string())
         ]
     );
     let doc = part_string(&accepted, "word/document.xml").unwrap();
-    for (old, new) in [("a", "0"), ("b", "3")] {
+    for (old, new) in [("a", "38"), ("b", "2")] {
         let at = doc.find(&format!("<w:t>{old}</w:t>")).unwrap();
         let start = doc[..at].rfind("commentRangeStart").unwrap();
         assert!(
@@ -486,8 +489,8 @@ fn accept_numbers_bookmarks_and_comments_in_one_document_order_counter() {
     }
     let comments = part_string(&accepted, "word/comments.xml").unwrap();
     assert!(
-        comments.contains(r#"w:id="0" w:author="Cy""#)
-            && comments.contains(r#"w:id="3" w:author="Bo""#),
+        comments.contains(r#"w:id="38" w:author="Cy""#)
+            && comments.contains(r#"w:id="2" w:author="Bo""#),
         "{comments}"
     );
 }
@@ -503,7 +506,7 @@ fn reject_drops_a_bookmark_over_wholly_inserted_text() {
     assert_word_valid_package(&rejected);
     assert_eq!(
         bookmarks(&rejected),
-        [("Empty".to_string(), "0".to_string())]
+        [("Empty".to_string(), "6".to_string())]
     );
 }
 
@@ -640,7 +643,7 @@ fn accept_dead_comment_probe_c_kept_character() {
 fn accept_dead_comment_probe_e_removes_thread_metadata() {
     let source = dead_comments::probe('e');
     let accepted = accept_revisions(&source).unwrap();
-    dead_comments::assert_state(&accepted, true, &[(0, "Kept range", None)]);
+    dead_comments::assert_state(&accepted, true, &[(2, "Kept range", None)]);
     assert_eq!(paragraphs(&accepted), ["", "kept"]);
 }
 

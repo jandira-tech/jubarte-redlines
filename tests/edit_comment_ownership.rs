@@ -80,7 +80,7 @@ fn sparse_ids() -> Vec<u8> {
     )
 }
 
-fn plan(json: serde_json::Value) -> EditPlan {
+fn plan(json: &serde_json::Value) -> EditPlan {
     EditPlan::from_json(&json.to_string()).unwrap()
 }
 
@@ -94,7 +94,7 @@ fn edit_c0(author: &str, rewrite: Option<bool>) -> EditPlan {
     if let Some(rewrite) = rewrite {
         value["rewrite_others_comments"] = rewrite.into();
     }
-    plan(value)
+    plan(&value)
 }
 
 /// The comment ids `bytes` holds, ascending.
@@ -156,14 +156,12 @@ fn rewrite_others_comments_true_allows_it_with_a_note() {
 #[test]
 fn a_reply_by_another_author_is_theirs_too() {
     let source = with_comments(
-        &format!(
-            r#"<w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>The cap is 10.</w:t></w:r><w:commentRangeEnd w:id="0"/><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="0"/></w:r><w:r><w:commentReference w:id="1"/></w:r></w:p>"#
-        ),
+        r#"<w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>The cap is 10.</w:t></w:r><w:commentRangeEnd w:id="0"/><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="0"/></w:r><w:r><w:commentReference w:id="1"/></w:r></w:p>"#,
         &[(0, "Alice", "Too low."), (1, "Bob", "Agreed.")],
     );
     let refused = apply_plan(
         &source,
-        &plan(serde_json::json!({
+        &plan(&serde_json::json!({
             "schema_version": 1,
             "author": "Alice",
             "operations": [{"kind": "edit_comment", "comment_id": 1, "text": "Reworded."}],
@@ -212,6 +210,13 @@ fn a_v2_plan_is_refused_in_its_own_words() {
     assert_eq!(
         (listed[0].text.as_str(), listed[0].author.as_str()),
         ("Reworded.", "Bob")
+    );
+    // A v2 report notes the rewrite as a v1 report does.
+    assert_eq!(
+        out.report.notes,
+        [
+            r#"/operations/0 (edit_comment): c0 is by "Bob"; their words were changed under their name"#
+        ]
     );
 }
 
@@ -326,7 +331,7 @@ fn an_edit_that_settles_keeps_the_ids_it_reports() {
     // calls the target c5, and the reply's id is the one reported.
     let out = apply_plan(
         &sparse_ids(),
-        &plan(serde_json::json!({
+        &plan(&serde_json::json!({
             "schema_version": 1,
             "author": "Alice",
             "date": "2026-10-20T09:00:00Z",
@@ -365,7 +370,7 @@ fn a_new_comment_never_takes_an_id_the_plan_removed() {
     );
     let out = apply_plan(
         &source,
-        &plan(serde_json::json!({
+        &plan(&serde_json::json!({
             "schema_version": 1,
             "author": "Alice",
             "date": "2026-10-20T09:00:00Z",
@@ -378,4 +383,49 @@ fn a_new_comment_never_takes_an_id_the_plan_removed() {
     let added = out.report.operations[0].comment_id.unwrap();
     assert!(added > 9, "the new comment reuses a removed id: c{added}");
     assert_eq!(ids(&out.clean), [5, added]);
+}
+
+/// c0 on p0 whose `w:comment` carries `author_attribute` verbatim (none,
+/// or an empty `w:author`).
+fn unnamed_comment(author_attribute: &str) -> Vec<u8> {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0"{author_attribute} w:date="2026-10-18T12:00:00Z"><w:p><w:r><w:t>Too low.</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    docx_with(
+        &format!("<w:p>{}</w:p>", commented(0, "The cap is 10.")),
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS,
+            rel_type: COMMENTS_REL,
+            xml: &comments,
+        }],
+    )
+}
+
+#[test]
+fn a_comment_that_names_no_author_is_not_yours_either() {
+    // Only a comment that names the plan's author is its own: with no
+    // name (scrubbed, or written by a tool) nobody can say whose it is.
+    for attribute in ["", r#" w:author="""#] {
+        let source = unnamed_comment(attribute);
+        let error = apply_plan(&source, &edit_c0("Alice", None)).unwrap_err();
+        assert_eq!(
+            (error.code.as_str(), error.message.as_str()),
+            (
+                "COMMENT_NOT_YOURS",
+                r#"c0 names no author; reply instead (reply_comment), or pass "rewrite_others_comments": true to change its words"#
+            ),
+            "{attribute:?}: {error}"
+        );
+        let out = apply_plan(&source, &edit_c0("Alice", Some(true))).unwrap();
+        assert_eq!(
+            out.report.notes,
+            ["op-1 (edit_comment): c0 names no author; its words were changed"],
+            "{attribute:?}"
+        );
+        for bytes in [&out.clean, &out.redline] {
+            assert_word_valid_package(bytes);
+            assert_eq!(list_comments(bytes).unwrap()[0].text, "Reworded.");
+        }
+    }
 }

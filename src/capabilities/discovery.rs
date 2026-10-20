@@ -168,6 +168,11 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
                     if schema["properties"].get("comment").is_some() {
                         conditions.push_str("; attached comments require a body anchor");
                     }
+                    if kind == "edit_comment" {
+                        conditions.push_str(
+                            "; another author's comment requires rewrite_others_comments",
+                        );
+                    }
                     if matches!(kind, "watermark" | "settings" | "redact") {
                         conditions.push_str("; this effect is untracked in both outputs");
                     }
