@@ -130,6 +130,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **`debug --full-lines`** prints the listing checks' lines (`text`, `xml`,
+  `runs`, `changes`, `styledefs`, `numbering`, `render`) whole instead of
+  clipping them at 200 characters; `debug::Options` gains `full_lines`. The
+  Markdown round-trip gate reads the render check this way: a clipped table
+  line kept a window that still held the cell shading the gate drops, so
+  `ids-fonts.md` reported a table difference the two packages do not have.
 - **`convert --commonmark`** writes Word as plain CommonMark with
   CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
   wrote before.

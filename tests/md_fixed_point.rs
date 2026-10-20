@@ -374,8 +374,21 @@ struct Case {
 /// `jubarte debug A B --check render` lists it (highlights, colours, fonts,
 /// styles, tables, sections, parts). The Markdown fixed point cannot see a
 /// loss in the first docx → md step: both views lose it alike. This can.
+/// Lines come whole (`--full-lines`): a clipped line keeps a window around
+/// its first difference, so one that differs only in what `in_dialect`
+/// drops would still differ in its window.
 fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
-    let out = match jubarte(dir, &["debug", source, written, "--check", "render"]) {
+    let out = match jubarte(
+        dir,
+        &[
+            "debug",
+            source,
+            written,
+            "--check",
+            "render",
+            "--full-lines",
+        ],
+    ) {
         Ok(out) => out,
         Err(e) => return vec![format!("  ✗ docx not compared: {e}")],
     };

@@ -1385,6 +1385,10 @@ pub enum Command {
         /// text/xml/runs of two files: common lines shown around each change.
         #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
         context: usize,
+        /// text/xml/runs/changes/styledefs/numbering/render: show complete
+        /// lines instead of clipping them at 200 characters.
+        #[arg(long)]
+        full_lines: bool,
     },
     /// Compare rendered pages pixel by pixel (different pages: exit 5).
     #[command(
