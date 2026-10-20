@@ -685,25 +685,69 @@ pub(crate) fn zip_defects<R: Read + Seek>(
     defects
 }
 
+/// The number of central records the end of central directory declares —
+/// its ZIP64 record's when the 16-bit field is saturated (APPNOTE 4.3.16,
+/// 4.3.14) — read from at most the 64 KiB tail an end record can sit in
+/// and the 56-byte ZIP64 record, so it never touches entry data. `None`
+/// when neither parses.
+fn declared_records<R: Read + Seek>(reader: &mut R) -> Option<u64> {
+    const EOCD: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    const LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07];
+    const EOCD64: [u8; 4] = [0x50, 0x4b, 0x06, 0x06];
+    let len = reader.seek(SeekFrom::End(0)).ok()?;
+    let window = len.min(22 + u64::from(u16::MAX));
+    reader.seek(SeekFrom::Start(len.checked_sub(window)?)).ok()?;
+    let mut tail = vec![0; usize::try_from(window).ok()?];
+    reader.read_exact(&mut tail).ok()?;
+    let at = (0..=tail.len().checked_sub(22)?)
+        .rev()
+        .find(|&i| tail.get(i..).is_some_and(|rest| rest.starts_with(&EOCD)))?;
+    let total = u16::from_le_bytes(*tail.get(at..)?.get(10..12)?.first_chunk::<2>()?);
+    if total != u16::MAX {
+        return Some(u64::from(total));
+    }
+    let locator = tail.get(at.checked_sub(20)?..at)?;
+    if !locator.starts_with(&LOCATOR) {
+        return None;
+    }
+    let offset = u64::from_le_bytes(*locator.get(8..16)?.first_chunk::<8>()?);
+    reader.seek(SeekFrom::Start(offset)).ok()?;
+    let mut record = [0u8; 56];
+    reader.read_exact(&mut record).ok()?;
+    if !record.starts_with(&EOCD64) {
+        return None;
+    }
+    Some(u64::from_le_bytes(*record.get(32..40)?.first_chunk::<8>()?))
+}
+
 /// Two central records naming one OPC part (`DUPLICATE_PART`, ZIP-15/#600,
 /// ECMA-376 Part 2 §6.2.2.3 M1.12). The reader's name index collapses a
 /// byte-equal duplicate (and Word refuses the file either way — probes
 /// p1/p2/p6/p7/p9), so the check walks the raw central records instead of
 /// the index: each record's name decodes exactly as `zip_entry_name`
-/// resolves it for the readers, and two decoded names equal under ASCII
-/// case are one part. A directory entry (`word/`) is not a part and never
-/// collides with a file. The walk stops at the first record that is not
-/// a central header, so a comment or trailing data cannot desynchronize
-/// it, and it allocates one entry per central record — the same bound
-/// the index itself would reach. Each defect pairs with the second
-/// entry's decoded name — the spelling `PartFs`'s typed refusal names.
+/// resolves it for the readers, and two decoded names with one OPC
+/// identity (`super::identity`: resolved like a relationship target, so
+/// `/word/x.xml` and `word/./x.xml` are `word/x.xml`, and compared under
+/// ASCII case) are one part — the key the part index stores them under.
+/// A directory entry (`word/`) is not a part and never collides with a
+/// file. The walk reads the records the end of central directory
+/// declares (`declared_records`) — the records zip's index reads before
+/// it collapses byte-equal names, and no more, so records padded in past
+/// that count cost nothing and collide with nothing — and stops early at
+/// the first record that is not a central header, so a comment or
+/// trailing data cannot desynchronize it. Each defect pairs with the
+/// second entry's decoded name — the spelling `PartFs`'s typed refusal
+/// names.
 pub(crate) fn duplicate_parts<R: Read + Seek>(
     reader: &mut R,
     mut at: u64,
 ) -> Vec<(String, ZipDefect)> {
+    // No end record parses only for a stream the open refuses on its
+    // own; walking to the first non-central header then loses nothing.
+    let records = declared_records(reader).unwrap_or(u64::MAX);
     let mut defects = Vec::new();
     let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for index in 0usize.. {
+    for index in (0..records).map_while(|index| usize::try_from(index).ok()) {
         let Some(central) = header_fields(reader, at, &CENTRAL_HEADER) else {
             break;
         };
@@ -725,7 +769,7 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
         else {
             continue;
         };
-        let identity = name.to_ascii_lowercase();
+        let identity = super::identity(&name);
         match seen.get(&identity) {
             None => {
                 seen.insert(identity, name);
@@ -747,7 +791,7 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
                     ZipDefect {
                         kind: ZipDefectKind::DuplicatePart,
                         detail: format!(
-                            "'{first}' and '{name}' name the same part (entry {index}; part names ignore case)"
+                            "'{first}' and '{name}' name the same part (entry {index}; part names resolve `.` and `..` and ignore case)"
                         ),
                     },
                 ));
