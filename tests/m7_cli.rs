@@ -412,7 +412,13 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         String::from_utf8_lossy(&json.stderr)
     );
     let json_out = String::from_utf8_lossy(&json.stdout).into_owned();
-    let json_lines: Vec<&str> = json_out.lines().collect();
+    let mut json_lines: Vec<&str> = json_out.lines().collect();
+    // The rows end with one line counting the input's validity findings (#1309).
+    let validity = json_lines.pop().expect("validity line present");
+    assert!(
+        validity.starts_with("{\"input_validity\":{\"errors\":"),
+        "{validity:?}"
+    );
     assert_eq!(
         json_lines.len(),
         count,
