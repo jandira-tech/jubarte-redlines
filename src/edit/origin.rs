@@ -782,9 +782,9 @@ fn exact_correspondence(
 /// one, at or after the last match, that holds its text. One whose own
 /// text the settle changed is found by its side instead: it belongs to the
 /// merge beside it when that merge holds text its found members do not
-/// explain on that side. One with no text, or that no merge holds, is
-/// gone. A merge of a single paragraph whose text did not change is that
-/// paragraph, kept.
+/// explain on that side; only the paragraph next to it counts as beside
+/// it. One with no text, or that no merge holds, is gone. A merge of a
+/// single paragraph whose text did not change is that paragraph, kept.
 fn fates(
     tags: &[Option<usize>],
     source_story: impl Fn(usize) -> String,
@@ -847,9 +847,12 @@ fn fates(
             continue;
         }
         let story = source_story(h);
-        let near = |g: &usize| found[*g] != Fate::Gone && source_story(*g) == story;
-        let before = (0..h).rev().find(near);
-        let after = (h + 1..count).find(near);
+        // Only the very next paragraph on a side places it: one past another
+        // unplaced paragraph says nothing about which of them the text is.
+        let beside =
+            |g: Option<usize>| g.filter(|&g| found[g] != Fate::Gone && source_story(g) == story);
+        let before = beside(h.checked_sub(1));
+        let after = beside((h + 1 < count).then_some(h + 1));
         let merged_at = |g: Option<usize>| match g.map(|g| (found[g], spans[g])) {
             Some((Fate::Merged(post), Some(span))) => Some((post, span)),
             _ => None,
@@ -1339,6 +1342,38 @@ mod tests {
             [
                 Fate::Kept(0),
                 Fate::Merged(1),
+                Fate::Merged(1),
+                Fate::Merged(1),
+                Fate::Kept(2)
+            ]
+        );
+        // Only the paragraph beside a found member is placed by it: a
+        // removed X is not merged through the changed Qy past it.
+        assert_eq!(
+            check(
+                &["A", "X", "Qy", "z", "D"],
+                &["A", "yz", "D"],
+                &[Some(0), None, Some(4)]
+            ),
+            [
+                Fate::Kept(0),
+                Fate::Gone,
+                Fate::Merged(1),
+                Fate::Merged(1),
+                Fate::Kept(2)
+            ]
+        );
+        // So of two changed paragraphs side by side, the outer one has no
+        // found neighbour to place it, and reads as gone.
+        assert_eq!(
+            check(
+                &["A", "Xb", "Yc", "d", "D"],
+                &["A", "bcd", "D"],
+                &[Some(0), None, Some(4)]
+            ),
+            [
+                Fate::Kept(0),
+                Fate::Gone,
                 Fate::Merged(1),
                 Fate::Merged(1),
                 Fate::Kept(2)
