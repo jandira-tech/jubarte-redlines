@@ -46,6 +46,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A story's deleted or inserted last paragraph is a patch hunk of its own again.** The view writes that paragraph and the mark before it as separate changes, and since the settled dialect (#1135) the patch had joined them to the paragraph above (`@@ [p1] @@ Kept.[-\n\n-][-Last.-]`). `diff` and `patch_redline` now give `@@ -[p2] @@ [-Last.-]` (or `@@ [p2] @@ {+Last.+}`), also when Word split the paragraph into several marks or a line break sits in it. When another author changed the mark, accepting that change alone joins the paragraphs, so the mark stays a change named after its author.
 - **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
 - **Duplicate ZIP and OPC part identities are refused on every route**
   (#600). OPC part names compare ASCII-case-insensitively (ECMA-376
@@ -133,6 +134,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   them (101, 34) as it already did for indents, spacing and cell margins.
   `jubarte debug` still reports the literal value: a diagnostic describes,
   it does not repair.
+- **Writing an output works on Linux again (#1351).** cap-std opens
+  directories `O_PATH` there, and `fsync` on an `O_PATH` descriptor fails
+  with EBADF. Every write reported `Bad file descriptor (os error 9)` and
+  "durability uncertain" after the file was already in place. The
+  directory sync now opens `.` through the handle it holds, which walks no
+  path, so root confinement still holds.
 
 ### Added
 

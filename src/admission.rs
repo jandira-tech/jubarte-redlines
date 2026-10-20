@@ -407,8 +407,8 @@ pub(crate) fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, 
     Ok(declared)
 }
 
-/// Account for actual inflation, with the same refusal wherever a reader stops.
-pub(crate) fn account_inflated(
+/// Tally actual inflation, with the same refusal wherever a reader stops.
+pub(crate) fn tally_inflated(
     total: &mut u64,
     read: u64,
     name: &str,
@@ -541,7 +541,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             std::io::copy(&mut limited, &mut std::io::sink())
                 .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{name}: {e}")))?
         };
-        account_inflated(&mut total, read, &name, cap, &limits)?;
+        tally_inflated(&mut total, read, &name, cap, &limits)?;
     }
 
     let main_part = main_part(&names, &kept)?;
