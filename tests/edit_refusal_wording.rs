@@ -1125,7 +1125,7 @@ fn assert_loss_json(flags: &[&str]) {
         let summary = summary.unwrap();
         assert_eq!(
             summary["removed_comments"],
-            json!([{"id":"c0","author":"Bob","replies":["c1"]}]),
+            json!([{"id":"c0","author":"Bob","replies":["c1"],"why":"anchor removed by rejecting r1"}]),
             "{channel}: {summary}"
         );
         assert_eq!(summary["kept_comments"], json!([]));

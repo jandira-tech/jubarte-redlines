@@ -6163,14 +6163,13 @@ impl<'p> Transaction<'p> {
     /// The text of [`Self::deletion_comment`], or of a reply
     /// [`Self::reply_in_deleted`] names: what goes on the deleted text.
     fn deleted_text_comment(&self, op: usize) -> Option<&str> {
-        self.deletion_comment(op).or_else(|| {
-            match &self.plan.operations[op].kind {
+        self.deletion_comment(op)
+            .or_else(|| match &self.plan.operations[op].kind {
                 OperationKind::ReplyComment { text, .. } if self.reply_in_deleted(op) => {
                     Some(text.as_str())
                 }
                 _ => None,
-            }
-        })
+            })
     }
 
     /// The copy the comparer reads as the original: the base, with each
@@ -9031,17 +9030,6 @@ mod deeper_boundary_tests {
                 "comments on a deleted paragraph",
             ),
             (
-                Resolved::Thread {
-                    op: ThreadOp::Reply {
-                        parent: 7,
-                        text: "n".into(),
-                    },
-                    stories: vec![0],
-                    anchor: Some(0),
-                },
-                "replies to a comment whose reference is in a deleted paragraph",
-            ),
-            (
                 Resolved::FormatParagraph {
                     para: 0,
                     style: None,
@@ -9069,6 +9057,17 @@ mod deeper_boundary_tests {
             assert_eq!(e.outcomes[0].status, "ok");
             assert_eq!(e.outcomes[1].message.as_deref(), Some(message));
         }
+        // A reply to a comment in the deleted paragraph is not one: the
+        // tracked deletion keeps the reference in struck text (#1159).
+        let reply = Resolved::Thread {
+            op: ThreadOp::Reply {
+                parent: 7,
+                text: "n".into(),
+            },
+            stories: vec![0],
+            anchor: Some(0),
+        };
+        conflicts(&source, vec![Resolved::DeleteParagraph { para: 0 }, reply]).unwrap();
         let e = conflicts(
             &source,
             vec![

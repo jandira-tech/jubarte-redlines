@@ -2432,12 +2432,25 @@ fn compare_history(
             "candidate changed revision history retained in W",
         )
     };
-    let mut before = changes(working)?;
+    // The comment marks a revision holds are the comments' history, not
+    // the revision's: a comment added or removed beside one moves them.
+    let history = |bytes| {
+        changes(bytes).map(|listed| {
+            listed
+                .into_iter()
+                .map(|change| Change {
+                    holds_comments: Vec::new(),
+                    ..change
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let mut before = history(working)?;
     let ids: BTreeSet<_> = before.iter().map(|c| c.id.clone()).collect();
     let mut after = Vec::new();
     let mut seen_insertions = BTreeSet::new();
     let mut insertion_text = BTreeMap::<String, String>::new();
-    for mut change in changes(candidate)? {
+    for mut change in history(candidate)? {
         if let Some(origin) = change
             .inside
             .as_ref()
@@ -2558,6 +2571,30 @@ mod tests {
             Some("REVISION_PRESERVATION_FAILED".into()),
             "another author's words must survive inside an editor deletion"
         );
+    }
+
+    #[test]
+    fn history_guard_ignores_a_comment_mark_inside_a_kept_revision() {
+        // A comment added or removed beside another author's insertion moves
+        // the mark the change holds; the revision's history is the same.
+        let package = |mark: &str| {
+            docx(&format!(
+                r#"<w:p><w:ins w:id="6" w:author="Alice"><w:r><w:t>kept</w:t></w:r>{mark}</w:ins></w:p>"#
+            ))
+        };
+        let mark = r#"<w:r><w:commentReference w:id="0"/></w:r>"#;
+        for (working, candidate) in [(package(""), package(mark)), (package(mark), package(""))] {
+            for guard in [preserve_history, preserve_direct_history] {
+                let result = guard(
+                    &working,
+                    &candidate,
+                    &BTreeSet::new(),
+                    "Carol Diaz",
+                    &BTreeMap::new(),
+                );
+                assert!(result.is_ok(), "{result:?}");
+            }
+        }
     }
 
     #[test]
