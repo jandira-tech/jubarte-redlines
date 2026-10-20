@@ -220,6 +220,13 @@ jubarte's results now). `replace` and
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
+Without `whole` or `format`, a `replace` writes only the words that differ:
+the words it keeps keep their formatting (a bold defined term stays bold),
+and a character the document has where `replacement` has a plain
+look-alike stays (a curly quote, a non-breaking space). Words that all
+change are one change; a kept word between two changes splits them. To
+change only a quote's style, use `"whole": true`; a replace that changes
+nothing reports a `message` saying so.
 Paragraph selectors: an id as `read` prints it (`"p12"`, `"header1.p0"`,
 `"footnotes.p2"`, `"t0.row1.cell2"`, `"c5.text"`; the expired `"body:p:12"` is refused),
 `{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two

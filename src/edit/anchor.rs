@@ -43,7 +43,7 @@ fn probe_compare() {
 fn probe_compare() {}
 
 /// What `c` reads as, or `None` for a character that shows nothing.
-fn reads_as(c: char) -> Option<char> {
+pub(super) fn reads_as(c: char) -> Option<char> {
     match c {
         '\u{A0}' | '\u{2007}' | '\u{202F}' | '\u{2000}'..='\u{200A}' => Some(' '),
         // Curled and other look-alike quotes read as the straight one. A

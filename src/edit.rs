@@ -2619,6 +2619,10 @@ struct Transaction<'p> {
     origin: Option<origin::Origin>,
     outcomes: Vec<EditOutcome>,
     resolved: Vec<(usize, Resolved)>,
+    /// `(paragraph, start, end)` a `replace` names, by operation, where
+    /// its diff wrote only some of it: other operations conflict with the
+    /// whole range, its kept words too.
+    claims: BTreeMap<usize, (usize, usize, usize)>,
     /// While an operation naming `cN.text` resolves: `N` and the span of
     /// its paragraph's projection the comment covers. Anchors are looked
     /// up there only.
@@ -2783,6 +2787,7 @@ impl<'p> Transaction<'p> {
             origin,
             outcomes: Vec::new(),
             resolved: Vec::new(),
+            claims: BTreeMap::new(),
             anchor_window: std::cell::Cell::new(None),
             syntax: PlanSyntax::default(),
             comments: Vec::new(),
@@ -3273,6 +3278,7 @@ impl<'p> Transaction<'p> {
                         .map(|c| (n, c.start, c.end))
                 });
             self.anchor_window.set(window);
+            let mut claim = None;
             let result = match &op.kind {
                 OperationKind::Rewrite {
                     paragraph,
@@ -3386,7 +3392,22 @@ impl<'p> Transaction<'p> {
                     };
                     self.resolve_visible(&id, visible, revision, comment.as_deref())
                 }
-                other => self.resolve_one(&id, other).map(|(resolved, outcome)| {
+                other => self.resolve_one(&id, other).map(|(resolved, mut outcome)| {
+                    if let OperationKind::Replace {
+                        whole: false,
+                        format: None,
+                        ..
+                    } = other
+                    {
+                        if let Resolved::Text {
+                            para, start, end, ..
+                        } = resolved
+                        {
+                            claim = Some((para, start, end));
+                        }
+                        let pieces = self.replace_pieces(resolved, &mut outcome);
+                        return (pieces, outcome);
+                    }
                     // A deletion's comment sits on the words it strikes, as a
                     // strike's does: in the redline only.
                     let comment = match (other, &resolved) {
@@ -3413,6 +3434,9 @@ impl<'p> Transaction<'p> {
                     outcome.id = id;
                     outcome.kind = kind;
                     outcome.status = "ok".into();
+                    if let Some(claim) = claim {
+                        self.claims.insert(i, claim);
+                    }
                     self.note_rewrites(self.outcomes.len(), &resolved);
                     self.outcomes.push(outcome);
                     self.resolved
@@ -4514,6 +4538,75 @@ impl<'p> Transaction<'p> {
         (stories, reference)
     }
 
+    /// A `replace` as the word-level edits that make its matched text read
+    /// as the replacement (plan 12): kept words stay in their runs, with
+    /// their formatting and the document's characters (a curly quote the
+    /// anchor typed straight), and only the words that change are written,
+    /// a new one formatted like the text before it. A comment covers the
+    /// whole matched text. When a piece has no place to go, the replacement
+    /// stays one edit that re-types the range, as `whole` does.
+    fn replace_pieces(&self, resolved: Resolved, outcome: &mut EditOutcome) -> Vec<Resolved> {
+        let Resolved::Text {
+            para,
+            start,
+            end,
+            replacement,
+            comment,
+            ..
+        } = &resolved
+        else {
+            return vec![resolved];
+        };
+        let (para, start, end) = (*para, *start, *end);
+        let projection = &self.projections[para];
+        let text = &projection.text;
+        let mut pieces = Vec::new();
+        for (s, e, piece) in rewrite::replace_ranges(&text[start..end], replacement) {
+            let (s, e) = (start + s, start + e);
+            let mut attach_before = text[..s]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c != '\u{FFFC}');
+            let checked = if s == e {
+                self.check_insert_position(projection, s, attach_before)
+                    .or_else(|first| {
+                        self.check_insert_position(projection, s, !attach_before)
+                            .map(|()| attach_before = !attach_before)
+                            .map_err(|_| first)
+                    })
+            } else {
+                self.check_range(projection, s, e)
+            };
+            if checked.is_err() {
+                return vec![resolved];
+            }
+            pieces.push(Resolved::Text {
+                para,
+                start: s,
+                end: e,
+                replacement: piece,
+                comment: None,
+                attach_before,
+                format: None,
+            });
+        }
+        if pieces.is_empty() {
+            outcome.message = Some(
+                "nothing changed: the text already reads as the replacement (a look-alike such as a curly quote stays; whole: true writes the replacement as typed)"
+                    .into(),
+            );
+        }
+        if let Some(text) = comment.clone() {
+            pieces.push(Resolved::CommentRange {
+                para,
+                start,
+                end,
+                text,
+            });
+        }
+        pieces
+    }
+
     /// `rewrite`: the smallest word-level edits that make the paragraph read
     /// as `new_text`, each checked as a `replace` or an `insert` is.
     fn resolve_rewrite(
@@ -5326,8 +5419,16 @@ impl<'p> Transaction<'p> {
         self.check_comment_ids_fit()?;
         self.check_thread_ops()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
+        for (&i, &(para, start, end)) in &self.claims {
+            if deleted.contains(&para) {
+                return Err(self.conflict(i, "edits text of a deleted paragraph"));
+            }
+            ranges.entry(para).or_default().push((start, end, i));
+        }
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
+                // A replace's pieces lie inside the range it claims.
+                Resolved::Text { .. } if self.claims.contains_key(i) => continue,
                 Resolved::Text {
                     para, start, end, ..
                 } => (*para, *start, *end),
@@ -5988,15 +6089,16 @@ impl<'p> Transaction<'p> {
             // placed below land inside them, on the inserted text.
             let plan = self.plan;
             for edit in &edits {
-                let OperationKind::Replace {
-                    find, whole: true, ..
-                } = &plan.operations[edit.op].kind
+                let OperationKind::Replace { whole: true, .. } = &plan.operations[edit.op].kind
                 else {
                     continue;
                 };
                 if edit.replacement.is_empty() {
                     continue;
                 }
+                // The text the anchor matched, as the document has it: an
+                // anchor typed with look-alikes or Markdown marks reads as it.
+                let find = self.projections[para].text[edit.start..edit.end].to_string();
                 let s = new_position(&edits, edit.start, true, Some(edit.op));
                 let end = s + edit.replacement.len();
                 let story = self.paragraph_story[para].0;
@@ -6006,7 +6108,7 @@ impl<'p> Transaction<'p> {
                     node,
                     (s, end),
                     (edit.op, part),
-                    (find, &edit.replacement),
+                    (&find, &edit.replacement),
                 ) {
                     self.whole_marks.push(mark);
                 }
@@ -6020,8 +6122,15 @@ impl<'p> Transaction<'p> {
                 }
             }
             for (start, end, i, text) in comment_ranges.remove(&para).unwrap_or_default() {
-                let s = new_position(&edits, start, true, None);
-                let e = new_position(&edits, end, false, None);
+                // The operation's own insertions at either end of its
+                // range are its new text: its comment holds them.
+                let own_at_end: usize = edits
+                    .iter()
+                    .filter(|x| x.op == i && x.start == end && x.end == end)
+                    .map(|x| x.replacement.len())
+                    .sum();
+                let s = new_position(&edits, start, true, Some(i));
+                let e = new_position(&edits, end, false, None) + own_at_end;
                 pending.push((s, e, i, text));
             }
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
@@ -7352,7 +7461,8 @@ fn apply_text_edit(
         }
         return;
     }
-    let inside = inner_comment_references(dom, projection, start, end);
+    let mut inside = inner_comment_references(dom, projection, start, end);
+    inside.extend(closing_comment_references(dom, projection, start, end));
     let mut pending = Some(replacement);
     for seg in &projection.segments {
         if seg.end <= start || seg.start >= end {
@@ -7414,6 +7524,73 @@ fn inner_comment_references(
     dom.descendants(paragraph, Some(&W::name("commentReference")))
         .into_iter()
         .filter(|&r| at(r).is_some_and(|i| from < i && i < to))
+        .collect()
+}
+
+/// The references of the comments wholly inside `[start, end)` that close
+/// where it ends: the edit deletes all their text, as it does a comment
+/// whose reference stands between its first and last character, but the
+/// reference follows the last one, where [`inner_comment_references`]
+/// does not look. A comment that opens where the range opens is not one:
+/// replaced exactly, it keeps the new text.
+fn closing_comment_references(
+    dom: &Dom,
+    projection: &Projection,
+    start: usize,
+    end: usize,
+) -> Vec<NodeId> {
+    let node = |seg: &crate::inspect::Segment| match seg.piece {
+        Piece::Text { t, .. } => t,
+        Piece::Glyph { element, .. } => element,
+    };
+    let mut covered = projection
+        .segments
+        .iter()
+        .filter(|seg| seg.end > start && seg.start < end);
+    let (Some(first), Some(last)) = (covered.next(), covered.next_back()) else {
+        return Vec::new();
+    };
+    if last.end != end {
+        return Vec::new();
+    }
+    let Some(&paragraph) = dom.ancestors(node(first), Some(&W::p())).first() else {
+        return Vec::new();
+    };
+    let order = dom.descendants(paragraph, None);
+    let at = |n: NodeId| order.iter().position(|&o| o == n);
+    let (Some(from), Some(to)) = (at(node(first)), at(node(last))) else {
+        return Vec::new();
+    };
+    if from >= to {
+        return Vec::new();
+    }
+    let next = projection
+        .segments
+        .iter()
+        .find(|seg| seg.start >= end)
+        .and_then(|seg| at(node(seg)))
+        .unwrap_or(order.len())
+        .max(to + 1);
+    let marker = |local: &str, id: &str, range: std::ops::Range<usize>| {
+        order[range]
+            .iter()
+            .any(|&n| dom.name_is(n, &W::name(local)) && dom.attribute(n, &W::id()) == Some(id))
+    };
+    let opened: Vec<&str> = order[from + 1..to]
+        .iter()
+        .filter(|&&n| dom.name_is(n, &W::name("commentRangeStart")))
+        .filter_map(|&n| dom.attribute(n, &W::id()))
+        .filter(|id| marker("commentRangeEnd", id, to + 1..next))
+        .collect();
+    order[to + 1..next]
+        .iter()
+        .copied()
+        .filter(|&n| {
+            dom.name_is(n, &W::name("commentReference"))
+                && dom
+                    .attribute(n, &W::id())
+                    .is_some_and(|id| opened.contains(&id))
+        })
         .collect()
 }
 

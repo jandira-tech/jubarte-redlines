@@ -809,7 +809,7 @@ supports):
 
 | Kind | What it does |
 |---|---|
-| `replace` | Replace `find` with `replacement` in one paragraph; optional `format` for the new text, `"whole": true` for one deletion then one insertion |
+| `replace` | Replace `find` with `replacement` in one paragraph; only the words that differ are written, so kept words keep their formatting and characters (a curly quote or a non-breaking space stays where the replacement has the plain one); optional `format` for the new text, `"whole": true` for one deletion then one insertion as typed |
 | `insert` | Insert text `after` or `before` a match, or at `position` `start`/`end` |
 | `delete` | Delete a match |
 | `rewrite` | Give a paragraph's whole new text; only the words that differ are edited |
