@@ -5,6 +5,7 @@
 //! `edit --plan` and `add --plan` with operation flags record into the plan
 //! instead of editing; `--plan` alone applies it, and `--consume` deletes it
 //! once applied.
+#![cfg(feature = "cli")]
 
 mod common;
 
