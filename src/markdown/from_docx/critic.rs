@@ -231,7 +231,7 @@ fn pairable_attribution(a: Option<&str>, b: Option<&str>) -> bool {
 /// after it with content between them, printed or not, are two.
 fn one_change(old_by: Option<&str>, new_by: Option<&str>) -> bool {
     match (tag(old_by), tag(new_by)) {
-        (Some(old), Some(new)) => super::agent::same_change(tag_parts(old).0, tag_parts(new).0),
+        (Some(old), Some(new)) => super::agent::one_replacement(tag_parts(old).0, tag_parts(new).0),
         _ => true,
     }
 }

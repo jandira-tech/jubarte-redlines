@@ -1221,14 +1221,21 @@ fn a_replacement_with_a_paragraph_mark_side_counts_as_a_substitution() {
     }
 }
 
+/// A text box anchored where it stands, `content` its `w:txbxContent`.
+fn text_box(content: &str) -> String {
+    format!(
+        r#"<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2374265" cy="1403985"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="307" name="Text Box 2"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2374265" cy="1403985"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor>"#
+    )
+}
+
 /// A paragraph holding Bob's inserted text box (`w:ins` 12, its own text
 /// `w:ins` 14 and paragraph mark `w:ins` 13 inside the box), then his
 /// deletion 17 of the paragraph's text and of its mark (11).
 fn inserted_text_box_replacing_text() -> Vec<u8> {
     let at = format!(r#"w:author="{BOB}" w:date="{DATE}""#);
-    let anchor = format!(
-        r#"<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2374265" cy="1403985"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="307" name="Text Box 2"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2374265" cy="1403985"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:pPr><w:rPr><w:ins w:id="13" {at}/></w:rPr></w:pPr><w:ins w:id="14" {at}><w:r><w:t>Datum plane</w:t></w:r></w:ins></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor>"#
-    );
+    let anchor = text_box(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="13" {at}/></w:rPr></w:pPr><w:ins w:id="14" {at}><w:r><w:t>Datum plane</w:t></w:r></w:ins></w:p>"#
+    ));
     docx(&format!(
         r#"<w:p><w:pPr><w:rPr><w:del w:id="11" {at}/></w:rPr></w:pPr><w:ins w:id="12" {at}><w:r><w:drawing>{anchor}</w:drawing></w:r></w:ins>{}</w:p>{}"#,
         del(17, "Gone. ", BOB, DATE),
@@ -1262,6 +1269,59 @@ fn a_text_box_in_an_insertion_first_replacement_keeps_every_id() {
     assert_word_valid_package(&out.docx);
     assert_eq!(marks(&out.docx), marks(&doc), "the marks of\n{view}");
     assert_eq!(body(&agent(&out.docx)), body(&view), "agent fixed point");
+}
+
+/// A paragraph holding Bob's insertion 7 of `a` and of a text box whose
+/// text has no change of its own, then `host`.
+fn text_box_in_a_single_mark() -> Vec<u8> {
+    let at = format!(r#"w:author="{BOB}" w:date="{DATE}""#);
+    let anchor = text_box(r#"<w:p><w:r><w:t xml:space="preserve">box </w:t></w:r></w:p>"#);
+    docx(&format!(
+        r#"<w:p><w:ins w:id="7" {at}><w:r><w:t>a</w:t></w:r><w:r><w:drawing>{anchor}</w:drawing></w:r></w:ins><w:r><w:t xml:space="preserve">host</w:t></w:r></w:p>"#
+    ))
+}
+
+/// A text box with no change of its own prints its anchor's tag. A copy of
+/// a single-id tag is the anchor's mark, which holds the box already, so
+/// written back it takes no id of its own and warns of nothing, the box
+/// unchanged or edited (#1353 review).
+#[test]
+fn a_text_box_copy_of_a_single_id_tag_writes_no_mark_of_its_own() {
+    let doc = text_box_in_a_single_mark();
+    assert_eq!(ids(&doc), ["r7"]);
+    let view = agent(&doc);
+    assert!(view.contains("{++box ++}{r7 @B}"), "{view}");
+    let edited = view.replace("{++box ++}{r7 @B}", "{++box, edited ++}{r7 @B}");
+    for (name, view) in [("unchanged", &view), ("edited", &edited)] {
+        let out = markdown_to_docx(view, &DocxOptions::default()).unwrap();
+        assert!(
+            !out.warnings
+                .iter()
+                .any(|w| w.contains("names two separate changes")),
+            "{name}: {:?}",
+            out.warnings
+        );
+        assert_word_valid_package(&out.docx);
+        let kinds = |doc: &[u8]| -> Vec<(String, ChangeKind)> {
+            marks(doc)
+                .into_iter()
+                .map(|(id, kind, _)| (id, kind))
+                .collect()
+        };
+        assert_eq!(
+            kinds(&out.docx),
+            kinds(&doc),
+            "{name}: the marks of\n{view}"
+        );
+        // The drawing's payload records the box text's hash, which an edit
+        // changes; the text before it is the fixed point.
+        let text = |view: &str| body(view).split("\n\n[d1]:").next().unwrap().to_string();
+        assert_eq!(
+            text(&agent(&out.docx)),
+            text(view),
+            "{name}: agent fixed point"
+        );
+    }
 }
 
 /// #1363: content the view prints nothing for (a hidden run, a soft
@@ -1303,6 +1363,30 @@ fn a_deletion_and_an_insertion_apart_print_as_the_two_changes_they_are() {
     assert_eq!(
         body(&agent(&touching)),
         "<!-- p0 -->\npay {~~old~>new~~}{r1+2 @B} now"
+    );
+}
+
+/// A deletion and the insertion after it that repeat one `w:id` are two
+/// changes, as `changes` lists them (a repeated id never joins), so the
+/// view prints them apart, not as the composite `r7+7` no listing names
+/// (#1353 review).
+#[test]
+fn a_deletion_and_an_insertion_repeating_one_id_print_apart() {
+    let doc = docx(&p(&[
+        kept("pay "),
+        del(7, "old", BOB, DATE),
+        ins(7, "new", BOB, DATE),
+        kept(" now"),
+    ]));
+    assert_eq!(ids(&doc), ["r7", "r7"]);
+    let view = agent(&doc);
+    assert_eq!(
+        body(&view),
+        "<!-- p0 -->\npay {--old--}{r7 @B}{++new++}{r7 @B} now"
+    );
+    assert!(
+        view.contains("2 marks shown as 2 changes: 1 insertion, 1 deletion"),
+        "{view}"
     );
 }
 

@@ -318,6 +318,16 @@ pub(crate) fn same_change(a: &str, b: &str) -> bool {
     ids(a) == ids(b)
 }
 
+/// Whether a deletion and the insertion after it are one replacement, as
+/// `changes` lists it: they print the same ids, a joined one among them
+/// (`r3+4`). The same single id on both is a file repeating a `w:id`:
+/// `changes` lists two changes, so the view prints two.
+pub(crate) fn one_replacement(del: &str, ins: &str) -> bool {
+    let ids = |tag: &str| format_tag_by(tag, |_| String::new());
+    let (a, b) = (ids(del), ids(ins));
+    a == b && a.split("; ").any(|id| id.contains('+'))
+}
+
 /// A plain-view tag ([`plain_tag_of`]) as its note prints it: the ids,
 /// then the `Author (date)` note when there is one (`r1+2 Ana Lima
 /// (2026-09-29T14:05:00Z)`, `r7`).
@@ -634,7 +644,7 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
             && joined[i + 1].as_ref().is_some_and(|next| {
                 current.author == next.author
                     && current.date == next.date
-                    && same_change(&current.tag, &next.tag)
+                    && one_replacement(&current.tag, &next.tag)
             });
         if pair {
             let next = joined[i + 1].take().expect("checked above");

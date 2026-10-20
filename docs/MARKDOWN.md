@@ -132,6 +132,10 @@ reference definition holds its frame and a text-free template. Matching
 Markdown and word hashes restore the template's original structure (apart
 from package relationship and drawing ids); edited paragraphs rebuild the
 box content inside the same frame. The payload cannot override edited words.
+A box whose words carry no change of their own prints them with its
+anchor's tag (`{++box ++}{r7 @B}` inside an inserted drawing). That copy of
+a single id is the anchor's mark, which already holds the box, so the
+writer writes the words bare, with no id of their own and no warning.
 
 A text box nested in another box has an ordinary `![alt][dN]` token at its
 position inside the enclosing box's region. Its own regions follow the
@@ -733,7 +737,9 @@ A substitution is one change: only a deletion directly followed by a live
 insertion of the same change, as `changes` lists it, pairs as one. Two
 changes print apart, each with its own tag (#1363): one author's deletion
 and insertion with hidden text, a soft hyphen, a symbol or a page break
-between them, or a move and the insertion beside it. Proofing markers,
+between them, a move and the insertion beside it, or a deletion and an
+insertion that repeat one `w:id` (`{--old--}{r7 @B}{++new++}{r7 @B}`:
+`changes` never joins a repeated id). Proofing markers,
 bookmarks that print nothing, and empty runs may intervene; visible text
 and rendered content interrupt adjacency. An insertion followed by a
 deletion stays in document order, one change when they touch:
