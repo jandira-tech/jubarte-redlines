@@ -550,7 +550,7 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
 }
 
 #[test]
-fn neighbouring_marks_by_one_author_keep_each_id_and_their_text() {
+fn neighbouring_marks_by_one_author_are_one_change_named_on_each_piece() {
     let p = format!(
         "<w:p>{}{}{}</w:p>",
         run("a "),
@@ -559,7 +559,7 @@ fn neighbouring_marks_by_one_author_keep_each_id_and_their_text() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold++}{r7 @AC}{++ words++}{r8 @AC}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}\n"
     );
 }
 
@@ -1528,10 +1528,11 @@ fn rev_counts_revisions_inside_links_content_controls_and_fields() {
         ins(10, "Ann Counsel", "field")
     );
     let out = agent_with(&docx(&body_xml), TrackChanges::Accept, true);
+    // The link's mark joins the one before it, and the change is named
+    // once; the content control parts it from the rest.
     assert!(
-        body(&out).starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- p0 rev r7 @AC; r8 @AC; r9 @AC; r10 @AC -->\n"
-        ),
+        body(&out)
+            .starts_with("<!-- page 1 of 1 -->\n\n<!-- p0 rev r7+8 @AC; r9 @AC; r10 @AC -->\n"),
         "{out}"
     );
 }
@@ -3660,7 +3661,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &after,
-        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+\+\d+ @R\}¶\{r\d+\+\d+ @R\}\n",
     );
     let before = confirmed(
         &[
@@ -3682,7 +3683,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+\+\d+ @R\}¶\{r\d+\+\d+ @R\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),

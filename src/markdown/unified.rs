@@ -815,13 +815,30 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
 /// with the paragraph break (or, for the last paragraph, starts with the
 /// one before it). That break moves out of the change, after its comments,
 /// so the paragraph is a block of its own. A change that is only a break
-/// joins or splits paragraphs and stays as it is.
+/// joins or splits paragraphs and stays as it is, and so does one that
+/// starts inside a paragraph: its break joins that paragraph to the next.
 fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     fn same(out: &mut Vec<Segment>, text: &str) {
         match out.last_mut() {
             Some(Segment::Same(same)) => same.push_str(text),
             _ => out.push(Segment::Same(text.to_string())),
         }
+    }
+    // Whether the next change starts its paragraph: nothing but a list,
+    // quote or heading marker before it on its line.
+    fn starts_paragraph(out: &[Segment]) -> bool {
+        for segment in out.iter().rev() {
+            match segment {
+                Segment::Same(text) => match text.rsplit_once('\n') {
+                    Some((_, line)) => return !visible(line),
+                    None if visible(text) => return false,
+                    None => {}
+                },
+                Segment::Edit(_) => return false,
+                _ => {}
+            }
+        }
+        true
     }
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
     let mut after: Option<String> = None;
@@ -854,7 +871,10 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
         let leading = plain.len() - plain.trim_start_matches('\n').len();
         if plain.trim().is_empty() {
             out.push(Segment::Edit(edit));
-        } else if trailing >= 2 && marked.ends_with(&plain[plain.len() - trailing..]) {
+        } else if trailing >= 2
+            && marked.ends_with(&plain[plain.len() - trailing..])
+            && starts_paragraph(&out)
+        {
             let text = plain.split_off(plain.len() - trailing);
             marked.truncate(marked.len() - trailing);
             out.push(Segment::Edit(edit));

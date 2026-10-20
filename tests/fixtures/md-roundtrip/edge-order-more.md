@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 12                      # 12 marks shown as 12 changes: 6 insertions, 6 deletions
+revisions: 12                      # 12 marks shown as 10 changes: 5 insertions, 5 deletions
 comments: 1 thread open            # 1 comment: c0
 authors:
   document_owner: none             # no docProps/core.xml
@@ -24,7 +24,7 @@ Mark: {++new++}{r82 @AL}<a id="mark"></a>{--old--}{r83 @AL} [go](#mark).
 Range: {++new++}{r84 @AL}{=={--old--}{r85 @AL}==}{>>c0 @B: On the deletion.<<}.
 
 <!-- p3 -->
-Runs: {++AA ++}{r86 @AL}{++BB ++}{r87 @AL}{--CC --}{r88 @AL}{--DD--}{r89 @AL}.
+Runs: {++AA ++}{r86+87 @AL}{++BB ++}{r86+87 @AL}{--CC --}{r88+89 @AL}{--DD--}{r88+89 @AL}.
 
 <!-- p4 -->
 Days: {++new++}{r90 @EF}{--old--}{r91 @EF}.

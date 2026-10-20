@@ -1767,9 +1767,21 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         }
     }
     if f.resolved {
-        let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();
+        // Each mark prints its change's id: a change of several marks is
+        // named once (#1261).
+        let mut tags: Vec<String> = Vec::new();
+        for (_, tag) in stamped_revs(p) {
+            let tag = format_tag(&tag);
+            let joined = tag
+                .split_whitespace()
+                .next()
+                .is_some_and(|id| id.contains('+'));
+            if !(joined && tags.contains(&tag)) {
+                tags.push(tag);
+            }
+        }
         if !tags.is_empty() {
-            clauses.push(format!("rev {}", format_tags(&tags)));
+            clauses.push(format!("rev {}", tags.join("; ")));
         }
     }
     if !f.comments.is_empty() {
@@ -2372,7 +2384,16 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             Token::SubstituteEnd => "sub",
             _ => "mark",
         };
-        add(&tags.iter().collect::<Vec<_>>(), kind);
+        match (kind, tags.as_slice()) {
+            // A substitution of two tags is two changes, its deleted side's
+            // and its inserted side's (`{r3 @A; r5+6 @B}`); a joined one
+            // counts once with its other pieces (`¶{r5+6 @B}`, #1356).
+            ("sub", [old, new]) => {
+                add(&[old], "del");
+                add(&[new], "ins");
+            }
+            _ => add(&tags.iter().collect::<Vec<_>>(), kind),
+        }
     }
     for line in shown.lines() {
         if let Some(p) = view_notes::id_line(line) {

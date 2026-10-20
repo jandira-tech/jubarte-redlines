@@ -491,13 +491,15 @@ fn a_folded_change_never_pairs_as_a_substitution() {
 
 #[test]
 fn two_sole_nests_side_by_side_keep_their_own_changes() {
+    // Ana's two insertions are one change, and so are Ben's deletions in
+    // them; the change's two ids give each nest its own insertion back.
     let markdown = plain(&two_sole_nests());
     assert_eq!(
         markdown,
-        "{--a--}{r3 Ben Ode (2026-09-30T09:00:00Z) \
-         re r1 Ana Lima (2026-09-29T14:05:00Z)}\
-         {--b--}{r4 Ben Ode (2026-09-30T09:00:00Z) \
-         re r2 Ana Lima (2026-09-29T14:05:00Z)}\n"
+        "{--a--}{r3+4 Ben Ode (2026-09-30T09:00:00Z) \
+         re r1+2 Ana Lima (2026-09-29T14:05:00Z)}\
+         {--b--}{r3+4 Ben Ode (2026-09-30T09:00:00Z) \
+         re r1+2 Ana Lima (2026-09-29T14:05:00Z)}\n"
     );
     assert_eq!(plain(&written(&markdown)), markdown, "{markdown}");
     let document = part_string(&written(&markdown), "word/document.xml").unwrap();
@@ -1793,13 +1795,15 @@ fn review_1126_story_keeps_separate_authors_beside_a_nest() {
     );
     for kind in ["header", "footer"] {
         let view = agent(&in_story(&source, kind));
+        // Alice's two insertions are one change (`r3+6`) on each of its
+        // pieces, the nest's `re` too; Bob's deletion beside them is his.
         assert!(
             view.contains(&format!(
-                "{{++new++}}{{{kind}1.r6 @A}}{{--old--}}{{{kind}1.r7 @B}}"
+                "{{++new++}}{{{kind}1.r3+6 @A}}{{--old--}}{{{kind}1.r7 @B}}"
             )),
             "{view}"
         );
-        let note = format!("{{{kind}1.r4 @B re {kind}1.r3 @A}}");
+        let note = format!("{{{kind}1.r4 @B re {kind}1.r3+6 @A}}");
         assert_story_nested_round_trip(
             &source,
             kind,
@@ -1829,6 +1833,78 @@ fn review_1126_open_tag_identity_is_local_to_each_story_part() {
             &[revision_by(author, Some(date))],
         );
     }
+}
+
+/// In a header as in the body (#1261), a deletion and its author's
+/// insertion are one change (`r5+6`). A substitution nested in the
+/// insertion names it with `re`: the writer gives the deletion 5 and the
+/// insertion around the nest 6, and the nest's own sides 7 and 8.
+#[test]
+fn story_replacement_around_a_nest_gives_each_side_its_own_id() {
+    let view = "---\nauthors:\n  AL: Alice # 2 revisions, 2026-09-29T14:05:00Z\n  BO: Bob # 2 revisions, 2026-09-30T09:00:00Z\nheaders:\n  default: {id: header1, text: \"{--old--}{header1.r5+6 @AL}{~~x~>y~~}{header1.r7+8 @BO re header1.r5+6 @AL}.\"}\n---\nBody.\n";
+    let xml = part_string(&written(view), "word/header1.xml").unwrap();
+    let alice = revision_by("Alice", Some("2026-09-29T14:05:00Z"));
+    let bob = revision_by("Bob", Some("2026-09-30T09:00:00Z"));
+    assert_revision_tree(
+        &xml,
+        &[
+            ("w:del", "5", None),
+            ("w:ins", "6", None),
+            ("w:del", "7", Some("6")),
+            ("w:ins", "8", None),
+        ],
+        &[alice.clone(), alice, bob.clone(), bob],
+    );
+}
+
+/// A nest closing one mark of a change, then that change's next mark
+/// (#1354): `r7+9` names two marks, so ` gamma.` is mark 9, not more of
+/// mark 7, and the copy reads as the source does. Headers and footers
+/// pool their pieces the same way.
+#[test]
+fn a_nest_then_the_next_mark_of_its_change_writes_each_mark_once() {
+    let paragraph = r#"<w:p><w:r><w:t xml:space="preserve">Start </w:t></w:r>
+      <w:ins w:id="7" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:t xml:space="preserve">alpha </w:t></w:r>
+      <w:del w:id="8" w:author="Alice" w:date="2026-10-02T10:00:00Z"><w:r><w:delText>beta</w:delText></w:r></w:del></w:ins>
+      <w:ins w:id="9" w:author="Bob" w:date="2026-10-01T10:00:00Z"><w:r><w:t xml:space="preserve"> gamma.</w:t></w:r></w:ins></w:p>"#;
+    let source = docx(paragraph);
+    let tree = [
+        ("w:ins", "7", None),
+        ("w:del", "8", Some("7")),
+        ("w:ins", "9", None),
+    ];
+    assert_nested_round_trip(&source, &["{r8 @A re r7+9 @B}"], &tree);
+    for kind in ["header", "footer"] {
+        let note = format!("{{{kind}1.r8 @A re {kind}1.r7+9 @B}}");
+        assert_story_nested_round_trip(&source, kind, &[&note], &tree);
+    }
+}
+
+/// The body and the footnotes number their marks apart (#1355): the
+/// body's `r7+8` and a footnote's `footnotes.r7+8` are two changes, each
+/// of its own two marks.
+#[test]
+fn a_footnote_change_with_the_body_changes_ids_keeps_its_own_marks() {
+    let view = "---\nauthors:\n  B: Bob # 4 revisions, 2026-10-01T10:00:00Z\n---\nA{++x++}{r7+8 @B}{++y++}{r7+8 @B}[^1]\n\n[^1]: note {++m++}{footnotes.r7+8 @B}{++n++}{footnotes.r7+8 @B}\n";
+    let round = written(view);
+    let bob = revision_by("Bob", Some("2026-10-01T10:00:00Z"));
+    for part in ["document", "footnotes"] {
+        let xml = part_string(&round, &format!("word/{part}.xml")).unwrap();
+        assert_revision_tree(
+            &xml,
+            &[("w:ins", "7", None), ("w:ins", "8", None)],
+            &[bob.clone(), bob.clone()],
+        );
+    }
+    let back = agent(&round);
+    assert!(
+        back.contains("A{++x++}{r7+8 @B}{++y++}{r7+8 @B}[^1]"),
+        "{back}"
+    );
+    assert!(
+        back.contains("[^1]: note {++m++}{footnotes.r7+8 @B}{++n++}{footnotes.r7+8 @B}\n"),
+        "{back}"
+    );
 }
 
 /// A story substitution retains each side's metadata and uses consecutive notes.

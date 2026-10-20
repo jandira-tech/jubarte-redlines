@@ -202,7 +202,7 @@ fn resolved_headers_name_table_marks_and_moves_from_the_revision_list() {
 }
 
 #[test]
-fn revisions_header_counts_the_five_printed_nested_changes() {
+fn revisions_header_counts_three_changes_from_six_nested_marks() {
     let nested = format!(
         r#"<w:ins w:id="2" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t> will pay the </w:t></w:r>{}</w:ins>"#,
         revision("del", 3, "Bob", "insurers")
@@ -216,14 +216,16 @@ fn revisions_header_counts_the_five_printed_nested_changes() {
     ));
     assert_eq!(
         printed_counts(view.split("---\n").nth(2).unwrap()),
-        [4, 0, 1, 0, 0, 0]
+        [2, 0, 1, 0, 0, 0]
     );
-    assert!(view.contains("re r2 @A"), "{view}");
+    // Bob's insertions do not separate Alice's: hers are one change, and
+    // Bob's replacement starts inside it.
+    assert!(view.contains("re r0+2+5 @A"), "{view}");
     assert_summary(&view);
 }
 
 #[test]
-fn revisions_header_counts_seventeen_tags_from_eighteen_marks() {
+fn revisions_header_counts_fifteen_changes_from_eighteen_marks() {
     let mut xml = String::new();
     for id in [0, 2, 4] {
         xml.push_str(&format!(r#"<w:p><w:ins w:id="{id}" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t>live</w:t></w:r>{}</w:ins></w:p>"#, revision("del", id + 1, "Bob", "nested")));
@@ -256,9 +258,11 @@ fn revisions_header_counts_seventeen_tags_from_eighteen_marks() {
     ));
     let view = agent(&xml);
     assert!(view.contains("revisions: 18"), "{view}");
+    // Neighbouring insertions by one author are one change: `r8+9`,
+    // `r12+13`.
     assert_eq!(
         printed_counts(view.split("---\n").nth(2).unwrap()),
-        [9, 7, 1, 0, 0, 0]
+        [7, 7, 1, 0, 0, 0]
     );
     assert_summary(&view);
 }
@@ -458,6 +462,27 @@ fn a_point_comment_after_an_insertion_keeps_the_header_and_body_in_step() {
     .unwrap()
     .markdown;
     assert!(view.contains("++}{r1 @A}{>>c0"), "{view}");
+    assert_summary(&view);
+}
+
+/// A substitution note of two tags names two changes (#1356): Bob's
+/// move-from `r3`, whose text he replaced, and his insertion `r5+6`,
+/// whose paragraph mark prints `¶{r5+6 @B}` and is the same change,
+/// counted once. The move's other side, `r4`, is a third.
+#[test]
+fn a_two_tag_substitution_counts_each_side_and_a_joined_side_once() {
+    let at = r#"w:author="Bob" w:date="2026-10-16T10:00:00Z""#;
+    let view = agent(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="6" {at}/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:moveFromRangeStart w:id="20" {at} w:name="move1"/><w:moveFrom w:id="3" {at}><w:r><w:t>General</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:ins w:id="5" {at}><w:r><w:t>CONSENT</w:t></w:r></w:ins></w:p><w:p><w:r><w:t xml:space="preserve">Then </w:t></w:r><w:moveToRangeStart w:id="21" {at} w:name="move1"/><w:moveTo w:id="4" {at}><w:r><w:t>General</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:r><w:t xml:space="preserve"> end.</w:t></w:r></w:p>"#
+    ));
+    assert!(
+        view.contains("Pay {~~General~>CONSENT~~}{r3 @B; r5+6 @B}¶{r5+6 @B}"),
+        "{view}"
+    );
+    assert!(
+        revisions_line(&view).ends_with("# 4 marks shown as 3 changes: 2 insertions, 1 deletion"),
+        "{view}"
+    );
     assert_summary(&view);
 }
 

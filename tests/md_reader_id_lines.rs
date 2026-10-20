@@ -384,10 +384,17 @@ fn a_line_break_in_a_cell_stays_a_line_break() {
 
 #[test]
 fn a_cell_paragraph_keeps_the_mark_its_table_line_names() {
+    // The cell paragraph's text and its mark are one change: the cell and
+    // the table line both name it, and the writer gives each its own mark.
     let body = "<!-- p0 -->\nBefore.\n\n\
-                <!-- t0 2x2, cells t0.row0 p1-p3 t0.row1 p4-p5, break-ins r5 @AC in p1 -->\n\
-                |{++A++}{r6 @AC}{++<br>B++}{r7 @AC}|C|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
+                <!-- t0 2x2, cells t0.row0 p1-p3 t0.row1 p4-p5, break-ins r6+5 @AC in p1 -->\n\
+                |{++A++}{r6+5 @AC}{++<br>B++}{r7 @AC}|C|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
+    // A view that names the two marks apart reads back as the one change.
+    let apart = body
+        .replace("break-ins r6+5", "break-ins r5")
+        .replace("{r6+5 @AC}", "{r6 @AC}");
+    assert_eq!(round_trip(&format!("{AUTHORS}{apart}")), body.trim());
 }
 
 #[test]
@@ -760,12 +767,12 @@ fn a_substitution_keeps_each_id_on_its_side_and_the_deletion_first() {
         (
             "{~~CC DD~>AA BB ~~}{r3+4+1+2 @AC}",
             &["del3", "del4", "ins1", "ins2"][..],
-            "{--CC --}{r3 @AC}{~~DD~>AA ~~}{r4+1 @AC}{++BB ++}{r2 @AC}",
+            "{--CC --}{r3+4+1+2 @AC}{~~DD~>AA ~~}{r3+4+1+2 @AC}{++BB ++}{r3+4+1+2 @AC}",
         ),
         (
             "{~~BBCC~>AA~~}{r2+3+1 @AC}",
             &["del2", "del3", "ins1"],
-            "{--BBC--}{r2 @AC}{~~C~>AA~~}{r3+1 @AC}",
+            "{--BBC--}{r2+3+1 @AC}{~~C~>AA~~}{r2+3+1 @AC}",
         ),
         (
             "{~~[old](https://example.com/)~>[new](https://example.com/)~~}{r2+1 @AC}",
@@ -781,6 +788,9 @@ fn a_substitution_keeps_each_id_on_its_side_and_the_deletion_first() {
         assert_eq!(marks(&docx), want, "{body}");
         let again = format!("<!-- p0 -->\nA {shown} z.");
         assert_eq!(round_trip(&view), again, "{body}");
+        // The pieces the view shows write back the same marks.
+        let shown_view = format!("{AUTHORS}<!-- p0 -->\nA {shown} z.\n");
+        assert_eq!(round_trip(&shown_view), again, "{shown}");
     }
 }
 
@@ -848,13 +858,14 @@ fn a_dated_range_puts_its_last_day_on_the_mark_written_last() {
 #[test]
 fn a_note_inserted_or_deleted_with_its_reference_keeps_words_shape() {
     // Word marks such a note's paragraph mark (`footnotes.r11`) and wraps
-    // its reference mark and text in one change (`footnotes.r12`); the
-    // view prints the note in its reference's change and names both.
+    // its reference mark and text in another mark (`footnotes.r12`); the
+    // view prints the note in its reference's change and names the note's
+    // own change after it, its text first: `footnotes.r12+11`.
     let body = "<!-- p0 -->\nAdded{++[^1]++}{r10 @AC} and cut{--[^2]--}{r20 @AC}.\n\n\
                 <!-- footnotes.p0 -->\n\
-                {++[^1]: An inserted note.++}{r10 @AC} <!-- rev footnotes.r11 @AC; footnotes.r12 @AC -->\n\
+                {++[^1]: An inserted note.++}{r10 @AC} <!-- rev footnotes.r12+11 @AC -->\n\
                 <!-- footnotes.p1 -->\n\
-                {--[^2]: A deleted note.--}{r20 @AC} <!-- rev-del footnotes.r21 @AC; footnotes.r22 @AC -->";
+                {--[^2]: A deleted note.--}{r20 @AC} <!-- rev-del footnotes.r22+21 @AC -->";
     let docx = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}\n")),
         &DocxOptions::default(),
@@ -908,8 +919,8 @@ fn a_tracked_note_reads_with_one_space_after_its_label() {
     .expect("the docx reads")
     .markdown;
     for line in [
-        "{++[^1]: An inserted note.++}{r10 @AL} <!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->",
-        "{--[^2]: A deleted note.--}{r20 @AL} <!-- rev-del footnotes.r21 @AL; footnotes.r22 @AL -->",
+        "{++[^1]: An inserted note.++}{r10 @AL} <!-- rev footnotes.r12+11 @AL -->",
+        "{--[^2]: A deleted note.--}{r20 @AL} <!-- rev-del footnotes.r22+21 @AL -->",
     ] {
         assert!(view.contains(line), "{line} in {view}");
     }
@@ -918,8 +929,8 @@ fn a_tracked_note_reads_with_one_space_after_its_label() {
 #[test]
 fn a_note_of_two_paragraphs_keeps_them() {
     // The view joins a note's paragraphs with `<br>` when its id line
-    // counts them; a note in its reference's change names every mark of its
-    // own after it, paragraph marks too.
+    // counts them; a note in its reference's change names its own changes
+    // after it, one for each paragraph's text and mark.
     let docx = std::fs::read("tests/fixtures/md-roundtrip/edges/edge-notes-tracked.docx")
         .expect("the edge fixture");
     let view = read(
@@ -932,7 +943,7 @@ fn a_note_of_two_paragraphs_keeps_them() {
     .expect("the docx reads")
     .markdown;
     let line = "<!-- footnotes.p2-p3 -->\n{++[^3]: Two paragraphs,<br>inserted.++}{r30 @AL} \
-                <!-- rev footnotes.r31 @AL; footnotes.r32 @AL; footnotes.r33 @AL; footnotes.r34 @AL -->";
+                <!-- rev footnotes.r32+31 @AL; footnotes.r34+33 @AL -->";
     assert!(view.contains(line), "{line} in {view}");
     for body in [
         "<!-- p0 -->\nSee[^1].\n\n<!-- footnotes.p0-p1 -->\n[^1]: One,<br>two.",
@@ -1178,7 +1189,7 @@ fn a_run_that_prints_nothing_keeps_no_two_marks_apart() {
 }
 
 #[test]
-fn a_header_keeps_insertion_then_deletion_and_distinct_ids() {
+fn a_header_keeps_insertion_then_deletion_apart_and_writes_back_each_mark() {
     // As in the body: insertion then deletion remains separate, and every
     // mark keeps its own id even beside another mark by the same author.
     let mark = |kind: &str, id: u32, text: &str| {
@@ -1220,7 +1231,8 @@ fn a_header_keeps_insertion_then_deletion_and_distinct_ids() {
     let view = read(&docx, &options).expect("the docx reads").markdown;
     for want in [
         "Sub {++new++}{header1.r90 @AL}{--old--}{header1.r91 @AL}.",
-        "Runs {++A++}{header1.r92 @AL}{++B++}{header1.r93 @AL}{--C--}{header1.r94 @AL}{--D--}{header1.r95 @AL}.",
+        // Neighbouring marks of one kind are one change.
+        "Runs {++A++}{header1.r92+93 @AL}{++B++}{header1.r92+93 @AL}{--C--}{header1.r94+95 @AL}{--D--}{header1.r94+95 @AL}.",
     ] {
         assert!(view.contains(want), "{want} in {view}");
     }
@@ -1288,7 +1300,7 @@ fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
     let (again, docx) = full_trip(view);
     for line in [
         "  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}",
-        "  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{footer1.r31 @AL}¶{footer1.r60 @AL}\", \"\"], \
+        "  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{footer1.r31+60 @AL}¶{footer1.r31+60 @AL}\", \"\"], \
          rev: break-del footer1.r61 @BC in footer1; \
          break-del footer1.r40 @BC in footer1.p1}",
     ] {

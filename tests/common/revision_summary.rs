@@ -111,8 +111,9 @@ fn printed_tags(body: &str) -> Vec<(String, usize)> {
         .collect::<Vec<_>>();
     let visible = |at: usize| !escaped(at) && !comments.iter().any(|range| range.contains(&at));
     let own = |attribution: &str| attribution.split_whitespace().next().unwrap().to_string();
+    // A note may name several changes, `; ` between them, before its `re`.
     let inline = Regex::new(&format!(
-        r"(\+\+\}}|--\}}|~~\}})[*_`]*\{{({attribution})\}}"
+        r"(\+\+\}}|--\}}|~~\}})[*_`]*\{{({part}(?:; {part})*(?: re {part})*)\}}"
     ))
     .unwrap();
     for cap in inline.captures_iter(body) {
@@ -124,7 +125,15 @@ fn printed_tags(body: &str) -> Vec<(String, usize)> {
             "--}" => 1,
             _ => 2,
         };
-        tags.push((own(&cap[2]), kind));
+        let own_tags = cap[2].split(" re ").next().unwrap();
+        match own_tags.split("; ").collect::<Vec<_>>().as_slice() {
+            // A substitution of two tags is a deletion and an insertion.
+            [old, new] if kind == 2 => {
+                tags.push((own(old), 1));
+                tags.push((own(new), 0));
+            }
+            _ => tags.push((own(&cap[2]), kind)),
+        }
     }
     for cap in Regex::new(&format!(r"¶\{{({attribution})\}}"))
         .unwrap()

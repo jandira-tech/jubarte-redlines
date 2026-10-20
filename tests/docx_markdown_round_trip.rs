@@ -52,7 +52,7 @@ fn read(docx: &[u8], track_changes: TrackChanges) -> String {
 /// Where the Markdown read back differs, and why the Word documents still
 /// hold the same changes. Accepting and rejecting agree for all of them
 /// but the formatting change.
-const KNOWN: [(&str, TrackChanges, &str); 4] = [
+const KNOWN: [(&str, TrackChanges, &str); 5] = [
     (
         "hard-notes",
         TrackChanges::All,
@@ -69,6 +69,13 @@ const KNOWN: [(&str, TrackChanges, &str); 4] = [
         "hard-comments",
         TrackChanges::All,
         "a comment on inserted text starts before the w:ins, not inside it",
+    ),
+    (
+        "hard-formatting",
+        TrackChanges::All,
+        "the source gives w:id 0 to an insertion and to two formatting changes, \
+         so `r0` cannot join the insertions beside it (`changes` keeps it apart \
+         too); the written copy numbers each mark once, and `r0+1+2` is one change",
     ),
     (
         "hard-formatting",

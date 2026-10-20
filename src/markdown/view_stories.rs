@@ -152,13 +152,13 @@ struct Marks<'p> {
     pools: HashMap<Vec<u32>, Pool>,
 }
 
-/// One joined id's pieces in a story part: how many marks they write, the
-/// next one to take its id, and the one taken last.
+/// One joined id's pieces in a story part: how many marks they write, and
+/// the mark each piece and each `re` naming it takes, in reading order.
 #[derive(Debug, Default)]
 struct Pool {
     slots: usize,
-    next: usize,
-    current: Option<usize>,
+    own: std::collections::VecDeque<usize>,
+    parents: std::collections::VecDeque<usize>,
 }
 
 impl Pool {
@@ -173,45 +173,193 @@ impl Pool {
     }
 }
 
-/// The joined ids `texts` and the paragraph marks `marks` print on more
-/// than one piece, each with the marks its pieces write: a substitution
-/// one tag names writes two, every other piece one.
-fn pools<'t>(
-    texts: &[&str],
-    marks: impl IntoIterator<Item = &'t super::view_notes::Tag>,
-) -> HashMap<Vec<u32>, Pool> {
-    use super::critic::Token;
-    let mut found: HashMap<Vec<u32>, (usize, Pool)> = HashMap::new();
-    let mut piece = |tag: &super::view_notes::Tag, slots: usize| {
-        let (notes, pool) = found.entry(tag.ids.clone()).or_default();
-        *notes += 1;
-        pool.slots += slots;
-    };
-    for text in texts {
-        for (token, note) in super::critic::attributed_notes(text) {
-            let own = note.split(" re ").next().unwrap_or_default();
-            let Some(tags) = super::view_notes::revision_tags(own) else {
-                continue;
-            };
-            match (token, tags.as_slice()) {
-                (Token::SubstituteEnd, [one]) => piece(one, 2),
-                (Token::SubstituteEnd, [old, new, ..]) => {
-                    piece(old, 1);
-                    piece(new, 1);
+/// What the story writer reads, in order, as the body's writer reads its
+/// runs ([`pools`]).
+enum Read {
+    /// A piece's own tag, with the element it writes.
+    Own(Vec<u32>, &'static str),
+    /// A `re` naming the change around the piece.
+    Parent(Vec<u32>, &'static str),
+    /// A paragraph mark.
+    Mark(Vec<u32>),
+    /// A piece ends.
+    End,
+    /// Text, a field or a drawing: what parts two pieces.
+    Gap,
+}
+
+/// The other of `w:ins` and `w:del`: each `re` level alternates them.
+fn other_mark(name: &str) -> &'static str {
+    if name == "w:ins" { "w:del" } else { "w:ins" }
+}
+
+/// [`Read`]s of one paragraph's text, as [`runs`] reads it.
+fn reads(text: &str, out: &mut Vec<Read>) {
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if let Some(after) = rest.strip_prefix("{>>")
+            && let Some(end) = after.find("<<}")
+        {
+            rest = &after[end + 3..];
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix("\\{") {
+            out.push(Read::Gap);
+            rest = after;
+            continue;
+        }
+        if let Some((_, len)) = super::from_docx::drawing::at(rest) {
+            out.push(Read::Gap);
+            rest = &rest[len..];
+            continue;
+        }
+        if let Some((change, after)) = change(rest) {
+            let (tags, mut parents, after) = tags_after(after);
+            match change {
+                Change::Insert(_) | Change::Delete(_) => {
+                    let mut name = if matches!(change, Change::Insert(_)) {
+                        "w:ins"
+                    } else {
+                        "w:del"
+                    };
+                    let mut seen: std::collections::HashSet<u32> =
+                        tags.iter().flat_map(|tag| &tag.ids).copied().collect();
+                    let distinct = parents
+                        .iter()
+                        .take_while(|parent| parent.ids.iter().all(|id| seen.insert(*id)))
+                        .count();
+                    parents.truncate(distinct);
+                    if let Some(tag) = tags.first() {
+                        out.push(Read::Own(tag.ids.clone(), name));
+                    }
+                    for parent in &parents {
+                        name = other_mark(name);
+                        out.push(Read::Parent(parent.ids.clone(), name));
+                    }
+                    out.push(Read::End);
                 }
-                (_, [first, ..]) => piece(first, 1),
-                (_, []) => {}
+                Change::Substitute(..) => {
+                    let (old, new) = match tags.as_slice() {
+                        [one] => (Some(one), Some(one)),
+                        [old, new, ..] => (Some(old), Some(new)),
+                        [] => (None, None),
+                    };
+                    if let Some(old) = old {
+                        out.push(Read::Own(old.ids.clone(), "w:del"));
+                    }
+                    let mut name = "w:ins";
+                    for parent in &parents {
+                        out.push(Read::Parent(parent.ids.clone(), name));
+                        name = other_mark(name);
+                    }
+                    out.push(Read::End);
+                    if let Some(new) = new {
+                        out.push(Read::Own(new.ids.clone(), "w:ins"));
+                    }
+                    out.push(Read::End);
+                }
             }
+            rest = after;
+            continue;
+        }
+        if let Some((field, after)) = field(rest) {
+            out.push(Read::Gap);
+            if let Field::Coded(_, result) = field {
+                reads(result, out);
+                out.push(Read::Gap);
+            }
+            rest = after;
+            continue;
+        }
+        out.push(Read::Gap);
+        rest = &rest[c.len_utf8()..];
+    }
+}
+
+/// The joined ids a story part prints on more than one piece, each with
+/// the mark every piece and `re` takes. As in the body
+/// (`Writer::share_pooled_ids`): a piece split around a nest in it goes
+/// on with its mark, and so does the nest; a piece of another kind is
+/// another mark; a nest right after a nest is the next mark while the
+/// ids last; and a change with ids to spare starts its next marks at the
+/// pieces right after a nest, the first ones first (#1354).
+fn pools(read: &[Read]) -> HashMap<Vec<u32>, Pool> {
+    let mut notes: HashMap<&[u32], usize> = HashMap::new();
+    for one in read {
+        if let Read::Own(ids, _) | Read::Parent(ids, _) | Read::Mark(ids) = one {
+            *notes.entry(ids).or_default() += 1;
         }
     }
-    for tag in marks {
-        piece(tag, 1);
-    }
-    found
-        .into_iter()
-        .filter(|(ids, (notes, _))| ids.len() > 1 && *notes > 1)
-        .map(|(ids, (_, pool))| (ids, pool))
-        .collect()
+    let pooled = |ids: &[u32]| ids.len() > 1 && notes.get(ids).is_some_and(|n| *n > 1);
+    let place = |split: &dyn Fn(&[u32]) -> bool, spare: &dyn Fn(&[u32]) -> usize| {
+        let mut found: HashMap<Vec<u32>, Pool> = HashMap::new();
+        let mut current: HashMap<&[u32], (usize, Option<&str>)> = HashMap::new();
+        let mut spent: HashMap<&[u32], usize> = HashMap::new();
+        let mut before: Vec<(&[u32], bool)> = Vec::new();
+        let mut now: Vec<(&[u32], bool)> = Vec::new();
+        for one in read {
+            let (ids, kind, nested) = match one {
+                Read::Own(ids, kind) => (ids, Some(*kind), false),
+                Read::Parent(ids, kind) => (ids, Some(*kind), true),
+                Read::Mark(ids) => (ids, None, false),
+                Read::End => {
+                    before = std::mem::take(&mut now);
+                    continue;
+                }
+                Read::Gap => {
+                    before.clear();
+                    now.clear();
+                    continue;
+                }
+            };
+            if !pooled(ids) {
+                continue;
+            }
+            let pool = found.entry(ids.clone()).or_default();
+            let mut goes_on = false;
+            let mut after_nest = false;
+            for &(other, inside) in &before {
+                if other == ids.as_slice() && kind.is_some() {
+                    goes_on |= nested != inside || (nested && !split(ids));
+                    after_nest |= !nested && inside;
+                }
+            }
+            let taken = spent.entry(ids.as_slice()).or_default();
+            let slot = match current.get(ids.as_slice()) {
+                Some(&(_, was)) if goes_on && was == kind && after_nest && *taken < spare(ids) => {
+                    *taken += 1;
+                    pool.slots += 1;
+                    pool.slots - 1
+                }
+                Some(&(at, was)) if goes_on && was == kind => at,
+                _ => {
+                    pool.slots += 1;
+                    pool.slots - 1
+                }
+            };
+            current.insert(ids, (slot, kind));
+            if nested {
+                pool.parents.push_back(slot);
+            } else {
+                pool.own.push_back(slot);
+            }
+            if kind.is_none() {
+                before.clear();
+                now.clear();
+            } else {
+                now.push((ids, nested));
+            }
+        }
+        found
+    };
+    let apart = place(&|_| true, &|_| 0);
+    let split = |ids: &[u32]| apart.get(ids).is_none_or(|pool| ids.len() >= pool.slots);
+    let spare = |ids: &[u32]| {
+        apart
+            .get(ids)
+            .map_or(0, |pool| ids.len().saturating_sub(pool.slots))
+    };
+    place(&split, &spare)
 }
 
 impl Marks<'_> {
@@ -219,9 +367,7 @@ impl Marks<'_> {
     /// several pieces; `None` when the tag's own ids apply.
     fn take(&mut self, tag: &super::view_notes::Tag) -> Option<Vec<u32>> {
         let pool = self.pools.get_mut(&tag.ids)?;
-        let slot = pool.next;
-        pool.next += 1;
-        pool.current = Some(slot);
+        let slot = pool.own.pop_front().unwrap_or(pool.slots);
         Some(pool.ids(&tag.ids, slot))
     }
 
@@ -236,16 +382,16 @@ impl Marks<'_> {
     }
 
     /// The mark `name` of a change `re` names around a nested one: the
-    /// piece of it read last, which the nest sits in.
+    /// mark of it [`pools`] found the nest in.
     fn parent(&mut self, name: &str, tag: &super::view_notes::Tag) -> String {
-        let current = self.pools.get(&tag.ids).and_then(|pool| {
-            pool.current
-                .map(|slot| pool.ids(&tag.ids, slot).first().copied())
-        });
-        match current {
-            Some(id) => self.mark_id(name, Some(tag), id),
-            None => self.piece(name, tag),
-        }
+        let id = match self.pools.get_mut(&tag.ids) {
+            Some(pool) => {
+                let slot = pool.parents.pop_front().unwrap_or(pool.slots);
+                pool.ids(&tag.ids, slot).first().copied()
+            }
+            None => tag.ids.first().copied(),
+        };
+        self.mark_id(name, Some(tag), id)
     }
 
     /// `w:ins w:id="5" w:author="…" w:date="…"`: the start tag's name and
@@ -1629,18 +1775,10 @@ fn story_part(
             placed.entry(index).or_default().extend(tags);
         }
     }
-    marks.pools = pools(
-        &texts,
-        paragraph_marks
-            .values()
-            .flatten()
-            .chain(&unplaced)
-            .map(|(_, tag)| tag),
-    );
-    let mut body = String::new();
-    let last = texts.len() - 1;
-    for (index, text) in texts.iter().enumerate() {
-        let mut text = *text;
+    // A paragraph's inline marks (`¶{footer1.r3 @AC}` at its end) join
+    // the ones `rev` names, before the pieces are read.
+    for (index, whole) in texts.iter_mut().enumerate() {
+        let mut text: &str = whole;
         let mut inline_marks = Vec::new();
         while let Some((body, tail)) = text.rsplit_once('¶') {
             let Some((note, width)) = super::critic::attribution_tag(tail) else {
@@ -1657,10 +1795,34 @@ fn story_part(
             inline_marks.push(("w:ins", tag));
             text = body;
         }
-        paragraph_marks
-            .entry(index)
-            .or_default()
-            .extend(inline_marks.into_iter().rev());
+        *whole = text;
+        if !inline_marks.is_empty() {
+            paragraph_marks
+                .entry(index)
+                .or_default()
+                .extend(inline_marks.into_iter().rev());
+        }
+    }
+    let last = texts.len() - 1;
+    // Every piece in the order the writer reaches it: a paragraph's runs,
+    // then its mark (`w:ins` before `w:del`), and after the last one the
+    // empty marks `rev` names no paragraph for.
+    let mut read = Vec::new();
+    for (index, text) in texts.iter().enumerate() {
+        reads(text, &mut read);
+        if let Some(named) = paragraph_marks.get_mut(&index) {
+            named.sort_by_key(|(name, _)| *name != "w:ins");
+            read.extend(named.iter().map(|(_, tag)| Read::Mark(tag.ids.clone())));
+        }
+        if index == last {
+            read.extend(unplaced.iter().map(|(_, tag)| Read::Mark(tag.ids.clone())));
+        }
+        read.push(Read::Gap);
+    }
+    marks.pools = pools(&read);
+    let mut body = String::new();
+    for (index, text) in texts.iter().enumerate() {
+        let text = *text;
         let style = match story.styles.as_slice() {
             [one] => one.as_str(),
             many => many.get(index).map_or(style, String::as_str),
@@ -1694,9 +1856,8 @@ fn story_part(
         // change that ends there, so it takes that change's last id.
         let mut content = runs(text, marks, &drawings);
         let mut properties = base.clone();
-        if let Some(mut named) = paragraph_marks.remove(&index) {
-            // `w:ins` comes before `w:del` in `w:rPr`.
-            named.sort_by_key(|(name, _)| *name != "w:ins");
+        if let Some(named) = paragraph_marks.remove(&index) {
+            // `w:ins` comes before `w:del` in `w:rPr`, sorted above.
             properties.push_str("<w:rPr>");
             for (name, tag) in &named {
                 let _ = write!(properties, "<{}/>", marks.piece(name, tag));

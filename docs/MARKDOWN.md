@@ -1248,9 +1248,11 @@ ends with `--force`.
   (a page break added after Word last saved turns no page) and does not
   add the blank page an odd- or even-page section start can need.
 - A table is one block for `-p`, `--head` and `--tail`.
-- Distinct revision ids keep separate attribution tags, including when a
-  comment range lies between them. Resolved views preserve them as separate
-  clauses: `rev r7 @AC; r8 @AC`.
+- A change Word wrote as several marks prints its joined id on each of its
+  pieces, as `changes` lists it (`{++bold++}{r7+8 @AC}{++ words++}{r7+8
+  @AC}`); a comment range between the marks does not part them. Separate
+  changes keep separate tags, and resolved views name each change once:
+  `rev r7+8 @AC; r9 @AC`.
 
 ## Diffs
 

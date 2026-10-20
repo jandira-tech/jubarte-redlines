@@ -10,7 +10,7 @@ More text
 
 Text before an inserted heading.¶{r3 Ana Lima (2026-10-01T00:20:00Z)}
 
-## {++Inserted heading++}{r4 Ana Lima (2026-10-01T00:20:00Z)}¶{r5 Ana Lima (2026-10-01T00:20:00Z)}
+## {++Inserted heading++}{r4+5 Ana Lima (2026-10-01T00:20:00Z)}¶{r4+5 Ana Lima (2026-10-01T00:20:00Z)}
 
 
 

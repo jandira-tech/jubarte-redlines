@@ -242,7 +242,7 @@ fn open(source: &[u8], refusal: &AnchorRefusal<'_>) -> Result<Snapshot, Box<Erro
 enum Target<'s> {
     /// The target exists, and this is its own text in the source.
     Here(&'s str),
-    /// The target names several changes (`r1+2`): it exists, but no one
+    /// The target names several marks (`r1+2`): it exists, but no one
     /// text carries an anchor.
     SeveralChanges,
     /// The source does not have the target.
@@ -282,18 +282,28 @@ fn find_target<'s>(snap: &'s Snapshot, target: &str) -> Target<'s> {
             None => Target::Missing,
         },
         Ok(Location::Changes(ids)) => {
+            // Each id names one mark, as `list_changes` lists them: a
+            // change of one, or a mark of a change of several (`r2`, the
+            // inserted side of `r1+2`), with its own covered text.
             let spelled: Vec<String> = ids.iter().map(|change| change.short()).collect();
-            if !spelled
-                .iter()
-                .all(|short| snap.changes.iter().any(|change| &change.id == short))
-            {
+            let mark = |short: &str| {
+                snap.changes.iter().find_map(|change| {
+                    if change.members.is_empty() {
+                        (change.id == short).then_some(change.text.as_str())
+                    } else {
+                        change
+                            .members
+                            .iter()
+                            .find(|member| member.id == short)
+                            .map(|member| member.text.as_str())
+                    }
+                })
+            };
+            if !spelled.iter().all(|short| mark(short).is_some()) {
                 return Target::Missing;
             }
             match spelled.as_slice() {
-                [one] => match snap.changes.iter().find(|change| &change.id == one) {
-                    Some(change) => Target::Here(&change.text),
-                    None => Target::Missing,
-                },
+                [one] => mark(one).map_or(Target::Missing, Target::Here),
                 _ => Target::SeveralChanges,
             }
         }
@@ -374,7 +384,7 @@ fn missing_target_message(snap: &Snapshot, target: &str) -> String {
         ),
         Ok(Location::Changes(_)) => format!(
             "no revision {target} in the source; the source has {}",
-            plural(snap.summary.revisions, "revision")
+            plural(snap.summary.revisions, "change")
         ),
         Ok(Location::Paragraph(id)) => match paragraph_place(&id) {
             Some((story, _)) if story != "body" => {
@@ -405,7 +415,7 @@ fn missing_target_message(snap: &Snapshot, target: &str) -> String {
     }
 }
 
-/// The structured refusal for a target that names several changes: it
+/// The structured refusal for a target that names several marks: it
 /// exists, but no one text carries an anchor.
 fn several_changes(snap: &Snapshot, refusal: &AnchorRefusal<'_>) -> Error {
     let one_by_one: Vec<String> = parse_change_ids(refusal.target)
@@ -416,7 +426,7 @@ fn several_changes(snap: &Snapshot, refusal: &AnchorRefusal<'_>) -> Error {
         _ => String::new(),
     };
     let mut error = base(&snap.source_sha256, refusal, "INVALID_EDIT").with_message(format!(
-        "{} names {} changes; an anchor targets one{}",
+        "{} names {} marks; an anchor targets one{}",
         refusal.target,
         one_by_one.len(),
         if spelled.is_empty() {

@@ -1053,3 +1053,33 @@ fn a_removed_comment_names_the_whole_change_that_held_it() {
         out.removed_comments
     );
 }
+
+/// Carol's edit inside Bob's insertion, which Bob made among Ann's marks,
+/// is Bob's text edited: it separates Ann's marks no more than Bob's
+/// insertion does.
+#[test]
+fn another_authors_edit_inside_an_insertion_among_the_marks_separates_nothing() {
+    let doc = docx(&p(&[
+        ins(1, "The parties ", "Ann", DATE),
+        format!(
+            r#"<w:ins w:id="2" w:author="{BOB}" w:date="{DATE}"><w:r><w:t xml:space="preserve">and </w:t></w:r>{}</w:ins>"#,
+            del(7, "their", "Carol", DATE)
+        ),
+        ins(8, "its", "Carol", DATE),
+        ins(9, " affiliates ", BOB, DATE),
+        ins(3, "agree to pay.", "Ann", DATE),
+    ]));
+    let rows: Vec<(String, Option<String>)> = list_logical_changes(&doc)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.id, c.inside))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("r1+3".to_string(), None),
+            ("r2+9".to_string(), None),
+            ("r7+8".to_string(), Some("r2+9".to_string())),
+        ]
+    );
+}

@@ -2131,6 +2131,7 @@ Change(
     ref: str | None = None,
     paragraph: str | None = None,
     holds_comments: tuple[str, ...] = (),
+    members: tuple[ChangeMember, ...] = (),
 )
 ```
 
@@ -2147,7 +2148,27 @@ short id the CLI prints and ``-p``/``--id`` take;
 ``paragraph`` is the id of the paragraph the change is in (``p3``).
 ``holds_comments`` names the comments (``c4``, a reply's ``c5``) whose
 reference mark the change holds: resolving it so its content goes
-removes their threads, as Word does.
+removes their threads, as Word does. A change Word wrote as several
+marks (one typed insertion split by session, or a deletion with the
+insertion that replaces it, kind ``replacement``) has the composite id
+``r7+8+9+10`` and lists its marks in ``members``; selecting only some of
+them is refused.
+
+### `ChangeMember`
+
+```python
+ChangeMember(
+    id: str,
+    kind: ChangeKind,
+    target: str,
+    date: str | None,
+    text: str,
+)
+```
+
+One mark of a change Word wrote as several: its own ``id`` (``r7``),
+``kind`` (``insertion`` or ``deletion``), ``target`` (``text`` or
+``paragraph_mark``), ``date`` and ``text``.
 
 ### `Comment`
 
@@ -2670,10 +2691,14 @@ RevisionCounts(
     moved: int,
     format_changed: int,
     total: int,
+    replaced: int = 0,
 )
 ```
 
-Comparer revision records in the redline.
+The redline's changes by kind, as ``changes`` lists them.
+
+``replaced`` counts replacements: a deletion and the insertion that
+replaces it, listed as one change. ``total`` is the sum of the others.
 
 ### `ResolvedRevisions`
 

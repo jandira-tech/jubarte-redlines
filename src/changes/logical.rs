@@ -193,12 +193,13 @@ fn groups(dom: &Dom, root: NodeId, carriers: &[Carrier]) -> Vec<Vec<usize>> {
             }
         }
         // Content another author inserted after a change's marks were made
-        // separates nothing, even inside the insertion the marks sit in;
-        // anything that was there before does: original text, and the text
-        // of an insertion the marks were made inside.
+        // separates nothing, even inside the insertion the marks sit in,
+        // and nor does a later edit of it; anything that was there before
+        // does: original text, and the text of an insertion the marks were
+        // made inside.
         open.retain(|author, g| {
             here.iter().any(|(a, _)| a == author)
-                || stack.last().is_some_and(|c| {
+                || stack.iter().any(|c| {
                     listed(carriers, *c).kind == ChangeKind::Insertion && !within[*g].contains(c)
                 })
         });

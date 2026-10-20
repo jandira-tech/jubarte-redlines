@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 7                       # 7 marks shown as 7 changes: 4 insertions, 3 deletions
+revisions: 7                       # 7 marks shown as 6 changes: 4 insertions, 2 deletions
 comments: 1 thread open            # 1 comment: c0
 authors:
   document_owner: none             # no docProps/core.xml
@@ -17,7 +17,7 @@ styles:
 Inside {--cut {==by a==}{>>c0 @B: Inside the deletion.<<} comment--}{r40 @AL} after.
 
 <!-- p1 -->
-Sub {++x++}{r7 @AL}{--plain --}{r5 @AL}{--_italic_--}{r6 @AL} end.
+Sub {++x++}{r7 @AL}{--plain --}{r5+6 @AL}{--_italic_--}{r5+6 @AL} end.
 
 <!-- p2 rev r9 @AL; r10 @AL -->
 Empty {++a++}{r8 @AL} end.

@@ -22,8 +22,8 @@ use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCa
 use super::critic::{self, Piece, Pieces, Token};
 use super::diff::{continues, marker_len, opens_amount, table_row, table_row_change};
 use super::xml::{
-    Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link, List, Note,
-    Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
+    Change, Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link,
+    List, Note, Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 use super::{math, view_notes, view_stories, view_styles};
@@ -1703,6 +1703,14 @@ impl Anchor {
     }
 }
 
+/// The part a pooled tag's marks are numbered in (#1355).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PoolStory {
+    Body,
+    Footnotes,
+    Endnotes,
+}
+
 struct Writer<'o, 'a> {
     options: &'o DocxOptions<'a>,
     /// A soft line break holds until the words after it arrive: the space
@@ -1719,10 +1727,13 @@ struct Writer<'o, 'a> {
     /// Substitutions one tag names (`r5+6+7`): the deleted side's serial and
     /// the inserted side's, whose ids the runs each has split.
     shared_tags: Vec<(u32, u32)>,
-    /// Each tag of several ids (`r7+8+9+10`): how many notes name those
-    /// ids, and the serials they name, in order. The pieces of one logical
-    /// change each carry its whole id ([`Self::share_pooled_ids`]).
-    pools: HashMap<Vec<u32>, (usize, Vec<u32>)>,
+    /// Each tag of several ids (`r7+8+9+10`) in its story: how many notes
+    /// name those ids, and the serials they name, in order. The pieces of
+    /// one logical change each carry its whole id
+    /// ([`Self::share_pooled_ids`]). The body, the footnotes and the
+    /// endnotes number their marks apart, so `r7+8` in the body and
+    /// `footnotes.r7+8` are two changes ([`PoolStory`]).
+    pools: HashMap<(PoolStory, Vec<u32>), (usize, Vec<u32>)>,
     /// The labels whose definition the view names an endnote
     /// (`<!-- endnotes.p0 -->` before `[^2]:`).
     endnotes: HashSet<String>,
@@ -4620,7 +4631,12 @@ impl<'o, 'a> Writer<'o, 'a> {
         if ids.len() < 2 || serials.is_empty() {
             return;
         }
-        let (notes, named) = self.pools.entry(ids.to_vec()).or_default();
+        let story = match &self.target {
+            None => PoolStory::Body,
+            Some(label) if self.endnotes.contains(label) => PoolStory::Endnotes,
+            Some(_) => PoolStory::Footnotes,
+        };
+        let (notes, named) = self.pools.entry((story, ids.to_vec())).or_default();
         *notes += 1;
         named.extend_from_slice(serials);
     }
@@ -5665,16 +5681,19 @@ fn mark_ids(tags: &[view_notes::Tag], serials: usize) -> Vec<Vec<u32>> {
 impl Writer<'_, '_> {
     /// The pieces of one logical change each carry its whole id (`{++shall
     /// re++}{r7+8 @B}{++main++}{r7+8 @B}`, #1261): its ids go to the
-    /// pieces in turn, in reading order, the last taking any left. A piece
-    /// the view split around a change nested in it continues the mark it
-    /// was split from (`{++a++}{r7+8 @B}{--x--}{r9 @A re r7+8 @B}{++b++}{r7+8
-    /// @B}`), and the nested change sits inside that mark. A paragraph mark
-    /// is a piece of its own, after its paragraph's text.
+    /// pieces in turn, in reading order, the last taking any left and a
+    /// piece past them a fresh one. A piece the view split around a change
+    /// nested in it continues the mark it was split from (`{++a++}{r7+8
+    /// @B}{--x--}{r9 @A re r7+8 @B}{++b++}{r7+8 @B}`), and the nested change
+    /// sits inside that mark; a piece of another kind is another mark
+    /// (`{--old--}{r5+6 @A}{--x--}{r7 @B re r5+6 @A}`: the deletion 5, then
+    /// the insertion 6 that holds 7). A paragraph mark is a piece of its
+    /// own, after its paragraph's text.
     fn share_pooled_ids(&mut self) {
         let pools: Vec<(Vec<u32>, Vec<u32>)> = std::mem::take(&mut self.pools)
             .into_iter()
             .filter(|(_, (notes, _))| *notes > 1)
-            .map(|(ids, (_, serials))| (ids, serials))
+            .map(|((_, ids), (_, serials))| (ids, serials))
             .collect();
         if pools.is_empty() {
             return;
@@ -5685,9 +5704,65 @@ impl Writer<'_, '_> {
                 pool_of.insert(serial, at);
             }
         }
-        // Per pool: the pieces counted so far, and the one read last.
-        let mut pieces = vec![0usize; pools.len()];
-        let mut current: Vec<Option<usize>> = vec![None; pools.len()];
+        // A nest right after another nest in the same change sits in the
+        // mark the first one sits in, or in the change's next mark
+        // (`{--a--}{r3+4 @B re r1+2 @A}{--b--}{r3+4 @B re r1+2 @A}`): the
+        // change's ids say which, a mark each while they last.
+        // A change with more ids than that finds pieces has a mark that
+        // starts after a nest (`{++a ++}{r7+9 @B}{--b--}{r8 @A re r7+9
+        // @B}{++ c++}{r7+9 @B}`: ` c` is mark 9, #1354): its next ids start
+        // one at each piece that follows a nest, the first ones first.
+        let none = vec![0; pools.len()];
+        let (_, apart) = self.pool_pieces(&pool_of, &vec![true; pools.len()], &none);
+        let split: Vec<bool> = pools
+            .iter()
+            .zip(&apart)
+            .map(|((ids, _), &count)| ids.len() >= count)
+            .collect();
+        let spare: Vec<usize> = pools
+            .iter()
+            .zip(&apart)
+            .map(|((ids, _), &count)| ids.len().saturating_sub(count))
+            .collect();
+        let (piece, pieces) = self.pool_pieces(&pool_of, &split, &spare);
+        for (pool, (ids, serials)) in pools.iter().enumerate() {
+            let count = pieces[pool];
+            for serial in serials {
+                let Some(&at) = piece.get(serial) else {
+                    continue;
+                };
+                // A piece past the ids takes a fresh one.
+                let Some(&id) = ids.get(at) else {
+                    continue;
+                };
+                let mut own = vec![id];
+                if at + 1 == count {
+                    own.extend(ids.iter().skip(count));
+                }
+                self.document.revision_ids.insert(*serial, own);
+            }
+        }
+        // A substitution among the pieces took its ids from them.
+        self.shared_tags.retain(|(deleted, inserted)| {
+            !piece.contains_key(deleted) && !piece.contains_key(inserted)
+        });
+    }
+
+    /// The piece of its pool each pooled serial is, in reading order, and
+    /// each pool's count of pieces ([`Self::share_pooled_ids`]); `split`
+    /// says, per pool, whether a nest right after a nest is a new piece,
+    /// and `spare` how many pieces right after a nest are new ones.
+    fn pool_pieces(
+        &self,
+        pool_of: &HashMap<u32, usize>,
+        split: &[bool],
+        spare: &[usize],
+    ) -> (HashMap<u32, usize>, Vec<usize>) {
+        // Per pool: the pieces counted so far, the one read last with its
+        // kind (none for a paragraph mark), and the spare ids taken.
+        let mut pieces = vec![0usize; split.len()];
+        let mut current: Vec<Option<(usize, Option<Kind>)>> = vec![None; split.len()];
+        let mut spent = vec![0usize; split.len()];
         let mut piece: HashMap<u32, usize> = HashMap::new();
         let notes = self.document.notes.iter().map(|note| &note.items);
         for items in std::iter::once(&self.document.body).chain(notes) {
@@ -5699,29 +5774,48 @@ impl Writer<'_, '_> {
                 match item {
                     Item::Run(run) => {
                         let mut now = Vec::new();
-                        let mut chain: Vec<u32> =
-                            run.change.map(|(_, by)| by).into_iter().collect();
-                        while let Some(&(_, outer)) =
-                            chain.last().and_then(|by| self.document.wraps.get(by))
-                            && !chain.contains(&outer)
+                        let mut chain: Vec<Change> = run.change.into_iter().collect();
+                        while let Some(&outer) =
+                            chain.last().and_then(|(_, by)| self.document.wraps.get(by))
+                            && !chain.iter().any(|&(_, by)| by == outer.1)
                         {
                             chain.push(outer);
                         }
-                        for (depth, serial) in chain.into_iter().enumerate() {
+                        for (depth, (kind, serial)) in chain.into_iter().enumerate() {
                             let Some(&pool) = pool_of.get(&serial) else {
                                 continue;
                             };
                             let nested = depth > 0;
                             let at = *piece.entry(serial).or_insert_with(|| {
-                                let goes_on = before
-                                    .iter()
-                                    .any(|&(other, inside)| other == pool && (nested || inside));
-                                current[pool].filter(|_| goes_on).unwrap_or_else(|| {
-                                    pieces[pool] += 1;
-                                    pieces[pool] - 1
-                                })
+                                // The piece read last goes on: around the
+                                // nest it holds, or after the nest in it
+                                // while no spare id is left; a nest after
+                                // a nest, unless split.
+                                let mut goes_on = false;
+                                let mut after_nest = false;
+                                for &(other, inside) in &before {
+                                    if other == pool {
+                                        goes_on |= nested != inside || (nested && !split[pool]);
+                                        after_nest |= !nested && inside;
+                                    }
+                                }
+                                let goes_on = current[pool]
+                                    .filter(|&(_, was)| goes_on && was == Some(kind))
+                                    .map(|(at, _)| at);
+                                match goes_on {
+                                    Some(_) if after_nest && spent[pool] < spare[pool] => {
+                                        spent[pool] += 1;
+                                        pieces[pool] += 1;
+                                        pieces[pool] - 1
+                                    }
+                                    Some(at) => at,
+                                    None => {
+                                        pieces[pool] += 1;
+                                        pieces[pool] - 1
+                                    }
+                                }
                             });
-                            current[pool] = Some(at);
+                            current[pool] = Some((at, Some(kind)));
                             now.push((pool, nested));
                         }
                         before = now;
@@ -5742,7 +5836,7 @@ impl Writer<'_, '_> {
                             && !piece.contains_key(&serial)
                         {
                             piece.insert(serial, pieces[pool]);
-                            current[pool] = Some(pieces[pool]);
+                            current[pool] = Some((pieces[pool], None));
                             pieces[pool] += 1;
                         }
                         before.clear();
@@ -5751,23 +5845,7 @@ impl Writer<'_, '_> {
                 }
             }
         }
-        for (pool, (ids, serials)) in pools.iter().enumerate() {
-            let count = pieces[pool];
-            for serial in serials {
-                let Some(&at) = piece.get(serial) else {
-                    continue;
-                };
-                let mut own = vec![ids[at.min(ids.len() - 1)]];
-                if at + 1 == count {
-                    own.extend(ids.iter().skip(count));
-                }
-                self.document.revision_ids.insert(*serial, own);
-            }
-        }
-        // A substitution among the pieces took its ids from them.
-        self.shared_tags.retain(|(deleted, inserted)| {
-            !piece.contains_key(deleted) && !piece.contains_key(inserted)
-        });
+        (piece, pieces)
     }
 
     /// A substitution's one tag (`r5+6+7`) lists the deleted side's ids,
