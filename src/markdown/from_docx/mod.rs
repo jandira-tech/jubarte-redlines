@@ -4480,10 +4480,11 @@ fn view_table_style(t: &Element, custom_grid: bool) -> Option<&str> {
     }
 }
 
-/// Whether `styles` defines Table Grid with one single border all round
-/// that is not Word's 0.5pt: a grid the legend can name (`TableGrid, all
-/// borders 1.5pt`) and the writer would otherwise replace with the thin
-/// one. Borders that vary, or none, keep Word's grid.
+/// Whether `styles` defines Table Grid with borders other than Word's thin
+/// grid (one single 0.5pt line on every side): a grid the legend names
+/// (`TableGrid, all borders 1.5pt`, `TableGrid, borders top double 3pt`)
+/// and the writer would otherwise replace with the thin one. A Table Grid
+/// that sets no border keeps Word's grid.
 fn custom_table_grid(styles: Option<&Element>) -> bool {
     let Some(borders) = styles
         .and_then(|s| {
@@ -4494,16 +4495,23 @@ fn custom_table_grid(styles: Option<&Element>) -> bool {
     else {
         return false;
     };
-    let sizes: Option<Vec<&str>> = ["top", "left", "bottom", "right", "insideH", "insideV"]
-        .iter()
-        .map(|side| {
-            borders
-                .child(side)
-                .filter(|b| b.attr("val") == Some("single"))
-                .and_then(|b| b.attr("sz"))
-        })
-        .collect();
-    sizes.is_some_and(|sizes| sizes.iter().all(|&sz| sz == sizes[0]) && sizes[0] != "4")
+    // The strict `start`/`end` elements name the `left`/`right` borders.
+    let sides = [
+        &["top"][..],
+        &["left", "start"][..],
+        &["bottom"][..],
+        &["right", "end"][..],
+        &["insideH"][..],
+        &["insideV"][..],
+    ];
+    let side = |names: &[&str]| names.iter().find_map(|name| borders.child(name));
+    // Word's thin grid is one single 0.5pt line on every side; any other
+    // border the style sets is the document's own, which the legend says
+    // (#1419).
+    let thin = sides.iter().all(|names| {
+        side(names).is_some_and(|b| b.attr("val") == Some("single") && b.attr("sz") == Some("4"))
+    });
+    !thin && sides.iter().any(|names| side(names).is_some())
 }
 
 /// The table styles of `body`'s tables the view names, in the order they

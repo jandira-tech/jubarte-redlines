@@ -49,7 +49,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   the document's own now lists each side it sets
   (`Ledger, borders bottom double 0.75pt`, with `#RRGGBB` and `space Npt`
   when they apply), and converting back writes those sides. Word's own
-  table styles still say `borders vary`.
+  table styles still say `borders vary`, except a Table Grid whose
+  borders are not Word's thin grid: it is the document's own and lists
+  its sides (`TableGrid, borders top double 3pt bottom double 3pt`).
 
 - **A story's deleted or inserted last paragraph is a patch hunk of its own again.** The view writes that paragraph and the mark before it as separate changes, and since the settled dialect (#1135) the patch had joined them to the paragraph above (`@@ [p1] @@ Kept.[-\n\n-][-Last.-]`). `diff` and `patch_redline` now give `@@ -[p2] @@ [-Last.-]` (or `@@ [p2] @@ {+Last.+}`), also when Word split the paragraph into several marks or a line break sits in it. When another author changed the mark, accepting that change alone joins the paragraphs, so the mark stays a change named after its author.
 - **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
