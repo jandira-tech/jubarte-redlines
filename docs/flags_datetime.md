@@ -214,7 +214,6 @@ Apply only: never record into, consume, or rewrite the plan
 | `<FILE>` |  | <FILE> |  |  | required | Immutable source document |
 | `--plan` |  | <FILE> |  |  | required | Input plan; v2 policy and attribution belong exclusively to it |
 | `--allow-unbound-plan` |  |  | false |  |  | Advanced v1-only waiver when neither plan nor CLI supplies a hash |
-| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir | Primary edited DOCX; required unless saving, bundling or dry-running |
 | `--out-dir` |  | <NEW_DIR> |  |  | conflicts --dry-run --output | Publish a new bundle directory (document.docx, changes.diff, report.json) |
 | `--report` |  | <FILE> |  |  |  | JSON receipt, irrespective of filename suffix |
 | `--emit` |  | <EMIT> |  | document, patch, report | append | Bundle roles: document,patch,report (primary document always included) |
@@ -225,6 +224,7 @@ Apply only: never record into, consume, or rewrite the plan
 | `--force` |  |  | false |  |  | Replace an explicitly named existing output; never overwrite an input |
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
+| `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir | Primary edited DOCX; required unless bundling or dry-running |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print |
 
 ## jubarte __edit-template (hidden task)
