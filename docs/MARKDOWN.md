@@ -709,7 +709,8 @@ insertion first, `r2+1` for a deletion first). The pieces keep their own
 text, formatting and, under `--dates`, their own dates. Original text,
 another author's deletion, a field, a move, a table cell or the end of a
 paragraph separates two changes. So does original text the view prints
-nothing for: hidden text, a soft hyphen, a symbol, a page break. Another
+nothing for: hidden text, a soft hyphen, a symbol, a page break. Written
+back, those two changes touch, so they read back as one (#1369). Another
 author's insertion among the marks does not, unless the marks were made
 inside it, or it sits between an insertion and the deletion after it,
 which touch only with nothing between them. Empty runs, bookmarks,

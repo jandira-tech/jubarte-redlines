@@ -2848,11 +2848,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
             if !self.resolved {
-                paragraph.unshown = line
-                    .rev
-                    .iter()
-                    .map(|tag| (!line.rev_del.contains(tag), self.format_mark(tag)))
-                    .collect();
+                let mut unshown = Vec::new();
+                for tag in &line.rev {
+                    let inserted = !line.rev_del.contains(tag);
+                    let marks = self.unshown_marks(tag);
+                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                }
+                paragraph.unshown = unshown;
             }
             let mark = line
                 .break_ins
@@ -2889,10 +2891,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 && let Some(tags) = self.unplaced.remove(&at)
             {
                 for (kind, tag) in &tags {
-                    let mark = self.format_mark(tag);
-                    match *kind {
-                        "fmt" => paragraph.formats.push(mark),
-                        _ => paragraph.unshown.push((*kind == "ins", mark)),
+                    if *kind == "fmt" {
+                        let mark = self.format_mark(tag);
+                        paragraph.formats.push(mark);
+                    } else {
+                        let marks = self.unshown_marks(tag);
+                        paragraph
+                            .unshown
+                            .extend(marks.into_iter().map(|mark| (*kind == "ins", mark)));
                     }
                 }
             }
@@ -2993,6 +2999,21 @@ impl<'o, 'a> Writer<'o, 'a> {
             self.document.reserved_ids.insert(id);
         }
         FormatMark { id, author, date }
+    }
+
+    /// An unshown change's empty marks, one per id its tag names: a
+    /// joined change (`rev-del r3+4 @B`) comes back as both its marks.
+    fn unshown_marks(&mut self, tag: &view_notes::Tag) -> Vec<FormatMark> {
+        let first = self.format_mark(tag);
+        let mut marks = vec![first.clone()];
+        for &id in tag.ids.iter().skip(1) {
+            self.document.reserved_ids.insert(id);
+            marks.push(FormatMark {
+                id: Some(id),
+                ..first.clone()
+            });
+        }
+        marks
     }
 
     /// The open table lies in a comment's range (`in c5`): its cells'
@@ -5356,11 +5377,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .rev()
                     .find(|item| matches!(item, Item::Paragraph(_)))
             {
-                last.unshown = clauses
-                    .rev
-                    .iter()
-                    .map(|tag| (!clauses.rev_del.contains(tag), self.format_mark(tag)))
-                    .collect();
+                let mut unshown = Vec::new();
+                for tag in &clauses.rev {
+                    let inserted = !clauses.rev_del.contains(tag);
+                    let marks = self.unshown_marks(tag);
+                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                }
+                last.unshown = unshown;
             }
             if !clauses.fmt.is_empty()
                 && let Some(Item::Paragraph(first)) = items.first_mut()

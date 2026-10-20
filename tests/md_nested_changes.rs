@@ -3009,3 +3009,39 @@ fn a_mark_that_holds_only_a_nest_keeps_its_id() {
     };
     assert_eq!(marks(&written(&agent(&source))), marks(&source));
 }
+
+/// Two touching deletions by Ben inside Ana's deletion: one change,
+/// `r3+4`, that the view names only on the paragraph's id line.
+fn joined_nests_in_a_deletion() -> Vec<u8> {
+    docx(
+        r#"<w:p><w:del w:id="1" w:author="Ana Lima" w:date="2026-09-29T14:05:00Z">
+           <w:r><w:delText>y1</w:delText></w:r>
+           <w:del w:id="3" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+           <w:r><w:delText>n3</w:delText></w:r></w:del>
+           <w:del w:id="4" w:author="Ben Ode" w:date="2026-09-30T09:00:00Z">
+           <w:r><w:delText>n4</w:delText></w:r></w:del></w:del></w:p>"#,
+    )
+}
+
+#[test]
+fn an_id_line_names_a_joined_change_once() {
+    let view = agent(&joined_nests_in_a_deletion());
+    let line = view
+        .lines()
+        .find(|l| l.starts_with("<!-- p0"))
+        .unwrap_or_else(|| panic!("no id line for p0:\n{view}"));
+    assert_eq!(line.matches("r3+4").count(), 1, "{line}");
+    // Both marks come back as Ben's deletions. That they hold no text,
+    // and so read back as two changes, is #1367.
+    let xml = part_string(&written(&view), "word/document.xml").expect("the body part");
+    let deletions: Vec<&str> = xml
+        .split("<w:del ")
+        .skip(1)
+        .filter_map(|mark| mark.split('>').next())
+        .filter(|mark| mark.contains(r#"w:author="Ben Ode""#))
+        .collect();
+    for id in ["3", "4"] {
+        let id = format!(r#"w:id="{id}""#);
+        assert!(deletions.iter().any(|mark| mark.contains(&id)), "{xml}");
+    }
+}

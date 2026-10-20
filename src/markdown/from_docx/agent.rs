@@ -1031,9 +1031,11 @@ pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<(
         return Vec::new();
     }
     let printed = printed_wids(shown, "body");
+    // The marks of one joined change print one tag (`r3+4`), named once.
     let mut unshown: Vec<(bool, String)> = Vec::new();
     for (inserted, id, tag) in carriers {
-        if !printed.contains(&id) && !unshown.iter().any(|(_, t)| *t == tag) {
+        let named = format_tag(&tag);
+        if !printed.contains(&id) && !unshown.iter().any(|(_, t)| format_tag(t) == named) {
             unshown.push((inserted, tag));
         }
     }
