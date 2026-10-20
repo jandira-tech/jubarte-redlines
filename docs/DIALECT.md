@@ -100,7 +100,7 @@ inserted or deleted row.
 | `¶{r3 @AC}` | inserted paragraph mark at the end of its text |
 | `\{r3 @C}` after a closer or `¶` | literal tag-like text |
 | `{>>c5 @AC: text<<}`, `re c5`, `resolved` | comment, reply, resolved thread |
-| `{>>c5 @AC in r13: text<<}` | c5's reference mark is inside r13, which the note prints outside; settling r13 settles the thread |
+| `{>>c5 @AC in r13: text<<}` | c5's reference mark is inside r13, which the note prints outside; resolving r13 so its content goes (accepting a deletion, rejecting an insertion) removes the thread, the other way keeps it |
 | `header1.r3 @AC`, `footnotes.r7 @AC` | change in another story |
 | `@??` | a mark with no author's name; written back as an empty `w:author` |
 | no tag | new, by the plan author |
