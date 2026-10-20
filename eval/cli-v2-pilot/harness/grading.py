@@ -128,9 +128,7 @@ def compute_unintended_edits(
             [p.get("text", "") or "" for p in before],
             [p.get("text", "") or "" for p in after],
         )
-        ambiguous = len(a) != len(b) and any(
-            n > 1 for n in Counter(a + b).values() if n > 2
-        )
+        ambiguous = len(a) != len(b) and any(n > 2 for n in Counter(a + b).values())
         for tag, i, j, k, stop in SequenceMatcher(
             a=a, b=b, autojunk=False
         ).get_opcodes():
