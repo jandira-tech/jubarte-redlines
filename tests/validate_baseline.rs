@@ -512,6 +512,27 @@ fn the_for_edit_read_carries_the_input_validity() {
         err.starts_with("input has 2 validity warnings; jubarte validate in.docx lists them\n"),
         "{err}"
     );
+    // -q drops the notice from a file too; the file is unchanged.
+    let (code, _, err) = run(
+        dir.path(),
+        &["read", "in.docx", "--for-edit", "-o", "q.json", "-q"],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(err, "");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("q.json")).unwrap(),
+        printed
+    );
+    // An error counts as an error.
+    std::fs::write(
+        dir.path().join("broken.docx"),
+        docx(&format!("{DELETED}{}", para("x"))),
+    )
+    .unwrap();
+    assert_eq!(
+        for_edit("broken.docx", false).1,
+        serde_json::json!({"errors":1,"warnings":0,"next":"jubarte validate broken.docx"})
+    );
     let library = jubarte::edit::for_edit::for_edit(
         &comment_graph("20000002"),
         &jubarte::edit::for_edit::ForEditRequest::default(),

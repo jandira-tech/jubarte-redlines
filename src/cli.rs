@@ -39,8 +39,8 @@ pub struct Cli {
     /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
     /// still prints what it read, and warnings and errors still print.
     /// `read`, `changes` and `comments` drop their one stderr line naming
-    /// the input's validity findings; under --json the output counts them,
-    /// -q or not.
+    /// the input's validity findings; under --json and read --for-edit the
+    /// output counts them, -q or not.
     #[arg(
         short = 'q',
         long,

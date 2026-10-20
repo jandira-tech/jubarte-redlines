@@ -224,7 +224,7 @@ Options:
                  without -o, `diff`, `capabilities`) still prints what it read, and
                  warnings and errors still print. `read`, `changes` and `comments` drop
                  their one stderr line naming the input's validity findings; under
-                 --json the output counts them, -q or not
+                 --json and read --for-edit the output counts them, -q or not
   -h, --help     Print help
   -V, --version  Print version
 
@@ -299,8 +299,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -525,7 +525,7 @@ Options:
                without -o, `diff`, `capabilities`) still prints what it read, and
                warnings and errors still print. `read`, `changes` and `comments` drop
                their one stderr line naming the input's validity findings; under --json
-               the output counts them, -q or not
+               and read --for-edit the output counts them, -q or not
   -h, --help   Print help
 ```
 
@@ -575,8 +575,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -667,8 +667,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -825,8 +825,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -942,8 +942,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1053,8 +1053,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1318,8 +1318,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -1493,8 +1493,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1531,7 +1531,8 @@ Options:
                                `capabilities`) still prints what it read, and warnings
                                and errors still print. `read`, `changes` and `comments`
                                drop their one stderr line naming the input's validity
-                               findings; under --json the output counts them, -q or not
+                               findings; under --json and read --for-edit the output
+                               counts them, -q or not
   -h, --help                   Print help
 ```
 
@@ -1558,8 +1559,8 @@ Options:
                        `changes`, `compare` without -o, `diff`, `capabilities`) still
                        prints what it read, and warnings and errors still print. `read`,
                        `changes` and `comments` drop their one stderr line naming the
-                       input's validity findings; under --json the output counts them,
-                       -q or not
+                       input's validity findings; under --json and read --for-edit the
+                       output counts them, -q or not
   -h, --help           Print help
 
 Rendering:
@@ -1599,8 +1600,8 @@ Options:
                        `changes`, `compare` without -o, `diff`, `capabilities`) still
                        prints what it read, and warnings and errors still print. `read`,
                        `changes` and `comments` drop their one stderr line naming the
-                       input's validity findings; under --json the output counts them,
-                       -q or not
+                       input's validity findings; under --json and read --for-edit the
+                       output counts them, -q or not
   -h, --help           Print help
 ```
 
@@ -1649,8 +1650,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1754,8 +1755,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1809,8 +1810,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1863,8 +1864,8 @@ Options:
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
           still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json the output counts them, -q
-          or not
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1932,8 +1933,8 @@ Options:
                            `changes`, `compare` without -o, `diff`, `capabilities`)
                            still prints what it read, and warnings and errors still
                            print. `read`, `changes` and `comments` drop their one stderr
-                           line naming the input's validity findings; under --json the
-                           output counts them, -q or not
+                           line naming the input's validity findings; under --json and
+                           read --for-edit the output counts them, -q or not
   -h, --help               Print help
 
 Examples:
