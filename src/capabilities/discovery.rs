@@ -139,7 +139,7 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
                 } else {
                     None
                 };
-                let conditions = if let Some(reason) = refusal {
+                let mut conditions = if let Some(reason) = refusal {
                     reason.to_string()
                 } else if version == 2 {
                     let mut conditions = String::from(
@@ -168,16 +168,16 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
                     if schema["properties"].get("comment").is_some() {
                         conditions.push_str("; attached comments require a body anchor");
                     }
-                    if kind == "edit_comment" {
-                        conditions.push_str(
-                            "; another author's comment requires rewrite_others_comments",
-                        );
-                    }
                     if matches!(kind, "watermark" | "settings" | "redact") {
                         conditions.push_str("; this effect is untracked in both outputs");
                     }
                     conditions
                 };
+                // Both dialects refuse another author's comment (#1264).
+                if refusal.is_none() && kind == "edit_comment" {
+                    conditions
+                        .push_str("; another author's comment requires rewrite_others_comments");
+                }
                 rows.push(json!({"runtime": runtime, "target": target, "track": track,
                     "existing_revisions": existing,
                     "status": if refusal.is_some() { "unsupported" } else { "conditional" },
