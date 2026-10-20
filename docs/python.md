@@ -1106,6 +1106,11 @@ Options:
       --reply <TEXT>
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
+      --rewrite-others-comments
+          Let `-p c5 --content` change a comment another author wrote; it keeps their
+          name. Without it that is refused (COMMENT_NOT_YOURS): one author answers
+          another with --reply
+
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
           change (`accepted r1+2 in p3: "from" > "to"`)
@@ -1167,11 +1172,6 @@ Options:
           directory>/<stem>_modified.docx`). Any other extension is written as a .docx
           too; .md, .json, .pdf and .png name the task that writes them
 
-      --out-dir [<DIR>]
-          Write the bundle instead: clean.docx, redline.docx, patch.diff and
-          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
-          `<FILE's directory>/<stem>.edit`)
-
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
@@ -1179,6 +1179,11 @@ Options:
           still print. `read`, `changes` and `comments` drop their one stderr line
           naming the input's validity findings; under --json and read --for-edit the
           output counts them, -q or not
+
+      --out-dir [<DIR>]
+          Write the bundle instead: clean.docx, redline.docx, patch.diff and
+          report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default:
+          `<FILE's directory>/<stem>.edit`)
 
       --force
           Replace an existing output (the bundle directory's files)
@@ -2267,6 +2272,7 @@ EditPlan(
     operations: tuple[dict[str, object], ...] = (),
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None,
     update_fields: bool = False,
+    rewrite_others_comments: bool = False,
 )
 ```
 
@@ -2449,6 +2455,9 @@ EditPlan.edit_comment(self, comment_id: 'int', *, text: 'str', id: 'str | None' 
 ```
 
 Replace the text of comment ``comment_id``; its author, date and thread stay.
+
+Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
+plan sets ``rewrite_others_comments``.
 
 #### `EditPlan.delete_comment`
 

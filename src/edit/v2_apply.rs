@@ -1734,6 +1734,7 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
                 ));
             }
         }
+        tx.note_rewrites(tx.outcomes.len(), &resolved);
         tx.resolved.extend(resolved.into_iter().map(|r| (i, r)));
         tx.outcomes.push(o);
     }

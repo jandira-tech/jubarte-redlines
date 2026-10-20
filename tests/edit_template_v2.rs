@@ -30,6 +30,13 @@ fn p(n: usize) -> Value {
 fn r(n: u32) -> Value {
     json!({"short_id":format!("r{n}"), "long_id":format!("document.w:ins.w:id.{n}")})
 }
+/// [`plan`] that may change another author's comment: the comment tests
+/// that call it edit "Other"'s `c0` on purpose (#1264).
+fn rewriting_plan(bytes: &[u8], operations: Value) -> Value {
+    let mut request = plan(bytes, operations);
+    request["rewrite_others_comments"] = true.into();
+    request
+}
 fn plan(bytes: &[u8], operations: Value) -> Value {
     let mut request = json!({"schema_version":2, "source":{"sha256":source_sha256(bytes)},
         "policy":{"track":"on","existing_revisions":"keep","text_view":"final"},
@@ -586,7 +593,7 @@ fn comment_delete_conflicts_with_other_thread_mutations() {
         json!({"kind":"edit_comment","target":c(0),"text":"Changed"}),
         json!({"kind":"resolve_comment","target":c(0),"done":true}),
     ] {
-        let q = plan(
+        let q = rewriting_plan(
             &s,
             json!([{"kind":"delete_comment","target":c(0),"include_replies":true},operation]),
         );
@@ -967,7 +974,7 @@ fn duplicate_comment_edits_and_thread_state_aliases_conflict() {
     let s = comment_source();
     let with = run(
         &s,
-        &plan(
+        &rewriting_plan(
             &s,
             json!([{"kind":"reply_comment","target":c(0),"text":"Existing reply"}]),
         ),
@@ -979,7 +986,7 @@ fn duplicate_comment_edits_and_thread_state_aliases_conflict() {
         json!([{"kind":"resolve_comment","target":c(0),"done":true},{"kind":"resolve_comment","target":c(1),"done":true}]),
         json!([{"kind":"resolve_comment","target":c(1),"done":false},{"kind":"resolve_comment","target":c(0),"done":true}]),
     ] {
-        let error = refused(&with, &plan(&with, ops.clone()));
+        let error = refused(&with, &rewriting_plan(&with, ops.clone()));
         assert_eq!(error.code, "CONFLICT");
         assert_eq!(error.operation.as_deref(), Some("/operations/1"));
         assert!(
@@ -998,7 +1005,7 @@ fn deleting_a_reply_conflicts_with_mutations_on_its_thread() {
     let s = comment_source();
     let with = run(
         &s,
-        &plan(
+        &rewriting_plan(
             &s,
             json!([{"kind":"reply_comment","target":c(0),"text":"Existing reply"}]),
         ),
@@ -1019,7 +1026,7 @@ fn deleting_a_reply_conflicts_with_mutations_on_its_thread() {
                 if reverse {
                     ops.reverse();
                 }
-                let error = refused(&with, &plan(&with, json!(ops)));
+                let error = refused(&with, &rewriting_plan(&with, json!(ops)));
                 assert_eq!(error.code, "CONFLICT");
                 assert_eq!(
                     error.operation.as_deref(),
@@ -1096,7 +1103,7 @@ fn comment_attribution_is_preserved_or_taken_from_plan() {
     let original = jubarte::comments::list_comments(&s).unwrap().remove(0);
     let out = run(
         &s,
-        &plan(
+        &rewriting_plan(
             &s,
             json!([
                 {"kind":"edit_comment","target":c(0),"text":"Updated"},
@@ -1320,7 +1327,7 @@ fn comment_mapping_does_not_mask_text_or_thread_conflicts() {
         ]),
     ] {
         let thread = ops.as_array().unwrap().len() == 3;
-        let error = refused(&s, &plan(&s, ops));
+        let error = refused(&s, &rewriting_plan(&s, ops));
         assert_eq!(error.code, "CONFLICT", "{error}");
         assert_eq!(
             error.operation.as_deref(),
@@ -1706,7 +1713,7 @@ fn comment_direct_scope_does_not_follow_paragraph_scope() {
         json!({"kind":"resolve_comment","target":c(0),"done":true}),
         json!({"kind":"delete_comment","target":c(0),"include_replies":true}),
     ] {
-        let mut q = plan(&s, json!([op]));
+        let mut q = rewriting_plan(&s, json!([op]));
         q["scope"] = json!({"kind":"selected","targets":[p(0)]});
         let e = run(&s, &q).unwrap_err();
         assert_eq!(e.code, "OUT_OF_SCOPE");
@@ -1719,7 +1726,7 @@ fn comment_direct_scope_does_not_follow_paragraph_scope() {
 #[test]
 fn comment_source_context_is_checked_against_original_text() {
     let s = comment_source();
-    let mut q = plan(
+    let mut q = rewriting_plan(
         &s,
         json!([{"kind":"edit_comment","target":c(0),"text":"New text"}]),
     );

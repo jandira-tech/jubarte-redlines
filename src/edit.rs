@@ -3200,12 +3200,41 @@ impl<'p> Transaction<'p> {
             .iter()
             .filter_map(|(i, comment, author)| {
                 let outcome = self.outcomes.get(*i).filter(|o| o.status == "ok")?;
-                Some(format!(
-                    "{} (edit_comment): c{comment} is by {author:?}; their words were changed under their name",
-                    outcome.id
-                ))
+                let what = if author.is_empty() {
+                    format!("c{comment} names no author; its words were changed")
+                } else {
+                    format!(
+                        "c{comment} is by {author:?}; their words were changed under their name"
+                    )
+                };
+                Some(format!("{} (edit_comment): {what}", outcome.id))
             })
             .collect()
+    }
+
+    /// Record each `edit_comment` among `resolved` (the operation whose
+    /// outcome will be `outcomes[outcome]`) that changes a comment not the
+    /// plan author's, for [`Self::rewrite_notes`]: v1 and v2 alike.
+    pub(crate) fn note_rewrites(&mut self, outcome: usize, resolved: &[Resolved]) {
+        for r in resolved {
+            if let Resolved::Thread {
+                op: ThreadOp::Edit { id: comment, .. },
+                ..
+            } = r
+                && let Some(family) = &self.family
+                && let Some(author) = self.not_own_comment(family, *comment)
+            {
+                self.rewritten.push((outcome, *comment, author));
+            }
+        }
+    }
+
+    /// The author of comment `id` when it is not the plan author's, `""`
+    /// for one that names no author: only a comment that names the plan's
+    /// author is its own (#1264).
+    fn not_own_comment(&self, family: &crate::comments::CommentFamily, id: u32) -> Option<String> {
+        let author = family.author(id).unwrap_or_default();
+        (author != self.plan.author).then(|| author.to_string())
     }
 
     /// Resolve every operation against the untouched source; the first
@@ -3365,21 +3394,7 @@ impl<'p> Transaction<'p> {
                     outcome.id = id;
                     outcome.kind = kind;
                     outcome.status = "ok".into();
-                    for r in &resolved {
-                        if let Resolved::Thread {
-                            op: ThreadOp::Edit { id: comment, .. },
-                            ..
-                        } = r
-                            && let Some(author) = self
-                                .family
-                                .as_ref()
-                                .and_then(|f| f.author(*comment))
-                                .filter(|&a| a != self.plan.author)
-                        {
-                            let author = author.to_string();
-                            self.rewritten.push((self.outcomes.len(), *comment, author));
-                        }
-                    }
+                    self.note_rewrites(self.outcomes.len(), &resolved);
                     self.outcomes.push(outcome);
                     self.resolved
                         .extend(resolved.into_iter().map(|resolved| (i, resolved)));
@@ -4389,7 +4404,7 @@ impl<'p> Transaction<'p> {
         // A comment speaks for its author: another author answers it.
         if let ThreadOp::Edit { id, .. } = op
             && !self.plan.rewrite_others_comments
-            && let Some(author) = family.author(id).filter(|&a| a != self.plan.author)
+            && let Some(author) = self.not_own_comment(family, id)
         {
             let (reply, rewrite) = match self.syntax {
                 PlanSyntax::Flags | PlanSyntax::Typed => (
@@ -4401,13 +4416,16 @@ impl<'p> Transaction<'p> {
                     r#""rewrite_others_comments": true"#,
                 ),
             };
-            return Err(fail(
-                "COMMENT_NOT_YOURS",
+            let message = if author.is_empty() {
+                format!(
+                    "c{id} names no author; reply instead ({reply}), or pass {rewrite} to change its words"
+                )
+            } else {
                 format!(
                     "c{id} is by {author:?}; reply instead ({reply}), or pass {rewrite} to change their words under their name"
-                ),
-                outcome,
-            ));
+                )
+            };
+            return Err(fail("COMMENT_NOT_YOURS", message, outcome));
         }
         let ids = match &op {
             ThreadOp::Delete { id } => family.with_replies(*id),
