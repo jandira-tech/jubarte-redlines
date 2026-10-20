@@ -101,7 +101,7 @@ inserted or deleted row.
 | `{++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}` | one change of two marks (#1261): each piece names the whole change, as `jubarte changes` lists it, and writes back as its own mark |
 | `{++a++}{r1 @AC}{++b++}{r2 @JD}` | different authors, or changes apart, keep their own ids |
 | `{--30 days--}{r50 @TL}{++45 days++}{r60 @RC}` | two authors' deletion and insertion are two changes, in document order (#1111); the reader still takes the pair `{~~30 days~>45 days~~}{r50 @TL; r60 @RC}` (old side's tag first) and writes the same two marks, but the view prints a substitution only for one change, as `changes` lists it (#1363) |
-| `{++the ++}{r13 @RC}{--applicable--}{r16 @TL re r13 @RC}{++ law++}{r13 @RC}` | a change inside another names it with `re`, beside live text too, as `changes` lists it (`r16 … inside r13`) |
+| `{++the ++}{r13 @RC}{--applicable--}{r16 @TL re r13 @RC}{++ law++}{r13 @RC}` | a text change inside another text change names it with `re`, beside live text too, as `changes` lists it (`r16 … inside r13`); a change inside an inserted cell or row is placed by the table line's `rev … in t0.row0.cell0` instead (#1376), and a formatting change's `fmt` tag names no parent yet (#1377) |
 | `{++new++}{r5+6 @AC}¶{r5+6 @AC}` | a change that ends its paragraph holds the mark too |
 | `¶{r3 @AC}` | inserted paragraph mark at the end of its text |
 | `\{r3 @C}` after a closer or `¶` | literal tag-like text |

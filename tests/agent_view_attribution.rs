@@ -212,7 +212,9 @@ fn handles(view: &str) -> HashMap<String, String> {
 
 /// A change of text: an insertion, deletion, move or replacement of
 /// runs. A row's, cell's or paragraph mark's change prints on its id
-/// line, not as a note a nested change could name with `re`.
+/// line, not as a note a nested change could name with `re`: a change
+/// inside one is placed by that line's location (#1376). A formatting
+/// change's `fmt` tag names no parent yet (#1377).
 fn of_text(change: &Change) -> bool {
     change.target == "text"
         && matches!(
