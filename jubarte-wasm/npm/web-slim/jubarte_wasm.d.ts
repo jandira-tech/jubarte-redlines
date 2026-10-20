@@ -298,8 +298,10 @@ export function initPanicHook(): void;
 
 /**
  * The inspection snapshot as JSON: `schema_version`, `source_sha256`,
- * `summary` and `paragraphs` (ids, text, style, formatting spans,
- * limitations). Oversized or malformed packages are refused before parsing.
+ * `summary`, `paragraphs` (ids, text, style, formatting spans,
+ * limitations) and top-level `tables` with recursive `nested` entries.
+ * Snapshot schema 2 counts top-level tables; nested entries have `parent`
+ * cell paths and no `index`. Oversized or malformed packages are refused before parsing.
  *
  * Mirrors `jubarte::inspect::inspect_json`.
  */
@@ -482,8 +484,9 @@ export function sourceSha256(docx: Uint8Array): string;
 
 /**
  * The grids `jubarte read --tables` prints: a `table N: RxC …` line per
- * body table, then a line per row of `ids=text` cells; `no tables` when
- * there are none.
+ * top-level body table, then a line per row of `ids=text` cells; nested
+ * tables follow their cell row, indented two spaces per level and labelled
+ * `nested in CELL_PATH`. `no tables` prints when there are none.
  *
  * Mirrors `jubarte::inspect::tables_text`.
  */
