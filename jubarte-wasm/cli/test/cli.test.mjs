@@ -415,7 +415,8 @@ test("capability query: --matrix and --operation answer through the wasm engine"
   const direct = JSON.parse(wasm.capabilityQuery(undefined, undefined));
   assert.equal(matrix.runtime, "wasm");
   assert.deepEqual(matrix.edit_operations, direct.edit_operations);
-  assert.equal(matrix.edit_operations.length, 24);
+  // #1252's strike and restore join the kinds once the binding has them.
+  assert.equal(matrix.edit_operations.length, matrix.edit_operations.includes("strike") ? 26 : 24);
   assert.deepEqual(matrix.edit_plan_versions, [1]);
   // Every advertised kind answers a focused query as a dispatched operation.
   for (const kind of matrix.edit_operations) {
