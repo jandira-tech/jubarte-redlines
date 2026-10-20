@@ -471,11 +471,12 @@ def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "review")]) == 0
     patch = (tmp_path / "review" / "patch.diff").read_text()
     assert patch.startswith("--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [p1] @@\n"), patch
-    assert "[-his or her-]{+an+}" in patch
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
+    assert "{+an+}[-his or her-]" in patch
     stdout = capsys.readouterr().out
     # stdout carries the changed blocks as the agent view; the patch stays on disk.
     assert "\n@@ " not in stdout and '"ev":"summary"' in stdout.replace(" ", ""), stdout
-    assert "\nrange: changed by @C (p1) of p0-p2\n" in stdout and "{~~his or her~>an~~}" in stdout, stdout
+    assert "\nrange: changed by @C (p1) of p0-p2\n" in stdout and "{++an++}{r1 @C}{--his or her--}{r2 @C}" in stdout, stdout
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "quiet"), "-q"]) == 0
     assert capsys.readouterr().out == ""
     # -q also goes before the task.
@@ -494,7 +495,8 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
         assert (bundle / name).is_file(), name
     assert f"\nsource: {bundle / 'redline.docx'}\n" in out, out
     assert "\nrange: changed by @R (p0, p1) of p0-p2\n" in out, out
-    assert "{~~his or her~>an~~}" in out and "{--Heading--}" in out, out
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
+    assert "{++an++}{r3 @R}{--his or her--}{r4 @R}" in out and "{--Heading--}" in out, out
     # A recording takes no --out-dir; flags without an operation are usage errors.
     for bad in (["--plan", "x.json", "-p", "p1", "--delete"], ["-p", "p1"], ["--anchor", "a", "-p", "p1", "--content", "b"]):
         with pytest.raises(SystemExit) as exit_info:
@@ -619,7 +621,8 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
     assert main(["edit", str(letter), "--plan", str(plan), "--consume", "--out-dir", str(tmp_path / "o")]) == 0
     assert not plan.exists(), "--consume deletes the applied plan"
     out = capsys.readouterr().out
-    assert "{~~his or her~>their~~}" in out and "Why 3?" in out, out
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
+    assert "{++their++}{r1 @R}{--his or her--}{r2 @R}" in out and "Why 3?" in out, out
 
 
 def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:

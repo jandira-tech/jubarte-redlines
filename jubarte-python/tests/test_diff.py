@@ -38,12 +38,13 @@ NEW_MD = "# Terms\n\nPayment is due in 45 days.\n\n- Delivery\n- Returns\n- Warr
 def test_two_word_documents_give_the_changed_paragraph_at_its_id() -> None:
     d = letter().diff(letter("an"), **OWNER)
     assert isinstance(d, Diff)
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
     assert d.text == (
         f"--- a/old.docx\n+++ b/new.docx{HEADER}@@ [p1] @@\n"
-        "The individual signs in [-his or her-]{+an+} individual capacity.\n"
+        "The individual signs in {+an+}[-his or her-] individual capacity.\n"
     )
     assert d.hunks == (Hunk(at="p1", removed=False, text=d.hunks[0].text),)
-    assert "[-his or her-]{+an+}" in d.hunks[0].text
+    assert "{+an+}[-his or her-]" in d.hunks[0].text
     assert str(d) == d.text
     assert d._repr_markdown_() == f"```diff\n{d.text}```\n"
 
@@ -55,7 +56,8 @@ def test_a_word_document_against_markdown_is_located_in_the_word_document() -> N
     plain = re.sub(r"^\[p\d+\] ", "", edited, flags=re.M).replace("his or her", "an")
     d = original.diff(plain, **OWNER)
     assert d.text.startswith(f"--- a/old.docx\n+++ b/new.md{HEADER}@@ [p1] @@\n"), d.text
-    assert "[-his or her-]{+an+}" in d.text
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
+    assert "{+an+}[-his or her-]" in d.text
 
 
 def test_two_markdown_texts_keep_their_lines() -> None:
@@ -101,7 +103,8 @@ def test_critic_format_is_the_whole_document_as_criticmarkup() -> None:
     assert d.text == "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery{++\n- Returns++}\n- Warranty\n"
     assert d.hunks == ()
     word = letter().diff(letter("an"), format="critic", **OWNER)
-    assert "{~~his or her~>an~~}" in word.text or "{--his or her--}{++an++}" in word.text, word.text
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
+    assert "{++an++}{r1 Arthur Rodrigues (2026-09-30T14:05:00Z)}{--his or her--}{r2 Arthur Rodrigues (2026-09-30T14:05:00Z)}" in word.text, word.text
 
 
 def test_identical_documents_give_an_empty_patch() -> None:
@@ -138,7 +141,8 @@ def test_an_edit_returns_the_patch_of_its_redline() -> None:
     ), result.diff.text
     one_line = result.diff.text.replace("\n", " ")
     # The comment is on the inserted text, so the insertion is highlighted.
-    assert "[-his or her-]{+{==an==}+}{>>Claude (2026-09-25T12:00:00Z): gender-neutral<<}" in one_line
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
+    assert "{+{==an==}+}{>>Claude (2026-09-25T12:00:00Z): gender-neutral<<}[-his or her-]" in one_line
     assert [h.at for h in result.diff.hunks] == ["p1"]
 
 

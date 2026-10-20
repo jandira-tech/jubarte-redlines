@@ -162,7 +162,8 @@ def test_unknown_output_suffix_writes_the_patch_for_word_inputs(tmp_path, capsys
     a.write_bytes(jubarte.from_markdown("old\n").to_bytes())
     b.write_bytes(jubarte.from_markdown("new\n").to_bytes())
     assert main(["diff", str(a), str(b), "-o", str(out)]) == 0
-    assert "[-old-]{+new+}" in out.read_text()
+    # Word writes the insertion first; the settled dialect pairs only a deletion then an insertion (#1135).
+    assert "{+new+}[-old-]" in out.read_text()
     assert capsys.readouterr().out == ""
 
 

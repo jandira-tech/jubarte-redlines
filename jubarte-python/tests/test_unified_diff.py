@@ -33,9 +33,9 @@ def test_docx_preserves_existing_marks_and_header_story():
     old = jubarte.from_markdown("Due in {~~30~>45~~} days.\n")
     new = jubarte.from_markdown("Due in {~~30~>60~~} days.\n")
     patch = old.diff(new, format="github", context=0).text
-    # The writer emits a substitution insertion-first, as Word Compare does;
+    # The settled dialect writes a substitution deletion first (#1135), and
     # the diff shows the runs in document order.
-    assert "{++45++}{--30--}" in patch and "{++60++}{--30--}" in patch
+    assert "{--30--}{++45++}" in patch and "{--30--}{++60++}" in patch
     patch = jubarte.diff(docx(para("same"), header="OLD HEADER"), docx(para("same"), header="NEW HEADER"), format="github").text
     assert "OLD HEADER" in patch and "NEW HEADER" in patch
 
