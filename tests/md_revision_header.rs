@@ -710,3 +710,105 @@ fn every_docx_fixture_header_counts_the_changes_changes_lists() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Each story's count on the `revisions:` line other than the body's
+/// (`3 in header1 (7 marks)`), as (story, changes, marks): the marks only
+/// print when they differ from the changes.
+fn printed_story_counts(view: &str) -> Vec<(String, usize, usize)> {
+    let story = Regex::new(r"^(\d+) in (\S+?)(?: \((\d+) marks?\))?$").unwrap();
+    let line = revisions_line(view);
+    let comment = line.split_once("# ").map_or("", |(_, comment)| comment);
+    let mut out: Vec<(String, usize, usize)> = comment
+        .split("; ")
+        .filter_map(|part| story.captures(part))
+        .map(|cap| {
+            let changes: usize = cap[1].parse().unwrap();
+            let marks = cap.get(3).map_or(changes, |m| m.as_str().parse().unwrap());
+            (cap[2].to_string(), changes, marks)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The same counts from `jubarte changes`: each story's logical changes
+/// and the elements they are made of.
+fn listed_story_counts(docx: &[u8]) -> Vec<(String, usize, usize)> {
+    use jubarte::changes::{list_changes, list_logical_changes};
+    let story = |id: &str| {
+        jubarte::ids::parse_change_ids(id)
+            .ok()
+            .and_then(|ids| ids.first().map(|id| id.story.clone()))
+            .unwrap_or_else(|| "body".to_string())
+    };
+    let mut counts: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+    for change in list_logical_changes(docx).unwrap() {
+        counts.entry(story(&change.id)).or_default().0 += 1;
+    }
+    for change in list_changes(docx).unwrap() {
+        counts.entry(story(&change.id)).or_default().1 += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(story, _)| !matches!(story.as_str(), "body" | "styles"))
+        .map(|(story, (changes, marks))| (story, changes, marks))
+        .collect()
+}
+
+/// A header's replacement of several marks is one change, as the body's
+/// is and as `jubarte changes` lists it (#1353 review); the marks follow
+/// when they differ, so the line still adds up to `revisions:`.
+#[test]
+fn a_story_counts_its_logical_changes() {
+    let docx = std::fs::read("tests/fixtures/md-roundtrip/edges/edge-authorless.docx").unwrap();
+    let view = docx_to_markdown(
+        &docx,
+        &MarkdownOptions {
+            ids: true,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert_eq!(
+        revisions_line(&view),
+        "revisions: 12                      # 1 mark shown as 1 change: 1 insertion; 3 in header1 (7 marks); 4 in footer1"
+    );
+    assert_eq!(printed_story_counts(&view), listed_story_counts(&docx));
+}
+
+/// Every DOCX fixture's header counts each other story's changes as
+/// `jubarte changes` lists them.
+#[test]
+fn every_docx_fixture_header_counts_each_storys_logical_changes() {
+    let mut paths = Vec::new();
+    docx_fixtures(std::path::Path::new("tests/fixtures"), &mut paths);
+    paths.sort();
+    let mut wrong = Vec::new();
+    for path in paths {
+        let docx = std::fs::read(&path).unwrap();
+        let Ok(view) = docx_to_markdown(
+            &docx,
+            &MarkdownOptions {
+                ids: true,
+                ..MarkdownOptions::default()
+            },
+        ) else {
+            continue;
+        };
+        let Ok(_) = jubarte::changes::list_logical_changes(&docx) else {
+            continue;
+        };
+        let (printed, listed) = (
+            printed_story_counts(&view.markdown),
+            listed_story_counts(&docx),
+        );
+        if printed != listed {
+            wrong.push(format!(
+                "{}: header {printed:?}; changes {listed:?}",
+                path.display()
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

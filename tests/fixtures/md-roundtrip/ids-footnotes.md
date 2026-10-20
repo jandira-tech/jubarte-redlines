@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 178                     # 172 marks shown as 93 changes: 48 insertions, 32 deletions, 3 paragraph marks, 10 table rows; 6 in footnotes
+revisions: 178                     # 172 marks shown as 93 changes: 48 insertions, 32 deletions, 3 paragraph marks, 10 table rows; 3 in footnotes (6 marks)
 comments: 1 thread open, style Normal  # 3 comments: c2 (+ replies c3, c4)
 authors:
   document_owner: Arthur Souza Rodrigues  # dc:creator

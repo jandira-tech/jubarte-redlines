@@ -454,6 +454,25 @@ pub(crate) fn shown_changes(shown: &str, whole: bool) -> Vec<&'static str> {
         .collect()
 }
 
+/// How many changes each story other than the body and `styles` holds,
+/// as `jubarte changes` lists them (#1353 review): a header's
+/// `header1.r2+3` counts once. `None` without the listing.
+pub(crate) fn story_changes() -> Option<HashMap<String, usize>> {
+    let logical = LOGICAL.with(|logical| Rc::clone(&logical.borrow()));
+    let changes = logical.as_ref().as_ref()?;
+    let mut counts = HashMap::new();
+    for c in changes {
+        let story = crate::ids::parse_change_ids(&c.id)
+            .ok()
+            .and_then(|ids| ids.into_iter().next())
+            .map_or_else(|| "body".to_string(), |id| id.story);
+        if !matches!(story.as_str(), "body" | "styles") {
+            *counts.entry(story).or_default() += 1;
+        }
+    }
+    Some(counts)
+}
+
 /// The marks of each logical change of several marks: by a mark's short
 /// id (`r8`, `header1.r2`), the `w:id`s of all its change's marks in
 /// reading order (`7 8 9 10`).

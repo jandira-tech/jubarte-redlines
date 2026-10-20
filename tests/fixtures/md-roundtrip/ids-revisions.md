@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 1668                    # 1571 marks shown as 854 changes: 659 insertions, 30 deletions, 23 substitutions, 18 paragraph marks, 124 table rows; 84 formatting; 1 in header1; 4 in footer3; 4 in footer2; 4 in footer1
+revisions: 1668                    # 1571 marks shown as 854 changes: 659 insertions, 30 deletions, 23 substitutions, 18 paragraph marks, 124 table rows; 84 formatting; 1 in header1; 3 in footer3 (4 marks); 3 in footer2 (4 marks); 3 in footer1 (4 marks)
 comments: 0
 authors:
   document_owner: Jones, SA        # dc:creator

@@ -216,9 +216,10 @@ fn join(items: &[String]) -> String {
 
 /// The `revisions:` line's comment: the body's marks and the changes the
 /// view shows them as, then formatting (body and styles) and each other
-/// story's count: `9 marks shown as 5 changes: 1 insertion, 4
-/// substitutions; 2 formatting; 1 in header1`. Resolved views describe
-/// the raw marks by kind, without `shown as`. Empty for no change.
+/// story's changes, with its marks when they differ: `9 marks shown as 5
+/// changes: 1 insertion, 4 substitutions; 2 formatting; 3 in header1 (7
+/// marks)`. Resolved views describe the raw marks by kind, without
+/// `shown as`. Empty for no change.
 fn revisions_comment(f: &Facts) -> String {
     use crate::changes::ChangeKind;
     let story = |c: &crate::changes::Change| {
@@ -268,9 +269,23 @@ fn revisions_comment(f: &Facts) -> String {
             order.push(s);
         }
     }
-    let others: Vec<(String, usize)> = order
+    // Each story counts the changes `jubarte changes` lists for it, as the
+    // body does, and its marks when they differ; a resolved view counts
+    // the raw marks.
+    let listed = f
+        .resolved
+        .is_none()
+        .then(super::agent::story_changes)
+        .flatten();
+    let others: Vec<(String, usize, usize)> = order
         .into_iter()
-        .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
+        .filter_map(|s| {
+            let marks = *counts.get(&s)?;
+            let changes = listed
+                .as_ref()
+                .map_or(marks, |l| l.get(&s).copied().unwrap_or(marks));
+            Some((s, changes, marks))
+        })
         .collect();
     let mut parts = Vec::new();
     let raw_kinds = if f.resolved.is_some() {
@@ -328,8 +343,12 @@ fn revisions_comment(f: &Facts) -> String {
     if formatting > 0 {
         parts.push(format!("{formatting} formatting"));
     }
-    for (name, n) in others {
-        parts.push(format!("{n} in {name}"));
+    for (name, changes, marks) in others {
+        parts.push(if changes == marks {
+            format!("{changes} in {name}")
+        } else {
+            format!("{changes} in {name} ({})", plural(marks, "mark", "marks"))
+        });
     }
     parts.join("; ")
 }

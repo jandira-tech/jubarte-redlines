@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 1651                    # 1383 marks shown as 896 changes: 400 insertions, 104 deletions, 38 substitutions, 277 paragraph marks, 77 table rows; 260 formatting; 1 in footer1; 3 in footer2; 2 in endnotes; 2 in footnotes
+revisions: 1651                    # 1383 marks shown as 896 changes: 400 insertions, 104 deletions, 38 substitutions, 277 paragraph marks, 77 table rows; 260 formatting; 1 in footer1; 2 in footer2 (3 marks); 2 in endnotes; 2 in footnotes
 comments: 0
 authors:
   document_owner: Cuenta Microsoft  # dc:creator

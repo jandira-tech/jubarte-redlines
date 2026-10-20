@@ -346,7 +346,8 @@ Consultant will deliver the services in each Statement of Work, including {++qua
 lists for the body, kind by kind (#1356). That includes a change printed
 only as another's parent (`re r7 @B`), and a row whose cells all print
 its id counts once, as a table row. A selection counts the changes whose
-ids it prints.
+ids it prints. Each other story then counts the changes `jubarte changes`
+lists for it, with its marks when they differ: `3 in header1 (7 marks)`.
 
 `--track-changes accept|reject` prints the document with every change
 resolved, `--comments none` leaves the comments out of the text (their ids
