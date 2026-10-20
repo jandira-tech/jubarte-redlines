@@ -430,9 +430,10 @@ fn kind_name(kind: ChangeKind) -> &'static str {
 }
 
 /// `jubarte changes`' listing: one line per change, `{ref}\t{kind}\t{target}
-/// \t{author}\t{paragraph}\t{text}[\tinside {ref}]` (`-` for an absent
-/// author or paragraph; the text quoted, its first 60 characters), then
-/// `{n} change(s)`.
+/// \t{author}\t{paragraph}\t{text}[\tinside {ref}][\tholds comment {c}'s
+/// mark]` (`-` for an absent author or paragraph; the text quoted, its
+/// first 60 characters; `holds comment marks {c}, {c}` for several), then
+/// `{n} change(s)`. A row has six fields, and one more for each suffix.
 pub fn changes_text(changes: &[Change]) -> String {
     let mut out = String::new();
     for c in changes {

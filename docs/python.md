@@ -2122,6 +2122,7 @@ Change(
     inside: str | None,
     ref: str | None = None,
     paragraph: str | None = None,
+    holds_comments: tuple[str, ...] = (),
 )
 ```
 
@@ -2136,6 +2137,9 @@ change applies to (``text``, ``paragraph_mark``, ``table_row``,
 one so its content goes takes this one along. ``ref`` equals ``id``: the
 short id the CLI prints and ``-p``/``--id`` take;
 ``paragraph`` is the id of the paragraph the change is in (``p3``).
+``holds_comments`` names the comments (``c4``, a reply's ``c5``) whose
+reference mark the change holds: resolving it so its content goes
+removes their threads, as Word does.
 
 ### `Comment`
 

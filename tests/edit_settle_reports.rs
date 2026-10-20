@@ -86,11 +86,17 @@ fn with_p1(reply: bool, p1: &str) -> Vec<u8> {
 /// [`commented`]'s parts with `paragraphs` between "Services" and "Next
 /// paragraph.", each the content of one `w:p`.
 fn with_paragraphs(reply: bool, paragraphs: &[&str]) -> Vec<u8> {
-    let mut pkg = jubarte::opc::PartFs::open(&commented(reply)).unwrap();
     let middle: String = paragraphs
         .iter()
         .map(|p| format!("<w:p>{p}</w:p>"))
         .collect();
+    with_body(reply, &middle)
+}
+
+/// [`commented`]'s parts with the body `middle` between "Services" and
+/// "Next paragraph.".
+fn with_body(reply: bool, middle: &str) -> Vec<u8> {
+    let mut pkg = jubarte::opc::PartFs::open(&commented(reply)).unwrap();
     let body = format!(
         r#"<w:p><w:r><w:t>Services</w:t></w:r></w:p>{middle}<w:p><w:r><w:t>Next paragraph.</w:t></w:r></w:p>"#
     );
@@ -475,9 +481,13 @@ fn reply_in_a_tracked_deleted_paragraph_is_allowed() {
 }
 
 fn v2_delete_and_reply(source: &[u8], track: &str) -> serde_json::Value {
+    v2_delete_and_reply_under(source, track, "keep")
+}
+
+fn v2_delete_and_reply_under(source: &[u8], track: &str, existing: &str) -> serde_json::Value {
     serde_json::json!({"schema_version":2,
     "source":{"sha256":jubarte::inspect::source_sha256(source)},
-    "policy":{"track":track,"existing_revisions":"keep","text_view":"final"},
+    "policy":{"track":track,"existing_revisions":existing,"text_view":"final"},
     "resolve_revisions":{"accept":[],"reject":[]},"author":"Alice",
     "date":"2026-10-18T12:05:00Z","scope":{"kind":"all"},
     "operations":[
@@ -486,12 +496,16 @@ fn v2_delete_and_reply(source: &[u8], track: &str) -> serde_json::Value {
     ]})
 }
 
+/// Both v2 routes: the direct one (`keep`) and the comparer's (`accept`).
 #[test]
 fn reply_in_a_tracked_v2_deleted_paragraph_is_allowed() {
-    let source = commented(false);
-    let plan = PlanV2::from_json(&v2_delete_and_reply(&source, "on").to_string()).unwrap();
-    let out = jubarte::edit::v2_apply::apply_plan(&source, &plan).unwrap();
-    assert_thread_on_deleted_text(&out.redline);
+    for existing in ["keep", "accept"] {
+        let source = commented(false);
+        let json = v2_delete_and_reply_under(&source, "on", existing).to_string();
+        let plan = PlanV2::from_json(&json).unwrap();
+        let out = jubarte::edit::v2_apply::apply_plan(&source, &plan).unwrap();
+        assert_thread_on_deleted_text(&out.redline);
+    }
 }
 
 /// Editing mode deletes the paragraph outright, the thread's reference
@@ -501,6 +515,13 @@ fn reply_in_a_tracked_v2_deleted_paragraph_is_allowed() {
 fn reply_in_an_editing_mode_deleted_paragraph_is_refused_with_comment_anchor_removed() {
     let source = commented(false);
     let plan = PlanV2::from_json(&v2_delete_and_reply(&source, "off").to_string()).unwrap();
+    let error = jubarte::edit::v2_apply::apply_plan(&source, &plan).unwrap_err();
+    assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
+    assert_eq!(error.operation.as_deref(), Some("/operations/0"), "{error}");
+    // The deletion is what removes the anchor: alone, it is refused the same.
+    let mut alone = v2_delete_and_reply(&source, "off");
+    alone["operations"].as_array_mut().unwrap().truncate(1);
+    let plan = PlanV2::from_json(&alone.to_string()).unwrap();
     let error = jubarte::edit::v2_apply::apply_plan(&source, &plan).unwrap_err();
     assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
     assert_eq!(error.operation.as_deref(), Some("/operations/0"), "{error}");
@@ -566,4 +587,108 @@ fn editing_mode_refuses_a_reply_on_a_paragraph_the_plan_deletes() {
         String::from_utf8_lossy(&tracked.stderr)
     );
     assert_thread_on_deleted_text(&std::fs::read(&output).unwrap());
+}
+
+/// Two identical paragraphs, Bob's comment on the first: deleting it and
+/// replying to Bob, the comparer strikes the twin instead, so the reply
+/// would sit on text that stays. The refusal says so about the reply and
+/// names the policy that writes the deletion as given; under it the
+/// thread goes on the struck paragraph.
+#[test]
+fn a_reply_the_comparer_would_leave_on_kept_text_is_refused_with_keep() {
+    let base = docx(
+        &(para("Lead.") + &para("Same words here.") + &para("Same words here.") + &para("Tail.")),
+    );
+    let bob = plan(
+        r#"{"schema_version":1,"author":"Bob","date":"2026-10-18T12:00:00Z","operations":[{"kind":"comment","paragraph":"p1","text":"Bob's note."}]}"#,
+    );
+    let source = apply_plan(&base, &bob).unwrap().clean;
+    let error = apply_plan(&source, &plan(DELETE_AND_REPLY)).unwrap_err();
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error}");
+    assert!(
+        error
+            .message
+            .contains("the reply would sit on text that stays")
+            && error.message.contains(r#""existing_revisions": "keep""#),
+        "{error}"
+    );
+    let keep = DELETE_AND_REPLY.replace(
+        "\"operations\"",
+        "\"existing_revisions\":\"keep\",\"operations\"",
+    );
+    let out = apply_plan(&source, &plan(&keep)).unwrap();
+    assert_thread_on_deleted_text(&out.redline);
+    let xml = part_string(&out.redline, "word/document.xml").unwrap();
+    let first = xml.find("Same words here.").unwrap();
+    assert!(
+        xml[..first].contains("<w:del "),
+        "the first copy is struck: {xml}"
+    );
+}
+
+/// The comments whose mark change `id` holds, as `changes --json` lists them.
+fn held(docx: &[u8], id: &str) -> Vec<String> {
+    list_changes(docx)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == id)
+        .unwrap_or_else(|| panic!("{id} listed"))
+        .holds_comments
+}
+
+const DAN: &str = r#"w:author="Dan" w:date="2026-10-18T12:02:00Z""#;
+
+/// A change holds the marks in the content it removes: a deleted row the
+/// marks in its cells, the row of a nested table only those in it, not the
+/// outer cell's around it.
+#[test]
+fn a_deleted_row_holds_the_marks_in_its_own_cells() {
+    let cell = |content: &str| {
+        format!(r#"<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr>{content}</w:tc>"#)
+    };
+    let table = |rows: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{rows}</w:tbl>"#
+        )
+    };
+    let marked = |id: u32, text: &str| {
+        format!(
+            r#"<w:p><w:commentRangeStart w:id="{id}"/><w:r><w:t>{text}</w:t></w:r><w:commentRangeEnd w:id="{id}"/><w:r>{REF}<w:commentReference w:id="{id}"/></w:r></w:p>"#
+        )
+    };
+    let inner = table(&format!(
+        r#"<w:tr><w:trPr><w:del w:id="41" {DAN}/></w:trPr>{}</w:tr>"#,
+        cell("<w:p><w:r><w:t>Inner.</w:t></w:r></w:p>")
+    ));
+    let body = table(&format!(
+        r#"<w:tr><w:trPr><w:del w:id="40" {DAN}/></w:trPr>{}</w:tr><w:tr>{}</w:tr>"#,
+        cell(&marked(0, "Row text.")),
+        cell(&format!("{}{inner}<w:p/>", marked(1, "Outer cell.")))
+    ));
+    let docx = with_body(true, &body);
+    assert_eq!(held(&docx, "r40"), ["c0"]);
+    assert!(held(&docx, "r41").is_empty(), "{:?}", held(&docx, "r41"));
+}
+
+/// A deleted paragraph mark and a formatting change remove no content, so
+/// they hold no mark, whatever the paragraph or run holds.
+#[test]
+fn a_paragraph_mark_or_formatting_change_holds_no_mark() {
+    let docx = with_p1(
+        false,
+        &format!(
+            r#"<w:pPr><w:rPr><w:del w:id="42" {DAN}/></w:rPr></w:pPr><w:commentRangeStart w:id="0"/><w:r><w:t>Text.</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/><w:b/><w:rPrChange w:id="43" {DAN}><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr></w:rPrChange></w:rPr><w:commentReference w:id="0"/></w:r>"#
+        ),
+    );
+    assert!(held(&docx, "r42").is_empty());
+    assert!(held(&docx, "r43").is_empty());
+}
+
+/// A receipt written before `why` existed still reads, its `why` empty.
+#[test]
+fn a_receipt_without_why_reads_with_an_empty_one() {
+    let old: jubarte::edit::RemovedComment =
+        serde_json::from_str(r#"{"id":"c0","author":"Bob","replies":["c1"]}"#).unwrap();
+    assert_eq!(old.why, "");
+    assert_eq!(old.replies, ["c1"]);
 }

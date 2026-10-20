@@ -828,6 +828,25 @@ def test_editing_mode_takes_a_plan_that_settles_every_change(
     assert error.value.code == 2
 
 
+def test_editing_mode_refuses_a_reply_on_a_paragraph_it_deletes(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The clean copy keeps neither p1 nor c0's thread: the reply would join nothing.
+    commented = tmp_path / "commented.docx"
+    assert main(["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]) == 0
+    capsys.readouterr()
+    output = tmp_path / "never-created.docx"
+    with pytest.raises(SystemExit) as error:
+        main([
+            "edit", str(commented), "-p", "p1", "--delete", "-p", "c0", "--reply", "Agreed.",
+            "--editing-mode", "-o", str(output),
+        ])
+    assert error.value.code == 2
+    captured = capsys.readouterr()
+    assert "--editing-mode deletes p1 outright" in captured.err
+    assert not output.exists()
+
+
 def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     commented = tmp_path / "commented.docx"
     assert main(["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]) == 0

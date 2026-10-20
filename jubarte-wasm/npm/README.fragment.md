@@ -105,8 +105,8 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `acceptRevisions` | `(docx) → Uint8Array` | Accept every tracked revision → clean DOCX. |
 | `rejectRevisions` | `(docx) → Uint8Array` | Reject every tracked revision → base DOCX. |
 | `getRevisions` | `(docx, inputLimitsJson?) → string` | List tracked revisions as a JSON array string (`type` / `author` / `date` / `part` / `moveGroupId` / `isMoveSource` / `formatChange` / `text`). |
-| `listChanges` | `(docx) → string` | Each tracked change as a JSON array string: `id` (`body:rev:12`), `ref` (`r12`, the short id the CLI prints), `kind`, `target`, `author`, `date`, `text`, `move_name`, `move_side`, `inside`. |
-| `changesText` | `(docx) → string` | The listing `jubarte changes` prints: a line per change with its short id (`r0`), kind, target, author, paragraph and text, then `N change(s)`. |
+| `listChanges` | `(docx) → string` | Each tracked change as a JSON array string: `id` (`body:rev:12`), `ref` (`r12`, the short id the CLI prints), `kind`, `target`, `author`, `date`, `text`, `move_name`, `move_side`, `inside`, and `holds_comments` (`c4`, a reply's `c5`) when the change holds comment reference marks: resolving it so its content goes removes those threads. |
+| `changesText` | `(docx) → string` | The listing `jubarte changes` prints: a line per change with its short id (`r0`), kind, target, author, paragraph and text (then `inside r1` and `holds comment c4's mark` when they apply), then `N change(s)`. |
 | `changeFilter` | `(filterJson) → string` | The filter `acceptChanges`/`rejectChanges` take, with each id in its long form (`r1+2` → `body:rev:1`, `body:rev:2`); an id that is no change id throws, as the CLI's usage error before any read. |
 | `acceptChanges` | `(docx, filterJson) → Uint8Array` | Accept the changes `filterJson` selects (`{"ids": [...], "authors": [...], "kinds": [...]}`: every list given must match; `{}` selects all, an empty list none) and keep the rest tracked. |
 | `rejectChanges` | `(docx, filterJson) → Uint8Array` | Reject the changes `filterJson` selects and keep the rest tracked. |
