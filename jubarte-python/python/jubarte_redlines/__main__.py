@@ -243,11 +243,19 @@ def _selection(options: dict) -> dict:
     }
 
 
-def _write_result(args: argparse.Namespace, data: bytes, *, source: str, view: dict | None = None) -> None:
+def _write_result(
+    args: argparse.Namespace,
+    data: bytes,
+    *,
+    source: str,
+    view: dict | None = None,
+    validity_file: str | None = None,
+) -> None:
     """``-o`` in the format its extension names, as the binary's writer: the
     Word package, its agent view (.md, headed ``source``), its snapshot
     (.json) or its drawing (.pdf, .png). ``view`` is read's options; the
-    defaults elsewhere."""
+    defaults elsewhere. ``validity_file`` puts the input's validity in a
+    snapshot's summary, as ``read --json`` prints it."""
     from . import _native
 
     output: Path = args.output
@@ -260,7 +268,7 @@ def _write_result(args: argparse.Namespace, data: bytes, *, source: str, view: d
     if kind == "md":
         text: bytes | str = _view_text(data, view, source)
     elif kind == "json":
-        text = _native.read_json(data, **_selection(view)) + "\n"
+        text = _native.read_json(data, **_selection(view), validity_file=validity_file) + "\n"
     else:
         text = data
     _wrote(args, output, kind, _write(output, text))
@@ -300,10 +308,21 @@ def cmd_read(args: argparse.Namespace) -> int:
         sys.stdout.write(markdown)
         return EXIT_OK
     if args.output is not None:
-        _write_result(args, _input(args), source=args.file.name, view=vars(args))
+        _write_result(
+            args,
+            _input(args),
+            source=args.file.name,
+            view=vars(args),
+            validity_file=_spelled(args, "file"),
+        )
         return EXIT_OK
     if args.json:
-        snapshot = _native.read_json(_input(args), **_selection(vars(args)), source=args.file.name)
+        snapshot = _native.read_json(
+            _input(args, notice=False),
+            **_selection(vars(args)),
+            source=args.file.name,
+            validity_file=_spelled(args, "file"),
+        )
         print(snapshot)
         return EXIT_OK
     return _print_view(_input(args), vars(args), args.file.name)
@@ -367,13 +386,14 @@ def _spelled(args: argparse.Namespace, key: str) -> str:
     return getattr(args, "spelled", {}).get(key) or str(getattr(args, key))
 
 
-def _input(args: argparse.Namespace) -> bytes:
+def _input(args: argparse.Namespace, *, notice: bool = True) -> bytes:
     """FILE's bytes for ``read``, ``changes`` and ``comments``; unless ``-q``,
-    one stderr line says how many validity findings the input has."""
+    one stderr line says how many validity findings the input has. A JSON
+    read (``notice=False``) reports them in its output instead (#1309)."""
     from . import _native
 
     docx = _read(args.file).to_bytes()
-    if not getattr(args, "quiet", False):
+    if notice and not getattr(args, "quiet", False):
         notice = _native.input_notice(docx, _spelled(args, "file"))
         if notice is not None:
             print(notice, file=sys.stderr)
@@ -958,9 +978,10 @@ def _json_lines(payload: str) -> None:
 def cmd_changes(args: argparse.Namespace) -> int:
     from . import _native
 
-    docx = _input(args)
+    docx = _input(args, notice=not args.json)
     if args.json:
         _json_lines(_native.list_changes_json(docx))
+        print(_native.input_validity_line(docx, _spelled(args, "file")))
     else:
         sys.stdout.write(_native.changes_text(docx))
     return EXIT_OK
@@ -969,9 +990,10 @@ def cmd_changes(args: argparse.Namespace) -> int:
 def cmd_comments(args: argparse.Namespace) -> int:
     from . import _native
 
-    docx = _input(args)
+    docx = _input(args, notice=not args.json)
     if args.json:
         _json_lines(_native.list_comments_json(docx, author=args.author, latest=args.latest))
+        print(_native.input_validity_line(docx, _spelled(args, "file")))
     else:
         sys.stdout.write(_native.comments_text(docx, author=args.author, latest=args.latest))
     return EXIT_OK

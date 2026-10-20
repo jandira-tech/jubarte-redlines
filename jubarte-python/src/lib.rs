@@ -282,7 +282,9 @@ fn track_changes_of(track_changes: Option<&str>) -> PyResult<jubarte::markdown::
 /// `comments`. `paragraphs`, `head`, `tail`, `changed` and `by` select as in
 /// [`read_view`]; the snapshot keeps the selected paragraphs and their
 /// changes and comments. `track_changes` `accept` or `reject` settles the
-/// text and names the choice in `track_changes`.
+/// text and names the choice in `track_changes`. `validity_file`, the path
+/// as the command line spells it, adds `summary.input_validity`: the
+/// input's validity findings counted, as the binary reports them.
 #[pyfunction]
 #[pyo3(signature = (
     docx,
@@ -294,6 +296,7 @@ fn track_changes_of(track_changes: Option<&str>) -> PyResult<jubarte::markdown::
     changed = false,
     by = None,
     source = None,
+    validity_file = None,
 ))]
 #[expect(
     clippy::too_many_arguments,
@@ -309,6 +312,7 @@ fn read_json(
     changed: bool,
     by: Option<&str>,
     source: Option<String>,
+    validity_file: Option<&str>,
 ) -> PyResult<String> {
     let track_changes = track_changes_of(track_changes)?;
     let select =
@@ -320,8 +324,10 @@ fn read_json(
         ..jubarte::markdown::ReadOptions::default()
     };
     py.detach(|| {
-        let snapshot =
+        let mut snapshot =
             jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
+        snapshot.summary.input_validity =
+            validity_file.map(|file| jubarte::validate::input_validity_of(docx, file));
         serde_json::to_string(&snapshot).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
@@ -1214,6 +1220,18 @@ fn input_notice(py: Python<'_>, docx: &[u8], file: &str) -> Option<String> {
     })
 }
 
+/// The last line `changes --json` and `comments --json` print, the input's
+/// validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
+/// "next":"jubarte validate FILE"}}`); `file` is the path as the command
+/// line spells it. Mirrors `jubarte::validate::input_validity_line`.
+#[pyfunction]
+fn input_validity_line(py: Python<'_>, docx: &[u8], file: &str) -> PyResult<String> {
+    py.detach(|| {
+        jubarte::validate::input_validity_line(&jubarte::validate::input_validity_of(docx, file))
+    })
+    .map_err(|e| err(e.to_string()))
+}
+
 /// `repair_json`'s result: the repaired package and `{"repaired": [...],
 /// "remaining": [...]}` as JSON.
 type RepairOutcome = (Py<PyBytes>, String);
@@ -1487,6 +1505,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
     m.add_function(wrap_pyfunction!(input_notice, m)?)?;
+    m.add_function(wrap_pyfunction!(input_validity_line, m)?)?;
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;

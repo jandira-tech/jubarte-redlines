@@ -38,8 +38,9 @@ pub struct Cli {
     /// Files are still written; a reading task
     /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
     /// still prints what it read, and warnings and errors still print.
-    /// `read`, `changes` and `comments` drop their one line naming the
-    /// input's validity findings.
+    /// `read`, `changes` and `comments` drop their one stderr line naming
+    /// the input's validity findings; under --json the output counts them,
+    /// -q or not.
     #[arg(
         short = 'q',
         long,

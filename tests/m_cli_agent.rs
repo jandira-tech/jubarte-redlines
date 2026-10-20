@@ -123,13 +123,17 @@ fn read_json_prints_the_snapshot_with_changes_and_comments() {
     for (task, key) in [("changes", "changes"), ("comments", "comments")] {
         let (code, stdout, _) = run(&[task, RECEIVED, "--json"]);
         assert_eq!(code, 0);
-        let listed: Vec<serde_json::Value> = match serde_json::from_str(&stdout) {
-            Ok(serde_json::Value::Array(all)) => all,
-            _ => stdout
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect(),
-        };
+        let mut listed: Vec<serde_json::Value> = stdout
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        // The last line is the input's validity, the snapshot's summary's
+        // (#1309), never a record.
+        let validity = listed.pop().unwrap();
+        assert_eq!(
+            validity["input_validity"], snapshot["summary"]["input_validity"],
+            "{task}"
+        );
         assert_eq!(
             listed.len(),
             snapshot[key].as_array().unwrap().len(),

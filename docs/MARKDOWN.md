@@ -370,10 +370,18 @@ With `--json` on the command line, an error also prints on stdout as one
 line, `{"error":{"code":"USAGE","message":"unexpected argument '--bogus'
 found","usage":"jubarte read [OPTIONS] <FILE>"}}`, so `| jq .error.code`
 reads it from stdout alone; stderr and the exit code stay as they are.
-stderr is text, the error and, for an input `validate` would flag, the
-one line naming its findings (`input has 2 validity warnings; jubarte
-validate FILE lists them`, which `-q` drops), so pipe stdout alone, never
-`2>&1 | jq`.
+stderr is text, the error alone, so pipe stdout alone, never `2>&1 |
+jq`.
+
+A JSON read names the input's own validity findings in its output, not
+on stderr (#1309), `-q` or not: `read --json` in the snapshot's
+`summary.input_validity`, `{"errors":0,"warnings":2,"next":"jubarte
+validate FILE"}` (a clean input reads `{"errors":0,"warnings":0}`), and
+`changes --json` and `comments --json` on their last line,
+`{"input_validity":{…}}`, always there, after the records. `read -o
+FILE.json` writes what `read --json` prints; with stdout free, the
+Markdown view and `-o` keep the one stderr line (`input has 2 validity
+warnings; jubarte validate FILE lists them`, which `-q` drops).
 Its `usage` is the task's, a line per form; the `Usage:` line on stderr is
 clap's, which names the flags given. The code is the message's leading
 code (`STALE_SOURCE`), else `USAGE` for an exit 2 and `ERROR` for any

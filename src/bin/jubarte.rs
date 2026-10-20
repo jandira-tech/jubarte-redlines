@@ -382,7 +382,7 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             }
             return Ok(());
         }
-        (Format::Md, Produced::Text(text)) => text.to_string(),
+        (Format::Md | Format::Json, Produced::Text(text)) => text.to_string(),
         (Format::Md, Produced::Docx(bytes)) => {
             agent_view(bytes, Some(out.source.clone()), out.view)?.markdown
         }
@@ -506,18 +506,20 @@ fn run_resolution(
 }
 
 fn run_changes(file: &Path, json: bool, quiet: bool) -> Result<(), String> {
+    if json {
+        let (bytes, validity) = read_input_json(file)?;
+        let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
+        for c in &changes {
+            outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+        }
+        return validity_line(&validity);
+    }
     let bytes = read_input(file, quiet)?;
     let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
-    if !json {
-        outln!(
-            "{}",
-            jubarte::changes::changes_text(&changes).trim_end_matches('\n')
-        );
-        return Ok(());
-    }
-    for c in &changes {
-        outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
-    }
+    outln!(
+        "{}",
+        jubarte::changes::changes_text(&changes).trim_end_matches('\n')
+    );
     Ok(())
 }
 
@@ -528,19 +530,34 @@ fn run_comments(
     latest: bool,
     quiet: bool,
 ) -> Result<(), String> {
-    let bytes = read_input(file, quiet)?;
+    let (bytes, validity) = if json {
+        let (bytes, validity) = read_input_json(file)?;
+        (bytes, Some(validity))
+    } else {
+        (read_input(file, quiet)?, None)
+    };
     let comments = jubarte::comments::list_comments(&bytes).map_err(|e| e.to_string())?;
     let comments = jubarte::comments::select_comments(comments, author, latest);
-    if !json {
+    let Some(validity) = validity else {
         outln!(
             "{}",
             jubarte::comments::comments_text(&comments).trim_end_matches('\n')
         );
         return Ok(());
-    }
+    };
     for c in &comments {
         outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
     }
+    validity_line(&validity)
+}
+
+/// The input's validity, the last line of `changes --json` and
+/// `comments --json` (#1309).
+fn validity_line(validity: &jubarte::validate::InputValidity) -> Result<(), String> {
+    outln!(
+        "{}",
+        jubarte::validate::input_validity_line(validity).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -1038,18 +1055,28 @@ fn run_text(
             render: &render,
         };
         check_output(&out)?;
+        if kind == Format::Json {
+            // The file holds the bytes --json prints, its input_validity
+            // too; stdout is free, so the stderr notice stays.
+            let (bytes, validity) = read_input_json(file)?;
+            if !quiet && let Some(line) = jubarte::validate::input_notice_of(&validity) {
+                eprintln!("{line}");
+            }
+            warn_nested_text_boxes(&bytes);
+            let json = read_json(&bytes, args, None, validity)?;
+            return write_output(&out, Produced::Text(&json));
+        }
         let bytes = read_input(file, quiet)?;
         warn_nested_text_boxes(&bytes);
         return write_output(&out, Produced::Docx(&bytes));
     }
+    if args.json {
+        let (bytes, validity) = read_input_json(file)?;
+        warn_nested_text_boxes(&bytes);
+        return Ok(write_stdout(read_json(&bytes, args, source, validity)?)?);
+    }
     let bytes = read_input(file, quiet)?;
     warn_nested_text_boxes(&bytes);
-    if args.json {
-        let snapshot = jubarte::markdown::read_snapshot(&bytes, &snapshot_options(args, source)?)
-            .map_err(|e| e.to_string())?;
-        let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
-        return Ok(write_stdout(format!("{json}\n"))?);
-    }
     Ok(print_agent_view(&bytes, source, args)?)
 }
 
@@ -2996,6 +3023,31 @@ fn read_input(path: &Path, quiet: bool) -> Result<Vec<u8>, String> {
         eprintln!("{line}");
     }
     Ok(bytes)
+}
+
+/// `read --json`'s snapshot of `bytes`, one line, its `summary` carrying
+/// the input's `validity` (#1309).
+fn read_json(
+    bytes: &[u8],
+    args: &ReadArgs,
+    source: Option<String>,
+    validity: jubarte::validate::InputValidity,
+) -> Result<String, ConvertFailure> {
+    let mut snapshot = jubarte::markdown::read_snapshot(bytes, &snapshot_options(args, source)?)
+        .map_err(|e| e.to_string())?;
+    snapshot.summary.input_validity = Some(validity);
+    let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+    Ok(format!("{json}\n"))
+}
+
+/// [`read_word`] for a JSON read (`read --json`, `changes --json`,
+/// `comments --json`): no stderr line, which would break `--json 2>&1 |
+/// jq`; the input's findings come back for the output to carry (#1309),
+/// under `-q` too. A package that cannot be validated has none.
+fn read_input_json(path: &Path) -> Result<(Vec<u8>, jubarte::validate::InputValidity), String> {
+    let bytes = read_word(path)?;
+    let validity = jubarte::validate::input_validity_of(&bytes, &path.to_string_lossy());
+    Ok((bytes, validity))
 }
 
 /// `CODE: FILE is …` when `bytes`, read from `path`, are no Word package.

@@ -124,6 +124,10 @@ pub struct Summary {
     pub list_numbering: bool,
     /// Settings enable tracking of new revisions.
     pub track_changes: bool,
+    /// The input's own validity findings, which `read --json` reports here
+    /// (#1309); absent where nothing validated the input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_validity: Option<crate::validate::InputValidity>,
 }
 
 /// Snapshot of a package as it stood at inspection time, serialized by

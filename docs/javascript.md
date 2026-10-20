@@ -359,19 +359,7 @@ auditTracked(original: Uint8Array, edited: Uint8Array, author: string): string
 
 Every text change from `original` to `edited` must be a revision by
 `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
-array. Existing foreign revisions may remain: `FOREIGN_AUTHOR` reports
-foreign history added, changed or removed against `original`. Paragraphs
-align by full text, including deleted text, within each story. An untracked
-paragraph merge or split around another author's revisions reports those
-revisions as new and gone alongside `UNTRACKED_EDIT`. Groups with
-the same author, kind, target, date and move side are compared in document
-order within the aligned paragraph or non-paragraph owner (for example, a
-style id). Revision ids do not define identity. Split carriers combine only
-when they touch, with no visible content or still-present revision between
-them. A boundary explained solely by a missing separator revision adds no
-finding beyond that separator. Changed revisions say `differs from the
-original`; new revisions say `is new`. These messages name ids and authors,
-never revision text.
+array.
 
 Mirrors `jubarte::validate::audit_tracked`.
 
@@ -1100,9 +1088,7 @@ Markdown inputs:
 
       --resource-path <DIR>
           Where images named by the Markdown are found (default: the original's
-          directory when it is Markdown, else the modified's). Only images that resolve
-          inside that directory are read, symlinks resolved; a URL or a path out of it
-          is written as its alt text, with a warning that says why
+          directory when it is Markdown, else the modified's)
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
@@ -1298,11 +1284,7 @@ Options:
 
 ```text
 $ jubarte-redlines accept --help
-Accept all tracked changes, or select by ID, author or kind.
-
-Every part counts: the body, headers, footers, notes and comment bodies. An author or
-kind selection reaches comment bodies too, but no ID names a comment-body change, so an
-ID selection leaves those tracked.
+Accept all tracked changes, or select by ID, author or kind
 
 Usage: jubarte-redlines accept [OPTIONS] --output <FILE> <FILE>
 
@@ -1320,8 +1302,7 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
-          and stay tracked
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1388,11 +1369,7 @@ Rendering (-o FILE.pdf or FILE.png):
 
 ```text
 $ jubarte-redlines reject --help
-Reject all tracked changes, or select by ID, author or kind.
-
-Every part counts: the body, headers, footers, notes and comment bodies. An author or
-kind selection reaches comment bodies too, but no ID names a comment-body change, so an
-ID selection leaves those tracked.
+Reject all tracked changes, or select by ID, author or kind
 
 Usage: jubarte-redlines reject [OPTIONS] --output <FILE> <FILE>
 
@@ -1410,8 +1387,7 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
-          and stay tracked
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1530,9 +1506,7 @@ Options:
 
       --resource-path <DIR>
           Markdown to Word: where images are found [default: the Markdown file's
-          directory]. Only images that resolve inside that directory are read, symlinks
-          resolved; a URL or a path out of it is written as its alt text, with a warning
-          that says why
+          directory]
 
   -a, --author <NAME>
           Markdown to Word: author of the tracked changes and comments that name none

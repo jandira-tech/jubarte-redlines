@@ -317,12 +317,9 @@ fn read_prints_warnings_once() {
     let line = "input has 2 validity warnings; jubarte validate in.docx lists them\n";
     for args in [
         &["read", "in.docx", "--no-page-markers"][..],
-        &["read", "in.docx", "--json"],
         &["in.docx", "--no-page-markers"],
         &["changes", "in.docx"],
-        &["changes", "in.docx", "--json"],
         &["comments", "in.docx"],
-        &["comments", "in.docx", "--json"],
     ] {
         let (code, out, err) = run(dir.path(), args);
         assert_eq!(code, 0, "{args:?}: {err}");
@@ -361,6 +358,113 @@ fn quiet_drops_it() {
         assert_eq!(code, 0, "{args:?}: {err}");
         assert_eq!(err, "", "{args:?}");
     }
+}
+
+/// What `read --json` and the JSON Lines of `changes` and `comments` say
+/// of the input's findings: the data, never a stderr line, so
+/// `--json 2>&1 | jq` parses (#1309).
+fn json_validity(dir: &Path, file: &str, quiet: bool) -> [serde_json::Value; 3] {
+    let parse = |line: &str| -> serde_json::Value {
+        serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"))
+    };
+    let mut reads = Vec::new();
+    for task in ["read", "changes", "comments"] {
+        let mut args = vec![task, file, "--json"];
+        if quiet {
+            args.push("-q");
+        }
+        let (code, out, err) = run(dir, &args);
+        assert_eq!(code, 0, "{args:?}: {err}");
+        assert_eq!(err, "", "{args:?}");
+        let lines: Vec<&str> = out.lines().collect();
+        reads.push(if task == "read" {
+            assert_eq!(lines.len(), 1, "{out}");
+            parse(lines[0])["summary"]["input_validity"].clone()
+        } else {
+            // The last line is the input's validity, every other a record.
+            let last = parse(lines.last().unwrap());
+            assert_eq!(last.as_object().unwrap().len(), 1, "{last}");
+            for line in &lines[..lines.len() - 1] {
+                assert!(parse(line).get("input_validity").is_none(), "{line}");
+            }
+            last["input_validity"].clone()
+        });
+    }
+    reads.try_into().unwrap()
+}
+
+#[test]
+fn json_reads_carry_the_input_validity() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), comment_graph("20000002")).unwrap();
+    let wanted = serde_json::json!({"errors":0,"warnings":2,"next":"jubarte validate in.docx"});
+    for quiet in [false, true] {
+        assert_eq!(
+            json_validity(dir.path(), "in.docx", quiet),
+            [wanted.clone(), wanted.clone(), wanted.clone()],
+            "quiet {quiet}"
+        );
+    }
+    // The records are still all there before the last line.
+    let (_, out, _) = run(dir.path(), &["comments", "in.docx", "--json"]);
+    assert_eq!(out.lines().count(), 2, "{out}");
+    // A path is spelled for a shell, as the stderr line spells it.
+    std::fs::write(dir.path().join("my file.docx"), comment_graph("20000002")).unwrap();
+    let [read, ..] = json_validity(dir.path(), "my file.docx", false);
+    assert_eq!(read["next"], "jubarte validate 'my file.docx'");
+    // An error counts as an error.
+    std::fs::write(
+        dir.path().join("broken.docx"),
+        docx(&format!("{DELETED}{}", para("x"))),
+    )
+    .unwrap();
+    let [read, changes, _] = json_validity(dir.path(), "broken.docx", false);
+    assert_eq!(
+        read,
+        serde_json::json!({"errors":1,"warnings":0,"next":"jubarte validate broken.docx"})
+    );
+    assert_eq!(changes, read);
+}
+
+/// `read -o FILE.json` writes the bytes `--json` prints, the validity
+/// included; stdout stays empty, so the stderr notice stays too.
+#[test]
+fn a_json_file_carries_the_validity_and_keeps_the_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), comment_graph("20000002")).unwrap();
+    let (_, printed, _) = run(dir.path(), &["read", "in.docx", "--json"]);
+    let (code, out, err) = run(dir.path(), &["read", "in.docx", "-o", "s.json"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("s.json")).unwrap(),
+        printed
+    );
+    assert!(
+        err.starts_with("input has 2 validity warnings; jubarte validate in.docx lists them\n"),
+        "{err}"
+    );
+    let (code, _, err) = run(dir.path(), &["read", "in.docx", "-o", "q.json", "-q"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(err, "");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("q.json")).unwrap(),
+        printed
+    );
+}
+
+#[test]
+fn a_clean_input_reads_zero_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("clean.docx"), docx(&para("x"))).unwrap();
+    let zero = serde_json::json!({"errors":0,"warnings":0});
+    assert_eq!(
+        json_validity(dir.path(), "clean.docx", false),
+        [zero.clone(), zero.clone(), zero]
+    );
+    // No changes and no comments: the validity is the only line.
+    let (_, out, _) = run(dir.path(), &["changes", "clean.docx", "--json"]);
+    assert_eq!(out, "{\"input_validity\":{\"errors\":0,\"warnings\":0}}\n");
 }
 
 /// IN and OUT in a fresh directory.

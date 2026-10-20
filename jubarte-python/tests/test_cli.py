@@ -24,6 +24,14 @@ from jubarte_redlines.__main__ import main
 from docx_fixture import docx, para
 
 
+def _listed(out: str) -> list[dict]:
+    """The records `changes --json` and `comments --json` print: the last
+    line is the input's validity (#1309), never a record."""
+    rows = [json.loads(line) for line in out.splitlines()]
+    assert list(rows.pop()) == ["input_validity"], out
+    return rows
+
+
 @pytest.fixture
 def letter(tmp_path: Path) -> Path:
     body = para("Heading") + para("The individual signs in his or her individual capacity.") + para("Sections 1(g), 2(e), 3 survive.")
@@ -61,7 +69,10 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert view.startswith(f"---\nsource: {letter.with_name('s.docx')} (not written)\n"), view
     assert written(["read", str(letter)], "v.md", "md").decode().startswith(f"---\nsource: {letter.name}\n")
     assert json.loads(written([str(letter)], "v.json", "json")) == snapshot
-    assert json.loads(written(["convert", str(letter)], "c.json", "json")) == snapshot
+    # `convert` writes the library's snapshot: the input's validity is a
+    # read's (#1309).
+    library = {**snapshot, "summary": {k: v for k, v in snapshot["summary"].items() if k != "input_validity"}}
+    assert json.loads(written(["convert", str(letter)], "c.json", "json")) == library
     redline = f"{letter.with_name('letter_v_letter.docx')} (not written; -o keeps it)"
     assert written(["compare", str(letter), str(letter)], "r.pdf", "pdf").startswith(b"%PDF")
     assert json.loads(written(["compare", str(letter), str(letter)], "r.json", "json"))["summary"]["paragraphs"] == 3
@@ -154,7 +165,7 @@ def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert main(["redline", str(a), str(b), "-d", "1970-01-01T00:00:00Z", "-o", str(tmp_path / "a_v_b.docx")]) == 0
     capsys.readouterr()
     assert main(["changes", str(tmp_path / "a_v_b.docx"), "--json"]) == 0
-    assert {json.loads(l)["kind"] for l in capsys.readouterr().out.splitlines()} >= {"insertion", "deletion"}
+    assert {r["kind"] for r in _listed(capsys.readouterr().out)} >= {"insertion", "deletion"}
 
 
 def test_a_legacy_doc_is_refused_with_a_save_as_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -297,7 +308,7 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     written = capsys.readouterr()
     assert written.out == "" and f"wrote {redline} (docx, " in written.err
     assert main(["changes", str(redline), "--json"]) == 0
-    rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    rows = _listed(capsys.readouterr().out)
     assert {r["kind"] for r in rows} >= {"insertion", "deletion"}
     assert all(r["author"] == "Legal" for r in rows)
     assert {r["date"] for r in rows} == {"1970-01-01T00:00:00Z"}
@@ -310,7 +321,7 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     after = stamp()
     capsys.readouterr()
     assert main(["changes", str(tmp_path / "now.docx"), "--json"]) == 0
-    dates = {json.loads(l)["date"] for l in capsys.readouterr().out.splitlines()}
+    dates = {row["date"] for row in _listed(capsys.readouterr().out)}
     assert dates and all(before <= d <= after for d in dates), (before, dates, after)
     assert main(["changes", str(redline)]) == 0
     assert "change(s)" in capsys.readouterr().out
@@ -806,7 +817,7 @@ def test_editing_mode_takes_a_plan_that_settles_every_change(
 ) -> None:
     # Codex on #425: what -p rN --accept settles is not kept.
     assert main(["changes", str(tracked), "--json"]) == 0
-    refs = [json.loads(line)["ref"] for line in capsys.readouterr().out.splitlines()]
+    refs = [row["ref"] for row in _listed(capsys.readouterr().out)]
     assert len(refs) > 1
     settle = [arg for ref in refs for arg in ("-p", ref, "--accept")]
     clean = tmp_path / "clean.docx"

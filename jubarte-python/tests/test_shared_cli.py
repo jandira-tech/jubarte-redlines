@@ -388,16 +388,43 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
     assert notice.startswith("input has 1 validity error; jubarte validate "), notice
     assert notice.endswith(" lists it"), notice
     line = f"{notice}\n"
-    for arguments in (["read", str(broken), "--no-page-markers"], ["read", str(broken), "--json"],
-                      ["changes", str(broken)], ["comments", str(broken), "--json"]):
+    for arguments in (["read", str(broken), "--no-page-markers"], ["changes", str(broken)],
+                      ["comments", str(broken)]):
         assert _main(arguments) == 0
         captured = capsys.readouterr()
         assert captured.err == line, arguments
         assert "validity" not in captured.out
-    for arguments in (["-q", "changes", str(broken)], ["read", str(broken), "--json", "-q"],
-                      ["changes", str(clean)]):
+    for arguments in (["-q", "changes", str(broken)], ["changes", str(clean)]):
         assert _main(arguments) == 0
         assert capsys.readouterr().err == "", arguments
+    # #1309: a JSON read carries the counts instead, -q or not; stderr stays
+    # empty for `--json 2>&1 | jq`.
+    wanted = {"errors": 1, "warnings": 0, "next": notice.removeprefix("input has 1 validity error; ").removesuffix(" lists it")}
+    for quiet in ([], ["-q"]):
+        assert _main(["read", str(broken), "--json", *quiet]) == 0
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        assert json.loads(captured.out)["summary"]["input_validity"] == wanted
+        for task in ("changes", "comments"):
+            assert _main([task, str(broken), "--json", *quiet]) == 0
+            captured = capsys.readouterr()
+            assert captured.err == "", task
+            rows = [json.loads(row) for row in captured.out.splitlines()]
+            assert rows[-1] == {"input_validity": wanted}, task
+            assert all("input_validity" not in row for row in rows[:-1]), task
+    # -o FILE.json writes what --json prints; its stdout is free, so the
+    # stderr line stays.
+    assert _main(["read", str(broken), "--json"]) == 0
+    printed = capsys.readouterr().out
+    written = tmp_path / "s.json"
+    assert _main(["read", str(broken), "-o", str(written)]) == 0
+    assert capsys.readouterr().err.startswith(line)
+    assert written.read_text(encoding="utf-8") == printed
+    # A clean input counts none, with nothing to run next.
+    assert _main(["changes", str(clean), "--json"]) == 0
+    assert capsys.readouterr().out == '{"input_validity":{"errors":0,"warnings":0}}\n'
+    assert _native.input_validity_line(broken.read_bytes(), "my file.docx") == (
+        '{"input_validity":{"errors":1,"warnings":0,"next":"jubarte validate \'my file.docx\'"}}')
     assert _native.input_notice(clean.read_bytes(), "clean.docx") is None
     assert _native.input_notice(broken.read_bytes(), "my file.docx") == (
         "input has 1 validity error; jubarte validate 'my file.docx' lists it")

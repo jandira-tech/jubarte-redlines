@@ -1028,8 +1028,19 @@ pub fn baselined_json(split: &Baselined) -> Result<String, serde_json::Error> {
 /// `None` when there is nothing to say. `file` is the path as given, quoted
 /// for a shell when it needs to be ([`crate::cli::shell_word`]).
 pub fn input_notice(findings: &[Finding], file: &str) -> Option<String> {
-    let count = |severity: &str| findings.iter().filter(|f| f.severity == severity).count();
-    let (errors, warnings) = (count("error"), count("warning"));
+    input_notice_of(&input_validity(findings, file))
+}
+
+/// [`input_notice`] from counts already taken, for a read that also
+/// reports them in its JSON (`read -o FILE.json`).
+pub fn input_notice_of(validity: &InputValidity) -> Option<String> {
+    let InputValidity {
+        errors,
+        warnings,
+        next,
+    } = validity;
+    let (errors, warnings) = (*errors, *warnings);
+    let next = next.as_deref()?;
     let spell = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
     let what = match (errors, warnings) {
         (0, 0) => return None,
@@ -1038,9 +1049,57 @@ pub fn input_notice(findings: &[Finding], file: &str) -> Option<String> {
         (e, w) => format!("{} and {}", spell(e, "validity error"), spell(w, "warning")),
     };
     let them = if errors + warnings == 1 { "it" } else { "them" };
-    Some(format!(
-        "input has {what}; jubarte validate {} lists {them}",
-        crate::cli::shell_word(file)
+    Some(format!("input has {what}; {next} lists {them}"))
+}
+
+/// The input's own validity findings as the JSON reads report them
+/// (#1309): `read --json` in its snapshot's `summary`, `changes --json` and
+/// `comments --json` on their last line ([`input_validity_line`]), where
+/// [`input_notice`]'s stderr line would break `--json 2>&1 | jq`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputValidity {
+    /// Findings of severity `error`.
+    pub errors: usize,
+    /// Findings of severity `warning`; `info` is not counted.
+    pub warnings: usize,
+    /// The command that lists them (`jubarte validate FILE`), when there
+    /// are any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+/// What [`InputValidity`] says of `findings`; `file` is the path as given,
+/// quoted for a shell when it needs to be ([`crate::cli::shell_word`]).
+#[must_use]
+pub fn input_validity(findings: &[Finding], file: &str) -> InputValidity {
+    let count = |severity: &str| findings.iter().filter(|f| f.severity == severity).count();
+    let (errors, warnings) = (count("error"), count("warning"));
+    InputValidity {
+        errors,
+        warnings,
+        next: (errors + warnings > 0)
+            .then(|| format!("jubarte validate {}", crate::cli::shell_word(file))),
+    }
+}
+
+/// [`input_validity`] of the package `docx` read from `file`, as the CLI
+/// and the bindings report it: a package that cannot be validated has no
+/// findings to count.
+#[must_use]
+pub fn input_validity_of(docx: &[u8], file: &str) -> InputValidity {
+    input_validity(&validate(docx).unwrap_or_default(), file)
+}
+
+/// The last line `changes --json` and `comments --json` print:
+/// `{"input_validity":{"errors":0,"warnings":2,"next":"jubarte validate FILE"}}`,
+/// its keys in that order.
+///
+/// # Errors
+/// When the validity does not serialize.
+pub fn input_validity_line(validity: &InputValidity) -> Result<String, serde_json::Error> {
+    Ok(format!(
+        r#"{{"input_validity":{}}}"#,
+        serde_json::to_string(validity)?
     ))
 }
 

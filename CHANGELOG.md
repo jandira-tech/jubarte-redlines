@@ -375,9 +375,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `input has 2 validity warnings; jubarte validate FILE lists them` (`1
   validity error`, or `1 validity error and 2 warnings`; `info` findings do
   not count), so an agent does not take them for its own; `-q` drops it
-  and skips the check. stdout is unchanged, `--json` included: read the
-  JSON from stdout alone, not merged with `2>&1`. The npm CLI's `read` and
-  `changes` and the Python CLI print the same. `--rules edits` without
+  and skips the check. A JSON read prints no such line (#1309): `read
+  --json` carries the counts in its snapshot's `summary.input_validity`,
+  `{"errors":0,"warnings":2,"next":"jubarte validate FILE"}` (a clean input
+  `{"errors":0,"warnings":0}`), and `changes --json` and `comments --json`
+  end with one `{"input_validity":{…}}` line, always, `-q` or not, so
+  `--json 2>&1 | jq` stays JSON. `read -o FILE.json` writes what `read
+  --json` prints and keeps the stderr line. Library:
+  `validate::{InputValidity, input_validity, input_validity_of,
+  input_validity_line, input_notice_of}`, `Summary::input_validity`;
+  Python `read_json(validity_file=)` and `input_validity_line`, WASM
+  `readJson`'s `validityFile` and `inputValidityLine`. The npm CLI's `read`
+  and `changes` and the Python CLI print the same. `--rules edits` without
   `--author` now says `--rules edits needs --author, and --original or
   --baseline`.
 - **Edits inside another author's insertion land (#1136).** Under
