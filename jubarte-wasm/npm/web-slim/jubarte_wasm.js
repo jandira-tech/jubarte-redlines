@@ -778,7 +778,9 @@ export function compareDocuments(original, modified, author, input_limits_json) 
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
- * `pN` id in a Word document or `line:N` in Markdown.
+ * `pN` id in a Word document or `line:N` in Markdown. When a side is a
+ * Word document, a replacement inside a paragraph reads insertion first,
+ * `{+new+}[-old-]`, as Word Compare writes it.
  *
  * Each side is a `.docx` package or UTF-8 Markdown
  * (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
