@@ -906,7 +906,7 @@ fn a_move_beside_a_change_keeps_its_own_tag() {
     assert_eq!(wids(&back), wids(&doc));
 }
 
-/// GLM review of #1353, 1: Carol's word inside Alice's insertion, between
+/// #1353 review: Carol's word inside Alice's insertion, between
 /// Bob's deletions there, came after them, as at the top level.
 #[test]
 fn another_authors_insertion_inside_the_insertion_the_marks_sit_in_separates_nothing() {
@@ -931,7 +931,7 @@ fn another_authors_insertion_inside_the_insertion_the_marks_sit_in_separates_not
     );
 }
 
-/// GLM review of #1353, 5: a replacement whose deletion sits in Alice's
+/// #1353 review: a replacement whose deletion sits in Alice's
 /// insertion and whose insertion follows it is inside nothing.
 #[test]
 fn a_change_is_inside_another_only_when_all_of_it_is() {
@@ -965,7 +965,7 @@ fn a_change_is_inside_another_only_when_all_of_it_is() {
     );
 }
 
-/// GLM review of #1353, 4: a filter whose kinds select none of a change's
+/// #1353 review: a filter whose kinds select none of a change's
 /// marks selects nothing of it, and settles nothing.
 #[test]
 fn a_filter_that_selects_no_mark_of_a_change_settles_nothing() {
@@ -986,7 +986,7 @@ fn a_filter_that_selects_no_mark_of_a_change_settles_nothing() {
     ));
 }
 
-/// GLM review of #1353, 8: `changes` prints the kind replacement, so
+/// #1353 review: `changes` prints the kind replacement, so
 /// `--kind replacement` reaches the refusal that says how to select one.
 #[test]
 fn the_cli_refuses_the_replacement_kind_with_how_to_select_one() {
@@ -1086,7 +1086,7 @@ fn a_story_change_of_several_pieces_writes_back_each_mark() {
     }
 }
 
-/// Minimax review of #1353, 2: a comment that goes with a change of
+/// #1353 review: a comment that goes with a change of
 /// several marks is reported as removed by that change, named as the
 /// selection named it, not by the member that held its anchor.
 #[test]
