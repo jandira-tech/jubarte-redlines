@@ -16,6 +16,9 @@ use jubarte::edit::{EditPlan, PlanSyntax, PrepareOptions, apply_plan, prepare};
 use jubarte::inspect::paragraphs;
 
 const REV: &str = r#"w:author="Other" w:date="2026-09-01T00:00:00Z""#;
+/// A second author: their marks are changes apart from `REV`'s even where
+/// they touch (plan 11).
+const REV_B: &str = r#"w:author="Second" w:date="2026-09-01T00:00:00Z""#;
 
 /// As read: p0 "Zero.", p1 deleted whole, p2 "Two.", p3 "Three" whose mark
 /// is deleted (it merges with p4 " four."), p5 "Five.". Settled under
@@ -90,13 +93,15 @@ fn repeats_an_id(message: &str) -> bool {
 
 /// p3's mark is deleted and p4 is empty, so accepting the mark leaves p3's
 /// words alone in one settled paragraph; rejecting the deletion of "!"
-/// inside p3 changes its text. That paragraph has one source: p3.
+/// inside p3 changes its text. That paragraph has one source: p3. The "!"
+/// is another author's deletion: one author's deleted "!" and mark would be
+/// one change, which a plan settles whole.
 fn merging_alone() -> Vec<u8> {
     docx(&[
         "<w:p><w:r><w:t>Zero.</w:t></w:r></w:p>".to_string(),
         "<w:p><w:r><w:t>Two.</w:t></w:r></w:p>".to_string(),
         format!(
-            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:r><w:t>Three</w:t></w:r><w:del w:id="5" {REV}><w:r><w:delText>!</w:delText></w:r></w:del></w:p>"#
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:r><w:t>Three</w:t></w:r><w:del w:id="5" {REV_B}><w:r><w:delText>!</w:delText></w:r></w:del></w:p>"#
         ),
         "<w:p/>".to_string(),
         "<w:p><w:r><w:t>Five.</w:t></w:r></w:p>".to_string(),

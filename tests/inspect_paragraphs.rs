@@ -43,7 +43,8 @@ fn deleted_and_moved_from_text_is_skipped_and_counted() {
     let bytes = docx(body);
     let paras = paragraphs(&bytes).unwrap();
     assert_eq!(paras[0].text, "keep new");
-    assert_eq!(summary(&bytes).unwrap().revisions, 2);
+    // One author's deletion then insertion: one replacement (plan 11).
+    assert_eq!(summary(&bytes).unwrap().revisions, 1);
 }
 
 #[test]
@@ -220,7 +221,7 @@ fn inspect_json_carries_schema_hash_summary_and_paragraphs() {
     let bytes = docx(&para("hello"));
     let json = inspect_json(&bytes).unwrap();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(v["schema_version"], 2);
+    assert_eq!(v["schema_version"], 3);
     assert_eq!(v["source_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(v["summary"]["paragraphs"], 1);
     assert_eq!(v["paragraphs"][0]["id"], "p0");

@@ -17,6 +17,23 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Breaking
 
+- **One logical change per edit** (#1261). The marks Word writes for one
+  edit are listed as one change: one author's touching insertions (or
+  deletions) in a story, whatever their dates, get a composite id
+  (`r7+8+9+10`) and a `members` list; a deletion followed by the same
+  author's insertion is one `replacement` (`r3+4`, text `old → new`). A
+  change takes its own paragraph's mark (`r5+6`) and ends there. `jubarte
+  changes` prints `\t(4 elements)` after such a change's text; `read
+  --json` is snapshot schema 3 and lists logical changes; Python
+  `Change.members` and `ChangeMember`, and WASM `listChanges`, follow.
+  `accept`/`reject --id`, `resolve_revisions` and `-p … --accept|--reject`
+  take a composite (`r7+8+9+10`, or `r87+r88`) and refuse part of a
+  change, naming the whole (`accept`/`reject` exit 2; an edit plan fails
+  with `INCOMPLETE_CHANGE`); one whole side of a replacement may still be
+  settled alone. The library's
+  `accept_elements`/`reject_elements` settle marks one by one. The edit
+  report counts logical changes and gains `revisions.replaced`.
+
 - **Markdown images stay inside their folder** (#617). `convert`, `compare` and `diff` read an image only when its decoded path resolves, symlinks followed, inside the Markdown file's folder or the `--resource-path` root. An absolute path, a `..` walk, a symlink out or a percent-encoded scheme (`file%3A…`, `DATA%3A…`) now becomes the image's alt text, and each alt-text warning names its reason (`outside the resource root`, `a URL scheme`, `not found`). Pass `--resource-path DIR` to trust another root.
 
 - Refresh saved edit anchors quoting the old in-code revision spelling (`` `w:del{++        ++}{r76 @AS}` ``): marks inside code are now literal, so those anchors can return `ANCHOR_NOT_FOUND`; quote a fresh view with marks outside the code fence.

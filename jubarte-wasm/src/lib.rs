@@ -116,13 +116,14 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
 /// List the tracked changes one by one as a JSON array string, each with the
 /// id `acceptChanges` / `rejectChanges` select by (the same objects as
 /// `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
-/// `text`, `move_name`, `move_side`, `inside`, and `holds_comments` when
-/// the change holds comment marks).
+/// `text`, `move_name`, `move_side`, `inside`, `holds_comments` when
+/// the change holds comment marks, and `members` for a change Word wrote
+/// as several marks).
 ///
-/// Mirrors `jubarte::changes::list_changes`.
+/// Mirrors `jubarte::changes::list_logical_changes`.
 #[wasm_bindgen(js_name = listChanges)]
 pub fn list_changes(docx: &[u8]) -> Result<String, JsValue> {
-    let changes = jubarte::changes::list_changes(docx).map_err(js_err)?;
+    let changes = jubarte::changes::list_logical_changes(docx).map_err(js_err)?;
     serde_json::to_string(&changes).map_err(js_err)
 }
 
@@ -151,7 +152,7 @@ pub fn list_comments(
 /// Mirrors `jubarte::changes::changes_text`.
 #[wasm_bindgen(js_name = changesText)]
 pub fn changes_text(docx: &[u8]) -> Result<String, JsValue> {
-    let changes = jubarte::changes::list_changes(docx).map_err(js_err)?;
+    let changes = jubarte::changes::list_logical_changes(docx).map_err(js_err)?;
     Ok(jubarte::changes::changes_text(&changes))
 }
 

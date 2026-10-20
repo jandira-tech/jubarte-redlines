@@ -26,6 +26,11 @@ The governing output rule is the maintainer’s instruction. This revision adopt
 8. A comma in `read -p` is an option-level separator, never part of an id; open ranges are retired (section 2).
 9. Every catalog row is checkable by eye: a `j:short` value is the short id beside it (section 11).
 
+**Amendment, 20 October 2026 UTC (plan 11, #1261, "one notion of a change"; the maintainer's decision on the 0.13.0 plan).** Two clauses below no longer hold:
+
+1. A logical revision that Word wrote as several carriers (one typed insertion split into `w:ins` per typing session, or one author's deletion run followed by the insertion run that replaces it) is named by the composite of its carriers' labels in reading order, `r7+8+9+10` or `r3+4`, not by its primary carrier's label alone (sections 3 and 4). `jubarte changes`, `read --json`, Python and WASM list it once, with its carriers as `members`. A composite that names only some of a logical revision's carriers is refused, naming the whole (one whole side of a replacement may be settled alone, as Word allows).
+2. A composite may repeat the `r` after `+` on input: `r87+r88` reads as `r87+88`, and only `r87+88` is ever printed. The conformance vector that refused `r1+r2` (section 10) is withdrawn; `rr1`, `r1+rr2` and `r1+R2` stay refused.
+
 # 1 Output contract
 
 ## Two representations
@@ -1152,7 +1157,6 @@ The following **166 accepted** and **127 refused** strings are portable parser c
     "c5.text.p0",
     "c05",
     "r01",
-    "r1+r2",
     "r1++2",
     "r1+02",
     "header1.r1+footer2.r2",

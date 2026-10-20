@@ -383,16 +383,23 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
     );
     for line in &lines {
         // ref \t kind \t target \t author \t paragraph \t {text:?}, then
-        // `\tinside r1` for a change inside another and `\tholds comment
-        // c4's mark` for one holding a comment's mark: this fixture has
-        // neither, so six fields. The count assumes the fixture's revision
-        // authors contain no literal tab (they don't). The human row format
-        // is tab-delimited by contract, so a tab inside an author would need
-        // `changes` to escape it before this could stay parseable.
-        assert_eq!(
-            line.split('\t').count(),
-            6,
-            "row has 6 tab-separated fields: {line:?}"
+        // `\t(2 elements)` for a change Word wrote as several marks (plan
+        // 11), `\tinside r1` for a change inside another and `\tholds
+        // comment c4's mark` for one holding a comment's mark: this fixture
+        // has no change inside another and no comment, so six fields, or
+        // seven with the element count. The count assumes the fixture's
+        // revision authors contain no literal tab (they don't). The human
+        // row format is tab-delimited by contract, so a tab inside an author
+        // would need `changes` to escape it before this could stay parseable.
+        let fields: Vec<&str> = line.split('\t').collect();
+        let elements = fields.get(6).is_some_and(|f| {
+            f.strip_prefix('(')
+                .and_then(|f| f.strip_suffix(" elements)"))
+                .is_some_and(|n| n.parse::<usize>().is_ok_and(|n| n > 1))
+        });
+        assert!(
+            fields.len() == 6 || (fields.len() == 7 && elements),
+            "row has 6 tab-separated fields, and a change of several marks its element count: {line:?}"
         );
         let short = line.split('\t').next().unwrap();
         assert!(

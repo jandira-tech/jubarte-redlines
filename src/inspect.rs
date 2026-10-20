@@ -33,7 +33,10 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// Snapshot wire schema. Version 2 numbers top-level tables only and nests
 /// cell tables recursively, with a parent cell path rather than an index.
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+/// Version 3 lists logical changes (plan 11): a change Word wrote as
+/// several marks is one entry with `members`, and kind `replacement`
+/// exists.
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 /// The story every document has; its paragraph ids are `pN`, and a
 /// selector without a `story` searches it.
@@ -108,7 +111,7 @@ pub struct Summary {
     pub comments: usize,
     /// Tracked changes, as `jubarte changes` lists them: the body, headers,
     /// footers, notes and styles, a move's sides and a text box's two copies
-    /// counted once each.
+    /// counted once each, and a change Word wrote as several marks once.
     pub revisions: usize,
     /// Footnotes excluding separators.
     pub footnotes: usize,
@@ -152,7 +155,8 @@ pub struct Snapshot {
     pub tables: Vec<Table>,
     /// Content controls (`w:sdt`) in the body, in document order.
     pub controls: Vec<ContentControl>,
-    /// Tracked changes, as [`crate::changes::list_changes`] lists them.
+    /// Tracked changes, as [`crate::changes::list_logical_changes`] lists
+    /// them.
     pub changes: Vec<crate::changes::Change>,
     /// Comments, as [`crate::comments::list_comments`] lists them.
     pub comments: Vec<crate::comments::CommentRecord>,
@@ -405,7 +409,7 @@ pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
     let stories = opened.stories()?;
     let tables = tables::body_tables(&opened.dom, opened.body);
     let controls = collect_controls(&opened.dom, opened.body);
-    let changes = crate::changes::changes_in(&opened.pkg);
+    let changes = crate::changes::logical_changes_in(&opened.pkg);
     let comments = crate::comments::comments_in(&mut opened).map_err(|e| match e {
         crate::comments::CommentError::Admission(refused) => InspectError::Admission(refused),
         crate::comments::CommentError::Package(m) => InspectError::Package(m),
@@ -796,7 +800,7 @@ impl Opened {
                 parse_part(pkg, &name)?;
             }
         }
-        summary.revisions = crate::changes::changes_in(pkg).len();
+        summary.revisions = crate::changes::logical_changes_in(pkg).len();
         for (kind, targets) in [
             ("header", self.related("header")),
             ("footer", self.related("footer")),

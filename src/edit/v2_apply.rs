@@ -1278,6 +1278,8 @@ impl SourceModel {
                                 (Some(MoveSide::From), true) | (Some(MoveSide::To), false)
                             ),
                             ChangeKind::Formatting => false,
+                            // Either way one side's text goes.
+                            ChangeKind::Replacement => true,
                         }
                 })
                 .map(|c| c.id.clone())

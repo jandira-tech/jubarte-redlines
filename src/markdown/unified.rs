@@ -323,7 +323,7 @@ pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, M
         ids: Some(others),
         ..crate::changes::ChangeFilter::default()
     };
-    let own = crate::changes::accept_changes(docx, &filter)
+    let own = crate::changes::accept_elements(docx, &filter)
         .map_err(|error| MarkdownError::Package(error.to_string()))?;
     patch_redline(&own, options)
 }

@@ -188,7 +188,20 @@ def _decode_revisions(payload: str) -> tuple[Revision, ...]:
     )
 
 
-ChangeKind = Literal["insertion", "deletion", "move", "formatting"]
+ChangeKind = Literal["insertion", "deletion", "move", "formatting", "replacement"]
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeMember:
+    """One mark of a change Word wrote as several: its own ``id`` (``r7``),
+    ``kind`` (``insertion`` or ``deletion``), ``target`` (``text`` or
+    ``paragraph_mark``), ``date`` and ``text``."""
+
+    id: str
+    kind: ChangeKind
+    target: str
+    date: str | None
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +219,11 @@ class Change:
     ``paragraph`` is the id of the paragraph the change is in (``p3``).
     ``holds_comments`` names the comments (``c4``, a reply's ``c5``) whose
     reference mark the change holds: resolving it so its content goes
-    removes their threads, as Word does.
+    removes their threads, as Word does. A change Word wrote as several
+    marks (one typed insertion split by session, or a deletion with the
+    insertion that replaces it, kind ``replacement``) has the composite id
+    ``r7+8+9+10`` and lists its marks in ``members``; selecting only some of
+    them is refused.
     """
 
     id: str
@@ -221,6 +238,17 @@ class Change:
     ref: str | None = None
     paragraph: str | None = None
     holds_comments: tuple[str, ...] = ()
+    members: tuple[ChangeMember, ...] = ()
+
+
+class _MemberRow(TypedDict):
+    """One ``members`` entry of the native ``changes`` JSON."""
+
+    id: str
+    kind: ChangeKind
+    target: str
+    date: NotRequired[str]
+    text: str
 
 
 class _ChangeRow(TypedDict):
@@ -238,6 +266,7 @@ class _ChangeRow(TypedDict):
     ref: NotRequired[str]
     paragraph: NotRequired[str]
     holds_comments: NotRequired[list[str]]
+    members: NotRequired[list[_MemberRow]]
 
 
 def _decode_changes(payload: str) -> tuple[Change, ...]:
@@ -259,6 +288,16 @@ def _changes_of(rows: list[_ChangeRow]) -> tuple[Change, ...]:
             ref=row.get("ref"),
             paragraph=row.get("paragraph"),
             holds_comments=tuple(row.get("holds_comments", ())),
+            members=tuple(
+                ChangeMember(
+                    id=m["id"],
+                    kind=m["kind"],
+                    target=m["target"],
+                    date=m.get("date"),
+                    text=m["text"],
+                )
+                for m in row.get("members", ())
+            ),
         )
         for row in rows
     )
@@ -1308,13 +1347,18 @@ class EditOutcome:
 
 @dataclass(frozen=True, slots=True)
 class RevisionCounts:
-    """Comparer revision records in the redline."""
+    """The redline's changes by kind, as ``changes`` lists them.
+
+    ``replaced`` counts replacements: a deletion and the insertion that
+    replaces it, listed as one change. ``total`` is the sum of the others.
+    """
 
     inserted: int
     deleted: int
     moved: int
     format_changed: int
     total: int
+    replaced: int = 0
 
 
 @dataclass(frozen=True, slots=True)

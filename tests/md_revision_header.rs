@@ -70,7 +70,8 @@ fn raw_summary(docx: &[u8]) -> String {
                 ChangeKind::Insertion => 0,
                 ChangeKind::Deletion => 1,
                 ChangeKind::Move => 5,
-                ChangeKind::Formatting => unreachable!(),
+                // Skipped above; no element is a replacement.
+                ChangeKind::Formatting | ChangeKind::Replacement => unreachable!(),
             },
         };
         counts[at] += 1;

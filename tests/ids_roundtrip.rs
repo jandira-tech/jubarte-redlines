@@ -1180,7 +1180,9 @@ fn word_redlines_round_trip() {
         let name = file.file_name().unwrap().to_string_lossy().to_string();
         let docx = std::fs::read(file).unwrap();
         round_trip(&name, &docx, &mut fails);
-        let listed = jubarte::changes::list_changes(&docx).unwrap();
+        // The id `jubarte changes` lists: a logical change, composite when
+        // Word wrote it as several marks.
+        let listed = jubarte::changes::list_logical_changes(&docx).unwrap();
         if let Some(change) = listed.first() {
             accept_by_cli(&name, &docx, &change.r#ref, &mut fails);
         }

@@ -140,11 +140,13 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
 
 /// List the tracked changes one by one as a JSON array string, each with the
 /// id `accept_changes` / `reject_changes` select by (the same objects as
-/// `jubarte changes --json`).
+/// `jubarte changes --json`): a change Word wrote as several marks is one
+/// object with `members`.
 #[pyfunction]
 fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     py.detach(|| {
-        let changes = jubarte::changes::list_changes(docx).map_err(|e| e.to_string())?;
+        let changes =
+            jubarte::changes::list_logical_changes(docx).map_err(|e| e.to_string())?;
         serde_json::to_string(&changes).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
@@ -176,7 +178,7 @@ fn list_comments_json(
 #[pyfunction]
 fn changes_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     py.detach(|| {
-        jubarte::changes::list_changes(docx)
+        jubarte::changes::list_logical_changes(docx)
             .map(|changes| jubarte::changes::changes_text(&changes))
             .map_err(|e| e.to_string())
     })
@@ -371,13 +373,15 @@ fn wrote_png_line(pattern: std::path::PathBuf, pages: usize, dpi: f32) -> String
     jubarte::cli::wrote_png_line(&pattern, pages, dpi)
 }
 
-/// A resolution's error: an id that is no change id, or names two changes,
-/// is a bad argument (`ValueError`, the binary's exit 2); the rest are
-/// `JubarteError`.
+/// A resolution's error: an id that is no change id, names two changes, or
+/// names part of one, is a bad argument (`ValueError`, the binary's exit
+/// 2); the rest are `JubarteError`.
 fn change_err(e: jubarte::changes::ChangeError) -> PyErr {
     use jubarte::changes::ChangeError;
     match e {
-        ChangeError::InvalidId(_) | ChangeError::Ambiguous { .. } => {
+        ChangeError::InvalidId(_)
+        | ChangeError::Ambiguous { .. }
+        | ChangeError::PartOfChange { .. } => {
             pyo3::exceptions::PyValueError::new_err(e.to_string())
         }
         e => err(e),

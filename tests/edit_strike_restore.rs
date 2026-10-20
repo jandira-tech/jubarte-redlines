@@ -9,7 +9,7 @@ mod common;
 use common::docx::{Part, R_NS, W_NS, docx, docx_with, part_string};
 use common::validity::assert_word_valid_package;
 use jubarte::changes::{
-    Change, ChangeFilter, ChangeKind, accept_changes, list_changes, reject_changes,
+    Change, ChangeFilter, ChangeKind, accept_changes, list_changes, reject_changes, reject_elements,
 };
 use jubarte::edit::{EditError, EditPlan, EditResult, RevisionSplit, apply_plan};
 use jubarte::inspect::paragraphs;
@@ -144,7 +144,7 @@ fn strike_nests_our_deletion_inside_their_insertion() {
     // Every author's reading is the right one.
     assert_eq!(
         accepted(&out.redline),
-        text(&accept_changes(&reject_changes(STEP1, &ids("r1")).unwrap(), &all()).unwrap())
+        text(&accept_changes(&reject_elements(STEP1, &ids("r1")).unwrap(), &all()).unwrap())
     );
     assert_eq!(rejected(&out.redline), rejected(STEP1));
 }
@@ -228,7 +228,7 @@ fn strike_inside_a_split_insertion_struck_only_where_it_is_still_visible() {
     }
     let struck: String = ours.iter().map(|&d| dom.value(d)).collect();
     assert_eq!(struck, "will pay the ");
-    let before = accept_changes(&reject_changes(ANNEX, &ids("r3")).unwrap(), &all()).unwrap();
+    let before = accept_changes(&reject_elements(ANNEX, &ids("r3")).unwrap(), &all()).unwrap();
     assert_eq!(accepted(&out.redline), text(&before));
 }
 
@@ -447,7 +447,7 @@ fn restore_inside_their_insertion_lands_beside_it() {
     stamped(&dom, ours, CAROL, DATE);
     assert_eq!(dom.value(ours), "bankers");
     assert!(dom.name_is(dom.parent(ours).unwrap(), &W::p()));
-    let before = accept_changes(&reject_changes(STEP2, &ids("r4")).unwrap(), &all()).unwrap();
+    let before = accept_changes(&reject_elements(STEP2, &ids("r4")).unwrap(), &all()).unwrap();
     assert_eq!(accepted(&out.redline), text(&before));
 }
 
@@ -502,7 +502,7 @@ fn reject_visible_picks_by_kind() {
         .collect();
     assert_eq!(restored.len(), 1);
     assert_eq!(dom.value(restored[0]), "bankers");
-    let settled = reject_changes(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
+    let settled = reject_elements(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
     assert_eq!(accepted(&out.redline), accepted(&settled));
 }
 
@@ -574,7 +574,7 @@ fn property_family(name: &str, source: &[u8]) {
         );
         assert_eq!(text(&undone), text(source), "{name} {}", change.id);
         // (2), (3) Accept All reads as Word's Reject would have left it.
-        let settled = reject_changes(source, &settle).unwrap();
+        let settled = reject_elements(source, &settle).unwrap();
         assert_eq!(
             accepted(&out.redline),
             accepted(&settled),
@@ -657,7 +657,7 @@ fn reject_visible_flags_pick_by_kind_per_group() {
         Some(ChangeFilter::ids(["r5"]))
     );
     let out = applied(STEP2, &mixed);
-    let settled = reject_changes(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
+    let settled = reject_elements(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
     assert_eq!(accepted(&out.redline), accepted(&settled));
 }
 
@@ -680,7 +680,7 @@ fn cli(dir: &std::path::Path, args: &[&str]) -> String {
 fn the_cli_strikes_restores_and_rejects_visibly() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.docx"), STEP2).unwrap();
-    let settled = reject_changes(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
+    let settled = reject_elements(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
     for (out, groups) in [
         (
             "flags.docx",
@@ -727,7 +727,7 @@ fn a_strike_listed_before_the_restore_beside_it_composes() {
             {"kind":"restore","revision":"r4"}
         ])),
     );
-    let settled = reject_changes(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
+    let settled = reject_elements(STEP2, &ChangeFilter::ids(["r4", "r5"])).unwrap();
     assert_eq!(accepted(&out.redline), accepted(&settled));
 }
 

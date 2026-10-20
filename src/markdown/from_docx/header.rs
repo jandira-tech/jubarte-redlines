@@ -285,6 +285,7 @@ fn revisions_comment(f: &Facts) -> String {
                 (_, ChangeKind::Deletion) => "del",
                 (_, ChangeKind::Move) => "move",
                 (_, ChangeKind::Formatting) => "fmt",
+                (_, ChangeKind::Replacement) => "sub",
             })
             .collect::<Vec<_>>()
     } else {

@@ -75,7 +75,7 @@ fn replace_unique_text_yields_clean_copy_and_tracked_redline() {
         op.context.as_deref(),
         Some("above also signs in {his or her→an} individual capacity")
     );
-    assert!(report.revisions.inserted >= 1 && report.revisions.deleted >= 1);
+    assert!(report.revisions.replaced >= 1, "{:?}", report.revisions);
     assert_eq!(report.source_sha256, source_sha256(&source));
     // Inputs are never mutated.
     assert_eq!(source_sha256(&source), report.source_sha256);
@@ -739,8 +739,13 @@ fn preview_reports_without_producing_documents() {
         report.operations[0].context.as_deref(),
         Some("alpha {beta→gamma}")
     );
-    // The counts are applying's: the replacement's deletion and insertion.
-    assert_eq!(report.revisions.total, 2, "{:?}", report.revisions);
+    // The counts are applying's: one replacement (plan 11).
+    assert_eq!(
+        (report.revisions.replaced, report.revisions.total),
+        (1, 1),
+        "{:?}",
+        report.revisions
+    );
 }
 
 #[test]
@@ -1742,12 +1747,14 @@ fn whole_replace_deletes_the_find_text_then_inserts_the_replacement() {
     }
     assert!(whole.report.ok);
     assert!(whole.report.operations.iter().all(|o| o.message.is_none()));
+    // Each deletion and the insertion after it is one replacement.
     assert_eq!(
         (
             whole.report.revisions.deleted,
-            whole.report.revisions.inserted
+            whole.report.revisions.inserted,
+            whole.report.revisions.replaced
         ),
-        (2, 2)
+        (0, 0, 2)
     );
 }
 
@@ -2075,8 +2082,9 @@ fn the_report_counts_the_listed_changes() {
             source_sha256(&source)
         )
     };
+    // Counted as `jubarte changes` lists them: logical changes (plan 11).
     let kept = apply_plan_json(&source, &json("keep")).unwrap();
-    let listed = jubarte::changes::list_changes(&kept.redline).unwrap();
+    let listed = jubarte::changes::list_logical_changes(&kept.redline).unwrap();
     let ours = listed
         .iter()
         .filter(|c| {
@@ -2093,9 +2101,14 @@ fn the_report_counts_the_listed_changes() {
     assert_eq!(total, summary(&compared.redline).unwrap().revisions);
     assert_eq!(
         total,
-        jubarte::changes::list_changes(&compared.redline)
+        jubarte::changes::list_logical_changes(&compared.redline)
             .unwrap()
             .len()
+    );
+    let counts = compared.report.revisions;
+    assert_eq!(
+        counts.inserted + counts.deleted + counts.moved + counts.format_changed + counts.replaced,
+        total
     );
 }
 

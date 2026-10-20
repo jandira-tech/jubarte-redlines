@@ -2544,17 +2544,36 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    let by_id = |id: &str| {
-        rows.iter()
-            .find(|r| r["id"] == format!("r{id}"))
-            .unwrap_or_else(|| panic!("no change r{id} in {changes}"))
-    };
-    assert_eq!(by_id(del_id)["kind"], "deletion");
-    assert_eq!(by_id(del_id)["text"], "thirty");
-    assert_eq!(by_id(ins_id)["kind"], "insertion");
-    assert_eq!(by_id(ins_id)["text"], "forty-five");
-    assert_eq!(by_id(del_id)["ref"], format!("r{del_id}"));
-    assert_eq!(by_id(ins_id)["ref"], format!("r{ins_id}"));
+    // The view's substitution is the one replacement `changes` lists, by
+    // the same id, with its deletion and insertion as members (plan 11).
+    let composite = format!("r{del_id}+{ins_id}");
+    let row = rows
+        .iter()
+        .find(|r| r["id"] == composite)
+        .unwrap_or_else(|| panic!("no change {composite} in {changes}"));
+    assert_eq!(row["ref"], composite);
+    assert_eq!(row["kind"], "replacement");
+    assert_eq!(row["text"], "thirty → forty-five");
+    let members: Vec<(&str, &str, &str)> = row["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["id"].as_str().unwrap(),
+                m["kind"].as_str().unwrap(),
+                m["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    let (del_ref, ins_ref) = (format!("r{del_id}"), format!("r{ins_id}"));
+    assert_eq!(
+        members,
+        [
+            (del_ref.as_str(), "deletion", "thirty"),
+            (ins_ref.as_str(), "insertion", "forty-five")
+        ]
+    );
 
     // The JSON prints the id the view prints, and that id selects it.
     ok(
