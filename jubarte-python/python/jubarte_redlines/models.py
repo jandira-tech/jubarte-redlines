@@ -190,6 +190,11 @@ def _decode_revisions(payload: str) -> tuple[Revision, ...]:
 
 ChangeKind = Literal["insertion", "deletion", "move", "formatting", "replacement"]
 
+#: The kinds a change filter selects by: an element's own. ``replacement``
+#: is listed (an author's deletion and their insertion right after it) but
+#: no single element has it, so the engine refuses it in a filter.
+FilterKind = Literal["insertion", "deletion", "move", "formatting"]
+
 
 @dataclass(frozen=True, slots=True)
 class ChangeMember:
@@ -379,7 +384,7 @@ def _comments_of(rows: list[_CommentRow]) -> tuple[Comment, ...]:
 def change_filter(
     ids: Sequence[str] | None = None,
     authors: Sequence[str] | None = None,
-    kinds: Sequence[ChangeKind] | None = None,
+    kinds: Sequence[FilterKind] | None = None,
 ) -> str:
     """The engine's change filter as JSON: a change is selected when it
     matches every list given; ``None`` leaves that list out (any), an empty
