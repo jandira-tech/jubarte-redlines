@@ -2430,15 +2430,7 @@ fn spellings_in<'a>(
     found
 }
 
-/// `arg` as a POSIX shell reads it back: bare when it holds only safe
-/// characters, else single-quoted.
-pub fn shell_word(arg: &str) -> String {
-    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
-    if !arg.is_empty() && arg.chars().all(safe) {
-        return arg.to_string();
-    }
-    format!("'{}'", arg.replace('\'', r"'\''"))
-}
+pub use crate::util::shell_word;
 
 /// What a retired spelling still means once parsed: `audit` with no
 /// `--rules` checks `a11y,style,structure`, as the retired task did, not

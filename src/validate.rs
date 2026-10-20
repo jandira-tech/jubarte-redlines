@@ -1026,7 +1026,7 @@ pub fn baselined_json(split: &Baselined) -> Result<String, serde_json::Error> {
 /// validity findings: `input has 2 validity warnings; jubarte validate FILE
 /// lists them` (an `error` counts as an error, `info` not at all), or
 /// `None` when there is nothing to say. `file` is the path as given, quoted
-/// for a shell when it needs to be ([`crate::cli::shell_word`]).
+/// for a shell when it needs to be ([`crate::util::shell_word`]).
 pub fn input_notice(findings: &[Finding], file: &str) -> Option<String> {
     input_notice_of(&input_validity(findings, file))
 }
@@ -1069,7 +1069,7 @@ pub struct InputValidity {
 }
 
 /// What [`InputValidity`] says of `findings`; `file` is the path as given,
-/// quoted for a shell when it needs to be ([`crate::cli::shell_word`]).
+/// quoted for a shell when it needs to be ([`crate::util::shell_word`]).
 #[must_use]
 pub fn input_validity(findings: &[Finding], file: &str) -> InputValidity {
     let count = |severity: &str| findings.iter().filter(|f| f.severity == severity).count();
@@ -1078,7 +1078,7 @@ pub fn input_validity(findings: &[Finding], file: &str) -> InputValidity {
         errors,
         warnings,
         next: (errors + warnings > 0)
-            .then(|| format!("jubarte validate {}", crate::cli::shell_word(file))),
+            .then(|| format!("jubarte validate {}", crate::util::shell_word(file))),
     }
 }
 

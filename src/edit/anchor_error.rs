@@ -205,6 +205,8 @@ pub fn v2_resolve_all(
 }
 
 /// Validate a declared story using the same missing-target refusal as anchors.
+/// Its only caller is the CLI's typed actions (`edit::inline`).
+#[cfg(feature = "cli")]
 pub(super) fn require_story(source: &[u8], story: &str) -> Result<(), Box<Error>> {
     let refusal = AnchorRefusal::new(story, "").with_operation("/operations/0");
     let snap = open(source, &refusal)?;
