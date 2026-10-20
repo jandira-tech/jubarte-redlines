@@ -1138,7 +1138,8 @@ pub struct RevisionCounts {
     /// as one change ([`ChangeKind::Replacement`]).
     #[serde(default)]
     pub replaced: usize,
-    /// All changes: the sum of the counts above.
+    /// All changes, each logical change once (#1261: a change of several
+    /// marks, or a replacement, counts one): the sum of the counts above.
     pub total: usize,
 }
 

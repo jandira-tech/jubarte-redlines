@@ -32,7 +32,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   with `INCOMPLETE_CHANGE`); one whole side of a replacement may still be
   settled alone. The library's
   `accept_elements`/`reject_elements` settle marks one by one. The edit
-  report counts logical changes and gains `revisions.replaced`.
+  report counts logical changes and gains `revisions.replaced`. The
+  agent view tags every piece of a change with its joined id
+  (`{++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}`, `¶{r5+6 @AC}` when it
+  ends its paragraph), and the writer gives each piece back its own
+  mark; the header counts such a change once (`2 marks shown as 1
+  change`).
 
 - **Markdown images stay inside their folder** (#617). `convert`, `compare` and `diff` read an image only when its decoded path resolves, symlinks followed, inside the Markdown file's folder or the `--resource-path` root. An absolute path, a `..` walk, a symlink out or a percent-encoded scheme (`file%3A…`, `DATA%3A…`) now becomes the image's alt text, and each alt-text warning names its reason (`outside the resource root`, `a URL scheme`, `not found`). Pass `--resource-path DIR` to trust another root.
 

@@ -113,9 +113,9 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
     jubarte::document_comparer::reject_revisions(docx).map_err(js_err)
 }
 
-/// List the tracked changes one by one as a JSON array string, each with the
-/// id `acceptChanges` / `rejectChanges` select by (the same objects as
-/// `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
+/// List the tracked changes as a JSON array string, one object per
+/// logical change, each with the id `acceptChanges` / `rejectChanges`
+/// select by (the same objects as `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
 /// `text`, `move_name`, `move_side`, `inside`, `holds_comments` when
 /// the change holds comment marks, and `members` for a change Word wrote
 /// as several marks).
@@ -147,7 +147,8 @@ pub fn list_comments(
 }
 
 /// The listing `jubarte changes` prints: a line per change with its short
-/// id (`r0`), kind, target, author, paragraph and text, then `N change(s)`.
+/// id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
+/// for a change Word wrote as several marks), then `N change(s)`.
 ///
 /// Mirrors `jubarte::changes::changes_text`.
 #[wasm_bindgen(js_name = changesText)]
@@ -297,8 +298,9 @@ pub fn source_sha256(docx: &[u8]) -> String {
 /// The inspection snapshot as JSON: `schema_version`, `source_sha256`,
 /// `summary`, `paragraphs` (ids, text, style, formatting spans,
 /// limitations) and top-level `tables` with recursive `nested` entries.
-/// Snapshot schema 2 counts top-level tables; nested entries have `parent`
-/// cell paths and no `index`. Oversized or malformed packages are refused before parsing.
+/// Snapshot schema 3 lists logical changes (one entry, with `members`, for
+/// a change Word wrote as several marks), counts top-level tables, and gives
+/// nested entries `parent` cell paths and no `index`. Oversized or malformed packages are refused before parsing.
 ///
 /// Mirrors `jubarte::inspect::inspect_json`.
 #[wasm_bindgen(js_name = inspectDocument)]

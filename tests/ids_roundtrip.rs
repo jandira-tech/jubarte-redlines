@@ -1245,3 +1245,82 @@ fn a_shell_unsafe_part_stem_prints_a_safe_story_id() {
     );
     assert!(view(&docx).contains("hdr%21old"), "{}", view(&docx));
 }
+
+/// Plan 11 (#1261): the view and `changes` agree on every logical
+/// change. An id the view prints that names a mark of a change of several
+/// marks is that change's whole id, and every such change is printed
+/// (itself, or the container it sits inside).
+fn agree_on_groups(name: &str, docx: &[u8], fails: &mut Vec<String>) {
+    let mut fail = |what: String| fails.push(format!("{name}: {what}"));
+    let printed = printed(&view(docx));
+    let logical = jubarte::changes::list_logical_changes(docx).expect("changes lists the document");
+    let whole: HashMap<&str, &str> = logical
+        .iter()
+        .flat_map(|c| {
+            c.members
+                .iter()
+                .map(move |m| (m.id.as_str(), c.id.as_str()))
+        })
+        .collect();
+    for token in &printed.changes {
+        let Ok(ids) = parse_change_ids(token) else {
+            continue; // `round_trip` names it
+        };
+        for id in ids {
+            if let Some(change) = whole.get(id.short().as_str())
+                && token != change
+            {
+                fail(format!("printed {token} for a mark of {change}"));
+            }
+        }
+    }
+    let by_id: HashMap<&str, &jubarte::changes::Change> =
+        logical.iter().map(|c| (c.id.as_str(), c)).collect();
+    for change in logical.iter().filter(|c| !c.members.is_empty()) {
+        let mut at = Some(change);
+        let mut hops = 0;
+        while let Some(c) = at.filter(|c| !printed.changes.contains(&c.id)) {
+            at = c.inside.as_deref().and_then(|i| by_id.get(i).copied());
+            hops += 1;
+            if hops > logical.len() {
+                at = None;
+            }
+        }
+        if at.is_none() {
+            fail(format!(
+                "{} ({:?}) is printed nowhere",
+                change.id, change.kind
+            ));
+        }
+    }
+}
+
+#[test]
+fn read_and_changes_agree_on_every_group() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench");
+    let mut fails = Vec::new();
+    for (name, docx) in [
+        ("long body", long_body()),
+        ("tables", tables()),
+        ("stories", stories()),
+    ] {
+        agree_on_groups(name, docx, &mut fails);
+    }
+    for dir in [
+        "grok_run/wr0928/rejected_tracking/docx",
+        "corpus/word/with_comments_tracking/docx",
+        "corpus/word/tracking_without_comments/docx",
+    ] {
+        let mut here: Vec<_> = std::fs::read_dir(root.join(dir))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "docx"))
+            .collect();
+        here.sort();
+        for file in here {
+            let name = file.file_name().unwrap().to_string_lossy().to_string();
+            agree_on_groups(&name, &std::fs::read(&file).unwrap(), &mut fails);
+        }
+    }
+    report(&fails);
+}

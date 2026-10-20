@@ -14,7 +14,10 @@ other surfaces see [docs/python.md](python.md) (Python and `uvx`) and
 [docs/javascript.md](javascript.md) (Node, browser and `npx`); the
 [README](../README.md) covers the shared workflow and install options.
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.

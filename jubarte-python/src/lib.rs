@@ -138,9 +138,9 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
     Ok(PyBytes::new(py, &out).unbind())
 }
 
-/// List the tracked changes one by one as a JSON array string, each with the
-/// id `accept_changes` / `reject_changes` select by (the same objects as
-/// `jubarte changes --json`): a change Word wrote as several marks is one
+/// List the tracked changes as a JSON array string, one object per
+/// logical change, each with the id `accept_changes` / `reject_changes`
+/// select by (the same objects as `jubarte changes --json`): a change Word wrote as several marks is one
 /// object with `members`.
 #[pyfunction]
 fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {

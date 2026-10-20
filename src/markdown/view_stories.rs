@@ -147,9 +147,107 @@ struct Marks<'p> {
     /// One opening tag per element and id in the current story part.
     opens: HashMap<MarkIdentity, String>,
     error: Option<String>,
+    /// The joined ids (`r92+93`) the current story part prints on more
+    /// than one piece: its pieces take the ids in reading order (#1261).
+    pools: HashMap<Vec<u32>, Pool>,
+}
+
+/// One joined id's pieces in a story part: how many marks they write, the
+/// next one to take its id, and the one taken last.
+#[derive(Debug, Default)]
+struct Pool {
+    slots: usize,
+    next: usize,
+    current: Option<usize>,
+}
+
+impl Pool {
+    /// The ids mark `slot` takes: one each, in order; the last mark the
+    /// rest, and a mark past the ids none (a fresh one).
+    fn ids(&self, ids: &[u32], slot: usize) -> Vec<u32> {
+        match ids.get(slot) {
+            None => Vec::new(),
+            Some(_) if slot + 1 >= self.slots => ids[slot..].to_vec(),
+            Some(&id) => vec![id],
+        }
+    }
+}
+
+/// The joined ids `texts` and the paragraph marks `marks` print on more
+/// than one piece, each with the marks its pieces write: a substitution
+/// one tag names writes two, every other piece one.
+fn pools<'t>(
+    texts: &[&str],
+    marks: impl IntoIterator<Item = &'t super::view_notes::Tag>,
+) -> HashMap<Vec<u32>, Pool> {
+    use super::critic::Token;
+    let mut found: HashMap<Vec<u32>, (usize, Pool)> = HashMap::new();
+    let mut piece = |tag: &super::view_notes::Tag, slots: usize| {
+        let (notes, pool) = found.entry(tag.ids.clone()).or_default();
+        *notes += 1;
+        pool.slots += slots;
+    };
+    for text in texts {
+        for (token, note) in super::critic::attributed_notes(text) {
+            let own = note.split(" re ").next().unwrap_or_default();
+            let Some(tags) = super::view_notes::revision_tags(own) else {
+                continue;
+            };
+            match (token, tags.as_slice()) {
+                (Token::SubstituteEnd, [one]) => piece(one, 2),
+                (Token::SubstituteEnd, [old, new, ..]) => {
+                    piece(old, 1);
+                    piece(new, 1);
+                }
+                (_, [first, ..]) => piece(first, 1),
+                (_, []) => {}
+            }
+        }
+    }
+    for tag in marks {
+        piece(tag, 1);
+    }
+    found
+        .into_iter()
+        .filter(|(ids, (notes, _))| ids.len() > 1 && *notes > 1)
+        .map(|(ids, (_, pool))| (ids, pool))
+        .collect()
 }
 
 impl Marks<'_> {
+    /// The ids the next piece of `tag` takes, when its joined id prints on
+    /// several pieces; `None` when the tag's own ids apply.
+    fn take(&mut self, tag: &super::view_notes::Tag) -> Option<Vec<u32>> {
+        let pool = self.pools.get_mut(&tag.ids)?;
+        let slot = pool.next;
+        pool.next += 1;
+        pool.current = Some(slot);
+        Some(pool.ids(&tag.ids, slot))
+    }
+
+    /// A piece's mark `name`: the next of its pooled ids, else its tag's
+    /// first.
+    fn piece(&mut self, name: &str, tag: &super::view_notes::Tag) -> String {
+        let id = match self.take(tag) {
+            Some(ids) => ids.first().copied(),
+            None => tag.ids.first().copied(),
+        };
+        self.mark_id(name, Some(tag), id)
+    }
+
+    /// The mark `name` of a change `re` names around a nested one: the
+    /// piece of it read last, which the nest sits in.
+    fn parent(&mut self, name: &str, tag: &super::view_notes::Tag) -> String {
+        let current = self.pools.get(&tag.ids).and_then(|pool| {
+            pool.current
+                .map(|slot| pool.ids(&tag.ids, slot).first().copied())
+        });
+        match current {
+            Some(id) => self.mark_id(name, Some(tag), id),
+            None => self.piece(name, tag),
+        }
+    }
+
     /// `w:ins w:id="5" w:author="…" w:date="…"`: the start tag's name and
     /// attributes, for `tag` or the document's author.
     fn mark(&mut self, name: &str, tag: Option<&super::view_notes::Tag>, at: usize) -> String {
@@ -224,6 +322,7 @@ pub(super) fn format_changes(
         next_id: first_id,
         opens: HashMap::new(),
         error: None,
+        pools: HashMap::new(),
     };
     let mut reserved: std::collections::HashSet<u32> =
         tags.iter().flat_map(|tag| &tag.ids).copied().collect();
@@ -692,7 +791,12 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         &mut noid_parent,
                     );
                     let tag = tags.first();
-                    let ids = tag.map_or(&[][..], |tag| tag.ids.as_slice());
+                    let pooled = tag.and_then(|tag| marks.take(tag));
+                    let ids = match (&pooled, tag) {
+                        (Some(pooled), _) => pooled.as_slice(),
+                        (None, Some(tag)) => tag.ids.as_slice(),
+                        (None, None) => &[][..],
+                    };
                     tracked(
                         &mut changed,
                         marks,
@@ -719,7 +823,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                         } else {
                             ("w:ins", "</w:ins>")
                         };
-                        let open = format!("<{}>", marks.mark(parent_name, Some(parent), 0));
+                        let open = format!("<{}>", marks.parent(parent_name, parent));
                         changed = format!("{open}{changed}{close}");
                         wrappers.push((open, close, true));
                         // Each `re` level alternates insertion and deletion.
@@ -730,11 +834,23 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                 Change::Substitute(old, new) => {
                     noid_parent.clear();
                     // One tag names both sides (`r5+6`, old first), or
-                    // each side has its own.
-                    let (old_tag, new_tag, (old_ids, new_ids)) = match tags.as_slice() {
-                        [one] => (Some(one), Some(one), substitution_ids(&one.ids)),
-                        [old, new, ..] => (Some(old), Some(new), (&old.ids[..], &new.ids[..])),
-                        [] => (None, None, (&[][..], &[][..])),
+                    // each side has its own; a side whose joined id prints
+                    // on other pieces too takes the next of its ids.
+                    let (old_tag, new_tag) = match tags.as_slice() {
+                        [one] => (Some(one), Some(one)),
+                        [old, new, ..] => (Some(old), Some(new)),
+                        [] => (None, None),
+                    };
+                    let old_pooled = old_tag.and_then(|tag| marks.take(tag));
+                    let new_pooled = new_tag.and_then(|tag| marks.take(tag));
+                    let (old_ids, new_ids) = match (tags.as_slice(), &old_pooled, &new_pooled) {
+                        (_, Some(old), Some(new)) => (&old[..], &new[..]),
+                        ([one], _, _) => substitution_ids(&one.ids),
+                        ([old, new, ..], old_pooled, new_pooled) => (
+                            old_pooled.as_deref().unwrap_or(&old.ids[..]),
+                            new_pooled.as_deref().unwrap_or(&new.ids[..]),
+                        ),
+                        _ => (&[][..], &[][..]),
                     };
                     tracked(
                         &mut changed,
@@ -747,7 +863,7 @@ fn runs(text: &str, marks: &mut Marks<'_>, drawings: &HashMap<String, String>) -
                     );
                     let mut parent_kind = "w:ins";
                     for parent in &parents {
-                        let open = format!("<{}>", marks.mark(parent_kind, Some(parent), 0));
+                        let open = format!("<{}>", marks.parent(parent_kind, parent));
                         changed = format!("{open}{changed}</{parent_kind}>");
                         parent_kind = if parent_kind == "w:ins" {
                             "w:del"
@@ -1305,6 +1421,7 @@ pub(super) fn write(
         next_id: first_id,
         opens: HashMap::new(),
         error: None,
+        pools: HashMap::new(),
     };
     let mut next_doc_pr = super::package::max_drawing_id(package) + 1;
     let mut even = false;
@@ -1512,6 +1629,14 @@ fn story_part(
             placed.entry(index).or_default().extend(tags);
         }
     }
+    marks.pools = pools(
+        &texts,
+        paragraph_marks
+            .values()
+            .flatten()
+            .chain(&unplaced)
+            .map(|(_, tag)| tag),
+    );
     let mut body = String::new();
     let last = texts.len() - 1;
     for (index, text) in texts.iter().enumerate() {
@@ -1565,13 +1690,16 @@ fn story_part(
             let align = if align == "justify" { "both" } else { align };
             let _ = write!(base, "<w:jc w:val=\"{align}\"/>");
         }
+        // The runs first: a paragraph's mark is the last piece of a
+        // change that ends there, so it takes that change's last id.
+        let mut content = runs(text, marks, &drawings);
         let mut properties = base.clone();
         if let Some(mut named) = paragraph_marks.remove(&index) {
             // `w:ins` comes before `w:del` in `w:rPr`.
             named.sort_by_key(|(name, _)| *name != "w:ins");
             properties.push_str("<w:rPr>");
             for (name, tag) in &named {
-                let _ = write!(properties, "<{}/>", marks.mark(name, Some(tag), 0));
+                let _ = write!(properties, "<{}/>", marks.piece(name, tag));
             }
             properties.push_str("</w:rPr>");
         }
@@ -1587,7 +1715,6 @@ fn story_part(
                 marks.mark("w:pPrChange", Some(&tag), 0)
             );
         }
-        let mut content = runs(text, marks, &drawings);
         if let Some(color) = own.and_then(|f| f.color.as_deref()) {
             // `w:color` is the only run property the writer gives a story's
             // runs, so it opens each run's `w:rPr`.
@@ -1599,7 +1726,7 @@ fn story_part(
         let _ = write!(body, "<w:p><w:pPr>{properties}</w:pPr>{content}");
         if index == last {
             for (name, tag) in &unplaced {
-                let _ = write!(body, "<{}/>", marks.mark(name, Some(tag), 0));
+                let _ = write!(body, "<{}/>", marks.piece(name, tag));
             }
         }
         body.push_str("</w:p>");
@@ -1795,6 +1922,7 @@ mod tests {
                 next_id: 100,
                 opens: HashMap::new(),
                 error: None,
+                pools: HashMap::new(),
             },
             &HashMap::new(),
         )

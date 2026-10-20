@@ -25,7 +25,9 @@
 //! a composite id hundreds of marks long, of a whole deleted clause list.
 //! No change runs across a table, row, cell, content control or note
 //! boundary, and moves, formatting changes and the marks in drawings stay
-//! changes of their own.
+//! changes of their own. A hyperlink, smart tag, custom XML element or
+//! simple field is walked through: its runs touch the runs beside it, as
+//! Word lays them out.
 
 use std::collections::{HashMap, HashSet};
 
@@ -120,10 +122,20 @@ pub(super) fn logical(dom: &Dom, root: NodeId, carriers: &[Carrier]) -> Vec<Chan
         }
         let members: Vec<&Change> = groups[g].iter().map(|&m| listed(carriers, m)).collect();
         let mut change = folded(&ids[g], &members);
-        change.inside = members
+        // Inside a change only when every member is (two deletions, one in
+        // someone's insertion and one after it, are not); a replacement is
+        // inside what its old side is, as the view's `re` names it.
+        let old_side = change.kind == ChangeKind::Replacement;
+        let insides: Vec<Option<String>> = members
             .iter()
-            .filter_map(|m| rename(&m.inside))
-            .find(|inside| inside != &ids[g]);
+            .filter(|m| !old_side || m.kind == ChangeKind::Deletion)
+            .map(|m| rename(&m.inside).filter(|inside| inside != &ids[g]))
+            .collect();
+        change.inside = insides
+            .iter()
+            .all(|inside| *inside == insides[0])
+            .then(|| insides[0].clone())
+            .flatten();
         out.push(change);
     }
     out
@@ -181,14 +193,14 @@ fn groups(dom: &Dom, root: NodeId, carriers: &[Carrier]) -> Vec<Vec<usize>> {
             }
         }
         // Content another author inserted after a change's marks were made
-        // separates nothing; anything that was there before does: original
-        // text, and an insertion the marks were made inside.
-        let inserted = stack
-            .first()
-            .is_some_and(|&c| listed(carriers, c).kind == ChangeKind::Insertion);
+        // separates nothing, even inside the insertion the marks sit in;
+        // anything that was there before does: original text, and the text
+        // of an insertion the marks were made inside.
         open.retain(|author, g| {
             here.iter().any(|(a, _)| a == author)
-                || (inserted && !stack.iter().any(|c| within[*g].contains(c)))
+                || stack.last().is_some_and(|c| {
+                    listed(carriers, *c).kind == ChangeKind::Insertion && !within[*g].contains(c)
+                })
         });
         for (author, c) in here {
             let change = listed(carriers, c);
@@ -255,15 +267,23 @@ fn single(id: &str) -> Option<(Story, u32)> {
 
 /// The id of changes `members` together: `r7+8+9+10`, `header1.r1+2`.
 fn composite<'a>(members: impl IntoIterator<Item = &'a Change>) -> String {
-    let mut story = Story::Body;
+    joined(members.into_iter().map(|member| member.id.as_str()))
+}
+
+/// The composite id of the marks `ids` names, in their order: every mark
+/// of a change is in one story, the first's.
+fn joined<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
+    let mut story = None;
     let mut wids = Vec::new();
-    for member in members {
-        if let Some((s, wid)) = single(&member.id) {
-            story = s;
-            wids.push(wid);
-        }
+    for (s, wid) in ids.into_iter().filter_map(single) {
+        story.get_or_insert(s);
+        wids.push(wid);
     }
-    ShortId::Change { story, wids }.to_string()
+    ShortId::Change {
+        story: story.unwrap_or(Story::Body),
+        wids,
+    }
+    .to_string()
 }
 
 /// One change standing for `members`, in reading order.
@@ -448,10 +468,11 @@ fn mark_carriers(dom: &Dom, p: NodeId, wrappers: &HashMap<NodeId, usize>) -> Vec
 }
 
 /// Refuse a selection that names only some of a logical change's marks:
-/// the ids `filter` lists ([`ChangeFilter::normalized`]), taken together,
-/// must name every mark of each change they touch, or one whole side of a
-/// replacement (rejecting only its deletion keeps both texts, as Word
-/// allows).
+/// the marks `filter` selects (its ids, [`ChangeFilter::normalized`], with
+/// its authors and kinds), taken together, must be every mark of each
+/// change they touch, or one whole side of a replacement (rejecting only
+/// its deletion keeps both texts, as Word allows). A filter that selects
+/// none of a change's marks leaves it alone.
 ///
 /// # Errors
 ///
@@ -462,10 +483,21 @@ pub(super) fn check_whole(filter: &ChangeFilter, logical: &[Change]) -> Result<(
         return Ok(());
     };
     for change in logical.iter().filter(|c| !c.members.is_empty()) {
+        // The marks the whole filter selects: its authors and kinds too.
+        let by = filter
+            .authors
+            .as_ref()
+            .is_none_or(|authors| change.author.as_ref().is_some_and(|a| authors.contains(a)));
         let hit: Vec<&ChangeMember> = change
             .members
             .iter()
-            .filter(|m| named.contains(&m.id))
+            .filter(|m| {
+                by && named.contains(&m.id)
+                    && filter
+                        .kinds
+                        .as_ref()
+                        .is_none_or(|kinds| kinds.contains(&m.kind))
+            })
             .collect();
         if hit.is_empty() || hit.len() == change.members.len() {
             continue;
@@ -502,15 +534,7 @@ pub(super) fn check_whole(filter: &ChangeFilter, logical: &[Change]) -> Result<(
 }
 
 fn composite_of(members: &[&ChangeMember]) -> String {
-    let mut story = Story::Body;
-    let mut wids = Vec::new();
-    for member in members {
-        if let Some((s, wid)) = single(&member.id) {
-            story = s;
-            wids.push(wid);
-        }
-    }
-    ShortId::Change { story, wids }.to_string()
+    joined(members.iter().map(|member| member.id.as_str()))
 }
 
 #[cfg(test)]

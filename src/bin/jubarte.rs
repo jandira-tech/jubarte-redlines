@@ -103,6 +103,7 @@ impl SelectionFilter for Selection {
                         KindArg::Deletion => ChangeKind::Deletion,
                         KindArg::Move => ChangeKind::Move,
                         KindArg::Formatting => ChangeKind::Formatting,
+                        KindArg::Replacement => ChangeKind::Replacement,
                     })
                     .collect()
             }),

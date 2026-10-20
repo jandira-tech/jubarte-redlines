@@ -18,6 +18,7 @@ use jubarte::changes::{
     ChangeError, ChangeFilter, ChangeKind, accept_changes, accept_elements, list_changes,
     list_logical_changes, reject_changes, reject_elements,
 };
+use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
 use std::process::Command;
 
 const BOB: &str = "Bob";
@@ -553,5 +554,502 @@ fn a_filter_of_the_replacement_kind_is_refused() {
     assert!(
         matches!(&err, ChangeError::InvalidId(m) if m.contains("by its id (r3+4)")),
         "{err}"
+    );
+}
+
+// ------------------------------------------------------------- the view
+//
+// The view prints each piece of a logical change apart, as Word marked
+// it, and tags every piece with the whole change's id (Q8 B): `read` and
+// `changes` name the same change. Writing the view back hands the ids
+// out to the pieces in turn, so each mark keeps its own `w:id`.
+
+fn agent(doc: &[u8]) -> String {
+    docx_to_markdown(
+        doc,
+        &MarkdownOptions {
+            ids: true,
+            comments: true,
+            page_markers: false,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown
+}
+
+fn plain(doc: &[u8]) -> String {
+    docx_to_markdown(
+        doc,
+        &MarkdownOptions {
+            page_markers: false,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown
+}
+
+/// The view's paragraphs: what follows its YAML header.
+fn body(view: &str) -> &str {
+    view.strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n"))
+        .map_or(view, |(_, body)| body)
+        .trim()
+}
+
+/// Each mark Word wrote, element by element: its id, kind and text.
+fn marks(doc: &[u8]) -> Vec<(String, ChangeKind, String)> {
+    list_changes(doc)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.id, c.kind, c.text))
+        .collect()
+}
+
+/// `markdown` written back: the package, after no warning.
+fn written(markdown: &str) -> Vec<u8> {
+    let out = markdown_to_docx(markdown, &DocxOptions::default()).unwrap();
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    out.docx
+}
+
+/// The agent view of `doc` writes back every mark with its own id and
+/// text, Word-valid, and reads again as itself.
+fn keeps_every_mark(doc: &[u8]) {
+    let view = agent(doc);
+    let back = written(&view);
+    assert_word_valid_package(&back);
+    assert_eq!(marks(&back), marks(doc), "the marks of\n{view}");
+    assert_eq!(body(&agent(&back)), body(&view), "agent fixed point");
+}
+
+/// Bob replaced "thirty days" by "forty weeks", which Word wrote as four
+/// marks.
+fn four_mark_replacement() -> Vec<u8> {
+    docx(&p(&[
+        kept("Pay "),
+        del(3, "thirty", BOB, DATE),
+        del(4, " days", BOB, DATE),
+        ins(1, "forty", BOB, DATE),
+        ins(2, " weeks", BOB, DATE),
+        kept(" end."),
+    ]))
+}
+
+/// Alice replaced a word inside Bob's insertion, which Word wrote as two
+/// marks around her change.
+fn replacement_inside_an_insertion() -> Vec<u8> {
+    const LATER: &str = "2026-10-20T07:33:05Z";
+    docx(&p(&[
+        kept("Start "),
+        format!(
+            r#"<w:ins w:id="7" w:author="{BOB}" w:date="{DATE}">{}{}</w:ins>"#,
+            kept("alpha "),
+            del(8, "beta", "Alice", LATER)
+        ),
+        ins(9, "BETA", "Alice", LATER),
+        ins(10, " gamma.", BOB, DATE),
+    ]))
+}
+
+/// A new paragraph: Bob's text and the mark that ends it.
+fn inserted_paragraph() -> Vec<u8> {
+    docx(&format!(
+        "{}{}",
+        p_with_inserted_mark(6, &[kept("First "), ins(5, "new text", BOB, DATE)]),
+        p(&[kept("and old.")]),
+    ))
+}
+
+#[test]
+fn the_view_tags_each_piece_with_its_whole_change() {
+    assert_eq!(
+        body(&agent(&split_insertion([DATE; 4]))),
+        "<!-- p0 -->\nThe licence {++shall re++}{r7+8+9+10 @B}\
+         {++main in ++}{r7+8+9+10 @B}{++effect until ++}{r7+8+9+10 @B}\
+         {++terminated.++}{r7+8+9+10 @B} End."
+    );
+}
+
+#[test]
+fn the_plain_view_tags_each_piece_with_its_whole_change() {
+    assert_eq!(
+        plain(&split_insertion([DATE; 4])),
+        "The licence {++shall re++}{r7+8+9+10 Bob (2026-10-01T10:00:00Z)}\
+         {++main in ++}{r7+8+9+10 Bob (2026-10-01T10:00:00Z)}\
+         {++effect until ++}{r7+8+9+10 Bob (2026-10-01T10:00:00Z)}\
+         {++terminated.++}{r7+8+9+10 Bob (2026-10-01T10:00:00Z)} End.\n"
+    );
+}
+
+#[test]
+fn each_piece_writes_back_as_its_own_mark() {
+    keeps_every_mark(&split_insertion([DATE; 4]));
+}
+
+#[test]
+fn pieces_dated_apart_keep_their_dates() {
+    let doc = split_insertion([
+        "2026-10-01T14:26:00Z",
+        "2026-10-01T14:27:00Z",
+        "2026-10-01T14:28:00Z",
+        "2026-10-01T14:27:00Z",
+    ]);
+    let view = docx_to_markdown(
+        &doc,
+        &MarkdownOptions {
+            ids: true,
+            dates: true,
+            page_markers: false,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(
+        view.contains("{++shall re++}{r7+8+9+10 @B 2026-10-01T14:26:00Z}"),
+        "{view}"
+    );
+    let back = written(&view);
+    let dates = |doc: &[u8]| -> Vec<Option<String>> {
+        list_changes(doc)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.date)
+            .collect()
+    };
+    assert_eq!(dates(&back), dates(&doc));
+    assert_eq!(marks(&back), marks(&doc));
+}
+
+#[test]
+fn a_change_that_ends_its_paragraph_tags_the_mark_too() {
+    let doc = inserted_paragraph();
+    assert_eq!(
+        body(&agent(&doc)),
+        "<!-- p0 -->\nFirst {++new text++}{r5+6 @B}¶{r5+6 @B}\n\n<!-- p1 -->\nand old."
+    );
+    keeps_every_mark(&doc);
+}
+
+#[test]
+fn a_replacement_of_four_marks_tags_every_piece() {
+    let doc = four_mark_replacement();
+    assert_eq!(
+        body(&agent(&doc)),
+        "<!-- p0 -->\nPay {--thirty--}{r3+4+1+2 @B}{~~ days~>forty~~}{r3+4+1+2 @B}\
+         {++ weeks++}{r3+4+1+2 @B} end."
+    );
+    keeps_every_mark(&doc);
+}
+
+#[test]
+fn a_change_inside_another_names_the_whole_of_it() {
+    let doc = replacement_inside_an_insertion();
+    assert_eq!(
+        body(&agent(&doc)),
+        "<!-- p0 -->\nStart {++alpha ++}{r7+10 @B}{~~beta~>BETA~~}{r8+9 @A re r7+10 @B}\
+         {++ gamma.++}{r7+10 @B}"
+    );
+    keeps_every_mark(&doc);
+}
+
+/// Text another author inserted among Bob's marks leaves them one change
+/// (the rule `changes` follows): the pieces either side of it share the id.
+#[test]
+fn pieces_either_side_of_another_authors_text_share_the_id() {
+    let doc = docx(&p(&[
+        kept("Pay "),
+        ins(7, "within ", BOB, DATE),
+        ins(8, "thirty ", "Alice", DATE),
+        ins(9, "days", BOB, DATE),
+        kept(" end."),
+    ]));
+    assert_eq!(ids(&doc), ["r7+9", "r8"]);
+    assert_eq!(
+        body(&agent(&doc)),
+        "<!-- p0 -->\nPay {++within ++}{r7+9 @B}{++thirty ++}{r8 @A}{++days++}{r7+9 @B} end."
+    );
+    keeps_every_mark(&doc);
+}
+
+/// The header counts what `changes` lists: one change of four marks.
+#[test]
+fn the_header_counts_logical_changes() {
+    let view = agent(&split_insertion([DATE; 4]));
+    let line = view
+        .lines()
+        .find(|line| line.starts_with("revisions:"))
+        .unwrap();
+    assert!(
+        line.contains("4 marks shown as 1 change: 1 insertion"),
+        "{line}"
+    );
+}
+
+/// A moved word is a change of its own: replaced by Bob's new paragraph,
+/// its tag stays apart from the paragraph's (`r3 @B; r5+6 @B`), and every
+/// mark keeps its id.
+#[test]
+fn a_move_beside_a_change_keeps_its_own_tag() {
+    let range = |tag: &str, id: u32| {
+        format!(r#"<w:{tag} w:id="{id}" w:author="{BOB}" w:date="{DATE}" w:name="move1"/>"#)
+    };
+    let doc = docx(&format!(
+        "{}{}",
+        p_with_inserted_mark(
+            6,
+            &[
+                kept("Pay "),
+                range("moveFromRangeStart", 20),
+                format!(
+                    r#"<w:moveFrom w:id="3" w:author="{BOB}" w:date="{DATE}">{}</w:moveFrom>"#,
+                    kept("General")
+                ),
+                r#"<w:moveFromRangeEnd w:id="20"/>"#.to_string(),
+                ins(5, "CONSENT", BOB, DATE),
+            ],
+        ),
+        p(&[
+            kept("Then "),
+            range("moveToRangeStart", 21),
+            format!(
+                r#"<w:moveTo w:id="4" w:author="{BOB}" w:date="{DATE}">{}</w:moveTo>"#,
+                kept("General")
+            ),
+            r#"<w:moveToRangeEnd w:id="21"/>"#.to_string(),
+            kept(" end."),
+        ]),
+    ));
+    assert_eq!(ids(&doc), ["r3", "r5+6", "r4"]);
+    let view = agent(&doc);
+    assert!(
+        body(&view)
+            .starts_with("<!-- p0 -->\nPay {~~General~>CONSENT~~}{r3 @B; r5+6 @B}¶{r5+6 @B}"),
+        "{view}"
+    );
+    let back = written(&view);
+    let wids = |doc: &[u8]| -> Vec<String> { marks(doc).into_iter().map(|(id, ..)| id).collect() };
+    assert_eq!(wids(&back), wids(&doc));
+}
+
+/// GLM review of #1353, 1: Carol's word inside Alice's insertion, between
+/// Bob's deletions there, came after them, as at the top level.
+#[test]
+fn another_authors_insertion_inside_the_insertion_the_marks_sit_in_separates_nothing() {
+    let doc = docx(&p(&[
+        kept("Start "),
+        format!(
+            r#"<w:ins w:id="3" w:author="Alice" w:date="{DATE}">{}{}{}{}</w:ins>"#,
+            kept("one "),
+            del(4, "two ", BOB, DATE),
+            ins(9, "X", "Carol", DATE),
+            del(5, "three", BOB, DATE)
+        ),
+    ]));
+    let listed = list_logical_changes(&doc).unwrap();
+    let rows: Vec<(&str, Option<&str>)> = listed
+        .iter()
+        .map(|c| (c.id.as_str(), c.inside.as_deref()))
+        .collect();
+    assert_eq!(
+        rows,
+        [("r3", None), ("r4+5", Some("r3")), ("r9", Some("r3"))]
+    );
+}
+
+/// GLM review of #1353, 5: a replacement whose deletion sits in Alice's
+/// insertion and whose insertion follows it is inside nothing.
+#[test]
+fn a_change_is_inside_another_only_when_all_of_it_is() {
+    let insides = |after: String| {
+        let doc = docx(&p(&[
+            format!(
+                r#"<w:ins w:id="3" w:author="Alice" w:date="{DATE}">{}{}</w:ins>"#,
+                kept("one "),
+                del(4, "x", BOB, DATE)
+            ),
+            after,
+        ]));
+        list_logical_changes(&doc)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.id, c.inside))
+            .collect::<Vec<_>>()
+    };
+    let named = |id: &str, inside: Option<&str>| (id.to_string(), inside.map(str::to_string));
+    // Two deletions, one in Alice's insertion and one after it: not all of
+    // the change is inside r3.
+    assert_eq!(
+        insides(del(5, "y", BOB, DATE)),
+        [named("r3", None), named("r4+5", None)]
+    );
+    // A replacement is inside what its old side is inside, as the view's
+    // `re` names it (`{~~x~>y~~}{r4+5 @B re r3 @A}`).
+    assert_eq!(
+        insides(ins(5, "y", BOB, DATE)),
+        [named("r3", None), named("r4+5", Some("r3"))]
+    );
+}
+
+/// GLM review of #1353, 4: a filter whose kinds select none of a change's
+/// marks selects nothing of it, and settles nothing.
+#[test]
+fn a_filter_that_selects_no_mark_of_a_change_settles_nothing() {
+    let doc = split_insertion([DATE; 4]);
+    let filter = ChangeFilter {
+        kinds: Some(vec![ChangeKind::Deletion]),
+        ..ChangeFilter::ids(["r7"])
+    };
+    let out = reject_changes(&doc, &filter).unwrap();
+    assert_eq!(ids(&out), ["r7+8+9+10"]);
+    let insertions = ChangeFilter {
+        kinds: Some(vec![ChangeKind::Insertion]),
+        ..ChangeFilter::ids(["r7"])
+    };
+    assert!(matches!(
+        reject_changes(&doc, &insertions),
+        Err(ChangeError::PartOfChange { .. })
+    ));
+}
+
+/// GLM review of #1353, 8: `changes` prints the kind replacement, so
+/// `--kind replacement` reaches the refusal that says how to select one.
+#[test]
+fn the_cli_refuses_the_replacement_kind_with_how_to_select_one() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), four_mark_replacement()).unwrap();
+    let out = jubarte(
+        dir.path(),
+        &[
+            "reject",
+            "in.docx",
+            "--kind",
+            "replacement",
+            "-o",
+            "out.docx",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("select a replacement by its id"),
+        "{stderr}"
+    );
+    assert!(!dir.path().join("out.docx").exists());
+    let help = jubarte(dir.path(), &["reject", "--help"]);
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("replacement"));
+}
+
+/// `jubarte read` of `docx` as the round trip compares it: no page
+/// markers, and without the lines that name the file.
+fn read_back(dir: &std::path::Path, docx: &str) -> String {
+    let out = jubarte(dir, &["read", docx, "--no-page-markers"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with("source: ") && !line.starts_with("sha256: "))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+/// The `w:id` of every `w:ins` and `w:del` in `part`, in order.
+fn part_ids(docx: &[u8], part: &str) -> Vec<String> {
+    use std::io::Read as _;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
+    let mut xml = String::new();
+    zip.by_name(part).unwrap().read_to_string(&mut xml).unwrap();
+    regex::Regex::new(r#"<w:(?:ins|del) w:id="(\d+)""#)
+        .unwrap()
+        .captures_iter(&xml)
+        .map(|cap| cap[1].to_string())
+        .collect()
+}
+
+/// A header's change printed on two pieces, and a note whose paragraphs'
+/// text and mark are one change (`rev footnotes.r32+31`), write back as
+/// the marks they came from: the view reads the same, every id kept.
+#[test]
+fn a_story_change_of_several_pieces_writes_back_each_mark() {
+    for (fixture, part) in [
+        ("edge-authorless.docx", "word/header1.xml"),
+        ("edge-notes-tracked.docx", "word/footnotes.xml"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = std::fs::read(format!(
+            "{}/tests/fixtures/md-roundtrip/edges/{fixture}",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        std::fs::write(dir.path().join("a.docx"), &source).unwrap();
+        let view = read_back(dir.path(), "a.docx");
+        assert!(view.contains("r92+93") || view.contains("r32+31"), "{view}");
+        std::fs::write(dir.path().join("a.md"), &view).unwrap();
+        let out = jubarte(
+            dir.path(),
+            &[
+                "convert",
+                "a.md",
+                "-o",
+                "b.docx",
+                "-d",
+                "1970-01-01T00:00:00Z",
+            ],
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{stderr}");
+        assert!(
+            !stderr.contains("names two separate changes"),
+            "{fixture}: {stderr}"
+        );
+        assert_eq!(read_back(dir.path(), "b.docx"), view, "{fixture}");
+        let back = std::fs::read(dir.path().join("b.docx")).unwrap();
+        assert_eq!(part_ids(&back, part), part_ids(&source, part), "{fixture}");
+    }
+}
+
+/// Minimax review of #1353, 2: a comment that goes with a change of
+/// several marks is reported as removed by that change, named as the
+/// selection named it, not by the member that held its anchor.
+#[test]
+fn a_removed_comment_names_the_whole_change_that_held_it() {
+    let anchored = format!(
+        r#"<w:ins w:id="8" w:author="{BOB}" w:date="{DATE}"><w:commentRangeStart w:id="0"/><w:r><w:t xml:space="preserve">main in </w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:ins>"#
+    );
+    let body = p(&[
+        kept("The licence "),
+        ins(7, "shall re", BOB, DATE),
+        anchored,
+        ins(9, "effect until ", BOB, DATE),
+        ins(10, "terminated.", BOB, DATE),
+        kept(" End."),
+    ]);
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="Ann"><w:p><w:r><w:t>Why?</w:t></w:r></w:p></w:comment></w:comments>"#,
+        common::docx::W_NS
+    );
+    let doc = common::docx::docx_with(
+        &body,
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    assert_eq!(ids(&doc), ["r7+8+9+10"]);
+    let out = jubarte::changes::reject_changes_with_report(&doc, &ChangeFilter::ids(["r7+8+9+10"]))
+        .unwrap();
+    assert_eq!(
+        out.removed_why,
+        ["anchor removed by rejecting r7+8+9+10"],
+        "{:?}",
+        out.removed_comments
     );
 }

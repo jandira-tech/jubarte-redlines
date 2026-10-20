@@ -88,7 +88,7 @@ nothing; `-o redline.pdf` renders it instead.
 ### Inspect and resolve tracked changes
 
 ```sh
-jubarte changes redline.docx          # one mark per line (a substitution is two): r12, kind, target, author, paragraph, text
+jubarte changes redline.docx          # one change per line (a replacement is one): r12, kind, target, author, paragraph, text
 
 # Resolve one specific change and leave the others tracked:
 jubarte accept redline.docx \
@@ -582,7 +582,10 @@ tables, content controls, and the changes and comments with their short
 narrow it as they narrow the view. `-o FILE.md` or `-o FILE.json` writes
 either to a file.
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.

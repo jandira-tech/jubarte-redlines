@@ -652,7 +652,8 @@ staged in the contract's plan, not landed.
 {--ninety days--}{r7 @AC}
 {~~weekly~>monthly~~}{r2+1 @AC}       one author, deleted id first
 {--old--}{r2 @JD}{++new++}{r1 @AC}    different authors stay separate
-{++bold ++}{r7 @AC}{++words++}{r8 @AC}  distinct ids stay separate
+{++bold ++}{r7+8 @AC}{++words++}{r7+8 @AC}  one change of two marks
+{++new text++}{r5+6 @AC}¶{r5+6 @AC}  a change that ends its paragraph
 {++quarterly++}{r0 @AC 2026-10-03T14:05:00Z}  with --dates
 {--deleted--}{r3 @BO re r1 @AL}        deletion inside insertion r1
 Text¶{r9 @AC}                        inserted paragraph mark
@@ -695,11 +696,21 @@ holding ` re r1 Kim` of its own stays one name. A part with a bare
 parenthesis in its name makes the note no fold: it reads as the change's
 plain attribution, or as a comment.
 
-Distinct revision ids always stay separate, including adjacent insertions or
-adjacent deletions by the same author. One id may appear on several marks.
-When writing DOCX, adjacent pieces with the same id, kind, author and date
-become one revision element, including formatting boundaries and changes
-nested inside that revision. Pieces separated by live text or a paragraph
+A tag names the logical change its piece belongs to, the one `jubarte
+changes` lists (#1261): the marks Word writes for one edit (one author's
+touching insertions, or deletions, in a story, whatever their dates; a
+deletion and that author's insertion after it; the paragraph mark the
+change ends with) are one change with a joined id, and every piece prints
+it: `{++bold ++}{r7+8 @AC}{++words++}{r7+8 @AC}`. The pieces keep their
+own text, formatting and, under `--dates`, their own dates. Original text,
+another author's deletion, a field, a move, a table cell or the end of a
+paragraph separates two changes; another author's insertion among the
+marks does not, unless the marks were made inside it. When writing DOCX,
+the pieces that print one joined id take its ids in reading order, one
+each, so reading the DOCX back prints the same view. One id may appear on
+several marks. When writing DOCX, adjacent pieces with the same single id,
+kind, author and date become one revision element, including formatting
+boundaries and changes nested inside that revision. Pieces separated by live text or a paragraph
 boundary take distinct OOXML ids. The writer warns with the source line
 and the replacement id; reading the DOCX back prints that new id. Reusing
 an id with a different kind, author or date also requires a new id.
@@ -931,7 +942,10 @@ exit 2. Table ranges (`t0-t2`) are not part of the `-p` grammar; list them
 as `t0,t1,t2`. `--head`, `--tail`, `--changed` and `--by` cannot be combined
 with `--tables`.
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.

@@ -5,7 +5,9 @@
 //! tags, author handles and timestamps, comment threads, id lines, table
 //! lines and block selection.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 use super::ooxml::{Element, Node};
 use crate::markdown::{Pick, Select};
@@ -328,27 +330,114 @@ fn format_tag_by(tag: &str, by: impl Fn(&str) -> String) -> String {
                 let story = story.map_or(String::new(), |s| format!("{s}."));
                 return format!("{story}noid{}", by(handle));
             }
-            let changes: Vec<crate::ids::ChangeId> = ids
-                .split('+')
-                .map(|w| crate::ids::ChangeId::new(story.unwrap_or("body"), untag_id(w)))
-                .collect();
-            let short: Vec<String> = changes.iter().map(crate::ids::ChangeId::short).collect();
-            if short.iter().all(|s| !s.contains(":rev:")) {
-                let numbers: Vec<&str> = changes.iter().map(|c| c.wid.as_str()).collect();
-                let head = short[0]
-                    .strip_suffix(changes[0].wid.as_str())
-                    .unwrap_or("r");
-                format!("{head}{}{}", numbers.join("+"), by(handle))
-            } else {
-                short
-                    .iter()
-                    .map(|s| format!("{s}{}", by(handle)))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            }
+            whole_changes(
+                ids.split('+')
+                    .map(|w| crate::ids::ChangeId::new(story.unwrap_or("body"), untag_id(w)))
+                    .collect(),
+            )
+            .iter()
+            .map(|changes| {
+                let short: Vec<String> = changes.iter().map(crate::ids::ChangeId::short).collect();
+                if short.iter().all(|s| !s.contains(":rev:")) {
+                    let numbers: Vec<&str> = changes.iter().map(|c| c.wid.as_str()).collect();
+                    let head = short[0]
+                        .strip_suffix(changes[0].wid.as_str())
+                        .unwrap_or("r");
+                    format!("{head}{}{}", numbers.join("+"), by(handle))
+                } else {
+                    short
+                        .iter()
+                        .map(|s| format!("{s}{}", by(handle)))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
         })
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+// Each mark's logical change while a view prints (#1261): the marks Word
+// wrote for one edit print the whole change's id. Set for the length of
+// one conversion ([`with_wholes`]), so every tag the view prints, in
+// notes, on id lines and in the header, names what `changes` lists.
+thread_local! {
+    static WHOLES: RefCell<Rc<Wholes>> = RefCell::new(Rc::default());
+}
+
+/// The marks of each logical change of several marks: by a mark's short
+/// id (`r8`, `header1.r2`), the `w:id`s of all its change's marks in
+/// reading order (`7 8 9 10`).
+pub(crate) type Wholes = HashMap<String, Vec<String>>;
+
+/// Restores the logical changes an enclosing conversion set.
+struct Restore(Rc<Wholes>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let previous = std::mem::take(&mut self.0);
+        WHOLES.with(|wholes| *wholes.borrow_mut() = previous);
+    }
+}
+
+/// Runs `print` with `wholes` as the logical changes the tags it prints
+/// name ([`format_tag`]).
+pub(crate) fn with_wholes<T>(wholes: Wholes, print: impl FnOnce() -> T) -> T {
+    let previous = WHOLES.with(|w| w.replace(Rc::new(wholes)));
+    let _restore = Restore(previous);
+    print()
+}
+
+/// The logical changes of a package, as [`with_wholes`] takes them.
+pub(crate) fn wholes_of(changes: &[crate::changes::Change]) -> Wholes {
+    let mut out = Wholes::new();
+    for change in changes.iter().filter(|c| !c.members.is_empty()) {
+        let wids: Vec<String> = change
+            .members
+            .iter()
+            .filter_map(|m| crate::ids::change_id(&m.id).map(|id| id.wid))
+            .collect();
+        for member in &change.members {
+            out.insert(member.id.clone(), wids.clone());
+        }
+    }
+    out
+}
+
+/// `changes` as the logical changes they are marks of, each a tag of its
+/// own: a mark of a change of several marks stands for the whole change,
+/// named once (the substitution `4+1` of the replacement `r3+4+1+2` prints
+/// `r3+4+1+2`), and a mark of none keeps its own id. Marks of no such
+/// change stay one tag, repeats too (`r43+43`).
+fn whole_changes(changes: Vec<crate::ids::ChangeId>) -> Vec<Vec<crate::ids::ChangeId>> {
+    WHOLES.with(|wholes| {
+        let wholes = wholes.borrow();
+        if !changes
+            .iter()
+            .any(|change| wholes.contains_key(&change.short()))
+        {
+            return vec![changes];
+        }
+        let mut out = Vec::new();
+        let mut named: Vec<&Vec<String>> = Vec::new();
+        for change in changes {
+            match wholes.get(&change.short()) {
+                Some(wids) if named.contains(&wids) => {}
+                Some(wids) => {
+                    named.push(wids);
+                    out.push(
+                        wids.iter()
+                            .map(|wid| crate::ids::ChangeId::new(change.story.clone(), wid.clone()))
+                            .collect(),
+                    );
+                }
+                None => out.push(vec![change]),
+            }
+        }
+        out
+    })
 }
 
 /// A list of tags for an id line: `r0 @AC; r1+2 @AC`.
@@ -2251,50 +2340,83 @@ pub(crate) fn comment_head(
 pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
     use crate::markdown::view_notes;
 
-    let mut out = Vec::new();
+    // A change of several marks once, however many pieces print its joined
+    // id (#1261); a span of one mark counts each time it prints, as before.
+    let mut out: Vec<(Vec<Vec<u32>>, &'static str)> = Vec::new();
+    let mut add = |tags: &[&view_notes::Tag], kind: &'static str| {
+        let ids: Vec<Vec<u32>> = tags.iter().map(|tag| tag.ids.clone()).collect();
+        let joined = ids.iter().all(|ids| !ids.is_empty()) && ids.iter().any(|ids| ids.len() > 1);
+        match out.iter_mut().find(|(other, _)| joined && *other == ids) {
+            Some((_, was)) => *was = joined_kind(was, kind),
+            None => out.push((ids, kind)),
+        }
+    };
     for (token, note) in crate::markdown::critic::attributed_notes(shown) {
         let own = note.split(" re ").next().unwrap_or_default();
-        if view_notes::revision_tags(own).is_none()
-            || own.split("; ").any(|tag| {
-                tag.split_whitespace().next().is_none_or(|id| {
-                    id != "noid"
-                        && crate::ids::parse_change_ids(id)
-                            .map_or(true, |ids| ids.iter().any(|id| id.story != "body"))
-                })
+        let Some(tags) = view_notes::revision_tags(own) else {
+            continue;
+        };
+        if own.split("; ").any(|tag| {
+            tag.split_whitespace().next().is_none_or(|id| {
+                id != "noid"
+                    && crate::ids::parse_change_ids(id)
+                        .map_or(true, |ids| ids.iter().any(|id| id.story != "body"))
             })
-        {
+        }) {
             continue;
         }
         use crate::markdown::critic::Token;
-        out.push(match token {
+        let kind = match token {
             Token::InsertEnd => "ins",
             Token::DeleteEnd => "del",
             Token::SubstituteEnd => "sub",
             _ => "mark",
-        });
+        };
+        add(&tags.iter().collect::<Vec<_>>(), kind);
     }
     for line in shown.lines() {
         if let Some(p) = view_notes::id_line(line) {
-            out.extend(p.break_ins.iter().chain(p.break_del.iter()).map(|_| "mark"));
-            out.extend(
-                p.page_break_change
-                    .iter()
-                    .map(|(ins, _)| if *ins { "ins" } else { "del" }),
-            );
-            out.extend(p.rev.iter().map(|tag| {
-                if p.rev_del.contains(tag) {
-                    "del"
-                } else {
-                    "ins"
-                }
-            }));
+            for tag in p.break_ins.iter().chain(p.break_del.iter()) {
+                add(&[tag], "mark");
+            }
+            if let Some((ins, tag)) = &p.page_break_change {
+                add(&[tag], if *ins { "ins" } else { "del" });
+            }
+            for tag in &p.rev {
+                add(
+                    &[tag],
+                    if p.rev_del.contains(tag) {
+                        "del"
+                    } else {
+                        "ins"
+                    },
+                );
+            }
         } else if let Some(t) = view_notes::table_line(line) {
-            out.extend(t.marks.values().map(|_| "mark"));
-            out.extend(t.row_marks.values().map(|_| "row"));
-            out.extend(t.cell_marks.values().map(|_| "cell"));
+            for (_, tag) in t.marks.values() {
+                add(&[tag], "mark");
+            }
+            for (_, tag) in t.row_marks.values() {
+                add(&[tag], "row");
+            }
+            for (_, tag) in t.cell_marks.values() {
+                add(&[tag], "cell");
+            }
         }
     }
-    out
+    out.into_iter().map(|(_, kind)| kind).collect()
+}
+
+/// What one change shows as when its pieces show as `was` and `kind`: a
+/// deletion with an insertion is a substitution, a paragraph mark goes
+/// with its text's insertion or deletion.
+fn joined_kind(was: &'static str, kind: &'static str) -> &'static str {
+    match (was, kind) {
+        (a, b) if a == b => a,
+        ("sub", _) | (_, "sub") | ("ins", "del") | ("del", "ins") => "sub",
+        ("mark", other) | (other, "mark") => other,
+        (a, _) => a,
+    }
 }
 
 /// One block of the rendered body: its lines, the paragraph span it covers

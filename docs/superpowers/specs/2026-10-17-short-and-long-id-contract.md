@@ -150,7 +150,7 @@ This deliberately replaces host-width-dependent `usize` syntax. The current pars
 
 ## Complete grammar
 
-This is the complete set of accepted short forms. Numerical instances and recursive nesting cannot usefully be enumerated as a finite list; the productions define all of them.
+This is the complete set of accepted short forms. Numerical instances and recursive nesting cannot usefully be enumerated as a finite list; the productions define all of them. Output is always canonical: a composite change id prints its `r` once (`r87+88`), though input may repeat it (`r87+r88`).
 
 ```ebnf
 short         = block | range | change | comment | covered | section | toc ;
@@ -175,7 +175,8 @@ cell_tail     = scoped_para
               | "box" N "." box_item
               | "cc" N ;
 
-change        = [ story "." ] "r" N { "+" N } ;
+change        = [ story "." ] "r" N { "+" [ "r" ] N } ;
+                (* input only: a member may repeat its "r"; output never does *)
 comment       = "c" N ;
 covered       = "c" N ".text" ;
 section       = "s" N ;

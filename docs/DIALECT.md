@@ -96,7 +96,9 @@ inserted or deleted row.
 | --- | --- |
 | `{++x++}{r12 @AC}` | revision r12; attribution follows the closer |
 | `{~~a~>b~~}{r1+2 @AC re r0 @JD}` | same-author deletion then insertion; parent applies to old side only |
-| `{++a++}{r1 @AC}{++b++}{r2 @AC}` | different ids remain separate marks |
+| `{++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}` | one change of two marks (#1261): each piece names the whole change, as `jubarte changes` lists it, and writes back as its own mark |
+| `{++a++}{r1 @AC}{++b++}{r2 @JD}` | different authors, or changes apart, keep their own ids |
+| `{++new++}{r5+6 @AC}¶{r5+6 @AC}` | a change that ends its paragraph holds the mark too |
 | `¶{r3 @AC}` | inserted paragraph mark at the end of its text |
 | `\{r3 @C}` after a closer or `¶` | literal tag-like text |
 | `{>>c5 @AC: text<<}`, `re c5`, `resolved` | comment, reply, resolved thread |
@@ -107,6 +109,8 @@ inserted or deleted row.
 
 With `--dates`, substitution pairing compares the stored dates, including
 an absent date, even when the author header elides a shared timestamp.
+Sides dated apart print apart, each with its date, and both still name the
+one change: `{--old--}{r1+2 @AL 2026-10-01T09:00:00Z}{++new++}{r1+2 @AL 2026-10-02T10:00:00Z}`.
 The default view omits per-revision dates and keeps its existing grouping.
 Rejecting `¶{tag}` removes its following paragraph separator; a list marker
 on the joined paragraph is removed with it. A patch records that separator
