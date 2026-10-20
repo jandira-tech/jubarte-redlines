@@ -544,10 +544,74 @@ pub struct ResolvedChanges {
     /// Removed comments, including replies, with their original ids and text.
     /// Surviving comments may be renumbered in `document`.
     pub removed_comments: Vec<crate::comments::CommentRecord>,
+    /// Why each of `removed_comments` went, in its order: `anchor removed
+    /// by accepting r13`, naming the change that held its mark, or its
+    /// thread root's (#1159).
+    pub removed_why: Vec<String>,
     /// Tracked changes still inside comment bodies after the resolution:
     /// an author or kind filter resolves them, an id selection cannot name
     /// them, so a partial selection can leave some (#1223).
     pub comment_changes_left: usize,
+}
+
+/// `anchor removed by accepting r13`: the verb of `resolution`, and the
+/// change of `changes` (the source's) that held the reference mark of a
+/// comment of `thread` (the root's first, then each reply's). The change
+/// must be one the verb removes the content of (a deletion or moved-from
+/// side accepted, an insertion or moved-to side rejected) and one the pass
+/// settled: an id of `settled`, or the other side of a move it holds, which
+/// it names as `settled` does; `None` settled every change. Of changes
+/// nested in one another the innermost is named. A thread also goes when
+/// the changes resolved remove all its range's text, its mark outside them
+/// (Word prunes a dead range): that names no change.
+pub(crate) fn why_removed(
+    changes: &[Change],
+    thread: &[String],
+    resolution: Resolution,
+    settled: Option<&[String]>,
+) -> String {
+    let (verb, kind, side) = match resolution {
+        Resolution::Accept => ("accepting", ChangeKind::Deletion, MoveSide::From),
+        Resolution::Reject => ("rejecting", ChangeKind::Insertion, MoveSide::To),
+    };
+    let removes = |ch: &Change| {
+        ch.kind == kind || (ch.kind == ChangeKind::Move && ch.move_side == Some(side))
+    };
+    // The id the pass selected for `ch`: its own, or its move's other side.
+    let named = |ch: &Change| -> Option<String> {
+        let Some(settled) = settled else {
+            return Some(ch.id.clone());
+        };
+        if settled.contains(&ch.id) {
+            return Some(ch.id.clone());
+        }
+        let name = ch.move_name.as_ref()?;
+        changes
+            .iter()
+            .find(|other| {
+                other.id != ch.id
+                    && other.move_name.as_ref() == Some(name)
+                    && settled.contains(&other.id)
+            })
+            .map(|other| other.id.clone())
+    };
+    let holder = thread.iter().find_map(|c| {
+        let held: Vec<&Change> = changes
+            .iter()
+            .filter(|ch| ch.holds_comments.contains(c) && removes(ch) && named(ch).is_some())
+            .collect();
+        held.iter()
+            .find(|ch| {
+                !held
+                    .iter()
+                    .any(|inner| inner.inside.as_ref() == Some(&ch.id))
+            })
+            .and_then(|ch| named(ch))
+    });
+    match holder {
+        Some(change) => format!("anchor removed by {verb} {change}"),
+        None => format!("anchor removed by {verb} the changes that held all its text"),
+    }
 }
 
 /// Accept selected changes and report comments that disappeared with them.
@@ -578,18 +642,45 @@ fn resolve_with_report(
     resolution: Resolution,
 ) -> Result<ResolvedChanges, ChangeError> {
     let (document, removed, comment_changes_left) = resolve(docx, filter, resolution)?;
-    let removed_comments = if removed.is_empty() {
-        Vec::new()
-    } else {
-        crate::comments::list_comments(docx)
-            .map_err(|e| ChangeError::Package(e.to_string()))?
-            .into_iter()
-            .filter(|c| removed.contains(&c.id.to_string()))
-            .collect()
-    };
+    if removed.is_empty() {
+        return Ok(ResolvedChanges {
+            document,
+            removed_comments: Vec::new(),
+            removed_why: Vec::new(),
+            comment_changes_left,
+        });
+    }
+    let comments =
+        crate::comments::list_comments(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
+    let listed = list_changes_tolerant(docx)?;
+    let filter = filter.normalized()?;
+    let settled: Vec<String> = listed
+        .iter()
+        .filter(|c| filter.matches(c))
+        .map(|c| c.id.clone())
+        .collect();
+    let removed_comments: Vec<crate::comments::CommentRecord> = comments
+        .iter()
+        .filter(|c| removed.contains(&c.id.to_string()))
+        .cloned()
+        .collect();
+    // A reply's thread: itself, then each comment it replies to.
+    let removed_why = removed_comments
+        .iter()
+        .map(|c| {
+            let mut thread = vec![format!("c{}", c.id)];
+            let mut parent = c.parent;
+            while let Some(id) = parent.filter(|id| !thread.contains(&format!("c{id}"))) {
+                thread.push(format!("c{id}"));
+                parent = comments.iter().find(|p| p.id == id).and_then(|p| p.parent);
+            }
+            why_removed(&listed, &thread, resolution, Some(&settled))
+        })
+        .collect();
     Ok(ResolvedChanges {
         document,
         removed_comments,
+        removed_why,
         comment_changes_left,
     })
 }

@@ -80,9 +80,19 @@ fn mark_before_deleted_text() -> Vec<u8> {
 
 /// [`commented`]'s parts, its p1 holding `p1`.
 fn with_p1(reply: bool, p1: &str) -> Vec<u8> {
+    with_paragraphs(reply, &[p1])
+}
+
+/// [`commented`]'s parts with `paragraphs` between "Services" and "Next
+/// paragraph.", each the content of one `w:p`.
+fn with_paragraphs(reply: bool, paragraphs: &[&str]) -> Vec<u8> {
     let mut pkg = jubarte::opc::PartFs::open(&commented(reply)).unwrap();
+    let middle: String = paragraphs
+        .iter()
+        .map(|p| format!("<w:p>{p}</w:p>"))
+        .collect();
     let body = format!(
-        r#"<w:p><w:r><w:t>Services</w:t></w:r></w:p><w:p>{p1}</w:p><w:p><w:r><w:t>Next paragraph.</w:t></w:r></w:p>"#
+        r#"<w:p><w:r><w:t>Services</w:t></w:r></w:p>{middle}<w:p><w:r><w:t>Next paragraph.</w:t></w:r></w:p>"#
     );
     let xml = format!(
         r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr/></w:body></w:document>"#
@@ -256,6 +266,12 @@ fn removed(docx: &[u8], fields: &serde_json::Value) -> serde_json::Value {
     let report = serde_json::to_value(&out.report).unwrap()["removed_comments"].clone();
     let summary: serde_json::Value =
         serde_json::from_str(out.report.to_jsonl().lines().last().unwrap()).unwrap();
+    // The report leaves out a receipt with nothing in it; the summary line
+    // lists it empty.
+    if report.is_null() {
+        assert_eq!(summary["removed_comments"], serde_json::json!([]));
+        return serde_json::json!([]);
+    }
     assert_eq!(summary["removed_comments"], report);
     report
 }
@@ -289,24 +305,133 @@ fn removed_comments_carry_why() {
     );
 }
 
+/// Dan's insertion r20, Eve's deletion r21 of its end inside it, and c0's
+/// mark in r21: accepting r21 or rejecting r20 takes the thread, accepting
+/// r20 or rejecting r21 keeps it.
+fn nested_holders() -> Vec<u8> {
+    with_p1(
+        false,
+        &format!(
+            r#"<w:commentRangeStart w:id="0"/><w:r><w:t xml:space="preserve">Kept. </w:t></w:r><w:ins w:id="20" w:author="Dan" w:date="2026-10-18T12:02:00Z"><w:r><w:t xml:space="preserve">Typed </w:t></w:r><w:del w:id="21" w:author="Eve" w:date="2026-10-18T12:03:00Z"><w:r><w:delText>then struck</w:delText></w:r><w:commentRangeEnd w:id="0"/><w:r>{REF}<w:commentReference w:id="0"/></w:r></w:del></w:ins>"#
+        ),
+    )
+}
+
+/// Dan's move of "Moved words." from p1 (r7) to p2 (r8), c0 on the moved-to
+/// words: rejecting either side takes the moved-to side and the thread.
+fn moved_thread() -> Vec<u8> {
+    with_paragraphs(
+        false,
+        &[
+            r#"<w:r><w:t xml:space="preserve">Lead. </w:t></w:r><w:moveFromRangeStart w:id="90" w:author="Dan" w:date="2026-10-18T12:02:00Z" w:name="mv1"/><w:moveFrom w:id="7" w:author="Dan" w:date="2026-10-18T12:02:00Z"><w:r><w:delText>Moved words.</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="90"/>"#,
+            &format!(
+                r#"<w:moveToRangeStart w:id="91" w:author="Dan" w:date="2026-10-18T12:02:00Z" w:name="mv1"/><w:moveTo w:id="8" w:author="Dan" w:date="2026-10-18T12:02:00Z"><w:commentRangeStart w:id="0"/><w:r><w:t>Moved words.</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r>{REF}<w:commentReference w:id="0"/></w:r></w:moveTo><w:moveToRangeEnd w:id="91"/>"#
+            ),
+        ],
+    )
+}
+
+/// `why` names a change the pass settled whose resolution removes its
+/// content: not an enclosing change of the other kind the plan never
+/// touched, and the side of a move the plan named, not the side it took
+/// along (#1342 review).
+#[test]
+fn why_names_the_change_the_pass_settled() {
+    let why = |docx: &[u8], fields: serde_json::Value| {
+        let report = removed(docx, &fields);
+        report
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["why"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let select = |verb: &str, id: &str| serde_json::json!({"resolve_revisions":{verb:{"ids":[id]}},"existing_revisions":"keep"});
+    let nested = nested_holders();
+    assert_eq!(
+        why(&nested, select("accept", "r21")),
+        ["anchor removed by accepting r21"]
+    );
+    assert_eq!(
+        why(&nested, select("reject", "r20")),
+        ["anchor removed by rejecting r20"]
+    );
+    assert!(why(&nested, select("accept", "r20")).is_empty());
+    assert!(why(&nested, select("reject", "r21")).is_empty());
+    // A blanket pass names the change of its kind that held the mark.
+    assert_eq!(
+        why(&nested, serde_json::json!({"existing_revisions":"accept"})),
+        ["anchor removed by accepting r21"]
+    );
+    assert_eq!(
+        why(&nested, serde_json::json!({"existing_revisions":"reject"})),
+        ["anchor removed by rejecting r20"]
+    );
+    // r20 accepted by id, then the rest rejected: the blanket rejection of
+    // r21 keeps its text, so the thread stays.
+    assert!(
+        why(
+            &nested,
+            serde_json::json!({"resolve_revisions":{"accept":{"ids":["r20"]}},"existing_revisions":"reject"})
+        )
+        .is_empty()
+    );
+    let moved = moved_thread();
+    assert_eq!(
+        why(&moved, select("reject", "r7")),
+        ["anchor removed by rejecting r7"]
+    );
+    assert_eq!(
+        why(&moved, select("reject", "r8")),
+        ["anchor removed by rejecting r8"]
+    );
+    assert!(why(&moved, select("accept", "r7")).is_empty());
+}
+
 /// Alice deletes p1, whose text Bob commented on, and replies to Bob in
 /// the same plan.
 const DELETE_AND_REPLY: &str = r#"{"schema_version":1,"author":"Alice","date":"2026-10-18T12:05:00Z","operations":[{"kind":"delete_paragraph","paragraph":"p1"},{"kind":"reply_comment","comment_id":"c0","text":"Alice replies."}]}"#;
 
 fn assert_thread_on_deleted_text(redline: &[u8]) {
+    assert_thread_of_on_deleted_text(redline, 2);
+}
+
+/// Whether the `<w:commentReference w:id="{id}"/>` of `xml` sits inside a
+/// `w:del`.
+fn reference_is_deleted(xml: &str, id: u32) -> bool {
+    let at = xml
+        .find(&format!(r#"<w:commentReference w:id="{id}""#))
+        .unwrap_or_else(|| panic!("c{id} has a reference: {xml}"));
+    let before = &xml[..at];
+    // A paragraph mark's `<w:del …/>` opens nothing.
+    let opened = before
+        .match_indices("<w:del ")
+        .filter(|&(i, _)| !before[i..].split('>').next().unwrap().ends_with('/'))
+        .count();
+    opened > before.matches("</w:del>").count()
+}
+
+/// The thread of `count` comments, Alice's reply last, on p1's struck
+/// text: every reference inside the deletion, the new reply's own too.
+fn assert_thread_of_on_deleted_text(redline: &[u8], count: usize) {
     assert_word_valid_package(redline);
     let listed = list_comments(redline).unwrap();
-    assert_eq!(listed.len(), 2, "{listed:?}");
-    assert_eq!(listed[1].parent, Some(listed[0].id));
-    assert_eq!(listed[1].text, "Alice replies.");
+    assert_eq!(listed.len(), count, "{listed:?}");
+    let reply = listed.last().unwrap();
+    assert_eq!(reply.parent, Some(listed[0].id));
+    assert_eq!(reply.text, "Alice replies.");
     let xml = part_string(redline, "word/document.xml").unwrap();
-    // Both references sit in the deleted paragraph's struck text.
-    let del = xml.find("<w:del ").unwrap();
-    assert!(xml.find("commentReference").unwrap() > del, "{xml}");
+    for c in &listed {
+        assert!(
+            reference_is_deleted(&xml, c.id),
+            "c{} outside the deletion: {xml}",
+            c.id
+        );
+    }
     // Reject All brings the paragraph back with its thread; Accept All
-    // removes both, as Word does.
+    // removes it all, as Word does.
     let rejected = jubarte::document_comparer::reject_revisions(redline).unwrap();
-    assert_eq!(list_comments(&rejected).unwrap().len(), 2);
+    assert_eq!(list_comments(&rejected).unwrap().len(), count);
     assert_word_valid_package(&rejected);
     let accepted = jubarte::document_comparer::accept_revisions(redline).unwrap();
     assert!(list_comments(&accepted).unwrap().is_empty());
@@ -314,9 +439,24 @@ fn assert_thread_on_deleted_text(redline: &[u8]) {
 }
 
 /// Every policy for existing revisions: the comparer path (the default
-/// and `accept`) and the direct one (`keep`) both put the reply there.
+/// and `accept`) and the direct one (`keep`) both put the reply there, on
+/// a thread with no reply yet and on one Carol already replied to.
 #[test]
 fn reply_in_a_tracked_deleted_paragraph_is_allowed() {
+    for policy in [None, Some("keep"), Some("accept")] {
+        let json = policy.map_or_else(
+            || DELETE_AND_REPLY.to_string(),
+            |p| {
+                DELETE_AND_REPLY.replace(
+                    "\"operations\"",
+                    &format!("\"existing_revisions\":\"{p}\",\"operations\""),
+                )
+            },
+        );
+        let out = apply_plan(&commented(true), &plan(&json)).unwrap();
+        assert_thread_of_on_deleted_text(&out.redline, 3);
+        assert!(list_comments(&out.clean).unwrap().is_empty(), "{policy:?}");
+    }
     for policy in [None, Some("keep"), Some("accept")] {
         let json = policy.map_or_else(
             || DELETE_AND_REPLY.to_string(),
@@ -364,4 +504,66 @@ fn reply_in_an_editing_mode_deleted_paragraph_is_refused_with_comment_anchor_rem
     let error = jubarte::edit::v2_apply::apply_plan(&source, &plan).unwrap_err();
     assert_eq!(error.code, "COMMENT_ANCHOR_REMOVED", "{error}");
     assert_eq!(error.operation.as_deref(), Some("/operations/0"), "{error}");
+}
+
+/// The v1 face of the refusal above: `--editing-mode` publishes the clean
+/// copy, where the paragraph and c0's thread are gone, so a reply to c0 in
+/// the same plan would land nowhere. The shared hook refuses it before
+/// anything is written, for the CLI and the Python and npm bindings alike.
+#[test]
+fn editing_mode_refuses_a_reply_on_a_paragraph_the_plan_deletes() {
+    let source = commented(false);
+    let message = jubarte::edit::flags::editing_mode_conflict(&plan(DELETE_AND_REPLY), &source)
+        .expect("editing mode loses the reply");
+    assert!(
+        message.contains("c0") && message.contains("p1"),
+        "{message}"
+    );
+    // The reply alone, or the deletion alone, has nothing to lose.
+    for alone in [
+        r#"{"kind":"delete_paragraph","paragraph":"p1"}"#,
+        r#"{"kind":"reply_comment","comment_id":"c0","text":"Alice replies."}"#,
+    ] {
+        let one = plan(&format!(
+            r#"{{"schema_version":1,"author":"Alice","date":"2026-10-18T12:05:00Z","operations":[{alone}]}}"#
+        ));
+        assert_eq!(
+            jubarte::edit::flags::editing_mode_conflict(&one, &source),
+            None,
+            "{alone}"
+        );
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.docx");
+    std::fs::write(&input, &source).unwrap();
+    let output = dir.path().join("out.docx");
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .arg("edit")
+        .arg(&input)
+        .args(["--editing-mode", "-a", "Alice", "-p", "p1", "--delete"])
+        .args(["-p", "c0", "--reply", "Alice replies."])
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(run.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--editing-mode"), "{stderr}");
+    assert!(!output.exists(), "a refused edit writes nothing");
+    // Tracked, the same flags keep the reply on the struck paragraph.
+    let tracked = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .arg("edit")
+        .arg(&input)
+        .args(["-a", "Alice", "-p", "p1", "--delete"])
+        .args(["-p", "c0", "--reply", "Alice replies."])
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        tracked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&tracked.stderr)
+    );
+    assert_thread_on_deleted_text(&std::fs::read(&output).unwrap());
 }

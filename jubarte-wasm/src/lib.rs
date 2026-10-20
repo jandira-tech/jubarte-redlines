@@ -631,12 +631,13 @@ pub fn flag_plan(
 }
 
 /// Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
-/// it keeps and does not itself accept or reject; `undefined` when none.
+/// it keeps and does not itself accept or reject, or a reply to a comment
+/// on a paragraph it deletes; `undefined` when neither.
 ///
 /// Mirrors `jubarte::edit::flags::editing_mode_conflict`.
 #[wasm_bindgen(js_name = editingModeConflict)]
 pub fn editing_mode_conflict(plan: &str, docx: &[u8]) -> Option<String> {
-    jubarte::edit::flags::editing_mode_conflict_json(plan, docx).map(str::to_string)
+    jubarte::edit::flags::editing_mode_conflict_json(plan, docx)
 }
 
 /// `record_plan` as JSON: `{ok: true, recorded: {plan, json, notes,

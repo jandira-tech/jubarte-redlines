@@ -38,26 +38,39 @@ pub struct KeptComment {
     pub written_id: Option<u32>,
 }
 
+use crate::revision_processor::Resolution;
+
+/// The pass that removed a thread: how it resolved, and the change ids it
+/// selected (`None` for a blanket pass over every change left).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Pass {
+    resolution: Resolution,
+    settled: Option<Vec<String>>,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct AnchorChanges {
     pub removed: Vec<String>,
     pub kept: Vec<String>,
-    decisions: std::collections::HashMap<String, String>,
+    passes: std::collections::HashMap<String, Pass>,
 }
 
 impl AnchorChanges {
+    /// Record a pass's receipts: `settled` names the ids it selected, or
+    /// `None` when it resolved every change left.
     pub fn extend(
         &mut self,
         removed: Vec<String>,
         kept: Vec<String>,
-        resolution: crate::revision_processor::Resolution,
+        resolution: Resolution,
+        settled: Option<&[String]>,
     ) {
-        let decision = match resolution {
-            crate::revision_processor::Resolution::Accept => "acceptance",
-            crate::revision_processor::Resolution::Reject => "rejection",
+        let pass = Pass {
+            resolution,
+            settled: settled.map(<[String]>::to_vec),
         };
         for id in &removed {
-            self.decisions.insert(id.clone(), decision.into());
+            self.passes.insert(id.clone(), pass.clone());
         }
         self.removed.extend(removed);
         self.kept.extend(kept);
@@ -113,20 +126,38 @@ impl AnchorChanges {
         let holders = if self.removed.is_empty() {
             Vec::new()
         } else {
-            crate::changes::list_changes_tolerant(source).unwrap_or_default()
+            crate::changes::list_changes_tolerant(source)
+                .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?
         };
         let removed = groups(&self.removed)
             .into_iter()
             .map(|(c, replies)| {
-                let decision = self.decisions.get(&c.id.to_string()).cloned();
+                let pass = self
+                    .passes
+                    .get(&c.id.to_string())
+                    .expect("every removed thread is recorded with its pass");
                 let id = format!("c{}", c.id);
-                let why = why_removed(&holders, &id, &replies, decision.as_deref());
+                let thread: Vec<String> = std::iter::once(id.clone())
+                    .chain(replies.iter().cloned())
+                    .collect();
+                let why = crate::changes::why_removed(
+                    &holders,
+                    &thread,
+                    pass.resolution,
+                    pass.settled.as_deref(),
+                );
                 RemovedComment {
                     id,
                     author: c.author.clone(),
                     replies,
                     why,
-                    decision,
+                    decision: Some(
+                        match pass.resolution {
+                            Resolution::Accept => "acceptance",
+                            Resolution::Reject => "rejection",
+                        }
+                        .into(),
+                    ),
                 }
             })
             .collect();
@@ -140,32 +171,6 @@ impl AnchorChanges {
             })
             .collect();
         Ok((removed, kept))
-    }
-}
-
-/// `anchor removed by accepting r13`: the decision, and the source change
-/// that held the mark of thread `id` (its own, else a reply's). A thread
-/// whose whole range a change removed, its mark outside it, names no change.
-fn why_removed(
-    changes: &[crate::changes::Change],
-    id: &str,
-    replies: &[String],
-    decision: Option<&str>,
-) -> String {
-    let verb = match decision {
-        Some("rejection") => "rejecting",
-        _ => "accepting",
-    };
-    let holder = std::iter::once(id)
-        .chain(replies.iter().map(String::as_str))
-        .find_map(|c| {
-            changes
-                .iter()
-                .find(|ch| ch.holds_comments.iter().any(|h| h == c))
-        });
-    match holder {
-        Some(change) => format!("anchor removed by {verb} {}", change.id),
-        None => format!("anchor removed by {verb} the changes that held all its text"),
     }
 }
 

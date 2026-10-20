@@ -1449,6 +1449,19 @@ fn selected_ids(
         .collect())
 }
 
+/// The ids `filter` itself selects in `listed`, before [`selected_ids`]
+/// adds each move's other side: the ones a receipt names as resolved.
+fn named_ids(listed: &[Change], filter: Option<&ChangeFilter>) -> Vec<String> {
+    let Some(filter) = filter.and_then(|f| f.normalized().ok()) else {
+        return Vec::new();
+    };
+    listed
+        .iter()
+        .filter(|c| filter.matches(c))
+        .map(|c| c.id.clone())
+        .collect()
+}
+
 /// Accept, then reject, the changes `resolve_revisions` selects: the new
 /// source (`None` when it selects nothing) and what was resolved.
 fn resolve_selected(
@@ -1489,7 +1502,12 @@ fn resolve_selected(
             policy == RemovedAnchorComments::Keep,
         )
         .map_err(change_err)?;
-        comments.extend(removed, kept, crate::revision_processor::Resolution::Accept);
+        comments.extend(
+            removed,
+            kept,
+            crate::revision_processor::Resolution::Accept,
+            Some(&named_ids(&listed, selection.accept.as_ref())),
+        );
         bytes = document;
         resolved.accepted = accept;
     }
@@ -1507,7 +1525,12 @@ fn resolve_selected(
             policy == RemovedAnchorComments::Keep,
         )
         .map_err(change_err)?;
-        comments.extend(removed, kept, crate::revision_processor::Resolution::Reject);
+        comments.extend(
+            removed,
+            kept,
+            crate::revision_processor::Resolution::Reject,
+            Some(&named_ids(&listed, selection.reject.as_ref())),
+        );
         bytes = document;
         resolved.rejected = reject;
     }
@@ -1529,6 +1552,25 @@ pub fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
     .and_then(|(bytes, _, _)| bytes);
     crate::changes::list_changes(resolved.as_deref().unwrap_or(source))
         .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with("styles:")))
+}
+
+/// The replies `plan` makes to a comment on a paragraph it deletes, each
+/// as the parent's id and the deleted paragraph's id. Tracked, the reply
+/// sits on the struck text; untracked, as `--editing-mode` publishes the
+/// edit, the paragraph and the thread are gone and the reply lands nowhere.
+/// A plan that does not resolve names none here: running it reports why.
+pub fn replies_on_deleted_paragraphs(source: &[u8], plan: &EditPlan) -> Vec<(u32, Option<String>)> {
+    let Ok(lowered) = visible::lower(source, plan) else {
+        return Vec::new();
+    };
+    let plan = lowered.as_ref().unwrap_or(plan);
+    let Ok(tx) = resolved(source, plan, PlanSyntax::V1) else {
+        return Vec::new();
+    };
+    (0..plan.operations.len())
+        .filter_map(|op| tx.reply_on_deleted(op))
+        .map(|(parent, by)| (parent, tx.outcomes[by].paragraph.clone()))
+        .collect()
 }
 
 /// The document a plan edits once `resolve_revisions` and
@@ -1583,7 +1625,7 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
                 plan.removed_anchor_comments == RemovedAnchorComments::Keep,
             )
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-            comment_changes.extend(removed, kept, resolution);
+            comment_changes.extend(removed, kept, resolution, None);
             let reopened = Opened::open(&flattened).map_err(open_error)?;
             (flattened, reopened, true)
         }
@@ -6145,18 +6187,26 @@ impl<'p> Transaction<'p> {
     /// a paragraph this plan deletes: the copy loses the reference, so the
     /// reply goes where the parent's stays, on the deleted text (#1159).
     fn reply_in_deleted(&self, op: usize) -> bool {
-        let deleted = |p: &usize| {
-            self.resolved
-                .iter()
-                .any(|(_, r)| matches!(r, Resolved::DeleteParagraph { para } if para == p))
-        };
-        self.resolved.iter().any(|(i, r)| {
-            *i == op
-                && matches!(r, Resolved::Thread {
-                    op: ThreadOp::Reply { .. },
-                    anchor: Some(anchor),
-                    ..
-                } if deleted(anchor))
+        self.reply_on_deleted(op).is_some()
+    }
+
+    /// The parent of reply `op` and the operation that deletes the
+    /// paragraph the parent is on, when the plan deletes it.
+    fn reply_on_deleted(&self, op: usize) -> Option<(u32, usize)> {
+        self.resolved.iter().find_map(|(i, r)| match r {
+            Resolved::Thread {
+                op: ThreadOp::Reply { parent, .. },
+                anchor: Some(anchor),
+                ..
+            } if *i == op => self.deletes_paragraph(*anchor).map(|by| (*parent, by)),
+            _ => None,
+        })
+    }
+
+    /// The operation that deletes paragraph `para`, if one does.
+    fn deletes_paragraph(&self, para: usize) -> Option<usize> {
+        self.resolved.iter().find_map(|(i, r)| {
+            matches!(r, Resolved::DeleteParagraph { para: p } if *p == para).then_some(*i)
         })
     }
 

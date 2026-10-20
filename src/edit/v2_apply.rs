@@ -209,7 +209,7 @@ fn apply_bound(
                     == super::RemovedAnchorComments::Keep,
             )
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-            comment_changes.extend(removed, kept, resolution);
+            comment_changes.extend(removed, kept, resolution, None);
             if has_history(&bytes)? {
                 return Err(err(
                     "UNSUPPORTED_REVISIONS",

@@ -1115,7 +1115,7 @@ fn assert_loss_text(flags: &[&str]) {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        text.contains("removed c0 (Bob) and its reply c1:"),
+        text.contains("removed c0 (Bob) and its reply c1: anchor removed by rejecting r1"),
         "{text}"
     );
 }

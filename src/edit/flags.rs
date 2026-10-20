@@ -643,18 +643,30 @@ fn inline_edit(
 
 /// Why `--editing-mode` cannot apply `plan` to `source`: under `keep` the
 /// tracked changes `plan` does not itself accept or reject (`-p r12
-/// --accept`) stay, so the "clean" copy would still carry revisions.
-pub fn editing_mode_conflict(plan: &EditPlan, source: &[u8]) -> Option<&'static str> {
-    (plan.existing_revisions == ExistingRevisions::Keep && crate::edit::revisions_left(source, plan))
-        .then_some(
-            "--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject",
-        )
+/// --accept`) stay, so the "clean" copy would still carry revisions; and a
+/// reply to a comment on a paragraph the plan deletes has no thread left in
+/// the clean copy to join.
+pub fn editing_mode_conflict(plan: &EditPlan, source: &[u8]) -> Option<String> {
+    if plan.existing_revisions == ExistingRevisions::Keep
+        && crate::edit::revisions_left(source, plan)
+    {
+        return Some(
+            "--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject".into(),
+        );
+    }
+    let (parent, paragraph) = crate::edit::replies_on_deleted_paragraphs(source, plan)
+        .into_iter()
+        .next()?;
+    let paragraph = paragraph.unwrap_or_else(|| "its paragraph".into());
+    Some(format!(
+        "--editing-mode deletes {paragraph} outright, and c{parent}'s thread with it, so the reply to c{parent} would join nothing; drop --editing-mode to track the deletion and keep the reply on the struck text, or delete without replying"
+    ))
 }
 
 /// [`editing_mode_conflict`] for a plan as JSON, as the Python and npm CLIs
 /// hold it. A plan that does not parse conflicts with nothing here: running
 /// it reports why.
-pub fn editing_mode_conflict_json(plan: &str, source: &[u8]) -> Option<&'static str> {
+pub fn editing_mode_conflict_json(plan: &str, source: &[u8]) -> Option<String> {
     EditPlan::from_json(plan)
         .ok()
         .and_then(|plan| editing_mode_conflict(&plan, source))
