@@ -1543,8 +1543,9 @@ changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` (since 0.11.0) shows the changed paragraphs
 between two documents — or a document and Markdown text — as `[-old-]{+new+}`
-marks (`format="critic"` for CriticMarkup). Between two Word documents a
-replacement keeps Word Compare's order, the insertion first: `{+new+}[-old-]`.
+marks (`format="critic"` for CriticMarkup). When a side is a Word document,
+the comparer writes the changes, and a replacement inside a paragraph keeps
+Word Compare's order, the insertion first: `{+new+}[-old-]`.
 
 ```python
 from jubarte_redlines import diff, read
@@ -1985,7 +1986,9 @@ diff(old: 'Document | bytes | str | os.PathLike[str]', new: 'Document | bytes | 
 
 The changes from ``old`` to ``new``: the changed paragraphs, each at
 its ``pN`` id in a Word document or ``line:N`` in Markdown, with
-``[-old-]{+new+}`` changes and CriticMarkup comments.
+``[-old-]{+new+}`` changes and CriticMarkup comments. When a side is a
+Word document, a replacement inside a paragraph reads insertion first,
+``{+new+}[-old-]``, as Word Compare writes it.
 
 Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
 or a path (``.md``/``.markdown`` read as Markdown, anything else as
@@ -2014,7 +2017,9 @@ Diff(
 The changes between two documents, as ``git diff --word-diff`` shows
 them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
 for the changes and CriticMarkup ``{==highlights==}`` and
-``{>>comments<<}``.
+``{>>comments<<}``. When a side is a Word document, a replacement
+inside a paragraph reads insertion first, ``{+new+}[-old-]``, as Word
+Compare writes it.
 
 ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
 ``hunks`` are the changed paragraphs (none for ``format="critic"``).

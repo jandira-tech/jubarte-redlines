@@ -999,8 +999,9 @@ Payment is due in [-30-]{+45+} days.
   paragraph in the new version; `@@ -[p12] @@` is a paragraph
   removed, in the old one. A change in a text box is shown at the
   paragraph that holds the box.
-- A change is `[-old-]{+new+}`; between two Word documents a replacement
-  keeps Word Compare's order, the insertion first (`{+new+}[-old-]`).
+- A change is `[-old-]{+new+}`; when a side is a Word document a
+  replacement inside a paragraph keeps Word Compare's order, the insertion
+  first (`{+new+}[-old-]`).
   Comments and their scopes stay CriticMarkup:
   `{==text==}{>>Name (date): comment<<}`.
 - The `+++` line names who made the changes and when, once. A change by
