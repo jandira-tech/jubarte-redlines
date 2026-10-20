@@ -91,6 +91,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # 🐇 The skills come from the workflow's own commit (main, or the PR merge
+      # ref), not from the PR head: older PR branches do not have them.
+      - name: 🐇 Check out the review skills
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .jules-el-conejo-skills
+          sparse-checkout: skills/jules-el-conejo
+          persist-credentials: false
+
       # 🐇 Stage 1: list the changed files and load the review skills.
       - name: 🐇 Detect changed files and load review skills
         id: skills
@@ -102,7 +112,7 @@ jobs:
             echo "changed_files<<__JULES_EOF__"
             echo "${CHANGED_FILES}"
             echo "__JULES_EOF__"
-            if printf '%s\n' "$CHANGED_FILES" | grep -q '\.rs$\|Cargo\.\(toml\|lock\)$'; then
+            if printf '%s\n' "$CHANGED_FILES" | grep -Eq '\.rs$|Cargo\.(toml|lock)$'; then
               echo "rust_changed=true"
             else
               echo "rust_changed=false"
@@ -110,10 +120,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           load_skill() {
-            local key="$1" file="skills/jules-el-conejo/$2"
+            local key="$1" file=".jules-el-conejo-skills/skills/jules-el-conejo/$2"
             {
               echo "${key}<<__JULES_SKILL_EOF__"
               cat "$file"
+              # The delimiter must start its own line even if the file lacks a final newline.
+              echo
               echo "__JULES_SKILL_EOF__"
             } >> "$GITHUB_OUTPUT"
           }
