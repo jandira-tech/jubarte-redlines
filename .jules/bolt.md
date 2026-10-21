@@ -1,0 +1,3 @@
+## 2024-05-14 - LCS Dynamic Programming Optimization
+**Learning:** String cloning and multi-dimensional `Vec` allocations (`vec![vec![...]]`) in hot loops like the LCS (Longest Common Subsequence) algorithm cause significant overhead due to memory fragmentation, indirection, and redundant allocations. Replacing a 2D matrix with a flattened 1D array (`Vec<T>`) mapped by index math drastically improves cache locality. Furthermore, using `u32` instead of `usize` for DP cell values cuts memory usage in half without risk of overflow in document context.
+**Action:** When implementing dynamic programming algorithms like LCS, favor 1D flattened arrays and string slices (`&str`) instead of cloned `String` copies.
