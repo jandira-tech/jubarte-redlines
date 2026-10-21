@@ -191,8 +191,7 @@ fn two_word_documents_are_located_in_each() {
     )
     .unwrap();
     assert_located(&patch, &old, &new, "original/modified");
-    // The comparer's changes are the owner's: no attribution (`Name (date)`
-    // with no comment text) follows any of them.
+    // The comparer's changes are the owner's: no attribution follows them.
     assert!(!patch.render(0).contains(")<<}"), "{patch}");
 }
 
@@ -212,7 +211,7 @@ fn markdown_against_word_is_located_in_the_word_document() {
     .unwrap();
     assert_eq!(patch.hunks.len(), 1, "{patch}");
     assert!(
-        patch.render(0).contains("[-**twelve**-]{+**eighteen**+}"),
+        patch.render(0).contains("{+**eighteen**+}[-**twelve**-]"),
         "{patch}"
     );
     let index = body_index(&patch.hunks[0].at);
@@ -226,7 +225,7 @@ fn markdown_against_word_is_located_in_the_word_document() {
     )
     .unwrap();
     assert!(
-        patch.render(0).contains("[-**eighteen**-]{+**twelve**+}"),
+        patch.render(0).contains("{+**twelve**+}[-**eighteen**-]"),
         "{patch}"
     );
     assert_eq!(body_index(&patch.hunks[0].at), index);
