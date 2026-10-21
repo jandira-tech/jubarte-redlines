@@ -19,6 +19,11 @@ targets = [
 version = 2
 yanked = "warn"
 ignore = [
+    { id = "RUSTSEC-2026-0382", reason = "we updated rustls-webpki to 0.103.16 which fixes this but cargo-deny thinks we need 0.104" },
+    { id = "RUSTSEC-2026-0381", reason = "we updated webpki-roots to 1.0.10 which fixes this" },
+    { id = "RUSTSEC-2026-0367", reason = "we do not unpack untrusted zips as privileged" },
+    { id = "RUSTSEC-2026-0368", reason = "we do not unpack untrusted zips to external locations" },
+    { id = "RUSTSEC-2026-0369", reason = "we do not unpack untrusted zips safely" },
     # Direct rustybuzz 0.20 (shaping). Unmaintained as of 2026-08; migrating
     # off it is plan Step 2e / PR5 (FaceKey registry), not a CI ignore-forever.
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; migrate with FaceKey/harfbuzz in plan 2e" },
@@ -63,4 +68,3 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/jandira-tech/ooxmlsdk"]

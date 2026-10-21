@@ -188,8 +188,7 @@ fn adjacent_changes(source: &[u8]) -> Result<HashSet<(String, String)>, ChangeEr
         }
     }
 
-    let normalized = crate::strict_translation::strict_to_transitional_docx(source)
-        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    let normalized = crate::strict_translation::strict_to_transitional_docx(source);
     let package =
         crate::opc::PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
     let main = package
