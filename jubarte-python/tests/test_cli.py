@@ -898,3 +898,73 @@ def test_edit_resolution_bundle_prints_resolved_lines(tmp_path: Path, capsys: py
     assert captured.out == 'accepted r0 in p3: "{++quarterly++}" > "quarterly"\n'
     assert (bundle / "report.jsonl").is_file()
     assert (bundle / "clean.docx").is_file()
+
+
+def test_read_for_edit_prints_the_binary_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``read FILE --for-edit`` prints the working-document JSON the
+    ``jubarte`` binary prints: same schema, same settled basis, same
+    ``input_validity`` — never the ordinary agent view."""
+    received = Path(__file__).parents[2] / "tests" / "fixtures" / "agent-view" / "received.docx"
+    src = tmp_path / "received.docx"
+    shutil.copy(received, src)
+
+    assert main(["read", str(src), "--for-edit"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["schema"] == "jubarte-read-for-edit-v1"
+    assert result["settled"] == {"changed": False}
+    assert result["basis"]["existing_revisions"] == "keep" and result["basis"]["track"] == "on"
+    assert len(result["paragraphs"]) == 28
+    assert result["input_validity"] == {
+        "errors": 0,
+        "warnings": 2,
+        "next": f"jubarte validate {src}",
+    }
+    p3 = next(p for p in result["paragraphs"] if p["target"]["short_id"] == "p3")
+    assert p3["original"]["text"].startswith("Consultant will deliver")
+
+    # --reject-change r0 settles the insertion out of the working text.
+    assert main(["read", str(src), "--for-edit", "--reject-change", "r0"]) == 0
+    decided = json.loads(capsys.readouterr().out)
+    assert decided["basis"]["reject"] == ["r0"]
+    assert decided["settled"] == {"changed": True, "rejected": ["r0"]}
+    decided_p3 = next(p for p in decided["paragraphs"] if p["target"]["short_id"] == "p3")
+    assert decided_p3["working"]["text"] == (
+        "Consultant will deliver the services in each Statement of Work, "
+        "including  route-cost reports and a monthly review call."
+    )
+
+    # An unknown change id is a plan refusal (exit 3), as the binary's.
+    assert main(["read", str(src), "--for-edit", "--accept-change", "r99"]) == 3
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error: UNKNOWN_CHANGE: resolve_revisions: no tracked change r99" in captured.err
+
+    # -o writes the same JSON; stdout is free, so the input's validity
+    # notice and the wrote line stay on stderr.
+    out = tmp_path / "e.json"
+    assert main(["read", str(src), "--for-edit", "-o", str(out)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"input has 2 validity warnings; jubarte validate {src} lists them\n"
+        f"wrote {out} (json, {out.stat().st_size} bytes)\n"
+    )
+    assert json.loads(out.read_text()) == result
+
+
+def test_read_for_edit_usage_errors_as_the_binary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    received = Path(__file__).parents[2] / "tests" / "fixtures" / "agent-view" / "received.docx"
+    src = tmp_path / "received.docx"
+    shutil.copy(received, src)
+
+    # The companions require --for-edit; a non-.json -o is refused, both
+    # by the shared parser before any file is read.
+    for argv in (
+        ["read", str(src), "--accept-change", "r0"],
+        ["read", str(src), "--for-edit", "-o", str(tmp_path / "e.md")],
+        ["read", str(src), "--for-edit", "--json"],
+    ):
+        with pytest.raises(SystemExit) as error:
+            main(argv)
+        assert error.value.code == 2, argv
+        assert "error:" in capsys.readouterr().err
