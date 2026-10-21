@@ -1963,7 +1963,9 @@ fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
 /// past Word's 22in, prints no widths at all: the writer would read them
 /// as another grid.
 pub(crate) fn geometry_clauses(tbl: &Element, text_width: u32) -> Vec<String> {
+    // The reader's bounds (`xml.rs`): 22in, and 600% of the text width.
     const MOST: f64 = 31_680.0;
+    const MOST_PERCENT: f64 = 600.0;
     let twips = |e: &Element, attr: &str| -> Option<f64> {
         let v = e.attr(attr)?;
         v.parse::<f64>()
@@ -2001,22 +2003,32 @@ pub(crate) fn geometry_clauses(tbl: &Element, text_width: u32) -> Vec<String> {
                         Some(percent) => percent.parse::<f64>().ok().map(|p| p * 50.0),
                         None => v.parse::<f64>().ok(),
                     });
-            if let Some(f) = fiftieths.filter(|f| f.is_finite() && *f >= 0.0)
-                && f.round() != 5000.0
-            {
-                let percent = format!("{:.2}", f.round() / 50.0);
-                let percent = percent.trim_end_matches('0').trim_end_matches('.');
-                out.push(format!("width {percent}%"));
+            // No width, or 0, is no preference: Word lays the table out
+            // as auto. Past 600% the reader refuses the clause, so the
+            // view prints none (#1483 review).
+            match fiftieths.filter(|f| f.is_finite() && *f >= 0.0) {
+                None if width.and_then(|w| w.attr("w")).is_none() => {
+                    out.push("width auto".to_string());
+                }
+                Some(f) if f.round() == 0.0 => out.push("width auto".to_string()),
+                Some(f) if f.round() != 5000.0 && f.round() <= MOST_PERCENT * 50.0 => {
+                    let percent = format!("{:.2}", f.round() / 50.0);
+                    let percent = percent.trim_end_matches('0').trim_end_matches('.');
+                    out.push(format!("width {percent}%"));
+                }
+                _ => {}
             }
         }
-        "dxa" => {
-            if let Some(w) = width
-                .and_then(|w| twips(w, "w"))
-                .filter(|w| (0.0..=MOST).contains(&w.round()))
-            {
+        "dxa" => match width.and_then(|w| twips(w, "w")) {
+            None if width.and_then(|w| w.attr("w")).is_none() => {
+                out.push("width auto".to_string());
+            }
+            Some(w) if w.round() == 0.0 => out.push("width auto".to_string()),
+            Some(w) if (0.0..=MOST).contains(&w.round()) => {
                 out.push(format!("width {}", inches(w)));
             }
-        }
+            _ => {}
+        },
         _ => out.push("width auto".to_string()),
     }
     if let Some(indent) = properties
