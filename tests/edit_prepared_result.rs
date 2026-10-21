@@ -11,8 +11,8 @@ mod common;
 use common::docx::{Part, docx, docx_with_sect, para};
 use common::validity::assert_word_valid_package;
 use jubarte::edit::{
-    EditPlan, PrepareOptions, PrimaryBytes, PrimaryRole, apply_plan_json, apply_plan_json_with,
-    introduced_findings, prepare, preview_plan_with,
+    EditPlan, PlanSyntax, PrepareOptions, PrimaryBytes, PrimaryRole, apply_plan_json,
+    apply_plan_json_with, introduced_findings, prepare, preview_plan_with,
 };
 use jubarte::inspect::{controls, paragraphs, source_sha256, stories};
 use jubarte::result::Effect;
@@ -22,16 +22,19 @@ const DEFAULT: PrepareOptions = PrepareOptions {
     require_change: false,
     exact_text: false,
     role: PrimaryRole::Clean,
+    syntax: PlanSyntax::V1,
 };
 const REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
     require_change: true,
     exact_text: false,
     role: PrimaryRole::Clean,
+    syntax: PlanSyntax::V1,
 };
 const EXACT: PrepareOptions = PrepareOptions {
     require_change: false,
     exact_text: true,
     role: PrimaryRole::Clean,
+    syntax: PlanSyntax::V1,
 };
 
 fn plan(json: &str) -> EditPlan {
@@ -225,6 +228,7 @@ fn unchanged_copy_and_require_change_are_distinct() {
             require_change: true,
             exact_text: true,
             role: PrimaryRole::Clean,
+            syntax: PlanSyntax::V1,
         },
     )
     .unwrap_err();
@@ -463,6 +467,7 @@ const REDLINE_REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
     require_change: true,
     exact_text: false,
     role: PrimaryRole::Redline,
+    syntax: PlanSyntax::V1,
 };
 
 /// For a changed v1 typed apply, the receipt digest names the bytes that

@@ -74,6 +74,9 @@ enum Keep {
     Inner,
     Nothing,
     NewSide,
+    /// A substitution's old side, then its new one: the order the
+    /// document holds them in.
+    BothSides,
 }
 
 /// `open … close` spans replaced by what `keep` says; an unclosed `open`
@@ -94,6 +97,11 @@ fn strip_between(text: &str, open: &str, close: &str, keep: Keep) -> String {
             Keep::Inner => out.push_str(inner),
             Keep::Nothing => {}
             Keep::NewSide => out.push_str(inner.rsplit_once("~>").map_or(inner, |(_, new)| new)),
+            Keep::BothSides => {
+                let (old, new) = inner.rsplit_once("~>").unwrap_or((inner, ""));
+                out.push_str(old);
+                out.push_str(new);
+            }
         }
         rest = &rest[inner_start + len + close.len()..];
     }
@@ -249,6 +257,20 @@ fn without_emphasis(text: &str) -> String {
 /// text and stays, as does an escaped mark (`\*\*`). Reads the way
 /// pulldown-cmark reads the same source.
 pub fn plain_anchor(text: &str) -> String {
+    read_anchor(text, Keep::Nothing, Keep::NewSide)
+}
+
+/// [`plain_anchor`] with the removed text kept: a deletion unwrapped
+/// (`{--x--}` → `x`) and a substitution as both sides
+/// (`{~~old~>new~~}` → `oldnew`), the text a refusal looks for in another
+/// author's deletion.
+pub(crate) fn plain_anchor_with_removed(text: &str) -> String {
+    read_anchor(text, Keep::Inner, Keep::BothSides)
+}
+
+/// [`plain_anchor`]'s reading, a deletion read as `deleted` says and a
+/// substitution as `substituted` says.
+fn read_anchor(text: &str, deleted: Keep, substituted: Keep) -> String {
     // Read code's padding and newlines as CommonMark does, then hide its
     // literal ASCII so the change and emphasis scanners cannot strip it.
     let mut literal = String::with_capacity(text.len());
@@ -330,8 +352,8 @@ pub fn plain_anchor(text: &str) -> String {
         "<<}",
         Keep::Nothing,
     );
-    text = strip_between(&text, "{--", "--}", Keep::Nothing);
-    text = strip_between(&text, "{~~", "~~}", Keep::NewSide);
+    text = strip_between(&text, "{--", "--}", deleted);
+    text = strip_between(&text, "{~~", "~~}", substituted);
     text = strip_between(&text, "{++", "++}", Keep::Inner);
     text = strip_between(&text, "{==", "==}", Keep::Inner);
     // A newline left at either end separates this paragraph from the one
@@ -343,6 +365,20 @@ pub fn plain_anchor(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_removed_reading_keeps_deletions_and_both_sides() {
+        assert_eq!(
+            plain_anchor_with_removed("pay {--bankers--} now"),
+            "pay bankers now"
+        );
+        assert_eq!(
+            plain_anchor_with_removed("{~~old~>new~~} end"),
+            "oldnew end"
+        );
+        assert_eq!(plain_anchor_with_removed("{++in++}{>>note<<}"), "in");
+        assert_eq!(plain_anchor("pay {--bankers--} now"), "pay  now");
+    }
 
     #[test]
     fn plain_anchor_drops_the_marks_the_agent_view_adds() {

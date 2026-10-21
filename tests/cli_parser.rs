@@ -2531,6 +2531,30 @@ fn replace_help_explains_all_matches_overlap_refusal() {
 }
 
 #[test]
+fn apply_help_names_only_the_ways_apply_publishes() {
+    let flat = |action: &str| {
+        let help = Cli::try_parse_from(["jubarte", "edit", action, "--help"])
+            .unwrap_err()
+            .to_string();
+        help.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    // apply has no --save-plan: its output is required unless it bundles
+    // or dry-runs.
+    let apply = flat("apply");
+    assert!(
+        apply.contains("Primary edited DOCX; required unless bundling or dry-running"),
+        "{apply}"
+    );
+    assert!(!apply.contains("saving"), "{apply}");
+    // An inline action saves a plan instead.
+    let replace = flat("replace");
+    assert!(
+        replace.contains("Primary edited DOCX; required unless saving, bundling or dry-running"),
+        "{replace}"
+    );
+}
+
+#[test]
 fn typed_edit_help_and_facade_use_the_public_route() {
     let help = Cli::try_parse_from(["jubarte", "edit", "replace", "--help"])
         .unwrap_err()

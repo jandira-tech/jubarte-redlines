@@ -5,12 +5,15 @@
 //! Review choices retained as data until the caller's grammar is known.
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use super::{EditError, Transaction, v2::Target};
 use crate::namespaces::W;
 use crate::result::NextAction;
 use crate::xmllinq::NodeId;
+
+/// What v2 puts before a refusal it cannot place on the requested side of
+/// an insertion point (`UNSUPPORTED_INSERTION_SIDE`).
+pub(super) const INSERTION_SIDE_PREFIX: &str = "requested insertion side cannot be preserved: ";
 
 /// The syntax the caller can use to resolve a blocking revision.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,34 +120,8 @@ impl RevisionRefusal {
         Self {
             reason: reason.into(),
             revisions,
-            syntax: RevisionSyntax::V1Plan,
-        }
-    }
-
-    fn decision(&self, accept: bool) -> String {
-        let key = if accept { "accept" } else { "reject" };
-        let ids: Vec<_> = self.revisions.iter().map(|r| &r.target.short_id).collect();
-        match self.syntax {
-            RevisionSyntax::V1Plan => json!({"resolve_revisions":{key:{"ids":ids}}}).to_string(),
-            RevisionSyntax::V2Plan => {
-                let targets: Vec<_> = self.revisions.iter().map(|r| &r.target).collect();
-                let decisions = if accept {
-                    json!({"accept":targets,"reject":[]})
-                } else {
-                    json!({"accept":[],"reject":targets})
-                };
-                json!({"resolve_revisions":decisions}).to_string()
-            }
-            RevisionSyntax::LegacyFlags => ids
-                .iter()
-                .map(|id| format!("-p {id} --{key}"))
-                .collect::<Vec<_>>()
-                .join(" "),
-            RevisionSyntax::TypedAction => ids
-                .iter()
-                .map(|id| format!("--{key}-change {id}"))
-                .collect::<Vec<_>>()
-                .join(" "),
+            // The message quotes its routes in the transaction's syntax.
+            syntax: tx.syntax.revision(),
         }
     }
 
@@ -162,56 +139,16 @@ impl RevisionRefusal {
             .collect::<Vec<_>>()
             .join(" and ")
     }
-
-    pub(super) fn message(&self) -> String {
-        let separator = if self.reason.starts_with("the ") {
-            " "
-        } else {
-            ": "
-        };
-        let revisions = self
-            .revisions
-            .iter()
-            .map(|r| {
-                let kind = if r.kind == "formatting" {
-                    "formatting change"
-                } else {
-                    &r.kind
-                };
-                format!(
-                    "{}, a tracked {} by {}",
-                    r.target.short_id,
-                    kind,
-                    serde_json::to_string(&r.author).expect("author serializes")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "{}{separator}{revisions}; {} {}; {} {}; refresh the edit against the resulting document, or comment on the revision",
-            self.reason,
-            self.decision(true),
-            self.consequence(true),
-            self.decision(false),
-            self.consequence(false)
-        )
-    }
 }
 
 impl EditError {
     /// Render all revision refusals, including operation outcomes, for a caller.
     #[must_use]
     pub fn with_revision_syntax(mut self, syntax: RevisionSyntax) -> Self {
+        // The message's routes are already in the caller's syntax
+        // (`hint::PlanSyntax`); the data records the same choice.
         for refusal in self.revision_refusals.iter_mut() {
-            let old = refusal.message();
             refusal.syntax = syntax;
-            let new = refusal.message();
-            self.message = self.message.replace(&old, &new);
-            for outcome in &mut self.outcomes {
-                if let Some(message) = &mut outcome.message {
-                    *message = message.replace(&old, &new);
-                }
-            }
         }
         self
     }
@@ -220,11 +157,22 @@ impl EditError {
     /// The templates go to stdout; source documents are never changed here.
     #[must_use]
     pub fn revision_next_actions(&self, source_path: &str, source_digest: &str) -> Vec<NextAction> {
-        let Some(refusal) = self
-            .revision_refusals
-            .first()
-            .filter(|refusal| self.message.contains(&refusal.message()))
-        else {
+        // Only the refusal the message names: a revision another operation
+        // met must not answer for a refusal of a different kind. The
+        // message's first line starts with the refusal's lead and its first
+        // revision, after v2's insertion-side prefix; an error of another
+        // kind may quote text shaped like it (an anchor the caller typed),
+        // and those choices are not its own.
+        let header = self.message.lines().next().unwrap_or_default();
+        let header = header.strip_prefix(INSERTION_SIDE_PREFIX).unwrap_or(header);
+        let Some(refusal) = self.revision_refusals.first().filter(|refusal| {
+            refusal.revisions.first().is_some_and(|first| {
+                header.starts_with(&format!("{} {}", refusal.reason, first.target.short_id))
+            }) && refusal
+                .revisions
+                .iter()
+                .all(|r| self.message.contains(&r.target.short_id))
+        }) else {
             return Vec::new();
         };
         [true, false].into_iter().map(|accept| {
@@ -244,13 +192,6 @@ impl EditError {
 }
 
 impl Transaction<'_> {
-    pub(super) fn revision_refusal_message(&self, reason: &str, nodes: &[NodeId]) -> String {
-        let refusal = RevisionRefusal::new(self, reason, nodes);
-        let message = refusal.message();
-        self.revision_refusal.replace(Some(refusal));
-        message
-    }
-
     pub(super) fn attach_revision_refusal(&self, mut error: EditError) -> EditError {
         if let Some(refusal) = self.revision_refusal.take() {
             let mut refusals = error.revision_refusals.into_vec();
@@ -258,19 +199,5 @@ impl Transaction<'_> {
             error.revision_refusals = refusals.into_boxed_slice();
         }
         error
-    }
-
-    pub(super) fn revision_nodes(&self, root: NodeId) -> Vec<NodeId> {
-        self.opened
-            .dom
-            .descendants(root, None)
-            .into_iter()
-            .filter(|&node| {
-                self.opened.dom.name(node).is_some_and(|name| {
-                    name.namespace_name() == W::URI
-                        && super::tracked::TRACKED.contains(&name.local_name())
-                })
-            })
-            .collect()
     }
 }

@@ -1360,6 +1360,12 @@ fn run_edit(
     // publication.
     let options = jubarte::edit::PrepareOptions {
         require_change: job.require_change,
+        // Refusal hints quote the flags a flags-built plan came from.
+        syntax: if job.plan.is_some() {
+            jubarte::edit::PlanSyntax::V1
+        } else {
+            jubarte::edit::PlanSyntax::Flags
+        },
         ..jubarte::edit::PrepareOptions::default()
     };
     let refuse = |e: jubarte::edit::EditError| {
@@ -2363,13 +2369,14 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Usage(m) => (EXIT_USAGE, m),
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
-    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| {
-        refused(
-            &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
-            flags.file,
-            source,
-        )
-    })?;
+    jubarte::edit::check_plan_quoting(source, &recorded.plan, jubarte::edit::PlanSyntax::Flags)
+        .map_err(|e| {
+            refused(
+                &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
+                flags.file,
+                source,
+            )
+        })?;
     if !flags.quiet {
         for note in &recorded.notes {
             outln!("note: {note}");

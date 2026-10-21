@@ -78,10 +78,51 @@ pub struct V2EditResult {
 /// requests return original bytes. Serialized integrity/publication gates
 /// belong to the preparation/publication layer, not to this adapter.
 pub fn apply_plan(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
-    apply(source, plan).map_err(|e| e.with_revision_syntax(super::refusal::RevisionSyntax::V2Plan))
+    apply_quoting(source, plan, super::PlanSyntax::V2)
 }
 
-fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
+/// [`apply_plan`], its refusals quoting their routes in `syntax`: the
+/// plan's JSON, or the options of the typed command that built it.
+pub(super) fn apply_quoting(
+    source: &[u8],
+    plan: &PlanV2,
+    syntax: super::PlanSyntax,
+) -> Result<V2EditResult, EditError> {
+    // The refusals record `syntax` themselves (`RevisionRefusal::new`).
+    apply_bound(source, plan, syntax).map_err(|e| with_operation_targets(e, plan))
+}
+
+/// A refusal's comment route on the refused operation's own target: the
+/// hint quotes a placeholder, since only the plan holds the target.
+fn with_operation_targets(mut error: EditError, plan: &PlanV2) -> EditError {
+    let placeholder = format!(r#""target":{}"#, super::hint::OPERATION_TARGET);
+    let fill = |message: &mut String, pointer: Option<&str>| {
+        if !message.contains(&placeholder) {
+            return;
+        }
+        let target = pointer
+            .and_then(|p| p.strip_prefix("/operations/"))
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| plan.operations.get(i))
+            .and_then(|op| serde_json::to_string(op.target()).ok());
+        if let Some(target) = target {
+            *message = message.replace(&placeholder, &format!(r#""target":{target}"#));
+        }
+    };
+    fill(&mut error.message, error.operation.as_deref());
+    for outcome in &mut error.outcomes {
+        if let Some(message) = &mut outcome.message {
+            fill(message, Some(&outcome.id));
+        }
+    }
+    error
+}
+
+fn apply_bound(
+    source: &[u8],
+    plan: &PlanV2,
+    syntax: super::PlanSyntax,
+) -> Result<V2EditResult, EditError> {
     plan.validate()?;
     if source_sha256(source) != plan.source.sha256 {
         return Err(err(
@@ -183,6 +224,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     execution.operations = mapped.iter().map(|m| m.legacy.clone()).collect();
     // Always use the preserving engine path. Tracking controls only the new edits.
     let mut tx = Transaction::start(&working, &execution)?;
+    tx.syntax = syntax;
     if selected_report.is_empty() && remaining_revisions.is_empty() {
         tx.origin = None;
     } else {
@@ -203,7 +245,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     let effect = !tx.resolved.is_empty()
         || !tx.resolved_revisions.is_empty()
         || !remaining_revisions.is_empty();
-    let edited_insertions = edited_insertions(&tx);
+    let edited_revisions = edited_revisions(&tx);
     tx.apply()?;
     super::prepared::check_dom_realized(&tx, true)?;
     let (clean, _) = tx.finish()?;
@@ -289,7 +331,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     preserve_direct_history(
         &working,
         &clean,
-        &edited_insertions,
+        &edited_revisions,
         &plan.author,
         &BTreeMap::new(),
     )?;
@@ -301,7 +343,7 @@ fn apply(source: &[u8], plan: &PlanV2) -> Result<V2EditResult, EditError> {
     guard(
         &working,
         &redline,
-        &edited_insertions,
+        &edited_revisions,
         &plan.author,
         &insertion_origins,
     )?;
@@ -723,24 +765,7 @@ impl SourceIndex {
                 continue;
             };
             for story in &stories {
-                // The carrier long ID follows the shared native-key policy:
-                // a `w:id` Word could have written (an `i32`) is its own
-                // form, anything else travels as its printed `j:short`.
-                let carrier = if super::native_keys::revision_id(wid).is_some() {
-                    format!(
-                        "{}.w:{}.w:id.{}",
-                        part_token(part),
-                        name.local_name(),
-                        encode(wid)
-                    )
-                } else {
-                    format!(
-                        "{}.w:{}.j:short.{}",
-                        part_token(part),
-                        name.local_name(),
-                        crate::ids::ChangeId::new(story.clone(), wid).short()
-                    )
-                };
+                let carrier = revision_long_id(part, name.local_name(), story, wid);
                 self.revision_carriers
                     .entry((story.clone(), wid.to_string()))
                     .or_default()
@@ -749,6 +774,22 @@ impl SourceIndex {
         }
     }
 }
+/// The long id of the revision carrier `w:{local}` with `w:id` `wid` in
+/// `part`, as `story` prints it. It follows the shared native-key policy:
+/// a `w:id` Word could have written (an `i32`) is its own form, anything
+/// else travels as its printed `j:short`.
+pub(super) fn revision_long_id(part: &str, local: &str, story: &str, wid: &str) -> String {
+    if super::native_keys::revision_id(wid).is_some() {
+        format!("{}.w:{local}.w:id.{}", part_token(part), encode(wid))
+    } else {
+        format!(
+            "{}.w:{local}.j:short.{}",
+            part_token(part),
+            crate::ids::ChangeId::new(story, wid).short()
+        )
+    }
+}
+
 #[derive(Clone)]
 enum Entity {
     Paragraph(usize),
@@ -2047,6 +2088,18 @@ fn resolve_operation(
     let occurrence = |n: Option<u64>| n.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
     let note = |c: &Option<AttachedComment>| c.as_ref().map(|c| c.text.clone());
     let p = p.unwrap_or(0);
+    // A miss that reaches into another author's deletion names it (#1108).
+    let select = |old: &str, needle: &str, n: Option<u64>| {
+        anchor::v2_select(old, needle, occurrence(n)).map_err(|e| {
+            match (e.code == "ANCHOR_NOT_FOUND")
+                .then(|| tx.removed_anchor_in(p, needle))
+                .flatten()
+            {
+                Some(hint) => err("UNSUPPORTED_STRUCTURE", None, hint),
+                None => e,
+            }
+        })
+    };
     o.paragraph = (!m.paragraphs.is_empty()).then(|| tx.paragraph_id(p));
     o.matches = 1;
     match operation {
@@ -2058,7 +2111,7 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
-            let (start, end) = anchor::v2_select(&old, find, occurrence(*n))?;
+            let (start, end) = select(&old, find, *n)?;
             if &old[start..end] == text {
                 comment_component(tx, p, start, end, note(attached_comment))
             } else {
@@ -2079,7 +2132,7 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
-            let (start, end) = anchor::v2_select(&old, find, occurrence(*n))?;
+            let (start, end) = select(&old, find, *n)?;
             Ok(vec![text_component(tx, p, start, end, "", None, true)?])
         }
         V::Insert {
@@ -2093,12 +2146,8 @@ fn resolve_operation(
         } => {
             let old = exact(p)?;
             let (at, attach) = match (before_text, after_text, edge) {
-                (Some(anchor), None, None) => {
-                    (anchor::v2_select(&old, anchor, occurrence(*n))?.0, false)
-                }
-                (None, Some(anchor), None) => {
-                    (anchor::v2_select(&old, anchor, occurrence(*n))?.1, true)
-                }
+                (Some(anchor), None, None) => (select(&old, anchor, *n)?.0, false),
+                (None, Some(anchor), None) => (select(&old, anchor, *n)?.1, true),
                 (None, None, Some(super::Edge::Start)) => (0, false),
                 (None, None, Some(super::Edge::End)) => (old.len(), true),
                 _ => {
@@ -2157,7 +2206,7 @@ fn resolve_operation(
         } => {
             let (start, end) = if let Some(find) = find {
                 let old = exact(p)?;
-                anchor::v2_select(&old, find, occurrence(*n))?
+                select(&old, find, *n)?
             } else {
                 (0, tx.projections[p].text.len())
             };
@@ -2242,7 +2291,7 @@ fn text_component(
                 err(
                     "UNSUPPORTED_INSERTION_SIDE",
                     None,
-                    format!("requested insertion side cannot be preserved: {m}"),
+                    format!("{}{m}", super::refusal::INSERTION_SIDE_PREFIX),
                 )
             })?;
     } else {
@@ -2285,12 +2334,30 @@ fn exact_rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)> {
         .collect()
 }
 
-/// Only insertion content touched by a resolved text operation may change.
-/// Snapshot these identities before applying the transaction: the stored
-/// projection nodes themselves are mutated by `apply`.
-fn edited_insertions(tx: &Transaction<'_>) -> BTreeSet<String> {
+/// The revisions the resolved operations reach: only insertion content a
+/// text operation touches may change, and a deleted paragraph reaches every
+/// revision it holds. Snapshot these identities before applying the
+/// transaction: the stored projection nodes themselves are mutated by
+/// `apply`.
+fn edited_revisions(tx: &Transaction<'_>) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
+    let dom = &tx.opened.dom;
     for (_, resolved) in &tx.resolved {
+        // A deleted paragraph deletes inside every insertion of its runs
+        // (#1136). A direct deletion takes the paragraph, and so every
+        // revision in it, mark included.
+        if let Resolved::DeleteParagraph { para } = resolved {
+            let story = &tx.stories[tx.paragraph_story[*para].0].id;
+            let node = tx.paragraph_nodes[*para];
+            for revision in dom.descendants(node, None) {
+                if super::hint::Held::of(dom, revision).is_some()
+                    && let Some(wid) = dom.attribute(revision, &W::id())
+                {
+                    ids.insert(crate::ids::ChangeId::new(story, wid).short());
+                }
+            }
+            continue;
+        }
         let Resolved::Text {
             para,
             start,
@@ -2438,13 +2505,22 @@ fn compare_history(
         }
     }
     before.retain_mut(|c| {
-        if c.kind == ChangeKind::Insertion && c.target == "text" && edited.contains(&c.id) {
+        if !edited.contains(&c.id) {
+            return true;
+        }
+        if c.kind == ChangeKind::Insertion && c.target == "text" {
             if let Some(new) = after.iter().find(|new| new.id == c.id) {
                 c.text.clone_from(&new.text);
-            } else if c.author.as_deref() == Some(author) {
-                // Deleting one's entire insertion removes its carrier.
+            } else if c.author.as_deref() == Some(author) || !tracked {
+                // Deleting one's entire insertion removes its carrier; so
+                // does a direct edit that takes every word of another
+                // author's (`check_dom_realized` holds the text).
                 return false;
             }
+        } else if !tracked && after.iter().all(|new| new.id != c.id) {
+            // A direct paragraph deletion takes the paragraph's other
+            // revisions with it; a tracked one keeps them (#1136).
+            return false;
         }
         true
     });

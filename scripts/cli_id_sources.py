@@ -329,7 +329,10 @@ def reaches(fns: dict[str, Fn], start: Fn, targets: set[str], limit: int = 7) ->
 
 
 def where(fn: Fn) -> str:
-    return f"`{fn.module}::{fn.key}`" if fn.module else f"`{fn.key}`"
+    # A key `functions` made unique already starts with its module.
+    if not fn.module or fn.key.startswith(f"{fn.module}::"):
+        return f"`{fn.key}`"
+    return f"`{fn.module}::{fn.key}`"
 
 
 def section(root: Path, cell) -> list[str]:

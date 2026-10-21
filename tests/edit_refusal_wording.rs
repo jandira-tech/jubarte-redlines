@@ -2,131 +2,170 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Revision refusals retain both review decisions in the caller's grammar.
-//! Library cases use in-memory packages and fixed dates; process cases are integration tests.
+//! Revision refusals name the revision and every route around it in the
+//! caller's grammar (#1108), beside the structured review choices (#1147).
+//! Library cases use in-memory packages and fixed dates; process cases are
+//! integration tests.
 mod common;
 use common::docx::{docx, para};
+use common::validity::assert_word_valid_package;
+use jubarte::changes::{ChangeFilter, accept_changes, list_changes, reject_changes};
 use jubarte::comments::list_comments;
 use jubarte::edit::{EditPlan, apply_plan, v2::PlanV2};
 use jubarte::inspect::source_sha256;
 use serde_json::{Value, json};
-use std::process::Command;
+use std::path::Path;
+use std::process::{Command, Output};
 
 const DATE: &str = "2026-10-17T00:00:00Z";
 const STAMP: &str = r#"w:id="7" w:author="Alice" w:date="2026-10-17T00:00:00Z""#;
 
+/// The accept and reject routes' labels and costs, by what the revision did.
+type Routes = [(&'static str, &'static str); 2];
+const MOVED: Routes = [
+    ("keep the move", "the words stay where they moved, unmarked"),
+    (
+        "undo it silently",
+        "the words go back where they were, no trace",
+    ),
+];
+const DELETED: Routes = [
+    ("let it go", "their words leave the document for good"),
+    (
+        "put it back silently",
+        "their deletion disappears, no trace",
+    ),
+];
+const INSERTED: Routes = [
+    ("keep it", "their words stay, unmarked"),
+    (
+        "take it out silently",
+        "their insertion disappears, no trace",
+    ),
+];
+const FORMATTED: Routes = [
+    ("keep their formatting", "their formatting stays, unmarked"),
+    (
+        "undo it silently",
+        "the old formatting comes back, no trace",
+    ),
+];
+
+/// The hyperlink refusal: structural, so it names no revision.
+const HYPERLINK: &str =
+    "sits inside a hyperlink; edit the text on either side of it, or comment on it";
+
 struct Case {
     body: String,
-    multi: bool,
     story: &'static str,
     operation: Value,
-    reason: &'static str,
-    local: &'static str,
-    kind: &'static str,
-    accept: &'static str,
-    reject: &'static str,
     flags: Vec<&'static str>,
     typed: Vec<&'static str>,
     v2: Value,
+    /// What the refusal says up to the revision's id.
+    lead: &'static str,
+    /// The revision element, for its long id.
+    local: &'static str,
+    /// The text the revision holds; a paragraph mark holds none.
+    text: &'static str,
+    /// What the revision did.
+    verb: &'static str,
+    routes: Routes,
+    /// The paragraph a v1 or command-line comment route names: the one
+    /// that holds the revision.
+    paragraph: &'static str,
+    /// The structured choices' consequences (#1147).
+    accept: &'static str,
+    reject: &'static str,
 }
 fn case(site: &str) -> Case {
     let target = json!({"short_id":"p0","long_id":"document.w:p.j:short.p0"});
     let mut c = Case {
-        multi: false,
         story: "body",
         body: format!(
             r#"<w:p><w:moveTo {STAMP}><w:r><w:t>beta</w:t></w:r></w:moveTo></w:p>{}"#,
             para("Tail.")
         ),
         operation: json!({"kind":"replace","paragraph":"p0","find":"beta","replacement":"new"}),
-        reason: "the text sits inside",
-        local: "moveTo",
-        kind: "move",
-        accept: "keeps the moved content at its destination",
-        reject: "restores the moved content at its origin",
         flags: vec!["-p", "p0", "--anchor", "beta", "--content", "new"],
         typed: vec!["replace", "--at", "p0", "--find", "beta", "--text", "new"],
         v2: json!({"kind":"replace","target":target,"find":"beta","text":"new"}),
+        lead: "the text is inside",
+        local: "moveTo",
+        text: "beta",
+        verb: "moved here",
+        routes: MOVED,
+        paragraph: "p0",
+        accept: "keeps the moved content at its destination",
+        reject: "restores the moved content at its origin",
+    };
+    let insert = |c: &mut Case| {
+        c.operation = json!({"kind":"insert","paragraph":"p0","position":"end","text":" new"});
+        c.flags = vec!["-p", "p0", "--anchor", "beta", "--content", "beta new"];
+        c.typed = vec![
+            "insert", "--kind", "text", "--at", "p0", "--edge", "end", "--text", " new",
+        ];
+        c.v2 = json!({"kind":"insert","target":target,"edge":"end","text":" new"});
+    };
+    let delete = |c: &mut Case, paragraph: &'static str| {
+        c.operation = json!({"kind":"delete_paragraph","paragraph":paragraph});
+        c.flags = vec!["-p", paragraph, "--delete"];
+        c.typed = vec!["delete", "--at", paragraph, "--whole-block"];
+        c.v2 = json!({"kind":"delete_paragraph","target":{"short_id":paragraph,"long_id":format!("document.w:p.j:short.{paragraph}")}});
     };
     match site {
         "range_move" => {}
         "header_move" => {
             c.story = "header1";
+            c.paragraph = "header1";
             c.operation["paragraph"] = json!("header1");
             c.flags[1] = "header1";
             c.typed[2] = "header1";
             c.v2["target"] = json!({"short_id":"header1","long_id":"header1.w:p.j:short.header1"});
         }
+        "insert_move" => {
+            c.lead = "the insertion point is inside";
+            insert(&mut c);
+        }
+        "delete_move" => {
+            c.lead = "under keep, a paragraph that holds a move cannot be deleted yet: the move is";
+            delete(&mut c, "p0");
+        }
+        // Text inside a hyperlink, inside another author's insertion.
         "range_insertion" | "insert_insertion" => {
             c.body = format!(
                 r#"<w:p><w:ins {STAMP}><w:hyperlink w:anchor="terms"><w:r><w:t>beta</w:t></w:r></w:hyperlink></w:ins></w:p>{}"#,
                 para("Tail.")
             );
-            c.local = "ins";
-            c.kind = "insertion";
-            c.accept = "keeps the proposed content as plain text";
-            c.reject = "removes the proposed content";
+            c.lead = "the text";
             if site == "insert_insertion" {
-                c.reason = "the insertion point sits inside";
-                c.operation =
-                    json!({"kind":"insert","paragraph":"p0","position":"end","text":" new"});
-                c.flags = vec!["-p", "p0", "--anchor", "beta", "--content", "beta new"];
-                c.typed = vec![
-                    "insert", "--kind", "text", "--at", "p0", "--edge", "end", "--text", " new",
-                ];
-                c.v2 = json!({"kind":"insert","target":target,"edge":"end","text":" new"});
+                c.lead = "the insertion point";
+                insert(&mut c);
             }
         }
-        "insert_move" => {
-            c.reason = "the insertion point sits inside";
-            c.operation = json!({"kind":"insert","paragraph":"p0","position":"end","text":" new"});
-            c.flags = vec!["-p", "p0", "--anchor", "beta", "--content", "beta new"];
-            c.typed = vec![
-                "insert", "--kind", "text", "--at", "p0", "--edge", "end", "--text", " new",
-            ];
-            c.v2 = json!({"kind":"insert","target":target,"edge":"end","text":" new"});
-        }
-        "delete_insertion" | "delete_deletion" | "delete_move" | "delete_multiple" => {
-            c.reason = "under keep, a paragraph that holds tracked changes cannot be deleted";
-            c.operation = json!({"kind":"delete_paragraph","paragraph":"p0"});
-            c.flags = vec!["-p", "p0", "--delete"];
-            c.typed = vec!["delete", "--at", "p0", "--whole-block"];
-            c.v2 = json!({"kind":"delete_paragraph","target":target});
-            if site != "delete_move" {
-                let (local, text, kind, accept, reject) =
-                    if matches!(site, "delete_insertion" | "delete_multiple") {
-                        (
-                            "ins",
-                            "t",
-                            "insertion",
-                            "keeps the proposed content as plain text",
-                            "removes the proposed content",
-                        )
-                    } else {
-                        (
+        // A paragraph holding another author's revisions, deleted (#1136).
+        "delete_insertion" | "delete_deletion" | "delete_multiple" => {
+            delete(&mut c, "p0");
+            let carrier = |local: &str, text: &str, stamp: &str, words: &str| {
+                format!(r#"<w:{local} {stamp}><w:r><w:{text}>{words}</w:{text}></w:r></w:{local}>"#)
+            };
+            let content = match site {
+                "delete_insertion" => carrier("ins", "t", STAMP, "beta"),
+                "delete_deletion" => carrier("del", "delText", STAMP, "beta"),
+                _ => {
+                    carrier("ins", "t", STAMP, "beta")
+                        + &carrier(
                             "del",
                             "delText",
-                            "deletion",
-                            "removes the deleted content",
-                            "restores the deleted content",
+                            r#"w:id="8" w:author="Bob" w:date="2026-10-17T00:00:00Z""#,
+                            "gamma",
                         )
-                    };
-                c.body = format!(
-                    r#"<w:p><w:{local} {STAMP}><w:r><w:{text}>beta</w:{text}></w:r></w:{local}></w:p>{}"#,
-                    para("Tail.")
-                );
-                c.local = local;
-                c.kind = kind;
-                c.accept = accept;
-                c.reject = reject;
-                if site == "delete_multiple" {
-                    c.multi = true;
-                    c.body = format!(
-                        r#"<w:p><w:ins {STAMP}><w:r><w:t>beta</w:t></w:r></w:ins><w:del w:id="8" w:author="Bob" w:date="2026-10-17T00:00:00Z"><w:r><w:delText>gamma</w:delText></w:r></w:del></w:p>{}"#,
-                        para("Tail.")
-                    );
                 }
-            }
+            };
+            // Bob's insertion outside the deleted paragraph stays.
+            c.body = format!(
+                r#"<w:p>{content}</w:p><w:p><w:ins w:id="9" w:author="Bob" w:date="2026-10-17T00:00:00Z"><w:r><w:t>Tail.</w:t></w:r></w:ins></w:p>"#
+            );
         }
         "last_paragraph" | "merge_mark" | "merge_insertion_mark" => {
             c.body = format!(
@@ -134,24 +173,24 @@ fn case(site: &str) -> Case {
                 para("beta")
             );
             c.local = "del";
-            c.kind = "deletion";
+            c.text = "";
+            c.verb = "deleted";
+            c.routes = DELETED;
             c.accept = "removes the deleted paragraph break";
             c.reject = "restores the deleted paragraph break";
             if site == "merge_insertion_mark" {
                 c.body = c.body.replace("<w:del ", "<w:ins ");
                 c.local = "ins";
-                c.kind = "insertion";
+                c.verb = "inserted";
+                c.routes = INSERTED;
                 c.accept = "keeps the proposed paragraph break";
                 c.reject = "removes the proposed paragraph break";
             }
             if site == "last_paragraph" {
-                c.reason = "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark";
-                c.operation = json!({"kind":"delete_paragraph","paragraph":"p1"});
-                c.flags = vec!["-p", "p1", "--delete"];
-                c.typed = vec!["delete", "--at", "p1", "--whole-block"];
-                c.v2 = json!({"kind":"delete_paragraph","target":{"short_id":"p1","long_id":"document.w:p.j:short.p1"}});
+                c.lead = "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark: that mark is";
+                delete(&mut c, "p1");
             } else {
-                c.reason = "under keep, a paragraph whose mark is already tracked cannot be merged";
+                c.lead = "under keep, a paragraph whose mark is already tracked cannot be merged: that mark is";
                 c.operation = json!({"kind":"merge_paragraphs","paragraph":"p0"});
                 c.flags.clear();
                 c.typed.clear();
@@ -159,7 +198,8 @@ fn case(site: &str) -> Case {
             }
         }
         "format_paragraph" | "list_paragraph" | "format_run" => {
-            c.kind = "formatting change";
+            c.verb = "reformatted";
+            c.routes = FORMATTED;
             c.accept = "keeps the proposed formatting";
             c.reject = "restores the previous formatting";
             c.typed.clear();
@@ -169,7 +209,7 @@ fn case(site: &str) -> Case {
                 c.body = format!(
                     r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange {STAMP}><w:rPr/></w:rPrChange></w:rPr><w:t>beta</w:t></w:r></w:p>"#
                 );
-                c.reason = "under keep, text whose formatting change is still tracked cannot be formatted again";
+                c.lead = "under keep, text whose formatting change is still tracked cannot be formatted again: that change is";
                 c.operation = json!({"kind":"format_run","paragraph":"p0","find":"beta","format":{"italic":true}});
                 c.flags = vec!["-p", "p0", "--anchor", "beta", "--style", "italic"];
             } else {
@@ -178,12 +218,12 @@ fn case(site: &str) -> Case {
                     r#"<w:p><w:pPr><w:jc w:val="right"/><w:pPrChange {STAMP}><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>beta</w:t></w:r></w:p>"#
                 );
                 if site == "format_paragraph" {
-                    c.reason = "under keep, a paragraph whose formatting change is still tracked cannot be formatted again";
+                    c.lead = "under keep, a paragraph whose formatting change is still tracked cannot be formatted again: that change is";
                     c.operation =
                         json!({"kind":"format_paragraph","paragraph":"p0","style":"Heading1"});
                     c.flags = vec!["-p", "p0", "--style", "Heading1"];
                 } else {
-                    c.reason = "under keep, a paragraph whose formatting change is still tracked cannot be numbered";
+                    c.lead = "under keep, a paragraph whose formatting change is still tracked cannot be numbered: that change is";
                     c.operation = json!({"kind":"list","paragraphs":["p0"]});
                     c.flags.clear();
                 }
@@ -193,122 +233,12 @@ fn case(site: &str) -> Case {
     }
     c
 }
-fn plan(c: &Case, source: &[u8], v2: bool) -> Value {
-    if v2 {
-        json!({"schema_version":2,"source":{"sha256":source_sha256(source)},"policy":{"track":"on","existing_revisions":"keep","text_view":"final"},"resolve_revisions":{"accept":[],"reject":[]},"author":"Carol Diaz","date":DATE,"scope":{"kind":"all"},"operations":[c.v2]})
-    } else {
-        json!({"schema_version":1,"source_sha256":source_sha256(source),"author":"Carol Diaz","date":DATE,"existing_revisions":"keep","operations":[c.operation]})
-    }
-}
-fn decision(c: &Case, accept: bool, syntax: &str) -> String {
-    let key = if accept { "accept" } else { "reject" };
-    let short = if c.story == "body" {
-        "r7"
-    } else {
-        "header1.r7"
-    };
-    let ids = if c.multi {
-        vec![short, "r8"]
-    } else {
-        vec![short]
-    };
-    match syntax {
-        "flags" => ids
-            .iter()
-            .map(|id| format!("-p {id} --{key}"))
-            .collect::<Vec<_>>()
-            .join(" "),
-        "typed" => ids
-            .iter()
-            .map(|id| format!("--{key}-change {id}"))
-            .collect::<Vec<_>>()
-            .join(" "),
-        "v2" | "template" => {
-            let part = if c.story == "body" {
-                "document"
-            } else {
-                c.story
-            };
-            let target = json!({"short_id":short,"long_id":format!("{part}.w:{}.w:id.7",c.local)});
-            let targets = if c.multi {
-                vec![
-                    target,
-                    json!({"short_id":"r8","long_id":"document.w:del.w:id.8"}),
-                ]
-            } else {
-                vec![target]
-            };
-            let decisions = if accept {
-                json!({"accept":targets,"reject":[]})
-            } else {
-                json!({"accept":[],"reject":targets})
-            };
-            json!({"resolve_revisions":decisions}).to_string()
-        }
-        _ => json!({"resolve_revisions":{key:{"ids":ids}}}).to_string(),
-    }
-}
-fn expected(c: &Case, syntax: &str) -> String {
-    let short = if c.story == "body" {
-        "r7"
-    } else {
-        "header1.r7"
-    };
-    // Legacy flags validate an insertion's anchor before testing its edge.
-    let reason = if syntax == "flags" && c.reason == "the insertion point sits inside" {
-        "the text sits inside"
-    } else {
-        c.reason
-    };
-    let prefix = if reason.starts_with("the ") {
-        format!("{reason} {short}")
-    } else {
-        format!("{reason}: {short}")
-    };
-    let more = if c.multi {
-        ", r8, a tracked deletion by \"Bob\""
-    } else {
-        ""
-    };
-    let accept = if c.multi {
-        "keeps the proposed content as plain text for r7 and removes the deleted content for r8"
-    } else {
-        c.accept
-    };
-    let reject = if c.multi {
-        "removes the proposed content for r7 and restores the deleted content for r8"
-    } else {
-        c.reject
-    };
-    format!(
-        "{prefix}, a tracked {} by \"Alice\"{more}; {} {accept}; {} {reject}; refresh the edit against the resulting document, or comment on the revision",
-        c.kind,
-        decision(c, true, syntax),
-        decision(c, false, syntax)
-    )
-}
-fn check(site: &str, syntax: &str) {
-    let c = case(site);
-    let source = if site == "format_paragraph" {
-        use common::docx::{Part, W_NS, docx_with};
-        let styles = format!(
-            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading1"/></w:style></w:styles>"#
-        );
-        docx_with(
-            &c.body,
-            &[Part {
-                name: "word/styles.xml",
-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
-                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
-                xml: &styles,
-            }],
-        )
-    } else if c.story == "body" {
-        docx(&c.body)
-    } else {
-        use common::docx::{Part, W_NS, docx_with_sect};
+/// The package `c` edits: its body, or its header; Heading1 is styled.
+fn source(c: &Case) -> Vec<u8> {
+    use common::docx::{Part, W_NS, docx_with, docx_with_sect};
+    if c.story != "body" {
         let header = format!(r#"<w:hdr xmlns:w="{W_NS}">{}</w:hdr>"#, c.body);
-        docx_with_sect(
+        return docx_with_sect(
             &para("Body."),
             &[Part {
                 name: "word/header1.xml",
@@ -317,25 +247,194 @@ fn check(site: &str, syntax: &str) {
                 xml: &header,
             }],
             r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
-        )
+        );
+    }
+    if c.operation["style"] != json!("Heading1") {
+        return docx(&c.body);
+    }
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading1"/></w:style></w:styles>"#
+    );
+    docx_with(
+        &c.body,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: &styles,
+        }],
+    )
+}
+fn plan(c: &Case, source: &[u8], v2: bool) -> Value {
+    if v2 {
+        json!({"schema_version":2,"source":{"sha256":source_sha256(source)},"policy":{"track":"on","existing_revisions":"keep","text_view":"final"},"resolve_revisions":{"accept":[],"reject":[]},"author":"Carol Diaz","date":DATE,"scope":{"kind":"all"},"operations":[c.v2]})
+    } else {
+        json!({"schema_version":1,"source_sha256":source_sha256(source),"author":"Carol Diaz","date":DATE,"existing_revisions":"keep","operations":[c.operation]})
+    }
+}
+/// `c`'s request in `syntax` as `jubarte` arguments: a dry run, or
+/// published to out.docx.
+fn args(c: &Case, syntax: &str, publish: bool) -> Vec<&'static str> {
+    let mut args = vec!["edit"];
+    match syntax {
+        "flags" => {
+            args.push("in.docx");
+            args.extend(c.flags.iter().copied());
+            args.extend([
+                "-a",
+                "Carol Diaz",
+                "-d",
+                DATE,
+                "--existing-revisions",
+                "keep",
+            ]);
+        }
+        "typed" => {
+            args.extend(c.typed.iter().copied());
+            args.extend([
+                "in.docx",
+                "--author",
+                "Carol Diaz",
+                "--datetime",
+                DATE,
+                "--json",
+            ]);
+        }
+        _ => args.extend(["apply", "in.docx", "--plan", "plan.json", "--json"]),
+    }
+    if publish {
+        args.extend(["-o", "out.docx"]);
+    } else {
+        args.push("--dry-run");
+    }
+    args
+}
+fn run(dir: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap()
+}
+/// A refused process's error: the flags' last JSONL row, or the
+/// envelope's `error`.
+fn refused(output: &Output, syntax: &str, args: &[&str]) -> Value {
+    assert!(!output.status.success(), "{args:?}");
+    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let response: Value = serde_json::from_str(stdout.lines().last().unwrap_or_default())
+        .unwrap_or_else(|e| panic!("{e}: {stdout}: {}", String::from_utf8_lossy(&output.stderr)));
+    if syntax == "flags" {
+        response
+    } else {
+        response["error"].clone()
+    }
+}
+fn short(c: &Case) -> &'static str {
+    if c.story == "body" {
+        "r7"
+    } else {
+        "header1.r7"
+    }
+}
+/// The refusal's first line: what was refused, then the revision by id,
+/// text, verb and author.
+fn header(c: &Case, syntax: &str) -> String {
+    let lead = match (c.lead, syntax) {
+        // The flags spell an insertion as a replacement of its anchor.
+        ("the insertion point is inside", "flags") => "the text is inside".to_string(),
+        // V2 insertion-side errors keep their diagnostic prefix.
+        ("the insertion point is inside", "typed" | "v2") => {
+            format!("requested insertion side cannot be preserved: {}", c.lead)
+        }
+        _ => c.lead.to_string(),
     };
+    let text = if c.text.is_empty() {
+        String::new()
+    } else {
+        format!("{:?} ", c.text)
+    };
+    format!("{lead} {}, {text}{} by \"Alice\".", short(c), c.verb)
+}
+/// The `verb` (`accept` or `reject`) route, as `syntax` spells it.
+fn settle(c: &Case, verb: &str, syntax: &str) -> String {
+    let id = short(c);
+    match syntax {
+        "flags" => format!("-p {id} --{verb}"),
+        "typed" => format!("--{verb}-change {id}"),
+        "v2" | "template" => {
+            let part = if c.story == "body" {
+                "document"
+            } else {
+                c.story
+            };
+            let target = format!(
+                r#"[{{"short_id":"{id}","long_id":"{part}.w:{}.w:id.7"}}]"#,
+                c.local
+            );
+            let (accept, reject) = if verb == "accept" {
+                (target.as_str(), "[]")
+            } else {
+                ("[]", target.as_str())
+            };
+            format!(r#""resolve_revisions":{{"accept":{accept},"reject":{reject}}}"#)
+        }
+        _ => format!(r#""resolve_revisions":{{"{verb}":{{"ids":["{id}"]}}}}"#),
+    }
+}
+/// The comment route, as `syntax` spells it. A v2 route names the refused
+/// operation's own target.
+fn comment(c: &Case, syntax: &str) -> String {
+    match syntax {
+        "flags" | "typed" => format!(r#"add -p {} --anchor "…" --content "…""#, c.paragraph),
+        "v2" | "template" => format!(
+            r#"{{"kind":"comment","target":{{"short_id":{},"long_id":{}}},"find":"…","text":"…"}}"#,
+            c.v2["target"]["short_id"], c.v2["target"]["long_id"]
+        ),
+        _ => format!(
+            r#"{{"kind":"comment","paragraph":"{}","find":"…","text":"…"}}"#,
+            c.paragraph
+        ),
+    }
+}
+/// A route line as its label, its fragment, its cost, and the columns the
+/// fragment and the cost start at.
+fn route(line: &str) -> (&str, &str, Option<&str>, usize, Option<usize>) {
+    let body = line
+        .strip_prefix("  ")
+        .unwrap_or_else(|| panic!("indented: {line:?}"));
+    let (label, rest) = body.split_once(':').unwrap();
+    let column = line.len() - rest.trim_start().len();
+    let rest = rest.trim_start();
+    match rest.strip_suffix(')').and_then(|r| r.rsplit_once(" (")) {
+        Some((fragment, cost)) => (
+            label,
+            fragment.trim_end(),
+            Some(cost),
+            column,
+            Some(line.len() - cost.len() - 2),
+        ),
+        None => (label, rest, None, column, None),
+    }
+}
+fn check(site: &str, syntax: &str) {
+    let c = case(site);
+    let source = source(&c);
     let mut q = plan(&c, &source, matches!(syntax, "v2" | "typed" | "template"));
-    let actual_message;
-    if syntax == "library" {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), &source).unwrap();
+    let mut error = Value::Null;
+    let message = if syntax == "library" {
         let e = apply_plan(&source, &EditPlan::from_json(&q.to_string()).unwrap()).unwrap_err();
-        assert_eq!(e.message, expected(&c, syntax));
         let preview =
             jubarte::edit::preview_plan(&source, &EditPlan::from_json(&q.to_string()).unwrap())
                 .unwrap_err();
         assert_eq!(preview.message, e.message);
-        actual_message = e.message;
+        e.message
     } else {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("in.docx"), &source).unwrap();
         if syntax == "template" {
-            let generated = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-                .current_dir(dir.path())
-                .args([
+            let generated = run(
+                dir.path(),
+                &[
                     "edit",
                     "template",
                     "in.docx",
@@ -347,9 +446,8 @@ fn check(site: &str, syntax: &str) {
                     DATE,
                     "-o",
                     "-",
-                ])
-                .output()
-                .unwrap();
+                ],
+            );
             assert!(
                 generated.status.success(),
                 "{}",
@@ -360,75 +458,42 @@ fn check(site: &str, syntax: &str) {
             q["operations"][0]["text"] = json!("new");
         }
         std::fs::write(dir.path().join("plan.json"), q.to_string()).unwrap();
-        let mut args = vec!["edit"];
-        match syntax {
-            "flags" => {
-                args.push("in.docx");
-                args.extend(&c.flags);
-                args.extend([
-                    "-a",
-                    "Carol Diaz",
-                    "-d",
-                    DATE,
-                    "--existing-revisions",
-                    "keep",
-                    "--dry-run",
-                ]);
-            }
-            "typed" => {
-                args.extend(&c.typed);
-                args.extend([
-                    "in.docx",
-                    "--author",
-                    "Carol Diaz",
-                    "--datetime",
-                    DATE,
-                    "--dry-run",
-                    "--json",
-                ]);
-            }
-            _ => args.extend([
-                "apply",
-                "in.docx",
-                "--plan",
-                "plan.json",
-                "--dry-run",
-                "--json",
-            ]),
-        }
-        let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
-            .current_dir(dir.path())
-            .args(&args)
-            .output()
-            .unwrap();
-        assert!(!output.status.success(), "{args:?}");
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let response: Value = serde_json::from_str(stdout.lines().last().unwrap_or_default())
-            .unwrap_or_else(|e| {
-                panic!("{e}: {stdout}: {}", String::from_utf8_lossy(&output.stderr))
-            });
-        let error = if syntax == "flags" {
-            &response
-        } else {
-            &response["error"]
-        };
-        let actual = error["message"].as_str().unwrap();
-        let wanted = expected(&c, syntax);
-        // V2 insertion-side errors preserve their existing diagnostic prefix.
-        let wanted = if site.starts_with("insert_") && matches!(syntax, "typed" | "v2") {
-            format!("requested insertion side cannot be preserved: {wanted}")
-        } else {
-            wanted
-        };
-        assert_eq!(actual, wanted);
-        actual_message = actual.to_string();
-        if matches!(syntax, "v2" | "template") {
-            assert!(
-                !actual.contains("\"ids\"")
-                    && !actual.contains("--accept")
-                    && !actual.contains("--reject")
-            );
-        }
+        let args = args(&c, syntax, false);
+        error = refused(&run(dir.path(), &args), syntax, &args);
+        error["message"].as_str().unwrap().to_string()
+    };
+    // The revision, then accept, reject and a comment, each with its cost,
+    // lined up in two columns.
+    let lines: Vec<&str> = message.lines().collect();
+    assert_eq!(lines.len(), 4, "{message}");
+    assert_eq!(lines[0], header(&c, syntax), "{message}");
+    let [accept, reject] = c.routes;
+    let wanted = [
+        (accept.0, settle(&c, "accept", syntax), Some(accept.1)),
+        (reject.0, settle(&c, "reject", syntax), Some(reject.1)),
+        ("or comment on it", comment(&c, syntax), None),
+    ];
+    let routes: Vec<_> = lines[1..].iter().map(|line| route(line)).collect();
+    for ((label, fragment, cost, _, _), (want_label, want_fragment, want_cost)) in
+        routes.iter().zip(&wanted)
+    {
+        assert_eq!(
+            (*label, *fragment, *cost),
+            (*want_label, want_fragment.as_str(), *want_cost),
+            "{message}"
+        );
+    }
+    assert!(routes.iter().all(|r| r.3 == routes[0].3), "{message}");
+    assert_eq!(routes[0].4, routes[1].4, "{message}");
+    if matches!(syntax, "v2" | "template") {
+        assert!(
+            !message.contains("\"ids\"")
+                && !message.contains("--accept")
+                && !message.contains("--reject"),
+            "{message}"
+        );
+    }
+    if syntax != "library" {
         let actions = error["next_actions"]
             .as_array()
             .expect("both structured review choices");
@@ -439,69 +504,232 @@ fn check(site: &str, syntax: &str) {
                 .expect("argv array, never shell text");
             assert!(argv.iter().all(Value::is_string));
             assert!(argv.contains(&json!(format!("--{key}-change"))));
-            assert!(argv.contains(&json!(if c.story == "body" {
-                "r7"
-            } else {
-                "header1.r7"
-            })));
+            assert!(argv.contains(&json!(short(&c))));
         }
     }
-    // The JSON suggestions parse in the caller's parser and settle exactly r7.
-    if matches!(syntax, "library" | "v1" | "v2") {
-        let fragments: Vec<Value> = actual_message
-            .split("; ")
-            .filter(|s| s.starts_with('{'))
-            .map(|s| {
-                serde_json::Deserializer::from_str(s)
-                    .into_iter::<Value>()
-                    .next()
+    match syntax {
+        // The JSON routes parse in the caller's parser and settle exactly r7.
+        "library" | "v1" | "v2" | "template" => {
+            for (_, fragment, _) in &wanted[..2] {
+                let route: Value = serde_json::from_str(&format!("{{{fragment}}}")).unwrap();
+                let mut settlement = q.clone();
+                settlement["operations"] = json!([]);
+                settlement["resolve_revisions"] = route["resolve_revisions"].clone();
+                let output = if matches!(syntax, "v2" | "template") {
+                    jubarte::edit::v2_apply::apply_plan(
+                        &source,
+                        &PlanV2::from_json(&settlement.to_string()).unwrap(),
+                    )
                     .unwrap()
+                    .redline
+                } else {
+                    apply_plan(
+                        &source,
+                        &EditPlan::from_json(&settlement.to_string()).unwrap(),
+                    )
                     .unwrap()
-            })
+                    .redline
+                };
+                assert!(list_changes(&output).unwrap().is_empty());
+            }
+            serde_json::from_str::<Value>(&wanted[2].1).unwrap();
+        }
+        // The flags settle r7 on their own.
+        "flags" => {
+            for (_, fragment, _) in &wanted[..2] {
+                let mut args = vec!["edit", "in.docx"];
+                args.extend(fragment.split(' '));
+                args.extend(["-a", "Carol Diaz", "-d", DATE, "-o", "settled.docx"]);
+                let output = run(dir.path(), &args);
+                assert!(
+                    output.status.success(),
+                    "{args:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let settled = std::fs::read(dir.path().join("settled.docx")).unwrap();
+                assert!(list_changes(&settled).unwrap().is_empty(), "{args:?}");
+                std::fs::remove_file(dir.path().join("settled.docx")).unwrap();
+            }
+        }
+        // The typed options run on the refused command itself and settle
+        // the revision: the refusal never comes back (#1308 review).
+        _ => {
+            for (_, fragment, _) in &wanted[..2] {
+                let mut args: Vec<&str> = args(&c, syntax, false);
+                args.extend(fragment.split(' '));
+                let output = run(dir.path(), &args);
+                let said = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_ne!(output.status.code(), Some(2), "{args:?}: {said}");
+                assert!(
+                    !said.contains(&header(&c, syntax)),
+                    "{args:?} left the refusal in place: {said}"
+                );
+            }
+        }
+    }
+}
+/// A structural refusal (text inside a hyperlink) names no revision and
+/// carries no review choices, even inside another author's insertion.
+fn structural(site: &str, syntax: &str) {
+    let c = case(site);
+    let source = source(&c);
+    let message = if syntax == "library" {
+        apply_plan(
+            &source,
+            &EditPlan::from_json(&plan(&c, &source, false).to_string()).unwrap(),
+        )
+        .unwrap_err()
+        .message
+    } else {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("in.docx"), &source).unwrap();
+        let mut q = plan(&c, &source, matches!(syntax, "v2" | "typed" | "template"));
+        if syntax == "template" {
+            let generated = run(
+                dir.path(),
+                &[
+                    "edit",
+                    "template",
+                    "in.docx",
+                    "--select",
+                    "p0",
+                    "--author",
+                    "Carol Diaz",
+                    "--datetime",
+                    DATE,
+                    "-o",
+                    "-",
+                ],
+            );
+            assert!(generated.status.success());
+            q = serde_json::from_slice(&generated.stdout).unwrap();
+            q["operations"][0]["text"] = json!("new");
+        }
+        std::fs::write(dir.path().join("plan.json"), q.to_string()).unwrap();
+        let args = args(&c, syntax, false);
+        let error = refused(&run(dir.path(), &args), syntax, &args);
+        assert!(error.get("next_actions").is_none(), "{error}");
+        error["message"].as_str().unwrap().to_string()
+    };
+    let wanted = match (c.lead, syntax) {
+        ("the insertion point", "flags") => format!("the text {HYPERLINK}"),
+        ("the insertion point", "typed" | "v2") => {
+            format!("requested insertion side cannot be preserved: the insertion point {HYPERLINK}")
+        }
+        (lead, _) => format!("{lead} {HYPERLINK}"),
+    };
+    assert_eq!(message, wanted);
+}
+/// Under keep, deleting a paragraph that holds other authors' insertions
+/// or deletions succeeds in every syntax (#1136): their revisions stay,
+/// attributed, beside ours, and the package stays Word-valid.
+fn deletes(site: &str, syntax: &str) {
+    let c = case(site);
+    let source = source(&c);
+    let redline = if syntax == "library" {
+        apply_plan(
+            &source,
+            &EditPlan::from_json(&plan(&c, &source, false).to_string()).unwrap(),
+        )
+        .unwrap()
+        .redline
+    } else {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("in.docx"), &source).unwrap();
+        std::fs::write(
+            dir.path().join("plan.json"),
+            plan(&c, &source, syntax == "v2").to_string(),
+        )
+        .unwrap();
+        let args = args(&c, syntax, true);
+        let output = run(dir.path(), &args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read(dir.path().join("out.docx")).unwrap()
+    };
+    assert_word_valid_package(&redline);
+    let after = list_changes(&redline).unwrap();
+    for old in list_changes(&source).unwrap() {
+        assert!(
+            after.iter().any(|new| new.kind == old.kind
+                && new.target == old.target
+                && new.author == old.author
+                && new.text == old.text),
+            "{old:?} lost: {after:?}"
+        );
+    }
+    let texts = |bytes: &[u8]| -> Vec<String> {
+        jubarte::inspect::paragraphs(bytes)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.text)
+            .collect()
+    };
+    let all = ChangeFilter::default();
+    assert_eq!(texts(&accept_changes(&redline, &all).unwrap()), ["Tail."]);
+    assert_eq!(
+        texts(&reject_changes(&redline, &all).unwrap()),
+        texts(&reject_changes(&source, &all).unwrap())
+    );
+    if syntax == "library" {
+        // The clean output loses the deleted paragraph with its revisions,
+        // and keeps every revision outside it (#1308 review).
+        let outside: Vec<_> = list_changes(&source)
+            .unwrap()
+            .into_iter()
+            .filter(|old| old.paragraph.as_deref() == Some("p1"))
+            .map(|old| (old.kind, old.author, old.text))
             .collect();
-        assert_eq!(fragments.len(), 2);
-        for fragment in fragments {
-            let mut settlement = q.clone();
-            settlement["operations"] = json!([]);
-            settlement["resolve_revisions"] = fragment["resolve_revisions"].clone();
-            let output = if syntax == "v2" {
-                jubarte::edit::v2_apply::apply_plan(
-                    &source,
-                    &PlanV2::from_json(&settlement.to_string()).unwrap(),
-                )
+        assert_eq!(outside.len(), 1, "{outside:?}");
+        let v1 = EditPlan::from_json(&plan(&c, &source, false).to_string()).unwrap();
+        let v2 = PlanV2::from_json(&plan(&c, &source, true).to_string()).unwrap();
+        for clean in [
+            apply_plan(&source, &v1).unwrap().clean,
+            jubarte::edit::v2_apply::apply_plan(&source, &v2)
                 .unwrap()
-                .redline
-            } else {
-                apply_plan(
-                    &source,
-                    &EditPlan::from_json(&settlement.to_string()).unwrap(),
-                )
+                .clean,
+        ] {
+            assert_word_valid_package(&clean);
+            let kept: Vec<_> = list_changes(&clean)
                 .unwrap()
-                .redline
-            };
-            assert!(jubarte::changes::list_changes(&output).unwrap().is_empty());
+                .into_iter()
+                .map(|new| (new.kind, new.author, new.text))
+                .collect();
+            assert_eq!(kept, outside);
+            assert_eq!(texts(&clean), ["Tail."]);
         }
     }
 }
-macro_rules! route_tests {
-    ($site:literal; $($test:ident => $syntax:literal),+ $(,)?) => {$ (#[test] fn $test(){check($site,$syntax);})+};
+macro_rules! site_tests {
+    ($check:ident, $site:literal; $($test:ident => $syntax:literal),+ $(,)?) => {$ (#[test] fn $test(){$check($site,$syntax);})+};
 }
-route_tests!("range_move"; range_move_library=>"library",range_move_flags=>"flags",range_move_v1=>"v1",range_move_typed=>"typed",range_move_v2=>"v2");
-route_tests!("insert_move"; insert_move_library=>"library",insert_move_flags=>"flags",insert_move_v1=>"v1",insert_move_typed=>"typed",insert_move_v2=>"v2");
-route_tests!("delete_insertion"; delete_insertion_library=>"library",delete_insertion_flags=>"flags",delete_insertion_v1=>"v1",delete_insertion_typed=>"typed",delete_insertion_v2=>"v2");
-route_tests!("delete_deletion"; delete_deletion_library=>"library",delete_deletion_flags=>"flags",delete_deletion_v1=>"v1",delete_deletion_typed=>"typed",delete_deletion_v2=>"v2");
-route_tests!("delete_move"; delete_move_library=>"library",delete_move_flags=>"flags",delete_move_v1=>"v1",delete_move_typed=>"typed",delete_move_v2=>"v2");
-route_tests!("last_paragraph"; last_paragraph_library=>"library",last_paragraph_flags=>"flags",last_paragraph_v1=>"v1",last_paragraph_typed=>"typed",last_paragraph_v2=>"v2");
-route_tests!("merge_mark"; merge_mark_library=>"library",merge_mark_v1=>"v1");
-route_tests!("format_paragraph"; format_paragraph_library=>"library",format_paragraph_flags=>"flags",format_paragraph_v1=>"v1");
-route_tests!("list_paragraph"; list_paragraph_library=>"library",list_paragraph_v1=>"v1");
-route_tests!("format_run"; format_run_library=>"library",format_run_flags=>"flags",format_run_v1=>"v1");
+site_tests!(check, "range_move"; range_move_library=>"library",range_move_flags=>"flags",range_move_v1=>"v1",range_move_typed=>"typed",range_move_v2=>"v2");
+site_tests!(check, "header_move"; header_move_library=>"library",header_move_flags=>"flags",header_move_v1=>"v1",header_move_typed=>"typed",header_move_v2=>"v2");
+site_tests!(check, "insert_move"; insert_move_library=>"library",insert_move_flags=>"flags",insert_move_v1=>"v1",insert_move_typed=>"typed",insert_move_v2=>"v2");
+site_tests!(check, "delete_move"; delete_move_library=>"library",delete_move_flags=>"flags",delete_move_v1=>"v1",delete_move_typed=>"typed",delete_move_v2=>"v2");
+site_tests!(check, "last_paragraph"; last_paragraph_library=>"library",last_paragraph_flags=>"flags",last_paragraph_v1=>"v1",last_paragraph_typed=>"typed",last_paragraph_v2=>"v2");
+site_tests!(check, "merge_mark"; merge_mark_library=>"library",merge_mark_v1=>"v1");
+site_tests!(check, "merge_insertion_mark"; merge_insertion_mark_library=>"library",merge_insertion_mark_v1=>"v1");
+site_tests!(check, "format_paragraph"; format_paragraph_library=>"library",format_paragraph_flags=>"flags",format_paragraph_v1=>"v1");
+site_tests!(check, "list_paragraph"; list_paragraph_library=>"library",list_paragraph_v1=>"v1");
+site_tests!(check, "format_run"; format_run_library=>"library",format_run_flags=>"flags",format_run_v1=>"v1");
+site_tests!(check, "range_move"; template_move=>"template");
 
-route_tests!("range_insertion"; range_insertion_library=>"library",range_insertion_flags=>"flags",range_insertion_v1=>"v1",range_insertion_typed=>"typed",range_insertion_v2=>"v2");
-route_tests!("insert_insertion"; insert_insertion_library=>"library",insert_insertion_flags=>"flags",insert_insertion_v1=>"v1",insert_insertion_typed=>"typed",insert_insertion_v2=>"v2");
+site_tests!(structural, "range_insertion"; range_insertion_library=>"library",range_insertion_flags=>"flags",range_insertion_v1=>"v1",range_insertion_typed=>"typed",range_insertion_v2=>"v2");
+site_tests!(structural, "insert_insertion"; insert_insertion_library=>"library",insert_insertion_flags=>"flags",insert_insertion_v1=>"v1",insert_insertion_typed=>"typed",insert_insertion_v2=>"v2");
+site_tests!(structural, "range_insertion"; template_insertion=>"template");
 
-route_tests!("range_move"; template_move=>"template");
-route_tests!("range_insertion"; template_insertion=>"template");
+site_tests!(deletes, "delete_insertion"; delete_insertion_library=>"library",delete_insertion_flags=>"flags",delete_insertion_v1=>"v1",delete_insertion_typed=>"typed",delete_insertion_v2=>"v2");
+site_tests!(deletes, "delete_deletion"; delete_deletion_library=>"library",delete_deletion_flags=>"flags",delete_deletion_v1=>"v1",delete_deletion_typed=>"typed",delete_deletion_v2=>"v2");
+site_tests!(deletes, "delete_multiple"; delete_multiple_library=>"library",delete_multiple_flags=>"flags",delete_multiple_v1=>"v1",delete_multiple_typed=>"typed",delete_multiple_v2=>"v2");
 
 fn structured_choices(syntax: &str) {
     let c = case("range_move");
@@ -601,10 +829,6 @@ fn structured_v2_choices() {
     structured_choices("v2");
 }
 
-route_tests!("delete_multiple"; delete_multiple_library=>"library",delete_multiple_flags=>"flags",delete_multiple_v1=>"v1",delete_multiple_typed=>"typed",delete_multiple_v2=>"v2");
-
-route_tests!("header_move"; header_move_library=>"library",header_move_flags=>"flags",header_move_v1=>"v1",header_move_typed=>"typed",header_move_v2=>"v2");
-
 #[test]
 fn every_failed_flag_operation_uses_flags() {
     let dir = tempfile::tempdir().unwrap();
@@ -669,8 +893,6 @@ fn structured_engine_error_retains_the_real_revision_pair() {
     );
 }
 
-route_tests!("merge_insertion_mark"; merge_insertion_mark_library=>"library",merge_insertion_mark_v1=>"v1");
-
 #[test]
 fn recording_a_flag_request_uses_flag_choices() {
     let c = case("range_move");
@@ -700,7 +922,11 @@ fn recording_a_flag_request_uses_flag_choices() {
     assert!(!output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let error: Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
-    assert_eq!(error["message"], expected(&c, "flags"));
+    let message = error["message"].as_str().unwrap();
+    assert_eq!(message.lines().next(), Some(header(&c, "flags").as_str()));
+    for verb in ["accept", "reject"] {
+        assert!(message.contains(&settle(&c, verb, "flags")), "{message}");
+    }
     assert!(!dir.path().join("recorded.json").exists());
 }
 
@@ -742,6 +968,80 @@ fn primary_nonrevision_error_has_no_secondary_review_choices() {
         error.get("next_actions").is_none(),
         "a secondary revision must not supply the primary error's review choices: {error}"
     );
+}
+
+/// An anchor the caller typed may read like a refusal's header: the error
+/// it gets is still no revision refusal, and carries no review choices
+/// (#1308 review).
+#[test]
+fn an_anchor_quoting_a_refusal_header_has_no_review_choices() {
+    let c = case("range_move");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), docx(&c.body)).unwrap();
+    let quoted = format!("{} {}", c.lead, short(&c));
+    let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args([
+            "edit",
+            "in.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            &quoted,
+            "--content",
+            "new",
+            "-p",
+            "p0",
+            "--anchor",
+            "beta",
+            "--content",
+            "new",
+            "--author",
+            "Carol Diaz",
+            "--datetime",
+            DATE,
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let error: Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(error["code"], "ANCHOR_NOT_FOUND");
+    let first = error["message"].as_str().unwrap().lines().next().unwrap();
+    assert!(first.contains(&quoted), "{error}");
+    assert!(error.get("next_actions").is_none(), "{error}");
+}
+
+/// The refusal's data names the syntax its message quotes, whoever builds
+/// the transaction (#1308 review): a typed command's prepared plan records
+/// `typed_action` without its caller restating it.
+#[test]
+fn the_refusal_data_records_the_quoted_syntax() {
+    let c = case("range_move");
+    let source = source(&c);
+    let syntax_of = |e: jubarte::edit::EditError| {
+        serde_json::to_value(&e).unwrap()["revision_refusals"][0]["syntax"].clone()
+    };
+    let v2 = PlanV2::from_json(&plan(&c, &source, true).to_string()).unwrap();
+    let typed = jubarte::edit::prepare_v2(
+        &source,
+        &v2,
+        &jubarte::edit::PrepareOptions {
+            syntax: jubarte::edit::PlanSyntax::Typed,
+            ..jubarte::edit::PrepareOptions::default()
+        },
+    )
+    .expect_err("refused");
+    assert_eq!(syntax_of(typed), "typed_action");
+    let plain = jubarte::edit::v2_apply::apply_plan(&source, &v2).expect_err("refused");
+    assert_eq!(syntax_of(plain), "v2_plan");
+    let v1 = EditPlan::from_json(&plan(&c, &source, false).to_string()).unwrap();
+    let flags = jubarte::edit::check_plan_quoting(&source, &v1, jubarte::edit::PlanSyntax::Flags)
+        .expect_err("refused");
+    assert_eq!(syntax_of(flags), "legacy_flags");
+    let v1 = apply_plan(&source, &v1).expect_err("refused");
+    assert_eq!(syntax_of(v1), "v1_plan");
 }
 
 fn loss_source() -> Vec<u8> {

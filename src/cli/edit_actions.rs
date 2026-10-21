@@ -126,7 +126,12 @@ pub enum EditAction {
         occurrence: Option<usize>,
     },
     /// Apply only: never record into, consume, or rewrite the plan.
-    #[command(override_usage = "jubarte edit apply [OPTIONS] <FILE> --plan FILE")]
+    // apply has no --save-plan, so its output is required unless it bundles
+    // or dry-runs.
+    #[command(
+        override_usage = "jubarte edit apply [OPTIONS] <FILE> --plan FILE",
+        mut_arg("output", |a| a.help("Primary edited DOCX; required unless bundling or dry-running"))
+    )]
     Apply {
         /// Immutable source document.
         file: PathBuf,

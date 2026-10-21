@@ -54,6 +54,7 @@ mod view_styles;
 mod write;
 pub(crate) mod xml;
 
+pub(crate) use anchor::plain_anchor_with_removed;
 pub use anchor::{plain_anchor, unescape_markdown};
 pub use diff::diff_markdown;
 pub use pages::paginate;
