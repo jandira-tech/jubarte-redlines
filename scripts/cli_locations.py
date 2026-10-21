@@ -189,6 +189,16 @@ def shape(token: str) -> str:
     return re.sub(r"\d+", "N", token)
 
 
+
+# Compiled regular expressions for fast searching in loops
+RE_VIEW_ID_LINE = re.compile(r"\s*<!-- (\S+)")
+RE_VIEW_NOTE = re.compile(r"\{>>(\S+)")
+RE_VIEW_REPLY = re.compile(r" re (c\d+):")
+RE_VIEW_STORY = re.compile(r"\bid: ([^,}\s]+)")
+RE_READ_TABLES = re.compile(r"(?:^|\t)([^\t=\s]+)=")
+RE_COMMENTS_REPLY = re.compile(r"reply to (\S+)")
+RE_VERDICT_PICKED = re.compile(r"<!-- (\S+)")
+
 # ---------------------------------------------------------------- section 3
 
 
@@ -213,20 +223,25 @@ def harvest(binary: Path, fixture: str, seen: Seen) -> None:
     _, view, _ = run(binary, ["read", fixture], ROOT)
     DEPRECATED.scan("printed in text", "read (view)", view)
     for line in view.splitlines():
-        if match := re.match(r"\s*<!-- (\S+)", line):
-            if match.group(1) != "page":
-                seen.add(match.group(1), "view id line", name)
-        for note in re.findall(r"\{>>(\S+)", line):
-            seen.add(note, "view note", name)
-        for reply in re.findall(r" re (c\d+):", line):
-            seen.add(reply, "view note (reply to)", name)
-        for story in re.findall(r"\bid: ([^,}\s]+)", line):
-            seen.add(story, "view header", name)
+        if "<!--" in line:
+            if match := RE_VIEW_ID_LINE.match(line):
+                if match.group(1) != "page":
+                    seen.add(match.group(1), "view id line", name)
+        if "{" in line:
+            for note in RE_VIEW_NOTE.findall(line):
+                seen.add(note, "view note", name)
+        if " re " in line:
+            for reply in RE_VIEW_REPLY.findall(line):
+                seen.add(reply, "view note (reply to)", name)
+        if "id:" in line:
+            for story in RE_VIEW_STORY.findall(line):
+                seen.add(story, "view header", name)
     _, tables, _ = run(binary, ["read", fixture, "--tables"], ROOT)
     DEPRECATED.scan("printed in text", "read --tables", tables)
     for line in tables.splitlines():
-        for token in re.findall(r"(?:^|\t)([^\t=\s]+)=", line):
-            seen.add(token, "read --tables", name)
+        if "=" in line:
+            for token in RE_READ_TABLES.findall(line):
+                seen.add(token, "read --tables", name)
     _, changes, _ = run(binary, ["changes", fixture], ROOT)
     DEPRECATED.scan("printed in text", "changes", changes)
     for line in changes.splitlines():
@@ -241,8 +256,9 @@ def harvest(binary: Path, fixture: str, seen: Seen) -> None:
         if len(parts) >= 2 and re.fullmatch(r"\S+", parts[0]):
             seen.add(parts[0], "comments (id)", name)
             seen.add(parts[1], "comments (paragraph)", name)
-        for reply in re.findall(r"reply to (\S+)", line):
-            seen.add(reply, "comments (reply to)", name)
+        if "reply to " in line:
+            for reply in RE_COMMENTS_REPLY.findall(line):
+                seen.add(reply, "comments (reply to)", name)
     _, findings, _ = run(binary, ["validate", fixture, "--rules", "word,a11y,style,structure"], ROOT)
     DEPRECATED.scan("printed in text", "validate", findings)
     for line in findings.splitlines():
@@ -325,7 +341,7 @@ def verdict(
     if code == 0:
         if LONG_ID.fullmatch(token) or RETIRED_ID.fullmatch(token):
             found.append((f"{task} {flag} accepts it", token))
-        picked = [i for i in re.findall(r"<!-- (\S+)", out) if i != "page"]
+        picked = [i for i in RE_VERDICT_PICKED.findall(out) if i != "page"] if "<!--" in out else []
         parts = [listed(picked)] if picked else []
         written = next((a for a in args if a.endswith(".docx") and "$" not in a and a != args[1]), None)
         if written and Path(written).exists():
