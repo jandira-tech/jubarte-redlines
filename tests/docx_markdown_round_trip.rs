@@ -52,7 +52,7 @@ fn read(docx: &[u8], track_changes: TrackChanges) -> String {
 /// Where the Markdown read back differs, and why the Word documents still
 /// hold the same changes. Accepting and rejecting agree for all of them
 /// but the formatting change.
-const KNOWN: [(&str, TrackChanges, &str); 6] = [
+const KNOWN: [(&str, TrackChanges, &str); 4] = [
     (
         "hard-notes",
         TrackChanges::All,
@@ -64,17 +64,6 @@ const KNOWN: [(&str, TrackChanges, &str); 6] = [
         "tables",
         TrackChanges::All,
         "adjacent insertions and deletions pair into substitutions differently",
-    ),
-    (
-        "hard-tables",
-        TrackChanges::All,
-        "adjacent insertions and deletions pair into substitutions differently",
-    ),
-    (
-        "hard-headings",
-        TrackChanges::All,
-        "an added heading is written as Word writes a paragraph added whole, \
-         its own mark inserted, which reads back as `## {++Heading\\n\\n++}`",
     ),
     (
         "hard-comments",

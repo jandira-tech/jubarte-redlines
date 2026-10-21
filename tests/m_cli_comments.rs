@@ -105,3 +105,72 @@ fn comments_refuses_a_file_that_is_not_a_document() {
     assert_ne!(code, 0);
     assert!(!stderr.is_empty());
 }
+
+#[path = "common/dead_comments.rs"]
+mod dead_comments;
+
+fn resolve_probe(case: char, what: &str) -> (Vec<u8>, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.docx");
+    let output = dir.path().join("resolved.docx");
+    std::fs::write(&input, dead_comments::probe(case)).unwrap();
+    let (code, stdout, stderr) = run(&[
+        what,
+        input.to_str().unwrap(),
+        "-o",
+        output.to_str().unwrap(),
+        "--quiet",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "");
+    (std::fs::read(&output).unwrap(), stderr)
+}
+
+#[test]
+fn accept_warns_for_a_dead_range_with_a_surviving_reference() {
+    let (output, stderr) = resolve_probe('a', "accept");
+    assert_eq!(
+        stderr,
+        "warning: accept removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\n"
+    );
+    dead_comments::assert_state(&output, false, &[]);
+}
+
+#[test]
+fn accept_warns_when_the_reference_is_deleted_too() {
+    let (output, stderr) = resolve_probe('b', "accept");
+    assert_eq!(
+        stderr,
+        "warning: accept removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\n"
+    );
+    dead_comments::assert_state(&output, false, &[]);
+}
+
+#[test]
+fn reject_warns_for_a_dead_inserted_range() {
+    let (output, stderr) = resolve_probe('d', "reject");
+    assert_eq!(
+        stderr,
+        "warning: reject removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\n"
+    );
+    dead_comments::assert_state(&output, false, &[]);
+}
+
+#[test]
+fn accept_warns_once_per_thread_member_using_original_ids() {
+    let (output, stderr) = resolve_probe('e', "accept");
+    assert_eq!(
+        stderr,
+        "warning: accept removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\nwarning: accept removed comment c1 (Bob: \"Reply to range\"): its whole range was deleted\n"
+    );
+    dead_comments::assert_state(&output, true, &[(0, "Kept range", None)]);
+}
+
+#[test]
+fn resolution_does_not_warn_about_surviving_comments() {
+    for (case, what) in [('c', "accept"), ('b', "reject")] {
+        let (output, stderr) = resolve_probe(case, what);
+        assert_eq!(stderr, "");
+        dead_comments::assert_state(&output, false, &[(0, "Existing range", None)]);
+    }
+}
