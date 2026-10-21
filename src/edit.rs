@@ -4000,6 +4000,18 @@ impl<'p> Transaction<'p> {
         self.check_control_conflicts(&deleted)?;
         self.check_comment_ids_fit()?;
         self.check_thread_ops()?;
+        let ranges = self.check_text_edits(&deleted)?;
+        self.check_comment_ranges(&ranges)?;
+        self.check_format_runs(&ranges)?;
+        self.check_page_setups()?;
+        self.check_footnote_anchors(&ranges)?;
+        Ok(())
+    }
+
+    fn check_text_edits(
+        &self,
+        deleted: &[usize],
+    ) -> Result<BTreeMap<usize, Vec<(usize, usize, usize)>>, EditError> {
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
@@ -4077,6 +4089,13 @@ impl<'p> Transaction<'p> {
                 }
             }
         }
+        Ok(ranges)
+    }
+
+    fn check_comment_ranges(
+        &self,
+        ranges: &BTreeMap<usize, Vec<(usize, usize, usize)>>,
+    ) -> Result<(), EditError> {
         // A comment boundary strictly inside a changed range has no position
         // in the edited text. Containing or touching an edit is fine.
         for (i, r) in &self.resolved {
@@ -4094,6 +4113,13 @@ impl<'p> Transaction<'p> {
                 return Err(self.conflict(*i, "comment range cuts through an edited range"));
             }
         }
+        Ok(())
+    }
+
+    fn check_format_runs(
+        &self,
+        ranges: &BTreeMap<usize, Vec<(usize, usize, usize)>>,
+    ) -> Result<(), EditError> {
         // Formatting applies to source text: no text edit may change it.
         for (i, r) in &self.resolved {
             let Resolved::FormatRun {
@@ -4111,6 +4137,10 @@ impl<'p> Transaction<'p> {
                 return Err(self.conflict(*i, "formats text another operation changes"));
             }
         }
+        Ok(())
+    }
+
+    fn check_page_setups(&self) -> Result<(), EditError> {
         // One page setup per section.
         let setups: Vec<(usize, &sections::Targets)> = self
             .resolved
@@ -4128,6 +4158,13 @@ impl<'p> Transaction<'p> {
                 return Err(self.conflict(*i, "sets up a section another operation sets up"));
             }
         }
+        Ok(())
+    }
+
+    fn check_footnote_anchors(
+        &self,
+        ranges: &BTreeMap<usize, Vec<(usize, usize, usize)>>,
+    ) -> Result<(), EditError> {
         // A reference mark needs its anchor's end to survive the text edits.
         for (i, r) in &self.resolved {
             let Resolved::InsertFootnote { para, at, .. } = r else {
