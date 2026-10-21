@@ -182,12 +182,16 @@ pub(super) struct Indent {
 }
 
 /// A paragraph's own `w:spacing` (#1473): the space before and after it in
-/// twips, and its line as Word stores it, a height in 240ths of a line for
-/// `auto` or in twips for `exact` and `atLeast`.
+/// twips, Word's automatic space in their place (`w:beforeAutospacing`,
+/// `w:afterAutospacing`, which HTML paste writes), and its line as Word
+/// stores it, a height in 240ths of a line for `auto` or in twips for
+/// `exact` and `atLeast`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Spacing {
     pub before: Option<u32>,
     pub after: Option<u32>,
+    pub before_auto: bool,
+    pub after_auto: bool,
     pub line: Option<(u32, &'static str)>,
 }
 
@@ -268,21 +272,25 @@ impl Spacing {
         *self == Self::default()
     }
 
-    /// One `before 6pt`, `after 0pt`, `line 1.5` or `line 8.65pt exact`
-    /// clause into `self`; `None` when it is none of these or its value is
-    /// out of Word's range.
+    /// One `before 6pt`, `before auto`, `after 0pt`, `line 1.5` or `line
+    /// 8.65pt exact` clause into `self`; `None` when it is none of these or
+    /// its value is negative or past what a twip count holds. Word's dialogs
+    /// stop at 1584pt, but a file may say more, and the view prints what the
+    /// file says (#1479 review).
     pub(super) fn clause(&mut self, word: &str, value: &str) -> Option<()> {
-        // Word keeps a space before or after a paragraph up to 1584pt.
+        let most = f64::from(u32::MAX);
         let points = |value: &str| -> Option<u32> {
             let n: f64 = value.strip_suffix("pt")?.parse().ok()?;
             let twips = (n * 20.0).round();
             // `as` cannot overflow: the bound is checked first.
-            (n.is_finite() && (0.0..=31_680.0).contains(&twips)).then_some(twips as u32)
+            (n.is_finite() && (0.0..=most).contains(&twips)).then_some(twips as u32)
         };
-        match word {
-            "before" => self.before = Some(points(value)?),
-            "after" => self.after = Some(points(value)?),
-            "line" => {
+        match (word, value) {
+            ("before", "auto") => self.before_auto = true,
+            ("after", "auto") => self.after_auto = true,
+            ("before", _) => self.before = Some(points(value)?),
+            ("after", _) => self.after = Some(points(value)?),
+            ("line", _) => {
                 self.line = Some(match value.split_once(' ') {
                     Some((height, "exact")) => (points(height)?, "exact"),
                     Some((height, "atLeast")) => (points(height)?, "atLeast"),
@@ -290,7 +298,7 @@ impl Spacing {
                     None => {
                         let ratio: f64 = value.parse().ok()?;
                         let line = (ratio * 240.0).round();
-                        if !(ratio.is_finite() && (0.0..=31_680.0).contains(&line)) {
+                        if !(ratio.is_finite() && (0.0..=most).contains(&line)) {
                             return None;
                         }
                         // `as` cannot overflow: the bound is checked first.
@@ -2041,9 +2049,15 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     let spacing = paragraph.spacing;
     if !spacing.is_empty() {
         properties.push_str("<w:spacing");
-        for (name, value) in [("before", spacing.before), ("after", spacing.after)] {
+        for (name, value, auto) in [
+            ("before", spacing.before, spacing.before_auto),
+            ("after", spacing.after, spacing.after_auto),
+        ] {
             if let Some(value) = value {
                 let _ = write!(properties, " w:{name}=\"{value}\"");
+            }
+            if auto {
+                let _ = write!(properties, " w:{name}Autospacing=\"1\"");
             }
         }
         if let Some((line, rule)) = spacing.line {
