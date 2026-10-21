@@ -26,12 +26,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT = ROOT / "jubarte-wasm" / "npm"
-SUFFIXES = {".wasm", ".js", ".ts"}
+SUFFIXES = {".wasm", ".js", ".mjs", ".ts"}
 
-# A home directory and the folder below it: macOS, Linux and Windows.
+# A home directory and the folder below it: macOS, Linux and Windows. The
+# user name may hold spaces and bytes past ASCII (`john smith`, `\u00c5sa`),
+# but not start with a space, and holds no control byte, quote or slash.
 HOME = re.compile(
     rb"(?P<root>/Users/|/home/|[A-Za-z]:\\{1,2}Users\\{1,2})"
-    rb"(?P<user>[A-Za-z0-9._-]+)[/\\]{1,2}(?P<next>[A-Za-z0-9._-]*)"
+    rb"(?P<user>[^\x00-\x20/\\\"'<>][^\x00-\x1f/\\\"'<>]{0,63})"
+    rb"[/\\]{1,2}(?P<next>[A-Za-z0-9._-]*)"
 )
 
 
