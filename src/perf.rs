@@ -330,6 +330,18 @@ mod tests {
     }
 
     #[test]
+    fn reset_zeroes_all_counters() {
+        set_atom_count(100);
+        inc_lcs_calls();
+        record_stage_ns(Stage::Atomize, 500);
+
+        reset();
+
+        let s = snapshot();
+        assert_eq!(s, Snapshot::default());
+    }
+
+    #[test]
     fn reset_and_record_are_safe_without_feature() {
         reset();
         record_stage_ns(Stage::Lcs, 42);
