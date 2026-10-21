@@ -116,8 +116,6 @@ pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
 pub mod edit;
-/// V2-13 (issue #845): the checker core for `--expect` evaluations.
-pub mod expect;
 pub mod fields;
 /// The one grammar of change, comment and paragraph ids (`r12`, `c5`, `p12`).
 pub mod ids;
@@ -133,9 +131,6 @@ pub mod namespaces;
 pub mod opc;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
 pub mod perf;
-/// Machine result envelope for the v2 routes (`edit apply`, `edit template`,
-/// `review accept`, and friends). See [`result::Envelope`].
-pub mod result;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
 pub mod scrub;
@@ -159,7 +154,3 @@ pub mod xmllinq;
 
 /// [`WmlDocument`] re-export for the common library entry point.
 pub use wml_document::WmlDocument;
-
-/// Capability-confined, staged filesystem publication for host applications.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod publication;

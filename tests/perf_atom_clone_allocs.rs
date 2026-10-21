@@ -14,14 +14,47 @@
 //! freshly-atomized atoms allocates only the vector's own backing buffer, not
 //! one allocation per atom.**
 //!
-//! (The counting global allocator was removed to eliminate unsafe code. We now
-//! verify this mechanically by proving `AtomHash` is inline and freshly-atomized
-//! state is empty.)
+//! Each integration-test file is its own binary, so it may install a process
+//! global allocator without disturbing the library (which stays 100% safe).
+
+#![expect(
+    unsafe_code,
+    reason = "a counting global allocator is an unsafe impl GlobalAlloc; the library itself stays unsafe-free"
+)]
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::comparer::atomize::create_comparison_unit_atom_list;
 use jubarte::namespaces::W;
 use jubarte::xmllinq::Dom;
+
+struct Counting;
+
+static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+static COUNTING: AtomicBool = AtomicBool::new(false);
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if COUNTING.load(Ordering::Relaxed) {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+        }
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if COUNTING.load(Ordering::Relaxed) {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+        }
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL: Counting = Counting;
 
 /// A single text node of `n` characters → `n` character atoms that all share ONE
 /// ancestor `Arc` (PATH-01). Isolates the per-atom hash allocation: cloning the
@@ -47,16 +80,6 @@ fn cloning_fresh_atoms_does_not_allocate_per_atom() {
     const ATOMS: usize = 500;
     const CLONES: usize = 100;
 
-    // 1. Prove AtomHash is strictly inline and manages no heap memory itself.
-    assert!(
-        !std::mem::needs_drop::<jubarte::comparer::atoms::AtomHash>(),
-        "AtomHash must remain an inline type without a Drop impl (e.g. String) to avoid per-atom allocations on clone"
-    );
-    assert!(
-        std::mem::size_of::<jubarte::comparer::atoms::AtomHash>() <= 32,
-        "AtomHash should be small enough to stay inline"
-    );
-
     let atoms = run_fragmented_atoms(ATOMS);
     // 500 char atoms + the paragraph-mark (pPr) atom.
     assert!(
@@ -65,18 +88,24 @@ fn cloning_fresh_atoms_does_not_allocate_per_atom() {
         atoms.len()
     );
 
-    // 2. Prove that the freshly atomized elements have empty Option<String> fields,
-    // which would otherwise allocate on clone.
-    for atom in &atoms {
-        assert!(
-            atom.correlated_sha1_hash.is_none(),
-            "Fresh atoms must not have correlated_sha1_hash populated, or cloning will allocate"
-        );
-    }
-
-    // 3. Keep the actual clone loop to ensure the code executes cleanly.
+    COUNTING.store(true, Ordering::Relaxed);
+    ALLOCS.store(0, Ordering::Relaxed);
     for _ in 0..CLONES {
         let cloned = atoms.clone();
         std::hint::black_box(&cloned);
     }
+    let allocs = ALLOCS.load(Ordering::Relaxed);
+    COUNTING.store(false, Ordering::Relaxed);
+
+    // Budget: a handful of allocations per full-vector clone (the Vec's own
+    // backing buffer, plus slack for grouping/atomization internals) — NOT one
+    // per atom. The old `String` hash cost ~ATOMS allocations per clone
+    // (~50,000 total); the inline hash costs ~CLONES total.
+    let budget = CLONES * 4;
+    assert!(
+        allocs <= budget,
+        "cloning {CLONES}×{} atoms allocated {allocs} times (budget {budget}); \
+         a per-atom hash allocation regressed the inline-hash invariant",
+        atoms.len()
+    );
 }

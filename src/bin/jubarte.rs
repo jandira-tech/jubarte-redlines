@@ -30,13 +30,6 @@ use std::process::ExitCode;
 
 use jubarte::cli::*;
 
-#[path = "jubarte/check.rs"]
-mod check;
-#[path = "jubarte/edit_template.rs"]
-mod edit_template;
-#[path = "jubarte/edit_typed.rs"]
-mod edit_typed;
-
 /// `println!` for the listings: a reader that stops early (`jubarte read
 /// FILE | head`) ends the process quietly, as `write_stdout` ends a view.
 macro_rules! outln {
@@ -151,40 +144,6 @@ fn pdf_options(
     }))
 }
 
-/// The absolute form of a CLI path: the real path when it exists, else the
-/// deepest existing ancestor's real path joined with the rest. Error
-/// envelopes use it to name the file the caller supplied even when its
-/// bytes were never read (#1084 review F5; proposal §11 keeps
-/// `source.path` absolute).
-///
-/// An artifact is recorded before it is published, so `canonicalize(path)`
-/// fails for every `-o`. The working-directory join alone kept Windows' 8.3
-/// short names (`RUNNER~1` on CI, #1244): `std::fs::canonicalize` expands
-/// them (`GetFinalPathNameByHandleW`, `VOLUME_NAME_DOS`), so the nearest
-/// ancestor that exists is canonicalized and the missing tail rejoined. A
-/// path with no existing ancestor keeps the working-directory join, still
-/// absolute.
-fn absolute(path: &Path) -> String {
-    let joined = std::env::current_dir().unwrap_or_default().join(path);
-    let resolved = std::fs::canonicalize(&joined).unwrap_or_else(|_| {
-        let mut missing = Vec::new();
-        let mut ancestor = joined.as_path();
-        loop {
-            if let Ok(real) = std::fs::canonicalize(ancestor) {
-                break missing.iter().rev().fold(real, |acc, name| acc.join(name));
-            }
-            match (ancestor.parent(), ancestor.file_name()) {
-                (Some(parent), Some(name)) => {
-                    missing.push(name.to_os_string());
-                    ancestor = parent;
-                }
-                _ => break joined.clone(),
-            }
-        }
-    });
-    slash_path(&resolved)
-}
-
 /// Whether two CLI paths name the same file. Two existing paths are compared
 /// by identity, which sees through hard links, symlinks and a volume that
 /// ignores case; a path not written yet is keyed by its canonicalized parent
@@ -233,44 +192,14 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 }
 
 /// No-clobber contract shared by every writing subcommand.
-fn ensure_writable(output: &Path, force: bool) -> Result<(), ConvertFailure> {
+fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
     if output.exists() && !force {
-        return Err(taken_output(output).into());
+        return Err(format!(
+            "output '{}' already exists (use --force to overwrite)",
+            output.display()
+        ));
     }
     Ok(())
-}
-
-fn report_publication(
-    result: Result<jubarte::publication::PublishReport, jubarte::publication::PublishError>,
-    stderr: &mut impl std::io::Write,
-) -> Result<(), jubarte::publication::PublishError> {
-    let warnings = match &result {
-        Ok(report) => &report.warnings,
-        Err(error) => &error.warnings,
-    };
-    write_publication_warnings(warnings, stderr);
-    result.map(|_| ())
-}
-
-fn write_publication_warnings(warnings: &[String], stderr: &mut impl std::io::Write) {
-    for warning in warnings {
-        let _ = writeln!(stderr, "warning: {warning}");
-    }
-}
-
-fn publish_paths(
-    files: &[(PathBuf, &[u8])],
-    force: bool,
-) -> Result<(), jubarte::publication::PublishError> {
-    report_publication(
-        jubarte::publication::publish_paths(files, force),
-        &mut std::io::stderr().lock(),
-    )
-}
-
-/// Stage complete bytes and atomically replace a single authorized output.
-fn publish_file(path: &Path, bytes: &[u8], force: bool) -> Result<(), String> {
-    publish_paths(&[(path.to_path_buf(), bytes)], force).map_err(|e| e.to_string())
 }
 
 /// One task's `-o`: where, as what, and how a Word result becomes it.
@@ -281,8 +210,6 @@ struct Output<'a> {
     quiet: bool,
     /// The document the task read (named in a refusal).
     input: &'a Path,
-    /// The task actually read Markdown (an explicit --from can override its suffix).
-    markdown_input: bool,
     /// The view's options for a `.md` output and the selection for a `.json`
     /// one: `read`'s own, the defaults elsewhere.
     view: &'a ReadArgs,
@@ -310,7 +237,6 @@ impl<'a> Output<'a> {
             force,
             quiet,
             input,
-            markdown_input: false,
             view: &VIEW,
             // An identifier agents read back: `/` on every OS (#568).
             source: format!("{} (not written)", slash_path(&path.with_extension("docx"))),
@@ -341,7 +267,7 @@ enum Produced<'a> {
 
 /// Refuse an existing output before any work: PNG pages are checked once
 /// their names are known.
-fn check_output(out: &Output<'_>) -> Result<(), ConvertFailure> {
+fn check_output(out: &Output<'_>) -> Result<(), String> {
     if out.kind == Format::Png {
         return Ok(());
     }
@@ -371,14 +297,10 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
         }
         (Format::Docx, Produced::Docx(bytes)) => {
             ensure_writable(out.path, out.force)?;
-            let before =
-                (!out.quiet).then(|| input_confirmation_view(out.input, out.markdown_input));
-            publish_file(out.path, bytes, out.force)?;
+            std::fs::write(out.path, bytes)
+                .map_err(|e| format!("writing {}: {e}", out.path.display()))?;
             if !out.quiet {
                 eprintln!("{}", wrote_line(out.path, Format::Docx, bytes.len(), None));
-            }
-            if let Some(before) = before {
-                print_success(out.input, before, out.path, bytes)?;
             }
             return Ok(());
         }
@@ -404,19 +326,10 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             );
         }
     };
-    write_text(out, &text, out.kind.name())
-}
-
-/// Publish text through the common writer, naming the representation written.
-fn write_text(out: &Output<'_>, text: &str, label: &str) -> Result<(), ConvertFailure> {
     ensure_writable(out.path, out.force)?;
-    publish_file(out.path, text.as_bytes(), out.force)?;
+    std::fs::write(out.path, &text).map_err(|e| format!("writing {}: {e}", out.path.display()))?;
     if !out.quiet {
-        eprintln!(
-            "wrote {} ({label}, {} bytes)",
-            out.path.display(),
-            text.len()
-        );
+        eprintln!("{}", wrote_line(out.path, out.kind, text.len(), None));
     }
     Ok(())
 }
@@ -429,30 +342,16 @@ fn check_side_file(
     flag: &str,
     others: [(&Path, &str); 2],
     force: bool,
-) -> Result<(), ConvertFailure> {
+) -> Result<(), String> {
     for (other, name) in others {
         if same_path(side, other) {
             return Err(format!(
                 "{flag} '{}' is the same file as the {name}",
-                slash_path(side)
-            )
-            .into());
+                side.display()
+            ));
         }
     }
     ensure_writable(side, force)
-}
-
-/// The note a selection prints when it leaves tracked changes inside
-/// comment bodies, which no `--id` can name (#1223).
-fn comment_changes_note(left: usize) -> String {
-    let (s, were, them) = if left == 1 {
-        ("", "was", "it")
-    } else {
-        ("s", "were", "them")
-    };
-    format!(
-        "note: {left} tracked change{s} inside comments {were} left; accept or reject all to settle {them}"
-    )
 }
 
 /// Shared body for `accept` / `reject`: read the redline, apply the package-wide
@@ -466,7 +365,7 @@ fn run_resolution(
     apply: fn(
         &[u8],
         &jubarte::changes::ChangeFilter,
-    ) -> Result<jubarte::changes::ResolvedChanges, jubarte::changes::ChangeError>,
+    ) -> Result<Vec<u8>, jubarte::changes::ChangeError>,
     what: &str,
 ) -> ExitCode {
     use jubarte::changes::ChangeError;
@@ -477,7 +376,7 @@ fn run_resolution(
         let filter = filter
             .normalized()
             .map_err(|e| (ExitCode::from(2), e.to_string()))?;
-        check_output(out).map_err(|f| (ExitCode::from(f.code), f.message))?;
+        check_output(out).map_err(failed)?;
         let bytes = read_word(file).map_err(failed)?;
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
             ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
@@ -485,21 +384,8 @@ fn run_resolution(
             }
             e => failed(format!("{what} failed: {e}")),
         })?;
-        write_output(out, Produced::Docx(&resolved.document))
-            .map_err(|f| (ExitCode::from(f.code), f.message))?;
-        for comment in &resolved.removed_comments {
-            let preview: String = comment.text.chars().take(60).collect();
-            eprintln!(
-                "warning: {what} removed comment c{} ({}: {preview:?}): its whole range was deleted",
-                comment.id, comment.author,
-            );
-        }
-        // #1223: --id cannot name a comment-body change, so a selection can
-        // leave some; say how many (an empty selection resolves them all).
-        if resolved.comment_changes_left > 0 {
-            eprintln!("{}", comment_changes_note(resolved.comment_changes_left));
-        }
-        Ok(())
+        write_output(out, Produced::Docx(&resolved))
+            .map_err(|f| (ExitCode::from(f.code), f.message))
     };
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -587,7 +473,7 @@ fn arm_timeout(limit: std::time::Duration) {
 const EXIT_FONT_SUBSTITUTED: u8 = 4;
 
 /// Why `convert` failed, and the exit status that says so.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct ConvertFailure {
     code: u8,
     message: String,
@@ -596,12 +482,6 @@ struct ConvertFailure {
 impl From<String> for ConvertFailure {
     fn from(message: String) -> Self {
         Self { code: 1, message }
-    }
-}
-
-impl From<(u8, String)> for ConvertFailure {
-    fn from((code, message): (u8, String)) -> Self {
-        Self { code, message }
     }
 }
 
@@ -685,46 +565,37 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
             if let Some(side) = side.filter(|side| same_path(side, path)) {
                 return Err(format!(
                     "{flag} '{}' is the same file as the PNG output",
-                    slash_path(side)
+                    side.display()
                 )
                 .into());
             }
         }
     }
-    let font_json = job
-        .font_report
-        .map(|_| jubarte::convert::font_report_json(&rendered.report.fonts));
-    let report_json = job.report.map(|_| rendered.report.to_json());
-    let mut outputs: Vec<(PathBuf, &[u8])> = Vec::new();
     if let Some(pdf) = &rendered.pdf {
-        outputs.push((output.clone(), pdf));
-    }
-    if png {
-        outputs.extend(
-            png_paths
-                .iter()
-                .cloned()
-                .zip(rendered.pngs.iter().map(Vec::as_slice)),
-        );
-    }
-    if let (Some(path), Some(json)) = (job.font_report, &font_json) {
-        outputs.push((path.to_path_buf(), json.as_bytes()));
-    }
-    if let (Some(path), Some(json)) = (job.report, &report_json) {
-        outputs.push((path.to_path_buf(), json.as_bytes()));
-    }
-    publish_paths(&outputs, job.force).map_err(|e| e.to_string())?;
-    if !job.quiet {
-        if let Some(pdf) = &rendered.pdf {
+        std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
+        if !job.quiet {
             eprintln!(
                 "{}",
                 wrote_line(&output, Format::Pdf, pdf.len(), Some(pages))
             );
         }
-        if png {
+    }
+    if png {
+        for (path, png) in png_paths.iter().zip(&rendered.pngs) {
+            std::fs::write(path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        }
+        if !job.quiet {
             let pattern = dir.join(format!("{stem}-page-NN.png"));
             eprintln!("{}", wrote_png_line(&pattern, rendered.pngs.len(), job.dpi));
         }
+    }
+    if let Some(report) = job.font_report {
+        let json = jubarte::convert::font_report_json(&rendered.report.fonts);
+        std::fs::write(report, json).map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    if let Some(report) = job.report {
+        std::fs::write(report, rendered.report.to_json())
+            .map_err(|e| format!("writing {}: {e}", report.display()))?;
     }
     if job.fail_on_substitution {
         let substituted: Vec<_> = rendered
@@ -806,7 +677,7 @@ struct DiffRenderJob<'a> {
 }
 
 /// Compare two documents page by page; `Ok(true)` when any page differs.
-fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, ConvertFailure> {
+fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
     let a = read_word(job.a)?;
     let b = read_word(job.b)?;
     let options = jubarte::convert::DiffOptions {
@@ -863,7 +734,9 @@ fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, ConvertFailure> {
             ensure_writable(path, job.force)?;
         }
         std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
-        publish_paths(&files, job.force).map_err(|e| e.to_string())?;
+        for (path, bytes) in &files {
+            std::fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        }
     }
     if job.json {
         outln!("{summary}");
@@ -899,167 +772,11 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
     format!("{stem}-page-{:0width$}.png", index + 1)
 }
 
-/// Resolve the shared `-p` grammar against inventory cell ownership before
-/// printing anything. A bad item refuses the whole request; retaining the
-/// original entries preserves document indices, order and formatting.
-fn select_table_inventory(
-    tables: &mut Vec<jubarte::inspect::Table>,
-    paragraph_count: usize,
-    spec: &str,
-) -> Result<(), String> {
-    use jubarte::markdown::{MarkdownError, Pick, Select};
-    use std::collections::{BTreeSet, HashMap};
-
-    let Select::Picks(picks) = Select::parse(spec)? else {
-        unreachable!("the -p parser returns picks");
-    };
-    fn add_owners<'a>(
-        rows: &'a [Vec<jubarte::inspect::TableCell>],
-        nested: &'a [jubarte::inspect::NestedTable],
-        index: usize,
-        owners: &mut HashMap<&'a str, usize>,
-    ) {
-        for id in rows.iter().flatten().flat_map(|cell| &cell.paragraph_ids) {
-            owners.insert(id, index);
-        }
-        for child in nested {
-            add_owners(&child.rows, &child.nested, index, owners);
-        }
-    }
-    let top_level_count = tables.len();
-    let mut owners = HashMap::new();
-    for table in tables.iter() {
-        add_owners(&table.rows, &table.nested, table.index, &mut owners);
-    }
-    let unreadable = |message| MarkdownError::Docx(message).to_string();
-    let mut selected = BTreeSet::new();
-    for pick in picks {
-        match pick {
-            Pick::Table(index) => {
-                if index >= top_level_count {
-                    return Err(unreadable(format!(
-                        "t{index} is not a table of this document"
-                    )));
-                }
-                selected.insert(index);
-            }
-            Pick::Paragraphs { from, to } => {
-                let last = paragraph_count
-                    .checked_sub(1)
-                    .ok_or_else(|| unreadable("the body has no paragraphs".to_string()))?;
-                let to = to.unwrap_or(last);
-                for n in [from, to] {
-                    if n > last {
-                        return Err(unreadable(format!(
-                            "p{n} is past the last paragraph p{last}"
-                        )));
-                    }
-                }
-                for n in from..=to {
-                    let id = format!("p{n}");
-                    let Some(&index) = owners.get(id.as_str()) else {
-                        return Err(format!(
-                            "{id} is not in a table; --tables -p takes tN, or a pN inside a table"
-                        ));
-                    };
-                    selected.insert(index);
-                }
-            }
-        }
-    }
-    tables.retain(|table| selected.contains(&table.index));
-    Ok(())
-}
-
-/// `read --tables`: the inventory, followed by the unchanged view when
-/// `-p` selects tables. Build both before printing, so refusals leave stdout
-/// empty. Selection errors exit 2; I/O failures keep their usual status.
-fn run_read_tables(file: &Path, args: &ReadArgs) -> Result<(), ConvertFailure> {
+/// `read --tables`: each body table as a grid.
+fn run_read_tables(file: &Path) -> Result<(), String> {
     let bytes = read_word(file)?;
-    warn_nested_text_boxes(&bytes);
-    let mut tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
-    if let Some(spec) = args.paragraphs.as_deref() {
-        let paragraph_count = jubarte::inspect::paragraphs(&bytes)
-            .map_err(|e| e.to_string())?
-            .len();
-        select_table_inventory(&mut tables, paragraph_count, spec)
-            .map_err(|message| (EXIT_USAGE, message))?;
-    }
-    let mut text = jubarte::inspect::tables_text(&tables);
-    if args.paragraphs.is_some() {
-        let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
-        let view = agent_view(&bytes, source, args)?;
-        text.push('\n');
-        text.push_str(&view.markdown);
-    }
-    write_stdout(text).map_err(Into::into)
-}
-
-/// `read --for-edit` (V2-10): the working document template/apply
-/// derive — exact working text, `before_sha256`, paired targets and
-/// per-operation readiness — as JSON on stdout or in a `.json` file.
-/// Usage failures exit 2, a refused basis 3, I/O 1.
-fn run_for_edit(
-    file: &Path,
-    args: &ReadArgs,
-    output: Option<&Path>,
-    force: bool,
-    quiet: bool,
-) -> Result<(), ConvertFailure> {
-    use jubarte::cli::{ExistingArg, TrackArg};
-    use jubarte::edit::ExistingRevisions;
-    use jubarte::edit::for_edit::{ForEditRequest, for_edit};
-    let request = ForEditRequest {
-        select: args.paragraphs.clone(),
-        story: None,
-        head: args.head,
-        tail: args.tail,
-        find: args.find.clone(),
-        regex: args.regex.clone(),
-        ignore_case: args.ignore_case,
-        changed: args.changed,
-        by: args.by.clone(),
-        by_any: Vec::new(),
-        context: args.context.unwrap_or(0),
-        limit: args.limit,
-        max_chars: args.max_chars,
-        all: args.all,
-        cursor: args.cursor.clone(),
-        accept: args.accept_change.clone(),
-        reject: args.reject_change.clone(),
-        existing_revisions: args
-            .existing_revisions
-            .and_then(ExistingArg::plan_value)
-            .unwrap_or(ExistingRevisions::Keep),
-        track: args.track.unwrap_or(TrackArg::On) == TrackArg::On,
-        // `read --for-edit` keeps the open-ended spellings its help documents.
-        closed_ranges_only: false,
-    };
-    let refused = |e: jubarte::edit::EditError| {
-        let code = if e.code == "USAGE" {
-            EXIT_USAGE
-        } else {
-            EXIT_PLAN_REFUSED
-        };
-        ConvertFailure {
-            code,
-            message: format!("{e}"),
-        }
-    };
-    let bytes = read_word(file).map_err(ConvertFailure::from)?;
-    warn_nested_text_boxes(&bytes);
-    let result = for_edit(&bytes, &request).map_err(refused)?;
-    let json =
-        serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
-    if let Some(path) = output {
-        ensure_writable(path, force)?;
-        publish_file(path, json.as_bytes(), force).map_err(ConvertFailure::from)?;
-        if !quiet {
-            eprintln!("{}", wrote_line(path, Format::Json, json.len(), None));
-        }
-        return Ok(());
-    }
-    write_stdout(json).map_err(ConvertFailure::from)
+    let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
+    write_stdout(jubarte::inspect::tables_text(&tables))
 }
 
 /// `read`: the agent view, with page markers from the layout pass unless
@@ -1072,31 +789,8 @@ fn run_text(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
-    if args.no_page_markers {
-        // The structured outputs never run the layout pass: the flag has
-        // nothing to skip there, so it is dropped, and said so.
-        let json_file = output.is_some_and(|path| {
-            matches!(
-                output_format(Task::Read, Some(path), None),
-                Ok(Some(Format::Json))
-            )
-        });
-        let kind = if args.tables {
-            Some("--tables")
-        } else if args.for_edit || args.json || json_file {
-            Some("JSON")
-        } else {
-            None
-        };
-        if let Some(kind) = kind {
-            eprintln!("warning: --no-page-markers dropped: no page markers in {kind}, proceeding");
-        }
-    }
-    if args.for_edit {
-        return run_for_edit(file, args, output, force, quiet);
-    }
     if args.tables {
-        return run_read_tables(file, args);
+        return Ok(run_read_tables(file)?);
     }
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if let Some(path) = output {
@@ -1109,18 +803,15 @@ fn run_text(
             force,
             quiet,
             input: file,
-            markdown_input: false,
             view: args,
             source: source.unwrap_or_default(),
             render: &render,
         };
         check_output(&out)?;
         let bytes = read_word(file)?;
-        warn_nested_text_boxes(&bytes);
         return write_output(&out, Produced::Docx(&bytes));
     }
     let bytes = read_word(file)?;
-    warn_nested_text_boxes(&bytes);
     if args.json {
         let snapshot = jubarte::markdown::read_snapshot(
             &bytes,
@@ -1148,25 +839,6 @@ fn selection(args: &ReadArgs) -> Result<Option<jubarte::markdown::Select>, Strin
     )
 }
 
-/// Report the first Word-fatal nest once per invocation, before editing or
-/// selecting content. Ring-1 owns branch selection, names and the diagnosis.
-fn warn_nested_text_boxes(bytes: &[u8]) {
-    // The command reports admission errors through its ordinary fallible
-    // reader. Do not run the preliminary DOM-based warning on refused XML.
-    if jubarte::admission::admit(bytes, jubarte::admission::InputLimits::default()).is_err() {
-        return;
-    }
-    let Ok(package) = jubarte::opc::PartFs::open(bytes) else {
-        return;
-    };
-    if let Some(finding) = jubarte::validate::ring1(&package)
-        .into_iter()
-        .find(|finding| finding.code == "NESTED_TEXT_BOX")
-    {
-        eprintln!("warning: {}", finding.message);
-    }
-}
-
 /// The agent view of `bytes`, its warnings said on stderr; `source` is the
 /// name the header prints.
 fn agent_view(
@@ -1191,74 +863,6 @@ fn agent_view(
         eprintln!("warning: {warning}");
     }
     Ok(view)
-}
-
-/// Use the same default view and source basename as `read PATH`.
-fn confirmation_view(path: &Path, bytes: &[u8]) -> Result<String, String> {
-    let source = path.file_name().map(|n| n.to_string_lossy().into_owned());
-    agent_view(bytes, source, &ReadArgs::default()).map(|view| view.markdown)
-}
-
-/// Markdown inputs are compared exactly as supplied, without a view header.
-fn input_confirmation_view(path: &Path, markdown_input: bool) -> Result<String, String> {
-    let bytes = read_document(path)?;
-    if markdown_input {
-        return String::from_utf8(bytes).map_err(|e| e.to_string());
-    }
-    confirmation_view(path, &bytes)
-}
-
-/// Render the exact buffer that was published, never an edit plan. Failure
-/// to read a view cannot turn a completed write into a failed operation.
-fn print_success(
-    before_path: &Path,
-    before: Result<String, String>,
-    after_path: &Path,
-    published: &[u8],
-) -> Result<(), String> {
-    let views = before
-        .and_then(|before| confirmation_view(after_path, published).map(|after| (before, after)));
-    let (before, after) = match views {
-        Ok(views) => views,
-        Err(error) => {
-            edit_status(format_args!(
-                "warning: the before/after views cannot be shown: {error}"
-            ));
-            return Ok(());
-        }
-    };
-    let block = jubarte::cli::success_block(
-        &slash_path(before_path),
-        &before,
-        &slash_path(after_path),
-        &after,
-    );
-    write_stdout(block)
-}
-
-/// A redaction's original view would repeat the text we just removed.
-fn print_edit_success(
-    before_path: &Path,
-    source: &[u8],
-    after_path: &Path,
-    published: &[u8],
-    redacted: bool,
-) -> Result<(), String> {
-    if redacted {
-        return match confirmation_view(after_path, published) {
-            Ok(after) => write_stdout(format!("SUCCESS:\n{after}")),
-            Err(_) => {
-                edit_status(format_args!("warning: the published view cannot be shown"));
-                Ok(())
-            }
-        };
-    }
-    print_success(
-        before_path,
-        confirmation_view(before_path, source),
-        after_path,
-        published,
-    )
 }
 
 /// The agent view of `bytes` on stdout.
@@ -1292,19 +896,10 @@ enum Mode {
 /// Options for `edit` and `add`.
 struct EditJob<'a> {
     file: &'a Path,
-    /// The plan's path when `--plan` named one: an input of the command,
-    /// protected from output aliases like `file` (V2-05).
-    plan: Option<&'a Path>,
-    /// `-o` named the document. When it did not, the default name of a
-    /// `X_modified.docx` input is that input itself: the documented
-    /// in-place iteration, not an output alias (V2-05).
-    explicit_output: bool,
     /// One document, or the bundle directory.
     target: &'a EditTarget,
     mode: Mode,
     dry_run: bool,
-    /// `--require-change`: refuse when the primary has no document effect.
-    require_change: bool,
     force: bool,
     pdf: bool,
     png: bool,
@@ -1355,34 +950,23 @@ fn run_edit(
     notes: &[String],
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
-    // Dry run and apply share one preparation path (V2-08): the dry run
-    // prepares and checks the same serialized candidate and stops before
-    // publication.
-    let options = jubarte::edit::PrepareOptions {
-        require_change: job.require_change,
-        ..jubarte::edit::PrepareOptions::default()
-    };
-    let refuse = |e: jubarte::edit::EditError| {
-        let syntax = if job.plan.is_some() {
-            jubarte::edit::refusal::RevisionSyntax::V1Plan
-        } else {
-            jubarte::edit::refusal::RevisionSyntax::LegacyFlags
-        };
-        refused(&e.with_revision_syntax(syntax), job.file, source)
-    };
     if job.dry_run {
-        let report = jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
+        let report = jubarte::edit::preview_plan(source, plan).map_err(|e| refused(&e))?;
         return write_stdout(report.to_jsonl()).map_err(fail);
     }
     // The plan first: a refused plan prints its whole report, whatever the
     // outputs (D15).
-    let result = jubarte::edit::prepare(source, plan, &options)
-        .map_err(refuse)?
-        .result;
+    let result = jubarte::edit::apply_plan(source, plan).map_err(|e| refused(&e))?;
     let dir = match job.target {
-        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source),
+        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source, plan),
         EditTarget::Bundle(dir) => dir,
     };
+    if dir.exists() && !job.force {
+        return Err(fail(format!(
+            "output directory '{}' already exists (use --force to replace its files)",
+            dir.display()
+        )));
+    }
     let input_dir = job
         .file
         .parent()
@@ -1432,6 +1016,8 @@ fn run_edit(
         });
         insert_before_summary(&mut jsonl, &render_line.to_string());
     }
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| fail(format!("creating {}: {e}", out_dir.display())))?;
     let name = job.file.file_name().map_or_else(
         || job.file.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -1473,613 +1059,97 @@ fn run_edit(
             outputs.push((png_name(name, i, count), png));
         }
     }
-    // The report names every member and closes with the summary; both are
-    // settled before anything is staged.
-    let saved: Vec<_> = outputs
-        .iter()
-        .map(|(name, bytes)| {
-            serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)})
-        })
-        .collect();
+    let mut saved = Vec::new();
+    for (name, bytes) in &outputs {
+        let path = out_dir.join(name);
+        std::fs::write(&path, bytes)
+            .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
+        saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
+    }
     let save_line = serde_json::json!({"ev": "save", "dir": slash_path(out_dir), "outputs": saved});
     insert_before_summary(&mut jsonl, &save_line.to_string());
-    let summary = jsonl.lines().last().unwrap_or("").to_string();
-    outputs.push(("report.jsonl".into(), jsonl.into_bytes()));
-    // V2-05: a bundle member that is an input refuses the publication;
-    // otherwise the bundle is staged in a sibling temp directory and
-    // published as a new directory — never merged into the existing one.
-    let inputs = job_inputs(job);
-    for (name, _) in &outputs {
-        refuse_output_alias(&out_dir.join(name), &inputs)?;
-    }
-    refuse_bundle_input_containment(out_dir, &inputs)?;
-    let paths: Vec<PathBuf> = outputs.iter().map(|(name, _)| out_dir.join(name)).collect();
-    refuse_output_collisions(&paths)?;
-    if out_dir.symlink_metadata().is_ok() && !job.force {
-        return Err(taken_output(out_dir));
-    }
-    if job.force {
-        refuse_foreign_bundle_contents(out_dir)?;
-    }
-    let stage = stage_bundle_dir(out_dir).map_err(fail)?;
-    let files: Vec<_> = outputs
-        .iter()
-        .map(|(name, bytes)| (stage.join(name), bytes.as_slice()))
-        .collect();
-    if let Err(error) = publish_paths(&files, false) {
-        let _ = std::fs::remove_dir_all(&stage);
-        return Err(fail(error.to_string()));
-    }
-    publish_dir(&stage, out_dir, job.force, || {
-        for path in &paths {
-            refuse_output_alias(path, &inputs)?;
-        }
-        refuse_bundle_input_containment(out_dir, &inputs)?;
-        refuse_output_collisions(&paths)?;
-        if job.force {
-            refuse_foreign_bundle_contents(out_dir)?;
-        }
-        recheck_edit_source(job.file, source)
-    })?;
-    let committed = |e: String| {
-        fail(format!(
-            "committed {} ({} files), but reporting the result failed: {e}",
-            slash_path(out_dir),
-            outputs.len()
-        ))
-    };
+    std::fs::write(out_dir.join("report.jsonl"), &jsonl)
+        .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
     if job.quiet {
         return Ok(());
     }
-    // Preserve the existing summary contract for ordinary edits.
-    if !is_pure_resolution(plan, &result) {
-        write_stdout(format!("{summary}\n")).map_err(committed)?;
+    // A pure accept/reject prints the resolved lines on stdout, nothing
+    // else; the bundle's report.jsonl still holds the summary.
+    if is_pure_resolution(plan, &result)
+        && let Ok(text) =
+            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
+    {
+        let names: Vec<&str> = outputs
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .chain(["report.jsonl"])
+            .collect();
+        eprintln!(
+            "wrote {} ({} files: {})",
+            out_dir.display(),
+            names.len(),
+            names.join(", ")
+        );
+        for note in edit_notes(notes, &result) {
+            eprintln!("{note}");
+        }
+        return write_stdout(&text).map_err(fail);
     }
-    let names: Vec<&str> = outputs.iter().map(|(name, _)| name.as_str()).collect();
+    let summary = jsonl.lines().last().unwrap_or("").to_string();
+    outln!("{summary}");
+    let names: Vec<&str> = outputs
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .chain(["report.jsonl"])
+        .collect();
     // The status lines on stderr (D6); the summary and the view are data.
-    edit_status(format_args!(
+    eprintln!(
         "wrote {} ({} files: {})",
         out_dir.display(),
         names.len(),
         names.join(", ")
-    ));
-    let primary = match job.mode {
-        Mode::Suggesting => &result.redline,
-        Mode::Editing => &result.clean,
-    };
-    for note in edit_notes(notes, &result, primary) {
-        edit_status(format_args!("{note}"));
+    );
+    for note in edit_notes(notes, &result) {
+        eprintln!("{note}");
     }
-    for (name, bytes) in &outputs {
-        if Path::new(name).extension().is_some_and(|ext| ext == "docx") {
-            print_edit_success(
-                job.file,
-                source,
-                &out_dir.join(name),
-                bytes,
-                result
-                    .report
-                    .operations
-                    .iter()
-                    .any(|op| op.kind == "redact"),
-            )
-            .map_err(committed)?;
+    // The changed blocks, as the agent view reads them back: the tracked
+    // redline, or in editing mode its accepted text.
+    let shown = match job.mode {
+        Mode::Suggesting => "redline.docx",
+        Mode::Editing => "clean.docx",
+    };
+    // The files are written and report.jsonl says so: a view that cannot be
+    // read back is a warning, not a failed edit.
+    match jubarte::markdown::changed_view(
+        &result.redline,
+        &result.report.author,
+        job.mode == Mode::Editing,
+        // An identifier agents read back: `/` on every OS (#568).
+        Some(&slash_path(&out_dir.join(shown))),
+    ) {
+        Ok(view) => write_stdout(&view).map_err(fail),
+        Err(e) => {
+            eprintln!("warning: the changed blocks cannot be shown: {e}");
+            Ok(())
         }
     }
-    Ok(())
 }
 
-/// Keep typed edit/template output refusals on the CLI's usage exit code.
-fn edit_envelope_exit(receipt: &jubarte::result::Envelope) -> u8 {
-    if receipt
-        .error
-        .as_ref()
-        .is_some_and(|error| error.code == "OUTPUT_EXISTS")
-    {
-        EXIT_USAGE
-    } else {
-        jubarte::result::exit_status_for_envelope(receipt).into()
-    }
-}
-
-/// An existing output without --force is a usage refusal: exit 2.
-/// Usage refusals name paths as identifiers an agent reads back, so they
-/// use `slash_path`'s `/` spelling on every OS (#568), not the native one.
+/// An existing output of `edit` or `add` without --force: exit 2.
 fn taken_output(path: &Path) -> (u8, String) {
     (
         EXIT_USAGE,
         format!(
-            "OUTPUT_EXISTS: output '{}' already exists (use --force to overwrite)",
-            slash_path(path)
+            "output '{}' already exists (use --force to overwrite)",
+            path.display()
         ),
     )
 }
 
-/// The inputs an output of `edit` or `add` must never overwrite (V2-05).
-fn job_inputs<'a>(job: &EditJob<'a>) -> Vec<(&'a Path, &'static str)> {
-    let mut inputs: Vec<(&'a Path, &'static str)> = vec![(job.file, "the input")];
-    if let Some(plan) = job.plan {
-        inputs.push((plan, "the plan"));
-    }
-    inputs
-}
-
-/// Exit 2, stable code `OUTPUT_ALIAS`: an output that names an input
-/// through another spelling, a symlink or a hard link, refused before
-/// anything is written (V2-05). `same_path` compares device and inode for
-/// existing paths (volume serial and file index on Windows) and keys a
-/// path not written yet by its canonicalized parent and lowercase name;
-/// there a hard link under a third name is not visible, but a hard link is
-/// an existing directory entry, so every alias of an existing input is
-/// seen.
-fn refuse_output_alias(output: &Path, inputs: &[(&Path, &str)]) -> Result<(), (u8, String)> {
-    for (input, what) in inputs {
-        if same_path(output, input) {
-            return Err((
-                EXIT_USAGE,
-                format!(
-                    "OUTPUT_ALIAS: the output '{}' is the same file as {what} '{}'",
-                    slash_path(output),
-                    slash_path(input)
-                ),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// --force authorizes an output replacement, never an input alias. The
-/// historical implicit X_modified.docx iteration remains permitted.
-fn refuse_edit_output_alias(job: &EditJob<'_>, output: &Path) -> Result<(), (u8, String)> {
-    let inplace_default = !job.explicit_output && output == job.file;
-    let inputs: Vec<(&Path, &str)> = job_inputs(job)
-        .into_iter()
-        .filter(|(input, _)| !inplace_default || *input != job.file)
-        .collect();
-    refuse_output_alias(output, &inputs)
-}
-
-/// Compare the exact preparation bytes with a fresh read of the named
-/// source. Never replace the preparation bytes with this second read.
-fn recheck_edit_source(file: &Path, source: &[u8]) -> Result<(), (u8, String)> {
-    let current =
-        std::fs::read(file).map_err(|e| (1, format!("rechecking {}: {e}", file.display())))?;
-    if jubarte::inspect::source_sha256(source) != jubarte::inspect::source_sha256(&current) {
-        return Err((
-            EXIT_PLAN_REFUSED,
-            format!(
-                "SOURCE_CHANGED: '{}' changed since the edit was prepared; nothing was published",
-                slash_path(file)
-            ),
-        ));
-    }
-    Ok(())
-}
-
-/// No two roles of a publication may resolve to the same output file.
-fn refuse_output_collisions(paths: &[PathBuf]) -> Result<(), (u8, String)> {
-    for (index, output) in paths.iter().enumerate() {
-        let previous: Vec<(&Path, &str)> = paths[..index]
-            .iter()
-            .map(|path| (path.as_path(), "another output"))
-            .collect();
-        refuse_output_alias(output, &previous)?;
-    }
-    Ok(())
-}
-
-/// A wholesale directory replacement must never remove an input's name.
-fn refuse_bundle_input_containment(
-    dir: &Path,
-    inputs: &[(&Path, &str)],
-) -> Result<(), (u8, String)> {
-    if let Ok(canonical_dir) = std::fs::canonicalize(dir) {
-        for (input, what) in inputs {
-            if std::fs::canonicalize(input).is_ok_and(|path| path.starts_with(&canonical_dir)) {
-                return Err((
-                    EXIT_USAGE,
-                    format!(
-                        "OUTPUT_ALIAS: the output directory '{}' contains {what} '{}'",
-                        slash_path(dir),
-                        slash_path(input)
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Post-commit status is best effort: a closed stderr cannot undo a commit
-/// or prevent its result from reaching stdout.
-fn edit_status(line: std::fmt::Arguments<'_>) {
-    use std::io::Write;
-    let _ = writeln!(std::io::stderr().lock(), "{line}");
-}
-
-/// `paths` comma-separated, with the `/` spelling the views use.
-fn comma_paths(paths: &[PathBuf]) -> String {
-    paths
-        .iter()
-        .map(|p| slash_path(p))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// A staging path beside `dest`: the same filesystem, so the commit is a
-/// rename; hidden; unique to this process (`n` breaks a tie with the
-/// survivor of an interrupted run).
-fn staging_path(dest: &Path, n: usize) -> PathBuf {
-    let dir = dest
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let mut name = std::ffi::OsString::from(".");
-    name.push(dest.file_name().unwrap_or(std::ffi::OsStr::new("out")));
-    name.push(format!(".jubarte-tmp-{}-{n}", std::process::id()));
-    dir.join(name)
-}
-
-/// Test-only synchronization for filesystem races in debug Unix builds.
-/// JUBARTE_TEST_PUBLICATION_HOOK names a local Unix socket owned by the
-/// integration test. Send the phase/PID, then wait for one release byte.
-/// No hook is available in release builds; no environment variable means
-/// no socket access. This never changes the prepared document bytes.
-#[cfg(all(unix, debug_assertions))]
-fn publication_test_hook(phase: &str) -> Result<(), String> {
-    use std::io::{Read, Write};
-    let Some(socket) = std::env::var_os("JUBARTE_TEST_PUBLICATION_HOOK") else {
-        return Ok(());
-    };
-    let hook = || -> std::io::Result<()> {
-        let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-        writeln!(stream, "{phase} {}", std::process::id())?;
-        stream.read_exact(&mut [0])
-    };
-    hook().map_err(|e| format!("test-only publication hook: {e}"))
-}
-
-#[cfg(not(all(unix, debug_assertions)))]
-fn publication_test_hook(_phase: &str) -> Result<(), String> {
-    Ok(())
-}
-
-/// What a publication rechecks after staging and before each commit
-/// (V2-05): an output that became unsafe, or a source that changed since it
-/// was read, publishes nothing new. `edit` builds it from its job, the typed
-/// edit routes from their own inputs.
-struct Recheck<'a> {
-    /// `--force`: replace an existing destination instead of refusing it.
-    force: bool,
-    /// Refuse an output that now resolves to one of the command's inputs.
-    alias: &'a dyn Fn(&Path) -> Refused,
-    /// Refuse when the source changed since it was read.
-    source: &'a dyn Fn() -> Refused,
-}
-
-/// A publication check: `Err` carries the exit status and the message.
-type Refused = Result<(), (u8, String)>;
-
-/// Stage every output before committing any of them. Without --force,
-/// hard-link the staged inode into its destination atomically: even an
-/// entry appearing after the recheck cannot be clobbered. A mid-publication
-/// failure names the artifacts already committed, without rolling them back.
-fn publish_files(
-    outputs: &[(PathBuf, &[u8])],
-    recheck: &Recheck<'_>,
-) -> Result<Vec<PathBuf>, (u8, String)> {
-    let mut staged = Vec::new();
-    let mut committed: Vec<PathBuf> = Vec::new();
-    let publish = |staged: &mut Vec<(jubarte::publication::StagedFile, PathBuf)>,
-                   committed: &mut Vec<PathBuf>| {
-        for (path, bytes) in outputs {
-            let held = jubarte::publication::StagedFile::prepare(path, bytes, recheck.force)
-                .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
-            staged.push((held, path.clone()));
-        }
-        publication_test_hook("staged").map_err(|e| (1, e))?;
-        // Recheck the entire set before committing the primary.
-        for (path, _) in outputs {
-            (recheck.alias)(path)?;
-        }
-        refuse_output_collisions(
-            &outputs
-                .iter()
-                .map(|(path, _)| path.clone())
-                .collect::<Vec<_>>(),
-        )?;
-        if !recheck.force
-            && let Some((path, _)) = outputs
-                .iter()
-                .find(|(path, _)| path.symlink_metadata().is_ok())
-        {
-            return Err(taken_output(path));
-        }
-        for (held, path) in staged.drain(..) {
-            (recheck.alias)(&path)?;
-            if committed.is_empty() {
-                (recheck.source)()?;
-            }
-            publication_test_hook("checked").map_err(|e| (1, e))?;
-            if let Err(error) = report_publication(held.commit(), &mut std::io::stderr().lock()) {
-                committed.extend(error.committed.iter().cloned());
-                if error.source.kind() == std::io::ErrorKind::AlreadyExists {
-                    return Err(taken_output(&path));
-                }
-                return Err((1, format!("committing {}: {error}", path.display())));
-            }
-            committed.push(path);
-        }
-        Ok(())
-    };
-    let outcome = publish(&mut staged, &mut committed);
-    drop(staged);
-    if let Err((code, mut message)) = outcome {
-        if !committed.is_empty() {
-            message += &format!(" (already committed: {})", comma_paths(&committed));
-        }
-        return Err((code, message));
-    }
-    Ok(committed)
-}
-
-/// Exit 2, stable code `OUTPUT_DIR_NOT_EMPTY`: `--force` replaces an
-/// existing `--out-dir` wholesale only when it is an earlier jubarte bundle,
-/// every entry named by its `report.jsonl` save line (V2-05), or when it
-/// is empty (no earlier bundle/report is required). Anything else
-/// in it (a user's file, an input under a subdirectory) would be deleted by
-/// the replacement, so the publication refuses before staging.
-fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(());
-    };
-    let mut ours: std::collections::BTreeSet<String> = ["report.jsonl".to_string()].into();
-    if let Ok(report) = std::fs::read_to_string(dir.join("report.jsonl")) {
-        let saved = report
-            .lines()
-            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .filter(|line| line["ev"] == "save")
-            .flat_map(|line| line["outputs"].as_array().cloned().unwrap_or_default());
-        ours.extend(saved.filter_map(|o| o["f"].as_str().map(str::to_string)));
-    }
-    let mut foreign: Vec<String> = entries
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|name| !ours.contains(name))
-        .collect();
-    foreign.extend(
-        std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-            .map(|e| format!("{}/", e.file_name().to_string_lossy())),
-    );
-    if foreign.is_empty() {
-        return Ok(());
-    }
-    foreign.sort();
-    Err((
-        EXIT_USAGE,
-        format!(
-            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); --force replaces only a jubarte bundle, so move those files or name another --out-dir",
-            dir.display(),
-            foreign.join(", ")
-        ),
-    ))
-}
-
-/// The sibling temp directory a bundle is staged in (V2-05). Its parent
-/// chain is created first, as `--out-dir` has always allowed nested names.
-fn stage_bundle_dir(dir: &Path) -> Result<PathBuf, String> {
-    if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
-    }
-    for n in 0..100 {
-        let stage = staging_path(dir, n);
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        match builder.create(&stage) {
-            Ok(()) => return Ok(stage),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("creating {}: {e}", dir.display())),
-        }
-    }
-    Err(format!("creating {}: no free staging name", dir.display()))
-}
-
-fn sync_bundle_parent(dir: &Path) -> Result<(), (u8, String)> {
-    let parent = dir
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    jubarte::publication::sync_directory(parent).map_err(|e| {
-        (
-            1,
-            format!(
-                "durability uncertain: syncing bundle parent: {e} (already committed: {})",
-                slash_path(dir)
-            ),
-        )
-    })
-}
-
-/// Publish the staged bundle as `dir` (V2-05): a rename when `dir` is
-/// free; under --force over an existing directory, a swap that replaces it
-/// wholesale — never a merge into its files. Precommit failures preserve the
-/// prior bundle; postcommit durability errors name the committed directory.
-fn publish_dir(
-    stage: &Path,
-    dir: &Path,
-    force: bool,
-    recheck: impl Fn() -> Result<(), (u8, String)>,
-) -> Result<(), (u8, String)> {
-    let failed = |error: (u8, String)| {
-        let _ = std::fs::remove_dir_all(stage);
-        error
-    };
-    publication_test_hook("staged").map_err(|e| failed((1, e)))?;
-    if dir.symlink_metadata().is_err() {
-        recheck().map_err(failed)?;
-        std::fs::rename(stage, dir)
-            .map_err(|e| failed((1, format!("publishing {}: {e}", dir.display()))))?;
-        return sync_bundle_parent(dir);
-    }
-    // Alias checks precede a no-clobber refusal, here as in preflight.
-    recheck().map_err(failed)?;
-    if !force {
-        return Err(failed(taken_output(dir)));
-    }
-    if !dir.is_dir() {
-        return Err(failed((
-            1,
-            format!(
-                "--out-dir '{}' is an existing file, not a directory",
-                dir.display()
-            ),
-        )));
-    }
-    let mut aside = None;
-    for n in 100..200 {
-        let candidate = staging_path(dir, n);
-        if candidate.symlink_metadata().is_ok() {
-            continue;
-        }
-        // The source guard runs immediately before the first commit rename.
-        recheck().map_err(failed)?;
-        match std::fs::rename(dir, &candidate) {
-            Ok(()) => {
-                aside = Some(candidate);
-                break;
-            }
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::DirectoryNotEmpty
-                ) =>
-            {
-                continue;
-            }
-            Err(e) => return Err(failed((1, format!("moving aside {}: {e}", dir.display())))),
-        }
-    }
-    let aside = aside.ok_or_else(|| {
-        failed((
-            1,
-            format!("moving aside {}: no free staging name", dir.display()),
-        ))
-    })?;
-    let restore = |error: (u8, String)| {
-        let (code, message) = failed(error);
-        match std::fs::rename(&aside, dir) {
-            Ok(()) => (code, message),
-            Err(e) => (
-                code,
-                format!(
-                    "{message}; restoring original bundle from {} to {} failed: {e}",
-                    aside.display(),
-                    dir.display()
-                ),
-            ),
-        }
-    };
-    if let Err(error) = recheck() {
-        return Err(restore(error));
-    }
-    if let Err(e) = std::fs::rename(stage, dir) {
-        return Err(restore((1, format!("publishing {}: {e}", dir.display()))));
-    }
-    sync_bundle_parent(dir)?;
-    // The old directory is replaced, not merged: drop what it held.
-    let dropped = if aside
-        .symlink_metadata()
-        .is_ok_and(|m| m.file_type().is_symlink())
-    {
-        std::fs::remove_file(&aside)
-    } else {
-        std::fs::remove_dir_all(&aside)
-    };
-    if let Err(e) = dropped {
-        edit_status(format_args!(
-            "warning: the replaced directory could not be removed; its contents remain at {}: {e}",
-            aside.display()
-        ));
-    }
-    Ok(())
-}
-
-/// One receipt line per thread, shared by legacy and typed edit publication.
-fn settlement_notes(
-    removed: &[jubarte::edit::RemovedComment],
-    kept: &[jubarte::edit::KeptComment],
-    document: &[u8],
-    decision: &str,
-) -> Vec<String> {
-    let reply_text = |replies: &[String]| match replies {
-        [] => String::new(),
-        [one] => format!(" and its reply {one}"),
-        many => format!(" and its replies {}", many.join(", ")),
-    };
-    let mut lines = Vec::new();
-    for c in removed {
-        let decision = c.decision.as_deref().unwrap_or(decision);
-        lines.push(format!(
-            "removed {} ({}){}: their anchor was text the {decision} removed",
-            c.id,
-            c.author,
-            reply_text(&c.replies)
-        ));
-    }
-    let comments = if kept.is_empty() {
-        Vec::new()
-    } else {
-        jubarte::comments::list_comments(document).unwrap_or_default()
-    };
-    for c in kept {
-        let paragraph = comments
-            .iter()
-            .find(|r| {
-                c.written_id
-                    .map_or_else(|| format!("c{}", r.id) == c.id, |id| r.id == id)
-            })
-            .and_then(|r| r.paragraph.as_deref())
-            .unwrap_or("the document");
-        lines.push(format!(
-            "kept {}{} on an empty anchor in {paragraph}",
-            c.id,
-            reply_text(&c.replies)
-        ));
-    }
-    lines
-}
-
 /// The `note:` lines of an applied edit: the flags' notes, then each
-/// anchor that matched as the paragraph reads rather than as typed. A kept
-/// comment names its paragraph in `published`, the copy the mode writes.
-fn edit_notes(
-    notes: &[String],
-    result: &jubarte::edit::EditResult,
-    published: &[u8],
-) -> Vec<String> {
+/// anchor that matched as the paragraph reads rather than as typed.
+fn edit_notes(notes: &[String], result: &jubarte::edit::EditResult) -> Vec<String> {
     let mut lines: Vec<String> = notes.iter().map(|note| format!("note: {note}")).collect();
-    let decision = if result.report.resolved_revisions.rejected.is_empty() {
-        "acceptance"
-    } else {
-        "rejection"
-    };
-    lines.extend(settlement_notes(
-        &result.report.removed_comments,
-        &result.report.kept_comments,
-        published,
-        decision,
-    ));
     for outcome in &result.report.operations {
         if let (Some(given), Some(read_as)) = (&outcome.anchor_given, &outcome.anchor_read_as) {
             let why = if jubarte::markdown::plain_anchor(given) == *read_as {
@@ -2096,20 +1166,47 @@ fn edit_notes(
     lines
 }
 
-/// A pure revision resolution keeps its existing absence of a bundle summary.
+/// Whether `plan` resolved only revisions and `result` resolved some: an
+/// `edit -p rN --accept/--reject` with no content operation prints the
+/// resolved lines, not the view. Ordinary edits keep the view.
 fn is_pure_resolution(plan: &jubarte::edit::EditPlan, result: &jubarte::edit::EditResult) -> bool {
     plan.operations.is_empty()
         && plan.resolve_revisions.is_some()
         && !result.report.resolved_revisions.is_empty()
 }
 
-/// Publish edit/add outputs, then confirm the document with full agent views.
+/// The resolved lines for a pure accept/reject, or the changed view
+/// otherwise. A view that cannot be read back is a warning, not a failed
+/// edit; lines that cannot be built fall back to the view the same way.
+fn resolved_or_view(
+    source: &[u8],
+    plan: &jubarte::edit::EditPlan,
+    result: &jubarte::edit::EditResult,
+    author: &str,
+    accepted: bool,
+    shown: Option<&str>,
+) -> Result<String, String> {
+    if is_pure_resolution(plan, result)
+        && let Ok(text) =
+            jubarte::edit::resolution::resolution_text(source, &result.report.resolved_revisions)
+    {
+        return Ok(text);
+    }
+    jubarte::markdown::changed_view(&result.redline, author, accepted, shown)
+        .map_err(|e| format!("the changed blocks cannot be shown: {e}"))
+}
+
+/// `edit` and `add` without --out-dir: the redline (in editing mode, the
+/// result) as one .docx at `path`, its PDF and PNG pages beside it, the
+/// `wrote` lines and notes on stderr, and the changed blocks' view of that
+/// file on stdout (a pure accept/reject prints the resolved lines).
 fn write_edited(
     job: &EditJob<'_>,
     path: &Path,
     result: &jubarte::edit::EditResult,
     notes: &[String],
     source: &[u8],
+    plan: &jubarte::edit::EditPlan,
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
     let document = match job.mode {
@@ -2117,6 +1214,17 @@ fn write_edited(
         Mode::Editing => &result.clean,
     };
     let mut outputs: Vec<(PathBuf, &[u8])> = vec![(path.to_path_buf(), document)];
+    // FILE itself (`X_modified.docx` edited again, or `-o FILE`) exists, so
+    // it is replaced only with --force (D15). The PNG names wait for the
+    // page count.
+    let pdf = job.pdf.then(|| path.with_extension("pdf"));
+    if !job.force
+        && let Some(taken) = std::iter::once(path.to_path_buf())
+            .chain(pdf)
+            .find(|p| p.exists())
+    {
+        return Err(taken_output(&taken));
+    }
     // Render before writing, so a failed render writes nothing.
     let rendered = if job.pdf || job.png {
         let options = jubarte::convert::PdfOptions {
@@ -2155,80 +1263,52 @@ fn write_edited(
             outputs.push((dir.join(png_name(&stem, i, png_count)), png));
         }
     }
-    // V2-05: never write over an input, whatever spelling or link named
-    // it; --force authorizes replacing an output, never an input. The
-    // in-place default (`X_modified.docx` edited again, without -o) is the
-    // command's own name for its input, not an alias of it.
-    for (output, _) in &outputs {
-        refuse_edit_output_alias(job, output)?;
-    }
-    refuse_output_collisions(
-        &outputs
-            .iter()
-            .map(|(path, _)| path.clone())
-            .collect::<Vec<_>>(),
-    )?;
     // The PNG names are known only now: nothing is written over a file.
     if !job.force
-        && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.symlink_metadata().is_ok())
+        && let Some((taken, _)) = outputs.iter().find(|(p, _)| p.exists())
     {
         return Err(taken_output(taken));
     }
-    // Stage beside each destination, then commit without clobbering unless
-    // --force was requested; a precommit failure leaves nothing behind.
-    let committed = publish_files(
-        &outputs,
-        &Recheck {
-            force: job.force,
-            alias: &|path| refuse_edit_output_alias(job, path),
-            source: &|| recheck_edit_source(job.file, source),
-        },
-    )?;
+    for (output, bytes) in &outputs {
+        std::fs::write(output, bytes)
+            .map_err(|e| fail(format!("writing {}: {e}", output.display())))?;
+    }
     if job.quiet {
         return Ok(());
     }
-    edit_status(format_args!(
-        "{}",
-        wrote_line(path, Format::Docx, document.len(), None)
-    ));
+    eprintln!("{}", wrote_line(path, Format::Docx, document.len(), None));
     if let Some(pages) = pdf_pages {
         let pdf = path.with_extension("pdf");
         let bytes = outputs
             .iter()
             .find(|(p, _)| *p == pdf)
             .map_or(0, |(_, b)| b.len());
-        edit_status(format_args!(
-            "{}",
-            wrote_line(&pdf, Format::Pdf, bytes, Some(pages))
-        ));
+        eprintln!("{}", wrote_line(&pdf, Format::Pdf, bytes, Some(pages)));
     }
     if png_count > 0 {
         let pattern = dir.join(format!("{stem}-page-NN.png"));
-        edit_status(format_args!(
-            "{}",
-            wrote_png_line(&pattern, png_count, job.dpi)
-        ));
+        eprintln!("{}", wrote_png_line(&pattern, png_count, job.dpi));
     }
-    for note in edit_notes(notes, result, document) {
-        edit_status(format_args!("{note}"));
+    for note in edit_notes(notes, result) {
+        eprintln!("{note}");
     }
-    print_edit_success(
-        job.file,
+    // The file is written: a view that cannot be read back is a warning,
+    // not a failed edit. A pure accept/reject prints the resolved lines.
+    match resolved_or_view(
         source,
-        path,
-        document,
-        result
-            .report
-            .operations
-            .iter()
-            .any(|op| op.kind == "redact"),
-    )
-    .map_err(|e| {
-        fail(format!(
-            "committed {}, but reporting the result failed: {e}",
-            comma_paths(&committed)
-        ))
-    })
+        plan,
+        result,
+        &result.report.author,
+        job.mode == Mode::Editing,
+        // An identifier agents read back: `/` on every OS (#568).
+        Some(&slash_path(path)),
+    ) {
+        Ok(text) => write_stdout(&text).map_err(fail),
+        Err(e) => {
+            eprintln!("warning: {e}");
+            Ok(())
+        }
+    }
 }
 
 /// One `edit` or `add` invocation, parsed.
@@ -2242,8 +1322,6 @@ struct EditFlags<'a> {
     operations: &'a [FlagOp],
     options: &'a EditOptions,
     dry_run: bool,
-    /// `--require-change` (`edit` only; `add` passes false).
-    require_change: bool,
     pdf: bool,
     png: bool,
     dpi: f32,
@@ -2253,13 +1331,7 @@ struct EditFlags<'a> {
 }
 
 fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
-    let source = read_word(flags.file).map_err(|mut message| {
-        if !flags.file.exists() && flags.plan.is_some() && matches!(flags.file.to_str(), Some("apply" | "replace" | "rewrite" | "insert" | "delete")) {
-            message.push_str("; this is legacy edit FILE --plan PLAN; for typed apply use: jubarte edit apply FILE --plan PLAN");
-        }
-        (1u8, message)
-    })?;
-    warn_nested_text_boxes(&source);
+    let source = read_word(flags.file).map_err(|m| (1u8, m))?;
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
@@ -2299,8 +1371,6 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     let target = flags.options.target(flags.file);
     let job = EditJob {
         file: flags.file,
-        plan: flags.plan,
-        explicit_output: flags.options.output.is_some(),
         target: &target,
         mode: if flags.options.editing_mode {
             Mode::Editing
@@ -2308,7 +1378,6 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
             Mode::Suggesting
         },
         dry_run: flags.dry_run,
-        require_change: flags.require_change,
         force: flags.options.force,
         pdf: flags.pdf,
         png: flags.png,
@@ -2363,29 +1432,15 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Usage(m) => (EXIT_USAGE, m),
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
-    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| {
-        refused(
-            &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
-            flags.file,
-            source,
-        )
-    })?;
+    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| refused(&e))?;
     if !flags.quiet {
         for note in &recorded.notes {
             outln!("note: {note}");
         }
     }
     if !flags.dry_run {
-        let warnings = write_plan(path, &recorded.json()).map_err(|error| {
-            if let Some(publish) = error
-                .get_ref()
-                .and_then(|source| source.downcast_ref::<jubarte::publication::PublishError>())
-            {
-                write_publication_warnings(&publish.warnings, &mut std::io::stderr().lock());
-            }
-            (1, format!("writing {}: {error}", path.display()))
-        })?;
-        write_publication_warnings(&warnings, &mut std::io::stderr().lock());
+        write_plan(path, &recorded.json())
+            .map_err(|e| (1, format!("writing {}: {e}", path.display())))?;
     }
     if !flags.quiet {
         outln!(
@@ -2412,7 +1467,7 @@ fn edit_exit(result: Result<(), (u8, String)>) -> ExitCode {
 }
 
 /// A refused plan: its report goes to stdout, the error to stderr, exit 3.
-fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, String) {
+fn refused(e: &jubarte::edit::EditError) -> (u8, String) {
     let report_lines: String = e
         .outcomes
         .iter()
@@ -2426,9 +1481,6 @@ fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, Str
             if let Some(c) = &o.context {
                 m.insert("ctx".into(), c.clone().into());
             }
-            if let Some(near) = &o.near {
-                m.insert("near".into(), serde_json::to_value(near).expect("near serializes"));
-            }
             if let Some(c) = &o.code {
                 m.insert("code".into(), c.clone().into());
             }
@@ -2438,25 +1490,15 @@ fn refused(e: &jubarte::edit::EditError, file: &Path, source: &[u8]) -> (u8, Str
             v.to_string() + "\n"
         })
         .collect();
-    let mut summary = serde_json::json!({
+    let summary = serde_json::json!({
         "ev": "summary",
         "status": "failed",
         "code": e.code,
         "operation": e.operation,
         "message": e.message,
     });
-    let actions =
-        e.revision_next_actions(&absolute(file), &jubarte::inspect::source_sha256(source));
-    if !actions.is_empty() {
-        summary["next_actions"] = serde_json::to_value(actions).expect("actions serialize");
-    }
     outln!("{report_lines}{summary}");
-    let mut message = format!("plan refused: {e}");
-    for near in e.outcomes.iter().filter_map(|o| o.near.as_ref()) {
-        message.push('\n');
-        message.push_str(&near.copy_hint());
-    }
-    (EXIT_PLAN_REFUSED, message)
+    (EXIT_PLAN_REFUSED, format!("plan refused: {e}"))
 }
 
 /// Insert `line` before the trailing `summary` line of a JSONL report.
@@ -2584,13 +1626,12 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         // An identifier agents read back: `/` on every OS (#568).
         slash_path(&default_output(&job.original, &job.modified))
     );
-    let mut out = job.output.as_deref().map(|path| Output {
+    let out = job.output.as_deref().map(|path| Output {
         kind: kind.unwrap_or(Format::Docx),
         path,
         force: job.force,
         quiet: job.quiet,
         input: &job.original,
-        markdown_input: false,
         view: &job.read,
         source: source.clone(),
         render: &job.render,
@@ -2623,9 +1664,6 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
             "read options shape the view; two Markdown documents write CriticMarkup to a .md"
                 .to_string(),
         ));
-    }
-    if let Some(out) = &mut out {
-        out.markdown_input = old.markdown.is_some();
     }
     let word_pair = old.markdown.is_none() && new.markdown.is_none();
     if word_pair
@@ -2665,25 +1703,15 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         } else {
             &job.modified
         };
-        let refusals = ImageRefusals::default();
-        let loader = image_loader(
-            &resource_dir(markdown_side, job.resource_path.as_deref()),
-            std::rc::Rc::clone(&refusals),
-        );
+        let loader = image_loader(resource_dir(markdown_side, job.resource_path.as_deref()));
         let options = jubarte::markdown::RedlineOptions {
             settings,
             reference: reference.as_deref(),
             critic: job.critic,
             images: Some(&loader),
         };
-        let docx = jubarte::markdown::redline(old.source(), new.source(), &options)
-            .map_err(|e| format!("compare failed: {e}"))?;
-        // `redline` drops the writer's warnings; the refusals its loader
-        // recorded become stderr's (#617).
-        for warning in image_refusal_warnings(&refusals) {
-            eprintln!("warning: {warning}");
-        }
-        docx
+        jubarte::markdown::redline(old.source(), new.source(), &options)
+            .map_err(|e| format!("compare failed: {e}"))?
     };
     match &out {
         None => Ok(print_agent_view(&redline, Some(source), &job.read)?),
@@ -2785,151 +1813,39 @@ fn markdown_text(path: &Path, bytes: Vec<u8>) -> Result<String, String> {
         .unwrap_or(text))
 }
 
-/// `(name, reason)` for every image load [`image_loader`] refuses, so the
-/// CLI can say why an image became its alt text: at `convert` the reason
-/// annotates the writer's own warning, and `redline` / `patch_documents`
-/// drop the writer's warnings, so `compare` and `diff` print this
-/// collection themselves (#617).
-type ImageRefusals = std::rc::Rc<std::cell::RefCell<Vec<(String, &'static str)>>>;
-
-/// `path` names a URL (`scheme:…`): a scheme is a letter, then letters,
-/// digits and `+-.`, up to its `:`. A decoded absolute path (`C:\…`) is
-/// not a scheme; the containment check judges it.
-fn url_scheme(path: &str) -> bool {
-    let Some((scheme, _)) = path.split_once(':') else {
-        return false;
-    };
-    scheme
-        .bytes()
-        .next()
-        .is_some_and(|b| b.is_ascii_alphabetic())
-        && scheme
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
-}
-
-/// `name`'s image path, its `%XX` escapes decoded and resolved against
-/// `root`, as the path inside `root` it lands on, or the reason it is
-/// refused. A URL is never fetched; an absolute path, a `..` walk or a
-/// symlink whose target leaves `root` is refused (#617).
-fn image_policy(root: &Path, name: &str) -> Result<PathBuf, &'static str> {
-    let mut decoded = Vec::with_capacity(name.len());
-    let bytes = name.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        let hex = bytes
-            .get(at + 1..at + 3)
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .and_then(|h| u8::from_str_radix(h, 16).ok());
-        match (bytes[at], hex) {
-            (b'%', Some(byte)) => {
-                decoded.push(byte);
-                at += 3;
-            }
-            (byte, _) => {
-                decoded.push(byte);
-                at += 1;
-            }
-        }
-    }
-    let named = std::str::from_utf8(&decoded).map_err(|_| "not found")?;
-    let path = PathBuf::from(named);
-    // Decoded first, so an encoded scheme (`file%3A%2F%2F…`, `DATA%3A`)
-    // is judged as what it names, not as an opaque relative path.
-    if !path.is_absolute() && url_scheme(named) {
-        return Err("a URL scheme");
-    }
-    // Canonicalized, `..` and links resolve to what the name really
-    // names; the prefix check keeps the read inside `root`.
-    let target = root.join(path).canonicalize().map_err(|_| "not found")?;
-    target
-        .strip_prefix(root)
-        .map(Path::to_path_buf)
-        .map_err(|_| "outside the resource root")
-}
-
-/// Reads images a Markdown file names: local paths, relative to `dir`,
-/// with `%XX` escapes decoded first. A decoded target that names a URL is
-/// never fetched, and the path it names must stay inside `dir` once
-/// symlinks are resolved, so a hostile document cannot read files its
-/// folder does not hold (#617). `--resource-path` names the trusted root
-/// the containment is checked against; it may sit anywhere. `None` —
-/// the image written as its alt text — records its reason in `refusals`.
-fn image_loader(dir: &Path, refusals: ImageRefusals) -> impl Fn(&str) -> Option<Vec<u8>> + use<> {
-    // Both sides of the containment check must be canonical: a resource
-    // root reached through a symlink is its target, or no image inside
-    // it would count as inside. The open root is the read's capability:
-    // resolving inside it, a link swapped in after the canonicalization
-    // cannot point the read out of it.
-    let root = dir
-        .canonicalize()
-        .and_then(|root| jubarte::publication::OutputRoot::open(&root).map(|cap| (root, cap)))
-        .ok();
+/// Reads images a Markdown file names: local paths, relative to `dir`, with
+/// `%XX` escapes decoded. URLs are not fetched.
+fn image_loader(dir: PathBuf) -> impl Fn(&str) -> Option<Vec<u8>> {
     move |name: &str| {
-        let loaded = root.as_ref().ok_or("not found").and_then(|(root, cap)| {
-            image_policy(root, name).and_then(|inside| cap.read(&inside).map_err(|_| "not found"))
-        });
-        match loaded {
-            Ok(bytes) => Some(bytes),
-            Err(reason) => {
-                refusals.borrow_mut().push((name.to_string(), reason));
-                None
+        if name.contains("://") || name.starts_with("data:") {
+            return None;
+        }
+        let mut decoded = Vec::with_capacity(name.len());
+        let bytes = name.as_bytes();
+        let mut at = 0;
+        while at < bytes.len() {
+            let hex = bytes
+                .get(at + 1..at + 3)
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            match (bytes[at], hex) {
+                (b'%', Some(byte)) => {
+                    decoded.push(byte);
+                    at += 3;
+                }
+                (byte, _) => {
+                    decoded.push(byte);
+                    at += 1;
+                }
             }
         }
-    }
-}
-
-/// The image loads `markdown`'s images would be refused under the root
-/// `dir` names, recorded like [`image_loader`]'s. `diff`'s text patch of
-/// two Markdown documents runs no loader — its images are never read —
-/// but it still says which loads its policy would refuse (#617). The
-/// `drawing:` and `data:` payloads the writer resolves inline are left
-/// out, exactly as the loader never sees them.
-fn report_image_refusals(dir: &Path, markdown: &[&str], refusals: &ImageRefusals) {
-    let Some(root) = dir.canonicalize().ok() else {
-        return;
-    };
-    for target in markdown
-        .iter()
-        .flat_map(|text| jubarte::markdown::image_targets(text))
-        .filter(|target| !(target.starts_with("drawing:") || target.starts_with("data:")))
-    {
-        if let Err(reason) = image_policy(&root, &target) {
-            refusals.borrow_mut().push((target, reason));
-        }
-    }
-}
-
-/// The refusals an [`image_loader`] recorded, as the writer phrases its
-/// fallback, for the compare and diff paths whose library calls drop
-/// `written.warnings` (#617).
-fn image_refusal_warnings(refusals: &ImageRefusals) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    refusals
-        .borrow()
-        .iter()
-        .filter(|refusal| seen.insert((*refusal).clone()))
-        .map(|(name, reason)| format!("image '{name}' was written as its alt text ({reason})"))
-        .collect()
-}
-
-/// `warning` with its reason when it is an image written as its alt text
-/// [`image_loader`] refused; `convert` annotates the writer's warnings
-/// rather than printing its collection a second time (#617).
-fn image_warning_reason(warning: &str, refusals: &ImageRefusals) -> String {
-    let reason = warning
-        .strip_prefix("image '")
-        .and_then(|tail| tail.strip_suffix("' was written as its alt text"))
-        .and_then(|name| {
-            refusals
-                .borrow()
-                .iter()
-                .find(|(refused, _)| refused == name)
-                .map(|(_, reason)| *reason)
-        });
-    match reason {
-        Some(reason) => format!("{warning} ({reason})"),
-        None => warning.to_string(),
+        let path = PathBuf::from(String::from_utf8(decoded).ok()?);
+        std::fs::read(if path.is_absolute() {
+            path
+        } else {
+            dir.join(path)
+        })
+        .ok()
     }
 }
 
@@ -2977,9 +1893,9 @@ fn diff_output<'a>(
 }
 
 /// `text` on stdout, or written to `out`.
-fn print_or_write(out: Option<&Output<'_>>, text: &str, label: &str) -> Result<(), ConvertFailure> {
+fn print_or_write(out: Option<&Output<'_>>, text: &str) -> Result<(), ConvertFailure> {
     match out {
-        Some(out) => write_text(out, text, label),
+        Some(out) => write_output(out, Produced::Text(text)),
         None => write_stdout(text).map_err(ConvertFailure::from),
     }
 }
@@ -2994,15 +1910,7 @@ fn run_text_diff(
     let out = diff_output(job.output, job.old, &render, job.force, job.quiet)?;
     let (old, new) = diff_inputs(job)?;
     let view = jubarte::text_diff::diff_documents_view(old.source(), new.source(), options)?;
-    use jubarte::text_diff::TextFormat;
-    let label = match options.format {
-        TextFormat::Github => "github diff",
-        TextFormat::Word => "word diff",
-        TextFormat::Normal => "normal diff",
-        TextFormat::Context => "context diff",
-        TextFormat::SideBySide => "side-by-side diff",
-    };
-    print_or_write(out.as_ref(), &view, label)
+    print_or_write(out.as_ref(), &view)
 }
 
 /// The two documents of a `diff`, each read as its name or bytes say.
@@ -3027,17 +1935,6 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
     let render = RenderArgs::default();
     let out = diff_output(job.output, job.old, &render, job.force, job.quiet)?;
     let (old, new) = diff_inputs(job)?;
-    let refusals = ImageRefusals::default();
-    // The patch of two Markdown documents runs no loader — its images
-    // are never read — but it still reports the loads the policy would
-    // refuse; a mixed pair's loader records its own (#617).
-    if let (Some(old_text), Some(new_text)) = (&old.markdown, &new.markdown) {
-        report_image_refusals(
-            &resource_dir(job.old, None),
-            &[old_text, new_text],
-            &refusals,
-        );
-    }
     let text = match job.patch {
         Some(columns) => {
             // Images of a Markdown side are read next to it.
@@ -3046,10 +1943,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
             } else {
                 job.new
             };
-            let loader = image_loader(
-                &resource_dir(markdown_side, None),
-                std::rc::Rc::clone(&refusals),
-            );
+            let loader = image_loader(resource_dir(markdown_side, None));
             let options = jubarte::markdown::RedlineOptions {
                 settings: job.settings.clone(),
                 reference: None,
@@ -3084,17 +1978,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
             }
         },
     };
-    let label = if job.patch.is_some() {
-        "patch diff"
-    } else {
-        "critic"
-    };
-    // `patch_documents` drops the writer's warnings; the refusals its
-    // loader recorded become stderr's (#617).
-    for warning in image_refusal_warnings(&refusals) {
-        eprintln!("warning: {warning}");
-    }
-    print_or_write(out.as_ref(), &text, label)
+    print_or_write(out.as_ref(), &text)
 }
 
 /// `convert`, for every pair of formats it takes.
@@ -3174,9 +2058,6 @@ fn run_convert_any(
         }
     }
     let converted = legacy.then_some(bytes.as_slice());
-    if from == Format::Docx && to == Format::Md {
-        warn_nested_text_boxes(&bytes);
-    }
     let render = RenderArgs::default();
     // Where a Word, Markdown or JSON output goes: -o, else FILE.<ext>.
     let output_at = |kind: Format| {
@@ -3184,8 +2065,7 @@ fn run_convert_any(
             .map_or_else(|| job.file.with_extension(kind.name()), Path::to_path_buf)
     };
     let at = |kind: Format, path: &Path, produced: Option<Produced<'_>>| {
-        let mut out = Output::of_task(kind, path, job.file, &render, job.force, job.quiet);
-        out.markdown_input = from == Format::Md;
+        let out = Output::of_task(kind, path, job.file, &render, job.force, job.quiet);
         match produced {
             Some(produced) => write_output(&out, produced),
             None => Ok(check_output(&out)?),
@@ -3311,42 +2191,14 @@ fn run_convert_any(
                 check_side_file(report, "--report", others, job.force)?;
             }
             ensure_writable(&path, job.force)?;
-            let before = (!job.quiet).then(|| confirmation_view(job.file, &bytes));
-            let out = match resolve {
+            let mut out = match resolve {
                 Some(resolve) => resolve(&bytes).map_err(|e| {
                     refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
                 })?,
                 None => bytes,
             };
             if update_fields {
-                let (updated, report_json) = refresh_fields(&out)?;
-                let docx = &updated.docx;
-                let mut outputs = vec![(path.clone(), docx.as_slice())];
-                if let Some(report) = job.report {
-                    outputs.push((report.to_path_buf(), report_json.as_bytes()));
-                }
-                publish_paths(&outputs, job.force).map_err(|e| e.to_string())?;
-                if !job.quiet {
-                    for field in &updated.fields {
-                        outln!(
-                            "{}\t{}\t{:?} -> {:?}",
-                            field.paragraph,
-                            field.kind,
-                            field.old,
-                            field.new
-                        );
-                    }
-                    eprintln!(
-                        "{} field(s) written; {} page(s)",
-                        updated.fields.len(),
-                        updated.page_count
-                    );
-                    eprintln!("{}", wrote_line(&path, Format::Docx, docx.len(), None));
-                }
-                if let Some(before) = before {
-                    print_success(job.file, before, &path, docx)?;
-                }
-                return Ok(());
+                out = refresh_fields(&out, job.report)?;
             }
             at(Format::Docx, &path, Some(Produced::Docx(&out)))
         }
@@ -3369,11 +2221,7 @@ fn run_convert_any(
                 .as_deref()
                 .map(read_document)
                 .transpose()?;
-            let refusals = ImageRefusals::default();
-            let loader = image_loader(
-                &resource_dir(job.file, markdown.resource_path.as_deref()),
-                std::rc::Rc::clone(&refusals),
-            );
+            let loader = image_loader(resource_dir(job.file, markdown.resource_path.as_deref()));
             // The changes and comments that name no author or date take
             // the flag's, else the front matter's, else the reference
             // document's creator and creation time, else Redline and now.
@@ -3407,7 +2255,7 @@ fn run_convert_any(
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;
             for warning in &written.warnings {
-                eprintln!("warning: {}", image_warning_reason(warning, &refusals));
+                eprintln!("warning: {warning}");
             }
             if matches!(to, Format::Pdf | Format::Png) {
                 return pdf_job(Some(&written.docx), to);
@@ -3421,31 +2269,33 @@ fn run_convert_any(
     }
 }
 
-/// `jubarte debug`'s report options: the checks asked for, else the
-/// triage.
-fn debug_options(
-    checks: Vec<DebugCheck>,
-    opts: jubarte::debug::Options,
-) -> jubarte::debug::Options {
-    if checks.is_empty() {
-        opts
-    } else {
-        jubarte::debug::Options {
-            checks: checks.into_iter().map(Into::into).collect(),
-            ..opts
-        }
-    }
-}
-
 /// `jubarte debug`: print the report for one package, or two compared.
-fn run_debug(files: &[PathBuf], list: bool, opts: &jubarte::debug::Options) -> Result<(), String> {
+fn run_debug(
+    files: &[PathBuf],
+    list: bool,
+    checks: Vec<DebugCheck>,
+    part: Option<String>,
+    grep: Option<String>,
+    limit: usize,
+    context: usize,
+) -> Result<(), String> {
     let read = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let a = read(&files[0])?;
     let b = files.get(1).map(read).transpose()?;
+    let mut opts = jubarte::debug::Options {
+        part,
+        grep,
+        limit,
+        context,
+        ..Default::default()
+    };
+    if !checks.is_empty() {
+        opts.checks = checks.into_iter().map(Into::into).collect();
+    }
     let out = if list {
-        jubarte::debug::list(&a, b.as_deref(), opts)?
+        jubarte::debug::list(&a, b.as_deref(), &opts)?
     } else {
-        jubarte::debug::report(&a, b.as_deref(), opts)?
+        jubarte::debug::report(&a, b.as_deref(), &opts)?
     };
     write_stdout(&out)
 }
@@ -3467,14 +2317,19 @@ struct ValidateJob<'a> {
 /// ([`jubarte::validate::fails`]), `Err` when a file could not be read or
 /// written or the rules cannot run. With `--repair` the findings are the
 /// repaired package's.
-fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
+fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
     use jubarte::validate::{fails, findings_text, repair, validate_with};
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
     if let Some(out) = job.repair {
-        ensure_writable(out, job.force)?;
+        if out.exists() && !job.force {
+            return Err(format!(
+                "output '{}' already exists (use --force to overwrite)",
+                out.display()
+            ));
+        }
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
-        publish_file(out, &fixed.docx, job.force)?;
+        std::fs::write(out, &fixed.docx).map_err(|e| format!("{}: {e}", out.display()))?;
         if !job.json {
             outln!("repaired {} finding(s)", fixed.repaired.len());
         }
@@ -3580,24 +2435,6 @@ fn cli_main() -> ExitCode {
         std::iter::once(std::ffi::OsString::from("jubarte")).chain(std::env::args_os().skip(1)),
     )
     .unwrap_or_else(|error| {
-        // The shared parser rejects non-DOCX edit outputs before execution.
-        // Preserve that refusal, but identify colliding publication roles
-        // with the same stable code as the executor (C9).
-        if error.kind() == clap::error::ErrorKind::ArgumentConflict
-            && let Ok(raw) = <Cli as clap::Parser>::try_parse_from(std::env::args_os())
-            && let Some(Command::Edit {
-                options, pdf: true, ..
-            }) = raw.command
-            && let Some(output) = options.output
-            && let Err((code, message)) =
-                refuse_output_collisions(&[output.clone(), output.with_extension("pdf")])
-        {
-            eprintln!("error: {message}");
-            std::process::exit(i32::from(code));
-        }
-        if edit_template::usage(&argv, &error) || edit_typed::usage(&argv, &error) {
-            std::process::exit(64);
-        }
         // A removed flag names what replaced it; clap's tip may name a
         // lookalike.
         if let Some((old, now)) =
@@ -3618,13 +2455,6 @@ fn cli_main() -> ExitCode {
     }
     let quiet = cli.quiet;
     match cli.command {
-        Some(Command::EditTemplate(jubarte::cli::edit_template::TemplateDispatch {
-            action: jubarte::cli::edit_template::TemplateAction::Template(options),
-        })) => return edit_template::run(&options, quiet),
-        Some(Command::TypedEdit(typed)) => return edit_typed::run(&typed, quiet),
-        Some(Command::Check { file, expect, json }) => {
-            return check::run(&file, expect.as_deref(), json, quiet);
-        }
         Some(Command::Compare(compare)) => {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }
@@ -3654,7 +2484,7 @@ fn cli_main() -> ExitCode {
                 &file,
                 &out,
                 &selection.filter(),
-                jubarte::changes::accept_changes_with_report,
+                jubarte::changes::accept_changes,
                 "accept",
             );
         }
@@ -3673,7 +2503,7 @@ fn cli_main() -> ExitCode {
                 &file,
                 &out,
                 &selection.filter(),
-                jubarte::changes::reject_changes_with_report,
+                jubarte::changes::reject_changes,
                 "reject",
             );
         }
@@ -3798,7 +2628,6 @@ fn cli_main() -> ExitCode {
             consume,
             options,
             dry_run,
-            require_change,
             pdf,
             png,
             dpi,
@@ -3820,7 +2649,6 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run,
-                require_change,
                 pdf,
                 png,
                 dpi,
@@ -3847,7 +2675,6 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run: false,
-                require_change: false,
                 pdf: false,
                 png: false,
                 dpi: 96.0,
@@ -3856,25 +2683,7 @@ fn cli_main() -> ExitCode {
             };
             return edit_exit(run_flags(&flags));
         }
-        Some(Command::Capabilities {
-            json,
-            operation,
-            field,
-            matrix,
-        }) => {
-            if matrix || operation.is_some() || field.is_some() {
-                let answer =
-                    jubarte::capabilities::discovery("cli", operation.as_deref(), field.as_deref());
-                let printed = if json {
-                    write_stdout(format!(
-                        "{}\n",
-                        serde_json::to_string_pretty(&answer).expect("discovery serializes")
-                    ))
-                } else {
-                    write_stdout(jubarte::capabilities::discovery_text(&answer))
-                };
-                return exit_code(printed);
-            }
+        Some(Command::Capabilities { json }) => {
             let manifest = jubarte::capabilities::capabilities("cli");
             let printed = if json {
                 outln!(
@@ -3936,7 +2745,10 @@ fn cli_main() -> ExitCode {
                 Ok(false) => ExitCode::SUCCESS,
                 // Like `edit`'s 3: a CI step can gate on a visual change.
                 Ok(true) => ExitCode::from(5),
-                Err(e) => convert_exit_code(Err(e)),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
             };
         }
         Some(Command::Debug {
@@ -3948,20 +2760,8 @@ fn cli_main() -> ExitCode {
             grep,
             limit,
             context,
-            full_lines,
         }) => {
-            let opts = debug_options(
-                checks,
-                jubarte::debug::Options {
-                    part,
-                    grep,
-                    limit,
-                    context,
-                    full_lines,
-                    ..Default::default()
-                },
-            );
-            return exit_code(run_debug(&files, list, &opts));
+            return exit_code(run_debug(&files, list, checks, part, grep, limit, context));
         }
         Some(Command::Append {
             files,
@@ -4011,7 +2811,7 @@ fn cli_main() -> ExitCode {
             };
             return match run_validate(&job) {
                 Ok(true) => ExitCode::from(2),
-                result => convert_exit_code(result.map(|_| ())),
+                result => exit_code(result.map(|_| ())),
             };
         }
         Some(Command::Scrub {
@@ -4087,187 +2887,41 @@ fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result
 /// `accept_revisions` / `reject_revisions`: a package in, the resolved one out.
 type Resolve = fn(&[u8]) -> Result<Vec<u8>, jubarte::opc::OpcError>;
 
-/// Prepare the refreshed package and its JSON report together, without file I/O.
-/// `convert --update-fields` publishes both only after staging succeeds.
-fn refresh_fields(bytes: &[u8]) -> Result<(jubarte::fields::Updated, String), String> {
+/// `convert --update-fields`: the package with its field results refreshed
+/// from jubarte's layout, one line per field written on stdout and
+/// `{page_count, fields}` in `report` when given.
+fn refresh_fields(bytes: &[u8], report: Option<&Path>) -> Result<Vec<u8>, String> {
     let updated = jubarte::fields::update_fields(bytes).map_err(|e| e.to_string())?;
-    let json = serde_json::json!({
-        "page_count": updated.page_count,
-        "fields": updated.fields,
-    });
-    Ok((updated, json.to_string()))
+    for field in &updated.fields {
+        outln!(
+            "{}\t{}\t{:?} -> {:?}",
+            field.paragraph,
+            field.kind,
+            field.old,
+            field.new
+        );
+    }
+    eprintln!(
+        "{} field(s) written; {} page(s)",
+        updated.fields.len(),
+        updated.page_count
+    );
+    if let Some(report) = report {
+        let json = serde_json::json!({
+            "page_count": updated.page_count,
+            "fields": updated.fields,
+        });
+        std::fs::write(report, json.to_string())
+            .map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    Ok(updated.docx)
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
-
-    #[test]
-    fn publication_cleanup_warnings_reach_stderr_for_both_outcomes() {
-        use jubarte::publication::{PublishError, PublishReport};
-        let warnings = vec!["cleaning staging: injected cleanup".to_string()];
-        for result in [
-            Ok(PublishReport {
-                warnings: warnings.clone(),
-            }),
-            Err(PublishError {
-                committed: vec!["output".into()],
-                durability_uncertain: true,
-                source: std::io::Error::other("injected SyncParent"),
-                warnings: warnings.clone(),
-            }),
-        ] {
-            let failed = result.is_err();
-            let mut stderr = Vec::new();
-            let reported = report_publication(result, &mut stderr);
-            assert_eq!(reported.is_err(), failed);
-            assert_eq!(
-                String::from_utf8(stderr).unwrap(),
-                "warning: cleaning staging: injected cleanup\n"
-            );
-        }
-    }
-
-    #[test]
-    fn comment_changes_note_agrees_with_its_count() {
-        assert_eq!(
-            comment_changes_note(1),
-            "note: 1 tracked change inside comments was left; accept or reject all to settle it"
-        );
-        assert_eq!(
-            comment_changes_note(2),
-            "note: 2 tracked changes inside comments were left; accept or reject all to settle them"
-        );
-    }
-
-    fn bundle_restore_failure(recheck_fails: bool, restore_fails: bool) {
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("bundle");
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("original"), b"old bundle").unwrap();
-        let stage = stage_bundle_dir(&dir).unwrap();
-        std::fs::write(stage.join("replacement"), b"new bundle").unwrap();
-        let aside = staging_path(&dir, 100);
-        let restore_error = std::cell::RefCell::new(String::new());
-        let original_error = std::cell::RefCell::new(String::new());
-        let error = publish_dir(&stage, &dir, true, || {
-            if !aside.exists() {
-                return Ok(());
-            }
-            if restore_fails {
-                // Obstruct with a non-empty directory: every platform refuses
-                // to rename a directory onto one. Unix answers ENOTEMPTY;
-                // Windows answers ERROR_DIR_NOT_EMPTY (std's rename falls
-                // back to POSIX-semantics FileRenameInfoEx and maps that
-                // refusal). A plain file cannot obstruct: Windows
-                // MOVEFILE_REPLACE_EXISTING replaces it, so the restore
-                // would succeed and never reach the path under test.
-                std::fs::create_dir(&dir).unwrap();
-                std::fs::write(dir.join("obstruction"), b"blocked").unwrap();
-                *restore_error.borrow_mut() =
-                    std::fs::rename(&aside, &dir).unwrap_err().to_string();
-            }
-            if recheck_fails {
-                let message = "SOURCE_CHANGED: deterministic recheck failure".to_string();
-                *original_error.borrow_mut() = message.clone();
-                return Err((EXIT_USAGE, message));
-            }
-            std::fs::remove_dir_all(&stage).unwrap();
-            *original_error.borrow_mut() = format!(
-                "publishing {}: {}",
-                dir.display(),
-                std::fs::rename(&stage, &dir).unwrap_err()
-            );
-            Ok(())
-        })
-        .unwrap_err();
-        assert_eq!(error.0, if recheck_fails { EXIT_USAGE } else { 1 });
-        assert!(!stage.exists(), "staging was not cleaned up");
-        if restore_fails {
-            assert_eq!(
-                std::fs::read(aside.join("original")).unwrap(),
-                b"old bundle"
-            );
-            assert_eq!(std::fs::read(dir.join("obstruction")).unwrap(), b"blocked");
-            assert!(error.1.contains(&*original_error.borrow()), "{}", error.1);
-            assert!(
-                error.1.contains(&aside.display().to_string()),
-                "{}",
-                error.1
-            );
-            assert!(error.1.contains("restoring"), "{}", error.1);
-            assert!(error.1.contains(&*restore_error.borrow()), "{}", error.1);
-        } else {
-            assert_eq!(std::fs::read(dir.join("original")).unwrap(), b"old bundle");
-            assert!(!aside.exists());
-            assert_eq!(error.1, *original_error.borrow());
-        }
-    }
-
-    #[test]
-    fn audit_d13_bundle_recheck_restore_failure_names_original() {
-        bundle_restore_failure(true, true);
-    }
-
-    #[test]
-    fn audit_d13_bundle_install_restore_failure_names_original() {
-        bundle_restore_failure(false, true);
-    }
-
-    #[test]
-    fn audit_d13_bundle_recheck_restore_success_keeps_message() {
-        bundle_restore_failure(true, false);
-    }
-
-    #[test]
-    fn audit_d13_bundle_install_restore_success_keeps_message() {
-        bundle_restore_failure(false, false);
-    }
-
-    /// GHSA-m665-v7pm-7grj: `jubarte debug` opens a package every other
-    /// route refuses — a local header naming an entry differently than the
-    /// central directory — because triaging refused input is its purpose.
-    #[test]
-    fn debug_opens_a_dual_header_package_instead_of_refusing() {
-        use std::io::Write as _;
-        let dir = tempfile::tempdir().unwrap();
-        let mut package = Vec::new();
-        {
-            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut package));
-            let options = zip::write::SimpleFileOptions::default();
-            for (name, body) in [
-                (
-                    "[Content_Types].xml",
-                    "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>",
-                ),
-                (
-                    "_rels/.rels",
-                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>",
-                ),
-                (
-                    "word/document.xml",
-                    "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body/></w:document>",
-                ),
-            ] {
-                writer.start_file(name, options).unwrap();
-                writer.write_all(body.as_bytes()).unwrap();
-            }
-            writer.finish().unwrap();
-        }
-        let at = {
-            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&package)).unwrap();
-            archive.by_name("word/document.xml").unwrap().header_start() as usize
-        };
-        assert_eq!(&package[at..at + 4], b"PK\x03\x04");
-        let range = at + 30..at + 30 + b"word/document.xml".len();
-        package[range].copy_from_slice(b"w0rd/document.xml");
-        let file = dir.path().join("cloaked.docx");
-        std::fs::write(&file, &package).unwrap();
-        run_debug(&[file], false, &jubarte::debug::Options::default())
-            .expect("debug triages a dual-header package");
-    }
 
     #[test]
     fn append_parses_files_output_and_break() {
@@ -5274,7 +3928,7 @@ mod tests {
         assert_eq!(json["pages"][2]["only_in"], "b");
 
         let err = run_diff_render(&diff_job(&a, &b, Some(&out))).expect_err("files exist");
-        assert!(err.message.contains("already exists"), "{err:?}");
+        assert!(err.contains("already exists"), "{err}");
         let again = DiffRenderJob {
             force: true,
             overlay: false,
@@ -5314,7 +3968,7 @@ mod tests {
         );
         let missing = dir.path().join("missing.docx");
         let err = run_diff_render(&diff_job(&missing, &b, None)).expect_err("no file");
-        assert!(err.message.contains("missing.docx"), "{err:?}");
+        assert!(err.contains("missing.docx"), "{err}");
     }
 
     #[test]
@@ -5343,18 +3997,20 @@ mod tests {
     fn refresh_fields_writes_the_report_and_says_when_it_cannot() {
         let dir = tempfile::tempdir().expect("tempdir");
         let report = dir.path().join("fields.json");
-        let (updated, json) = refresh_fields(&tiny_docx_bytes("Calibri")).expect("update");
-        publish_file(&report, json.as_bytes(), false).expect("report");
+        let written = refresh_fields(&tiny_docx_bytes("Calibri"), Some(&report)).expect("update");
         assert_eq!(
-            jubarte::inspect::paragraphs(&updated.docx).unwrap()[0].text,
+            jubarte::inspect::paragraphs(&written).unwrap()[0].text,
             "HELLO"
         );
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
         assert_eq!(json["page_count"], 1);
-        assert!(json["fields"].is_array());
-        let err = publish_file(&dir.path().join("no/such/dir.json"), b"{}", false).unwrap_err();
+        let err = refresh_fields(
+            &tiny_docx_bytes("Calibri"),
+            Some(&dir.path().join("no/such/dir.json")),
+        )
+        .unwrap_err();
         assert!(err.contains("writing"), "{err}");
-        assert!(refresh_fields(b"not a zip").is_err());
+        assert!(refresh_fields(b"not a zip", None).is_err());
     }
 }
