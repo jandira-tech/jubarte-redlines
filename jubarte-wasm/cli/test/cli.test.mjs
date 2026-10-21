@@ -1612,3 +1612,67 @@ test("read and changes name the input's validity findings once; -q drops it (#12
     assert.equal(r.err, "", args.join(" "));
   }
 });
+
+// `read --for-edit` (V2-10): the working-document JSON the binary prints,
+// decisions and refusals with its exit codes.
+test("read --for-edit prints the binary's working-document JSON", () => {
+  const src = copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-for-edit.docx");
+  const plain = run("read", "received-for-edit.docx", "--for-edit");
+  assert.equal(plain.code, 0, plain.err);
+  const result = JSON.parse(plain.out);
+  assert.equal(result.schema, "jubarte-read-for-edit-v1");
+  assert.deepEqual(result.settled, { changed: false });
+  assert.equal(result.basis.existing_revisions, "keep");
+  assert.equal(result.basis.track, "on");
+  assert.equal(result.paragraphs.length, 28);
+  assert.deepEqual(result.input_validity, {
+    errors: 0, warnings: 2, next: "jubarte validate received-for-edit.docx",
+  });
+  const p3 = result.paragraphs.find((p) => p.target.short_id === "p3");
+  assert.match(p3.original.text, /^Consultant will deliver/);
+
+  // --reject-change r0 settles the insertion out of the working text.
+  const decided = run("read", "received-for-edit.docx", "--for-edit", "--reject-change", "r0");
+  assert.equal(decided.code, 0, decided.err);
+  const rejected = JSON.parse(decided.out);
+  assert.deepEqual(rejected.basis.reject, ["r0"]);
+  assert.deepEqual(rejected.settled, { changed: true, rejected: ["r0"] });
+  const rejectedP3 = rejected.paragraphs.find((p) => p.target.short_id === "p3");
+  assert.equal(
+    rejectedP3.working.text,
+    "Consultant will deliver the services in each Statement of Work, including  route-cost reports and a monthly review call.",
+  );
+
+  // An unknown change id is a plan refusal (exit 3), as the binary's.
+  const unknown = run("read", "received-for-edit.docx", "--for-edit", "--accept-change", "r99");
+  assert.equal(unknown.code, 3, unknown.err);
+  assert.equal(unknown.out, "");
+  assert.match(unknown.err, /error: UNKNOWN_CHANGE: resolve_revisions: no tracked change r99/);
+
+  // -o writes the same JSON; stdout is free, so the input's validity
+  // notice and the wrote line stay on stderr.
+  const out = path.join(tmp, "fe.json");
+  const written = run("read", "received-for-edit.docx", "--for-edit", "-o", "fe.json");
+  assert.equal(written.code, 0, written.err);
+  assert.equal(written.out, "");
+  assert.equal(
+    written.err,
+    `input has 2 validity warnings; jubarte validate received-for-edit.docx lists them\n` +
+      `wrote fe.json (json, ${fs.statSync(out).size} bytes)\n`,
+  );
+  assert.deepEqual(JSON.parse(fs.readFileSync(out, "utf8")), result);
+  void src;
+});
+
+test("read --for-edit usage errors as the binary", () => {
+  copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-for-edit-usage.docx");
+  for (const args of [
+    ["read", "received-for-edit-usage.docx", "--accept-change", "r0"],
+    ["read", "received-for-edit-usage.docx", "--for-edit", "-o", "fe.md"],
+    ["read", "received-for-edit-usage.docx", "--for-edit", "--json"],
+  ]) {
+    const r = run(...args);
+    assert.equal(r.code, 2, `${args}: ${r.out} ${r.err}`);
+    assert.match(r.err, /error:/);
+  }
+});
