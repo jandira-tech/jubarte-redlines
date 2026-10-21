@@ -111,8 +111,8 @@ impl XNamespace {
         }
     }
 
-    /// The empty namespace (no URI). Equal to `XNamespace::get("")`; the
-    /// XML namespace in OOXML for unqualified elements.
+    /// The empty namespace (no URI). Equal to `XNamespace::get("")`;
+    /// the XML namespace in OOXML for unqualified elements.
     pub fn none() -> XNamespace {
         XNamespace::get("")
     }
@@ -266,6 +266,24 @@ impl std::fmt::Debug for XName {
 use std::any::Any;
 use std::collections::HashMap;
 
+// N01 mechanism counter (tests only): attribute-name comparisons the DOM
+// performs (bulk index lookups count once per incoming name). Incremental `set_attribute_value` insertion pays one Vec scan
+// per name (quadratic in a tag's width); the parser's bulk
+// `set_attributes` probes a hash index instead. Per thread, so tests
+// running side by side in one `cargo test` process do not count each
+// other's work.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static ATTR_NAME_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Add one to this thread's [`ATTR_NAME_PROBES`].
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+fn bump_attr_name_probes() {
+    ATTR_NAME_PROBES.with(|c| c.set(c.get() + 1));
+}
+
 /// Handle into a [`Dom`] arena: the slot index of a node, plus a `Debug` /
 /// `Copy` so it can travel cheaply through hot loops (compare, atomize).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -400,7 +418,7 @@ impl Dom {
     /// any subsequent internal push provably reallocates. Test-only helper
     /// that pins `capacity == length` for the MEM-ATTRIBUTE-01 invariant.
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     pub fn shrink_arena_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
     }
@@ -890,6 +908,54 @@ impl Dom {
         (&a.name, a.value.as_str())
     }
 
+    /// Insert a batch of attributes in declaration order. The parser uses
+    /// this: pushing N attributes through [`Self::set_attribute_value`]
+    /// re-scans the growing `attrs` Vec for each name (N(N-1)/2
+    /// comparisons); here a wide tag costs O(N) — one hash probe per name
+    /// against an index built once. Narrow tags take a short linear scan.
+    ///
+    /// Semantics match the incremental path exactly: a name already
+    /// present (existing, or repeated in `attrs` after expansion) keeps
+    /// its first declaration-order slot and takes the latest value — what
+    /// N `set_attribute_value` calls produce.
+    pub(crate) fn set_attributes(&mut self, id: NodeId, attrs: Vec<(XName, String)>) {
+        let data = self.data_mut(id);
+        if attrs.is_empty() {
+            return;
+        }
+        // Common WordprocessingML tags stay under 16 attributes
+        // (`w:rFonts` up to 9, `w:spacing` 8, `w:p` and `w:pgMar` 7). At
+        // that width a scan of at most 16 x 16 comparisons beats allocating
+        // a hash index; wider tags (a root's namespace declarations, the
+        // #650 attack) take the index.
+        if attrs.len() <= 16 {
+            for (name, value) in attrs {
+                if let Some(a) = data.attrs.iter_mut().find(|a| a.name == name) {
+                    a.value = value;
+                } else {
+                    data.attrs.push(Attr { name, value });
+                }
+            }
+            return;
+        }
+        let mut index: HashMap<XName, usize> =
+            HashMap::with_capacity(data.attrs.len() + attrs.len());
+        for (i, a) in data.attrs.iter().enumerate() {
+            index.entry(a.name.clone()).or_insert(i);
+        }
+        for (name, value) in attrs {
+            #[cfg(test)]
+            bump_attr_name_probes();
+            match index.get(&name) {
+                Some(&i) => data.attrs[i].value = value,
+                None => {
+                    index.insert(name.clone(), data.attrs.len());
+                    data.attrs.push(Attr { name, value });
+                }
+            }
+        }
+    }
+
     /// Add or update an attribute. Passing `Some(value)` inserts the
     /// attribute when missing or replaces its value when present;
     /// `None` removes any matching attribute. Matches the TS
@@ -899,8 +965,22 @@ impl Dom {
         match value {
             None => attrs.retain(|a| &a.name != name),
             Some(v) => {
-                if let Some(a) = attrs.iter_mut().find(|a| &a.name == name) {
-                    a.value = v.to_string();
+                #[cfg(test)]
+                let found = {
+                    let mut hit = None;
+                    for (i, a) in attrs.iter().enumerate() {
+                        bump_attr_name_probes();
+                        if &a.name == name {
+                            hit = Some(i);
+                            break;
+                        }
+                    }
+                    hit
+                };
+                #[cfg(not(test))]
+                let found = attrs.iter().position(|a| &a.name == name);
+                if let Some(i) = found {
+                    attrs[i].value = v.to_string();
                 } else {
                     attrs.push(Attr {
                         name: name.clone(),
@@ -1205,6 +1285,17 @@ impl Dom {
     pub fn parse_xdocument(&mut self, xml: &str) -> NodeId {
         parse::parse_xdocument(self, xml)
     }
+
+    /// Checked variant of [`Self::parse_xdocument`]: refuses input that
+    /// fails [`parse::validate_xml`] (including the tag-width and namespace
+    /// budgets) before any DOM node is built.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`parse::validate_xml`] error string unchanged.
+    pub fn try_parse_xdocument(&mut self, xml: &str) -> Result<NodeId, String> {
+        parse::try_parse_xdocument(self, xml)
+    }
     /// Serialize an element subtree to an XML string. See
     /// [`serialize::serialize_element`] for namespace-prefix scope rules.
     pub fn serialize_element(&self, el: NodeId) -> String {
@@ -1236,7 +1327,7 @@ impl Dom {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod node_layout_tests {
     use super::*;
 
@@ -1282,7 +1373,7 @@ mod node_layout_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod intern_tests {
     use super::*;
 
