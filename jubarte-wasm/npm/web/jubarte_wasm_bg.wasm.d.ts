@@ -16,8 +16,6 @@ export const auditDocument: (a: number, b: number, c: number, d: number, e: numb
 export const auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const capabilities: (a: number) => void;
 export const capabilitiesText: (a: number, b: number, c: number) => void;
-export const capabilityQuery: (a: number, b: number, c: number, d: number, e: number) => void;
-export const capabilityQueryText: (a: number, b: number, c: number, d: number, e: number) => void;
 export const changeFilter: (a: number, b: number, c: number) => void;
 export const changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const changesText: (a: number, b: number, c: number) => void;
@@ -65,7 +63,6 @@ export const renderoutput_pdf: (a: number, b: number) => void;
 export const repairDocument: (a: number, b: number, c: number) => void;
 export const repairoutput_docx: (a: number, b: number) => void;
 export const repairoutput_json: (a: number, b: number) => void;
-export const resolutionText: (a: number, b: number, c: number, d: number, e: number) => void;
 export const scrubDocument: (a: number, b: number, c: number, d: number, e: number) => void;
 export const sourceSha256: (a: number, b: number, c: number) => void;
 export const tablesText: (a: number, b: number, c: number) => void;

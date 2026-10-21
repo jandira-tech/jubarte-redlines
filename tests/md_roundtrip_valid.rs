@@ -20,7 +20,7 @@ use regex::Regex;
 const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 
 /// How many times `markdown` names each revision number, as a tag
-/// (`{r5 @AC}`, `rev r9`, `break-ins r3`, `styles.r0`): a number the
+/// (`{>>r5 @AC<<}`, `rev r9`, `break-ins r3`, `styles.r0`): a number the
 /// view names twice is written twice, as Word's own files repeat an id
 /// for one change split across carriers (`r43+43`).
 fn named_numbers(markdown: &str) -> HashMap<u32, usize> {

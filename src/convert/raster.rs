@@ -615,7 +615,7 @@ fn paint_image(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::convert::font::FaceId;
@@ -903,7 +903,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod raster_payload_boundary_tests {
     use super::*;
 
@@ -1123,7 +1123,7 @@ mod raster_payload_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod residual_display_contract_tests {
     use super::*;
     use crate::convert::font::FaceId;

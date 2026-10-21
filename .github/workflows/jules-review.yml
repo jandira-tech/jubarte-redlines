@@ -35,6 +35,8 @@ jobs:
       - name: Jules review
         uses: arthrod/jules-pr-reviewer@8972cac9a5a8d3f389abbfb4b13f0b4a2c0dc650
         with:
+          rules_file: ""
+          rules_directory: ""
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # Jules checks out the PR branch itself and reviews the full base...head diff with repo context.

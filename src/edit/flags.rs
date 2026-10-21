@@ -116,7 +116,6 @@ pub fn plan_from_flags(
             date: date.map(str::to_string),
             initials: None,
             resolve_revisions,
-            removed_anchor_comments: Default::default(),
             existing_revisions: existing,
             operations,
             update_fields: false,

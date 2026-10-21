@@ -770,7 +770,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1058,7 +1058,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod imported_source_contract_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -1325,7 +1325,7 @@ mod imported_source_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod residual_import_contract_tests {
     use super::*;
 

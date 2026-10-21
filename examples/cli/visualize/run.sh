@@ -70,15 +70,6 @@ An agent has three kinds of eyes:
 - **Machine views** (`--json` everywhere, `--report`, `visual-diff --json`):
   for checking a result instead of reading it.
 
-Attribution uses braces after the change closer: `{++new++}{r1 @AL}`.
-`{>>c5 @AC: note<<}` remains a comment. A deletion inside another author's
-insertion names its parent with `{r3 @BO re r1 @AL}`. Distinct revision ids
-stay separate; only a deletion directly followed in the rendered stream by
-a live insertion from the same author forms `{~~old~>new~~}{r4+5 @AL}`.
-Different inline dates keep the two marks separate. An inserted paragraph
-mark is `¶{r7 @AL}`. To write literal attribution-shaped text after a closer,
-escape the opening brace: `{++new++}\{r1 @AL}`; write literal `¶\{` likewise.
-
 The document is a consulting agreement that Ann Counsel already redlined:
 nine tracked changes (insertions, deletions, a table cell change) and two
 comments, built from CriticMarkup:

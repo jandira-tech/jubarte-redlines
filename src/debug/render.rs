@@ -1241,7 +1241,7 @@ fn layout_lines(pkg: &Package, rels: &[Rel]) -> (Vec<String>, usize) {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod story_diagnostic_contract_tests {
     use super::*;
     use std::io::{Cursor, Write};
