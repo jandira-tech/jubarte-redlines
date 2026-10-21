@@ -1100,9 +1100,7 @@ Markdown inputs:
 
       --resource-path <DIR>
           Where images named by the Markdown are found (default: the original's
-          directory when it is Markdown, else the modified's). Only images that resolve
-          inside that directory are read, symlinks resolved; a URL or a path out of it
-          is written as its alt text, with a warning that says why
+          directory when it is Markdown, else the modified's)
 
 Rendering (-o FILE.pdf or FILE.png):
       --revisions <REVISIONS>
@@ -1311,11 +1309,7 @@ Options:
 
 ```text
 $ jubarte-redlines accept --help
-Accept all tracked changes, or select by ID, author or kind.
-
-Every part counts: the body, headers, footers, notes and comment bodies. An author or
-kind selection reaches comment bodies too, but no ID names a comment-body change, so an
-ID selection leaves those tracked.
+Accept all tracked changes, or select by ID, author or kind
 
 Usage: jubarte-redlines accept [OPTIONS] --output <FILE> <FILE>
 
@@ -1333,8 +1327,7 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
-          and stay tracked
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1401,11 +1394,7 @@ Rendering (-o FILE.pdf or FILE.png):
 
 ```text
 $ jubarte-redlines reject --help
-Reject all tracked changes, or select by ID, author or kind.
-
-Every part counts: the body, headers, footers, notes and comment bodies. An author or
-kind selection reaches comment bodies too, but no ID names a comment-body change, so an
-ID selection leaves those tracked.
+Reject all tracked changes, or select by ID, author or kind
 
 Usage: jubarte-redlines reject [OPTIONS] --output <FILE> <FILE>
 
@@ -1423,8 +1412,7 @@ Options:
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
-          `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
-          and stay tracked
+          `header1.r1`, or `r1+2` (both). Repeatable
 
       --author <NAME>
           Only changes by this author. Repeatable
@@ -1543,9 +1531,7 @@ Options:
 
       --resource-path <DIR>
           Markdown to Word: where images are found [default: the Markdown file's
-          directory]. Only images that resolve inside that directory are read, symlinks
-          resolved; a URL or a path out of it is written as its alt text, with a warning
-          that says why
+          directory]
 
   -a, --author <NAME>
           Markdown to Word: author of the tracked changes and comments that name none

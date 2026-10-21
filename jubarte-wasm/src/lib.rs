@@ -532,6 +532,9 @@ struct ReadJsonOptions {
     changed: bool,
     by: Option<String>,
     source: Option<String>,
+    /// The path as the command line spells it: the snapshot's summary
+    /// carries the input's validity findings (#1309).
+    validity_file: Option<String>,
 }
 
 fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
@@ -547,13 +550,18 @@ fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Strin
         options.by.as_deref(),
     )?;
     let track_changes = track_changes_of(options.track_changes.as_deref())?;
+    let validity_file = options.validity_file;
     let options = jubarte::markdown::ReadOptions {
         track_changes,
         select,
         source: options.source,
         ..jubarte::markdown::ReadOptions::default()
     };
-    let snapshot = jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
+    let mut snapshot =
+        jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
+    snapshot.summary.input_validity = validity_file
+        .as_deref()
+        .map(|file| jubarte::validate::input_validity_of(docx, file));
     serde_json::to_string(&snapshot).map_err(|e| e.to_string())
 }
 
@@ -561,8 +569,10 @@ fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Strin
 /// `comments`. Options (JSON, all optional) select as in
 /// [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
 /// `source` names the document; `trackChanges` `accept` or `reject`
-/// settles the text and names the choice in `track_changes`. The snapshot
-/// keeps the selected paragraphs and their changes and comments.
+/// settles the text and names the choice in `track_changes`;
+/// `validityFile`, the path as the command line spells it, adds
+/// `summary.input_validity`, the input's validity findings counted. The
+/// snapshot keeps the selected paragraphs and their changes and comments.
 ///
 /// Mirrors `jubarte::markdown::read_snapshot`.
 #[wasm_bindgen(js_name = readJson)]
@@ -1206,6 +1216,31 @@ pub fn append_documents(
 pub fn validate_document(docx: &[u8]) -> Result<String, JsValue> {
     let findings = jubarte::validate::validate(docx).map_err(js_err)?;
     serde_json::to_string(&findings).map_err(js_err)
+}
+
+/// The one stderr line `read` and `changes` give an input with validity
+/// findings (`input has 2 validity warnings; jubarte validate FILE lists
+/// them`), or `undefined` when there is none or the package cannot be
+/// validated; `file` is the path as the command line spells it.
+///
+/// Mirrors `jubarte::validate::input_notice`.
+#[wasm_bindgen(js_name = inputNotice)]
+pub fn input_notice(docx: &[u8], file: &str) -> Option<String> {
+    jubarte::validate::validate(docx)
+        .ok()
+        .and_then(|findings| jubarte::validate::input_notice(&findings, file))
+}
+
+/// The last line `changes --json` and `comments --json` print, the input's
+/// validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
+/// "next":"jubarte validate FILE"}}`); `file` is the path as the command
+/// line spells it. A package that cannot be validated counts none.
+///
+/// Mirrors `jubarte::validate::input_validity_line`.
+#[wasm_bindgen(js_name = inputValidityLine)]
+pub fn input_validity_line(docx: &[u8], file: &str) -> Result<String, JsValue> {
+    jubarte::validate::input_validity_line(&jubarte::validate::input_validity_of(docx, file))
+        .map_err(js_err)
 }
 
 /// Check that every text change from `original` to `edited` is a revision
@@ -2272,6 +2307,50 @@ mod tests {
             "no tables\n"
         );
         assert_eq!(comments_text(&docx, None, None).unwrap(), "0 comment(s)\n");
+    }
+
+    #[test]
+    fn input_notice_counts_the_inputs_findings() {
+        // #1256: the line `read` and `changes` print, as the CLI's.
+        let clean = word("Due in 30 days.\n");
+        assert_eq!(input_notice(&clean, "a.docx"), None);
+        let mut pkg = jubarte::opc::PartFs::open(&clean).unwrap();
+        let xml = String::from_utf8(pkg.part_bytes("word/document.xml").unwrap().to_vec()).unwrap();
+        // Text inside a deletion as `w:t`: one Word-fatal error.
+        let broken = xml.replacen(
+            "<w:body>",
+            r#"<w:body><w:p><w:del w:id="90" w:author="A"><w:r><w:t>gone</w:t></w:r></w:del></w:p>"#,
+            1,
+        );
+        assert_ne!(broken, xml);
+        pkg.set_part("word/document.xml", broken.into_bytes());
+        let docx = pkg.to_zip().unwrap();
+        assert_eq!(
+            input_notice(&docx, "my file.docx").as_deref(),
+            Some("input has 1 validity error; jubarte validate 'my file.docx' lists it")
+        );
+        assert_eq!(input_notice(b"no package", "x.docx"), None);
+        // #1309: the JSON reads carry the counts instead.
+        assert_eq!(
+            input_validity_line(&clean, "a.docx").unwrap(),
+            r#"{"input_validity":{"errors":0,"warnings":0}}"#
+        );
+        assert_eq!(
+            input_validity_line(&docx, "my file.docx").unwrap(),
+            r#"{"input_validity":{"errors":1,"warnings":0,"next":"jubarte validate 'my file.docx'"}}"#
+        );
+        let snapshot: serde_json::Value = serde_json::from_str(
+            &read_json_of(&docx, Some(r#"{"validityFile":"my file.docx"}"#)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot["summary"]["input_validity"],
+            serde_json::json!({"errors":1,"warnings":0,"next":"jubarte validate 'my file.docx'"})
+        );
+        // Without it, the snapshot is the library's, as before.
+        let plain: serde_json::Value =
+            serde_json::from_str(&read_json_of(&docx, None).unwrap()).unwrap();
+        assert!(plain["summary"].get("input_validity").is_none(), "{plain}");
     }
 
     #[test]

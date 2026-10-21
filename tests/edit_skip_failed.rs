@@ -6,6 +6,7 @@
 //! leaves the failed ones out, with a runnable plan of the failures beside
 //! the plan; a clean dry run prints the command that applies it; every
 //! write prints the output's SHA-256.
+#![cfg(feature = "cli")]
 
 mod common;
 

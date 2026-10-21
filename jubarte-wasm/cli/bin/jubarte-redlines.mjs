@@ -73,6 +73,24 @@ function read(file, forceKind) {
   return bytes;
 }
 
+/** The JSON reads report the input's validity findings in their output,
+ * not on stderr (#1309). (A binding older than that has no
+ * inputValidityLine; its JSON reads keep the stderr line.) */
+const jsonValidity = typeof wasm.inputValidityLine === "function";
+
+/** `read`'s bytes for `read` and `changes`; unless `-q`, one stderr line
+ * says how many validity findings the input has, as the binary's does,
+ * but for a JSON read (`json`), which carries them. (A binding older than
+ * #1256 has no inputNotice and says nothing.) */
+function readInput(file, o, json = false) {
+  const docx = read(file);
+  if (!o.quiet && !(json && jsonValidity) && wasm.inputNotice) {
+    const notice = wasm.inputNotice(docx, file);
+    if (notice) console.error(notice);
+  }
+  return docx;
+}
+
 function ensureWritable(file, force) {
   if (fs.existsSync(file) && !force) {
     throw new CliError(`output '${file}' already exists (use --force to overwrite)`);
@@ -126,6 +144,11 @@ function wrote(o, file, format, size, pages) {
   if (!o.quiet) console.error(wasm.wroteLine(file, format, size, pages));
 }
 
+/** `readJson`'s `validityFile` for FILE as typed, when the binding takes it. */
+function validity(file) {
+  return file != null && jsonValidity ? { validityFile: file } : {};
+}
+
 /** The read options that select paragraphs, and the text --track-changes
  * settles, as `readJson` takes them. */
 function selection(o = {}) {
@@ -134,13 +157,15 @@ function selection(o = {}) {
 
 /** `-o` in the format its extension names, as the binary's writer: the Word
  * package, its agent view (.md, headed `source`), its snapshot (.json) or
- * its PDF. `view` is read's options; the defaults elsewhere. */
-function writeResult(o, docx, source, view) {
+ * its PDF. `view` is read's options; the defaults elsewhere. `validityFile`
+ * puts the input's validity in a snapshot's summary, as `read --json`
+ * prints it. */
+function writeResult(o, docx, source, view, validityFile) {
   const output = o.output, kind = o.output_format ?? "docx";
   if (kind === "pdf") return renderTo(o, docx, output);
   ensureWritable(output, o.force);
   const data = kind === "md" ? viewText(docx, view ?? {}, source)
-    : kind === "json" ? `${wasm.readJson(docx, JSON.stringify(selection(view)))}\n`
+    : kind === "json" ? `${wasm.readJson(docx, JSON.stringify({ ...selection(view), ...validity(validityFile) }))}\n`
     : docx;
   write(output, data);
   wrote(o, output, kind, typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.length);
@@ -218,26 +243,28 @@ const COMMANDS = {
   },
   changes: {
     run(_, [file], o) {
-      const docx = read(file);
+      const docx = readInput(file, o, o.json);
       if (!o.json) return void process.stdout.write(wasm.changesText(docx));
       for (const change of JSON.parse(wasm.listChanges(docx))) {
         console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
       }
+      if (jsonValidity) console.log(wasm.inputValidityLine(docx, file));
     },
   },
   accept: resolution(true),
   reject: resolution(false),
   read: {
     run(_, [file], o) {
+      const docx = readInput(file, o, o.json && o.output == null);
       if (o.tables) {
         // (A binding older than #1255 has no tablesView; its parser
         // refuses -p and --track-changes here.)
-        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(read(file)));
+        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(docx));
         // With -p, the grids of the tables it reaches, then its view; a
         // pick that reaches no table is a usage error.
         let view;
         try {
-          view = JSON.parse(wasm.tablesView(read(file), JSON.stringify({
+          view = JSON.parse(wasm.tablesView(docx, JSON.stringify({
             trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
             pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined, source: path.basename(file),
           })));
@@ -249,9 +276,9 @@ const COMMANDS = {
         for (const warning of view.warnings) console.error(`warning: ${warning}`);
         return void process.stdout.write(view.markdown);
       }
-      if (o.output != null) return void writeResult(o, read(file), path.basename(file), o);
-      if (o.json) return void console.log(wasm.readJson(read(file), JSON.stringify({ ...selection(o), source: path.basename(file) })));
-      printView(read(file), o, path.basename(file));
+      if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
+      if (o.json) return void console.log(wasm.readJson(docx, JSON.stringify({ ...selection(o), source: path.basename(file), ...validity(file) })));
+      printView(docx, o, path.basename(file));
     },
   },
   convert: {

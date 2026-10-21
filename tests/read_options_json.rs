@@ -6,6 +6,7 @@
 //! options are no-ops there, `--track-changes` settles the text, `-p tN`
 //! picks a table of the grids, and with `--json` an error is a JSON object
 //! on stdout as well as text on stderr.
+#![cfg(feature = "cli")]
 
 mod common;
 

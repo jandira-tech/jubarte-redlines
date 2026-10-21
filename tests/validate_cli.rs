@@ -225,7 +225,7 @@ fn rules_usage_errors_exit_two() {
     let (code, _, err) = run(dir.path(), &["validate", "a.docx", "--rules", "edits"]);
     assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("--rules edits needs --original and --author"),
+        err.contains("--rules edits needs --author, and --original or --baseline"),
         "{err}"
     );
     let (code, _, err) = run(dir.path(), &["validate", "a.docx", "--rules", "BOGUS"]);

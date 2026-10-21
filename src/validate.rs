@@ -78,7 +78,7 @@ use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 
 use crate::admission::{AdmissionError, InputLimits};
-use crate::changes::{Change, ChangeError, ChangeFilter, reject_changes};
+use crate::changes::{Change, ChangeError, ChangeFilter, list_changes, reject_changes};
 use crate::inspect::InspectError;
 use crate::namespaces::{MC, R, VML, W, W14, WP};
 use crate::opc::PartFs;
@@ -337,7 +337,7 @@ pub fn validate_with(
     if edits {
         let Some((before, author)) = original else {
             return Err(ValidateError::Usage(
-                "rules edits needs --original and --author".to_string(),
+                "rules edits needs --author, and --original or --baseline".to_string(),
             ));
         };
         out.extend(audit_tracked(before, docx, author)?);
@@ -354,6 +354,40 @@ pub fn validate_with(
         out.extend(report.findings.into_iter().map(Finding::from));
     }
     Ok(out)
+}
+
+/// [`validate_with`] on `docx`, split by the findings of `base`, the
+/// document the edits started from, under the same rules and against the
+/// same original ([`baseline_keyed`], each side's keys read in its own
+/// document by [`identities`]). That original is `base` unless `original`
+/// names another; `author` turns the `edits` rule on as `validate_with`'s
+/// `original` does, so the other party's changes `base` already had are
+/// the input's, not the edit's.
+///
+/// # Errors
+///
+/// As [`validate_with`], for either document.
+pub fn validate_baselined(
+    docx: &[u8],
+    base: &[u8],
+    rules: &[&str],
+    original: Option<&[u8]>,
+    author: Option<&str>,
+    mut layout: Option<crate::audit::LayoutPass<'_>>,
+) -> Result<Baselined, ValidateError> {
+    let against = original.or(Some(base)).zip(author);
+    let findings = validate_with(
+        docx,
+        rules,
+        against,
+        layout
+            .as_mut()
+            .map(|pass| &mut **pass as crate::audit::LayoutPass<'_>),
+    )?;
+    let inherited = validate_with(base, rules, against, layout)?;
+    let keys = identities(docx, &findings);
+    let inherited_keys = identities(base, &inherited);
+    Ok(baseline_keyed(findings, &keys, inherited, &inherited_keys))
 }
 
 /// The usage message for a rule that is neither a set nor an audit code.
@@ -385,16 +419,7 @@ pub fn fails(findings: &[Finding], strict: bool) -> bool {
 pub fn findings_text(findings: &[Finding]) -> String {
     let mut out = String::new();
     for f in findings {
-        let star = if f.word_fatal { '*' } else { ' ' };
-        let place = if matches!(f.set.as_str(), "word" | "edits") {
-            format!("{}#{}", f.part, f.location)
-        } else {
-            f.location.clone()
-        };
-        out.push_str(&format!(
-            "{star} {}\t{}\t{place}\t{}\n",
-            f.code, f.severity, f.message
-        ));
+        out.push_str(&finding_line(f));
     }
     if findings.is_empty() {
         out.push_str("no findings\n");
@@ -409,6 +434,675 @@ pub fn findings_text(findings: &[Finding]) -> String {
         ));
     }
     out
+}
+
+/// One [`findings_text`] line, newline included.
+fn finding_line(f: &Finding) -> String {
+    let star = if f.word_fatal { '*' } else { ' ' };
+    let place = if matches!(f.set.as_str(), "word" | "edits") {
+        format!("{}#{}", f.part, f.location)
+    } else {
+        f.location.clone()
+    };
+    format!(
+        "{star} {}\t{}\t{place}\t{}\n",
+        f.code, f.severity, f.message
+    )
+}
+
+/// What makes a finding in one version of a document the same finding in
+/// another ([`Finding::identity`]): its code, set and part, where it sits
+/// (its paragraph id or element chain, empty for a part-level finding), its
+/// message with element indices dropped (`w:p[3]` reads `w:p`) and
+/// paragraph ids spelled `p#`, and what surrounds it there ([`Place`]). A
+/// finding named by an entity, a durableId or a bookmark, keeps that
+/// entity in its message.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FindingKey {
+    /// [`Finding::code`].
+    pub code: String,
+    /// [`Finding::set`].
+    pub set: String,
+    /// [`Finding::part`].
+    pub part: String,
+    /// [`Finding::location`]; from [`identities`], an element chain with
+    /// its indices dropped, or `p#` for a paragraph id.
+    pub location: String,
+    /// [`Finding::message`], normalised.
+    pub message: String,
+    /// What surrounds the finding in its document, read by [`identities`];
+    /// empty from [`Finding::identity`].
+    pub place: Place,
+}
+
+/// What surrounds a finding in its document ([`identities`]), each part
+/// `None` where there is none: what [`baseline_keyed`] tells two findings
+/// of one kind apart by.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Place {
+    /// The text of the paragraph the finding sits in; outside one, of its
+    /// table, or else of its element with the attributes of that element
+    /// and of everything holding it (a style's `w:styleId`), leaving out
+    /// the ones an edit renumbers.
+    pub text: Option<String>,
+    /// That paragraph's `w14:paraId`.
+    pub paragraph_id: Option<String>,
+    /// The tracked change, or comment, the finding sits in: its element
+    /// and `w:id` (`del 3`); for `FOREIGN_AUTHOR`, the change's id (`r3`).
+    /// `jubarte edit` keeps the input's `w:id` values.
+    pub revision: Option<String>,
+    /// The text of the element before the one [`Self::text`] reads, of its
+    /// name and in the same parent.
+    pub previous: Option<String>,
+    /// The text of the element after it, of its name and in the same
+    /// parent.
+    pub next: Option<String>,
+}
+
+impl Finding {
+    /// This finding's [`FindingKey`]: [`baseline`] matches findings by it.
+    pub fn identity(&self) -> FindingKey {
+        FindingKey {
+            code: self.code.clone(),
+            set: self.set.clone(),
+            part: self.part.clone(),
+            location: self.location.clone(),
+            message: normalised(&self.message),
+            place: Place::default(),
+        }
+    }
+}
+
+/// Each of `findings`' [`FindingKey`], read in `docx`, the document they
+/// were found in. A finding at an element chain or a paragraph id, in any
+/// story, keys by the chain with its indices dropped (`p#` for the id) and
+/// by its [`Place`], so it keeps its identity when an edit moves or
+/// renumbers it. A `FOREIGN_AUTHOR` change keys by its kind, author and
+/// text, and by its id. Anything else keys as [`Finding::identity`] does.
+#[must_use]
+pub fn identities(docx: &[u8], findings: &[Finding]) -> Vec<FindingKey> {
+    let mut anchors = Anchors::new(docx);
+    findings
+        .iter()
+        .map(|f| {
+            let mut key = f.identity();
+            if f.code == "FOREIGN_AUTHOR" {
+                if let Some((id, rest)) = f.message.split_once(' ')
+                    && let Some(change) = anchors.change(id)
+                {
+                    key.message = normalised(rest);
+                    key.place = Place {
+                        text: Some(change),
+                        revision: Some(id.to_string()),
+                        ..Place::default()
+                    };
+                }
+            } else if let Some((location, place)) = anchors.place(&f.part, &f.location) {
+                key.location = location;
+                key.place = place;
+            }
+            key
+        })
+        .collect()
+}
+
+/// What [`identities`] reads a document's places by, each part parsed once.
+struct Anchors<'a> {
+    docx: &'a [u8],
+    pkg: Option<PartFs>,
+    parts: HashMap<String, Option<Part>>,
+    changes: Option<HashMap<String, String>>,
+}
+
+impl<'a> Anchors<'a> {
+    fn new(docx: &'a [u8]) -> Self {
+        Anchors {
+            docx,
+            pkg: PartFs::open(docx).ok(),
+            parts: HashMap::new(),
+            changes: None,
+        }
+    }
+
+    /// `kind, author, text` of change `id` (`r3`).
+    fn change(&mut self, id: &str) -> Option<String> {
+        let docx = self.docx;
+        self.changes
+            .get_or_insert_with(|| {
+                list_changes(docx)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| {
+                        let anchor = format!(
+                            "{:?}\u{1f}{}\u{1f}{}",
+                            c.kind,
+                            c.author.unwrap_or_default(),
+                            c.text
+                        );
+                        (c.id, anchor)
+                    })
+                    .collect()
+            })
+            .get(id)
+            .cloned()
+    }
+
+    /// The location `location` in `part` keys by, and its [`Place`];
+    /// `None` when it is neither an element chain of the part nor one of
+    /// the part's paragraph ids.
+    fn place(&mut self, part: &str, location: &str) -> Option<(String, Place)> {
+        if location.is_empty() {
+            return None;
+        }
+        let pkg = self.pkg.as_ref()?;
+        let part = self
+            .parts
+            .entry(part.to_string())
+            .or_insert_with(|| parse_part(pkg, part).map(|(dom, root)| Part::new(dom, root)))
+            .as_mut()?;
+        if location.contains('[') {
+            let node = part.resolve(location)?;
+            let chain: Vec<&str> = location
+                .split('/')
+                .map(|step| step.split_once('[').map_or(step, |(name, _)| name))
+                .collect();
+            Some((chain.join("/"), part.around(node)))
+        } else {
+            let (story, index) = crate::ids::paragraph_place(location)?;
+            let node = *part.paragraphs(&story).get(index)?;
+            Some(("p#".to_string(), part.around(node)))
+        }
+    }
+}
+
+/// A parsed part and the lookups [`Anchors`] made in it, so reading every
+/// finding's place costs one walk of the part.
+struct Part {
+    dom: Dom,
+    root: NodeId,
+    /// Each parent's child elements of one name, keyed by the parent, the
+    /// namespace and the local name.
+    children: HashMap<(NodeId, String, String), Vec<NodeId>>,
+    /// Where each element listed in `children` stands in its list.
+    rank: HashMap<NodeId, usize>,
+    /// The part's paragraphs in the order its paragraph ids count them.
+    paragraphs: Option<Vec<NodeId>>,
+}
+
+impl Part {
+    fn new(dom: Dom, root: NodeId) -> Self {
+        Part {
+            dom,
+            root,
+            children: HashMap::new(),
+            rank: HashMap::new(),
+            paragraphs: None,
+        }
+    }
+
+    /// The element `chain` ([`element_path`]) names under the root.
+    fn resolve(&mut self, chain: &str) -> Option<NodeId> {
+        let Part {
+            dom,
+            root,
+            children,
+            rank,
+            ..
+        } = self;
+        let mut node = *root;
+        for step in chain.split('/') {
+            let (name, index) = step.strip_suffix(']')?.split_once('[')?;
+            let index: usize = index.parse().ok()?;
+            let (namespace, local) = match name.split_once(':') {
+                Some((prefix, local)) => (well_known_namespace(prefix)?, local),
+                None => ("", name),
+            };
+            node = *named(dom, children, rank, node, namespace, local).get(index)?;
+        }
+        Some(node)
+    }
+
+    /// The paragraphs of `story`, this part's, in the order its paragraph
+    /// ids (`p3`, `header1.p2`) count them: the order `inspect` and the
+    /// audit number them in.
+    fn paragraphs(&mut self, story: &str) -> &[NodeId] {
+        let Part {
+            dom,
+            root,
+            paragraphs,
+            ..
+        } = self;
+        paragraphs.get_or_insert_with(|| {
+            if story == "body" {
+                dom.element(*root, &W::body())
+                    .map(|body| crate::inspect::body_paragraph_nodes(dom, body))
+                    .unwrap_or_default()
+            } else {
+                crate::inspect::story_paragraph_nodes(dom, *root)
+            }
+        })
+    }
+
+    /// The [`Place`] of `node`: what it sits in, read from its paragraph
+    /// (else its table, else itself), and the change around it.
+    fn around(&mut self, node: NodeId) -> Place {
+        let Part {
+            dom,
+            children,
+            rank,
+            ..
+        } = self;
+        let held: Vec<NodeId> = std::iter::once(node)
+            .chain(dom.ancestors(node, None))
+            .collect();
+        let anchor = [W::p(), W::tbl()]
+            .iter()
+            .find_map(|name| held.iter().copied().find(|&n| dom.name_is(n, name)));
+        let revision = held.iter().find_map(|&n| {
+            let id = dom.attribute(n, &W::id())?;
+            dom.attribute(n, &W::author())?;
+            Some(format!("{} {id}", dom.name(n)?.local_name()))
+        });
+        let (anchor, text) = match anchor {
+            Some(anchor) => (anchor, dom.value(anchor)),
+            None => (node, signature(dom, &held)),
+        };
+        let paragraph_id = if dom.name_is(anchor, &W::p()) {
+            dom.attribute(anchor, &W14::name("paraId"))
+                .map(str::to_string)
+        } else {
+            None
+        };
+        let (previous, next) = match (dom.parent(anchor), dom.name(anchor)) {
+            (Some(parent), Some(name)) => {
+                let siblings = named(
+                    dom,
+                    children,
+                    rank,
+                    parent,
+                    name.namespace_name(),
+                    name.local_name(),
+                );
+                let at = rank.get(&anchor).copied();
+                let text =
+                    |i: Option<usize>| i.and_then(|i| siblings.get(i)).map(|&n| dom.value(n));
+                (
+                    text(at.and_then(|at| at.checked_sub(1))),
+                    text(at.map(|at| at + 1)),
+                )
+            }
+            _ => (None, None),
+        };
+        Place {
+            text: Some(text),
+            paragraph_id,
+            revision,
+            previous,
+            next,
+        }
+    }
+}
+
+/// `parent`'s child elements named `local` in `namespace`, listed once
+/// into `children`, each one's place in the list into `rank`.
+fn named<'c>(
+    dom: &Dom,
+    children: &'c mut HashMap<(NodeId, String, String), Vec<NodeId>>,
+    rank: &mut HashMap<NodeId, usize>,
+    parent: NodeId,
+    namespace: &str,
+    local: &str,
+) -> &'c [NodeId] {
+    children
+        .entry((parent, namespace.to_string(), local.to_string()))
+        .or_insert_with(|| {
+            let list: Vec<NodeId> = dom
+                .elements(parent, None)
+                .into_iter()
+                .filter(|&e| {
+                    dom.name(e)
+                        .is_some_and(|n| n.local_name() == local && n.namespace_name() == namespace)
+                })
+                .collect();
+            for (i, &e) in list.iter().enumerate() {
+                rank.insert(e, i);
+            }
+            list
+        })
+}
+
+/// The text of `held[0]`, then the attributes of it and of each element
+/// holding it (`held[1..]`), but namespace declarations and the ones an
+/// edit renumbers (`rsid…`, `paraId`, `textId`, `id`).
+fn signature(dom: &Dom, held: &[NodeId]) -> String {
+    let mut out = held.first().map(|&n| dom.value(n)).unwrap_or_default();
+    for &n in held {
+        for (name, value) in dom.attributes(n) {
+            let local = name.local_name();
+            if dom.is_namespace_declaration(&name)
+                || local.starts_with("rsid")
+                || matches!(local, "paraId" | "textId" | "id")
+            {
+                continue;
+            }
+            out.push_str(&format!("\u{1f}{local}={value}"));
+        }
+    }
+    out
+}
+
+/// `message` with each `[N]` element index dropped and each paragraph or
+/// cell id ([`is_paragraph_id`]) spelled `p#`, so an inherited finding keeps
+/// its identity when an edit renumbers what it names in passing.
+fn normalised(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_alphanumeric() || c == '[') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        if let Some(tail) = rest.strip_prefix('[') {
+            let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+            if digits > 0 && tail[digits..].starts_with(']') {
+                rest = &tail[digits + 1..];
+            } else {
+                out.push('[');
+                rest = tail;
+            }
+            continue;
+        }
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.'))
+            .unwrap_or(rest.len());
+        // A sentence's full stop is not part of the id before it.
+        let token = rest[..end].trim_end_matches('.');
+        if is_paragraph_id(token) {
+            out.push_str("p#");
+        } else {
+            out.push_str(token);
+        }
+        rest = &rest[token.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// True for a paragraph or cell id `-p` takes (`p12`, `header1.p2`,
+/// `t0.row1.cell2`, `t0.row1.cell2.p1`): a position, which an edit
+/// renumbers. A story's bare name (`header1`) is no position, and a word
+/// that parses as one is not taken for an id.
+fn is_paragraph_id(token: &str) -> bool {
+    let last = token.rsplit('.').next().unwrap_or(token);
+    let numbered = |prefix: &str| {
+        last.strip_prefix(prefix)
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    (numbered("p") || numbered("cell"))
+        && matches!(
+            crate::ids::parse_location(token),
+            Ok(crate::ids::Location::Paragraph(_))
+        )
+}
+
+/// A document's findings against those of the document it was made from
+/// ([`baseline`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Baselined {
+    /// The document's findings the baseline does not have: the edit's.
+    pub new: Vec<Finding>,
+    /// The document's findings the baseline already had.
+    pub baseline: Vec<Finding>,
+    /// The baseline's findings the document no longer has.
+    pub resolved: Vec<Finding>,
+}
+
+/// Splits `new` (the findings of an edited document) by those of `base`
+/// (the document before the edits), matched by [`Finding::identity`]: each
+/// baseline finding vouches for one finding of `new` with its identity, so
+/// a second finding with the same identity is new, and a finding that
+/// replaced another is new while the one it replaced is resolved, whatever
+/// the counts. Each list keeps its input's order.
+pub fn baseline(new: Vec<Finding>, base: Vec<Finding>) -> Baselined {
+    let new_keys: Vec<FindingKey> = new.iter().map(Finding::identity).collect();
+    let base_keys: Vec<FindingKey> = base.iter().map(Finding::identity).collect();
+    baseline_keyed(new, &new_keys, base, &base_keys)
+}
+
+/// [`baseline`] with each finding's key given, in step with its list:
+/// [`identities`] reads them in the documents themselves. Two findings
+/// match when their keys agree but for [`Place`] and they share a place,
+/// tried strongest first: all of it, then the change they sit in, their
+/// paragraph's id, their text with its neighbours, their text alone, and
+/// last their neighbours (their paragraph rewritten). Each pass pairs the
+/// findings left, in order, each with the earliest the baseline has left.
+#[must_use]
+pub fn baseline_keyed(
+    new: Vec<Finding>,
+    new_keys: &[FindingKey],
+    base: Vec<Finding>,
+    base_keys: &[FindingKey],
+) -> Baselined {
+    let mut paired = vec![false; new.len()];
+    let mut matched = vec![false; base.len()];
+    for pass in 0..PASSES {
+        let mut open: HashMap<_, Vec<usize>> = HashMap::new();
+        for (i, key) in base_keys.iter().enumerate().rev() {
+            if !matched[i]
+                && let Some(tier) = tier(pass, key)
+            {
+                open.entry(tier).or_default().push(i);
+            }
+        }
+        for (j, key) in new_keys.iter().enumerate() {
+            if !paired[j]
+                && let Some(tier) = tier(pass, key)
+                && let Some(i) = open.get_mut(&tier).and_then(Vec::pop)
+            {
+                paired[j] = true;
+                matched[i] = true;
+            }
+        }
+    }
+    let mut out = Baselined::default();
+    for (f, paired) in new.into_iter().zip(paired) {
+        if paired {
+            out.baseline.push(f);
+        } else {
+            out.new.push(f);
+        }
+    }
+    out.resolved = base
+        .into_iter()
+        .zip(matched)
+        .filter_map(|(f, matched)| (!matched).then_some(f))
+        .collect();
+    out
+}
+
+/// How many passes [`baseline_keyed`] makes ([`tier`]).
+const PASSES: usize = 6;
+
+/// What pass `pass` of [`baseline_keyed`] matches `key` by: the key but its
+/// [`Place`], and the parts of the place the pass reads; `None` when `key`
+/// lacks what the pass needs.
+fn tier(pass: usize, key: &FindingKey) -> Option<([&str; 5], [Option<&str>; 5])> {
+    let place = &key.place;
+    let text = place.text.as_deref();
+    let id = place.paragraph_id.as_deref();
+    let change = place.revision.as_deref();
+    let (previous, next) = (place.previous.as_deref(), place.next.as_deref());
+    let read = match pass {
+        // Nothing around it changed.
+        0 => [text, id, change, previous, next],
+        // The change it sits in.
+        1 if change.is_some() => [None, None, change, None, None],
+        // Its paragraph, by id.
+        2 if id.is_some() => [None, id, None, None, None],
+        // Its text, between the same neighbours.
+        3 if text.is_some() => [text, None, None, previous, next],
+        // Its text.
+        4 if text.is_some() => [text, None, None, None, None],
+        // Between the same neighbours, not both empty: its paragraph
+        // rewritten.
+        5 if previous.is_some() && next.is_some() && (previous != Some("") || next != Some("")) => {
+            [None, None, None, previous, next]
+        }
+        _ => return None,
+    };
+    let kind = [
+        key.code.as_str(),
+        key.set.as_str(),
+        key.part.as_str(),
+        key.location.as_str(),
+        key.message.as_str(),
+    ];
+    Some((kind, read))
+}
+
+/// [`baseline`]'s split as `validate --baseline` prints it: `new: none` or
+/// `new: N` and the new findings ([`findings_text`]'s lines), then
+/// `already in the input: N (not yours)` (or `none`), then, when the edits
+/// fixed some, `resolved: N (in the input, not in this file)` and those.
+pub fn baselined_text(split: &Baselined) -> String {
+    let count = |n: usize| {
+        if n == 0 {
+            "none".to_string()
+        } else {
+            n.to_string()
+        }
+    };
+    let mut out = format!("new: {}\n", count(split.new.len()));
+    for f in &split.new {
+        out.push_str(&finding_line(f));
+    }
+    out.push_str(&format!(
+        "already in the input: {}{}\n",
+        count(split.baseline.len()),
+        if split.baseline.is_empty() {
+            ""
+        } else {
+            " (not yours)"
+        }
+    ));
+    if !split.resolved.is_empty() {
+        out.push_str(&format!(
+            "resolved: {} (in the input, not in this file)\n",
+            split.resolved.len()
+        ));
+        for f in &split.resolved {
+            out.push_str(&finding_line(f));
+        }
+    }
+    out
+}
+
+/// [`baseline`]'s split as JSON Lines: each finding of the document, new
+/// ones first, as its JSON object with `"status": "new"` or `"baseline"`,
+/// then one `{"resolved": [...]}` line with the baseline's findings the
+/// document no longer has (an empty array when there are none).
+///
+/// # Errors
+///
+/// A finding that does not serialise.
+pub fn baselined_json(split: &Baselined) -> Result<String, serde_json::Error> {
+    #[derive(Serialize)]
+    struct Marked<'a> {
+        #[serde(flatten)]
+        finding: &'a Finding,
+        status: &'static str,
+    }
+    let mut out = String::new();
+    for (findings, status) in [(&split.new, "new"), (&split.baseline, "baseline")] {
+        for finding in findings {
+            out.push_str(&serde_json::to_string(&Marked { finding, status })?);
+            out.push('\n');
+        }
+    }
+    out.push_str(&serde_json::to_string(
+        &serde_json::json!({ "resolved": split.resolved }),
+    )?);
+    out.push('\n');
+    Ok(out)
+}
+
+/// The one stderr line `read`, `changes` and `comments` give an input with
+/// validity findings: `input has 2 validity warnings; jubarte validate FILE
+/// lists them` (an `error` counts as an error, `info` not at all), or
+/// `None` when there is nothing to say. `file` is the path as given, quoted
+/// for a shell when it needs to be ([`crate::util::shell_word`]).
+pub fn input_notice(findings: &[Finding], file: &str) -> Option<String> {
+    input_notice_of(&input_validity(findings, file))
+}
+
+/// [`input_notice`] from counts already taken, for a read that also
+/// reports them in its JSON (`read -o FILE.json`).
+pub fn input_notice_of(validity: &InputValidity) -> Option<String> {
+    let InputValidity {
+        errors,
+        warnings,
+        next,
+    } = validity;
+    let (errors, warnings) = (*errors, *warnings);
+    let next = next.as_deref()?;
+    let spell = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
+    let what = match (errors, warnings) {
+        (0, 0) => return None,
+        (0, w) => spell(w, "validity warning"),
+        (e, 0) => spell(e, "validity error"),
+        (e, w) => format!("{} and {}", spell(e, "validity error"), spell(w, "warning")),
+    };
+    let them = if errors + warnings == 1 { "it" } else { "them" };
+    Some(format!("input has {what}; {next} lists {them}"))
+}
+
+/// The input's own validity findings as the JSON reads report them
+/// (#1309): `read --json` in its snapshot's `summary`, `changes --json` and
+/// `comments --json` on their last line ([`input_validity_line`]), where
+/// [`input_notice`]'s stderr line would break `--json 2>&1 | jq`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputValidity {
+    /// Findings of severity `error`.
+    pub errors: usize,
+    /// Findings of severity `warning`; `info` is not counted.
+    pub warnings: usize,
+    /// The command that lists them (`jubarte validate FILE`), when there
+    /// are any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+/// What [`InputValidity`] says of `findings`; `file` is the path as given,
+/// quoted for a shell when it needs to be ([`crate::util::shell_word`]).
+#[must_use]
+pub fn input_validity(findings: &[Finding], file: &str) -> InputValidity {
+    let count = |severity: &str| findings.iter().filter(|f| f.severity == severity).count();
+    let (errors, warnings) = (count("error"), count("warning"));
+    InputValidity {
+        errors,
+        warnings,
+        next: (errors + warnings > 0)
+            .then(|| format!("jubarte validate {}", crate::util::shell_word(file))),
+    }
+}
+
+/// [`input_validity`] of the package `docx` read from `file`, as the CLI
+/// and the bindings report it: a package that cannot be validated has no
+/// findings to count.
+#[must_use]
+pub fn input_validity_of(docx: &[u8], file: &str) -> InputValidity {
+    input_validity(&validate(docx).unwrap_or_default(), file)
+}
+
+/// The last line `changes --json` and `comments --json` print:
+/// `{"input_validity":{"errors":0,"warnings":2,"next":"jubarte validate FILE"}}`,
+/// its keys in that order.
+///
+/// # Errors
+/// When the validity does not serialize.
+pub fn input_validity_line(validity: &InputValidity) -> Result<String, serde_json::Error> {
+    Ok(format!(
+        r#"{{"input_validity":{}}}"#,
+        serde_json::to_string(validity)?
+    ))
 }
 
 impl From<crate::audit::AuditFinding> for Finding {
@@ -721,7 +1415,7 @@ fn check_runs_inside_paragraphs(pkg: &PartFs, out: &mut Vec<Finding>) {
 
 /// `w:body[0]/w:p[3]/w:r[2]`: conventional prefix and local name with the
 /// index among same-named siblings, root excluded.
-fn element_path(dom: &Dom, node: NodeId) -> String {
+pub(crate) fn element_path(dom: &Dom, node: NodeId) -> String {
     let mut parts = Vec::new();
     let mut cur = Some(node);
     while let Some(n) = cur {
@@ -4017,5 +4711,169 @@ mod foreign_alignment_budget_tests {
             b[199] = "changed";
             bounded_alignment(&a, &b, 199 - changed);
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod baseline_tests {
+    use super::*;
+
+    fn finding(code: &str, location: &str, message: &str) -> Finding {
+        Finding::new(code, "word/document.xml", location, message)
+    }
+
+    #[test]
+    fn a_chain_resolves_to_the_element_it_names() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{W_NS}"><w:body><w:p/><w:p><w:r/><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#,
+            W_NS = W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        let t = dom.descendants(root, Some(&W::t()))[0];
+        let chain = element_path(&dom, t);
+        assert_eq!(chain, "w:body[0]/w:p[1]/w:r[1]/w:t[0]");
+        let mut part = Part::new(dom, root);
+        assert_eq!(part.resolve(&chain), Some(t));
+        assert_eq!(part.resolve("w:body[0]/w:p[2]"), None);
+        assert_eq!(part.resolve("w:body[0]/w:p"), None);
+    }
+
+    #[test]
+    fn identity_drops_element_indices_and_paragraph_ids_from_the_message() {
+        let a = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "",
+            "_Hlk1: start w:body[0]/w:p[3]/w:bookmarkStart[0] and end p3, p4-p5.",
+        );
+        let b = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "",
+            "_Hlk1: start w:body[0]/w:p[9]/w:bookmarkStart[0] and end p9, p10-p11.",
+        );
+        assert_eq!(a.identity(), b.identity());
+        assert_eq!(
+            a.identity().message,
+            "_Hlk1: start w:body/w:p/w:bookmarkStart and end p#, p#-p#."
+        );
+        // The entity a message names stays: another bookmark is another
+        // finding, and so is a bracket that is no index.
+        let other = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "",
+            "_Hlk2: start w:body[0]/w:p[3]/w:bookmarkStart[0] and end p3, p4-p5.",
+        );
+        assert_ne!(a.identity(), other.identity());
+        assert_eq!(normalised("id [a] and [12x]"), "id [a] and [12x]");
+        assert_eq!(
+            normalised("header1.p2, t0.row1.cell2 and t0.row1.cell2.p1"),
+            "p#, p# and p#"
+        );
+        // Stories, parts and words are kept.
+        assert_eq!(
+            normalised("header1 footnotes commentsExtensible word/document.xml"),
+            "header1 footnotes commentsExtensible word/document.xml"
+        );
+        // Comments and revisions are entities, not positions.
+        assert_eq!(normalised("c5 on r12 and c5.text"), "c5 on r12 and c5.text");
+        assert_eq!(normalised("durableId '00251B63'"), "durableId '00251B63'");
+    }
+
+    #[test]
+    fn identity_keeps_where_the_finding_sits() {
+        let here = finding("TEXT_INSIDE_DELETION", "w:body[0]/w:p[3]", "w:t in w:del");
+        let there = finding("TEXT_INSIDE_DELETION", "w:body[0]/w:p[9]", "w:t in w:del");
+        assert_ne!(here.identity(), there.identity());
+        let mut audit = here.clone();
+        audit.set = "a11y".to_string();
+        assert_ne!(here.identity(), audit.identity());
+    }
+
+    #[test]
+    fn baseline_matches_one_for_one_by_identity() {
+        let x = finding("DUPLICATE_DOCPR_ID", "", "docPr id 1 appears 2 times");
+        let y = finding("DUPLICATE_DOCPR_ID", "", "docPr id 7 appears 2 times");
+        // The same identity twice in the output, once in the input: one of
+        // them is new.
+        let split = baseline(vec![x.clone(), x.clone()], vec![x.clone()]);
+        assert_eq!(split.baseline, vec![x.clone()]);
+        assert_eq!(split.new, vec![x.clone()]);
+        assert!(split.resolved.is_empty());
+        // One replaced by another at the same count.
+        let split = baseline(vec![y.clone()], vec![x.clone()]);
+        assert_eq!(split.new, vec![y.clone()]);
+        assert!(split.baseline.is_empty());
+        assert_eq!(split.resolved, vec![x.clone()]);
+        // Order is each input's own.
+        let split = baseline(
+            vec![y.clone(), x.clone()],
+            vec![x.clone(), y.clone(), x.clone()],
+        );
+        assert_eq!(split.baseline, vec![y.clone(), x.clone()]);
+        assert_eq!(split.resolved, vec![x]);
+    }
+
+    #[test]
+    fn baselined_text_and_json_name_each_list() {
+        let x = finding("DUPLICATE_DOCPR_ID", "", "docPr id 1 appears 2 times");
+        let empty = Baselined::default();
+        assert_eq!(
+            baselined_text(&empty),
+            "new: none\nalready in the input: none\n"
+        );
+        assert_eq!(baselined_json(&empty).unwrap(), "{\"resolved\":[]}\n");
+        let split = Baselined {
+            new: vec![x.clone()],
+            baseline: vec![x.clone()],
+            resolved: vec![x.clone()],
+        };
+        let line = finding_line(&x);
+        assert_eq!(
+            baselined_text(&split),
+            format!(
+                "new: 1\n{line}already in the input: 1 (not yours)\n\
+                 resolved: 1 (in the input, not in this file)\n{line}"
+            )
+        );
+        let json = baselined_json(&split).unwrap();
+        let rows: Vec<serde_json::Value> = json
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(rows[0]["status"], "new");
+        assert_eq!(rows[1]["status"], "baseline");
+        assert_eq!(rows[0]["code"], "DUPLICATE_DOCPR_ID");
+        assert_eq!(rows[2]["resolved"][0]["code"], "DUPLICATE_DOCPR_ID");
+        assert!(rows[2]["resolved"][0].get("status").is_none());
+    }
+
+    #[test]
+    fn input_notice_counts_errors_and_warnings_but_not_info() {
+        let warning = finding("DUPLICATE_DOCPR_ID", "", "w");
+        let error = finding("TEXT_INSIDE_DELETION", "", "e");
+        let mut info = warning.clone();
+        info.severity = "info".to_string();
+        assert_eq!(warning.severity, "warning");
+        assert_eq!(error.severity, "error");
+        assert_eq!(input_notice(&[], "a.docx"), None);
+        assert_eq!(input_notice(std::slice::from_ref(&info), "a.docx"), None);
+        assert_eq!(
+            input_notice(std::slice::from_ref(&warning), "a.docx").unwrap(),
+            "input has 1 validity warning; jubarte validate a.docx lists it"
+        );
+        assert_eq!(
+            input_notice(&[warning.clone(), warning.clone(), info], "a.docx").unwrap(),
+            "input has 2 validity warnings; jubarte validate a.docx lists them"
+        );
+        assert_eq!(
+            input_notice(&[error.clone(), error.clone()], "a.docx").unwrap(),
+            "input has 2 validity errors; jubarte validate a.docx lists them"
+        );
+        assert_eq!(
+            input_notice(&[error, warning.clone(), warning.clone()], "my file.docx").unwrap(),
+            "input has 1 validity error and 2 warnings; \
+             jubarte validate 'my file.docx' lists them"
+        );
     }
 }

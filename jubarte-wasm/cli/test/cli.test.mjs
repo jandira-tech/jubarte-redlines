@@ -27,6 +27,16 @@ let tmp;
 // rebuilt from a source that has them; until then their tests skip.
 const binding = createRequire(import.meta.url)(path.join(cliDir, "..", "npm"));
 const jsonErrors = typeof binding.runtimeJsonError === "function";
+const inputNotices = typeof binding.inputNotice === "function";
+const inputValidity = typeof binding.inputValidityLine === "function";
+
+/** The records `changes --json` prints: its last line is the input's
+ * validity (#1309) once the binding has it, never a record. */
+function records(out) {
+  const rows = out.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  if (inputValidity) assert.deepEqual(Object.keys(rows.pop()), ["input_validity"], out);
+  return rows;
+}
 
 before(() => {
   // The published package resolves jubarte-wasm from npm; here it is the
@@ -153,7 +163,7 @@ test("redline writes a Word redline and refuses to overwrite it", () => {
   assert.equal(r.out, "");
   assert.match(r.err, /^wrote .*redline\.docx \(docx, \d+ bytes\)\n$/);
   assert.deepEqual([...fs.readFileSync(out).subarray(0, 2)], [0x50, 0x4b]);
-  const changes = run("changes", out, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
+  const changes = records(run("changes", out, "--json").out);
   assert.ok(changes.length > 0 && changes.every((c) => c.author === "Legal"));
   const again = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
   assert.equal(again.code, 1);
@@ -189,7 +199,7 @@ test("changes, accept and reject by kind", () => {
   assert.equal(listed.code, 0, listed.err);
   assert.match(listed.out, /^r0\tdeletion\ttext\tBo Chen\tp1\t" to people that"\n/);
   assert.match(listed.out, /\n\d+ change\(s\)\n$/);
-  const rows = run("changes", tracked, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
+  const rows = records(run("changes", tracked, "--json").out);
   assert.equal(rows[0].kind, "deletion");
   // `revisions` left the CLI: `changes` is the one listing.
   const gone = run("revisions", tracked);
@@ -197,7 +207,7 @@ test("changes, accept and reject by kind", () => {
   assert.doesNotMatch(gone.out, /revision\(s\)/);
   const kept = path.join(tmp, "kept.docx");
   assert.equal(run("accept", tracked, "-o", kept, "--kind", "deletion").code, 0);
-  const left = run("changes", kept, "--json").out.trim().split("\n").map((l) => JSON.parse(l));
+  const left = records(run("changes", kept, "--json").out);
   assert.ok(left.length > 0 && left.every((c) => c.kind !== "deletion"));
   const base = path.join(tmp, "base.docx");
   assert.equal(run("reject", tracked, "-o", base).code, 0);
@@ -1071,9 +1081,9 @@ test("a redline's PDF forwards page options; diff writes none (integration)", ()
   const dated = path.join(tmp, "page-options-now.docx");
   assert.equal(run("compare", a, b, "-o", dated).code, 0);
   const after = stamp();
-  const dates = run("changes", dated, "--json").out.trim().split("\n").map((line) => JSON.parse(line).date);
+  const dates = records(run("changes", dated, "--json").out).map((change) => change.date);
   assert.ok(dates.length > 0 && dates.every((d) => before <= d && d <= after), `${before} ${dates} ${after}`);
-  const pinned = run("changes", redline, "--json").out.trim().split("\n").map((line) => JSON.parse(line).date);
+  const pinned = records(run("changes", redline, "--json").out).map((change) => change.date);
   assert.deepEqual([...new Set(pinned)], ["1970-01-01T00:00:00Z"]);
   const all = path.join(tmp, "diff-all.pdf"), kept = path.join(tmp, "diff-kept.pdf");
   for (const [output, flags] of [[all, []], [kept, ["--changed-only"]]]) {
@@ -1416,7 +1426,7 @@ test("convert signs what names no one by the flags, the front matter, the refere
     assert.equal(r.code, 0, r.err);
     const changes = run("changes", out, "--json");
     assert.equal(changes.code, 0, changes.err);
-    return JSON.parse(changes.out.trim().split("\n")[0]);
+    return records(changes.out)[0];
   };
   const front = "---\nauthor: Fran Front\nlast_modified: 2025-01-02T03:04:05Z\n---\n\nSome {++x++} here.\n";
   let change = stamped(front, "--reference-doc", reference);
@@ -1532,4 +1542,48 @@ test("read --json and --tables take the view's options; errors under --json are 
   const missing = run("read", untracked, "--tables", "-p", "t9");
   assert.equal(missing.code, run("read", untracked, "-p", "t9").code);
   assert.match(missing.err, /t9 is not a table of this document/);
+});
+
+test("the JSON reads carry the input's validity, never on stderr (#1309)", { skip: !inputValidity && "the checked-in binding predates #1309" }, () => {
+  copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-1309.docx");
+  const wanted = { errors: 0, warnings: 2, next: "jubarte validate received-1309.docx" };
+  for (const quiet of [[], ["-q"]]) {
+    const read = run("read", "received-1309.docx", "--json", ...quiet);
+    assert.equal(read.code, 0, read.err);
+    assert.equal(read.err, "");
+    assert.deepEqual(JSON.parse(read.out).summary.input_validity, wanted);
+    const changes = run("changes", "received-1309.docx", "--json", ...quiet);
+    assert.equal(changes.code, 0, changes.err);
+    assert.equal(changes.err, "");
+    const lines = changes.out.trim().split("\n");
+    assert.deepEqual(JSON.parse(lines.at(-1)), { input_validity: wanted });
+    assert.ok(lines.slice(0, -1).every((line) => !("input_validity" in JSON.parse(line))), changes.out);
+  }
+  // -o FILE.json writes what --json prints; the stderr line stays.
+  const printed = run("read", "received-1309.docx", "--json").out;
+  const written = run("read", "received-1309.docx", "-o", "received-1309.json", "--force");
+  assert.equal(written.code, 0, written.err);
+  assert.equal(fs.readFileSync(path.join(tmp, "received-1309.json"), "utf8"), printed);
+  assert.match(written.err, /^input has 2 validity warnings; jubarte validate received-1309.docx lists them\n/);
+  // A clean input counts zero, with nothing to run next.
+  assert.deepEqual(JSON.parse(run("read", untracked, "--json").out).summary.input_validity, { errors: 0, warnings: 0 });
+});
+
+test("read and changes name the input's validity findings once; -q drops it (#1256)", { skip: !inputNotices && "the checked-in binding predates #1256" }, () => {
+  copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-1256.docx");
+  const line = "input has 2 validity warnings; jubarte validate received-1256.docx lists them\n";
+  // A JSON read carries the counts instead once the binding has them (#1309).
+  const reads = [["read", "received-1256.docx", "--no-page-markers"], ["changes", "received-1256.docx"]];
+  if (!inputValidity) reads.push(["read", "received-1256.docx", "--json"]);
+  for (const args of reads) {
+    const r = run(...args);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.err, line, args.join(" "));
+    assert.doesNotMatch(r.out, /validity/);
+  }
+  for (const args of [["-q", "read", "received-1256.docx", "--no-page-markers"], ["changes", "received-1256.docx", "-q"], ["changes", untracked]]) {
+    const r = run(...args);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.err, "", args.join(" "));
+  }
 });
