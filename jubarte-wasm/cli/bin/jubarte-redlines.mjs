@@ -276,10 +276,6 @@ const COMMANDS = {
   add: { run: (name, [file], o) => runEdit("add", file, o) },
   capabilities: {
     run(_, __, o) {
-      if (o.matrix || o.operation != null || o.field != null) {
-        if (o.json) return console.log(JSON.stringify(JSON.parse(wasm.capabilityQuery(o.operation, o.field)), null, 2));
-        return process.stdout.write(wasm.capabilityQueryText(o.operation, o.field));
-      }
       const manifest = cliManifest();
       if (o.json) return console.log(JSON.stringify(manifest, null, 2));
       process.stdout.write(wasm.capabilitiesText(JSON.stringify(manifest)));
@@ -430,69 +426,39 @@ function recordPlan(verb, file, docx, o) {
   return EXIT_OK;
 }
 
-// lstat refuses links even where O_NOFOLLOW is unavailable; compare the
-// opened file with the name using bigint identities to avoid rounding inos.
-function planIdentityMatches(fd, name) {
-  const opened = fs.fstatSync(fd, { bigint: true });
-  const named = fs.lstatSync(name, { bigint: true });
-  if (named.isSymbolicLink()) throw Object.assign(new Error("symbolic link"), { code: "ELOOP" });
-  return (opened.ino === 0n && named.ino === 0n) || (opened.dev === named.dev && opened.ino === named.ino);
-}
-
 function runEdit(verb, file, o) {
   const docx = read(file);
   if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
   // What --consume deletes once the edit is written: the plan file as it
-  // was read, never a link to it or an output written over it. Open once
-  // and read the handle, so `plan` names this file — not another placed on
-  // the name between a check and the read; O_NOFOLLOW makes the open itself
-  // refuse a symbolic link.
-  let planFd, consumed;
+  // was read, never a link to it or an output written over it.
+  let consumed;
   if (o.consume && !o.dry_run) {
     try {
-      planFd = fs.openSync(o.plan, (fs.constants.O_NOFOLLOW ?? 0) | fs.constants.O_RDONLY);
-      if (!planIdentityMatches(planFd, o.plan)) {
-        throw new Error("the plan name changed while it was being read");
-      }
-      consumed = fs.readFileSync(planFd);
-    } catch (e) {
-      if (planFd !== undefined) try { fs.closeSync(planFd); } catch {}
-      if (e?.code === "ELOOP") {
+      const stats = fs.lstatSync(o.plan);
+      if (stats.isSymbolicLink()) {
         throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
       }
+      consumed = fs.readFileSync(o.plan);
+    } catch (e) {
+      if (e instanceof UsageError) throw e;
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
     }
   }
-  try {
-    const code = applyEdit(verb, file, docx, o);
-    if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
-      const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
-      let unchanged = false;
-      try {
-        // The original read advanced the fd: reread positionally, including
-        // one extra byte so an append cannot compare equal to the plan.
-        const current = Buffer.alloc(consumed.length + 1);
-        let length = 0;
-        while (length < current.length) {
-          const read = fs.readSync(planFd, current, length, current.length - length, length);
-          if (read === 0) break;
-          length += read;
-        }
-        unchanged = current.subarray(0, length).equals(consumed) && planIdentityMatches(planFd, o.plan);
-      } catch {}
-      if (!unchanged) throw kept("it no longer holds the plan (an output was written over it?)");
-      // Unavoidable race window between the last lstat and unlinkSync:
-      // Node has no unlink-by-handle API.
-      try {
-        fs.unlinkSync(o.plan);
-      } catch (e) {
-        throw kept(osError(e));
-      }
+  const code = applyEdit(verb, file, docx, o);
+  if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
+    const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
+    let current;
+    try {
+      current = fs.readFileSync(o.plan);
+    } catch {}
+    if (!current?.equals(consumed)) throw kept("it no longer holds the plan (an output was written over it?)");
+    try {
+      fs.unlinkSync(o.plan);
+    } catch (e) {
+      throw kept(osError(e));
     }
-    return code;
-  } finally {
-    if (planFd !== undefined) fs.closeSync(planFd);
   }
+  return code;
 }
 
 function applyEdit(verb, file, docx, o) {

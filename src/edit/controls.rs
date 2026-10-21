@@ -22,7 +22,7 @@ use crate::namespaces::{W, W14};
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 /// Which content control to fill; every form must match exactly one.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ControlSelector {
     /// `"p3.cc0"` or `"cc1"`, the same as `{"id": "p3.cc0"}`.
@@ -86,7 +86,6 @@ impl Transaction<'_> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -763,7 +762,7 @@ fn format_date(pattern: &str, y: i32, m: u32, d: u32) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -799,7 +798,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod control_source_boundary_tests {
     use super::*;
     use crate::edit::{EditPlan, apply_plan, preview_plan};

@@ -25,10 +25,8 @@ test("default context, labels, empty patches and existing tracked marks", () => 
   const old = wasm.markdownToDocx("Due in {~~30~>45~~} days.\n");
   const next = wasm.markdownToDocx("Due in {~~30~>60~~} days.\n");
   const tracked = wasm.diffDocumentsUnified(old, next);
-  // The Markdown writer emits `{~~old~>new~~}` deletion first, and a mark
-  // already in a document keeps its order; only a replacement compare makes
-  // reads insertion first.
-  assert.ok(tracked.includes("[-30-]{+45+}") && tracked.includes("[-30-]{+60+}"), tracked);
+  // The writer emits a substitution insertion-first, as Word Compare does.
+  assert.ok(tracked.includes("{+45+}[-30-]") && tracked.includes("{+60+}[-30-]"), tracked);
   assert.equal(wasm.diffDocumentsUnified(old, old), "");
 });
 
