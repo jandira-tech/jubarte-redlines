@@ -80,6 +80,9 @@ pub(crate) struct ParaFact {
     /// The frame it lays out in (`w:framePr`, its style's under its own),
     /// as [`crate::markdown::frames::describe`] prints it.
     pub frame: Option<String>,
+    /// Its own indent (`w:ind`), as the id lines say it: `first-line`,
+    /// `hanging`, `left`, `right` and each one's inches.
+    pub indent: Vec<(&'static str, String)>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -1116,11 +1119,16 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
 }
 
 /// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
-/// one carries its own colour, borders or frame, or their alignments differ.
+/// one carries its own colour, borders, frame or indent, or their
+/// alignments differ.
 fn by_paragraph(s: &StoryFact) -> bool {
-    s.paras
-        .iter()
-        .any(|p| p.color.is_some() || p.border.is_some() || p.frame.is_some() || p.align != s.align)
+    s.paras.iter().any(|p| {
+        p.color.is_some()
+            || p.border.is_some()
+            || p.frame.is_some()
+            || !p.indent.is_empty()
+            || p.align != s.align
+    })
 }
 
 /// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt,
@@ -1134,6 +1142,14 @@ fn paragraph_entries(s: &StoryFact) -> Vec<String> {
             let mut inner = format!("text: {}", scalar(text, true));
             if let Some(align) = p.align {
                 inner.push_str(&format!(", {align}"));
+            }
+            if !p.indent.is_empty() {
+                let sides: Vec<String> = p
+                    .indent
+                    .iter()
+                    .map(|(side, inches)| format!("{side}: {inches}"))
+                    .collect();
+                inner.push_str(&format!(", indent: {{{}}}", sides.join(", ")));
             }
             if let Some(color) = &p.color {
                 inner.push_str(&format!(", color: {}", scalar(color, true)));

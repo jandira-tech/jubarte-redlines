@@ -293,3 +293,78 @@ fn a_frame_value_the_schema_forbids_is_not_written() {
         );
     }
 }
+
+/// Word's page-number footer: the number in a frame on the margin, the
+/// text in the next paragraph, indented clear of it (#1422).
+const FOOTER_FRAME: &str = r#"<w:p><w:pPr><w:framePr w:wrap="none" w:vAnchor="text" w:hAnchor="margin" w:y="1"/></w:pPr><w:r><w:t>1</w:t></w:r></w:p><w:p><w:pPr><w:ind w:firstLine="360"/></w:pPr><w:r><w:t>Footer text</w:t></w:r></w:p>"#;
+
+/// A story paragraph's own indent prints as the id lines say it, in an
+/// `indent:` map of its `pN:` entry, and comes back; an indent alone prints
+/// the story paragraph by paragraph (#1422).
+#[test]
+fn a_story_paragraph_keeps_its_own_indent() {
+    let first = view(&with_header(FOOTER_FRAME));
+    assert!(
+        headers_block(&first).contains("p1: {text: Footer text, indent: {first-line: 0.25in}}"),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(xml.contains(r#"<w:ind w:firstLine="360"/>"#), "{xml}");
+    assert_eq!(view(&again), first);
+
+    let sides = r#"<w:p><w:pPr><w:ind w:left="720" w:right="1440" w:hanging="360"/><w:jc w:val="center"/></w:pPr><w:r><w:t>Indented</w:t></w:r></w:p>"#;
+    let first = view(&with_header(sides));
+    assert!(
+        headers_block(&first).contains(
+            "p0: {text: Indented, center, indent: {hanging: 0.25in, left: 0.5in, right: 1in}}"
+        ),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(
+            r#"<w:ind w:left="720" w:right="1440" w:hanging="360"/><w:jc w:val="center"/>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(view(&again), first);
+}
+
+/// An indent that is no length, names a side the id lines do not, or is no
+/// map does not read, and the story entry with it, as a border that does
+/// not read (#1422).
+#[test]
+fn a_story_indent_that_is_no_length_does_not_read() {
+    let first = view(&with_header(FOOTER_FRAME));
+    for bad in [
+        "indent: {first-line: wide}",
+        "indent: {first-line: 25in}",
+        "indent: {first-line: 0.25}",
+        "indent: {start: 0.25in}",
+        "indent: 0.25in",
+    ] {
+        let edited = first.replace("indent: {first-line: 0.25in}", bad);
+        assert_ne!(edited, first, "{first}");
+        let xml = part_string(&write(&edited), "word/header1.xml").unwrap_or_default();
+        assert!(!xml.contains("<w:ind"), "{bad}: {xml}");
+    }
+}
+
+/// `right` is the alignment and `indent: {right: 1in}` the indent: one
+/// paragraph says both, and no key of its entry twice (#1422).
+#[test]
+fn a_story_paragraph_s_alignment_and_indent_keep_apart() {
+    let both = r#"<w:p><w:pPr><w:ind w:right="1440"/><w:jc w:val="right"/></w:pPr><w:r><w:t>Both</w:t></w:r></w:p>"#;
+    let first = view(&with_header(both));
+    assert!(
+        headers_block(&first).contains("p0: {text: Both, right, indent: {right: 1in}}"),
+        "{first}"
+    );
+    let xml = part_string(&write(&first), "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(r#"<w:ind w:right="1440"/><w:jc w:val="right"/>"#),
+        "{xml}"
+    );
+}

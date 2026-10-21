@@ -43,6 +43,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A header's or footer's paragraph indent survives Markdown** (#1422).
+  A story paragraph's own `w:ind` was dropped, so the footer text next to
+  a framed page number ran under the number. It now prints in the
+  paragraph's entry (`p1: {text: …, indent: {first-line: 0.25in}}`) and
+  converting back writes it.
 - **A header's or footer's frame survives Markdown** (#526). Word's
   page-number frame (`w:framePr`, the number at the margin's edge) was
   dropped, so the number came back as an ordinary line of the header.

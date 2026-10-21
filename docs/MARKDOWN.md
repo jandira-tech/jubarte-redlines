@@ -962,8 +962,8 @@ near reporting adds no new successful match.
   says to read those lines (with no block left when only they changed).
   A story whose paragraphs carry their own text colour (`w:color`, when
   every text run sets the same one), borders (`w:pBdr`, in the table
-  border grammar) or frame, or differ in alignment, prints paragraph by
-  paragraph:
+  border grammar), frame or indent, or differ in alignment, prints
+  paragraph by paragraph:
   `id: header1`, then `p0: {text: …, center, color: "595959", border:
   bottom single 0.5pt 8496B0 space 4pt}` for each, as a block in the first
   section and as a flow map in `sections:`. A colour that opens with a
@@ -977,7 +977,13 @@ near reporting adds no new successful match.
   lays out in, its style's under its own, and the writer puts it on the
   paragraph; `frame: {}` is an empty `w:framePr`. A frame naming another
   attribute, or a value the schema does not allow, does not read, and the
-  story entry with it.
+  story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
+  {first-line: 0.25in, right: 0.25in}`, its sides as the id lines name
+  them (`first-line`, `hanging`, `left`, `right`) in inches; a stated 0 is
+  printed, since it overrides the style's. It is a map of its own because
+  `left` and `right` alone are the alignment. A side it does not name, or
+  a value that is no length up to 22in, does not read, and the story entry
+  with it.
 - Page markers need the layout pass; `--no-page-markers` skips it. With
   `--json`, `--tables`, `--for-edit` or `-o FILE.json`, it is dropped with a
   warning (`warning: --no-page-markers dropped: no page markers in JSON,

@@ -22,11 +22,11 @@ footers:
   default:
     id: footer2
     p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: ""}
+    p1: {text: "", indent: {right: 0.25in}}
   even:                            # defined, but even/odd headers are off
     id: footer1
     p0: {text: "{PAGE}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: ""}
+    p1: {text: "", indent: {right: 0.25in}}
     inactive: true
 ---
 

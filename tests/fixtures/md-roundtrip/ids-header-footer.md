@@ -15,31 +15,31 @@ headers:
   first:                           # page 1 only (different first page)
     id: header3
     p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "This is my first page header, page numbers at the right"}
+    p1: {text: "This is my first page header, page numbers at the right", indent: {right: 0.25in}}
   default:
     id: header2
     p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "Odd page header, page numbers at the right"}
+    p1: {text: "Odd page header, page numbers at the right", indent: {right: 0.25in}}
   even:
     id: header1
     p0: {text: "{PAGE}2{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "Even page header, page numbers at the right"}
-    p2: {text: ""}
+    p1: {text: "Even page header, page numbers at the right", indent: {right: 0.25in}}
+    p2: {text: "", indent: {right: 0.25in}}
 footers:
   first:                           # page 1 only (different first page)
     id: footer3
     p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, y: 1}}
-    p1: {text: "This Is my first page footer, page numbers at the left"}
+    p1: {text: "This Is my first page footer, page numbers at the left", indent: {first-line: 0.25in}}
   default:
     id: footer2
     p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, y: 1}}
-    p1: {text: "Odd page footer, page numbers at the left"}
+    p1: {text: "Odd page footer, page numbers at the left", indent: {first-line: 0.25in, right: 0.25in}}
     p2: {text: ""}
     styles: [Footer, Header, Footer]
   even:
     id: footer1
     p0: {text: "{PAGE}2{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, y: 1}}
-    p1: {text: "Even page footer, page numbers at the right"}
+    p1: {text: "Even page footer, page numbers at the right", indent: {first-line: 0.25in}}
 ---
 
 <!-- p0 -->

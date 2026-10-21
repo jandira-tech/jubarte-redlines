@@ -995,6 +995,10 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                     styles_root.as_ref(),
                                     default_style.as_deref(),
                                 ),
+                                indent: p
+                                    .path(&["pPr", "ind"])
+                                    .map(agent::indent_clauses)
+                                    .unwrap_or_default(),
                             };
                             (
                                 i,
