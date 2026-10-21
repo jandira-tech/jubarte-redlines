@@ -22,7 +22,7 @@ const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/r
 const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 
 /// The largest picture Word lays out: 22 inches, in EMU.
-pub(super) const MAX_WIDTH_EMU: u64 = 20_116_800;
+const MAX_WIDTH_EMU: u64 = 20_116_800;
 
 /// Content types the engine embeds.
 const SUPPORTED: &[&str] = &[
@@ -193,7 +193,7 @@ impl Transaction<'_> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::decode_base64;
 

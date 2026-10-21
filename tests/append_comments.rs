@@ -130,7 +130,7 @@ fn with_entries(docx: &[u8], entries: &[(&str, &[u8])]) -> Vec<u8> {
     let opts = zip::write::SimpleFileOptions::default();
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
-        let name = file.name().expect("decode ZIP fixture name").into_owned();
+        let name = file.name().to_string();
         if entries.iter().any(|(n, _)| *n == name) {
             continue;
         }

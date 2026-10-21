@@ -32,13 +32,7 @@ fn m62_file_21_keeps_footer_parts_not_media() {
     let out = compare_documents(&a, &b, "Arthur Souza Rodrigues").expect("compare ok");
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
     let names: Vec<String> = (0..zip.len())
-        .map(|i| {
-            zip.by_index(i)
-                .unwrap()
-                .name()
-                .expect("decode ZIP fixture name")
-                .into_owned()
-        })
+        .map(|i| zip.by_index(i).unwrap().name().to_string())
         .collect();
     let footers: Vec<_> = names
         .iter()

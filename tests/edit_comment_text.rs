@@ -573,11 +573,6 @@ fn note_definitions_carry_settled_ids_in_settled_views() {
         view.contains(&"<!-- footnotes.p1 -->".to_string()),
         "{view:?}"
     );
-    // Case-only spellings are Word's own style for both note kinds.
-    assert!(
-        view.contains(&"<!-- endnotes.p0-p2 -->".to_string()),
-        "{view:?}"
-    );
 }
 
 /// `read` names each note's paragraphs on the line before its definition,
