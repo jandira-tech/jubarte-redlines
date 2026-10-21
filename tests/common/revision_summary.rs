@@ -239,7 +239,7 @@ pub fn assert_summary(view: &str) {
         .unwrap();
     let mut stated = [0; 6];
     let mut total = 0;
-    if let Some((_, summary)) = line.split_once(" shown as ") {
+    if let Some((raw, summary)) = line.split_once(" shown as ") {
         total = summary
             .split_whitespace()
             .next()
