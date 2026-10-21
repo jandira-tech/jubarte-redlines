@@ -47,8 +47,8 @@ def source_texts(path):
     require(not document.findall('.//w:tbl', NS), 'ORACLE_TABLE_UNSUPPORTED')
     require(not document.findall('.//w:ins', NS), 'ORACLE_REVISIONS_UNSUPPORTED')
     require(not document.findall('.//w:del', NS), 'ORACLE_REVISIONS_UNSUPPORTED')
-    return [''.join(node.text or '' for node in p.findall('.//w:t', NS))
-            for p in document.findall('./w:body/w:p', NS)]
+    return [''.join(node.text or '' for node in p.iter(f"{{{NS['w']}}}t"))
+            for p in document.iter(f"{{{NS['w']}}}p")]
 
 
 def target_index(target, texts):
