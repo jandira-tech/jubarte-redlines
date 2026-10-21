@@ -421,12 +421,17 @@ const UTF8_FLAG: u16 = 0x0800;
 /// admit, `0o040000` admits only on a name ending in `/`, and every
 /// other type — link, device, pipe, socket — is refused. On any host,
 /// the DOS directory attribute `0x10` on a non-slash name is refused.
-/// Permission and owner bits never matter. The raw fields are read
-/// rather than zip's `is_symlink`, which is a bit-mask test that reads
-/// a mode only for the Unix host.
-fn special_entry(index: usize, name: &[u8], central: &HeaderFields) -> Option<ZipDefect> {
-    let shown = String::from_utf8_lossy(name).into_owned();
-    let slash = name.ends_with(b"/");
+/// `name` is the name the readers surface — the header name decoded as
+/// `admit` decodes it, including a 0x7075 Unicode Path override — so a
+/// directory cannot hide behind a slash-terminated raw name whose
+/// override drops the slash. Permission and owner bits never matter.
+/// The raw fields are read rather than zip's `is_symlink`, which is a
+/// bit-mask test that reads a mode only for the Unix host.
+fn special_entry(index: usize, name: &str, central: &HeaderFields) -> Option<ZipDefect> {
+    // The detail prints control characters escaped: a crafted name cannot
+    // reach a terminal through it.
+    let shown = crate::admission::shown(name);
+    let slash = name.ends_with('/');
     let defect = |detail: String| ZipDefect {
         kind: ZipDefectKind::SpecialEntry,
         detail,
@@ -511,8 +516,15 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             });
             continue;
         };
-        let shown = String::from_utf8_lossy(&central.name).into_owned();
-        if let Some(defect) = special_entry(i, &central.name, &central) {
+        let shown = crate::admission::shown(&String::from_utf8_lossy(&central.name)).into_owned();
+        // The entry type is judged on the name the readers surface: a
+        // 0x7075 Unicode Path field can override the header name, so a
+        // slash-terminated raw name may read as a file name. Decode it as
+        // `admit` does before testing for the trailing `/`.
+        let decoded =
+            crate::admission::zip_entry_name_raw(&central.name, central.flags, &central.extra)
+                .unwrap_or_else(|_| String::from_utf8_lossy(&central.name).into_owned());
+        if let Some(defect) = special_entry(i, &decoded, &central) {
             defects.push(defect);
         }
         let mismatch = |detail: String| ZipDefect {
@@ -528,7 +540,7 @@ pub(crate) fn zip_defects<R: Read + Seek>(
         if local.name != central.name {
             defects.push(mismatch(format!(
                 "entry {i} is '{shown}' in the central directory but '{}' in its local header",
-                String::from_utf8_lossy(&local.name)
+                crate::admission::shown(&String::from_utf8_lossy(&local.name)).into_owned()
             )));
         }
         if local.method != central.method {
@@ -761,9 +773,6 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
         at = at
             .saturating_add(CENTRAL_HEADER.name as u64)
             .saturating_add(step);
-        if central.name.ends_with(b"/") {
-            continue;
-        }
         // The per-entry read refuses an archive whose name fails to decode
         // with the same error; it needs no second finding here.
         let Ok(name) =
@@ -771,6 +780,13 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
         else {
             continue;
         };
+        // A directory entry is not a part — judged on the decoded name, as
+        // `special_entry` judges the type, so a Unicode Path override that
+        // drops the raw name's slash cannot smuggle a directory in as a
+        // part, nor can one adding a slash hide a duplicate.
+        if name.ends_with('/') {
+            continue;
+        }
         let identity = super::identity(&name);
         match seen.get(&identity) {
             None => {
@@ -782,7 +798,8 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
                     ZipDefect {
                         kind: ZipDefectKind::DuplicatePart,
                         detail: format!(
-                            "two ZIP entries have the same name '{name}' (entry {index})"
+                            "two ZIP entries have the same name '{}' (entry {index})",
+                            crate::admission::shown(&name)
                         ),
                     },
                 ));
@@ -793,7 +810,9 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
                     ZipDefect {
                         kind: ZipDefectKind::DuplicatePart,
                         detail: format!(
-                            "'{first}' and '{name}' name the same part (entry {index}; part names resolve `.` and `..` and ignore case)"
+                            "'{}' and '{}' name the same part (entry {index}; part names resolve `.` and `..` and ignore case)",
+                            crate::admission::shown(first),
+                            crate::admission::shown(&name)
                         ),
                     },
                 ));
@@ -1065,6 +1084,40 @@ mod tests {
             b"",
         );
         let mut archive = open_archive(Cursor::new(&package)).expect("the wide descriptor admits");
+        let mut actual = Vec::new();
+        archive
+            .by_name("payload.bin")
+            .unwrap()
+            .read_to_end(&mut actual)
+            .unwrap();
+        assert_eq!(actual, b"payload");
+    }
+
+    /// The compatibility companion: a bit-3 entry whose local header
+    /// carries a 0x0001 field *prescribes* the 24-byte descriptor
+    /// (APPNOTE 4.3.9.2), but a writer that emits the narrow 16-byte
+    /// descriptor still admits when its CRC and sizes match the central
+    /// record — the prescribed width wins only when both match
+    /// (`descriptor_extent`). Refusing would close the file to a shape
+    /// real writers produce and Word opens; the extent still ends before
+    /// the next record, so nothing else is smuggled.
+    #[test]
+    fn open_archive_admits_a_zip64_local_extra_narrow_descriptor() {
+        use crate::admission::zip_names;
+
+        let extra = zip_names::zip64_extra(0, 0);
+        let package = zip_names::assembled(
+            b"",
+            &[zip_names::AssembledEntry {
+                local_extra: extra.as_slice(),
+                ..zip_names::AssembledEntry::plain(b"payload.bin", b"payload")
+                    .with_descriptor(zip_names::Descriptor::Signed)
+            }],
+            None,
+            b"",
+        );
+        let mut archive =
+            open_archive(Cursor::new(&package)).expect("the narrow descriptor admits");
         let mut actual = Vec::new();
         archive
             .by_name("payload.bin")
