@@ -13828,16 +13828,18 @@ fn split_words_preserve(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
+fn word_lcs_indices(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
     let n = a.len();
     let m = b.len();
-    let mut dp = vec![vec![0usize; m + 1]; n + 1];
-    for i in 0..n {
-        for j in 0..m {
-            if a[i] == b[j] {
-                dp[i + 1][j + 1] = dp[i][j] + 1;
+    let mut dp = vec![0u32; (n + 1) * (m + 1)];
+    for (i, a_i) in a.iter().enumerate() {
+        let row_offset = i * (m + 1);
+        let next_row_offset = (i + 1) * (m + 1);
+        for (j, b_j) in b.iter().enumerate() {
+            if a_i == b_j {
+                dp[next_row_offset + j + 1] = dp[row_offset + j] + 1;
             } else {
-                dp[i + 1][j + 1] = dp[i + 1][j].max(dp[i][j + 1]);
+                dp[next_row_offset + j + 1] = dp[next_row_offset + j].max(dp[row_offset + j + 1]);
             }
         }
     }
@@ -13849,10 +13851,14 @@ fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
             out.push((i - 1, j - 1));
             i -= 1;
             j -= 1;
-        } else if dp[i - 1][j] >= dp[i][j - 1] {
-            i -= 1;
         } else {
-            j -= 1;
+            let row_offset = (i - 1) * (m + 1);
+            let next_row_offset = i * (m + 1);
+            if dp[row_offset + j] >= dp[next_row_offset + j - 1] {
+                i -= 1;
+            } else {
+                j -= 1;
+            }
         }
     }
     out.reverse();
@@ -13875,8 +13881,8 @@ fn word_lcs_indices_eligible(a: &[String], b: &[String], boiler: &[&str]) -> Vec
     if a_idx.is_empty() || b_idx.is_empty() {
         return Vec::new();
     }
-    let a_f: Vec<String> = a_idx.iter().map(|&i| a[i].clone()).collect();
-    let b_f: Vec<String> = b_idx.iter().map(|&j| b[j].clone()).collect();
+    let a_f: Vec<&str> = a_idx.iter().map(|&i| a[i].as_str()).collect();
+    let b_f: Vec<&str> = b_idx.iter().map(|&j| b[j].as_str()).collect();
     word_lcs_indices(&a_f, &b_f)
         .into_iter()
         .map(|(i, j)| (a_idx[i], b_idx[j]))
