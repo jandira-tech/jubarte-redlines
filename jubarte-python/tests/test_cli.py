@@ -828,7 +828,7 @@ def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, caps
     # edit writes the deletion before the insertion, as typing over a
     # selection does; the view pairs only an insertion before a deletion,
     # so these are two changes under the comment.
-    assert "{=={~~his or her~>their~~}{r1+2 @R}==}" in capsys.readouterr().out
+    assert "{=={--his or her--}{>>r1 @R<<}{++their++}{>>r2 @R<<}==}" in capsys.readouterr().out
     assert main(["edit", str(commented), "-p", "c0.text", "--anchor", "signs", "--content", "x", "-o", str(tmp_path / "no.docx")]) == 3
     assert "not in the text c0 covers" in capsys.readouterr().err
 
