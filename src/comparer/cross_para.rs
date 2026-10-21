@@ -2136,7 +2136,7 @@ fn emit_segment(
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod lexical_pairing_contract_tests {
     use super::*;
     use crate::comparer::atoms::ComparisonUnitWord;
@@ -2471,7 +2471,7 @@ mod lexical_pairing_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_option_source_ownership_tests {
     use super::*;
     use crate::xmllinq::NodeId;
