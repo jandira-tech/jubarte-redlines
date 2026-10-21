@@ -315,7 +315,7 @@ fn describe(edit: &Edit, paragraphs: &[Paragraph], blocks: &[Block]) -> String {
 /// typed numbering left out.
 fn key(text: &str) -> String {
     let spaced = text.replace('\u{FFFC}', " ");
-    let collapsed = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    let collapsed = crate::util::collapse_whitespace(&spaced);
     collapsed[enumerator_len(&collapsed)..].to_string()
 }
 

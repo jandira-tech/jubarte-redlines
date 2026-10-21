@@ -598,7 +598,7 @@ fn push_text(stack: &mut [Element], text: &str) {
 }
 
 pub(crate) fn collapse_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::util::collapse_whitespace(s)
 }
 
 /// How a stretch of inline text is set: the marks printed around it.

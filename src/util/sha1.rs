@@ -189,17 +189,26 @@ mod tests {
     #[test]
     fn test_sha1_hex() {
         // sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
-        assert_eq!(sha1_hex("hello"), "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        assert_eq!(
+            sha1_hex("hello"),
+            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        );
         assert_eq!(sha1_hex(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
     }
 
     #[test]
     fn test_sha1_digest() {
         let digest_hello = sha1_digest(b"hello");
-        assert_eq!(hex_encode_20(&digest_hello).as_slice(), b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        assert_eq!(
+            hex_encode_20(&digest_hello).as_slice(),
+            b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        );
 
         let digest_empty = sha1_digest(b"");
-        assert_eq!(hex_encode_20(&digest_empty).as_slice(), b"da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(
+            hex_encode_20(&digest_empty).as_slice(),
+            b"da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
     }
 
     #[test]
@@ -232,25 +241,42 @@ mod tests {
         let d2 = sha1_digest(b"world");
         let hexes = [d1, d2];
 
-        let expected = sha1_hex("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d7c211433f02071597741e6ff5a8ea34789abbf43");
+        let expected = sha1_hex(
+            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d7c211433f02071597741e6ff5a8ea34789abbf43",
+        );
         assert_eq!(sha1_hex_of_digest_hexes(&hexes), expected);
 
-        assert_eq!(sha1_hex_of_digest_hexes(std::iter::empty::<&[u8; 20]>()), sha1_hex(""));
+        assert_eq!(
+            sha1_hex_of_digest_hexes(std::iter::empty::<&[u8; 20]>()),
+            sha1_hex("")
+        );
     }
 
     #[test]
     fn test_sha1_hex_bytes() {
-        assert_eq!(sha1_hex_bytes(b"hello"), "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
-        assert_eq!(sha1_hex_bytes(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(
+            sha1_hex_bytes(b"hello"),
+            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        );
+        assert_eq!(
+            sha1_hex_bytes(b""),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
     }
 
     #[test]
     fn test_sha1_hex_parts() {
         let parts = ["he", "ll", "o"];
-        assert_eq!(sha1_hex_parts(parts), "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        assert_eq!(
+            sha1_hex_parts(parts),
+            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        );
 
         let empty_parts: [&str; 0] = [];
-        assert_eq!(sha1_hex_parts(empty_parts), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(
+            sha1_hex_parts(empty_parts),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
     }
 
     #[test]
@@ -266,7 +292,10 @@ mod tests {
         // Published FNV-1a 128-bit vectors (offset basis, "a", "foobar").
         assert_eq!(fnv1a_128(""), 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d);
         assert_eq!(fnv1a_128("a"), 0xd228_cb69_6f1a_8caf_7891_2b70_4e4a_8964);
-        assert_eq!(fnv1a_128("foobar"), 0x343e_1662_793c_64bf_6f0d_3597_ba44_6f18);
+        assert_eq!(
+            fnv1a_128("foobar"),
+            0x343e_1662_793c_64bf_6f0d_3597_ba44_6f18
+        );
     }
 
     #[test]

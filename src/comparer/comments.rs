@@ -125,7 +125,7 @@ fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
 }
 
 fn normalized_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::util::collapse_whitespace(text)
 }
 
 /// Build an id-independent identity from the comment body and its anchored
