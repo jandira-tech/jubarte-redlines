@@ -387,14 +387,9 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             agent_view(bytes, Some(out.source.clone()), out.view)?.markdown
         }
         (Format::Json, Produced::Docx(bytes)) => {
-            let snapshot = jubarte::markdown::read_snapshot(
-                bytes,
-                &jubarte::markdown::ReadOptions {
-                    select: selection(out.view)?,
-                    ..jubarte::markdown::ReadOptions::default()
-                },
-            )
-            .map_err(|e| e.to_string())?;
+            let snapshot =
+                jubarte::markdown::read_snapshot(bytes, &snapshot_options(out.view, None)?)
+                    .map_err(|e| e.to_string())?;
             let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
             format!("{json}\n")
         }
@@ -617,7 +612,7 @@ fn convert_exit_code(r: Result<(), ConvertFailure>) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(ConvertFailure { code: 1, message }) => exit_code(Err(message)),
         Err(ConvertFailure { code, message }) => {
-            eprintln!("error: {message}");
+            say_error(&message, code);
             ExitCode::from(code)
         }
     }
@@ -899,100 +894,40 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
     format!("{stem}-page-{:0width$}.png", index + 1)
 }
 
-/// Resolve the shared `-p` grammar against inventory cell ownership before
-/// printing anything. A bad item refuses the whole request; retaining the
-/// original entries preserves document indices, order and formatting.
-fn select_table_inventory(
-    tables: &mut Vec<jubarte::inspect::Table>,
-    paragraph_count: usize,
-    spec: &str,
-) -> Result<(), String> {
-    use jubarte::markdown::{MarkdownError, Pick, Select};
-    use std::collections::{BTreeSet, HashMap};
-
-    let Select::Picks(picks) = Select::parse(spec)? else {
-        unreachable!("the -p parser returns picks");
-    };
-    fn add_owners<'a>(
-        rows: &'a [Vec<jubarte::inspect::TableCell>],
-        nested: &'a [jubarte::inspect::NestedTable],
-        index: usize,
-        owners: &mut HashMap<&'a str, usize>,
-    ) {
-        for id in rows.iter().flatten().flat_map(|cell| &cell.paragraph_ids) {
-            owners.insert(id, index);
-        }
-        for child in nested {
-            add_owners(&child.rows, &child.nested, index, owners);
-        }
-    }
-    let top_level_count = tables.len();
-    let mut owners = HashMap::new();
-    for table in tables.iter() {
-        add_owners(&table.rows, &table.nested, table.index, &mut owners);
-    }
-    let unreadable = |message| MarkdownError::Docx(message).to_string();
-    let mut selected = BTreeSet::new();
-    for pick in picks {
-        match pick {
-            Pick::Table(index) => {
-                if index >= top_level_count {
-                    return Err(unreadable(format!(
-                        "t{index} is not a table of this document"
-                    )));
-                }
-                selected.insert(index);
-            }
-            Pick::Paragraphs { from, to } => {
-                let last = paragraph_count
-                    .checked_sub(1)
-                    .ok_or_else(|| unreadable("the body has no paragraphs".to_string()))?;
-                let to = to.unwrap_or(last);
-                for n in [from, to] {
-                    if n > last {
-                        return Err(unreadable(format!(
-                            "p{n} is past the last paragraph p{last}"
-                        )));
-                    }
-                }
-                for n in from..=to {
-                    let id = format!("p{n}");
-                    let Some(&index) = owners.get(id.as_str()) else {
-                        return Err(format!(
-                            "{id} is not in a table; --tables -p takes tN, or a pN inside a table"
-                        ));
-                    };
-                    selected.insert(index);
-                }
-            }
-        }
-    }
-    tables.retain(|table| selected.contains(&table.index));
-    Ok(())
-}
-
-/// `read --tables`: the inventory, followed by the unchanged view when
-/// `-p` selects tables. Build both before printing, so refusals leave stdout
-/// empty. Selection errors exit 2; I/O failures keep their usual status.
+/// `read --tables`: each body table as a grid; with `-p` the grids of the
+/// tables the view's selection reaches, then that view (#1161), and
+/// `--track-changes reject` reads the rejected text. A pick that reaches
+/// no table exits 2; what the view refuses, as `read -p` does.
 fn run_read_tables(file: &Path, args: &ReadArgs) -> Result<(), ConvertFailure> {
     let bytes = read_word(file)?;
     warn_nested_text_boxes(&bytes);
-    let mut tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
-    if let Some(spec) = args.paragraphs.as_deref() {
-        let paragraph_count = jubarte::inspect::paragraphs(&bytes)
-            .map_err(|e| e.to_string())?
-            .len();
-        select_table_inventory(&mut tables, paragraph_count, spec)
-            .map_err(|message| (EXIT_USAGE, message))?;
+    let view = jubarte::markdown::read_tables(
+        &bytes,
+        &jubarte::markdown::ReadOptions {
+            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+            comments: args.comments == CommentsArg::Inline,
+            dates: args.dates,
+            page_markers: !args.no_page_markers,
+            select: selection(args).map_err(usage_failure)?,
+            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
+        },
+    )
+    .map_err(|e| match e {
+        jubarte::markdown::TablesError::Usage(message) => usage_failure(message),
+        jubarte::markdown::TablesError::Read(e) => e.to_string().into(),
+    })?;
+    for warning in &view.warnings {
+        eprintln!("warning: {warning}");
     }
-    let mut text = jubarte::inspect::tables_text(&tables);
-    if args.paragraphs.is_some() {
-        let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
-        let view = agent_view(&bytes, source, args)?;
-        text.push('\n');
-        text.push_str(&view.markdown);
+    Ok(write_stdout(view.markdown)?)
+}
+
+/// A usage error: exit 2.
+fn usage_failure(message: String) -> ConvertFailure {
+    ConvertFailure {
+        code: EXIT_USAGE,
+        message,
     }
-    write_stdout(text).map_err(Into::into)
 }
 
 /// `read --for-edit` (V2-10): the working document template/apply
@@ -1072,26 +1007,8 @@ fn run_text(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
-    if args.no_page_markers {
-        // The structured outputs never run the layout pass: the flag has
-        // nothing to skip there, so it is dropped, and said so.
-        let json_file = output.is_some_and(|path| {
-            matches!(
-                output_format(Task::Read, Some(path), None),
-                Ok(Some(Format::Json))
-            )
-        });
-        let kind = if args.tables {
-            Some("--tables")
-        } else if args.for_edit || args.json || json_file {
-            Some("JSON")
-        } else {
-            None
-        };
-        if let Some(kind) = kind {
-            eprintln!("warning: --no-page-markers dropped: no page markers in {kind}, proceeding");
-        }
-    }
+    // A selection that does not parse is a usage error, before I/O.
+    selection(args).map_err(usage_failure)?;
     if args.for_edit {
         return run_for_edit(file, args, output, force, quiet);
     }
@@ -1122,19 +1039,27 @@ fn run_text(
     let bytes = read_word(file)?;
     warn_nested_text_boxes(&bytes);
     if args.json {
-        let snapshot = jubarte::markdown::read_snapshot(
-            &bytes,
-            &jubarte::markdown::ReadOptions {
-                select: selection(args)?,
-                source,
-                ..jubarte::markdown::ReadOptions::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
+        let snapshot = jubarte::markdown::read_snapshot(&bytes, &snapshot_options(args, source)?)
+            .map_err(|e| e.to_string())?;
         let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
         return Ok(write_stdout(format!("{json}\n"))?);
     }
     Ok(print_agent_view(&bytes, source, args)?)
+}
+
+/// The options `read --json` and `read -o FILE.json` read the snapshot
+/// with: the selection, and the text `--track-changes` settles. The view's
+/// other options change nothing in a snapshot.
+fn snapshot_options(
+    args: &ReadArgs,
+    source: Option<String>,
+) -> Result<jubarte::markdown::ReadOptions, String> {
+    Ok(jubarte::markdown::ReadOptions {
+        track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+        select: selection(args)?,
+        source,
+        ..jubarte::markdown::ReadOptions::default()
+    })
 }
 
 /// The paragraphs `-p`, `--head`, `--tail`, `--changed` and `--by` select.
@@ -2978,10 +2903,26 @@ fn exit_code(r: Result<(), String>) -> ExitCode {
     match r {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e}");
+            say_error(&e, 1);
             ExitCode::FAILURE
         }
     }
+}
+
+/// Set when the command line asks for JSON (`--json` before any `--`): an
+/// error then prints on stdout too, as one
+/// [`jubarte::cli::json_error`] line, for a reader that pipes stdout to a
+/// JSON parser (#1158).
+static JSON_ERRORS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says `message` as the error a run ends with `exit` for: `error: …` on
+/// stderr, and under `--json` its JSON object on stdout too.
+fn say_error(message: &str, exit: u8) {
+    if JSON_ERRORS.load(std::sync::atomic::Ordering::Relaxed) {
+        // stdout may be closed already; stderr still says it.
+        let _ = write_stdout(jubarte::cli::runtime_json_error(message, exit));
+    }
+    eprintln!("error: {message}");
 }
 
 /// A document read for comparison: Word bytes or Markdown text.
@@ -3885,7 +3826,14 @@ fn cli_main() -> ExitCode {
         if let Some((old, now)) =
             jubarte::cli::removed_spellings(argv.iter().map(String::as_str)).first()
         {
-            eprintln!("{}", jubarte::cli::removed_error(old, now));
+            let removed = jubarte::cli::removed_error(old, now);
+            if jubarte::cli::wants_json(&argv) {
+                let message = removed.strip_prefix("error: ").unwrap_or(&removed);
+                let _ = write_stdout(jubarte::cli::removed_json_error(
+                    &error, &argv, "jubarte", message,
+                ));
+            }
+            eprintln!("{removed}");
             std::process::exit(2);
         }
         // Help, version and usage errors say a name is retired too: the run
@@ -3893,11 +3841,20 @@ fn cli_main() -> ExitCode {
         for note in jubarte::cli::notes(&argv) {
             eprintln!("{note}");
         }
+        if jubarte::cli::wants_json(&argv)
+            && let Some(line) = jubarte::cli::usage_json_error(&error, &argv, "jubarte")
+        {
+            let _ = write_stdout(line);
+        }
         error.exit()
     });
     for note in jubarte::cli::notes(&argv) {
         eprintln!("{note}");
     }
+    JSON_ERRORS.store(
+        jubarte::cli::wants_json(&argv),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let quiet = cli.quiet;
     match cli.command {
         Some(Command::EditTemplate(jubarte::cli::edit_template::TemplateDispatch {
@@ -4066,11 +4023,6 @@ fn cli_main() -> ExitCode {
             output,
             force,
         }) => {
-            // A selection that does not parse is a usage error, before I/O.
-            if let Err(e) = selection(&args) {
-                eprintln!("error: {e}");
-                return ExitCode::from(2);
-            }
             return convert_exit_code(run_text(&file, &args, output.as_deref(), force, quiet));
         }
         Some(Command::Edit {

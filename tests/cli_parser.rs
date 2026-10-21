@@ -1679,10 +1679,6 @@ fn every_writing_task_takes_the_formats_its_output_names() {
             "--json writes the snapshot",
         ),
         (
-            vec!["read", "a.docx", "-o", "v.json", "--dates"],
-            "--dates shapes the Markdown view",
-        ),
-        (
             vec!["read", "a.docx", "-o", "v.md", "--tables"],
             "--tables prints the grids",
         ),
@@ -2257,22 +2253,21 @@ fn writer_render_options_survive_shared_parser_serialization() {
 #[test]
 fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
     for prefix in [&["read", "a.docx"][..], &["text", "a.docx"], &["a.docx"]] {
+        // A .json snapshot is --json's (#1255): --track-changes settles its
+        // text, and the view's other options change nothing in it.
+        for flags in [
+            vec!["--track-changes", "all"],
+            vec!["--track-changes", "rejected"],
+            vec!["--comments", "inline"],
+            vec!["--dates"],
+            vec!["--no-page-markers"],
+        ] {
+            let args = [prefix, &["-o", "v.json"], &flags].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(result["args"]["output_format"], "json", "{args:?}");
+        }
         for (output, flags, message) in [
-            (
-                "v.json",
-                vec!["--track-changes", "all"],
-                "--track-changes shapes the Markdown view",
-            ),
-            (
-                "v.json",
-                vec!["--comments", "inline"],
-                "--comments shapes the Markdown view",
-            ),
-            (
-                "v.json",
-                vec!["--dates"],
-                "--dates shapes the Markdown view",
-            ),
             ("v.json", vec!["--tables"], "--tables prints the grids"),
             ("v.md", vec!["--tables"], "--tables prints the grids"),
             ("v.unknown", vec!["--json"], "--json writes the snapshot"),
@@ -2669,14 +2664,12 @@ fn read_no_page_markers_accepts_structured_outputs_in_the_shared_parser() {
 
 #[test]
 fn read_view_conflict_usage_is_shared_with_bindings() {
-    for flags in [
-        vec!["--comments=inline", "--json"],
-        vec!["--dates", "-o", "snap.json"],
-    ] {
-        let result = parse(&[vec!["source.docx"], flags].concat(), &["compare"]);
-        assert_eq!(result["exit_code"], 2, "{result}");
-        assert_eq!(result["stream"], "stderr", "{result}");
-    }
+    let result = parse(
+        &["source.docx", "--track-changes=all", "--for-edit"],
+        &["compare"],
+    );
+    assert_eq!(result["exit_code"], 2, "{result}");
+    assert_eq!(result["stream"], "stderr", "{result}");
     for prefix in [
         &["read", "source.docx"][..],
         &["text", "source.docx"],
@@ -2702,6 +2695,12 @@ fn read_view_conflict_usage_is_shared_with_bindings() {
                         continue;
                     }
                     let result = parse(&args, &[]);
+                    // Only --for-edit, which settles through its own
+                    // --accept-change, refuses a view option (#1255).
+                    if flags[0] != "--track-changes=all" || output[0] != "--for-edit" {
+                        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+                        continue;
+                    }
                     assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
                     assert_eq!(result["stream"], "stderr", "{result}");
                     let text = result["text"].as_str().unwrap();

@@ -86,12 +86,13 @@ pub enum TrackChanges {
 
 impl TrackChanges {
     /// Parses `"all"`, `"accept"` or `"reject"`, the values of pandoc's
-    /// `--track-changes`. Returns `None` for any other input.
+    /// `--track-changes`, and the `"accepted"` and `"rejected"` the CLI
+    /// takes for them too. Returns `None` for any other input.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "all" => Some(Self::All),
-            "accept" => Some(Self::Accept),
-            "reject" => Some(Self::Reject),
+            "accept" | "accepted" => Some(Self::Accept),
+            "reject" | "rejected" => Some(Self::Reject),
             _ => None,
         }
     }
@@ -813,12 +814,22 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
 /// describes, without page markers. The view prints a table whole, but a
 /// paragraph pick keeps only the paragraphs it names: `-p p5` of a cell
 /// is p5, not its table; `-p t0` keeps the table's every paragraph.
+/// `options.track_changes` `Accept` or `Reject` reads the text with every
+/// change settled ([`crate::inspect::settled_snapshot`]); `All` is the
+/// plain snapshot. The comments, dates and page-marker options shape only
+/// the view and change nothing here.
 pub fn read_snapshot(
     docx: &[u8],
     options: &ReadOptions,
 ) -> Result<crate::inspect::Snapshot, MarkdownError> {
+    use crate::inspect::Settle;
     let docx_error = |e: crate::inspect::InspectError| MarkdownError::Docx(e.to_string());
-    let mut snapshot = crate::inspect::snapshot(docx).map_err(docx_error)?;
+    let mut snapshot = match options.track_changes {
+        TrackChanges::All => crate::inspect::snapshot(docx),
+        TrackChanges::Accept => crate::inspect::settled_snapshot(docx, Settle::Accept),
+        TrackChanges::Reject => crate::inspect::settled_snapshot(docx, Settle::Reject),
+    }
+    .map_err(docx_error)?;
     if options.select.is_some() {
         let view = read(
             docx,
@@ -859,6 +870,127 @@ pub fn read_snapshot(
         snapshot.retain_with(&kept, &view.selected_stories);
     }
     Ok(snapshot)
+}
+
+/// Why `read --tables` printed nothing.
+#[derive(Debug)]
+pub enum TablesError {
+    /// The selection reaches no table (`p0`, outside every table), or is
+    /// no `-p` pick: a usage error.
+    Usage(String),
+    /// The document cannot be read, or the view refuses the selection as
+    /// `read -p` does (`t5 is not a table of this document`).
+    Read(MarkdownError),
+}
+
+impl std::fmt::Display for TablesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usage(message) => f.write_str(message),
+            Self::Read(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for TablesError {}
+
+/// What `read --tables` prints ([`crate::inspect::tables_text`]): every
+/// body table as a grid, under `options.track_changes` `Reject` with every
+/// change rejected (`Accept` and `All` read the accepted text). With
+/// `options.select` (`-p`), read as the view reads it (`tN` a table
+/// outside every cell, a `pN` or a range the tables that hold it): the
+/// grids of the tables it reaches, each with the tables nested in it, in
+/// document order and once, then an empty line and the view [`read`]
+/// prints of the same selection, unchanged, its warnings with it (#1161).
+/// Without a selection the view's other options change nothing.
+///
+/// # Errors
+///
+/// [`TablesError::Read`] when the document cannot be read or the view
+/// refuses the selection; [`TablesError::Usage`] when a pick reaches no
+/// table or the selection is not `-p`.
+pub fn read_tables(docx: &[u8], options: &ReadOptions) -> Result<ReadView, TablesError> {
+    let read_error =
+        |e: crate::inspect::InspectError| TablesError::Read(MarkdownError::Docx(e.to_string()));
+    let settle =
+        (options.track_changes == TrackChanges::Reject).then_some(crate::inspect::Settle::Reject);
+    let tables = crate::inspect::view_tables(docx, settle).map_err(read_error)?;
+    let Some(select) = &options.select else {
+        let tables: Vec<crate::inspect::Table> =
+            tables.into_iter().map(|(_, table)| table).collect();
+        return Ok(ReadView {
+            markdown: crate::inspect::tables_text(&tables),
+            warnings: Vec::new(),
+            selected: None,
+            selected_stories: Vec::new(),
+        });
+    };
+    let Select::Picks(picks) = select else {
+        return Err(TablesError::Usage(
+            "--tables takes -p only: tN, or a pN inside a table".to_string(),
+        ));
+    };
+    // The view reads the selection first: what it refuses, `read -p`
+    // refuses alike.
+    let view = read(docx, options).map_err(TablesError::Read)?;
+    // The view's table that holds each paragraph (`pN` of a cell, or of a
+    // table nested in one, at any depth).
+    fn own(
+        rows: &[Vec<crate::inspect::TableCell>],
+        nested: &[crate::inspect::NestedTable],
+        number: usize,
+        owner: &mut std::collections::BTreeMap<usize, usize>,
+    ) {
+        for id in rows.iter().flatten().flat_map(|cell| &cell.paragraph_ids) {
+            if let Some(("body", n)) = crate::ids::paragraph_place(id)
+                .as_ref()
+                .map(|(story, n)| (story.as_str(), *n))
+            {
+                owner.insert(n, number);
+            }
+        }
+        for child in nested {
+            own(&child.rows, &child.nested, number, owner);
+        }
+    }
+    let mut owner = std::collections::BTreeMap::new();
+    for (number, table) in &tables {
+        own(&table.rows, &table.nested, *number, &mut owner);
+    }
+    let mut reached = std::collections::BTreeSet::new();
+    for pick in picks {
+        match *pick {
+            Pick::Table(t) => {
+                reached.insert(t);
+            }
+            Pick::Paragraphs { from, to } => {
+                let mut hit = false;
+                for (_, &number) in owner.range(from..=to.unwrap_or(usize::MAX)) {
+                    hit = true;
+                    reached.insert(number);
+                }
+                if !hit {
+                    let spelled = match to {
+                        Some(to) if to == from => format!("p{from}"),
+                        Some(to) => format!("p{from}-p{to}"),
+                        None => format!("p{from}-"),
+                    };
+                    return Err(TablesError::Usage(format!(
+                        "{spelled} is not in a table; --tables -p takes tN, or a pN inside a table"
+                    )));
+                }
+            }
+        }
+    }
+    let kept: Vec<crate::inspect::Table> = tables
+        .into_iter()
+        .filter(|(number, _)| reached.contains(number))
+        .map(|(_, table)| table)
+        .collect();
+    Ok(ReadView {
+        markdown: format!("{}\n{}", crate::inspect::tables_text(&kept), view.markdown),
+        ..view
+    })
 }
 
 /// The view `jubarte edit` and `jubarte add` print after applying:
