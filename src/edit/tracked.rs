@@ -518,7 +518,11 @@ fn emit(
         let node = t.paragraph_nodes[para];
         let dom = &mut t.opened.dom;
         let mut edits = by_para.remove(&para).unwrap_or_default();
-        edits.sort_by_key(|e| (e.start, e.end, e.op));
+        let mut empty = project_paragraph(dom, node)
+            .text
+            .is_empty()
+            .then(super::EmptyPlacement::default);
+        super::sort_edits(&mut edits, empty.is_some());
         // In reverse, so earlier source offsets stay valid: a deletion
         // leaves the projection and an insertion joins it, exactly as the
         // plain edit changes the clean copy.
@@ -565,7 +569,7 @@ fn emit(
                     vec![edit.clone()]
                 };
                 for piece in pieces.iter().rev() {
-                    emit_text(dom, node, piece, stamp);
+                    emit_text(dom, node, piece, stamp, empty.as_mut());
                 }
             }
         }
@@ -1029,8 +1033,32 @@ fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> 
 
 /// Emit one text edit: the range's runs in `w:del`, then the replacement in
 /// a `w:ins` run formatted like the first deleted run, or like the run the
-/// insertion attaches to.
-fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut Stamp<'_>) {
+/// insertion attaches to. `empty` places the text of a paragraph that had
+/// none.
+fn emit_text(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    edit: &ScheduledEdit,
+    stamp: &mut Stamp<'_>,
+    empty: Option<&mut super::EmptyPlacement>,
+) {
+    if let Some(placement) = empty {
+        // Typed into an empty paragraph: a run formatted as the mark, in
+        // our insertion, at its edge. Placed in reverse order, no text is
+        // before it yet, so its words start at 0.
+        if edit.replacement.is_empty() {
+            return;
+        }
+        let ins = stamp.container(dom, W::ins());
+        placement.place(dom, paragraph, ins, edit.attach_before);
+        let run = super::mark_run(dom, paragraph);
+        dom.add(ins, run);
+        super::write_mark_run_text(dom, run, &edit.replacement);
+        if let Some(format) = &edit.format {
+            super::format_range(dom, paragraph, 0, edit.replacement.len(), format);
+        }
+        return;
+    }
     let projection = project_paragraph(dom, paragraph);
     let touched: Vec<_> = if edit.start == edit.end {
         attach_segment(&projection, edit.start, edit.attach_before)
@@ -1683,6 +1711,8 @@ pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
         if dom.name_is(child, &W::r_pr_change())
             || dom.name_is(child, &W::ins())
             || dom.name_is(child, &W::del())
+            || dom.name_is(child, &W::name("moveFrom"))
+            || dom.name_is(child, &W::name("moveTo"))
         {
             dom.remove(child);
         }

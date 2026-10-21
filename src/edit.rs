@@ -5118,7 +5118,8 @@ impl<'p> Transaction<'p> {
         attach_before: bool,
     ) -> Result<(), String> {
         if projection.text.is_empty() {
-            return Err("cannot insert text into an empty paragraph; use insert_paragraph".into());
+            // Typed as Word types it: a run formatted as the mark.
+            return Ok(());
         }
         let seg = attach_segment(projection, pos, attach_before)
             .ok_or_else(|| "no run holds the insertion point".to_string())?;
@@ -5755,7 +5756,11 @@ impl<'p> Transaction<'p> {
         for para in touched {
             let node = self.paragraph_nodes[para];
             let mut edits = by_para.remove(&para).unwrap_or_default();
-            edits.sort_by_key(|e| (e.start, e.end, e.op));
+            let mut empty = project_paragraph(&self.opened.dom, node)
+                .text
+                .is_empty()
+                .then(EmptyPlacement::default);
+            sort_edits(&mut edits, empty.is_some());
             // Apply in reverse so earlier source offsets stay valid.
             for edit in edits.iter().rev() {
                 let projection = project_paragraph(&self.opened.dom, node);
@@ -5773,14 +5778,22 @@ impl<'p> Transaction<'p> {
                     })
                     .collect();
                 carriers.dedup();
-                apply_text_edit(
-                    &mut self.opened.dom,
-                    &projection,
-                    edit.start,
-                    edit.end,
-                    &edit.replacement,
-                    edit.attach_before,
-                );
+                if let Some(placement) = empty.as_mut() {
+                    if !edit.replacement.is_empty() {
+                        let run = mark_run(&mut self.opened.dom, node);
+                        placement.place(&mut self.opened.dom, node, run, edit.attach_before);
+                        write_mark_run_text(&mut self.opened.dom, run, &edit.replacement);
+                    }
+                } else {
+                    apply_text_edit(
+                        &mut self.opened.dom,
+                        &projection,
+                        edit.start,
+                        edit.end,
+                        &edit.replacement,
+                        edit.attach_before,
+                    );
+                }
                 for ins in carriers {
                     tracked::remove_empty_insertion(&mut self.opened.dom, ins);
                 }
@@ -6790,8 +6803,10 @@ fn excerpt(text: &str, max: usize) -> String {
 /// sharing a point land in plan order, so `own` shifts only past the ones
 /// planned before it.
 fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Option<usize>) -> usize {
+    // Insertions at one point stand in `edits`' order (see `sort_edits`).
+    let own_at = own.and_then(|o| edits.iter().position(|e| e.op == o));
     let mut delta: i64 = 0;
-    for edit in edits {
+    for (k, edit) in edits.iter().enumerate() {
         let (start, end, i) = (edit.start, edit.end, edit.op);
         if Some(i) == own {
             continue;
@@ -6799,7 +6814,7 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
         let shifts = if start == end {
             // insertion
             if inclusive {
-                start < pos || (start == pos && own.is_none_or(|o| i < o))
+                start < pos || (start == pos && own_at.is_none_or(|o| k < o))
             } else {
                 start < pos
             }
@@ -7218,6 +7233,76 @@ fn remove_comment_references(dom: &mut Dom, references: &[NodeId]) {
 fn set_text(dom: &mut Dom, t: NodeId, value: &str) {
     dom.set_value(t, value);
     dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+}
+
+/// A new run for text typed into the empty `paragraph`, as Word types it:
+/// formatted as the paragraph mark (its `w:pPr/w:rPr`, without the mark's
+/// own revisions or `w:oMath`, which only a mark takes). Not yet in the
+/// tree.
+pub(super) fn mark_run(dom: &mut Dom, paragraph: NodeId) -> NodeId {
+    let run = dom.new_element(W::r());
+    if let Some(rpr) = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    {
+        let rpr = tracked::clean_rpr(dom, rpr);
+        if let Some(math) = dom.element(rpr, &W::name("oMath")) {
+            dom.remove(math);
+        }
+        if dom.has_elements(rpr) {
+            dom.add(run, rpr);
+        }
+    }
+    run
+}
+
+/// `text` written into `run`, a [`mark_run`] already in the tree.
+pub(super) fn write_mark_run_text(dom: &mut Dom, run: NodeId, text: &str) {
+    let t = dom.new_element(W::t());
+    dom.add(run, t);
+    write_text(dom, t, text);
+}
+
+/// Text typed into an empty paragraph, placed edit by edit in reverse
+/// [`sort_edits`] order, so that each edge keeps plan order and what the
+/// paragraph holds (a field, a bookmark's markers) stays between them: the
+/// text joins no range it was not typed in (#1303).
+#[derive(Default)]
+pub(super) struct EmptyPlacement {
+    /// The end text placed last, which the next end text goes before.
+    next_end: Option<NodeId>,
+}
+
+impl EmptyPlacement {
+    /// Put `node` where its text was typed in `paragraph`: last for an
+    /// insert at the end (before the end text already placed), else first,
+    /// after the paragraph's properties (an insert at the start, a rewrite).
+    pub(super) fn place(
+        &mut self,
+        dom: &mut Dom,
+        paragraph: NodeId,
+        node: NodeId,
+        attach_before: bool,
+    ) {
+        if attach_before {
+            match self.next_end {
+                Some(next) => dom.add_before_self(next, node),
+                None => dom.add(paragraph, node),
+            }
+            self.next_end = Some(node);
+        } else if let Some(ppr) = dom.element(paragraph, &W::p_pr()) {
+            dom.add_after_self(ppr, node);
+        } else {
+            dom.add_first(paragraph, node);
+        }
+    }
+}
+
+/// Sort a paragraph's edits for applying: by source range, then plan
+/// order. In an `empty` paragraph every edit sits at its one point, and the
+/// start edge's text comes before the end edge's (#1303).
+fn sort_edits(edits: &mut [ScheduledEdit], empty: bool) {
+    edits.sort_by_key(|e| (e.start, e.end, empty && e.attach_before, e.op));
 }
 
 /// Set the text of `t`, a `w:t` in a run, writing each `\t` as a `w:tab`

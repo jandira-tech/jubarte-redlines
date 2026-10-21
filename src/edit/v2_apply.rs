@@ -2181,13 +2181,6 @@ fn resolve_operation(
             ..
         } => {
             let old = exact(p)?;
-            if old.is_empty() && !text.is_empty() {
-                return Err(err(
-                    "UNSUPPORTED_STRUCTURE",
-                    None,
-                    "cannot insert text into an empty paragraph; use insert_paragraph",
-                ));
-            }
             let mut resolved = Vec::new();
             for (start, end, replacement) in exact_rewrite_ranges(&old, text) {
                 resolved.push(text_component(tx, p, start, end, &replacement, None, true)?);

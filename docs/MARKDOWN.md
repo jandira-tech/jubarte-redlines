@@ -1071,6 +1071,22 @@ permission range the source holds: a heading replaced whole loses its
 defined.". The refusal adds the route: drop `update_fields` and run
 `jubarte convert FILE --update-fields` afterwards.
 
+An empty paragraph (`<!-- p9 empty -->`) takes text as Word types it:
+`edit FILE -p p9 --content "text"`, an `insert` at `position` `start` or
+`end`, and a `rewrite` write one new run in your insertion. The run is
+formatted as the paragraph mark (a copy of its `w:pPr/w:rPr`, without the
+mark's own revisions or `w:oMath`, which only a mark takes), and the
+paragraph's properties stay as they were. What the paragraph holds without
+text (a field with no result, a bookmark's markers) stays where it is: an
+`insert` at `start`, a `rewrite` and `--content` go before it, an `insert`
+at `end` after it, so the words join no range they were not typed in.
+Several inserts go to their edges, each edge in plan order (#1303); a v2
+plan that mixes both edges of one empty paragraph is refused as ambiguous,
+both edges being one point. A `format` on the operation applies over the
+mark's formatting. In a table cell, a header or a footer too. Accept All
+leaves one plain paragraph holding the text; Reject All, the empty
+paragraph.
+
 ### Visible rejects
 
 `--reject` is Word's Reject: another author's insertion vanishes and their
