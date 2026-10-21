@@ -1888,7 +1888,7 @@ pub(crate) fn operation_schemas() -> &'static [serde_json::Value] {
 }
 
 /// Names accepted by the common v1 dispatcher, in the legacy manifest order.
-pub(crate) fn dispatched_operation_kinds() -> Vec<String> {
+pub fn dispatched_operation_kinds() -> Vec<String> {
     operation_schemas()
         .iter()
         .map(|schema| {
