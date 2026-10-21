@@ -302,7 +302,7 @@ fn cached_breaks_inside_a_table_are_named_at_the_next_block() {
     )));
     assert!(
         body(&out).starts_with(
-            "<!-- page 1 of 3 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 3x1, cells p1-p3 by row -->\n"
+            "<!-- page 1 of 3 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 3x1, cells p1-p3 by row, widths 2.778in, width auto -->\n"
         ),
         "{out}"
     );
@@ -441,7 +441,7 @@ fn table_line_gives_grid_cells_and_header_row() {
     let bytes = docx(&format!("{}{TABLE_3X2}{}", para("Before"), para("After")));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 center 3x2, cells p1-p6 by row, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p7 -->\nAfter\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 center 3x2, cells p1-p6 by row, widths 2.778in 2.778in, width auto, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p7 -->\nAfter\n"
     );
 }
 
@@ -449,7 +449,7 @@ fn table_line_gives_grid_cells_and_header_row() {
 fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_marks() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:rPr><w:ins w:id="12" w:author="Ann Counsel"/></w:rPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged t0.row0.cell0 across 2, break-ins r12 @AC in p1 -->\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, widths 2.778in 2.778in, width auto, merged t0.row0.cell0 across 2, break-ins r12 @AC in p1 -->\n"), "{out}");
 }
 
 #[test]
@@ -466,7 +466,7 @@ fn a_cells_empty_paragraphs_keep_their_breaks() {
     let out = body(&agent(&docx(&tbl))).to_string();
     assert!(
         out.starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells t0.row0 p0-p4 -->\n|a<br><br>b|c<br>|\n"
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells t0.row0 p0-p4, widths 2.778in 2.778in, width auto -->\n|a<br><br>b|c<br>|\n"
         ),
         "{out}"
     );
@@ -478,7 +478,7 @@ fn table_line_names_each_merged_cell_and_how_far_it_reaches() {
     // spanning columns names how many.
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x3, cells p0-p4 by row, merged t0.row0.cell0 down 2; t0.row0.cell1 across 2 -->\n|A|B||\n|-|-|-|\n||C|D|\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x3, cells p0-p4 by row, widths 2.083in 2.083in 2.083in, width auto, merged t0.row0.cell0 down 2; t0.row0.cell1 across 2 -->\n|A|B||\n|-|-|-|\n||C|D|\n"), "{out}");
 }
 
 /// The ids round trip (Task 5b): a table's own property changes and a
@@ -496,7 +496,7 @@ fn table_line_names_the_tables_own_changes() {
     let bytes = docx(&tbl);
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, p2 right, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
+        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, p2 right, widths 2.778in 2.778in, width auto, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
         "{out}"
     );
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
@@ -876,7 +876,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev-del r6 @AC in t0.row1 -->"),
+        out.contains("<!-- t0 2x1, cells p0-p1 by row, width auto, rev-del r6 @AC in t0.row1 -->"),
         "{out}"
     );
     let lines = header_lines(&out);
@@ -1425,7 +1425,7 @@ fn hidden_comments_in_a_cell_go_on_the_table_line_not_the_next_paragraph() {
     let out = agent_with(&one_comment_docx(&body_xml), TrackChanges::All, false);
     assert!(
         body(&out).starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, comments c9 in p1 -->\n"
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, widths 2.778in 2.778in, width auto, comments c9 in p1 -->\n"
         ),
         "{out}"
     );
@@ -2340,7 +2340,7 @@ fn picks_print_paragraphs_ranges_and_whole_tables_in_document_order() {
     assert!(out.contains("\nrange: p1, p4, p9 of p0-p9\n"), "{out}");
     assert_eq!(
         body(&out),
-        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nOne\n\n<!-- t0 center 3x2, cells p2-p7 by row, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p9 -->\nNine\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nOne\n\n<!-- t0 center 3x2, cells p2-p7 by row, widths 2.778in 2.778in, width auto, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p9 -->\nNine\n"
     );
     let out = selected(Select::parse("t0,p8-").unwrap());
     assert!(out.contains("\nrange: t0, p8-p9 of p0-p9\n"), "{out}");
@@ -2940,7 +2940,7 @@ fn table_line_counts_rows_inside_content_controls() {
     );
     let out = body(&agent(&docx(&tbl))).to_string();
     assert!(
-        out.contains("<!-- t0 2x2, cells p0-p3 by row -->\n"),
+        out.contains("<!-- t0 2x2, cells p0-p3 by row, widths 2.778in 2.778in, width auto -->\n"),
         "{out}"
     );
 }
@@ -2955,7 +2955,8 @@ fn a_row_revision_shows_on_the_table_line_after_resolution() {
     assert!(accepted.contains(" rev r7 @AC in t0.row1"), "{accepted}");
     let rejected = body(&agent_with(&bytes, TrackChanges::Reject, true)).to_string();
     assert!(
-        rejected.contains("<!-- t0 1x2, cells p0-p1 by row -->"),
+        rejected
+            .contains("<!-- t0 1x2, cells p0-p1 by row, widths 2.778in 2.778in, width auto -->"),
         "{rejected}"
     );
 }
@@ -4662,7 +4663,7 @@ fn id_lines_inside_a_multi_paragraph_comment_name_it() {
         );
     }
     assert!(
-        out.contains("<!-- t0 1x1, cells p2-p2 by row, in c9 -->"),
+        out.contains("<!-- t0 1x1, cells p2-p2 by row, widths 2.778in, width auto, in c9 -->"),
         "{out}"
     );
     assert!(out.contains("<!-- p4 -->"), "{out}");
@@ -4811,7 +4812,7 @@ fn a_table_line_names_a_range_that_starts_in_a_cell() {
     );
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.contains("<!-- t0 1x1, cells p0-p0 by row, in c9 -->"),
+        out.contains("<!-- t0 1x1, cells p0-p0 by row, widths 2.778in, width auto, in c9 -->"),
         "{out}"
     );
     assert!(out.contains("<!-- p1 in c9 -->"), "{out}");
@@ -5343,7 +5344,7 @@ fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers()
         assert_eq!(
             body(&agent_with(&bytes, mode, true)),
             format!(
-                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, rev r2 @AC in p0; r1 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
+                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, width auto, rev r2 @AC in p0; r1 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
             )
         );
     }
@@ -5798,7 +5799,7 @@ fn pr392_comment_range_ending_in_a_table_does_not_leak_to_the_next_paragraph() {
     let view = agent(&bytes);
     assert!(view.contains("<!-- p0 in c9 -->"), "{view}");
     assert!(
-        view.contains("<!-- t0 1x1, cells p1-p1 by row, in c9 -->"),
+        view.contains("<!-- t0 1x1, cells p1-p1 by row, widths 2.778in, width auto, in c9 -->"),
         "{view}"
     );
     assert!(view.contains("<!-- p2 -->\nQuiet"), "{view}");

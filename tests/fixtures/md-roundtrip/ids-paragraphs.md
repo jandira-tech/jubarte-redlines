@@ -3194,7 +3194,7 @@ do eiusmod et et adipiscing sed et ipsum sit elit ipsum magna elit et consectetu
 <!-- p1059 TextHeading2 after 36pt -->
 tempor adipiscing incididunt incididunt tempor magna.
 
-<!-- t0 1x3, cells p1060-p1062 by row, p1061 justify, p1060-p1062 TextHeading2, p1060-p1062 before 0pt after 0pt, borders none, cell-borders bottom single 0.5pt in t0.row0.cell1 -->
+<!-- t0 1x3, cells p1060-p1062 by row, p1061 justify, p1060-p1062 TextHeading2, p1060-p1062 before 0pt after 0pt, widths 0.7604in 3.0625in 2.177in, width auto, borders none, cell-borders bottom single 0.5pt in t0.row0.cell1 -->
 |ipsum||(dolore)|
 |:-|-|:-|
 
@@ -3303,7 +3303,7 @@ do eiusmod et et adipiscing sed et ipsum sit elit ipsum magna elit et consectetu
 <!-- p1108 TextHeading2 after 36pt -->
 tempor adipiscing incididunt incididunt tempor magna.
 
-<!-- t1 1x3, cells p1109-p1111 by row, p1110 justify, p1109-p1111 TextHeading2, p1109-p1111 before 0pt after 0pt, borders none, cell-borders bottom single 0.5pt in t1.row0.cell1 -->
+<!-- t1 1x3, cells p1109-p1111 by row, p1110 justify, p1109-p1111 TextHeading2, p1109-p1111 before 0pt after 0pt, widths 0.7604in 3.0625in 2.177in, width auto, borders none, cell-borders bottom single 0.5pt in t1.row0.cell1 -->
 |ipsum||(dolore)|
 |:-|-|:-|
 

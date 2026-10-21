@@ -603,6 +603,19 @@ fn twips(e: &Element, attr: &str) -> Option<f64> {
     })
 }
 
+/// The page width less the side margins of `sect`, in twips, as the
+/// writer computes it (`package.rs`): what it splits a table's columns
+/// over when the table line gives no widths (#1472).
+pub(crate) fn text_width(sect: Option<&Element>) -> u32 {
+    let size = sect.and_then(|s| s.child("pgSz"));
+    let margins = sect.and_then(|s| s.child("pgMar"));
+    let width = size.and_then(|s| twips(s, "w")).unwrap_or(12240.0);
+    let side = |a: &str| margins.and_then(|m| twips(m, a)).unwrap_or(1440.0);
+    let text = (width - side("left") - side("right")).round().max(1440.0);
+    // `as` saturates: a width past u32 is no page Word writes.
+    text as u32
+}
+
 /// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
 fn page_setup(sect: &Element) -> String {
     let size = sect.child("pgSz");

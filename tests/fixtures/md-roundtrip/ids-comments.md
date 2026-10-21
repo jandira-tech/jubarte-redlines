@@ -27,7 +27,7 @@ styles:
 <!-- p2 Normal left -->
 Either party may end this agreement with ninety days{== written notice{++ without undue delay++}{r4 @BC}.==}{>>c1 @CD: Client asked for this.<<}
 
-<!-- t0 5x3, cells p3-p17 by row, p3-p17 Normal -->
+<!-- t0 5x3, cells p3-p17 by row, p3-p17 Normal, widths 2.2306in 2.231in 2.231in, layout fixed -->
 |Clause|Change|Status|
 |:-|:-|:-|
 |Late payments{++ as reasonably required++}{r5 @BC}{== carry interest.==}{>>c2 @AL: Client asked for this.<<}|Each {--party--}{r6 @CD}{++sixty++}{r7 @AL} keeps {--the--}{r8 @DP}{++supplier++}{r9 @AL}.|{--The--}{r10 @BC}{++sixty++}{r11 @CD} warranty{== period is.==}{>>c3 @DP: Client asked for this.<<}{>>c4 @DP: Legal to review.<<}|

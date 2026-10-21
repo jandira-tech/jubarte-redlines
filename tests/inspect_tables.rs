@@ -491,7 +491,7 @@ fn table_inventory_without_selection_and_the_table_view_are_unchanged() {
     assert!(stdout.contains("range: t1 of p0-p9\n"), "{stdout}");
     assert!(
         stdout.ends_with(
-            "<!-- t1 1x2, cells p4-p5 by row, header row repeats -->\n|Bob|Two|\n|-|-|\n"
+            "<!-- t1 1x2, cells p4-p5 by row, widths 4.167in 2.333in, width 6.5in, header row repeats -->\n|Bob|Two|\n|-|-|\n"
         ),
         "{stdout}"
     );

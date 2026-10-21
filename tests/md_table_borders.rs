@@ -397,14 +397,17 @@ fn a_grid_and_a_borderless_table_keep_their_own() {
         table(DEMO_BORDERS)
     );
     let (first, again, second) = round_trip(&docx(&body));
+    // The tables' 4000-twip columns are not an even split of the text
+    // width, and their width is auto, so both lines name their geometry.
     assert!(
         first.contains(
-            "<!-- t1 2x2, cells p6-p9 by row, style TableNormal, borders single 0.5pt 000000 -->"
+            "<!-- t1 2x2, cells p6-p9 by row, widths 2.778in 2.778in, width auto, \
+             style TableNormal, borders single 0.5pt 000000 -->"
         ),
         "{first}"
     );
     assert!(
-        first.contains("<!-- t0 2x2, cells p0-p3 by row -->"),
+        first.contains("<!-- t0 2x2, cells p0-p3 by row, widths 2.778in 2.778in, width auto -->"),
         "{first}"
     );
     let document = part(&again, "word/document.xml");

@@ -35,7 +35,7 @@ headers:
 
 <!-- p7 empty, before 0.1pt -->
 
-<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, p8-p19 line 8.65pt exact, p23 line 8.65pt exact, p27 line 8.65pt exact, p31 line 8.65pt exact, p35 line 8.65pt exact, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
+<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, p8-p19 line 8.65pt exact, p23 line 8.65pt exact, p27 line 8.65pt exact, p31 line 8.65pt exact, p35 line 8.65pt exact, widths 1.3465in 1.3465in 1.3465in 1.3465in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
 |Centro:||Código de Centro:||
 |-|-|-|-|
 |Dirección:||Provincia:||
@@ -55,7 +55,7 @@ headers:
 
 <!-- p41 empty, before 0.1pt -->
 
-<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center, p45 before 0.1pt line 9.6pt exact, p47 before 0.1pt line 9.6pt exact, p48 before 0.45pt, p50 before 4.85pt line 0.988, p52 before 0.1pt line 9.6pt exact, p53 line 8.55pt exact, p59 line 8.65pt exact, p65 line 8.75pt exact, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
+<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center, p45 before 0.1pt line 9.6pt exact, p47 before 0.1pt line 9.6pt exact, p48 before 0.45pt, p50 before 4.85pt line 0.988, p52 before 0.1pt line 9.6pt exact, p53 line 8.55pt exact, p59 line 8.65pt exact, p65 line 8.75pt exact, widths 0.758in 1.2896in 0.989in 0.768in 0.889in 0.6924in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
 |<br>Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|<br>Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
 |-|-|-|-|-|-|
 |Ed Primaria||||||
@@ -69,7 +69,7 @@ headers:
 
 <!-- p73 empty, before 0.25pt -->
 
-<!-- t2 4x2, cells t2.row0 p74-p75 t2.row1 p76-p77 t2.row2 p78-p80 t2.row3 p81-p82, p74-p75 line 8.65pt exact, p76 before 0.2pt line 9.6pt exact, p78 line 9.55pt exact, p79 line 8.75pt exact, p81 before 0.1pt line 9.7pt exact, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
+<!-- t2 4x2, cells t2.row0 p74-p75 t2.row1 p76-p77 t2.row2 p78-p80 t2.row3 p81-p82, p74-p75 line 8.65pt exact, p76 before 0.2pt line 9.6pt exact, p78 line 9.55pt exact, p79 line 8.75pt exact, p81 before 0.1pt line 9.7pt exact, widths 4.4806in 0.906in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
 |En relación a las familias del alumnado participantes en el programa|2019 / 2020|
 |-|-|
 |Porcentaje de familias que ha participado en actividades de tipo informativo (entrevistas; reuniones)||
@@ -78,7 +78,7 @@ headers:
 
 <!-- p83 empty, before 0.5pt, after 0.05pt -->
 
-<!-- t3 3x2, cells t3.row0 p84-p85 t3.row1 p86-p87 t3.row2 p88-p90, p84-p85 line 8.65pt exact, p86 before 0.1pt line 9.7pt exact, p88 line 9.55pt exact, p89 line 8.75pt exact, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
+<!-- t3 3x2, cells t3.row0 p84-p85 t3.row1 p86-p87 t3.row2 p88-p90, p84-p85 line 8.65pt exact, p86 before 0.1pt line 9.7pt exact, p88 line 9.55pt exact, p89 line 8.75pt exact, widths 4.4806in 0.906in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
 |En relación a la colaboración con otras entidades|2019 / 2020|
 |-|-|
 |Número de centros educativos con los que se han realizado actividades en el marco del proyecto.||
@@ -148,7 +148,7 @@ Director/a del …….…………………………………………………�
 
 <!-- p115 BodyText empty, justify, right 0.925in, before 2.75pt, line 1.038 -->
 
-<!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText -->
+<!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText, widths 0.981in 1.4764in 1.3785in 2.3625in, width auto -->
 |NOMBRE|APELLIDOS|NIF|COORDINADOR/ PARTICIPANTE|
 |-|-|-|-|
 |||||

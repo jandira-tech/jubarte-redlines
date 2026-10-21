@@ -15,21 +15,21 @@ styles:
 <!-- p0 -->
 No style:
 
-<!-- t0 1x3, cells p1-p3 by row, style TableNormal -->
+<!-- t0 1x3, cells p1-p3 by row, widths 1.667in 1.667in 1.667in, width auto, style TableNormal -->
 |x|y|z|
 |-|-|-|
 
 <!-- p4 -->
 Table Grid:
 
-<!-- t1 1x3, cells p5-p7 by row -->
+<!-- t1 1x3, cells p5-p7 by row, widths 1.667in 1.667in 1.667in, width auto -->
 |x|y|z|
 |-|-|-|
 
 <!-- p8 -->
 Custom:
 
-<!-- t2 1x3, cells p9-p11 by row, style Ledger -->
+<!-- t2 1x3, cells p9-p11 by row, widths 1.667in 1.667in 1.667in, width auto, style Ledger -->
 |x|y|z|
 |-|-|-|
 

@@ -195,6 +195,78 @@ pub(super) struct Spacing {
     pub line: Option<(u32, &'static str)>,
 }
 
+/// A table's geometry from its line (#1472): its grid's column widths, its
+/// preferred width, its indent and a fixed layout. `None` and `false` are
+/// what the writer writes by itself: an even split of the text width over
+/// 100% of it, no indent, an autofit layout.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct TableGeometry {
+    /// Each grid column's width (`w:gridCol`), in twips.
+    pub widths: Option<Vec<u32>>,
+    /// The table's preferred width (`w:tblW`).
+    pub width: Option<TableWidth>,
+    /// `w:tblInd`, in twips.
+    pub indent: Option<i64>,
+    /// `w:tblLayout w:type="fixed"`.
+    pub fixed: bool,
+}
+
+/// A table's preferred width, as `w:tblW` types it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TableWidth {
+    Auto,
+    /// `dxa`, in twips.
+    Twips(u32),
+    /// `pct`, in fiftieths of a percent: 5000 is the whole text width.
+    Fiftieths(u32),
+}
+
+/// Word keeps a column, a table's width and its indent within 22in.
+const MOST_TABLE_TWIPS: f64 = 31_680.0;
+
+/// The widest preferred width in percent Word takes: 600%.
+const MOST_TABLE_PERCENT: f64 = 600.0;
+
+impl TableGeometry {
+    /// One `widths 2.14in 1in`, `width auto|6.5in|50%`, `indent 0.25in` or
+    /// `layout fixed` clause into `self`; `None` when it is none of these
+    /// or a value is out of Word's range.
+    pub(super) fn clause(&mut self, clause: &str) -> Option<()> {
+        let (word, value) = clause.split_once(' ')?;
+        let twips = |value: &str| -> Option<u32> {
+            let n: f64 = value.strip_suffix("in")?.parse().ok()?;
+            let twips = (n * 1440.0).round();
+            // `as` cannot overflow: the bound is checked first.
+            (n.is_finite() && (0.0..=MOST_TABLE_TWIPS).contains(&twips)).then_some(twips as u32)
+        };
+        match word {
+            "widths" => {
+                let widths = value.split(' ').map(twips).collect::<Option<Vec<_>>>()?;
+                self.widths = Some(widths).filter(|w| !w.is_empty());
+            }
+            "width" => {
+                self.width = Some(if value == "auto" {
+                    TableWidth::Auto
+                } else if let Some(percent) = value.strip_suffix('%') {
+                    let n: f64 = percent.parse().ok()?;
+                    let fiftieths = (n * 50.0).round();
+                    if !(n.is_finite() && (0.0..=MOST_TABLE_PERCENT * 50.0).contains(&fiftieths)) {
+                        return None;
+                    }
+                    // `as` cannot overflow: the bound is checked first.
+                    TableWidth::Fiftieths(fiftieths as u32)
+                } else {
+                    TableWidth::Twips(twips(value)?)
+                });
+            }
+            "indent" => self.indent = Some(super::view_styles::twips_in(value)?),
+            "layout" if value == "fixed" => self.fixed = true,
+            _ => return None,
+        }
+        Some(())
+    }
+}
+
 impl Spacing {
     pub(super) fn is_empty(&self) -> bool {
         *self == Self::default()
@@ -272,6 +344,8 @@ pub(super) enum Item {
         /// Its style (`tblStyle`); none is Word's Normal Table.
         style: Option<String>,
         formats: TableFormats,
+        /// Its grid's widths, preferred width, indent and layout (#1472).
+        geometry: TableGeometry,
     },
     Row {
         header: bool,
@@ -718,6 +792,10 @@ pub(super) fn story(
     let mut run_formats: Vec<FormatMark> = Vec::new();
     // The open tables' formatting changes, and the row and cell each is in.
     let mut tables: Vec<(TableFormats, usize, usize)> = Vec::new();
+    // Each open table's grid column widths in twips, the grid column the
+    // next cell of its current row starts at, and the even split a cell
+    // past the grid takes per column.
+    let mut grids: Vec<(Vec<u32>, usize, u32)> = Vec::new();
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
     // (`{--plain _italic_--}{r43+44 @AL}` is two marks).
@@ -1226,16 +1304,36 @@ pub(super) fn story(
                 align,
                 style,
                 formats,
+                geometry,
             } => {
                 columns.clone_from(these);
                 let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
+                // The line's widths when they count the grid's columns
+                // (the plan checked), else an even split of the text width.
+                let widths = geometry
+                    .widths
+                    .clone()
+                    .filter(|w| w.len() == columns.len().max(1))
+                    .unwrap_or_else(|| vec![context.text_width / count; columns.len().max(1)]);
                 let mut properties = String::new();
                 if let Some(style) = style {
                     let _ = write!(properties, "<w:tblStyle w:val=\"{}\"/>", escape(style));
                 }
-                properties.push_str("<w:tblW w:w=\"5000\" w:type=\"pct\"/>");
+                // CT_TblPr's order: tblStyle, tblW, jc, tblInd, tblBorders,
+                // tblLayout, tblLook.
+                properties.push_str(&match geometry.width {
+                    None => "<w:tblW w:w=\"5000\" w:type=\"pct\"/>".to_string(),
+                    Some(TableWidth::Auto) => "<w:tblW w:w=\"0\" w:type=\"auto\"/>".to_string(),
+                    Some(TableWidth::Twips(w)) => format!("<w:tblW w:w=\"{w}\" w:type=\"dxa\"/>"),
+                    Some(TableWidth::Fiftieths(w)) => {
+                        format!("<w:tblW w:w=\"{w}\" w:type=\"pct\"/>")
+                    }
+                });
                 if let Some(align) = align {
                     let _ = write!(properties, "<w:jc w:val=\"{align}\"/>");
+                }
+                if let Some(indent) = geometry.indent {
+                    let _ = write!(properties, "<w:tblInd w:w=\"{indent}\" w:type=\"dxa\"/>");
                 }
                 if let Some(borders) = &formats.borders {
                     let _ = write!(
@@ -1243,6 +1341,9 @@ pub(super) fn story(
                         "<w:tblBorders>{}</w:tblBorders>",
                         super::borders::xml(borders)
                     );
+                }
+                if geometry.fixed {
+                    properties.push_str("<w:tblLayout w:type=\"fixed\"/>");
                 }
                 properties.push_str(
                     "<w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" \
@@ -1259,9 +1360,10 @@ pub(super) fn story(
                 out.push_str("</w:tblPr><w:tblGrid>");
                 tables.push((formats.clone(), 0, 0));
                 let mut grid = String::new();
-                for _ in 0..count {
-                    let _ = write!(grid, "<w:gridCol w:w=\"{}\"/>", context.text_width / count);
+                for width in &widths {
+                    let _ = write!(grid, "<w:gridCol w:w=\"{width}\"/>");
                 }
+                grids.push((widths, 0, context.text_width / count));
                 out.push_str(&grid);
                 // The grid's change keeps the grid as it is, and names no
                 // author: Word's `w:tblGridChange` has none.
@@ -1282,6 +1384,10 @@ pub(super) fn story(
                 gaps: (before, after),
             } => {
                 out.push_str("<w:tr>");
+                // The row's first cell starts past its `before` gap.
+                if let Some((_, at, _)) = grids.last_mut() {
+                    *at = *before;
+                }
                 row_change = *change;
                 let (format, own) = tables
                     .last_mut()
@@ -1312,9 +1418,11 @@ pub(super) fn story(
                 if *header || change.is_some() || own.is_some() || format.is_some() || gapped {
                     // What the row has, which its formatting change keeps.
                     let mut base = String::new();
-                    let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
-                    let width =
-                        |n: usize| context.text_width / count * u32::try_from(n).unwrap_or(0);
+                    // The grid columns a gap leaves out, at the row's start
+                    // or its end.
+                    let widths = grids.last().map(|(w, ..)| w.as_slice()).unwrap_or_default();
+                    let before_width: u32 = widths.iter().take(*before).sum();
+                    let after_width: u32 = widths.iter().rev().take(*after).sum();
                     if *before > 0 {
                         let _ = write!(base, "<w:gridBefore w:val=\"{before}\"/>");
                     }
@@ -1322,15 +1430,10 @@ pub(super) fn story(
                         let _ = write!(base, "<w:gridAfter w:val=\"{after}\"/>");
                     }
                     if *before > 0 {
-                        let _ = write!(
-                            base,
-                            "<w:wBefore w:w=\"{}\" w:type=\"dxa\"/>",
-                            width(*before)
-                        );
+                        let _ = write!(base, "<w:wBefore w:w=\"{before_width}\" w:type=\"dxa\"/>");
                     }
                     if *after > 0 {
-                        let _ =
-                            write!(base, "<w:wAfter w:w=\"{}\" w:type=\"dxa\"/>", width(*after));
+                        let _ = write!(base, "<w:wAfter w:w=\"{after_width}\" w:type=\"dxa\"/>");
                     }
                     if *header {
                         base.push_str("<w:tblHeader/>");
@@ -1357,13 +1460,21 @@ pub(super) fn story(
                 }
             }
             Item::Cell { across, merge, .. } => {
-                let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
-                let across = u32::try_from(*across).unwrap_or(1).max(1);
-                let _ = write!(
-                    out,
-                    "<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/>",
-                    context.text_width / count * across
-                );
+                // The cell is as wide as the grid columns it spans, from
+                // where the row's cells so far end.
+                let spans = (*across).max(1);
+                let width: u32 = grids
+                    .last_mut()
+                    .map(|(widths, at, even)| {
+                        let width = (*at..*at + spans)
+                            .map(|column| widths.get(column).copied().unwrap_or(*even))
+                            .sum();
+                        *at += spans;
+                        width
+                    })
+                    .unwrap_or_default();
+                let across = u32::try_from(spans).unwrap_or(1);
+                let _ = write!(out, "<w:tc><w:tcPr><w:tcW w:w=\"{width}\" w:type=\"dxa\"/>");
                 if across > 1 {
                     let _ = write!(out, "<w:gridSpan w:val=\"{across}\"/>");
                 }
@@ -1429,6 +1540,7 @@ pub(super) fn story(
             }
             Item::TableEnd => {
                 tables.pop();
+                grids.pop();
                 out.push_str("</w:tbl>");
             }
         }

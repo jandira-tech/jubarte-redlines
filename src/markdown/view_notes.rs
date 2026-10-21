@@ -614,6 +614,9 @@ pub(super) struct TableLine {
     /// Cell paragraphs' own spacing (`p8-p38 line 8.65pt exact`), by
     /// paragraph (#1473).
     pub spacings: HashMap<usize, super::xml::Spacing>,
+    /// The grid's widths, the table's width, indent and layout (`widths
+    /// 2.14in 1in, width auto, indent 0.25in, layout fixed`), #1472.
+    pub geometry: super::xml::TableGeometry,
     /// The table's style (`style Ledger`) when tables differ in theirs.
     pub style: Option<String>,
     /// The table's own borders (`borders single 0.5pt 000000`).
@@ -787,6 +790,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         aligns: HashMap::new(),
         styles: HashMap::new(),
         spacings: HashMap::new(),
+        geometry: super::xml::TableGeometry::default(),
         style: None,
         borders: None,
         cell_borders: Vec::new(),
@@ -836,6 +840,10 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             for n in first..first + count {
                 parsed.styles.insert(n, style.clone());
             }
+            continue;
+        }
+        // `widths 2.14in 1in`, `width 50%`, `indent 0.25in`, `layout fixed`.
+        if i > 0 && parsed.geometry.clause(clause).is_some() {
             continue;
         }
         if clause == "header row repeats" {
@@ -1196,8 +1204,12 @@ const CLAUSE_WORDS: [&str; 24] = [
 /// The words that open a id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not
 /// read as.
-const TABLE_WORDS: [&str; 10] = [
+const TABLE_WORDS: [&str; 14] = [
     "cells",
+    "widths",
+    "width",
+    "indent",
+    "layout",
     "borders",
     "cell-borders",
     "row-borders",

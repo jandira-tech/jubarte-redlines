@@ -90,19 +90,22 @@ fn a_row_wider_than_its_grid_keeps_its_cells_and_merges() {
         // An empty cell past the grid.
         (
             "p19_wide_empty_extra.docx",
-            "<!-- t0 2x3, cells t0.row0 p1-p3 t0.row1 p4-p7 -->",
+            "<!-- t0 2x3, cells t0.row0 p1-p3 t0.row1 p4-p7, widths 1.667in 1.667in 1.667in, \
+             width auto -->",
         ),
         // A gap after over columns cells take.
         (
             "p16_after_overflows_cell.docx",
-            "<!-- t0 2x4, cells t0.row0 p1-p3 t0.row1 p4, merged t0.row0.cell1 across 2, \
-             gaps t0.row0 after 1; t0.row1 after 3 -->",
+            "<!-- t0 2x4, cells t0.row0 p1-p3 t0.row1 p4, widths 1.667in 1.667in 1.667in \
+             1.667in, width auto, merged t0.row0.cell1 across 2, gaps t0.row0 after 1; \
+             t0.row1 after 3 -->",
         ),
         // A merged pad cell longer than the room the gap leaves.
         (
             "p17_span_cut_by_after.docx",
-            "<!-- t0 2x4, cells t0.row0 p1-p2 t0.row1 p3, merged t0.row0.cell1 across 3, \
-             gaps t0.row0 after 2; t0.row1 after 3 -->",
+            "<!-- t0 2x4, cells t0.row0 p1-p2 t0.row1 p3, widths 1.667in 1.667in 1.667in \
+             1.667in, width auto, merged t0.row0.cell1 across 3, gaps t0.row0 after 2; \
+             t0.row1 after 3 -->",
         ),
     ] {
         let (first, second) = round_trip(dir.path(), &fixture(name));

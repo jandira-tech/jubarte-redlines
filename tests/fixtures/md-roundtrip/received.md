@@ -54,7 +54,7 @@ Client shall pay each invoice within {~~thirty~>forty-five~~}{r3+4 @AC} days of 
 <!-- p7 -->
 This Agreement begins on March 1, 2026 and continues until either party ends it with {~~ninety days~>sixty days~~}{r7+8 @AC} written notice.
 
-<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->
+<!-- t0 center 3x3, cells p8-p16 by row, widths 2.1646in 2.164in 2.1646in, header row repeats -->
 |Deliverable|Due|Owner|
 |-|-|-|
 |Route-cost report|{~~Day 10~>Day 15~~}{r9+10 @AC}|Consultant|

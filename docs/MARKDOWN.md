@@ -472,7 +472,24 @@ alike, a tie or justified text prints `-`; the `center` or `right` after
 `t0` places the table itself on the page), then `p8 Quote` for each cell
 paragraph that states a style, then `p8-p10 after 0pt line 1` for cell
 paragraphs with their own spacing (the id line's clauses joined by
-spaces, one range for neighbours that say the same), then `merged t0.row0.cell1 across 2; t0.row1.cell0
+spaces, one range for neighbours that say the same), then the table's
+geometry: `widths 1.5in 2in 3in` for the grid's columns (`w:gridCol`),
+printed when they are not an even split of the text width (the body
+section's page width less its margins); the reader writes the grid from
+it, each cell's `w:tcW` from the columns it spans, and a row's gap
+columns as `w:wBefore`/`w:wAfter`, while widths naming a column count
+the grid does not have are dropped with a warning and the columns split
+the text width evenly. `width auto`, `width 6in` or `width 80%` is the
+table's preferred width (`w:tblW`); without one the table fills the text
+width (`5000` fiftieths of a percent), so a table Word sizes to its
+contents, or whose `w:tblW` gives no width or 0, says `width auto`; the
+reader takes up to 22in or 600%, and the view prints no width past
+either. `indent 0.5in` is its indent from the margin (`w:tblInd`), and
+`layout fixed` keeps its column widths as set instead of fitting them to
+the text (`w:tblLayout`). Only a numbered table has a table line, so the
+geometry is a body table's: a table nested in a cell, or in a note,
+header or footer, prints none and its widths are not kept. After that come `header row
+repeats`, the table's `style` and its `borders`, then `merged t0.row0.cell1 across 2; t0.row1.cell0
 down 3` for a cell spanning grid columns or a vertical merge and the rows
 it covers (the view prints a span's other columns as empty cells, and
 leaves out empty columns at the right; the reader counts both back, and a

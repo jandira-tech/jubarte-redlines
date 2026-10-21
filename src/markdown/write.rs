@@ -877,6 +877,8 @@ struct TablePlan {
     styles: HashMap<usize, String>,
     /// The cell paragraphs' own spacing (`p8 line 8.65pt exact`), #1473.
     spacings: HashMap<usize, super::xml::Spacing>,
+    /// The grid's widths, the table's width, indent and layout (#1472).
+    geometry: super::xml::TableGeometry,
     /// A comment's range runs through the table (`in c5`).
     in_comment: bool,
     /// The formatting changes the line names.
@@ -1307,6 +1309,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         aligns: line.aligns,
         styles: line.styles,
         spacings: line.spacings,
+        geometry: line.geometry,
         style: line.style,
         borders: line.borders,
         cell_borders: line.cell_borders,
@@ -2256,11 +2259,31 @@ impl<'o, 'a> Writer<'o, 'a> {
                     }
                 }
                 let formats = self.table_formats();
+                let mut geometry = self
+                    .table_plan
+                    .as_ref()
+                    .map(|plan| plan.geometry.clone())
+                    .unwrap_or_default();
+                // Widths that do not count the grid's columns (an edit added
+                // or dropped one) name no column: the even split stands.
+                if let Some(widths) = &geometry.widths
+                    && widths.len() != grid.len().max(1)
+                {
+                    self.document.warnings.push(format!(
+                        "t{}: its widths name {} columns and its grid has {}: the columns \
+                         split the text width evenly",
+                        self.table_count,
+                        widths.len(),
+                        grid.len().max(1)
+                    ));
+                    geometry.widths = None;
+                }
                 self.story().push(Item::Table {
                     columns: grid,
                     align,
                     style,
                     formats,
+                    geometry,
                 });
                 self.table = Some(columns);
                 self.table_count += 1;
