@@ -49,6 +49,7 @@
 //! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
+//! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -198,7 +199,8 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 27] = [
+const RING1_CODES: [&str; 28] = [
+    "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
     "MC_UNBOUND_PREFIX",
@@ -1026,7 +1028,7 @@ pub fn baselined_json(split: &Baselined) -> Result<String, serde_json::Error> {
 /// validity findings: `input has 2 validity warnings; jubarte validate FILE
 /// lists them` (an `error` counts as an error, `info` not at all), or
 /// `None` when there is nothing to say. `file` is the path as given, quoted
-/// for a shell when it needs to be ([`crate::cli::shell_word`]).
+/// for a shell when it needs to be ([`crate::util::shell_word`]).
 pub fn input_notice(findings: &[Finding], file: &str) -> Option<String> {
     input_notice_of(&input_validity(findings, file))
 }
@@ -1069,7 +1071,7 @@ pub struct InputValidity {
 }
 
 /// What [`InputValidity`] says of `findings`; `file` is the path as given,
-/// quoted for a shell when it needs to be ([`crate::cli::shell_word`]).
+/// quoted for a shell when it needs to be ([`crate::util::shell_word`]).
 #[must_use]
 pub fn input_validity(findings: &[Finding], file: &str) -> InputValidity {
     let count = |severity: &str| findings.iter().filter(|f| f.severity == severity).count();
@@ -1078,7 +1080,7 @@ pub fn input_validity(findings: &[Finding], file: &str) -> InputValidity {
         errors,
         warnings,
         next: (errors + warnings > 0)
-            .then(|| format!("jubarte validate {}", crate::cli::shell_word(file))),
+            .then(|| format!("jubarte validate {}", crate::util::shell_word(file))),
     }
 }
 
@@ -1176,7 +1178,50 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_style_names(pkg, &mut out);
     check_nested_text_boxes(pkg, &mut out);
     check_move_range_counts(pkg, &mut out);
+    check_data_bindings_have_stores(pkg, &mut out);
     out
+}
+
+/// Word fills a bound content control from the custom XML store its
+/// `w:storeItemID` names, and shows the control empty when the main part
+/// reaches no such store (#1427). Word opens the file: a lead. Word's own
+/// stores (the document properties) live in `docProps`.
+fn check_data_bindings_have_stores(pkg: &PartFs, out: &mut Vec<Finding>) {
+    use crate::markdown::data_stores::{built_in, stores};
+    let Some(main) = main_part(pkg) else {
+        return;
+    };
+    let mut held: Option<Vec<String>> = None;
+    for part in xml_parts(pkg) {
+        if part.starts_with("customXml/")
+            || !pkg
+                .part_bytes(&part)
+                .is_some_and(|bytes| bytes.windows(11).any(|w| w == b"dataBinding"))
+        {
+            continue;
+        }
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        for binding in dom.descendants(root, Some(&W::name("dataBinding"))) {
+            let Some(store) = dom.attribute(binding, &W::name("storeItemID")) else {
+                continue;
+            };
+            if built_in(store)
+                || held
+                    .get_or_insert_with(|| stores(pkg, &main))
+                    .contains(&store.to_ascii_uppercase())
+            {
+                continue;
+            }
+            out.push(Finding::new(
+                "DATA_BINDING_WITHOUT_STORE",
+                &part,
+                element_path(&dom, binding),
+                format!("{store}: no custom XML store the main part reaches holds it; Word shows the bound control empty (#1427)"),
+            ));
+        }
+    }
 }
 
 /// Word opens unequal per-name move ranges cleanly, but Reject All can

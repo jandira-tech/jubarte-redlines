@@ -1610,7 +1610,9 @@ changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` (since 0.11.0) shows the changed paragraphs
 between two documents — or a document and Markdown text — as `[-old-]{+new+}`
-marks (`format="critic"` for CriticMarkup):
+marks (`format="critic"` for CriticMarkup). When a side is a Word document,
+the comparer writes the changes, and a replacement inside a paragraph keeps
+Word Compare's order, the insertion first: `{+new+}[-old-]`.
 
 ```python
 from jubarte_redlines import diff, read
@@ -1649,12 +1651,16 @@ cutover and retires the transitional spellings — `noid`, colon ids
 (`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
 the fields the wire carries today are the ones named above.
 
-> **Stale-artifact note (2026-10-19).** The `--help` blocks above are
-> generated from the installed 0.12.0 wheel and still advertise
-> `p17-`/`-p3` in `read -p`'s spelling list. Current source no longer
-> advertises them (`src/cli.rs`; they still parse transitionally, but the
-> contract retires them — spell the end, `p17-p20`); the block refreshes
-> on the next wheel rebuild.
+The OPC constructor enforces `InputLimits::compare()`:
+512 MiB compressed, 10,000 declared ZIP entries, 512 MiB per inflated part,
+and 2 GiB inflated in total. `scrub` and the maintainer `debug` command now
+refuse packages over those ceilings with `INPUT_LIMIT`; Markdown reads use
+the same bounded constructor. Entry counts are checked before indexing,
+and actual inflation is capped even when ZIP size declarations lie.
+`scrub` still applies its existing validation limits as well. A leak scan
+that exceeds a budget or cannot read a part reports a finding; editing a
+redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
+incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
 Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.12.0`).
@@ -2047,7 +2053,9 @@ diff(old: 'Document | bytes | str | os.PathLike[str]', new: 'Document | bytes | 
 
 The changes from ``old`` to ``new``: the changed paragraphs, each at
 its ``pN`` id in a Word document or ``line:N`` in Markdown, with
-``[-old-]{+new+}`` changes and CriticMarkup comments.
+``[-old-]{+new+}`` changes and CriticMarkup comments. When a side is a
+Word document, a replacement inside a paragraph reads insertion first,
+``{+new+}[-old-]``, as Word Compare writes it.
 
 Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
 or a path (``.md``/``.markdown`` read as Markdown, anything else as
@@ -2076,7 +2084,9 @@ Diff(
 The changes between two documents, as ``git diff --word-diff`` shows
 them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
 for the changes and CriticMarkup ``{==highlights==}`` and
-``{>>comments<<}``.
+``{>>comments<<}``. When a side is a Word document, a replacement
+inside a paragraph reads insertion first, ``{+new+}[-old-]``, as Word
+Compare writes it.
 
 ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
 ``hunks`` are the changed paragraphs (none for ``format="critic"``).

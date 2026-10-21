@@ -1122,6 +1122,56 @@ fn zip17_public_boundaries() {
     jubarte::debug::findings(&forced).expect("debug opens it");
 }
 
+/// ZIP-15 (#600): a rooted or dot-segment spelling resolves to the same
+/// OPC identity the part index keys on, so it is the same part as the
+/// plain spelling. Without the refusal `PartFs` keeps one entry and the
+/// other's bytes are silently shadowed.
+#[test]
+fn a_rooted_or_dot_segment_alias_is_the_same_part() {
+    for (stand_in, alias) in [
+        ("word/document.xm01", "/word/document.xml"),
+        ("word/document.xm012", "word/./document.xml"),
+        ("word/document.xm012345678", "word/../word/document.xml"),
+    ] {
+        let bytes = duplicate_probe(stand_in, alias);
+        let Err(jubarte::opc::OpcError::DuplicatePartName(_)) = jubarte::opc::PartFs::open(&bytes)
+        else {
+            panic!("{alias}: PartFs must refuse with DuplicatePartName");
+        };
+        let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
+            .expect_err("{alias} probe must be refused");
+        assert_eq!(err.code(), "DUPLICATE_PART", "{alias}: {err}");
+    }
+}
+
+/// The raw duplicate walk reads the records the index reads and no more:
+/// a central record past the end of central directory's declared count is
+/// not a part, so naming an indexed part there is no collision, and the
+/// walk does no work for it.
+#[test]
+fn a_central_record_past_the_declared_count_is_not_a_part() {
+    let mut bytes = duplicate_probe("word/document.xm0", "word/document.xml");
+    let eocd = bytes
+        .windows(4)
+        .rposition(|window| window == [0x50, 0x4b, 0x05, 0x06])
+        .unwrap();
+    for field in [eocd + 8, eocd + 10] {
+        let count = u16::from_le_bytes([bytes[field], bytes[field + 1]]);
+        bytes[field..field + 2].copy_from_slice(&(count - 1).to_le_bytes());
+    }
+    match jubarte::opc::PartFs::open(&bytes) {
+        Err(jubarte::opc::OpcError::DuplicatePartName(name)) => {
+            panic!("an unindexed record named '{name}' is not a duplicate part")
+        }
+        Err(other) => panic!("the declared three parts open: {other}"),
+        Ok(fs) => assert_eq!(
+            fs.part_bytes("word/document.xml").unwrap(),
+            DOCUMENT.as_bytes(),
+            "the indexed part keeps its bytes"
+        ),
+    }
+}
+
 /// A 56-byte ZIP64 end-of-central-directory record (APPNOTE 4.3.14)
 /// declaring `entries`.
 fn eocd64(entries: u64) -> Vec<u8> {

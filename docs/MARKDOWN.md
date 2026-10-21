@@ -109,11 +109,11 @@ CLI reads them.
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
-| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) `row-borders top double 0.5pt FF0000 in t0.row1 t0.row3` (a row's own `w:tblPrEx/w:tblBorders`; groups joined by `; `) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). A border in a theme colour adds it after its fallback colour: `single 1pt 2F5496 theme accent1 tint 99 shade BF` (`w:themeColor`, `w:themeTint`, `w:themeShade`). A source that defines `TableGrid` with one single border other than 0.5pt keeps it: the legend says `table: TableGrid, all borders 1.5pt`. Header row repeated, column alignment kept |
+| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) `row-borders top double 0.5pt FF0000 in t0.row1 t0.row3` (a row's own `w:tblPrEx/w:tblBorders`; groups joined by `; `) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). A border in a theme colour adds it after its fallback colour: `single 1pt 2F5496 theme accent1 tint 99 shade BF` (`w:themeColor`, `w:themeTint`, `w:themeShade`). A source that defines `TableGrid` with one single border other than 0.5pt keeps it: the legend says `table: TableGrid, all borders 1.5pt`; one whose borders vary names each side (`table: TableGrid, borders top double 3pt bottom double 3pt`). Header row repeated, column alignment kept |
 | `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. Reading Word back, reader and writer share github-slugger's names (a repeat `-1`, `-2`): only the exact name the writer gives a heading is its own bookmark and prints no anchor; any other (`title-01`, a lone `title-1`) stays an `<a id>` anchor, and a heading in a table cell claims no slug. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
 | `[^note]` | footnote; a label defined twice (a footnote and an endnote both `[^1]`) is two notes: its first reference names the first definition and its next the second, which takes the next free number, with a warning |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
-| `![alt][dN]` with `[dN]: drawing:PAYLOAD` | a drawing the readable forms cannot say — a shape, text box, connector, VML picture or `mc:AlternateContent`. The reference's name is the drawing's number in reading order; the definition sits with the others after a `<!-- drawings -->` marker at the end of the view, so the body text stays free of payloads. `PAYLOAD` is URL-safe base64 of a JSON envelope the reader writes: the element's XML, its relationships, and every part they reach. The writer splices it back verbatim (fresh relationship and `docPr` ids, each part re-written); a payload that does not decode is dropped with a warning. The older inline form `![alt](drawing:PAYLOAD)` reads the same |
+| `![alt][dN]` with `[dN]: drawing:PAYLOAD` | a drawing the readable forms cannot say — a shape, text box, connector, VML picture or `mc:AlternateContent`. The reference's name is the drawing's number in reading order; the definition sits with the others after a `<!-- drawings -->` marker at the end of the view, so the body text stays free of payloads. `PAYLOAD` is URL-safe base64 of a JSON envelope the reader writes: the element's XML, its relationships, and every part they reach. The writer splices it back verbatim (fresh relationship and `docPr` ids, each part re-written); a payload that does not decode is dropped with a warning. A content control inside it bound to a custom XML store (a cover page's Abstract) gets its store back when the main part reaches none: the writer builds it from the bindings it writes, each simple path of prefixed names (`/ns0:CoverPageProperties[1]/ns0:Abstract[1]`) holding what a plain text, date or list control shows, since Word fills a bound control from its store. Any other binding (rich text, a picture, a check box, another path, a field or symbol in the text) is dropped, so Word keeps what the control shows, and `jubarte validate` reports a binding whose store the main part does not reach as `DATA_BINDING_WITHOUT_STORE` (a warning: Word opens the file and shows the control empty). The older inline form `![alt](drawing:PAYLOAD)` reads the same |
 | `![alt][imageN]` with `[imageN]: <data:mime;base64,…>` and `<!-- imageN drawing:PAYLOAD -->` | a raster picture (PNG, JPEG, GIF, BMP, TIFF), inline or floating. The `data:` definition holds the image's bytes; the backing comment the payload of everything else (anchor, wrap, `docPr`). Written back, the bytes fill the payload's image part; an edited `data:` writes the new image. Two identical payloads share one name and one definition. Without its backing comment the `data:` picture is a plain inline image |
 | ` ```svg dN ` fence with `<!-- dN drawing:PAYLOAD -->` | an `asvg:svgBlip` the paragraph holds alone, as its source code: the fence's text is the SVG part, the backing comment the payload with the PNG fallback inside. An edited source writes the new SVG into the part and keeps the fallback |
 | ` ```mermaid dN ` fence with `<!-- dN drawing:PAYLOAD -->` | a chart the paragraph holds alone, as its data: a `pie` fence for a pie chart, `xychart-beta` for bar and line. The backing comment holds the payload and a hash of the printed text: a fence that comes back unchanged writes the chart part byte for byte; an edited one rewrites the part's categories, values and title in place — styling, axes and everything else the Mermaid cannot say stay the part's own. A chart that shares its paragraph with text keeps `![alt][dN]` instead |
@@ -514,11 +514,15 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 `tN` counts top-level body tables.
 
 `styles:` gives the default paragraph style's whole look (font, size,
-spacing, alignment), each heading level's style with what differs from
-it, then every other paragraph style the body uses, keyed by its id
+spacing, alignment; the writer writes its spacing as the document's
+default, `w:pPrDefault`, so a table style's own spacing still wins in
+its cells), each heading level's style with what differs from
+it, then every other paragraph style the body uses, a text box's
+paragraphs included, keyed by its id
 (`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
 names only what its style sets apart from the style it is based on:
-font and size, `before`/`after`, `line`, alignment, `keep-next`,
+font and size, `before`/`after` (`after 0pt` too, when the base has
+some), `line` (`line 1` for single, when the base is not), alignment, `keep-next`,
 `keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, and
 `contextual spacing` (no space between paragraphs of that style, as List
 Paragraph has). A line ends `, named Text Heading 2` when the style's name
@@ -535,9 +539,18 @@ stays unambiguous — and the writer writes no comma into a style's
 `w:name` (Word forbids one, reading it as an alias list): the comma
 becomes a space, and the conversion says so in a warning.
 When the tables differ the legend is plural, one entry per style in
-first-use order (`tables: TableNormal, Ledger, borders vary`), each
-entry saying what the singular `table:` line says (the borders clause,
-the name). Converting the
+first-use order (`tables: TableNormal, Ledger, borders bottom double
+0.75pt`), each entry saying what the singular `table:` line says (the
+borders clause, the name). A style of the document's own whose borders
+are not one single line all round names each side it sets, in Word's
+order (top, left, bottom, right, insideH, insideV): the side, its
+`w:val`, then its size in points, `#RRGGBB` for a colour other than
+`auto` and `space Npt` for a spacing other than zero (`borders top
+single 1.5pt #FF0000 space 2pt insideH nil`, the legend value quoted
+for the `#`). Converting back writes exactly those sides. One of Word's
+own styles says `borders vary` instead, since the writer writes it as
+Word defines it; an older view's `borders vary` on another style still
+reads, and the writer warns that it writes that style without borders. Converting the
 view back defines each style as its line says, and a style Word knows
 (`ListParagraph`, `Quote`) keeps Word's own gallery settings.
 
@@ -1134,15 +1147,32 @@ ends with `--force`.
   blocks: when one holds a change `--changed` selects, the `range:` line
   says to read those lines (with no block left when only they changed).
   A story whose paragraphs carry their own text colour (`w:color`, when
-  every text run sets the same one) or borders (`w:pBdr`, in the table
-  border grammar), or differ in alignment, prints paragraph by paragraph:
+  every text run sets the same one), borders (`w:pBdr`, in the table
+  border grammar), frame or indent, or differ in alignment, prints
+  paragraph by paragraph:
   `id: header1`, then `p0: {text: …, center, color: "595959", border:
   bottom single 0.5pt 8496B0 space 4pt}` for each, as a block in the first
   section and as a flow map in `sections:`. A colour that opens with a
   digit is quoted, since YAML reads `000000` as the number 0. Alignment is
   `center`, `right`, or `left`/`justify` when the paragraph states it
   (`w:jc`), so a centred Header style does not centre it; no word means the
-  paragraph names none.
+  paragraph names none. A framed paragraph (Word's page-number frame)
+  adds `frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right,
+  y: 1}`: the attributes of `w:framePr` (CT_FramePr) and their values,
+  lengths in twips, in the schema's order. It is the frame the paragraph
+  lays out in, its style's under its own, and the writer puts it on the
+  paragraph; `frame: {}` is an empty `w:framePr`. A frame naming another
+  attribute, or a value the schema does not allow, does not read, and the
+  story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
+  {first-line: 0.25in, right: 0.25in}` right after the alignment
+  (`p1: {text: …, left, indent: {right: 0.25in}, color: …}`), its sides as
+  the id lines name them (`first-line`, `hanging`, `left`, `right`; Strict's
+  `start` and `end` read as `left` and `right`) in inches, negative for an
+  outdent; a stated 0 is printed, since it overrides the style's. It is a
+  map of its own because `left` and `right` alone are the alignment. A side
+  it does not name or names twice, or a value that is not inches
+  (`0.25in`) or is over 22in either way, does not read, and the story entry
+  with it.
 - Page markers need the layout pass; `--no-page-markers` skips it. With
   `--json`, `--tables`, `--for-edit` or `-o FILE.json`, it is dropped with a
   warning (`warning: --no-page-markers dropped: no page markers in JSON,
@@ -1184,7 +1214,10 @@ Payment is due in [-30-]{+45+} days.
   paragraph in the new version; `@@ -[p12] @@` is a paragraph
   removed, in the old one. A change in a text box is shown at the
   paragraph that holds the box.
-- A change is `[-old-]{+new+}`. Comments and their scopes stay CriticMarkup:
+- A change is `[-old-]{+new+}`; when a side is a Word document a
+  replacement inside a paragraph keeps Word Compare's order, the insertion
+  first (`{+new+}[-old-]`).
+  Comments and their scopes stay CriticMarkup:
   `{==text==}{>>Name (date): comment<<}`.
 - The `+++` line names who made the changes and when, once. A change by
   anyone else (a tracked change already in a Word document) is followed

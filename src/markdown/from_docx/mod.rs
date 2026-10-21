@@ -24,7 +24,7 @@ mod revise;
 
 use critic::{Change, Critic, Mark};
 use ooxml::{Blocks, ListIndent, Marks, Media, Package, Rels};
-pub(crate) use ooxml::{Element, parse_xml};
+pub(crate) use ooxml::{Element, element_from, parse_xml};
 
 /// How tracked changes and comments come out.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -848,13 +848,26 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             // Every other paragraph style the body uses, in the order it
             // first does (the stories' follow): the legend describes each,
             // so the docx the view writes defines it as the original did.
-            for p in &ps {
+            // A text box's paragraphs count too (#1423): the writer gives
+            // them their styles back, so the docx must define those; a
+            // style only a box uses counts when the styles part defines it.
+            let outside: HashSet<*const Element> =
+                ps.iter().map(|p| std::ptr::from_ref(*p)).collect();
+            for p in agent::paragraphs_and_boxes(body) {
                 let Some(style) = p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) else {
                     continue;
                 };
+                let in_box = !outside.contains(&std::ptr::from_ref(p));
                 if style != default_style.as_deref().unwrap_or("Normal")
                     && !heading_styles.iter().any(|(_, h)| h == style)
                     && !other_styles.iter().any(|o| o == style)
+                    && (!in_box
+                        || styles_root.as_ref().is_some_and(|root| {
+                            root.children_named("style").any(|s| {
+                                s.attr("type") == Some("paragraph")
+                                    && s.attr("styleId") == Some(style)
+                            })
+                        }))
                 {
                     other_styles.push(style.to_string());
                 }
@@ -990,6 +1003,15 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                         &crate::markdown::borders::PARAGRAPH_SIDES,
                                     )
                                 }),
+                                frame: story_frame(
+                                    p,
+                                    styles_root.as_ref(),
+                                    default_style.as_deref(),
+                                ),
+                                indent: p
+                                    .path(&["pPr", "ind"])
+                                    .map(agent::indent_clauses)
+                                    .unwrap_or_default(),
                             };
                             (
                                 i,
@@ -4480,10 +4502,11 @@ fn view_table_style(t: &Element, custom_grid: bool) -> Option<&str> {
     }
 }
 
-/// Whether `styles` defines Table Grid with one single border all round
-/// that is not Word's 0.5pt: a grid the legend can name (`TableGrid, all
-/// borders 1.5pt`) and the writer would otherwise replace with the thin
-/// one. Borders that vary, or none, keep Word's grid.
+/// Whether `styles` defines Table Grid with borders other than Word's thin
+/// grid (one single 0.5pt line on every side): a grid the legend names
+/// (`TableGrid, all borders 1.5pt`, `TableGrid, borders top double 3pt`)
+/// and the writer would otherwise replace with the thin one. A Table Grid
+/// that sets no border keeps Word's grid.
 fn custom_table_grid(styles: Option<&Element>) -> bool {
     let Some(borders) = styles
         .and_then(|s| {
@@ -4494,16 +4517,23 @@ fn custom_table_grid(styles: Option<&Element>) -> bool {
     else {
         return false;
     };
-    let sizes: Option<Vec<&str>> = ["top", "left", "bottom", "right", "insideH", "insideV"]
-        .iter()
-        .map(|side| {
-            borders
-                .child(side)
-                .filter(|b| b.attr("val") == Some("single"))
-                .and_then(|b| b.attr("sz"))
-        })
-        .collect();
-    sizes.is_some_and(|sizes| sizes.iter().all(|&sz| sz == sizes[0]) && sizes[0] != "4")
+    // The strict `start`/`end` elements name the `left`/`right` borders.
+    let sides = [
+        &["top"][..],
+        &["left", "start"][..],
+        &["bottom"][..],
+        &["right", "end"][..],
+        &["insideH"][..],
+        &["insideV"][..],
+    ];
+    let side = |names: &[&str]| names.iter().find_map(|name| borders.child(name));
+    // Word's thin grid is one single 0.5pt line on every side; any other
+    // border the style sets is the document's own, which the legend says
+    // (#1419).
+    let thin = sides.iter().all(|names| {
+        side(names).is_some_and(|b| b.attr("val") == Some("single") && b.attr("sz") == Some("4"))
+    });
+    !thin && sides.iter().any(|names| side(names).is_some())
 }
 
 /// The table styles of `body`'s tables the view names, in the order they
@@ -4665,6 +4695,42 @@ fn bookmark_targets<'e>(
 
 /// The colour every text run of a header or footer paragraph `p` sets
 /// itself (`w:rPr/w:color`), when they all set the same one.
+/// The frame story paragraph `p` lays out in: the `w:framePr` of its
+/// style chain (`default` when it names no style), base first, under its
+/// own, as the view prints it.
+fn story_frame(p: &Element, styles: Option<&Element>, default: Option<&str>) -> Option<String> {
+    let mut chain: Vec<&[(String, String)]> = Vec::new();
+    if let Some(styles) = styles {
+        let mut id = p
+            .path(&["pPr", "pStyle"])
+            .and_then(|s| s.attr("val"))
+            .or(default)
+            .map(str::to_string);
+        let mut seen = HashSet::new();
+        while let Some(sid) = id.take() {
+            if !seen.insert(sid.clone()) {
+                break;
+            }
+            let Some(style) = styles.children_named("style").find(|s| {
+                s.attr("styleId") == Some(sid.as_str()) && s.attr("type") == Some("paragraph")
+            }) else {
+                break;
+            };
+            if let Some(frame) = style.path(&["pPr", "framePr"]) {
+                chain.push(frame.attrs.as_slice());
+            }
+            id = style
+                .child("basedOn")
+                .and_then(|b| b.attr("val"))
+                .map(str::to_string);
+        }
+        chain.reverse();
+    }
+    let own = p.path(&["pPr", "framePr"]).map(|f| f.attrs.as_slice());
+    crate::markdown::frames::merged(chain, own)
+        .map(|frame| crate::markdown::frames::describe(&frame))
+}
+
 fn story_color(p: &Element) -> Option<String> {
     let mut runs = Vec::new();
     p.find_all("r", &mut runs);

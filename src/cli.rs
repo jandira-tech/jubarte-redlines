@@ -1411,6 +1411,10 @@ pub enum Command {
         /// text/xml/runs of two files: common lines shown around each change.
         #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
         context: usize,
+        /// text/xml/runs/changes/styledefs/numbering/render: show complete
+        /// lines instead of clipping them at 200 characters.
+        #[arg(long)]
+        full_lines: bool,
     },
     /// Compare rendered pages pixel by pixel (different pages: exit 5).
     #[command(
@@ -2430,15 +2434,7 @@ fn spellings_in<'a>(
     found
 }
 
-/// `arg` as a POSIX shell reads it back: bare when it holds only safe
-/// characters, else single-quoted.
-pub fn shell_word(arg: &str) -> String {
-    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
-    if !arg.is_empty() && arg.chars().all(safe) {
-        return arg.to_string();
-    }
-    format!("'{}'", arg.replace('\'', r"'\''"))
-}
+pub use crate::util::shell_word;
 
 /// What a retired spelling still means once parsed: `audit` with no
 /// `--rules` checks `a11y,style,structure`, as the retired task did, not
