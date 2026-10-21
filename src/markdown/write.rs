@@ -2883,10 +2883,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
             if !self.resolved {
                 let mut unshown = Vec::new();
-                for tag in &line.rev {
-                    let inserted = !line.rev_del.contains(tag);
+                for (inserted, tag) in &line.rev {
                     let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                    unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 paragraph.unshown = unshown;
             }
@@ -5361,12 +5360,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             // in reading order (`rev footnotes.r32+31`: text, then mark,
             // #1261); Word's shape names them apart, the mark first.
             let own: Vec<view_notes::Tag> = if clauses.rev.len() == paragraphs(&items)
-                && clauses.rev.iter().all(|tag| tag.ids.len() > 1)
+                && clauses.rev.iter().all(|(_, tag)| tag.ids.len() > 1)
             {
                 clauses
                     .rev
                     .iter()
-                    .flat_map(|tag| {
+                    .flat_map(|(_, tag)| {
                         let (text, mark) = tag.ids.split_at(tag.ids.len() - 1);
                         [mark, text].map(|ids| view_notes::Tag {
                             ids: ids.to_vec(),
@@ -5375,7 +5374,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     })
                     .collect()
             } else {
-                clauses.rev.clone()
+                clauses.rev.iter().map(|(_, tag)| tag.clone()).collect()
             };
             if let Some((kind, _)) = change
                 && !self.resolved
@@ -5426,10 +5425,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .find(|item| matches!(item, Item::Paragraph(_)))
             {
                 let mut unshown = Vec::new();
-                for tag in &clauses.rev {
-                    let inserted = !clauses.rev_del.contains(tag);
+                for (inserted, tag) in &clauses.rev {
                     let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                    unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 last.unshown = unshown;
             }

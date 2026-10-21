@@ -1369,10 +1369,12 @@ pub(super) struct IdLine {
     /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
     pub fmt: Vec<Tag>,
     /// The marks its text shows nothing of (`rev r9 @AL`, `rev-del r10
-    /// @AL`); a `rev-del` tag is in `rev_del` too.
-    pub rev: Vec<Tag>,
-    /// The `rev` tags a `rev-del` clause named: deletions, while `rev`
-    /// alone names insertions.
+    /// @AL`), in clause order, each with whether its own clause named an
+    /// insertion. The kind rides with the tag because two tags can be
+    /// equal: `noid` names no id, so one author's inserted and deleted
+    /// marks are one tag (`rev noid @AL, rev-del noid @AL`).
+    pub rev: Vec<(bool, Tag)>,
+    /// The `rev` tags a `rev-del` clause named, as deletions.
     pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
@@ -1466,10 +1468,16 @@ impl IdLine {
                 self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
             }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
-            Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
+            Some(("rev", v)) => self.rev.extend(
+                revision_tags(v)
+                    .into_iter()
+                    .flatten()
+                    .map(|tag| (true, tag)),
+            ),
             Some(("rev-del", v)) => {
                 let tags: Vec<Tag> = revision_tags(v).into_iter().flatten().collect();
-                self.rev.extend(tags.iter().cloned());
+                self.rev
+                    .extend(tags.iter().cloned().map(|tag| (false, tag)));
                 self.rev_del.extend(tags);
             }
             Some(_) => {}
