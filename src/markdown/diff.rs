@@ -702,7 +702,7 @@ fn pair_by_similarity(olds: &[&str], news: &[&str]) -> Vec<(usize, usize)> {
     // The candidate old lines of each new line: the lines its rarer words
     // occur in (at least its rarest word, however common that is).
     let mut candidates: Vec<Vec<usize>> = Vec::with_capacity(news.len());
-    for words in &new_distinct {
+    for (j, words) in new_distinct.iter().enumerate() {
         let mut by_rarity: Vec<(usize, u32)> = words
             .iter()
             .filter_map(|&word| index.get(&word).map(|lines| (lines.len(), word)))
@@ -718,6 +718,18 @@ fn pair_by_similarity(olds: &[&str], news: &[&str]) -> Vec<(usize, usize)> {
                 .collect();
             lines.sort_unstable();
             lines.dedup();
+            // The bound counts candidates that can pair at all: a line
+            // whose block marker differs is no pair, and two lines with
+            // the same marker and the same words stand in for each
+            // other. Cutting the list before that keeps lines that can
+            // never pair and drops the one that could, which is how a
+            // long list of repeated boilerplate left its one odd line
+            // deleted whole.
+            let mut seen = std::collections::HashSet::new();
+            lines.retain(|&i| {
+                old_shape[i] == new_shape[j]
+                    && seen.insert((old_shape[i].clone(), old_multiset[i].clone()))
+            });
             lines.truncate(MAX_CANDIDATES);
         }
         candidates.push(lines);
@@ -2011,6 +2023,31 @@ mod tests {
         let diff = diff_markdown(&old, &new);
         assert!(diff.contains("row0 w0"), "{}", &diff[..diff.len().min(200)]);
         round_trip(&old, &new);
+    }
+
+    /// A hunk's candidate list must not lose the one line that can
+    /// pair to its old index: 71 identical list lines and one plain
+    /// line, against a new plain line whose every word the old lines
+    /// carry. The plain line is the only candidate with the new line's
+    /// shape, and it sat past the bound, so the hunk gave up and
+    /// deleted all 72 lines for one insertion.
+    #[test]
+    fn the_only_pairable_candidate_survives_the_candidate_bound() {
+        let mut old = String::new();
+        for _ in 0..MAX_CANDIDATES + 7 {
+            old.push_str("- alpha beta gamma\n");
+        }
+        old.push_str("alpha beta gamma\n");
+        let new = "alpha beta gamma zeta\n";
+        let diff = diff_markdown(&old, new);
+        // The plain line pairs with the new one, so only the words that
+        // were added are marked.
+        assert!(diff.contains("alpha beta gamma{++ zeta++}"), "{diff}");
+        assert!(
+            !diff.contains("{--\nalpha beta gamma--}"),
+            "the plain line was deleted whole\n{diff}"
+        );
+        round_trip(&old, new);
     }
 
     #[test]
