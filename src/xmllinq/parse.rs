@@ -426,7 +426,14 @@ fn decode_entity(body: &str) -> Option<String> {
         } else {
             body[1..].parse::<u32>().ok()?
         };
-        return char::from_u32(code).map(|c| c.to_string());
+        let c = char::from_u32(code)?;
+        // Reject numeric references outside the XML character ranges (XML 1.0 §2.2 Char)
+        // Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+        if c == '\u{9}' || c == '\u{A}' || c == '\u{D}' || ('\u{20}'..='\u{D7FF}').contains(&c) || ('\u{E000}'..='\u{FFFD}').contains(&c) || ('\u{10000}'..='\u{10FFFF}').contains(&c) {
+            return Some(c.to_string());
+        } else {
+            return None;
+        }
     }
     // named entity — must be all ASCII letters to match the TS regex `[a-zA-Z]+`
     if !b.iter().all(|c| c.is_ascii_alphabetic()) {
@@ -706,5 +713,12 @@ mod unescape_tests {
 
         // Mixed text and entities
         assert_eq!(unescape_xml_text("Start &#x41; middle &amp; end"), "Start A middle & end");
+
+        // Forbidden characters
+        assert_eq!(unescape_xml_text("&#0;"), "&#0;");
+        assert_eq!(unescape_xml_text("&#x1;"), "&#x1;");
+        assert_eq!(unescape_xml_text("&#11;"), "&#11;");
+        assert_eq!(unescape_xml_text("&#xfffe;"), "&#xfffe;");
+        assert_eq!(unescape_xml_text("&#xffff;"), "&#xffff;");
     }
 }
