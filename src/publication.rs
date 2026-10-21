@@ -394,9 +394,14 @@ fn sync_directory_for_platform(
     if windows { Ok(()) } else { sync() }
 }
 
+/// cap-std opens directories `O_PATH` on Linux, and `fsync` on an `O_PATH`
+/// descriptor is EBADF (#1351). Opening `.` through the handle gives a
+/// readable descriptor without walking a path, so confinement holds (D35).
 fn sync_directory_handle(dir: &cap_std::fs::Dir) -> io::Result<()> {
     sync_directory_for_platform(cfg!(windows), || {
-        dir.try_clone()?.into_std_file().sync_all()
+        dir.open_with(".", cap_std::fs::OpenOptions::new().read(true))?
+            .into_std()
+            .sync_all()
     })
 }
 
@@ -767,6 +772,21 @@ mod tests {
                 assert_eq!(error.to_string(), "read-only directory");
             }
         }
+    }
+
+    /// cap-std opens directories `O_PATH` on Linux, and `fsync` on an
+    /// `O_PATH` descriptor is EBADF (#1351): every publication failed after
+    /// its commit there, with "durability uncertain".
+    #[test]
+    fn a_cap_std_directory_handle_can_be_synced() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("sub")).unwrap();
+        let dir =
+            cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+        sync_directory_handle(&dir).expect("an ambient directory handle syncs");
+        sync_directory_handle(&dir.open_dir("sub").unwrap())
+            .expect("a directory opened through a handle syncs");
+        sync_directory(temp.path()).expect("sync_directory syncs");
     }
 
     /// Deterministic filesystem fake: all state and injected failures stay in memory.

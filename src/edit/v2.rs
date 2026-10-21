@@ -430,11 +430,7 @@ fn integer<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
         return Ok(n);
     }
     if let Some(n) = n.as_f64() {
-        if n < 0.0
-            || n >= 18_446_744_073_709_551_616.0
-            || n.fract() != 0.0
-            || n >= 9_007_199_254_740_992.0
-        {
+        if !(0.0..9_007_199_254_740_992.0).contains(&n) || n.fract() != 0.0 {
             return Err(serde::de::Error::custom(
                 "expected an unsigned 64-bit integer; an integer written with a fraction or exponent must be below 2^53; write it as a plain integer",
             ));

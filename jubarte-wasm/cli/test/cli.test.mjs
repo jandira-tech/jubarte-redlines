@@ -970,11 +970,13 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   const shown = run(a, b, "-d", "1970-01-01T00:00:00Z");
   assert.equal(shown.code, 0, shown.err);
   assert.ok(shown.out.startsWith(`---\nsource: ${word} (not written; -o keeps it)\n`), shown.out);
-  assert.ok(shown.out.includes("{~~30~>45~~}"), shown.out);
+  // Word comparison keeps insertion before deletion, as the native view does.
+  const replacement = (handle) => new RegExp(`\\{\\+\\+45\\+\\+\\}\\{r\\d+ @${handle}\\}\\{--30--\\}\\{r\\d+ @${handle}\\}`);
+  assert.match(shown.out, replacement("R"));
   assert.ok(!fs.existsSync(word));
   // The view is the output, so --quiet does not hide it (pi review av5 F6);
   // read options apply to it.
-  assert.ok(run(a, b, "--quiet", "-d", "1970-01-01T00:00:00Z").out.includes("{~~30~>45~~}"));
+  assert.match(run(a, b, "--quiet", "-d", "1970-01-01T00:00:00Z").out, replacement("R"));
   const acceptedView = run(a, b, "--track-changes", "accept", "-d", "1970-01-01T00:00:00Z");
   assert.equal(acceptedView.code, 0, acceptedView.err);
   assert.ok(!acceptedView.out.includes("{~~") && acceptedView.out.includes("<!-- p0 rev r"), acceptedView.out);
@@ -989,7 +991,8 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   for (const by of ["AC", "Ann Counsel"]) {
     const mine = run("read", signed, "--changed", "--by", by, "--no-page-markers");
     assert.equal(mine.code, 0, mine.err);
-    assert.ok(mine.out.includes("\nrange: changed by @AC (p0) of p0") && mine.out.includes("{~~30~>45~~}"), mine.out);
+    assert.ok(mine.out.includes("\nrange: changed by @AC (p0) of p0"), mine.out);
+    assert.match(mine.out, replacement("AC"));
   }
   // One file is the agent view (read).
   const one = run(untracked, "--no-page-markers");
@@ -1288,7 +1291,7 @@ test("diff, compare and convert follow the native input and output contract (int
   const written = path.join(tmp, "contract-d.md");
   const patched = run("diff", word, b, "-o", written);
   assert.equal(patched.code, 0, patched.err);
-  assert.match(fs.readFileSync(written, "utf8"), /\[-30-\]\{\+45\+\}/);
+  assert.match(fs.readFileSync(written, "utf8"), /\{\+45\+\}\[-30-\]/);
   for (const [args, code, message] of [
     [["diff", word, b, "-o", path.join(tmp, "contract-patch.docx")], 2, /`compare OLD NEW -o /],
   ]) {

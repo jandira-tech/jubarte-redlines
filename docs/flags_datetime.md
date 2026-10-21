@@ -567,6 +567,7 @@ Diagnose a Word package, or compare package structures
 | `-g, --grep` |  | <TEXT> |  |  |  | Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole) |
 | `-n, --limit` |  | <N> | 5 |  |  | Examples per finding kind |
 | `-C, --context` |  | <N> | 0 |  |  | text/xml/runs of two files: common lines shown around each change |
+| `--full-lines` |  |  | false |  |  | text/xml/runs/changes/styledefs/numbering/render: show complete lines instead of clipping them at 200 characters |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
 
 ## jubarte debug diff
@@ -742,7 +743,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--format` | diff | `<FORMAT> default=patch values=patch, critic, github=unified=text, word, normal, context, side-by-side` |
 | `--from` | convert, diff | `-f <FORMAT> default= values=docx, md, markdown` |
 | `--full` | debug diff | `default=false values=` |
-| `--full-lines` | diff | `default=false values=` |
+| `--full-lines` | diff, debug | `default=false values=` |
 | `--grep` | debug | `-g <TEXT> default= values=` |
 | `--head` | (shorthand), compare, read | `<N> default= values=` |
 | `--id` | accept, reject | `<ID> default= values=` |

@@ -148,6 +148,55 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `read -p` does. `jubarte FILE -p q7` (the one-document shorthand) exits 2
   for a selection that does not parse, as `jubarte read FILE -p q7` does.
 
+- **A bound content control in a text box keeps its text in Word**
+  (#1427). A cover page's Abstract, bound to a custom XML store, came
+  back empty: the drawing kept the control's binding but not the store
+  it names, and Word fills a bound control from its store. The writer
+  now builds every store a plain text, date or list control's binding
+  names and the main part does not reach, and drops any other binding
+  so Word keeps the control's text. `jubarte validate` reports a
+  binding with no store as `DATA_BINDING_WITHOUT_STORE` (a warning).
+- **A text box's paragraph style survives Markdown** (#1423). The
+  `styles:` legend listed only the styles of the body's own paragraphs,
+  so a style used only inside a text box (a cover page's `No Spacing`)
+  was left undefined in the docx written back, and the box's paragraph
+  fell back to Normal. The legend now describes it too.
+- **A header's or footer's paragraph indent survives Markdown** (#1422).
+  A story paragraph's own `w:ind` was dropped, so the footer text next to
+  a framed page number ran under the number. It now prints in the
+  paragraph's entry (`p1: {text: …, indent: {first-line: 0.25in}}`) and
+  converting back writes it.
+- **A header's or footer's frame survives Markdown** (#526). Word's
+  page-number frame (`w:framePr`, the number at the margin's edge) was
+  dropped, so the number came back as an ordinary line of the header.
+  A framed paragraph now prints paragraph by paragraph with its frame
+  (`p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin,
+  vAnchor: text, xAlign: right, y: 1}}`), and converting back writes it.
+- **A style's zero spacing or single line survives the Markdown legend**
+  (#1421). The `styles:` legend left out a `before`/`after` of 0 and a
+  single line even when the default style has some, so a heading with no
+  space after came back with the body's 10pt after it. The legend now
+  says `after 0pt` and `line 1` whenever they set the style apart from
+  its base.
+- **The document's default spacing stays its default through Markdown**
+  (#1420). The writer put the default paragraph style's spacing on
+  `Normal` itself. A table style's own spacing (every built-in one sets
+  none after, single) wins over the document default in its cells, but
+  not over `Normal`, so each cell took the body's spacing and the tables
+  grew: an 11-page document came back with 13 pages, in Word as in
+  jubarte. That spacing is now written as `w:pPrDefault`, where Word
+  keeps it.
+- **A table style whose borders vary keeps them through Markdown** (#1419).
+  The view named such a style `Ledger, borders vary`, which the writer
+  could not rebuild, so the style came back without borders. A style of
+  the document's own now lists each side it sets
+  (`Ledger, borders bottom double 0.75pt`, with `#RRGGBB` and `space Npt`
+  when they apply), and converting back writes those sides. Word's own
+  table styles still say `borders vary`, except a Table Grid whose
+  borders are not Word's thin grid: it is the document's own and lists
+  its sides (`TableGrid, borders top double 3pt bottom double 3pt`).
+
+- **A story's deleted or inserted last paragraph is a patch hunk of its own again.** The view writes that paragraph and the mark before it as separate changes, and since the settled dialect (#1135) the patch had joined them to the paragraph above (`@@ [p1] @@ Kept.[-\n\n-][-Last.-]`). `diff` and `patch_redline` now give `@@ -[p2] @@ [-Last.-]` (or `@@ [p2] @@ {+Last.+}`), also when Word split the paragraph into several marks or a line break sits in it. When another author changed the mark, accepting that change alone joins the paragraphs, so the mark stays a change named after its author.
 - **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
 - **Duplicate ZIP and OPC part identities are refused on every route**
   (#600). OPC part names compare ASCII-case-insensitively (ECMA-376
@@ -235,6 +284,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   them (101, 34) as it already did for indents, spacing and cell margins.
   `jubarte debug` still reports the literal value: a diagnostic describes,
   it does not repair.
+- **Writing an output works on Linux again (#1351).** cap-std opens
+  directories `O_PATH` there, and `fsync` on an `O_PATH` descriptor fails
+  with EBADF. Every write reported `Bad file descriptor (os error 9)` and
+  "durability uncertain" after the file was already in place. The
+  directory sync now opens `.` through the handle it holds, which walks no
+  path, so root confinement still holds.
 
 ### Added
 
@@ -354,6 +409,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   changes, a move's source to restore or destination to strike, and a
   split or non-plain deletion to restore are refused with the route that
   takes them.
+- **`debug --full-lines`** prints the listing checks' lines (`text`, `xml`,
+  `runs`, `changes`, `styledefs`, `numbering`, `render`) whole instead of
+  clipping them at 200 characters; `debug::Options` gains `full_lines`. The
+  Markdown round-trip gate reads the render check this way: a clipped table
+  line kept a window that still held the cell shading the gate drops, so
+  `ids-fonts.md` reported a table difference the two packages do not have.
 - **`convert --commonmark`** writes Word as plain CommonMark with
   CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
   wrote before.
