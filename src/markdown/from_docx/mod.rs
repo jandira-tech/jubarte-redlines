@@ -390,6 +390,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         },
         custom_grid: custom_table_grid(styles_root.as_ref()),
         text_width: header::text_width(document.child("body").and_then(|b| b.child("sectPr"))),
+        style_sizes: header::paragraph_style_sizes(styles_root.as_ref(), default_style.as_deref()),
         bookmarks: bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
@@ -2352,6 +2353,10 @@ struct Writer<'a> {
     /// The source defines Table Grid with borders of its own
     /// ([`custom_table_grid`]), so the view names it.
     custom_grid: bool,
+    /// Each paragraph style's text size and a paragraph's with no
+    /// `w:pStyle`, in half-points: a paragraph's own `size` is measured
+    /// against them (#1474).
+    style_sizes: (HashMap<String, u32>, u32),
     /// The body's text width in twips: a table's grid that splits it
     /// evenly is the writer's own and prints no widths (#1472).
     text_width: u32,
@@ -2746,11 +2751,14 @@ impl Writer<'_> {
             let spaced = ppr
                 .and_then(|pr| pr.child("spacing"))
                 .is_some_and(|sp| !agent::spacing_clauses(sp).is_empty());
+            // So is its mark's own size (#1474): the line's height.
+            let size = self.own_size(p);
             if empty
                 && !numbered
                 && style.is_none()
                 && own_outline.is_none()
                 && !spaced
+                && size.is_none()
                 && comments.is_empty()
                 && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
@@ -2810,6 +2818,7 @@ impl Writer<'_> {
                 spans: &spans,
                 empty,
                 unshown: &unshown,
+                size,
             };
             blocks.push_line(&format!(
                 "{}{}",
@@ -3703,8 +3712,22 @@ impl Writer<'_> {
             .collect()
     }
 
-    /// `p8-p38 line 8.65pt exact`: the cell paragraphs' own spacing
-    /// (#1473), consecutive ones that say the same as one range.
+    /// The text size paragraph `p` states and its style does not give
+    /// (`size 9pt`), in half-points (#1474). A style the styles part does
+    /// not define is the default paragraph style, as Word reads it.
+    fn own_size(&self, p: &Element) -> Option<u32> {
+        let (sizes, default) = &self.style_sizes;
+        let given = p
+            .path(&["pPr", "pStyle"])
+            .and_then(|s| s.attr("val"))
+            .and_then(|id| sizes.get(id))
+            .unwrap_or(default);
+        agent::own_size(p).filter(|size| size != given)
+    }
+
+    /// `p8-p38 line 8.65pt exact size 9pt`: the cell paragraphs' own
+    /// spacing (#1473) and text size (#1474), consecutive ones that say
+    /// the same as one range.
     fn cell_spacings(&self, table: &Element) -> Vec<String> {
         let mut runs: Vec<(usize, usize, String)> = Vec::new();
         for tr in table_rows(table) {
@@ -3717,11 +3740,13 @@ impl Writer<'_> {
                     else {
                         continue;
                     };
-                    let said = p
+                    let mut said = p
                         .path(&["pPr", "spacing"])
                         .map(agent::spacing_clauses)
-                        .unwrap_or_default()
-                        .join(" ");
+                        .unwrap_or_default();
+                    // Its own text size too (#1474).
+                    said.extend(self.own_size(p).map(agent::size_clause));
+                    let said = said.join(" ");
                     if said.is_empty() {
                         continue;
                     }

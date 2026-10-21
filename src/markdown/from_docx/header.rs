@@ -882,6 +882,33 @@ fn resolve(styles: Option<&Element>, theme: Option<&Element>, id: &str) -> Resol
     r
 }
 
+/// Each paragraph style's text size through its `basedOn` chain and the
+/// document defaults, in half-points, and the size of a paragraph with no
+/// `w:pStyle` (the default paragraph style's): what a paragraph's own
+/// `size` clause is measured against (#1474). Word's own default is 10pt.
+pub(crate) fn paragraph_style_sizes(
+    styles: Option<&Element>,
+    default_style: Option<&str>,
+) -> (HashMap<String, u32>, u32) {
+    let size = |id: &str| {
+        let half = resolve(styles, None, id)
+            .size_half_points
+            .filter(|h| h.is_finite())
+            .unwrap_or(20.0)
+            .round();
+        // `as` cannot truncate: the value is clamped to ST_HpsMeasure.
+        half.clamp(1.0, 3276.0) as u32
+    };
+    let sizes = styles
+        .into_iter()
+        .flat_map(|root| root.children_named("style"))
+        .filter(|s| s.attr("type") == Some("paragraph"))
+        .filter_map(|s| s.attr("styleId"))
+        .map(|id| (id.to_string(), size(id)))
+        .collect();
+    (sizes, size(default_style.unwrap_or("")))
+}
+
 fn points(twips: f64) -> String {
     let v = format!("{:.1}", twips / 20.0);
     v.trim_end_matches('0').trim_end_matches('.').to_string()

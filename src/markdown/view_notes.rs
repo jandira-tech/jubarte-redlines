@@ -614,6 +614,9 @@ pub(super) struct TableLine {
     /// Cell paragraphs' own spacing (`p8-p38 line 8.65pt exact`), by
     /// paragraph (#1473).
     pub spacings: HashMap<usize, super::xml::Spacing>,
+    /// Cell paragraphs' own text size (`p8-p38 size 9pt`), in half-points,
+    /// by paragraph (#1474).
+    pub sizes: HashMap<usize, u32>,
     /// The grid's widths, the table's width, indent and layout (`widths
     /// 2.14in 1in, width auto, indent 0.25in, layout fixed`), #1472.
     pub geometry: super::xml::TableGeometry,
@@ -790,6 +793,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         aligns: HashMap::new(),
         styles: HashMap::new(),
         spacings: HashMap::new(),
+        sizes: HashMap::new(),
         geometry: super::xml::TableGeometry::default(),
         style: None,
         borders: None,
@@ -820,14 +824,19 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             parsed.aligns.insert(at, jc);
             continue;
         }
-        // `p8-p38 line 8.65pt exact`, `p5 before 2pt after 2pt`: cell
-        // paragraphs' own spacing.
+        // `p8-p38 line 8.65pt exact`, `p5 before 2pt after 2pt size 9pt`:
+        // cell paragraphs' own spacing and text size.
         if let Some((at, tail)) = clause.split_once(' ')
             && let Some((first, count)) = paragraph_range(at)
-            && let Some(spacing) = spacing_words(tail)
+            && let Some((spacing, size)) = spacing_words(tail)
         {
             for n in first..first + count {
-                parsed.spacings.insert(n, spacing);
+                if !spacing.is_empty() {
+                    parsed.spacings.insert(n, spacing);
+                }
+                if let Some(size) = size {
+                    parsed.sizes.insert(n, size);
+                }
             }
             continue;
         }
@@ -1174,7 +1183,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 24] = [
+const CLAUSE_WORDS: [&str; 25] = [
     "empty",
     "outline",
     "center",
@@ -1186,6 +1195,7 @@ const CLAUSE_WORDS: [&str; 24] = [
     "before",
     "after",
     "line",
+    "size",
     "bullet",
     "num",
     "level",
@@ -1335,6 +1345,8 @@ pub(super) struct IdLine {
     /// Its own spacing (`before 6pt`, `after 0pt`, `line 1.5`, `line
     /// 8.65pt exact`), #1473.
     pub spacing: super::xml::Spacing,
+    /// Its own text size (`size 9pt`), in half-points (#1474).
+    pub size: Option<u32>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
     /// The page break's tracked change, `true` for an insertion
@@ -1436,6 +1448,10 @@ impl IdLine {
                     self.spacing = spacing;
                 }
             }
+            // A size out of range leaves what an earlier clause said.
+            Some(("size", v)) => {
+                self.size = super::xml::size_half_points(v).or(self.size);
+            }
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
             Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
@@ -1457,14 +1473,19 @@ impl IdLine {
     }
 }
 
-/// `before 2pt after 2pt line 8.65pt exact`: a cell paragraph's spacing
-/// on the table line, the id line's clauses joined by spaces. `None` unless
-/// every word is one of them.
-fn spacing_words(text: &str) -> Option<super::xml::Spacing> {
+/// `before 2pt after 2pt line 8.65pt exact size 9pt`: a cell paragraph's
+/// spacing and text size on the table line, the id line's clauses joined
+/// by spaces. `None` unless every word is one of them.
+fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>)> {
     let mut spacing = super::xml::Spacing::default();
+    let mut size = None;
     let mut words = text.split(' ').peekable();
     while let Some(word) = words.next() {
         let mut value = words.next()?.to_string();
+        if word == "size" {
+            size = Some(super::xml::size_half_points(&value)?);
+            continue;
+        }
         if word == "line"
             && let Some(rule) = words.next_if(|w| matches!(*w, "exact" | "atLeast"))
         {
@@ -1472,7 +1493,7 @@ fn spacing_words(text: &str) -> Option<super::xml::Spacing> {
         }
         spacing.clause(word, &value)?;
     }
-    (!spacing.is_empty()).then_some(spacing)
+    (!spacing.is_empty() || size.is_some()).then_some((spacing, size))
 }
 
 /// `c5 c6`: the comment numbers of an `in` clause.

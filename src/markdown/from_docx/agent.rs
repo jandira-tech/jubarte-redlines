@@ -875,6 +875,53 @@ pub(crate) struct LineFacts<'a> {
     /// Tracked view: the paragraph's changes its text prints no tag for,
     /// `true` for an insertion (see [`unshown_tags`]).
     pub unshown: &'a [(bool, String)],
+    /// The text size the paragraph states and its style does not give
+    /// (`size 9pt`), in half-points: see [`own_size`].
+    pub size: Option<u32>,
+}
+
+/// The one `w:sz` every text run of paragraph `p` states (#1474), or, with
+/// no text, its mark's, in half-points: `None` when a run states none or
+/// another. A text box, Word's Fallback copy and math hold runs of their
+/// own.
+pub(crate) fn own_size(p: &Element) -> Option<u32> {
+    fn size(rpr: Option<&Element>) -> Option<u32> {
+        let value = rpr?.child("sz")?.attr("val")?;
+        let half = value
+            .parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_half_points(value))?
+            .round();
+        // `as` cannot truncate: the range is checked first.
+        (half.is_finite() && (1.0..=3276.0).contains(&half)).then_some(half as u32)
+    }
+    fn walk(element: &Element, sizes: &mut Vec<Option<u32>>) {
+        for child in element.elements() {
+            match child.local() {
+                "pPr" | "Fallback" | "oMath" | "oMathPara" => {}
+                "r" => {
+                    if child.child("t").is_some() || child.child("delText").is_some() {
+                        sizes.push(size(child.child("rPr")));
+                    }
+                }
+                _ => walk(child, sizes),
+            }
+        }
+    }
+    let mut sizes = Vec::new();
+    walk(p, &mut sizes);
+    match sizes.split_first() {
+        None => size(p.path(&["pPr", "rPr"])),
+        Some((first, rest)) => first.filter(|_| rest.iter().all(|s| s == first)),
+    }
+}
+
+/// `size 9pt`, `size 10.5pt`: the clause of a text size in half-points.
+pub(crate) fn size_clause(half_points: u32) -> String {
+    match half_points % 2 {
+        0 => format!("size {}pt", half_points / 2),
+        _ => format!("size {}.5pt", half_points / 2),
+    }
 }
 
 /// The tags of the insertions, deletions and moves in paragraph `p` whose
@@ -1716,6 +1763,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     if let Some(spacing) = ppr.and_then(|pr| pr.child("spacing")) {
         clauses.extend(spacing_clauses(spacing));
+    }
+    if let Some(size) = f.size {
+        clauses.push(size_clause(size));
     }
     match f.marker {
         Some("-") => clauses.push("bullet".to_string()),
@@ -3051,6 +3101,7 @@ mod tests {
             spans: &[],
             empty: false,
             unshown: &[],
+            size: None,
         };
         let line = id_line(p, &facts, &Handles::default());
         assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
@@ -3080,6 +3131,7 @@ mod tests {
                 spans: &[],
                 empty: false,
                 unshown: &[],
+                size: None,
             };
             let line = id_line(p, &facts, &Handles::default());
             assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");

@@ -227,6 +227,7 @@ pub(super) fn assemble(
         warnings,
         revision_prefix: "",
         pending_marks: Vec::new(),
+        run_sizes: Vec::new(),
         num_ids,
         label_nums,
         note_ids: Vec::new(),
