@@ -15,8 +15,152 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Breaking
+
+- **Markdown images stay inside their folder** (#617). `convert`, `compare` and `diff` read an image only when its decoded path resolves, symlinks followed, inside the Markdown file's folder or the `--resource-path` root. An absolute path, a `..` walk, a symlink out or a percent-encoded scheme (`file%3A…`, `DATA%3A…`) now becomes the image's alt text, and each alt-text warning names its reason (`outside the resource root`, `a URL scheme`, `not found`). Pass `--resource-path DIR` to trust another root.
+
+- Refresh saved edit anchors quoting the old in-code revision spelling (`` `w:del{++        ++}{r76 @AS}` ``): marks inside code are now literal, so those anchors can return `ANCHOR_NOT_FOUND`; quote a fresh view with marks outside the code fence.
+
+- `read --json` snapshot schema 2: `summary.tables` and `tables[]` count
+  top-level tables, with view-aligned `index`. Cell tables move into
+  recursive `nested` arrays with a `parent` cell path and no `index`.
+  `read --tables` uses the same top-level numbers and indents nested grids
+  under their cell rows. Python `Table` gains `parent` and `nested`; its
+  nested indices are `None`. Legacy edit-plan schemas are unchanged.
+
+- **Markdown revision attribution uses the settled brace dialect.** Update saved
+  views and consumers using this migration table. Comments keep `{>>…<<}`.
+
+  | Rule | Old | New |
+  | --- | --- | --- |
+  | Attribution tag | `{++new++}{>>r1 @AL<<}` | `{++new++}{r1 @AL}` |
+  | Parent chain | `{>>r3 @BO on r1 @AL<<}` | `{r3 @BO re r1 @AL}` |
+  | Merged ids | `{++a b++}{>>r1+2 @AL<<}` | `{++a++}{r1 @AL}{++ b++}{r2 @AL}`; merge only equal ids |
+  | Substitution pairing | Adjacent changes could merge regardless of direction | Only deletion then live insertion by the same author in the rendered stream; different inline dates stay separate; old id precedes new id in `{r1+2 @AL}` |
+  | Inserted paragraph mark | `<!-- p0 break-ins r7 @AL -->` on an id line | Inline `¶{r7 @AL}` at the paragraph end |
+  | Literal escape | Attribution-shaped text after a closer was unprotected | Escape the opening brace, as in `{++new++}\{r1 @AL}` and `¶\{` |
+
+
 ### Fixed
 
+- **A bound content control in a text box keeps its text in Word**
+  (#1427). A cover page's Abstract, bound to a custom XML store, came
+  back empty: the drawing kept the control's binding but not the store
+  it names, and Word fills a bound control from its store. The writer
+  now builds every store a plain text, date or list control's binding
+  names and the main part does not reach, and drops any other binding
+  so Word keeps the control's text. `jubarte validate` reports a
+  binding with no store as `DATA_BINDING_WITHOUT_STORE` (a warning).
+- **A text box's paragraph style survives Markdown** (#1423). The
+  `styles:` legend listed only the styles of the body's own paragraphs,
+  so a style used only inside a text box (a cover page's `No Spacing`)
+  was left undefined in the docx written back, and the box's paragraph
+  fell back to Normal. The legend now describes it too.
+- **A header's or footer's paragraph indent survives Markdown** (#1422).
+  A story paragraph's own `w:ind` was dropped, so the footer text next to
+  a framed page number ran under the number. It now prints in the
+  paragraph's entry (`p1: {text: …, indent: {first-line: 0.25in}}`) and
+  converting back writes it.
+- **A header's or footer's frame survives Markdown** (#526). Word's
+  page-number frame (`w:framePr`, the number at the margin's edge) was
+  dropped, so the number came back as an ordinary line of the header.
+  A framed paragraph now prints paragraph by paragraph with its frame
+  (`p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin,
+  vAnchor: text, xAlign: right, y: 1}}`), and converting back writes it.
+- **A style's zero spacing or single line survives the Markdown legend**
+  (#1421). The `styles:` legend left out a `before`/`after` of 0 and a
+  single line even when the default style has some, so a heading with no
+  space after came back with the body's 10pt after it. The legend now
+  says `after 0pt` and `line 1` whenever they set the style apart from
+  its base.
+- **The document's default spacing stays its default through Markdown**
+  (#1420). The writer put the default paragraph style's spacing on
+  `Normal` itself. A table style's own spacing (every built-in one sets
+  none after, single) wins over the document default in its cells, but
+  not over `Normal`, so each cell took the body's spacing and the tables
+  grew: an 11-page document came back with 13 pages, in Word as in
+  jubarte. That spacing is now written as `w:pPrDefault`, where Word
+  keeps it.
+- **A table style whose borders vary keeps them through Markdown** (#1419).
+  The view named such a style `Ledger, borders vary`, which the writer
+  could not rebuild, so the style came back without borders. A style of
+  the document's own now lists each side it sets
+  (`Ledger, borders bottom double 0.75pt`, with `#RRGGBB` and `space Npt`
+  when they apply), and converting back writes those sides. Word's own
+  table styles still say `borders vary`, except a Table Grid whose
+  borders are not Word's thin grid: it is the document's own and lists
+  its sides (`TableGrid, borders top double 3pt bottom double 3pt`).
+
+- **A story's deleted or inserted last paragraph is a patch hunk of its own again.** The view writes that paragraph and the mark before it as separate changes, and since the settled dialect (#1135) the patch had joined them to the paragraph above (`@@ [p1] @@ Kept.[-\n\n-][-Last.-]`). `diff` and `patch_redline` now give `@@ -[p2] @@ [-Last.-]` (or `@@ [p2] @@ {+Last.+}`), also when Word split the paragraph into several marks or a line break sits in it. When another author changed the mark, accepting that change alone joins the paragraphs, so the mark stays a change named after its author.
+- **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
+- Enforce XML tag policy at package admission and checked XML APIs with active limits: defaults of 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags, plus duplicate expanded-name refusal. Preserve permissive comparison tree construction and linear bulk attribute insertion. Markdown conversion enforces explicit `MarkdownOptions::input_limits`, including on best-effort auxiliary parts; comparison-to-Markdown carries active limits. Ring-1 reports Word-fatal `DUPLICATE_EXPANDED_ATTRIBUTE` with part and element (#650).
+- **Package writes plan against ZIP32 and never write ZIP64** (#604).
+  Every writer — `PartFs::to_zip`, the Strict→Transitional repack, the
+  Markdown default template — runs `zip32_plan` on the names and
+  uncompressed lengths it is about to write, before `ZipWriter::new`.
+  A package that would need ZIP64 — a part, a header offset or a
+  central-directory size reaching `0xFFFFFFFF`, or 65,535 entries (the
+  ZIP64 count marker) — is refused up front with `OUTPUT_LIMIT` instead
+  of failing after the bytes are written. The Strict→Transitional
+  normalizer now returns `Result<Vec<u8>, opc::Zip32Limit>` (a breaking
+  change for Rust callers of `strict_to_transitional_docx` and
+  `strict_to_transitional_docx_within`) so the
+  refusal reaches the caller rather than handing back untranslated
+  bytes; its zero-churn pass-through is unchanged. Written entries stay
+  Deflated with version-needed 20 and no ZIP64 fields, asserted per
+  entry in both headers.
+
+- **Dual-header ZIP packages are refused** (#594, GHSA-m665-v7pm-7grj). zip is bumped to 9.0.5, and every package open compares each entry's raw name in its local file header with its central record. A disagreement, or a central record with no local header, is `ZIP_HEADER_MISMATCH` on every route. `jubarte debug` reports it as a finding instead of refusing. A local time that differs from the central record is still accepted, as Word accepts it.
+
+- **`accept`/`reject` keep untracked text under an orphan move.** A
+  `w:moveTo` whose `w:name` range has no `w:moveFrom` counterpart (or a bare
+  move element with no range at all) was treated as moved content: Reject All
+  deleted every run inside the orphaned range markers, wrapped or not.
+  Orphan move elements now resolve like `w:ins`/`w:del`, and on Reject the
+  markers of an orphan `moveTo` range are dropped before the ranges are
+  reversed, so `jubarte reject` keeps `Keep | B` on the #1235 probe, as
+  Word's Reject All does. An orphan `moveFrom` range still deletes its
+  unwrapped content on Accept, as Word's Accept All does (#1243: the first
+  version of this fix dropped those markers too and kept the content).
+  Well-formed moves (a `moveFrom` source and `moveTo` destination sharing a
+  `w:name`) are unchanged.
+
+- **Structural ZIP inconsistencies are refused** (#644). The same
+  local-vs-central pass now compares the compression method, flag bits 0
+  and 3 (bit 11 only when a raw name is non-ASCII — an ASCII name
+  decodes identically with the bit set or clear),
+  and — with bit 3 clear — the CRC-32 and ZIP64-resolved sizes (still
+  `ZIP_HEADER_MISMATCH`); validates every entry's extent — local header,
+  payload and data descriptor — for overlaps and placement before the
+  central directory (`INVALID_PACKAGE`); checks each data descriptor,
+  signed or unsigned, in the width the local header's ZIP64 form
+  prescribes — a 0x0001 extra field alone prescribes 8-byte sizes — or
+  the other width when only it matches the central record; and
+  reads directory payloads through the bounded CRC stream so a corrupt
+  one refuses and its bytes count against the budgets. `jubarte debug`
+  reports each class as a `zip-header-mismatch`, `zip-extent`,
+  `zip-descriptor` or `zip-directory-payload` finding instead of
+  refusing, and an entry whose open or payload read still fails becomes
+  a `zip-entry-read` finding of its own, so the structural findings
+  always reach the report.
+
+- **ZIP entries recorded as non-regular types are refused** (#639). The
+  shared package open reads the raw central record's version-made-by and
+  external attributes: on a Unix or OS X host the entry's recorded type must
+  be a regular file, or a directory on a `/`-terminated name, and on any
+  host the DOS directory attribute demands the same — a symlink, device,
+  FIFO, socket or a directory type on a file name is `UNSUPPORTED_PACKAGE`
+  on every route, and `jubarte debug` reports it as a `zip-special-entry`
+  finding. `jubarte self-update` also lstats the extracted binary before
+  installing it, closing the symlink a tar release archive can plant where
+  the zip path already refuses one.
+
+- **`accept`/`reject` settle tracked changes inside comment bodies**
+  (`word/comments.xml`), as Word's Accept/Reject All do. An `--author` or
+  `--kind` selection resolves them too; `--id` still cannot name one (they
+  carry no listed id), so a selection that leaves any prints a note with
+  the count. A comment whose revisions empty its paragraphs keeps one
+  `w:p`, the shape Word writes.
 - **Fractional plain values on table and frame geometry are rounded in
   redline output — a validity repair.** A gdocs-style fractional dxa
   (`w:tblpX="100.5"`, `w:framePr w:x="33.5"`) is schema-invalid on the
@@ -25,9 +169,21 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   them (101, 34) as it already did for indents, spacing and cell margins.
   `jubarte debug` still reports the literal value: a diagnostic describes,
   it does not repair.
+- **Writing an output works on Linux again (#1351).** cap-std opens
+  directories `O_PATH` there, and `fsync` on an `O_PATH` descriptor fails
+  with EBADF. Every write reported `Bad file descriptor (os error 9)` and
+  "durability uncertain" after the file was already in place. The
+  directory sync now opens `.` through the handle it holds, which walks no
+  path, so root confinement still holds.
 
 ### Added
 
+- **`debug --full-lines`** prints the listing checks' lines (`text`, `xml`,
+  `runs`, `changes`, `styledefs`, `numbering`, `render`) whole instead of
+  clipping them at 200 characters; `debug::Options` gains `full_lines`. The
+  Markdown round-trip gate reads the render check this way: a clipped table
+  line kept a window that still held the cell shading the gate drops, so
+  `ids-fonts.md` reported a table difference the two packages do not have.
 - **`convert --commonmark`** writes Word as plain CommonMark with
   CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
   wrote before.
@@ -139,6 +295,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   say, in the binary and in both hosts.
 
 ### Changed
+
+- **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
+  `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`
+  select a comment, not a paragraph, and used to ignore a stray `paragraph`
+  silently; they now refuse it as an unknown field (`INVALID_PLAN`), as
+  `list`, `watermark`, `settings`, `fill_control` and `page_setup` already
+  did. Discovery publishes every v1 operation as closed
+  (`additionalProperties: false`), with the bounds the dispatcher enforces.
 
 - **Breaking (CLI): `convert FILE.docx -t md` writes the agent view**, the
   Markdown `jubarte read` prints (YAML header, id lines, ids on changes and
