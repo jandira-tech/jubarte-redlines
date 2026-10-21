@@ -161,6 +161,21 @@ fn an_anchor_typed_with_plain_lookalikes_is_found_and_the_report_says_how_it_rea
             "\u{201C}Officer\u{201D} shall mean (1)\u{A0}any officer\u{2019}s attorney\u{2011}in\u{2011}fact"
         )
     );
+    // Only the words that change are written: the document's curly quotes,
+    // non-breaking space and apostrophe stay (plan 12).
+    let text = &jubarte::inspect::paragraphs(&out.clean).unwrap()[0].text;
+    assert_eq!(
+        text,
+        "\u{201C}Officer\u{201D} means\u{A0}any officer\u{2019}s agent."
+    );
+    // `whole` writes the replacement as typed.
+    let out = apply_plan(
+        &lookalikes(),
+        &plan(
+            r#"[{"kind":"replace","paragraph":"p0","find":"\"Officer\" shall mean (1) any officer's attorney-in-fact","replacement":"\"Officer\" means any officer's agent","whole":true}]"#,
+        ),
+    )
+    .unwrap();
     let text = &jubarte::inspect::paragraphs(&out.clean).unwrap()[0].text;
     assert_eq!(text, "\"Officer\" means any officer's agent.");
 }

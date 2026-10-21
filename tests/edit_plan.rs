@@ -1798,7 +1798,12 @@ fn whole_replace_across_runs_keeps_formatting_and_comment() {
             count += 1;
         }
     }
-    assert!(count >= 2, "both sides retain their formatting history");
+    // Re-typed whole, the span is one deletion and one insertion: neither
+    // side carries a formatting change of its own (#1375).
+    assert_eq!(
+        count, 0,
+        "no w:rPrChange on either side of a whole replacement"
+    );
     assert_eq!(xml.matches("<w:commentReference ").count(), 1);
     // "email to" was bold in the source; its deleted copy stays bold.
     let del = &xml[xml.find("<w:del ").unwrap()..xml.find("</w:del>").unwrap()];

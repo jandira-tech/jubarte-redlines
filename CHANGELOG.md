@@ -17,6 +17,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Breaking
 
+- **`replace` keeps what it keeps** (plan 12, #1262). A `replace` with
+  neither `whole` nor `format` writes only the words that differ from
+  `replacement`, so the words it keeps keep their formatting (a bold
+  defined term is no longer re-typed plain with a `w:rPrChange`) and the
+  document's characters: a curly quote or a non-breaking space stays
+  where `replacement` types the plain one. Words that all change are one
+  change, as Word Compare shows them. To restyle only a quote, give the
+  replace `"whole": true`; a replace that changes nothing reports a
+  `message`. The range a replace names still conflicts with other
+  operations as a whole. `"whole": true` over runs of mixed formatting is
+  one deletion and one insertion, with no leftover `w:rPrChange` (#1375).
+
 - **One logical change per edit** (#1261). The marks Word writes for one
   edit are listed as one change: one author's touching insertions (or
   deletions) in a story, whatever their dates, get a composite id

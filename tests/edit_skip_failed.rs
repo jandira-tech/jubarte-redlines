@@ -1069,8 +1069,12 @@ fn the_failed_plan_names_the_paragraphs_of_the_output() {
         let fixed = EditPlan::from_json(&fixed.to_string()).unwrap();
         let applied = prepare(written, &fixed, &PrepareOptions::default()).unwrap();
         let after = texts(&applied.result.clean);
+        // The anchor typed the source's non-breaking space as a space;
+        // the replace keeps the document's character (plan 12).
         assert!(
-            after.iter().any(|t| t == "Notice is due within 60 days."),
+            after
+                .iter()
+                .any(|t| t == "Notice is due within 60\u{a0}days."),
             "{after:?}"
         );
         assert!(
