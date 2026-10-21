@@ -8,6 +8,8 @@
 
 mod common;
 
+use std::time::Instant;
+
 use common::validity::assert_word_valid_package;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::inspect;
@@ -381,4 +383,144 @@ fn md_roundtrip_sample_matches_docx_route_after_resolve() {
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Probes from `wip/521`'s `tests/markdown_diff_misc3.rs` /
+/// `tests/markdown_diff_reflow.rs` scratch diagnostic files that
+/// asserted concrete, correct behaviour. They run as plain
+/// `diff_markdown` + `resolve_critic` checks: no docx round-trip
+/// needed.
+
+#[test]
+fn many_lines_with_one_changed_word_each_pair_them_by_position() {
+    // Many lines, each with one word change. Should NOT use reflow (positions differ).
+    let old = "first row alpha\nsecond row beta\nthird row gamma\nfourth row delta\nfifth row epsilon";
+    let new = "first row ALPHA\nsecond row beta\nthird row GAMMA\nfourth row delta\nfifth row epsilon";
+    let diff = diff_markdown(old, new);
+    let acc = resolve_critic(&diff, TrackChanges::Accept);
+    assert_eq!(acc, new, "accept mismatch:\n  diff {diff:?}\n  acc {acc:?}");
+}
+
+#[test]
+fn a_4space_indented_line_does_not_join_a_plain_paragraph_around_it() {
+    // A line with 4-space indent is a code block; reflow shouldn't see the
+    // whole thing as one paragraph.
+    let old = "alpha bravo\n    indented\ncharlie delta";
+    let new = "alpha bravo\n    indented\ncharlie changed";
+    let diff = diff_markdown(old, new);
+    let acc = resolve_critic(&diff, TrackChanges::Accept);
+    let rej = resolve_critic(&diff, TrackChanges::Reject);
+    assert_eq!(acc, new, "accept mismatch:\n  diff {diff:?}\n  acc {acc:?}");
+    assert_eq!(rej, old, "reject mismatch:\n  diff {diff:?}\n  rej {rej:?}");
+}
+
+#[test]
+fn a_plain_reflow_resolves_back_to_old_and_new() {
+    let old = "alpha bravo\ncharlie delta";
+    let new = "alpha\nbravo charlie\ndelta";
+    let diff = diff_markdown(old, new);
+    let acc = resolve_critic(&diff, TrackChanges::Accept);
+    let rej = resolve_critic(&diff, TrackChanges::Reject);
+    assert_eq!(acc, new, "accept mismatch:\n  diff {diff:?}\n  acc {acc:?}");
+    assert_eq!(rej, old, "reject mismatch:\n  diff {diff:?}\n  rej {rej:?}");
+}
+
+#[test]
+fn two_word_moves_resolve_back_to_old_and_new() {
+    let old = "alpha bravo charlie\ndelta echo foxtrot\ngolf hotel";
+    let new = "alpha\nbravo charlie delta\necho foxtrot\ngolf hotel";
+    let diff = diff_markdown(old, new);
+    let acc = resolve_critic(&diff, TrackChanges::Accept);
+    let rej = resolve_critic(&diff, TrackChanges::Reject);
+    assert_eq!(acc, new, "accept mismatch:\n  diff {diff:?}\n  acc {acc:?}");
+    assert_eq!(rej, old, "reject mismatch:\n  diff {diff:?}\n  rej {rej:?}");
+}
+
+#[test]
+fn at_exactly_4_000_000_pair_bound_round_trips() {
+    // k = m = 2000: k*m = 4_000_000 exactly. The bound between the
+    // quadratic and the linear engine is recorded by the elapsed time;
+    // the round-trip is the contract.
+    let n = 2000usize;
+    let old: String = (0..n)
+        .map(|i| format!("row {i} alpha beta gamma\n"))
+        .collect();
+    let new: String = (0..n)
+        .map(|i| format!("row {i} alpha beta delta\n"))
+        .collect();
+    let start = Instant::now();
+    let diff = diff_markdown(&old, &new);
+    eprintln!("k=m=2000 diff took {:?}, len = {}", start.elapsed(), diff.len());
+    let acc = resolve_critic(&diff, TrackChanges::Accept);
+    let rej = resolve_critic(&diff, TrackChanges::Reject);
+    assert_eq!(acc, new, "accept mismatch (k=m=2000)");
+    assert_eq!(rej, old, "reject mismatch (k=m=2000)");
+}
+
+#[test]
+fn just_over_pair_bound_falls_back_and_round_trips() {
+    // k = 2001, m = 2000: k*m = 4_002_000 > 4_000_000.
+    let n = 2000usize;
+    let old: String = (0..n)
+        .map(|i| format!("row {i} alpha beta gamma\n"))
+        .collect();
+    let mut new = old.clone();
+    new.push_str("row 2000 alpha beta gamma\n");
+    let start = Instant::now();
+    let diff = diff_markdown(&old, &new);
+    eprintln!(
+        "k=2001, m=2000 diff took {:?}, len = {}",
+        start.elapsed(),
+        diff.len()
+    );
+    let acc = resolve_critic(&diff, TrackChanges::Accept);
+    let rej = resolve_critic(&diff, TrackChanges::Reject);
+    assert_eq!(acc, new, "accept mismatch (k=2001, m=2000)");
+    assert_eq!(rej, old, "reject mismatch (k=2001, m=2000)");
+}
+
+#[test]
+fn many_paragraphs_with_one_word_change_each_round_trip() {
+    // Many lines, all but identical content — reflow kicks in.
+    let base = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+    let added = base.replacen("alpha", "alpha X", 1);
+    let wrap = |text: &str, width: usize| -> String {
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for word in text.split_whitespace() {
+            if !line.is_empty() && line.len() + 1 + word.len() > width {
+                lines.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        lines.push(String::new());
+        lines.join("\n")
+    };
+    for &width in &[20usize, 24, 40] {
+        for copies in [1usize, 5, 20, 100] {
+            let old_paras = std::iter::repeat(wrap(base, width))
+                .take(copies)
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let new_paras = std::iter::repeat(wrap(&added, width))
+                .take(copies)
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let start = Instant::now();
+            let diff = diff_markdown(&old_paras, &new_paras);
+            let elapsed = start.elapsed();
+            eprintln!(
+                "width={width} copies={copies} ({} lines) -> {elapsed:?}",
+                old_paras.matches('\n').count()
+            );
+            let acc = resolve_critic(&diff, TrackChanges::Accept);
+            assert_eq!(acc, new_paras, "width={width} copies={copies}");
+        }
+    }
 }
