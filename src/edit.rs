@@ -1944,6 +1944,8 @@ struct StoryPart {
     root: NodeId,
 }
 
+
+type EditRanges = BTreeMap<usize, Vec<(usize, usize, usize)>>;
 impl<'p> Transaction<'p> {
     fn start(source: &[u8], plan: &'p EditPlan) -> Result<Self, EditError> {
         if plan.schema_version != SCHEMA_VERSION {
@@ -4011,8 +4013,8 @@ impl<'p> Transaction<'p> {
     fn check_text_edits(
         &self,
         deleted: &[usize],
-    ) -> Result<BTreeMap<usize, Vec<(usize, usize, usize)>>, EditError> {
-        let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
+    ) -> Result<EditRanges, EditError> {
+        let mut ranges: EditRanges = BTreeMap::new();
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
                 Resolved::Text {
@@ -4094,7 +4096,7 @@ impl<'p> Transaction<'p> {
 
     fn check_comment_ranges(
         &self,
-        ranges: &BTreeMap<usize, Vec<(usize, usize, usize)>>,
+        ranges: &EditRanges,
     ) -> Result<(), EditError> {
         // A comment boundary strictly inside a changed range has no position
         // in the edited text. Containing or touching an edit is fine.
@@ -4118,7 +4120,7 @@ impl<'p> Transaction<'p> {
 
     fn check_format_runs(
         &self,
-        ranges: &BTreeMap<usize, Vec<(usize, usize, usize)>>,
+        ranges: &EditRanges,
     ) -> Result<(), EditError> {
         // Formatting applies to source text: no text edit may change it.
         for (i, r) in &self.resolved {
@@ -4163,7 +4165,7 @@ impl<'p> Transaction<'p> {
 
     fn check_footnote_anchors(
         &self,
-        ranges: &BTreeMap<usize, Vec<(usize, usize, usize)>>,
+        ranges: &EditRanges,
     ) -> Result<(), EditError> {
         // A reference mark needs its anchor's end to survive the text edits.
         for (i, r) in &self.resolved {
