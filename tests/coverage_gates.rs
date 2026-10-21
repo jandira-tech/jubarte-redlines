@@ -38,6 +38,34 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The `.rs` files of the git checkout at `root` that git tracks or would
+/// add: an ignored folder never builds. `None` outside a checkout.
+fn checkout_rust_files(root: &Path) -> Option<Vec<PathBuf>> {
+    let listed = std::process::Command::new("git")
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
+        .args(["--", "*.rs"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())?;
+    Some(
+        String::from_utf8_lossy(&listed.stdout)
+            .split('\0')
+            .filter(|name| !name.is_empty())
+            .map(|name| root.join(name))
+            // A tracked file deleted from the checkout, or a link, is not
+            // read: the walk below skips links too.
+            .filter(|path| fs::symlink_metadata(path).is_ok_and(|m| m.is_file()))
+            .collect(),
+    )
+}
+
 /// Line number and predicate of each `cfg_attr(PREDICATE, ATTRIBUTE)` whose
 /// attribute is `attribute`, however rustfmt splits it over lines.
 fn predicates<'a>(text: &'a str, attribute: &str) -> Vec<(usize, &'a str)> {
@@ -131,8 +159,11 @@ fn audit(root: &Path) -> (String, usize, Vec<String>) {
         "the crate roots gate the feature alike: {gates:?}"
     );
     let gate = gates[0].clone();
-    let mut files = Vec::new();
-    rust_files(root, &mut files);
+    let mut files = checkout_rust_files(root).unwrap_or_else(|| {
+        let mut files = Vec::new();
+        rust_files(root, &mut files);
+        files
+    });
     files.sort();
     let mut sites = 0;
     let mut loose = Vec::new();
@@ -225,6 +256,34 @@ fn a_loose_gate_outside_src_is_reported() {
         "tests/t.rs",
         "#[cfg_attr(coverage_nightly, coverage(off))]\nfn helper() {}\n",
     )]);
+    let (_, sites, loose) = audit(dir.path());
+    assert_eq!(sites, 1, "{loose:?}");
+    assert_eq!(loose.len(), 1, "{loose:?}");
+    assert!(loose[0].starts_with("tests/t.rs:1: "), "{loose:?}");
+}
+
+#[test]
+fn a_folder_git_ignores_is_not_scanned() {
+    // An ignored local folder (old evidence, a scratch copy of a crate)
+    // never builds, so a loose gate in it is no E0658. A file git would
+    // add is still scanned.
+    let dir = sample_crate(&[
+        (".gitignore", "/archive/\n"),
+        (
+            "archive/probe/src/lib.rs",
+            "#[cfg_attr(coverage_nightly, coverage(off))]\nfn helper() {}\n",
+        ),
+        (
+            "tests/t.rs",
+            "#[cfg_attr(coverage_nightly, coverage(off))]\nfn helper() {}\n",
+        ),
+    ]);
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git runs");
+    assert!(init.success());
     let (_, sites, loose) = audit(dir.path());
     assert_eq!(sites, 1, "{loose:?}");
     assert_eq!(loose.len(), 1, "{loose:?}");
