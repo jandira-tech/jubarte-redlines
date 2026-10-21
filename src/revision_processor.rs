@@ -18,6 +18,7 @@
 //! accepted / rejected projections before correlating them.
 
 mod annotation_ids;
+pub(crate) use annotation_ids::AnnotationIds;
 mod bookmarks;
 pub(crate) mod comments;
 mod notes;
@@ -237,6 +238,7 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     let name = dom.name(node).unwrap();
 
     // Accept inserted content: collapse w:ins.
+    // #1155: resolve even the final paragraph mark, unlike Word's Accept/Reject All.
     if name == W::ins() {
         let mut out = Vec::new();
         for c in dom.nodes(node) {
@@ -370,15 +372,8 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     }
 
     // w:tbl whose rows are ALL deleted → drop the whole table.
-    if name == W::tbl() {
-        let rows = dom.elements(node, Some(&W::tr()));
-        if !rows.is_empty()
-            && rows
-                .iter()
-                .all(|&tr| has_path(dom, tr, &W::tr_pr(), &W::del()))
-        {
-            return vec![];
-        }
+    if name == W::tbl() && table_rows_all_deleted(dom, node) {
+        return vec![];
     }
 
     // Accept deleted text: drop w:del. Hoist comment range markers that lived
@@ -727,14 +722,30 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
 /// path is identity; only `RemoveRsid` is needed (in-place). The return
 /// value is the same `root` `NodeId`.
 pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
+    reject_content(dom, root, false, &mut Vec::new())
+}
+
+fn reject_content(
+    dom: &mut Dom,
+    root: NodeId,
+    keep_comments: bool,
+    kept: &mut Vec<String>,
+) -> NodeId {
     if !element_has_tracked_revisions(dom, root) {
         return remove_rsid_transform(dom, root).expect("reject clean: root not dropped by rsid");
     }
     let reverted =
         reject_revisions_for_part_transform(dom, root).expect("reject: root must not be dropped");
+    // O.0 (#1243): before the reversal, drop only the orphan moveTo range
+    // markers. The reversal would turn them into moveFrom ranges whose
+    // unwrapped content A.2 deletes on the accept pass below, but Word keeps
+    // an orphan moveTo range's content on Reject (#1235). Orphan moveFrom
+    // markers survive the reversal as moveTo markers — inert for A.2/A.4,
+    // stripped by A.10 — so their content is kept too (#1243).
+    let reverted = normalize_orphan_moves(dom, reverted, OrphanMovePass::RejectMoveToMarkers);
     let reversed = reverse_revisions_transform(dom, reverted);
     let derssid = remove_rsid_transform(dom, reversed).expect("reject: root not dropped by rsid");
-    accept_revisions_for_part_content(dom, derssid)
+    accept_content(dom, derssid, keep_comments, kept)
 }
 
 // ───────────────────────────── A.0 — part-pipeline walkers ──────────────────
@@ -927,8 +938,12 @@ pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockCo
         .collect()
 }
 
-/// `W.BlockLevelContentContainers` (PtOpenXmlUtil.cs :5569).
-fn block_level_content_containers() -> [XName; 7] {
+/// `W.BlockLevelContentContainers` (PtOpenXmlUtil.cs :5569), plus
+/// `w:comment`: the C# pipeline never visits `comments.xml`, but Word's
+/// Accept/Reject All does, and a deleted or inserted paragraph mark inside
+/// a comment merges the comment's own paragraphs — never across the
+/// `w:comment` boundary.
+fn block_level_content_containers() -> [XName; 8] {
     [
         W::body(),
         W::tc(),
@@ -937,6 +952,7 @@ fn block_level_content_containers() -> [XName; 7] {
         W::ftr(),
         W::endnote(),
         W::footnote(),
+        W::name("comment"),
     ]
 }
 
@@ -1120,6 +1136,187 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
     ne
 }
 
+// ────────── O.0 — orphan move normalization (#1235, #1243) ───────────
+
+/// Which orphan-move cleanup a resolution path runs (#1243).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OrphanMovePass {
+    /// Accept (and Reject, on its reversed tree): orphan `moveTo` elements
+    /// become `w:ins` and orphan `moveFrom` elements become `w:del`; range
+    /// markers stay. Word deletes an orphan `moveFromRange`'s unwrapped
+    /// content on Accept (#1243), which is A.2's own reading of the
+    /// markers, and A.10 strips every leftover marker afterwards.
+    AcceptElements,
+    /// Reject, before the reversal: drop only orphan `moveToRange…`
+    /// markers (no element conversion). The reversal would otherwise turn
+    /// them into `moveFromRange` markers whose unwrapped content A.2
+    /// deletes on the accept pass below, while Word keeps an orphan
+    /// `moveToRange`'s content on Reject (#1235).
+    RejectMoveToMarkers,
+}
+
+/// #1235, #1243: a `w:moveTo` / `w:moveFrom` is an ORPHAN when no range of
+/// the other kind shares its `w:name` in the same part — a bare `moveTo`
+/// has no `w:name` at all, so it is an orphan unless it sits inside a
+/// paired `moveToRange`. Word keeps an orphan `moveTo` like an insertion
+/// and an orphan `moveFrom` like a deletion; only the elements themselves
+/// carry moved content.
+///
+/// [`OrphanMovePass::AcceptElements`] rewrites those elements to
+/// `w:ins`/`w:del` and leaves every range marker in place: Word deletes the
+/// unwrapped content of a `moveFromRange` on Accept whether or not a
+/// `moveToRange` shares its `w:name` (#1243), so A.2 (A.4 for the
+/// `customXml…` markers) must still see an orphan `moveFromRange`.
+/// [`OrphanMovePass::RejectMoveToMarkers`] drops only orphan
+/// `moveToRange`/`customXmlMoveToRange` markers, before the reversal turns
+/// them into `moveFromRange` markers whose content A.2 would wrongly
+/// delete — Word keeps it (#1235). A well-formed move —
+/// `moveFromRange`/`moveToRange` sharing a `w:name` — keeps its markers
+/// and its `moveFrom`/`moveTo` elements and is untouched.
+fn normalize_orphan_moves(dom: &mut Dom, root: NodeId, pass: OrphanMovePass) -> NodeId {
+    let ns = W::URI;
+    let mut from_names: HashSet<String> = HashSet::new();
+    let mut to_names: HashSet<String> = HashSet::new();
+    for e in dom.descendants_and_self(root, None) {
+        let Some(n) = dom.name(e) else { continue };
+        if n.namespace_name() != ns {
+            continue;
+        }
+        match n.local_name() {
+            "moveFromRangeStart" | "customXmlMoveFromRangeStart" => {
+                if let Some(v) = dom.attribute(e, &W::name("name")) {
+                    from_names.insert(v.to_string());
+                }
+            }
+            "moveToRangeStart" | "customXmlMoveToRangeStart" => {
+                if let Some(v) = dom.attribute(e, &W::name("name")) {
+                    to_names.insert(v.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    match pass {
+        // No moveTo range markers exist → nothing to drop before the
+        // reversal.
+        OrphanMovePass::RejectMoveToMarkers if to_names.is_empty() => return root,
+        OrphanMovePass::AcceptElements if from_names.is_empty() && to_names.is_empty() => {
+            // Ranges cannot tell orphan from paired without names, but a bare
+            // `w:moveTo` / `w:moveFrom` is still orphaned: it has no `w:name`
+            // to pair with anything.
+            let has_move = dom.descendants_and_self(root, None).into_iter().any(|e| {
+                dom.name(e)
+                    .is_some_and(|n| n == W::move_to() || n == W::move_from())
+            });
+            if !has_move {
+                return root;
+            }
+        }
+        _ => {}
+    }
+
+    let mut to_ins: HashSet<NodeId> = HashSet::new();
+    let mut to_del: HashSet<NodeId> = HashSet::new();
+    let mut drop_markers: HashSet<NodeId> = HashSet::new();
+    // id → w:name of every currently open range, by flavor.
+    let mut open_from: HashMap<String, String> = HashMap::new();
+    let mut open_to: HashMap<String, String> = HashMap::new();
+    for tag in descendant_and_self_tags(dom, root) {
+        let e = tag.element;
+        let Some(n) = dom.name(e) else { continue };
+        if n.namespace_name() != ns {
+            continue;
+        }
+        match n.local_name() {
+            "moveFromRangeStart" | "customXmlMoveFromRangeStart" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("").to_string();
+                let name = dom.attribute(e, &W::name("name")).unwrap_or("").to_string();
+                open_from.insert(id, name);
+            }
+            "moveFromRangeEnd" | "customXmlMoveFromRangeEnd" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("");
+                open_from.remove(id);
+            }
+            "moveToRangeStart" | "customXmlMoveToRangeStart" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("").to_string();
+                let name = dom.attribute(e, &W::name("name")).unwrap_or("").to_string();
+                if pass == OrphanMovePass::RejectMoveToMarkers && !from_names.contains(&name) {
+                    drop_markers.insert(e);
+                }
+                open_to.insert(id, name);
+            }
+            "moveToRangeEnd" | "customXmlMoveToRangeEnd" => {
+                let id = dom.attribute(e, &W::id()).unwrap_or("");
+                if let Some(name) = open_to.remove(id)
+                    && pass == OrphanMovePass::RejectMoveToMarkers
+                    && !from_names.contains(&name)
+                {
+                    drop_markers.insert(e);
+                }
+            }
+            "moveTo"
+                if tag.tag_type != TagType::EndElement
+                    && pass == OrphanMovePass::AcceptElements =>
+            {
+                let inside_paired_range = open_to.values().any(|name| from_names.contains(name));
+                if !inside_paired_range {
+                    to_ins.insert(e);
+                }
+            }
+            "moveFrom"
+                if tag.tag_type != TagType::EndElement
+                    && pass == OrphanMovePass::AcceptElements =>
+            {
+                let inside_paired_range = open_from.values().any(|name| to_names.contains(name));
+                if !inside_paired_range {
+                    to_del.insert(e);
+                }
+            }
+            _ => {}
+        }
+    }
+    if to_ins.is_empty() && to_del.is_empty() && drop_markers.is_empty() {
+        return root;
+    }
+    normalize_orphan_moves_transform(dom, root, &to_ins, &to_del, &drop_markers)
+        .expect("the part root is never a move element or range marker")
+}
+
+/// Rebuild for [`normalize_orphan_moves`]: orphan `moveTo`/`moveFrom`
+/// re-emerge as `w:ins`/`w:del` (attributes preserved), orphan range markers
+/// vanish, everything else rebuilds recursively.
+fn normalize_orphan_moves_transform(
+    dom: &mut Dom,
+    node: NodeId,
+    to_ins: &HashSet<NodeId>,
+    to_del: &HashSet<NodeId>,
+    drop_markers: &HashSet<NodeId>,
+) -> Option<NodeId> {
+    if !dom.is_element(node) {
+        return Some(dom.clone_subtree(node));
+    }
+    if drop_markers.contains(&node) {
+        return None;
+    }
+    let new_name = if to_ins.contains(&node) {
+        W::ins()
+    } else if to_del.contains(&node) {
+        W::del()
+    } else {
+        dom.name(node).unwrap()
+    };
+    let ne = dom.new_element(new_name);
+    for (an, av) in dom.attributes(node) {
+        dom.set_attribute_value(ne, &an, Some(&av));
+    }
+    for c in dom.nodes(node) {
+        if let Some(tc) = normalize_orphan_moves_transform(dom, c, to_ins, to_del, drop_markers) {
+            dom.add(ne, tc);
+        }
+    }
+    Some(ne)
+}
+
 // ───────────────────────────── A.2 — moveFrom ranges ────────────────────────
 
 /// A.2 — `AcceptMoveFromRanges` (:1530): walk the tag stream; while one or
@@ -1210,7 +1407,7 @@ fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<Node
                 // Empty/partially surviving range anchors were hoisted from
                 // moveFrom after wholly deleted bookmarks were removed.
                 // The move range must not discard those anchors a second time.
-                && !dom.name(e).is_some_and(|name| is_comment_or_bookmark_range_marker(&name))
+                && !dom.name(e).is_some_and(|name| is_inline_range_marker(&name))
                 && !is_container_property(dom, e)
                 && !dom
                     .ancestors(e, None)
@@ -1744,7 +1941,7 @@ fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
 
 /// Does every row of `tbl` carry `trPr/w:del` (and is there a row)?
 fn table_rows_all_deleted(dom: &Dom, tbl: NodeId) -> bool {
-    let rows = dom.elements(tbl, Some(&W::tr()));
+    let rows = wrapped_children(dom, tbl, &W::tr());
     !rows.is_empty()
         && rows.into_iter().all(|tr| {
             dom.element(tr, &W::tr_pr())
@@ -2061,15 +2258,31 @@ fn is_body_level_range_marker(name: &XName) -> bool {
         )
 }
 
-fn is_comment_or_bookmark_range_marker(name: &XName) -> bool {
+fn is_inline_range_marker(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && matches!(
             name.local_name(),
-            "commentRangeStart" | "commentRangeEnd" | "bookmarkStart" | "bookmarkEnd"
+            "commentRangeStart"
+                | "commentRangeEnd"
+                | "bookmarkStart"
+                | "bookmarkEnd"
+                | "permStart"
+                | "permEnd"
         )
 }
 
-/// Pull comment range and bookmark markers out of a subtree being discarded
+/// Permission ranges follow Word's character-range rule, including paragraph
+/// marks: discard both endpoints only when their nonempty span disappears.
+/// Originally empty ranges have nothing to lose and remain in place.
+fn drop_wholly_deleted_permissions(dom: &mut Dom, root: NodeId) {
+    let (start, end) = (W::name("permStart"), W::name("permEnd"));
+    let dropped = bookmarks::wholly_deleted_endpoints(dom, root, &start, &end);
+    for endpoint in dropped {
+        dom.remove(endpoint);
+    }
+}
+
+/// Pull comment, bookmark and permission markers out of a subtree being discarded
 /// (e.g. accepted `w:del`) so anchors between delText runs are not lost.
 fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
@@ -2077,7 +2290,7 @@ fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
         let Some(n) = dom.name(e) else {
             continue;
         };
-        if is_comment_or_bookmark_range_marker(&n) {
+        if is_inline_range_marker(&n) {
             out.push(dom.clone_subtree(e));
         }
     }
@@ -2777,6 +2990,22 @@ fn row_tbl_pr_ex(dom: &mut Dom, tr: NodeId, own: &[NodeId]) -> NodeId {
     ex
 }
 
+/// Matching children in order, through wrappers but not into nested tables.
+fn wrapped_children(dom: &Dom, parent: NodeId, name: &XName) -> Vec<NodeId> {
+    let mut children = Vec::new();
+    for child in dom.elements(parent, None) {
+        if dom.name_is(child, name) {
+            children.push(child);
+        } else if dom.name(child) == Some(W::name("sdt"))
+            || dom.name(child) == Some(W::name("sdtContent"))
+            || dom.name(child) == Some(W::name("customXml"))
+        {
+            children.extend(wrapped_children(dom, child, name));
+        }
+    }
+    children
+}
+
 /// A.8 — `FixWidths` (:1484): clone the table and rewrite each `w:tcW`'s
 /// `w:w` to the sum of the grid columns its cell spans (per the ORIGINAL
 /// table's `tblGrid`). FAITHFUL: cells without a `tcW` do not advance the
@@ -2793,9 +3022,9 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
         })
         .collect();
     let new_tbl = dom.clone_subtree(tbl);
-    for tr in dom.elements(new_tbl, Some(&W::tr())) {
+    for tr in wrapped_children(dom, new_tbl, &W::tr()) {
         let mut last_used: i64 = -1;
-        for tc in dom.elements(tr, Some(&W::tc())) {
+        for tc in wrapped_children(dom, tr, &W::tc()) {
             // Singular tcPr / tcW / gridSpan — avoid multi-Vec flat_map scans.
             let tc_w = dom
                 .element(tc, &W::tc_pr())
@@ -3052,7 +3281,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                 Vec::new()
             };
             let fixed = fix_widths(dom, tbl);
-            for tr in dom.elements(fixed, Some(&W::tr())) {
+            for tr in wrapped_children(dom, fixed, &W::tr()) {
                 let new_row = dom.new_element(W::tr());
                 for (an, av) in dom.attributes(tr) {
                     dom.set_attribute_value(new_row, &an, Some(&av));
@@ -3061,50 +3290,39 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                     let ex = row_tbl_pr_ex(dom, tr, &own_ex);
                     dom.add(new_row, ex);
                 }
-                let non_cells: Vec<NodeId> = dom
-                    .elements(tr, None)
-                    .into_iter()
-                    .filter(|&e| {
-                        dom.name(e) != Some(W::tc())
-                            && (own_ex.is_empty() || dom.name(e) != Some(W::name("tblPrEx")))
-                    })
-                    .collect();
-                for e in non_cells {
-                    let c = dom.clone_subtree(e);
+                for property in [W::name("tblPrEx"), W::tr_pr()] {
+                    if !own_ex.is_empty() && property == W::name("tblPrEx") {
+                        continue;
+                    }
+                    for e in dom.elements(tr, Some(&property)) {
+                        let c = dom.clone_subtree(e);
+                        dom.add(new_row, c);
+                    }
+                }
+                for child in dom.elements(tr, None) {
+                    if dom.name(child) == Some(W::name("tblPrEx"))
+                        || dom.name(child) == Some(W::tr_pr())
+                    {
+                        continue;
+                    }
+                    let c = dom.clone_subtree(child);
                     dom.add(new_row, c);
                 }
-                for tc in dom.elements(tr, Some(&W::tc())) {
+                let mut width_to_left = 0i64;
+                for tc in wrapped_children(dom, new_row, &W::tc()) {
                     let w: Option<i64> = dom
                         .element(tc, &W::tc_pr())
                         .and_then(|p| dom.element(p, &W::name("tcW")))
                         .and_then(|t| dom.attribute(t, &W::name("w")))
                         .and_then(|v| v.parse().ok());
-                    let Some(w) = w else {
-                        let c = dom.clone_subtree(tc);
-                        dom.add(new_row, c);
-                        continue;
-                    };
-                    let mut width_to_left = 0i64;
-                    for btc in dom.elements(tr, Some(&W::tc())) {
-                        if btc == tc {
-                            break;
-                        }
-                        width_to_left += dom
-                            .element(btc, &W::tc_pr())
-                            .and_then(|p| dom.element(p, &W::name("tcW")))
-                            .and_then(|t| dom.attribute(t, &W::name("w")))
-                            .and_then(|v| v.parse::<i64>().ok())
-                            .unwrap_or(0);
-                    }
-                    // rolled_pairs = [0] ++ rolled; start = first >= width_to_left
+                    let Some(w) = w else { continue };
+                    let cell_start = width_to_left;
+                    width_to_left += w;
+                    // rolled_pairs = [0] ++ rolled; start = first >= cell_start
                     let rolled_pairs: Vec<i64> =
                         std::iter::once(0).chain(rolled.iter().copied()).collect();
-                    let start = rolled_pairs.iter().position(|&gv| gv >= width_to_left);
-                    let Some(start_idx) = start else {
-                        let c = dom.clone_subtree(tc);
-                        dom.add(new_row, c);
-                        continue;
-                    };
+                    let start = rolled_pairs.iter().position(|&gv| gv >= cell_start);
+                    let Some(start_idx) = start else { continue };
                     let start_value = rolled_pairs[start_idx];
                     let grids_required = rolled_pairs[start_idx..]
                         .iter()
@@ -3142,9 +3360,18 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                         let c = dom.clone_subtree(e);
                         dom.add(new_cell, c);
                     }
-                    dom.add(new_row, new_cell);
+                    dom.replace_with(tc, &[new_cell]);
                 }
-                dom.add(new_table, new_row);
+                dom.replace_with(tr, &[new_row]);
+            }
+            for child in dom.elements(fixed, None) {
+                if dom.name(child) == Some(W::tbl_pr())
+                    || dom.name(child) == Some(W::name("tblGrid"))
+                {
+                    continue;
+                }
+                let c = dom.clone_subtree(child);
+                dom.add(new_table, c);
             }
         }
         dom.add(ne, new_table);
@@ -3250,10 +3477,32 @@ fn collect_empty_table_cells(
 /// deleted-cells, merge-adjacent). Still runs RemoveRsid, A.9 empty-cell
 /// fill (not revision-gated in C#), and UniqueId/numPr cleanup.
 pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId {
+    accept_content(dom, root, false, &mut Vec::new())
+}
+
+fn accept_content(
+    dom: &mut Dom,
+    root: NodeId,
+    keep_comments: bool,
+    kept: &mut Vec<String>,
+) -> NodeId {
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        // O.0: normalize orphan move elements first — the comment/bookmark
+        // prepasses and A.2/A.4 all treat matched moveFrom-range content as
+        // deleted, so orphan `moveTo`/`moveFrom` elements must be `w:ins`/
+        // `w:del` before any of them runs (#1235). No range marker is
+        // dropped here: Word deletes an orphan moveFrom range's unwrapped
+        // content on Accept (#1243), which is A.2's own doing, and A.10
+        // strips every leftover marker afterwards.
+        let e = normalize_orphan_moves(dom, e, OrphanMovePass::AcceptElements);
+        if keep_comments {
+            kept.extend(comments::keep_wholly_deleted_comments(dom, e));
+        }
+        comments::drop_wholly_deleted_comments(dom, e);
         bookmarks::drop_wholly_deleted_bookmarks(dom, e);
+        drop_wholly_deleted_permissions(dom, e);
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
         let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
         let e = {
@@ -3288,6 +3537,12 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     } else {
         e
     };
+    // #1223: a `w:comment` must keep at least one `w:p`. Rejecting a
+    // comment's only insertion or accepting a wholly deleted one can empty
+    // it; Word writes an empty `w:p` there.
+    if dom.name(e) == Some(W::name("comments")) {
+        ensure_comment_paragraphs(dom, e);
+    }
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
     let unique_id = PT::unique_id();
@@ -3326,6 +3581,22 @@ fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bo
     } else {
         for c in kept {
             dom.add(reverted, c);
+        }
+    }
+}
+
+/// Give every `w:comment` under a `w:comments` root without a block child
+/// (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`) an empty paragraph (#1223).
+fn ensure_comment_paragraphs(dom: &mut Dom, root: NodeId) {
+    let block = [W::p(), W::tbl(), W::sdt(), W::name("customXml")];
+    for comment in dom.elements(root, Some(&W::name("comment"))) {
+        if !dom
+            .elements(comment, None)
+            .into_iter()
+            .any(|c| dom.name(c).is_some_and(|n| block.contains(&n)))
+        {
+            let p = dom.new_element(W::p());
+            dom.add(comment, p);
         }
     }
 }
@@ -3385,21 +3656,36 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
     Some(ne)
 }
 
-/// The parts `AcceptRevisions`/`RejectRevisions` (:1277/:31) walk, in the C#
-/// order: main, headers, footers, endnotes, footnotes, then styles (flagged).
-/// The main document's numbering part, when it has one.
-fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
+/// The part `rel` of the main part targets (`numbering`, `comments`),
+/// resolved against the main part; `None` when the package has none.
+fn related_part(pkg: &crate::opc::PartFs, rel: &str) -> Option<String> {
     let main = pkg.main_document_part()?;
     let rels = pkg.read_rels_for(&main)?;
     rels.items
         .iter()
         .find(|r| {
             r.target_mode.as_deref() != Some("External")
-                && r.rel_type.rsplit('/').next() == Some("numbering")
+                && r.rel_type.rsplit('/').next() == Some(rel)
         })
         .map(|r| pkg.resolve_rel_target(&main, &r.target))
 }
 
+/// The main document's numbering part, when it has one.
+fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
+    related_part(pkg, "numbering")
+}
+
+/// The main document's comments part (`word/comments.xml`), when it has
+/// one. Its revisions resolve like every other part's, but they are not
+/// listed, so `changes` skips this part.
+pub(crate) fn comments_part(pkg: &crate::opc::PartFs) -> Option<String> {
+    related_part(pkg, "comments")
+}
+
+/// The parts `AcceptRevisions`/`RejectRevisions` (:1277/:31) walk, in the C#
+/// order — main, headers, footers, endnotes, footnotes, then styles
+/// (flagged) — with the comments part Word's own Accept/Reject All also
+/// settles (#1223) between the notes and the styles.
 pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
     let main = pkg
         .main_document_part()
@@ -3408,6 +3694,7 @@ pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, b
     let mut footers = Vec::new();
     let mut endnotes = Vec::new();
     let mut footnotes = Vec::new();
+    let mut comments = Vec::new();
     let mut styles = Vec::new();
     if let Some(rels) = pkg.read_rels_for(&main) {
         for r in &rels.items {
@@ -3419,6 +3706,7 @@ pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, b
                 "footer" => &mut footers,
                 "endnotes" => &mut endnotes,
                 "footnotes" => &mut footnotes,
+                "comments" => &mut comments,
                 "styles" => &mut styles,
                 _ => continue,
             };
@@ -3431,6 +3719,7 @@ pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, b
         .chain(footers)
         .chain(endnotes)
         .chain(footnotes)
+        .chain(comments)
     {
         out.push((p, false));
     }
@@ -3485,19 +3774,93 @@ pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
 /// come back unchanged ([`crate::changes`]).
 pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
 
+/// Package-wide ids reserved before any revision is frozen or removed.
+/// Annotation ids and XML parts outside the revision pipeline have other scopes.
+pub(crate) struct RevisionIds {
+    next: u64,
+    used: HashSet<u64>,
+}
+
+impl RevisionIds {
+    pub(crate) fn new(pkg: &crate::opc::PartFs) -> Self {
+        let mut used = HashSet::new();
+        for (part, _) in revision_bearing_parts(pkg) {
+            let Some(xml) = pkg.part_string(&part) else {
+                continue;
+            };
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let Some(root) = dom.root(doc) else { continue };
+            for node in dom.descendants_and_self(root, None) {
+                if dom
+                    .name(node)
+                    .is_some_and(|name| crate::validate::has_unique_revision_id(&name))
+                    && let Some(id) = dom
+                        .attribute(node, &W::id())
+                        .and_then(|id| id.parse::<u64>().ok())
+                {
+                    used.insert(id);
+                }
+            }
+        }
+        Self::from_used(used)
+    }
+
+    pub(crate) fn from_used(used: HashSet<u64>) -> Self {
+        let next = used.iter().max().map_or(0, |id| id.saturating_add(1));
+        Self { next, used }
+    }
+
+    /// Keep max + 1 until Word's signed 32-bit range is exhausted, then
+    /// allocate the lowest unused id. Reserve copies immediately, too.
+    pub(crate) fn allocate(&mut self) -> u64 {
+        const MAX: u64 = i32::MAX as u64;
+        if self.next > MAX {
+            self.next = 0;
+        }
+        while self.used.contains(&self.next) {
+            self.next += 1;
+        }
+        assert!(self.next <= MAX, "revision id space exhausted");
+        let id = self.next;
+        self.used.insert(id);
+        self.next += 1;
+        id
+    }
+}
+
+/// A copied property history is a distinct record. Allocate at the copy
+/// site, leaving the original's attribution, payload and id untouched.
+pub(crate) fn clone_with_fresh_property_ids(
+    dom: &mut Dom,
+    source: NodeId,
+    next_id: &mut RevisionIds,
+) -> NodeId {
+    let copy = dom.clone_subtree(source);
+    for node in std::iter::once(copy).chain(dom.descendants(copy, None)) {
+        if dom.name(node).is_some_and(|name| {
+            matches!(name.namespace_name(), W::URI | FROZEN_NS)
+                && matches!(name.local_name(), "rPrChange" | "pPrChange")
+        }) {
+            dom.set_attribute_value(node, &W::id(), Some(&next_id.allocate().to_string()));
+        }
+    }
+    copy
+}
+
 /// Called with each revision-bearing part's name and parsed root before it
 /// is resolved; renames the revisions to keep into [`FROZEN_NS`].
 pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
 
 /// Accept or reject every revision `freeze` leaves in place. Annotation ids
 /// are renumbered only when no revision is left, so the ids of the ones kept
-/// still name them.
+/// still name them. Return the removed comments' original ids.
 pub(crate) fn resolve_package(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
-) {
-    resolve(pkg, resolution, freeze, true);
+) -> Vec<String> {
+    resolve(pkg, resolution, freeze, true)
 }
 
 fn resolve(
@@ -3505,8 +3868,34 @@ fn resolve(
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
     renumber: bool,
-) {
+) -> Vec<String> {
+    resolve_with_comments(pkg, resolution, freeze, renumber, false, &mut Vec::new())
+}
+
+/// Edit plans retain annotation ids so subsequent operations still address the
+/// snapshot they read. The edit result renumbers once all operations finish.
+/// Only this entry point can rescue removed anchors.
+pub(crate) fn resolve_package_for_edit(
+    pkg: &mut crate::opc::PartFs,
+    resolution: Resolution,
+    freeze: Option<Freeze<'_>>,
+    keep_comments: bool,
+) -> (Vec<String>, Vec<String>) {
+    let mut kept = Vec::new();
+    let removed = resolve_with_comments(pkg, resolution, freeze, false, keep_comments, &mut kept);
+    (removed, kept)
+}
+
+fn resolve_with_comments(
+    pkg: &mut crate::opc::PartFs,
+    resolution: Resolution,
+    freeze: Option<Freeze<'_>>,
+    renumber: bool,
+    keep_comments: bool,
+    kept_comments: &mut Vec<String>,
+) -> Vec<String> {
     let parts = revision_bearing_parts(pkg);
+    let mut next_id = RevisionIds::new(pkg);
     let levels = numbering_part(pkg)
         .and_then(|p| pkg.part_string(&p))
         .map(|xml| style_records::Levels::parse(&xml))
@@ -3522,14 +3911,24 @@ fn resolve(
                 (true, Resolution::Reject) => {
                     let recorded = style_records::recorded_blocks(dom, root);
                     let rejected = reject_revisions_for_styles_transform(dom, root)?;
-                    style_records::restore_against_built_ins(dom, rejected, &recorded, &levels);
+                    style_records::restore_against_built_ins(
+                        dom,
+                        rejected,
+                        &recorded,
+                        &levels,
+                        &mut next_id,
+                    );
                     accept_revisions_for_styles_transform(dom, rejected)
                 }
                 (false, _) => {
                     sections::carry_vanishing_section_references(dom, root, resolution);
                     Some(match resolution {
-                        Resolution::Accept => accept_revisions_for_part_content(dom, root),
-                        Resolution::Reject => reject_revisions_document(dom, root),
+                        Resolution::Accept => {
+                            accept_content(dom, root, keep_comments, kept_comments)
+                        }
+                        Resolution::Reject => {
+                            reject_content(dom, root, keep_comments, kept_comments)
+                        }
                     })
                 }
             }?;
@@ -3538,12 +3937,26 @@ fn resolve(
         });
     }
     let stories = story_parts(&parts);
-    comments::prune_orphan_comments(pkg, &stories);
+    let removed_comments = comments::prune_orphan_comments(pkg, &stories);
     notes::prune_orphan_notes(pkg, &stories);
     if renumber && !kept {
-        annotation_ids::renumber(pkg, &stories);
+        let _ = annotation_ids::renumber(pkg, &stories);
     }
     word_save::tidy(pkg, &stories);
+    removed_comments
+}
+
+/// Canonicalize annotation ids after every operation of an edit plan has run.
+/// Pending revisions keep their snapshot ids, just as selective settlement does.
+pub(crate) fn renumber_settled_annotations(pkg: &mut crate::opc::PartFs) -> Option<AnnotationIds> {
+    let parts = revision_bearing_parts(pkg);
+    if parts.iter().any(|(part, _)| {
+        comments::Parsed::load(pkg, part)
+            .is_some_and(|p| element_has_tracked_revisions(&p.dom, p.root))
+    }) {
+        return None;
+    }
+    Some(annotation_ids::renumber_with_map(pkg, &story_parts(&parts)))
 }
 
 /// Rename every frozen revision element under `root` back into `w:`; true
@@ -3573,7 +3986,7 @@ fn story_parts(parts: &[(String, bool)]) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod revision_boundary_coverage_tests {
     use super::*;
 
@@ -4372,7 +4785,7 @@ mod revision_boundary_coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_block_control_ownership_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -4617,7 +5030,7 @@ mod public_block_control_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod body_equation_paragraph_mark_ownership_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -4838,7 +5251,7 @@ mod body_equation_paragraph_mark_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deleted_title_equation_barrier_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -4990,7 +5403,7 @@ mod deleted_title_equation_barrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_field_instruction_metadata_boundary_tests {
     use super::*;
     #[test]
@@ -5070,7 +5483,7 @@ mod complete_field_instruction_metadata_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod alternate_content_paragraph_owner_tests {
     use super::*;
     use crate::namespaces::{A, MC, W14};
