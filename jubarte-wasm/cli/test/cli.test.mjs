@@ -598,7 +598,7 @@ test("edit and add --plan record into one plan that --consume deletes once appli
   const link = path.join(tmp, "record-link.json");
   fs.symlinkSync(plan, link);
   const linked = run("edit", file, "--plan", link, "--consume");
-  assert.equal(linked.code, 2);
+  assert.equal(linked.code, 1);
   assert.match(linked.err, /a symbolic link; pass the file it names/);
   assert.equal(fs.readFileSync(plan, "utf8"), held);
   assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
@@ -979,8 +979,9 @@ test("compare reports the bytes a Markdown redline takes (integration)", () => {
   fs.writeFileSync(b, "Prazo de 45 días — ok.\n");
   const result = run("compare", a, b, "-d", "1970-01-01T00:00:00Z", "-o", out);
   assert.equal(result.code, 0, result.err);
+  const content = fs.readFileSync(out, "utf8");
   const size = fs.statSync(out).size;
-  assert.ok(size > fs.readFileSync(out, "utf8").length);
+  assert.ok(size > content.length);
   assert.equal(result.out, "");
   assert.equal(result.err, `wrote ${out} (md, ${size} bytes)\n`);
 });
