@@ -1416,7 +1416,7 @@ mod intern_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod attribute_iter_tests {
     use super::*;
 
