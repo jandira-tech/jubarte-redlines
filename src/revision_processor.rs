@@ -3901,17 +3901,19 @@ fn resolve_with_comments(
         .map(|xml| style_records::Levels::parse(&xml))
         .unwrap_or_default();
     let mut kept = false;
-    // #1223 settles revisions inside comment bodies; a comments part with
-    // none is left as it is, byte for byte, as Word's redline carries it.
-    let untouched_comments = comments_part(pkg).filter(|part| {
-        comments::Parsed::load(pkg, part)
-            .is_some_and(|p| !element_has_tracked_revisions(&p.dom, p.root))
-    });
+    // #1223 settles revisions inside comment bodies. A comments part with
+    // none is neither settled nor tidied, as before #1223, so a redline
+    // carries it as Word's does (#1467); a comment whose anchors are gone
+    // is still pruned from it.
+    let comments = comments_part(pkg);
+    let mut untouched_comments = None;
     for (part, is_styles) in parts.clone() {
-        if untouched_comments.as_ref() == Some(&part) {
-            continue;
-        }
+        let is_comments = comments.as_ref() == Some(&part);
         process_part(pkg, &part, |dom, root| {
+            if is_comments && !element_has_tracked_revisions(dom, root) {
+                untouched_comments = Some(part.clone());
+                return None;
+            }
             if let Some(freeze) = freeze {
                 freeze(&part, dom, root);
             }
@@ -3951,7 +3953,11 @@ fn resolve_with_comments(
     if renumber && !kept {
         let _ = annotation_ids::renumber(pkg, &stories);
     }
-    word_save::tidy(pkg, &stories);
+    let tidied: Vec<String> = stories
+        .into_iter()
+        .filter(|part| untouched_comments.as_ref() != Some(part))
+        .collect();
+    word_save::tidy(pkg, &tidied);
     removed_comments
 }
 
