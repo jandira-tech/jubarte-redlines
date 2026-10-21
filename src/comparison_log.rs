@@ -76,3 +76,37 @@ impl ComparisonLog {
             .count()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_count() {
+        let mut log = ComparisonLog::new();
+
+        // Initially empty
+        assert_eq!(log.error_count(), 0);
+
+        // Add an info
+        log.info("info message");
+        assert_eq!(log.error_count(), 0);
+
+        // Add a warning
+        log.warning("warning message");
+        assert_eq!(log.error_count(), 0);
+
+        // Add an error
+        log.error("error message 1");
+        assert_eq!(log.error_count(), 1);
+
+        // Add another info and warning
+        log.info("another info");
+        log.warning("another warning");
+        assert_eq!(log.error_count(), 1);
+
+        // Add another error
+        log.error("error message 2");
+        assert_eq!(log.error_count(), 2);
+    }
+}
