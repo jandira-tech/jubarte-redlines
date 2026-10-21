@@ -1,0 +1,27 @@
+--- scripts/cli_id_sources.py
++++ scripts/cli_id_sources.py
+@@ -233,16 +233,21 @@
+     return sorted(out, key=lambda f: (f.file, f.key))
+
+
++_messages_consts_cache: dict[Path, dict[str, str]] = {}
++
++
+ def messages(fn: Fn, root: Path) -> list[str]:
+     """The refusals a parser can give: its id-message literals and the ids.rs
+     constants it names, spelled out."""
+-    consts = dict(
+-        re.findall(
+-            r'pub const (\w+): &str = "([^"]*)";', (root / "src" / "ids.rs").read_text(encoding="utf-8")
++    if root not in _messages_consts_cache:
++        _messages_consts_cache[root] = dict(
++            re.findall(
++                r'pub const (\w+): &str = "([^"]*)";', (root / "src" / "ids.rs").read_text(encoding="utf-8")
++            )
+         )
+-    )
++    consts = _messages_consts_cache[root]
+     found = [m.strip('"') for m in ID_MESSAGE.findall(fn.body)]
+-    found.extend(consts[c] for c in set(re.findall(r"\b([A-Z_]{6,})\b", fn.body)).intersection(consts))
++    found.extend(consts[c] for c in set(re.findall(r"\b([A-Z_]{6,})\b", fn.body)).intersection(consts))
+     return sorted(set(found))
