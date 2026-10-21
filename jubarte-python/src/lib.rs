@@ -767,7 +767,10 @@ fn diff_json(
             _ => jubarte::markdown::redline(old, new, &redline()).and_then(|docx| {
                 jubarte::markdown::docx_to_markdown(
                     &docx,
-                    &jubarte::markdown::MarkdownOptions::default(),
+                    &jubarte::markdown::MarkdownOptions {
+                        input_limits: settings.input_limits,
+                        ..Default::default()
+                    },
                 )
                 .map(|read| read.markdown)
             }),
@@ -1166,10 +1169,24 @@ fn capabilities_json() -> String {
     jubarte::capabilities::capabilities_json("python")
 }
 
+/// Focused edit discovery, or the edit support matrix when both filters are absent.
+#[pyfunction]
+#[pyo3(signature = (operation=None, field=None))]
+fn capability_query(operation: Option<&str>, field: Option<&str>) -> String {
+    jubarte::capabilities::discovery("python", operation, field).to_string()
+}
+
 /// [`capabilities_json`] as the text summary `jubarte capabilities` prints.
 #[pyfunction]
-fn capabilities_text() -> String {
-    jubarte::capabilities::capabilities_text(&jubarte::capabilities::capabilities("python"))
+#[pyo3(signature = (operation=None, field=None, matrix=false))]
+fn capabilities_text(operation: Option<&str>, field: Option<&str>, matrix: bool) -> String {
+    if matrix || operation.is_some() || field.is_some() {
+        jubarte::capabilities::discovery_text(&jubarte::capabilities::discovery(
+            "python", operation, field,
+        ))
+    } else {
+        jubarte::capabilities::capabilities_text(&jubarte::capabilities::capabilities("python"))
+    }
 }
 
 /// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
@@ -1196,10 +1213,8 @@ fn markdown_to_docx(
         .detach(|| {
             // Built here: `DocxOptions` can hold an image loader, which is
             // not `Send`, so it cannot cross into the detached call.
-            let options = jubarte::markdown::docx_options_from_json(
-                options_json.unwrap_or("{}"),
-                reference,
-            )?;
+            let options =
+                jubarte::markdown::docx_options_from_json(options_json.unwrap_or("{}"), reference)?;
             jubarte::markdown::markdown_to_docx(text, &options).map_err(|e| e.to_string())
         })
         .map_err(JubarteError::new_err)?;
@@ -1226,9 +1241,81 @@ fn audit_json(py: Python<'_>, docx: &[u8], rules: Option<Vec<String>>) -> PyResu
     serde_json::to_string(&report).map_err(err)
 }
 
+/// Persistent filesystem authority for the hosted MCP adapter. The root is
+/// opened once, not re-resolved by pathname for every write.
+#[pyclass(name = "_OutputRoot")]
+struct PyOutputRoot {
+    root: jubarte::publication::OutputRoot,
+}
+
+#[pymethods]
+impl PyOutputRoot {
+    #[new]
+    fn new(root: &str) -> PyResult<Self> {
+        Ok(Self {
+            root: jubarte::publication::OutputRoot::open(std::path::Path::new(root))?,
+        })
+    }
+
+    fn read<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = py.detach(|| self.root.read(std::path::Path::new(path)))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn publish(
+        &self,
+        py: Python<'_>,
+        files: Vec<(String, Vec<u8>)>,
+        overwrite: bool,
+    ) -> PyResult<()> {
+        let result = py.detach(|| {
+            let files: Vec<_> = files
+                .iter()
+                .map(|(path, bytes)| (std::path::PathBuf::from(path), bytes.as_slice()))
+                .collect();
+            self.root.publish(&files, overwrite)
+        });
+        publish_result(py, result)
+    }
+}
+
+fn publish_result(
+    py: Python<'_>,
+    result: Result<jubarte::publication::PublishReport, jubarte::publication::PublishError>,
+) -> PyResult<()> {
+    let (warnings, result) = match result {
+        Ok(report) => (report.warnings, Ok(())),
+        Err(error) => {
+            // PublishError's Display preserves the primary error and committed
+            // state, but does not include its cleanup warnings.
+            let mut message = error.to_string();
+            for warning in &error.warnings {
+                message.push_str(&format!("\nwarning: {warning}"));
+            }
+            (
+                error.warnings,
+                Err(pyo3::exceptions::PyOSError::new_err(message)),
+            )
+        }
+    };
+    let category = py.get_type::<pyo3::exceptions::PyRuntimeWarning>();
+    for warning in warnings {
+        let emitted = std::ffi::CString::new(warning)
+            .map_err(err)
+            .and_then(|message| PyErr::warn(py, &category, &message, 1));
+        // Warning filters may raise. Preserve the original publication error
+        // when there is one; its message already contains every warning.
+        if result.is_ok() {
+            emitted?;
+        }
+    }
+    result
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_class::<PyOutputRoot>()?;
     m.add("JubarteError", m.py().get_type::<JubarteError>())?;
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
@@ -1254,6 +1341,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preview_json, m)?)?;
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
+    m.add_function(wrap_pyfunction!(capability_query, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_text, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
@@ -1280,4 +1368,150 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(scrub_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_json, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use jubarte::publication::{PublishError, PublishReport};
+    use pyo3::exceptions::{PyOSError, PyRuntimeWarning};
+
+    #[test]
+    fn publication_report_emits_each_runtime_warning_and_keeps_unit() {
+        Python::initialize();
+        Python::attach(|py| {
+            let warnings = py.import("warnings").unwrap();
+            let context = warnings
+                .call_method(
+                    "catch_warnings",
+                    (),
+                    Some(&{
+                        let kwargs = pyo3::types::PyDict::new(py);
+                        kwargs.set_item("record", true).unwrap();
+                        kwargs
+                    }),
+                )
+                .unwrap();
+            let caught = context.call_method0("__enter__").unwrap();
+            warnings.call_method1("simplefilter", ("always",)).unwrap();
+            let report = PublishReport {
+                warnings: vec![
+                    "cleaning staging: first".into(),
+                    "cleaning staging: second".into(),
+                ],
+            };
+            let result = publish_result(py, Ok(report));
+            assert!(result.is_ok(), "{result:?}");
+            assert_eq!(caught.len().unwrap(), 2);
+            for (index, message) in ["cleaning staging: first", "cleaning staging: second"]
+                .iter()
+                .enumerate()
+            {
+                let warning = caught.get_item(index).unwrap();
+                assert!(
+                    warning
+                        .getattr("category")
+                        .unwrap()
+                        .is(py.get_type::<PyRuntimeWarning>())
+                );
+                assert_eq!(
+                    warning
+                        .getattr("message")
+                        .unwrap()
+                        .str()
+                        .unwrap()
+                        .to_str()
+                        .unwrap(),
+                    *message
+                );
+            }
+            context
+                .call_method1("__exit__", (py.None(), py.None(), py.None()))
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn publication_error_preserves_primary_state_and_all_cleanup_warnings() {
+        Python::initialize();
+        Python::attach(|py| {
+            let warnings = py.import("warnings").unwrap();
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("record", true).unwrap();
+            let context = warnings
+                .call_method("catch_warnings", (), Some(&kwargs))
+                .unwrap();
+            let caught = context.call_method0("__enter__").unwrap();
+            warnings.call_method1("simplefilter", ("always",)).unwrap();
+            let error = PublishError {
+                committed: vec!["a.txt".into()],
+                durability_uncertain: true,
+                source: std::io::Error::other("primary failure"),
+                warnings: vec![
+                    "cleaning staging: first".into(),
+                    "cleaning staging: second".into(),
+                ],
+            };
+            let raised = publish_result(py, Err(error)).unwrap_err();
+            assert_eq!(caught.len().unwrap(), 2);
+            for index in 0..2 {
+                assert!(
+                    caught
+                        .get_item(index)
+                        .unwrap()
+                        .getattr("category")
+                        .unwrap()
+                        .is(py.get_type::<PyRuntimeWarning>())
+                );
+            }
+            context
+                .call_method1("__exit__", (py.None(), py.None(), py.None()))
+                .unwrap();
+            assert!(raised.is_instance_of::<PyOSError>(py));
+            let message = raised.value(py).str().unwrap().to_str().unwrap().to_owned();
+            for expected in [
+                "primary failure",
+                "a.txt",
+                "durability uncertain",
+                "cleaning staging: first",
+                "cleaning staging: second",
+            ] {
+                assert!(message.contains(expected), "missing {expected}: {message}");
+            }
+        });
+    }
+    #[test]
+    fn publication_success_obeys_warnings_as_errors() {
+        Python::initialize();
+        Python::attach(|py| {
+            let warnings = py.import("warnings").unwrap();
+            let context = warnings.call_method0("catch_warnings").unwrap();
+            context.call_method0("__enter__").unwrap();
+            warnings.call_method1("simplefilter", ("error",)).unwrap();
+            assert!(publish_result(py, Ok(PublishReport::default())).is_ok());
+            let raised = publish_result(
+                py,
+                Ok(PublishReport {
+                    warnings: vec!["cleaning staging: first".into()],
+                }),
+            )
+            .unwrap_err();
+            assert!(raised.is_instance_of::<PyRuntimeWarning>(py));
+            let raised = publish_result(
+                py,
+                Err(PublishError {
+                    committed: vec![],
+                    durability_uncertain: false,
+                    source: std::io::Error::other("primary failure"),
+                    warnings: vec!["cleaning staging: first".into()],
+                }),
+            )
+            .unwrap_err();
+            assert!(raised.is_instance_of::<PyOSError>(py));
+            assert!(raised.to_string().contains("cleaning staging: first"));
+            context
+                .call_method1("__exit__", (py.None(), py.None(), py.None()))
+                .unwrap();
+        });
+    }
 }
