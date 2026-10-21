@@ -442,7 +442,9 @@ class Document:
         still-present revision between them. A boundary explained solely by a
         missing separator revision adds no finding beyond that separator. Changed
         revisions say ``differs from the original``; new revisions say ``is new``.
-        These messages name ids and authors, never revision text.
+        These messages name ids and authors, never revision text. A permission
+        endpoint of ``original`` that the edit lost, in any story, is a
+        ``PERMISSION_RANGE_DROPPED`` finding.
         An empty tuple means every edit is tracked.
         """
         before = original.to_bytes() if isinstance(original, Document) else original
