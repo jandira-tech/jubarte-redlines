@@ -215,6 +215,155 @@ fn has_run_content(dom: &Dom, element: NodeId) -> bool {
         .any(|e| dom.name(e).is_some_and(|n| content_names.contains(&n)))
 }
 
+fn try_accept_wholly_revised_equation(
+    dom: &mut Dom,
+    node: NodeId,
+    name: &XName,
+) -> Option<Vec<NodeId>> {
+    if name == &M::name("oMath") || name == &M::name("oMathPara") {
+        let owners: Vec<_> = dom
+            .descendants(node, None)
+            .into_iter()
+            .filter(|&n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
+            .collect();
+        let has_authored_empty_equation = dom
+            .descendants(node, Some(&M::name("oMath")))
+            .into_iter()
+            .any(|equation| {
+                !dom.descendants(equation, None)
+                    .into_iter()
+                    .any(|n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
+            });
+        let has_unowned_content = dom.descendants(node, None).into_iter().any(|child| {
+            let ancestors = dom.ancestors(child, None);
+            if dom.name_is(child, &W::del())
+                || ancestors
+                    .iter()
+                    .any(|&ancestor| dom.name_is(ancestor, &W::del()))
+            {
+                return false;
+            }
+            let Some(child_name) = dom.name(child) else {
+                return !dom
+                    .text_value(child)
+                    .is_some_and(|text| text.trim().is_empty());
+            };
+            // oMath admits ordinary WML runs, anchors and transparent controls.
+            // They are independent owners even when all m:r owners are deleted.
+            if child_name.namespace_name() != M::URI {
+                return true;
+            }
+            if child_name.local_name() == "r" || child_name.local_name() == "ctrlPr" {
+                return false;
+            }
+            // Math property leaves describe the removed equation; an empty
+            // expression/container outside properties is an authored sibling.
+            let in_math_properties = child_name.local_name().ends_with("Pr")
+                || ancestors.iter().any(|&ancestor| {
+                    dom.name(ancestor).is_some_and(|name| {
+                        name.namespace_name() == M::URI && name.local_name().ends_with("Pr")
+                    })
+                });
+            !in_math_properties && dom.elements(child, None).is_empty()
+        });
+        if !has_authored_empty_equation
+            && !has_unowned_content
+            && !owners.is_empty()
+            && owners.iter().all(|&owner| {
+                let children = dom.elements(owner, None);
+                !children.is_empty()
+                    && children.iter().all(|&child| dom.name_is(child, &W::del()))
+                    && dom.nodes(owner).into_iter().all(|child| {
+                        dom.is_element(child)
+                            || dom
+                                .text_value(child)
+                                .is_some_and(|text| text.trim().is_empty())
+                    })
+            })
+        {
+            return Some(hoist_range_markers_from(dom, node));
+        }
+    }
+    None
+}
+
+fn try_accept_math_fraction(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &M::name("f") {
+        let removed = dom
+            .elements(node, Some(&M::name("fPr")))
+            .into_iter()
+            .any(|fpr| has_path(dom, fpr, &M::name("ctrlPr"), &W::del()));
+        if removed {
+            return Some(vec![]);
+        }
+    }
+    None
+}
+
+fn try_accept_deleted_row(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::tr() && has_path(dom, node, &W::tr_pr(), &W::del()) {
+        return Some(vec![]);
+    }
+    None
+}
+
+fn try_accept_deleted_table(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::tbl() && table_rows_all_deleted(dom, node) {
+        return Some(vec![]);
+    }
+    None
+}
+
+fn try_accept_deleted_text(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::del() {
+        return Some(hoist_range_markers_from(dom, node));
+    }
+    None
+}
+
+fn try_accept_cell_merge(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::cell_merge() {
+        let parent_is_tcpr = dom
+            .parent(node)
+            .and_then(|p| dom.name(p))
+            .is_some_and(|pn| pn == W::tc_pr());
+        if parent_is_tcpr {
+            let vmerge = dom.attribute(node, &W::v_merge()).map(|s| s.to_string());
+            if vmerge.as_deref() == Some("rest") {
+                let v = dom.new_element(W::v_merge());
+                dom.set_attribute_value(v, &W::val(), Some("restart"));
+                return Some(vec![v]);
+            }
+            if vmerge.as_deref() == Some("cont") {
+                let v = dom.new_element(W::v_merge());
+                dom.set_attribute_value(v, &W::val(), Some("continue"));
+                return Some(vec![v]);
+            }
+        }
+    }
+    None
+}
+
+fn try_accept_hyperlink(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::hyperlink() {
+        let ne = dom.new_element(name.clone());
+        for (an, av) in dom.attributes(node) {
+            dom.set_attribute_value(ne, &an, Some(&av));
+        }
+        for c in dom.nodes(node) {
+            for tn in accept_all_other_revisions_transform(dom, c) {
+                dom.add(ne, tn);
+            }
+        }
+        return Some(if has_run_content(dom, ne) {
+            vec![ne]
+        } else {
+            hoist_range_markers_from(dom, ne)
+        });
+    }
+    None
+}
+
 /// Port of `AcceptAllOtherRevisionsTransform` — accept inserts (unwrap
 /// `w:ins`), drop deletions and revision-range markers, accept formatting-
 /// change markers, handle deleted rows/tables, cell merges, and empty
@@ -285,150 +434,30 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
         return vec![];
     }
 
-    // Word serializes a wholly revised equation by marking every math run
-    // and control-property owner internally. Removing those deleted children
-    // must remove the equation too, rather than leave an empty oMath shell in
-    // a surviving paragraph. Require every owner to be wholly deleted: mixed
-    // equations and authored empty runs are independent live source content.
-    if name == M::name("oMath") || name == M::name("oMathPara") {
-        let owners: Vec<_> = dom
-            .descendants(node, None)
-            .into_iter()
-            .filter(|&n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
-            .collect();
-        let has_authored_empty_equation = dom
-            .descendants(node, Some(&M::name("oMath")))
-            .into_iter()
-            .any(|equation| {
-                !dom.descendants(equation, None)
-                    .into_iter()
-                    .any(|n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
-            });
-        let has_unowned_content = dom.descendants(node, None).into_iter().any(|child| {
-            let ancestors = dom.ancestors(child, None);
-            if dom.name_is(child, &W::del())
-                || ancestors
-                    .iter()
-                    .any(|&ancestor| dom.name_is(ancestor, &W::del()))
-            {
-                return false;
-            }
-            let Some(child_name) = dom.name(child) else {
-                return !dom
-                    .text_value(child)
-                    .is_some_and(|text| text.trim().is_empty());
-            };
-            // oMath admits ordinary WML runs, anchors and transparent controls.
-            // They are independent owners even when all m:r owners are deleted.
-            if child_name.namespace_name() != M::URI {
-                return true;
-            }
-            if child_name.local_name() == "r" || child_name.local_name() == "ctrlPr" {
-                return false;
-            }
-            // Math property leaves describe the removed equation; an empty
-            // expression/container outside properties is an authored sibling.
-            let in_math_properties = child_name.local_name().ends_with("Pr")
-                || ancestors.iter().any(|&ancestor| {
-                    dom.name(ancestor).is_some_and(|name| {
-                        name.namespace_name() == M::URI && name.local_name().ends_with("Pr")
-                    })
-                });
-            !in_math_properties && dom.elements(child, None).is_empty()
-        });
-        if !has_authored_empty_equation
-            && !has_unowned_content
-            && !owners.is_empty()
-            && owners.iter().all(|&owner| {
-                let children = dom.elements(owner, None);
-                !children.is_empty()
-                    && children.iter().all(|&child| dom.name_is(child, &W::del()))
-                    && dom.nodes(owner).into_iter().all(|child| {
-                        dom.is_element(child)
-                            || dom
-                                .text_value(child)
-                                .is_some_and(|text| text.trim().is_empty())
-                    })
-            })
-        {
-            return hoist_range_markers_from(dom, node);
-        }
+    if let Some(res) = try_accept_wholly_revised_equation(dom, node, &name) {
+        return res;
     }
-
-    // m:f / m:fPr / m:ctrlPr / w:del → remove the math fraction.
-    if name == M::name("f") {
-        let removed = dom
-            .elements(node, Some(&M::name("fPr")))
-            .into_iter()
-            .any(|fpr| has_path(dom, fpr, &M::name("ctrlPr"), &W::del()));
-        if removed {
-            return vec![];
-        }
+    if let Some(res) = try_accept_math_fraction(dom, node, &name) {
+        return res;
     }
-
-    // w:tr / w:trPr / w:del → deleted row.
-    if name == W::tr() && has_path(dom, node, &W::tr_pr(), &W::del()) {
-        return vec![];
+    if let Some(res) = try_accept_deleted_row(dom, node, &name) {
+        return res;
     }
-
-    // w:tbl whose rows are ALL deleted → drop the whole table.
-    if name == W::tbl() && table_rows_all_deleted(dom, node) {
-        return vec![];
+    if let Some(res) = try_accept_deleted_table(dom, node, &name) {
+        return res;
     }
-
-    // Accept deleted text: drop w:del. Hoist comment range markers that lived
-    // inside the deletion so nested/table comment anchors survive accept
-    // (docx_lots_of_comments redline: starts 9/10 sit between delText runs;
-    // dropping the whole w:del orphaned those comments → carry 2/6), and the
-    // bookmarks left there: `bookmarks::drop_wholly_deleted_bookmarks` has
-    // already removed those whose every character went.
-    if name == W::del() {
-        return hoist_range_markers_from(dom, node);
+    if let Some(res) = try_accept_deleted_text(dom, node, &name) {
+        return res;
     }
-
-    // Vertically-merged cell markers.
-    if name == W::cell_merge() {
-        let parent_is_tcpr = dom
-            .parent(node)
-            .and_then(|p| dom.name(p))
-            .is_some_and(|pn| pn == W::tc_pr());
-        if parent_is_tcpr {
-            let vmerge = dom.attribute(node, &W::v_merge()).map(|s| s.to_string());
-            if vmerge.as_deref() == Some("rest") {
-                let v = dom.new_element(W::v_merge());
-                dom.set_attribute_value(v, &W::val(), Some("restart"));
-                return vec![v];
-            }
-            if vmerge.as_deref() == Some("cont") {
-                let v = dom.new_element(W::v_merge());
-                dom.set_attribute_value(v, &W::val(), Some("continue"));
-                return vec![v];
-            }
-        }
+    if let Some(res) = try_accept_cell_merge(dom, node, &name) {
+        return res;
     }
-
-    // w:hyperlink that collapses to an empty shell after accepting children → drop.
-    if name == W::hyperlink() {
-        let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
-        for c in dom.nodes(node) {
-            for tn in accept_all_other_revisions_transform(dom, c) {
-                dom.add(ne, tn);
-            }
-        }
-        return if has_run_content(dom, ne) {
-            vec![ne]
-        } else {
-            // Discard the empty link while retaining surviving range anchors
-            // hoisted from its deleted content.
-            hoist_range_markers_from(dom, ne)
-        };
+    if let Some(res) = try_accept_hyperlink(dom, node, &name) {
+        return res;
     }
 
     // Identity clone with transformed children.
-    let ne = dom.new_element(name);
+    let ne = dom.new_element(name.clone());
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(ne, &an, Some(&av));
     }
