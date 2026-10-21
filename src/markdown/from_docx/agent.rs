@@ -2845,7 +2845,7 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
                 add(&[tag], if *inserted { "ins" } else { "del" });
             }
         } else if let Some(t) = view_notes::table_line(line) {
-            for (inserted, tag) in t.marks.values() {
+            for (inserted, tag) in t.marks.values().flatten() {
                 add(
                     &[tag],
                     if *inserted {
@@ -3537,6 +3537,16 @@ mod tests {
         all_tables(&body, &mut all);
         let numbered: Vec<Option<&str>> = all.iter().map(|t| t.attr(TABLE)).collect();
         assert_eq!(numbered, [Some("0"), None, Some("1")]);
+    }
+
+    /// A cell paragraph's mark names an insertion and a deletion at once
+    /// (`w:pPr/w:rPr` holds both `w:ins` and `w:del`), and the header
+    /// counts each mark the change list names.
+    #[test]
+    fn a_cell_paragraph_mark_named_twice_counts_twice() {
+        let line = "<!-- t0 1x1, cells p1-p1 by row, break-ins r3 @AC in p1, \
+                    break-del r4 @AC in p1 -->";
+        assert_eq!(collect_revisions(line), ["mark", "mark"]);
     }
 
     /// A mark with no `w:id` prints `noid`, so one author's inserted and
