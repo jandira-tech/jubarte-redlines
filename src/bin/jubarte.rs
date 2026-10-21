@@ -103,6 +103,7 @@ impl SelectionFilter for Selection {
                         KindArg::Deletion => ChangeKind::Deletion,
                         KindArg::Move => ChangeKind::Move,
                         KindArg::Formatting => ChangeKind::Formatting,
+                        KindArg::Replacement => ChangeKind::Replacement,
                     })
                     .collect()
             }),
@@ -475,9 +476,9 @@ fn run_resolution(
         check_output(out).map_err(|f| (ExitCode::from(f.code), f.message))?;
         let bytes = read_word(file).map_err(failed)?;
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
-            ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
-                (ExitCode::from(2), e.to_string())
-            }
+            ChangeError::Ambiguous { .. }
+            | ChangeError::InvalidId(_)
+            | ChangeError::PartOfChange { .. } => (ExitCode::from(2), e.to_string()),
             e => failed(format!("{what} failed: {e}")),
         })?;
         write_output(out, Produced::Docx(&resolved.document))
@@ -508,14 +509,14 @@ fn run_resolution(
 fn run_changes(file: &Path, json: bool, quiet: bool) -> Result<(), String> {
     if json {
         let (bytes, validity) = read_input_json(file)?;
-        let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
+        let changes = jubarte::changes::list_logical_changes(&bytes).map_err(|e| e.to_string())?;
         for c in &changes {
             outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
         }
         return validity_line(&validity);
     }
     let bytes = read_input(file, quiet)?;
-    let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
+    let changes = jubarte::changes::list_logical_changes(&bytes).map_err(|e| e.to_string())?;
     outln!(
         "{}",
         jubarte::changes::changes_text(&changes).trim_end_matches('\n')

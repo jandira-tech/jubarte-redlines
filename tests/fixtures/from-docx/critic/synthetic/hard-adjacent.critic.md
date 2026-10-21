@@ -6,23 +6,23 @@ Back to back: {++one++}{r0 Ana Lima (2026-10-01T00:05:00Z)}{++two++}{r1 Bo Chen 
 
 Replaced by two people: {--old--}{r6 Ana Lima (2026-10-01T00:35:00Z)}{++new++}{r7 Bo Chen (2026-10-01T00:40:00Z)}.
 
-Deletion across paragraphs: alpha{-- beta--}{r8 Bo Chen (2026-10-01T00:45:00Z)}{--
+Deletion across paragraphs: alpha{-- beta
 
---}{r9 Bo Chen (2026-10-01T00:45:00Z)}{--gamma--}{r10 Bo Chen (2026-10-01T00:45:00Z)} delta.
+--}{r8+9 Bo Chen (2026-10-01T00:45:00Z)}{--gamma--}{r10 Bo Chen (2026-10-01T00:45:00Z)} delta.
 
-Insertion across paragraphs: one{++ two++}{r11 Ana Lima (2026-10-01T00:50:00Z)}¶{r12 Ana Lima (2026-10-01T00:50:00Z)}
+Insertion across paragraphs: one{++ two++}{r11+12 Ana Lima (2026-10-01T00:50:00Z)}¶{r11+12 Ana Lima (2026-10-01T00:50:00Z)}
 
 {++three++}{r13 Ana Lima (2026-10-01T00:50:00Z)} four.
 
 Before three cut paragraphs.
 
-{--Cut one.--}{r14 Bo Chen (2026-10-01T00:55:00Z)}{--
+{--Cut one.
 
---}{r15 Bo Chen (2026-10-01T00:55:00Z)}{--Cut two.--}{r16 Bo Chen (2026-10-01T00:55:00Z)}{--
+--}{r14+15 Bo Chen (2026-10-01T00:55:00Z)}{--Cut two.
 
---}{r17 Bo Chen (2026-10-01T00:55:00Z)}{--Cut three.--}{r18 Bo Chen (2026-10-01T00:55:00Z)}{--
+--}{r16+17 Bo Chen (2026-10-01T00:55:00Z)}{--Cut three.
 
---}{r19 Bo Chen (2026-10-01T00:55:00Z)}After them.
+--}{r18+19 Bo Chen (2026-10-01T00:55:00Z)}After them.
 
 An empty paragraph above{--
 

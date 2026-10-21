@@ -545,12 +545,12 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {++forty-five++}{r4 @AC}{--thirty--}{r3 @AC} days, {++quarterly++}{r5 @AC} reports{--, nothing else--}{r6 @AC}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {++forty-five++}{r4+3 @AC}{--thirty--}{r4+3 @AC} days, {++quarterly++}{r5 @AC} reports{--, nothing else--}{r6 @AC}\n"
     );
 }
 
 #[test]
-fn neighbouring_marks_by_one_author_keep_each_id_and_their_text() {
+fn neighbouring_marks_by_one_author_are_one_change_named_on_each_piece() {
     let p = format!(
         "<w:p>{}{}{}</w:p>",
         run("a "),
@@ -559,7 +559,7 @@ fn neighbouring_marks_by_one_author_keep_each_id_and_their_text() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold++}{r7 @AC}{++ words++}{r8 @AC}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}\n"
     );
 }
 
@@ -1152,8 +1152,8 @@ fn numbering_and_styles_authors_get_handles_after_comment_authors() {
 
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own
 /// way, moves included, and the tracked view escapes document text that
-/// reads like a mark. An insertion followed by a deletion keeps both tags,
-/// as in the body.
+/// reads like a mark. An insertion followed by the same author's deletion
+/// is one replacement, its id on both pieces, as in the body (#1359).
 #[test]
 fn header_text_follows_each_view() {
     let header = format!(
@@ -1182,7 +1182,7 @@ fn header_text_follows_each_view() {
     };
     assert_eq!(
         text(&agent(&bytes)),
-        r#"  default: {id: header1, text: "Status: {++DRAFT++}{header1.r1 @AC 2026-10-01T09:00:00Z}{--FINAL--}{header1.r2 @AC 2026-10-01T09:00:00Z} {\\>>x<<\\} Page {++2++}{header1.r9 @AC}{--7--}{header1.r8 @AC} of 3", style: Normal}"#
+        r#"  default: {id: header1, text: "Status: {++DRAFT++}{header1.r1+2 @AC 2026-10-01T09:00:00Z}{--FINAL--}{header1.r1+2 @AC 2026-10-01T09:00:00Z} {\\>>x<<\\} Page {++2++}{header1.r9 @AC}{--7--}{header1.r8 @AC} of 3", style: Normal}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Accept, true)),
@@ -1481,11 +1481,11 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
     let bytes = docx(&format!("{p0}{p1}"));
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Accept, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r4 @AC; r3 @AC -->\nWithin forty-five\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r4+3 @AC -->\nWithin forty-five\n"
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Reject, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r4 @AC; r3 @AC -->\nWithin thirty\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r4+3 @AC -->\nWithin thirty\n"
     );
 }
 
@@ -1528,10 +1528,11 @@ fn rev_counts_revisions_inside_links_content_controls_and_fields() {
         ins(10, "Ann Counsel", "field")
     );
     let out = agent_with(&docx(&body_xml), TrackChanges::Accept, true);
+    // The link's mark joins the one before it, and the change is named
+    // once; the content control parts it from the rest.
     assert!(
-        body(&out).starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- p0 rev r7 @AC; r8 @AC; r9 @AC; r10 @AC -->\n"
-        ),
+        body(&out)
+            .starts_with("<!-- page 1 of 1 -->\n\n<!-- p0 rev r7+8 @AC; r9 @AC; r10 @AC -->\n"),
         "{out}"
     );
 }
@@ -2052,7 +2053,7 @@ fn header_counts_revisions_comments_and_authors() {
     );
     assert_eq!(
         lines[4],
-        "revisions: 3                       # 3 marks shown as 3 changes: 2 insertions, 1 deletion"
+        "revisions: 3                       # 3 marks shown as 2 changes: 1 insertion, 1 substitution"
     );
     assert_eq!(lines[5], "comments: 0");
     assert_eq!(lines[6], "authors:");
@@ -2544,17 +2545,36 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    let by_id = |id: &str| {
-        rows.iter()
-            .find(|r| r["id"] == format!("r{id}"))
-            .unwrap_or_else(|| panic!("no change r{id} in {changes}"))
-    };
-    assert_eq!(by_id(del_id)["kind"], "deletion");
-    assert_eq!(by_id(del_id)["text"], "thirty");
-    assert_eq!(by_id(ins_id)["kind"], "insertion");
-    assert_eq!(by_id(ins_id)["text"], "forty-five");
-    assert_eq!(by_id(del_id)["ref"], format!("r{del_id}"));
-    assert_eq!(by_id(ins_id)["ref"], format!("r{ins_id}"));
+    // The view's substitution is the one replacement `changes` lists, by
+    // the same id, with its deletion and insertion as members (plan 11).
+    let composite = format!("r{del_id}+{ins_id}");
+    let row = rows
+        .iter()
+        .find(|r| r["id"] == composite)
+        .unwrap_or_else(|| panic!("no change {composite} in {changes}"));
+    assert_eq!(row["ref"], composite);
+    assert_eq!(row["kind"], "replacement");
+    assert_eq!(row["text"], "thirty → forty-five");
+    let members: Vec<(&str, &str, &str)> = row["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["id"].as_str().unwrap(),
+                m["kind"].as_str().unwrap(),
+                m["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    let (del_ref, ins_ref) = (format!("r{del_id}"), format!("r{ins_id}"));
+    assert_eq!(
+        members,
+        [
+            (del_ref.as_str(), "deletion", "thirty"),
+            (ins_ref.as_str(), "insertion", "forty-five")
+        ]
+    );
 
     // The JSON prints the id the view prints, and that id selects it.
     ok(
@@ -3642,7 +3662,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &after,
-        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+\+\d+ @R\}¶\{r\d+\+\d+ @R\}\n",
     );
     let before = confirmed(
         &[
@@ -3664,7 +3684,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+\+\d+ @R\}¶\{r\d+\+\d+ @R\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
@@ -3784,10 +3804,13 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         out.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"),
         "{out}"
     );
-    captures(
+    // The comparer writes the insertion first: one replacement, its id
+    // on both pieces (#1359).
+    let ids = captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{r\d+ @R\}\{--thirty--\}\{r\d+ @R\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{(r\d+\+\d+) @R\}\{--thirty--\}\{(r\d+\+\d+) @R\} days of receipt\.\n",
     );
+    assert_eq!(ids[0], ids[1], "{out}");
     assert!(out.contains("R: Redline"), "{out}");
     // The digest is the in-memory redline's, neither input's.
     let digest = captures(&out, r"\nsha256: ([0-9a-f]{64})\n")[0].to_string();
@@ -4379,8 +4402,9 @@ fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
 }
 
 /// pi review av2 F10: `w:bdo`/`w:dir` are transparent to revisions as they
-/// are to the text: an insertion then a deletion keeps document order,
-/// and the resolved `rev` agrees.
+/// are to the text: an insertion then the same author's deletion is one
+/// replacement printed in document order (#1359), and the resolved `rev`
+/// agrees.
 #[test]
 fn a_bidi_wrapper_keeps_insertion_then_deletion_in_document_order() {
     let doc = docx(&format!(
@@ -4390,14 +4414,11 @@ fn a_bidi_wrapper_keeps_insertion_then_deletion_in_document_order() {
     ));
     let tracked = agent(&doc);
     assert!(
-        tracked.contains("{++b++}{r2 @AC}{--a--}{r1 @AC}"),
+        tracked.contains("{++b++}{r2+1 @AC}{--a--}{r2+1 @AC}"),
         "{tracked}"
     );
     let accepted = agent_with(&doc, TrackChanges::Accept, true);
-    assert!(
-        accepted.contains("<!-- p0 rev r2 @AC; r1 @AC -->"),
-        "{accepted}"
-    );
+    assert!(accepted.contains("<!-- p0 rev r2+1 @AC -->"), "{accepted}");
 }
 
 /// pi review av2 F19: `read --dates` reaches the view through the CLI; an
@@ -5334,21 +5355,33 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
     );
 }
 
+/// A cell's replacement is one change on the table line, named once
+/// whichever of its marks comes first (#1359), as on a paragraph's line.
 #[test]
 fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers() {
-    let bytes = docx(&format!(
-        "<w:tbl><w:tr><w:tc><w:p>{}{}</w:p></w:tc></w:tr></w:tbl>{}",
-        ins(2, "Ann Counsel", "new"),
-        del(1, "Ann Counsel", "old"),
-        para("After")
-    ));
-    for (mode, text) in [(TrackChanges::Accept, "new"), (TrackChanges::Reject, "old")] {
-        assert_eq!(
-            body(&agent_with(&bytes, mode, true)),
-            format!(
-                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, width auto, rev r2 @AC in p0; r1 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
-            )
-        );
+    for (marks, id) in [
+        (
+            [ins(2, "Ann Counsel", "new"), del(1, "Ann Counsel", "old")],
+            "r2+1",
+        ),
+        (
+            [del(1, "Ann Counsel", "old"), ins(2, "Ann Counsel", "new")],
+            "r1+2",
+        ),
+    ] {
+        let bytes = docx(&format!(
+            "<w:tbl><w:tr><w:tc><w:p>{}</w:p></w:tc></w:tr></w:tbl>{}",
+            marks.concat(),
+            para("After")
+        ));
+        for (mode, text) in [(TrackChanges::Accept, "new"), (TrackChanges::Reject, "old")] {
+            assert_eq!(
+                body(&agent_with(&bytes, mode, true)),
+                format!(
+                    "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, width auto, rev {id} @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
+                )
+            );
+        }
     }
 }
 

@@ -223,10 +223,10 @@ fn undated_author_has_no_shared_header_date_and_dated_note_is_explicit() {
             .unwrap();
         assert!(!author.contains(UNDATED_PROBE_DATE), "{author}");
         assert!(
-            view.contains(&format!("{{--old--}}{{r1 @A {UNDATED_PROBE_DATE}}}")),
+            view.contains(&format!("{{--old--}}{{r1+2 @A {UNDATED_PROBE_DATE}}}")),
             "{view}"
         );
-        assert!(view.contains("{++new++}{r2 @A}"), "{view}");
+        assert!(view.contains("{++new++}{r1+2 @A}"), "{view}");
     }
 }
 

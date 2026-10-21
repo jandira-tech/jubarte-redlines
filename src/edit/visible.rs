@@ -103,6 +103,9 @@ pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, 
             "resolve_revisions.reject.visible needs existing_revisions keep: the rejected changes stay, beside ours",
         ));
     }
+    if let Some(reject) = &selection.reject {
+        crate::changes::check_whole_changes(source, reject).map_err(super::selection_error)?;
+    }
     let listed = crate::changes::list_changes(source).map_err(super::selection_error)?;
     let ids = super::selected_ids(&listed, selection.reject.as_ref())?;
     let mut lowered = plan.clone();
@@ -447,6 +450,12 @@ impl Transaction<'_> {
                         Visible::Strike => "an insertion",
                         Visible::Restore => "a deletion",
                     }
+                ),
+            )),
+            (_, ChangeKind::Replacement, _) => Some((
+                "INVALID_EDIT",
+                format!(
+                    "{short} is a replacement: strike its insertion or restore its deletion by its own id"
                 ),
             )),
             (_, ChangeKind::Formatting, _) => Some((

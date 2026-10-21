@@ -120,11 +120,16 @@ impl AnchorChanges {
                 })
                 .collect::<Vec<_>>()
         };
-        let holders = if self.removed.is_empty() {
-            Vec::new()
+        let (holders, wholes) = if self.removed.is_empty() {
+            (Vec::new(), std::collections::HashMap::new())
         } else {
-            crate::changes::list_changes_tolerant(source)
-                .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?
+            let invalid = |e: crate::changes::ChangeError| {
+                super::err("INVALID_DOCUMENT", None, e.to_string())
+            };
+            (
+                crate::changes::list_changes_tolerant(source).map_err(invalid)?,
+                crate::changes::member_wholes(source).map_err(invalid)?,
+            )
         };
         let removed = groups(&self.removed)
             .into_iter()
@@ -142,6 +147,7 @@ impl AnchorChanges {
                     &thread,
                     pass.resolution,
                     pass.settled.as_deref(),
+                    &wholes,
                 );
                 RemovedComment {
                     id,

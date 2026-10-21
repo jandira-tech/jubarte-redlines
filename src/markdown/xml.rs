@@ -2293,7 +2293,8 @@ fn write_run(
                 boxes
                     .iter()
                     .map(|(markdown, items)| {
-                        let xml = story(context, items, relate, None);
+                        let items = outside_anchor(context.document, items, run.change);
+                        let xml = story(context, &items, relate, None);
                         (
                             markdown.clone(),
                             if xml.is_empty() {
@@ -2320,6 +2321,49 @@ fn write_run(
         }
     }
     out.push_str("</w:r>");
+}
+
+/// A text box's `items` without the copies of `anchor`, the change of the
+/// run that holds the box. The view prints a box with no change of its own
+/// with its anchor's tag; when that tag names one id, the anchor's mark
+/// holds the box already, so the copy writes no mark (and takes no id) of
+/// its own. A joined tag's copy keeps its piece (`r12+17+11`).
+fn outside_anchor<'i>(
+    document: &Document,
+    items: &'i [Item],
+    anchor: Option<Change>,
+) -> Cow<'i, [Item]> {
+    let Some((kind, serial)) = anchor else {
+        return Cow::Borrowed(items);
+    };
+    let single = |serial: u32| {
+        document
+            .revision_ids
+            .get(&serial)
+            .filter(|ids| ids.len() == 1)
+    };
+    let Some(ids) = single(serial) else {
+        return Cow::Borrowed(items);
+    };
+    let copy = |item: &Item| {
+        matches!(item, Item::Run(Run { change: Some((k, s)), .. })
+            if *k == kind && single(*s) == Some(ids))
+    };
+    if !items.iter().any(copy) {
+        return Cow::Borrowed(items);
+    }
+    Cow::Owned(
+        items
+            .iter()
+            .map(|item| match item {
+                Item::Run(run) if copy(item) => Item::Run(Run {
+                    change: None,
+                    ..run.clone()
+                }),
+                item => item.clone(),
+            })
+            .collect(),
+    )
 }
 
 /// The `w:drawing` of a minimal anchored text box `boxed`: a rectangle the

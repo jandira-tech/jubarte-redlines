@@ -67,7 +67,10 @@ fonts; redline output is identical. The size saving is now small: in
 
 ## API reference
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
@@ -86,7 +89,7 @@ signatures and doc comments the package ships.
 The identity fields the models carry retain their existing wire shape: `id` and
 `ref` both hold the short id (`r12`, `header1.r1`, `c5` — the colon
 fallback `body:rev:007` only when no short spelling reads back; `9872a374`,
-`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 2` for the table-tree shape.
+`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 3` for logical changes over the table-tree shape.
 The 17 October 2026 short-and-long-ID contract
 ([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
 staged in

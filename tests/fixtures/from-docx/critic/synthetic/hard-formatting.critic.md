@@ -1,6 +1,6 @@
 # Formatting
 
-Bold inserted: {++**strong**++}{r0 Ana Lima (2026-10-01T00:05:00Z)}{++ and ++}{r1 Ana Lima (2026-10-01T00:05:00Z)}{++_slanted_++}{r2 Ana Lima (2026-10-01T00:05:00Z)} text.
+Bold inserted: {++**strong**++}{r0 Ana Lima (2026-10-01T00:05:00Z)}{++ and ++}{r1+2 Ana Lima (2026-10-01T00:05:00Z)}{++_slanted_++}{r1+2 Ana Lima (2026-10-01T00:05:00Z)} text.
 
 Deleted bold: {--heavy--}{r3 Bo Chen (2026-10-01T00:10:00Z)} text.
 

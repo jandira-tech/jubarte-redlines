@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 64                      # 63 marks shown as 61 changes: 27 insertions, 28 deletions, 2 substitutions, 4 paragraph marks; 1 in footnotes
+revisions: 64                      # 63 marks shown as 60 changes: 27 insertions, 27 deletions, 2 substitutions, 4 paragraph marks; 1 in footnotes
 comments: 30 threads open, style Normal  # 30 comments: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -57,7 +57,7 @@ Neither party is liable{== for==}{>>c18 @AL: Is this consistent with the master 
 {>>c19 @BC: Legal to review.<<}The warranty period is twelve months from{++ without undue delay++}{r37 @CD} delivery.
 
 <!-- p25 Normal left, break-del r45 @DP -->
-Either party may{-- end--}{r38 @DP}{-- --}{r39 @AL}{--_this_--}{r40 @AL}{== agreement {--with--}{r41 @CD}{++customer++}{r42 @BC}==}{>>c20 @CD: Agreed.<<} ninety{-- days--}{r43 @CD} written{++ unless agreed otherwise++}{r44 @CD} notice.
+Either party may{-- end--}{r38 @DP}{-- --}{r39+40 @AL}{--_this_--}{r39+40 @AL}{== agreement {--with--}{r41 @CD}{++customer++}{r42 @BC}==}{>>c20 @CD: Agreed.<<} ninety{-- days--}{r43 @CD} written{++ unless agreed otherwise++}{r44 @CD} notice.
 
 <!-- p26 Normal left -->
 &#32;The supplier may subcontract only with the buyer's{== prior **consent**.==}{>>c21 @CD: Why thirty and not sixty?<<}{>>c22 @AL: Too broad, narrow it down.<<}

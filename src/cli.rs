@@ -898,6 +898,10 @@ pub enum Command {
     )]
     Compare(CompareArgs),
     /// List tracked changes with IDs for accept, reject and edit plans.
+    ///
+    /// One line per logical change: the marks Word wrote for one edit are
+    /// one change with a joined id (`r7+8+9+10`), its text followed by
+    /// `(N elements)`.
     Changes {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -2733,6 +2737,12 @@ pub enum KindArg {
     Move,
     /// Changes to text or paragraph formatting.
     Formatting,
+    /// The kind `changes` prints for a deletion and the insertion that
+    /// replaces it. It names no mark, so a filter of it is refused, with
+    /// how to select one (by its id, or its marks by kind); hidden, it is
+    /// no value to offer.
+    #[value(hide = true)]
+    Replacement,
 }
 
 fn parse_timeout(value: &str) -> Result<std::time::Duration, String> {

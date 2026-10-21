@@ -26,7 +26,7 @@ pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024;
 /// Largest number of entries a container may declare.
 pub(crate) const MAX_ENTRIES: usize = 10_000;
 /// Deepest XML nesting we accept; deeper input is treated as hostile.
-const MAX_DEPTH: usize = 512;
+const MAX_DEPTH: usize = crate::xmllinq::parse::PERMISSIVE_MAX_DEPTH;
 
 pub(crate) fn invalid(message: impl std::fmt::Display) -> ConvertError {
     ConvertError::Invalid(message.to_string())

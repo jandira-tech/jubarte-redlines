@@ -75,15 +75,20 @@ fn mark(kind: &str, id: usize, author: &str, text: &str) -> String {
     )
 }
 
+/// Only a deletion then the same author's insertion prints as one
+/// `{~~old~>new~~}`; insertion first, the two are one replacement too
+/// (#1359), printed in document order with its id on each piece.
 #[test]
-fn distinct_ids_stay_distinct_and_only_deletion_then_same_author_insertion_pairs() {
+fn neighbouring_marks_join_and_only_deletion_then_same_author_insertion_pairs() {
     let a = mark("ins", 1, "Alice", "a");
     let b = mark("ins", 2, "Alice", "b");
     let old = mark("del", 3, "Alice", "old");
     let new = mark("ins", 4, "Alice", "new");
-    assert!(view(&format!("<w:p>{a}{b}</w:p>")).contains("{++a++}{r1 @A}{++b++}{r2 @A}"));
+    assert!(view(&format!("<w:p>{a}{b}</w:p>")).contains("{++a++}{r1+2 @A}{++b++}{r1+2 @A}"));
     assert!(view(&format!("<w:p>{old}{new}</w:p>")).contains("{~~old~>new~~}{r3+4 @A}"));
-    assert!(view(&format!("<w:p>{new}{old}</w:p>")).contains("{++new++}{r4 @A}{--old--}{r3 @A}"));
+    assert!(
+        view(&format!("<w:p>{new}{old}</w:p>")).contains("{++new++}{r4+3 @A}{--old--}{r4+3 @A}")
+    );
     let other = mark("ins", 5, "Bob", "other");
     assert!(
         view(&format!("<w:p>{old}{other}</w:p>")).contains("{--old--}{r3 @A}{++other++}{r5 @B}")
@@ -171,7 +176,7 @@ fn diff_escapes_literal_revision_tags() {
 }
 
 #[test]
-fn plain_view_keeps_the_same_author_separate_across_timestamps() {
+fn plain_view_dates_each_side_of_a_change_made_at_two_times() {
     use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
     let xml = r#"<w:p><w:del w:id="1" w:author="Alice" w:date="2026-10-17T10:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="Alice" w:date="2026-10-18T10:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#;
     let text = docx_to_markdown(&common::docx::docx(xml), &MarkdownOptions::default())
@@ -179,7 +184,7 @@ fn plain_view_keeps_the_same_author_separate_across_timestamps() {
         .markdown;
     assert!(
         text.contains(
-            "{--old--}{r1 Alice (2026-10-17T10:00:00Z)}{++new++}{r2 Alice (2026-10-18T10:00:00Z)}"
+            "{--old--}{r1+2 Alice (2026-10-17T10:00:00Z)}{++new++}{r1+2 Alice (2026-10-18T10:00:00Z)}"
         ),
         "{text}"
     );
@@ -218,7 +223,10 @@ fn plain_inserted_paragraph_mark_is_inline_and_preserves_heading_rejection() {
     );
     let options = MarkdownOptions::default();
     let text = docx_to_markdown(&source, &options).unwrap().markdown;
-    assert!(text.contains("¶{r2 Alice}"), "{text}");
+    assert!(
+        text.contains("{++Heading++}{r1+2 Alice}¶{r1+2 Alice}"),
+        "{text}"
+    );
     let back = package(&text);
     let reject = MarkdownOptions {
         track_changes: TrackChanges::Reject,

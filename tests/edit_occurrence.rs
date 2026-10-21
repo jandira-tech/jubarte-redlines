@@ -8,7 +8,7 @@
 mod common;
 
 use common::docx::{Part, W_NS, docx, docx_with_sect, para};
-use jubarte::changes::list_changes;
+use jubarte::changes::{list_changes, list_logical_changes};
 use jubarte::comments::list_comments;
 use jubarte::edit::{
     AnchorRefusal, EditPlan, Working, apply_plan, v2_candidates, v2_resolve, v2_resolve_all,
@@ -883,11 +883,16 @@ fn every_dash_p_target_is_recognized() {
         refused.message
     );
 
-    // Revisions: the change's own covered text.
+    // Revisions: a mark's own covered text, the inserted side of the
+    // replacement (`r2` of `r1+2`) too.
     let changes = list_changes(&source).unwrap();
     let inserted = changes
         .iter()
         .find(|c| c.text == "closing")
+        .expect("the tracked replacement");
+    let deleted = changes
+        .iter()
+        .find(|c| c.text == "outro")
         .expect("the tracked replacement");
     assert!(
         v2_resolve(
@@ -907,31 +912,28 @@ fn every_dash_p_target_is_recognized() {
     .unwrap_err();
     assert!(
         refused.message.contains("no revision r99")
-            && refused
-                .message
-                .contains(&format!("the source has {} revisions", changes.len())),
+            && refused.message.contains("the source has 1 change"),
         "{}",
         refused.message
     );
-    // A pair of changes is a valid `-p` target, but no one text carries an
-    // anchor: refused as an invalid edit, with the single spellings said.
-    let numbers: Vec<&str> = changes
-        .iter()
-        .map(|c| c.id.trim_start_matches('r'))
-        .collect();
-    let pair = format!("r{}+{}", numbers[0], numbers[1]);
+    // The replacement's two marks are a valid `-p` target, the change
+    // `changes` lists, but no one text carries an anchor: refused as an
+    // invalid edit, with the single spellings said.
+    let pair = &list_logical_changes(&source).unwrap()[0].id;
     let refused = v2_resolve(
         &source,
         Working::InSource,
-        &AnchorRefusal::new(&pair, "closing"),
+        &AnchorRefusal::new(pair, "closing"),
         None,
     )
     .unwrap_err();
     assert_eq!(refused.code, "INVALID_EDIT");
-    assert!(
-        refused.message.contains("names 2 changes"),
-        "{}",
-        refused.message
+    assert_eq!(
+        refused.message,
+        format!(
+            "{pair} names 2 marks; an anchor targets one ({} or {})",
+            deleted.id, inserted.id
+        )
     );
 
     // A source that cannot be parsed says so; it never claims paragraph

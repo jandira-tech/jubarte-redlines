@@ -1626,7 +1626,10 @@ print(diff(read("v1.docx"), read("v2.docx")))
 
 ## API reference
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
@@ -1645,7 +1648,7 @@ signatures, dataclass fields and docstrings below are the shipped ones.
 The identity fields the models carry retain their existing wire shape: `id` and
 `ref` both hold the short id (`r12`, `header1.r1`, `c5` — the colon
 fallback `body:rev:007` only when no short spelling reads back; `9872a374`,
-`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 2` for the table-tree shape.
+`52e96ced`), comment ids are numeric and `Snapshot.schema_version == 3` for logical changes over the table-tree shape.
 The 17 October 2026 short-and-long-ID contract
 ([superpowers/specs/2026-10-17-short-and-long-id-contract.md](superpowers/specs/2026-10-17-short-and-long-id-contract.md),
 staged in
@@ -2140,6 +2143,7 @@ Change(
     ref: str | None = None,
     paragraph: str | None = None,
     holds_comments: tuple[str, ...] = (),
+    members: tuple[ChangeMember, ...] = (),
 )
 ```
 
@@ -2156,7 +2160,27 @@ short id the CLI prints and ``-p``/``--id`` take;
 ``paragraph`` is the id of the paragraph the change is in (``p3``).
 ``holds_comments`` names the comments (``c4``, a reply's ``c5``) whose
 reference mark the change holds: resolving it so its content goes
-removes their threads, as Word does.
+removes their threads, as Word does. A change Word wrote as several
+marks (one typed insertion split by session, or a deletion with the
+insertion that replaces it, kind ``replacement``) has the composite id
+``r7+8+9+10`` and lists its marks in ``members``; selecting only some of
+them is refused.
+
+### `ChangeMember`
+
+```python
+ChangeMember(
+    id: str,
+    kind: ChangeKind,
+    target: str,
+    date: str | None,
+    text: str,
+)
+```
+
+One mark of a change Word wrote as several: its own ``id`` (``r7``),
+``kind`` (``insertion`` or ``deletion``), ``target`` (``text`` or
+``paragraph_mark``), ``date`` and ``text``.
 
 ### `Comment`
 
@@ -2679,10 +2703,14 @@ RevisionCounts(
     moved: int,
     format_changed: int,
     total: int,
+    replaced: int = 0,
 )
 ```
 
-Comparer revision records in the redline.
+The redline's changes by kind, as ``changes`` lists them.
+
+``replaced`` counts replacements: a deletion and the insertion that
+replaces it, listed as one change. ``total`` is the sum of the others.
 
 ### `ResolvedRevisions`
 

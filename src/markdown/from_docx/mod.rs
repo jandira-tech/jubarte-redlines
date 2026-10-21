@@ -94,6 +94,18 @@ fn part_stem(path: &str) -> String {
 }
 
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
+    // The marks Word wrote for one edit print the whole change's id, as
+    // `changes` lists it (#1261). A package the listing cannot read prints
+    // each mark's own.
+    let logical = crate::changes::list_logical_changes_tolerant(bytes).ok();
+    let wholes = logical.as_deref().map(agent::wholes_of).unwrap_or_default();
+    agent::with_wholes(wholes, || {
+        agent::with_logical(logical, || convert_marks(bytes, options))
+    })
+}
+
+/// [`convert`], its tags naming the changes [`agent::with_wholes`] set.
+fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
     let mut package = Package::open(bytes, "DOCX")?;
     package.input_limits = options.input_limits;
     package.check_tag_policy()?;
@@ -717,7 +729,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         // Resolved views name original revisions with `rev` labels, but
         // print no tracked changes. Count only what this view shows.
         let tags = if accept.is_none() {
-            agent::collect_revisions(&markdown)
+            agent::shown_changes(&markdown, range.is_none())
         } else {
             Vec::new()
         };

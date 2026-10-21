@@ -19,13 +19,13 @@ from .models import (
     AuditFinding,
     Change,
     Comment,
-    ChangeKind,
     CompareOptions,
     Diff,
     EditOutcome,
     EditPlan,
     EditReport,
     FieldUpdate,
+    FilterKind,
     Finding,
     PdfOptions,
     RenderDiff,
@@ -185,7 +185,7 @@ class Document:
         *,
         ids: Sequence[str] | None = None,
         authors: Sequence[str] | None = None,
-        kinds: Sequence[ChangeKind] | None = None,
+        kinds: Sequence[FilterKind] | None = None,
     ) -> Document:
         """Return a new document accepting tracked changes, as Word does.
 
@@ -230,7 +230,7 @@ class Document:
         *,
         ids: Sequence[str] | None = None,
         authors: Sequence[str] | None = None,
-        kinds: Sequence[ChangeKind] | None = None,
+        kinds: Sequence[FilterKind] | None = None,
     ) -> Document:
         """Return a new document rejecting tracked changes (selection as in
         ``accept``; none rejects every change)."""

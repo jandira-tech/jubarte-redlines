@@ -14,7 +14,7 @@
 //! nests the deletion there and splits off the new words and remainder.
 //! The editor's own insertion is edited in place.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use super::structural;
 use super::visible;
@@ -25,7 +25,7 @@ use super::{
     new_position, place_reply_markers, remove_comment_markers, runs_in_range, set_text,
     split_run_at, toc_paragraphs,
 };
-use crate::changes::list_changes;
+use crate::changes::{list_changes, list_logical_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -397,18 +397,29 @@ fn splits(origins: &BTreeMap<String, String>) -> Vec<super::RevisionSplit> {
     out
 }
 
-/// Counts of the redline's changes stamped with `author` and `date` whose
-/// `w:id` is at least `floor`: the edit's own. A source change carrying the
-/// very same stamp has an id below `floor`, so it does not count.
+/// Counts of the redline's logical changes holding a mark stamped with
+/// `author` and `date` whose `w:id` is at least `floor`: the edit's own. A
+/// source change carrying the very same stamp has an id below `floor`, so
+/// it does not count.
 fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> RevisionCounts {
     let changes = list_changes(redline).unwrap_or_default();
-    RevisionCounts::from_changes(changes.iter().filter(|c| {
-        c.author.as_deref() == Some(author)
-            && c.date.as_deref() == Some(date)
-            && crate::ids::change_id(&c.id)
-                .and_then(|id| id.wid.parse::<u64>().ok())
-                .is_some_and(|id| id >= floor)
-    }))
+    let own: HashSet<&str> = changes
+        .iter()
+        .filter(|c| {
+            c.author.as_deref() == Some(author)
+                && c.date.as_deref() == Some(date)
+                && crate::ids::change_id(&c.id)
+                    .and_then(|id| id.wid.parse::<u64>().ok())
+                    .is_some_and(|id| id >= floor)
+        })
+        .map(|c| c.id.as_str())
+        .collect();
+    let logical = list_logical_changes(redline).unwrap_or_default();
+    RevisionCounts::from_changes(
+        logical
+            .iter()
+            .filter(|c| c.element_ids().any(|id| own.contains(id))),
+    )
 }
 
 /// One past the highest `w:id` in every revision-bearing part and among the

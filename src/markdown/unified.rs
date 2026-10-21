@@ -323,7 +323,7 @@ pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, M
         ids: Some(others),
         ..crate::changes::ChangeFilter::default()
     };
-    let own = crate::changes::accept_changes(docx, &filter)
+    let own = crate::changes::accept_elements(docx, &filter)
         .map_err(|error| MarkdownError::Package(error.to_string()))?;
     patch_redline(&own, options)
 }
@@ -870,12 +870,30 @@ fn join_marks(segments: Vec<Segment>) -> Vec<Segment> {
 /// paragraph the same side changes whole: the view writes a story's last
 /// paragraph and the mark before it as two changes (`{--\n\n--}{r1
 /// @C}{--Last.--}{r2 @C}`), and the paragraph is still a hunk of its own.
+/// A change that starts inside a paragraph stays as it is too: its break
+/// joins that paragraph to the next.
 fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     fn same(out: &mut Vec<Segment>, text: &str) {
         match out.last_mut() {
             Some(Segment::Same(same)) => same.push_str(text),
             _ => out.push(Segment::Same(text.to_string())),
         }
+    }
+    // Whether the next change starts its paragraph: nothing but a list,
+    // quote or heading marker before it on its line.
+    fn starts_paragraph(out: &[Segment]) -> bool {
+        for segment in out.iter().rev() {
+            match segment {
+                Segment::Same(text) => match text.rsplit_once('\n') {
+                    Some((_, line)) => return !visible(line),
+                    None if visible(text) => return false,
+                    None => {}
+                },
+                Segment::Edit(_) => return false,
+                _ => {}
+            }
+        }
+        true
     }
     let leads = leading_breaks(&segments);
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
@@ -911,7 +929,10 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
             same(&mut out, plain);
         } else if plain.trim().is_empty() {
             out.push(Segment::Edit(edit));
-        } else if trailing >= 2 && marked.ends_with(&plain[plain.len() - trailing..]) {
+        } else if trailing >= 2
+            && marked.ends_with(&plain[plain.len() - trailing..])
+            && starts_paragraph(&out)
+        {
             let text = plain.split_off(plain.len() - trailing);
             marked.truncate(marked.len() - trailing);
             out.push(Segment::Edit(edit));

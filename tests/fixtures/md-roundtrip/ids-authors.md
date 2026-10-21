@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 22                      # 22 marks shown as 22 changes: 7 insertions, 9 deletions, 6 paragraph marks
+revisions: 22                      # 22 marks shown as 17 changes: 7 insertions, 9 deletions, 1 paragraph mark
 comments: 0
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -28,14 +28,14 @@ Back to back: {++one++}{r0 @AL}{++two++}{r1 @BC}{--three--}{r2 @CD}{--four--}{r3
 <!-- p3 Normal left -->
 Replaced by two people: {--old--}{r6 @AL}{++new++}{r7 @BC}.
 
-<!-- p4 Normal left, break-del r9 @BC -->
-Deletion across paragraphs: alpha{-- beta--}{r8 @BC}
+<!-- p4 Normal left, break-del r8+9 @BC -->
+Deletion across paragraphs: alpha{-- beta--}{r8+9 @BC}
 
 <!-- p5 Normal left -->
 {--gamma--}{r10 @BC} delta.
 
 <!-- p6 Normal left -->
-Insertion across paragraphs: one{++ two++}{r11 @AL}¶{r12 @AL}
+Insertion across paragraphs: one{++ two++}{r11+12 @AL}¶{r11+12 @AL}
 
 <!-- p7 Normal left -->
 {++three++}{r13 @AL} four.
@@ -43,14 +43,14 @@ Insertion across paragraphs: one{++ two++}{r11 @AL}¶{r12 @AL}
 <!-- p8 Normal left -->
 Before three cut paragraphs.
 
-<!-- p9 Normal left, break-del r15 @BC -->
-{--Cut one.--}{r14 @BC}
+<!-- p9 Normal left, break-del r14+15 @BC -->
+{--Cut one.--}{r14+15 @BC}
 
-<!-- p10 Normal left, break-del r17 @BC -->
-{--Cut two.--}{r16 @BC}
+<!-- p10 Normal left, break-del r16+17 @BC -->
+{--Cut two.--}{r16+17 @BC}
 
-<!-- p11 Normal left, break-del r19 @BC -->
-{--Cut three.--}{r18 @BC}
+<!-- p11 Normal left, break-del r18+19 @BC -->
+{--Cut three.--}{r18+19 @BC}
 
 <!-- p12 Normal left -->
 After them.

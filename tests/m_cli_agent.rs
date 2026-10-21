@@ -53,7 +53,7 @@ fn retired_names_work_once_with_a_note() {
     assert_eq!(stderr, "note: text is now read; text is removed in 0.14\n");
     let (code, stdout, stderr) = run(&["inspect", file, "--json"]);
     assert_eq!(code, 0);
-    assert!(stdout.starts_with("{\"schema_version\":2"), "{stdout}");
+    assert!(stdout.starts_with("{\"schema_version\":3"), "{stdout}");
     assert_eq!(
         stderr,
         "note: inspect is now read; inspect is removed in 0.14\n"
@@ -110,7 +110,7 @@ fn json(args: &[&str]) -> serde_json::Value {
 #[test]
 fn read_json_prints_the_snapshot_with_changes_and_comments() {
     let snapshot = json(&["read", RECEIVED, "--json"]);
-    assert_eq!(snapshot["schema_version"], 2);
+    assert_eq!(snapshot["schema_version"], 3);
     assert_eq!(snapshot["paragraphs"][1]["id"], "p1");
     assert_eq!(snapshot["changes"][0]["ref"], "r0");
     assert_eq!(snapshot["comments"][0]["ref"], "c5");
@@ -148,15 +148,15 @@ fn read_json_prints_the_snapshot_with_changes_and_comments() {
     }
 }
 
-/// The library's snapshot carries what `list_changes` and `list_comments`
-/// list, and `retain` keeps a paragraph's own records.
+/// The library's snapshot carries what `list_logical_changes` and
+/// `list_comments` list, and `retain` keeps a paragraph's own records.
 #[test]
 fn the_snapshot_lists_changes_and_comments_and_retains_by_paragraph() {
     let bytes = std::fs::read(RECEIVED).unwrap();
     let mut snapshot = jubarte::inspect::snapshot(&bytes).unwrap();
     assert_eq!(
         snapshot.changes,
-        jubarte::changes::list_changes(&bytes).unwrap()
+        jubarte::changes::list_logical_changes(&bytes).unwrap()
     );
     assert_eq!(
         snapshot.comments,

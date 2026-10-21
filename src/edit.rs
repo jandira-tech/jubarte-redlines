@@ -1134,7 +1134,12 @@ pub struct RevisionCounts {
     /// Formatting changes: run, paragraph, section, table and style
     /// properties.
     pub format_changed: usize,
-    /// All changes.
+    /// Replacements: a deletion and the insertion that replaces it, listed
+    /// as one change ([`ChangeKind::Replacement`]).
+    #[serde(default)]
+    pub replaced: usize,
+    /// All changes, each logical change once (#1261: a change of several
+    /// marks, or a replacement, counts one): the sum of the counts above.
     pub total: usize,
 }
 
@@ -1148,6 +1153,7 @@ impl RevisionCounts {
                 ChangeKind::Deletion => &mut counts.deleted,
                 ChangeKind::Move => &mut counts.moved,
                 ChangeKind::Formatting => &mut counts.format_changed,
+                ChangeKind::Replacement => &mut counts.replaced,
             };
             *slot += 1;
             counts.total += 1;
@@ -1429,6 +1435,11 @@ fn selection_error(e: ChangeError) -> EditError {
             None,
             format!("resolve_revisions: {ambiguous}"),
         ),
+        part @ ChangeError::PartOfChange { .. } => err(
+            "INCOMPLETE_CHANGE",
+            None,
+            format!("resolve_revisions: {part}"),
+        ),
         ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
     }
 }
@@ -1481,6 +1492,14 @@ fn resolve_selected(
         return Ok((None, resolved, comments));
     };
     let change_err = selection_error;
+    // Each side names whole changes, checked on the source: an accept can
+    // join what is left (#1261).
+    for side in [selection.accept.as_ref(), selection.reject.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        crate::changes::check_whole_changes(source, side).map_err(change_err)?;
+    }
     let listed = crate::changes::list_changes(source).map_err(change_err)?;
     let accept = selected_ids(&listed, selection.accept.as_ref())?;
     // A visible reject settles nothing: it is lowered to operations.
@@ -2374,7 +2393,7 @@ pub fn preview_plan_with(
 
 /// The comparer's redline holds this edit's changes only: all of them.
 fn revision_counts(redline: &[u8]) -> RevisionCounts {
-    RevisionCounts::from_changes(&crate::changes::list_changes(redline).unwrap_or_default())
+    RevisionCounts::from_changes(&crate::changes::list_logical_changes(redline).unwrap_or_default())
 }
 
 /// A text edit scheduled on one paragraph, in source projection bytes.

@@ -226,10 +226,11 @@ fn text_edits_carry_comments_and_formatting() {
             (ChangeKind::Insertion, "New York")
         ]
     );
+    // "Delaware" → "New York" is one replacement (plan 11).
     let r = &out.report.revisions;
     assert_eq!(
-        (r.inserted, r.deleted, r.total),
-        (2, 2, 4),
+        (r.inserted, r.deleted, r.replaced, r.total),
+        (1, 1, 1, 3),
         "the report counts my changes only"
     );
     let red = part_string(&out.redline, "word/document.xml").unwrap();

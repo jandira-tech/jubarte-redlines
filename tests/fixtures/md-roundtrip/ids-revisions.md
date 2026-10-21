@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 1668                    # 1571 marks shown as 1571 changes: 682 insertions, 52 deletions, 713 paragraph marks, 124 table rows; 84 formatting; 1 in header1; 4 in footer3; 4 in footer2; 4 in footer1
+revisions: 1668                    # 1571 marks shown as 854 changes: 659 insertions, 30 deletions, 23 substitutions, 18 paragraph marks, 124 table rows; 84 formatting; 1 in header1; 3 in footer3 (4 marks); 3 in footer2 (4 marks); 3 in footer1 (4 marks)
 comments: 0
 authors:
   document_owner: Jones, SA        # dc:creator
@@ -19,20 +19,20 @@ headers:
 footers:
   first:                           # defined, but different first page is off
     id: footer3
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer3.r1664 @AB}¶{footer3.r1663 @AB}", center, indent: {first-line: 0in, left: 0in}}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer3.r1664+1663 @AB}¶{footer3.r1664+1663 @AB}", center, indent: {first-line: 0in, left: 0in}}
     p1: {text: "{++ ++}{footer3.r1666 @AB}", left, indent: {first-line: 0in, left: 0in}}
     style: Normal
     inactive: true
     fmt: footer3.r1665 @AB in footer3.p1
   default:
     id: footer2
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer2.r1660 @AB}¶{footer2.r1659 @AB}", center, indent: {first-line: 0in, left: 0in}}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer2.r1660+1659 @AB}¶{footer2.r1660+1659 @AB}", center, indent: {first-line: 0in, left: 0in}}
     p1: {text: "{++ ++}{footer2.r1662 @AB}", left, indent: {first-line: 0in, left: 0in}}
     style: Normal
     fmt: footer2.r1661 @AB in footer2.p1
   even:                            # defined, but even/odd headers are off
     id: footer1
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer1.r1656 @AB}¶{footer1.r1655 @AB}", center, indent: {first-line: 0in, left: 0in}}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer1.r1656+1655 @AB}¶{footer1.r1656+1655 @AB}", center, indent: {first-line: 0in, left: 0in}}
     p1: {text: "{++ ++}{footer1.r1658 @AB}", left, indent: {first-line: 0in, left: 0in}}
     style: Normal
     inactive: true
@@ -40,976 +40,976 @@ footers:
 ---
 
 <!-- p0 center, left 0.007in, right -0.0104in, after 11.5pt, line 1.025 -->
-{++CODE-SWITCHING IN NIGERIAN CHRISTIAN SONGS  ++}{r2 @AB}¶{r1 @AB}
+{++CODE-SWITCHING IN NIGERIAN CHRISTIAN SONGS  ++}{r2+1 @AB}¶{r2+1 @AB}
 
 <!-- p1 center, left 0.007in, right -0.0104in, after 1.4pt, line 1.025 -->
-{++ADAMU, PAUL ++}{r4 @AB}¶{r3 @AB}
+{++ADAMU, PAUL ++}{r4+3 @AB}¶{r4+3 @AB}
 
 <!-- p2 center, left 1.594in, right -0.0104in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Department of English, ++}{r6 @AB}¶{r5 @AB}
+{++Department of English, ++}{r6+5 @AB}¶{r6+5 @AB}
 
 <!-- p3 center, left 1.594in, right 1.324in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{r8 @AB}¶{r7 @AB}
+{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{r8+7 @AB}¶{r8+7 @AB}
 
 <!-- p4 center, left 1.594in, right 1.557in, after 11.5pt, line 1.012, size 9.5pt -->
-{++Email: pauladams830@gmail. com Tel: 07036968338 ++}{r10 @AB}¶{r9 @AB}
+{++Email: pauladams830@gmail. com Tel: 07036968338 ++}{r10+9 @AB}¶{r10+9 @AB}
 
 <!-- p5 center, first-line 0in, left 0in, after 11.9pt, line 1 -->
-{++& ++}{r12 @AB}¶{r11 @AB}
+{++& ++}{r12+11 @AB}¶{r12+11 @AB}
 
 <!-- p6 center, left 0.007in, right -0.0104in, after 1.4pt, line 1.025 -->
-{++HAYAB, FORTUNE JOSIAH ++}{r14 @AB}¶{r13 @AB}
+{++HAYAB, FORTUNE JOSIAH ++}{r14+13 @AB}¶{r14+13 @AB}
 
 <!-- p7 center, left 1.594in, right -0.0104in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Department of English, ++}{r16 @AB}¶{r15 @AB}
+{++Department of English, ++}{r16+15 @AB}¶{r16+15 @AB}
 
 <!-- p8 center, left 1.594in, right 1.324in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{r18 @AB}¶{r17 @AB}
+{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{r18+17 @AB}¶{r18+17 @AB}
 
 <!-- p9 center, left 1.594in, right -0.0104in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Email: forhayab@yahoo.com ++}{r20 @AB}¶{r19 @AB}
+{++Email: forhayab@yahoo.com ++}{r20+19 @AB}¶{r20+19 @AB}
 
 <!-- p10 center, left 1.594in, right -0.0104in, after 11.95pt, line 1.012, size 9.5pt -->
-{++Telephone: 07036968338 ++}{r22 @AB}¶{r21 @AB}
+{++Telephone: 07036968338 ++}{r22+21 @AB}¶{r22+21 @AB}
 
 <!-- p11 left, right -0.0104in, after 2pt, line 1 -->
-{++Abstract ++}{r24 @AB}¶{r23 @AB}
+{++Abstract ++}{r24+23 @AB}¶{r24+23 @AB}
 
 <!-- p12 first-line 0in, left -0.0104in, after 2.1pt, line 0.975 -->
-{++This paper investigates the phenomenon of code-switching and also the types of code-switching that occur in gospel songs. Therefore, using purposive random sampling and Poplack’s (1980) model, the excerpts of from ten gospel songs are collected and analysed. Findings reveal that the most dominant type of codeswitching that occurs in Christian music is inter-sentential code switching while others like intra-switching and tag switching occur rather sparingly. Also, the English language and Pidgin, according to the findings, remain the most dominant language being code switched with indigenous languages. To this end, it can be asserted that code-switching is not only a recurring decimal in Christian songs but also a manifestation of a brand of music that can be labelled Nigerian gospel music.             ++}{r26 @AB}¶{r25 @AB}
+{++This paper investigates the phenomenon of code-switching and also the types of code-switching that occur in gospel songs. Therefore, using purposive random sampling and Poplack’s (1980) model, the excerpts of from ten gospel songs are collected and analysed. Findings reveal that the most dominant type of codeswitching that occurs in Christian music is inter-sentential code switching while others like intra-switching and tag switching occur rather sparingly. Also, the English language and Pidgin, according to the findings, remain the most dominant language being code switched with indigenous languages. To this end, it can be asserted that code-switching is not only a recurring decimal in Christian songs but also a manifestation of a brand of music that can be labelled Nigerian gospel music.             ++}{r26+25 @AB}¶{r26+25 @AB}
 
 <!-- p13 left, first-line 0in, left 0in, line 1 -->
-{++ ++}{r28 @AB}¶{r27 @AB}
+{++ ++}{r28+27 @AB}¶{r28+27 @AB}
 
 <!-- p14 left, right -0.0104in, after 2pt, line 1 -->
-{++Introduction  ++}{r30 @AB}¶{r29 @AB}
+{++Introduction  ++}{r30+29 @AB}¶{r30+29 @AB}
 
 <!-- p15 -->
-{++The Nigerian music industry today is swarming with different kinds of artistes, each with different kind of songs and lyrics. One peculiar features of the Nigerian music industry however is the tendency to use English alongside several other languages- a recurrent decimal that has become all too obvious to many lovers of Nigerian music today. While this may be considered as mere entertainment in some quarters; to linguists, this trend can be investigated linguistically, but then since music itself is meant to communicate something, an idea, a culture, a belief, a doctrine etc. through language. ++}{r32 @AB}¶{r31 @AB}
+{++The Nigerian music industry today is swarming with different kinds of artistes, each with different kind of songs and lyrics. One peculiar features of the Nigerian music industry however is the tendency to use English alongside several other languages- a recurrent decimal that has become all too obvious to many lovers of Nigerian music today. While this may be considered as mere entertainment in some quarters; to linguists, this trend can be investigated linguistically, but then since music itself is meant to communicate something, an idea, a culture, a belief, a doctrine etc. through language. ++}{r32+31 @AB}¶{r32+31 @AB}
 
 <!-- p16 first-line 0.47in, left -0.0104in -->
-{++In the Nigerian context, many languages exist and are used for different communication purposes, and are often designated foreign language (e.g. English, French, and German etc.) or indigenous languages (e.g. Hausa, Igbo and Yoruba among several others). Some scholars even classify them into indigenous, exogenous and indi-exogenous language like Pidgin. ++}{r34 @AB}¶{r33 @AB}
+{++In the Nigerian context, many languages exist and are used for different communication purposes, and are often designated foreign language (e.g. English, French, and German etc.) or indigenous languages (e.g. Hausa, Igbo and Yoruba among several others). Some scholars even classify them into indigenous, exogenous and indi-exogenous language like Pidgin. ++}{r34+33 @AB}¶{r34+33 @AB}
 
 <!-- p17 -->
-{++The implication of this linguistic pluralism is that terms like bilingualism, borrowing, code switching and code mixing have recurrent linguistic features over time; and as such, speakers of a given language will have a wide variety to make deliberate or conscious linguistic choices given the different linguistic codes at their disposal; however, the language aptitude and attitude of the language users among other linguistic parameters often come to bear. Nevertheless, this linguistic reality which is a clear manifestation of languages in contact has its pros and cons. Be that as it may, Nigerian musicians or artistes have benefited from this linguistic pluralism highlighted thus far, producing songs that have a blend of many Nigerian languages much to the delight of many numerous fans across the country and beyond. In the North where Hausa is the dominant lingua franca, there is a tendency for many music artistes there to adopt English language as well as Hausa in their songs, and this situation is expected to in other regions. To this end, some Christian songs are not left out of this trend. Consequently, these songs will serve as a case in point to justify the prevalence of code-switching in Christian songs.  ++}{r36 @AB}¶{r35 @AB}
+{++The implication of this linguistic pluralism is that terms like bilingualism, borrowing, code switching and code mixing have recurrent linguistic features over time; and as such, speakers of a given language will have a wide variety to make deliberate or conscious linguistic choices given the different linguistic codes at their disposal; however, the language aptitude and attitude of the language users among other linguistic parameters often come to bear. Nevertheless, this linguistic reality which is a clear manifestation of languages in contact has its pros and cons. Be that as it may, Nigerian musicians or artistes have benefited from this linguistic pluralism highlighted thus far, producing songs that have a blend of many Nigerian languages much to the delight of many numerous fans across the country and beyond. In the North where Hausa is the dominant lingua franca, there is a tendency for many music artistes there to adopt English language as well as Hausa in their songs, and this situation is expected to in other regions. To this end, some Christian songs are not left out of this trend. Consequently, these songs will serve as a case in point to justify the prevalence of code-switching in Christian songs.  ++}{r36+35 @AB}¶{r36+35 @AB}
 
 <!-- p18 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r38 @AB}¶{r37 @AB}
+{++ ++}{r38+37 @AB}¶{r38+37 @AB}
 
 <!-- p19 left, right -0.0104in, after 2pt, line 1 -->
-{++Statement of the Problem ++}{r40 @AB}¶{r39 @AB}
+{++Statement of the Problem ++}{r40+39 @AB}¶{r40+39 @AB}
 
 <!-- p20 -->
-{++While code-switching is not a recent phenomenon in the lyric and study of secular music or non-religious songs, very little or no work has been written on this linguistic occurrence in Christian religious songs. Moreover, while it appears that many papers like Babalola (2009), Olarunfemi (2009) and Guerrero (2009) among others seem to stress the impact or prevalence of code switching in hip hop and traditional music respectively, this paper is concerned with the linguistic content of religious songs with a view to finding cases of code-switching in them.    ++}{r42 @AB}¶{r41 @AB}
+{++While code-switching is not a recent phenomenon in the lyric and study of secular music or non-religious songs, very little or no work has been written on this linguistic occurrence in Christian religious songs. Moreover, while it appears that many papers like Babalola (2009), Olarunfemi (2009) and Guerrero (2009) among others seem to stress the impact or prevalence of code switching in hip hop and traditional music respectively, this paper is concerned with the linguistic content of religious songs with a view to finding cases of code-switching in them.    ++}{r42+41 @AB}¶{r42+41 @AB}
 
 <!-- p21 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r44 @AB}¶{r43 @AB}
+{++ ++}{r44+43 @AB}¶{r44+43 @AB}
 
 <!-- p22 left, right -0.0104in, after 2pt, line 1 -->
-{++Basic Assumptions of this Paper ++}{r46 @AB}¶{r45 @AB}
+{++Basic Assumptions of this Paper ++}{r46+45 @AB}¶{r46+45 @AB}
 
 <!-- p23 -->
-{++This paper rests on the following assumptions:  ++}{r48 @AB}¶{r47 @AB}
+{++This paper rests on the following assumptions:  ++}{r48+47 @AB}¶{r48+47 @AB}
 
 <!-- p24 hanging 0.235in, left 0.548in, bullet -->
-- {++That code-switching occurs in Christian music or non-secular music  ++}{r50 @AB}¶{r49 @AB}
+- {++That code-switching occurs in Christian music or non-secular music  ++}{r50+49 @AB}¶{r50+49 @AB}
 
 <!-- p25 hanging 0.235in, left 0.548in, bullet -->
-- {++That there is a preponderance of inter-sentential code-switching in gospel songs than any other type of code switching    ++}{r52 @AB}¶{r51 @AB}
+- {++That there is a preponderance of inter-sentential code-switching in gospel songs than any other type of code switching    ++}{r52+51 @AB}¶{r52+51 @AB}
 
 <!-- p26 hanging 0.235in, left 0.548in, bullet -->
-- {++That  intra-sentential code-switching only occurs minimally in the ++}{r54 @AB}¶{r53 @AB}
+- {++That  intra-sentential code-switching only occurs minimally in the ++}{r54+53 @AB}¶{r54+53 @AB}
 
 <!-- p27 left 0.5556in -->
-{++Christian songs compared to inter-sentential code switching ++}{r56 @AB}¶{r55 @AB}
+{++Christian songs compared to inter-sentential code switching ++}{r56+55 @AB}¶{r56+55 @AB}
 
 <!-- p28 hanging 0.235in, left 0.548in, bullet -->
-- {++That tag switching hardly occurs or occurs minimally in Christian songs  ++}{r58 @AB}¶{r57 @AB}
+- {++That tag switching hardly occurs or occurs minimally in Christian songs  ++}{r58+57 @AB}¶{r58+57 @AB}
 
 <!-- p29 hanging 0.235in, left 0.548in, bullet -->
-- {++That code-switching does  not occur between a lexical stem and a bound morpheme but on “utterance construction level” and ++}{r60 @AB}¶{r59 @AB}
+- {++That code-switching does  not occur between a lexical stem and a bound morpheme but on “utterance construction level” and ++}{r60+59 @AB}¶{r60+59 @AB}
 
 <!-- p30 hanging 0.235in, left 0.548in, bullet -->
-- {++That this “utterance construction level” is used as a reference to the lyrics in the lines of Christian songs dismissed as “excerpts” in this paper            ++}{r62 @AB}¶{r61 @AB}
+- {++That this “utterance construction level” is used as a reference to the lyrics in the lines of Christian songs dismissed as “excerpts” in this paper            ++}{r62+61 @AB}¶{r62+61 @AB}
 
 <!-- p31 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r64 @AB}¶{r63 @AB}
+{++ ++}{r64+63 @AB}¶{r64+63 @AB}
 
 <!-- p32 left, right -0.0104in, after 2pt, line 1 -->
-{++Methodology  ++}{r66 @AB}¶{r65 @AB}
+{++Methodology  ++}{r66+65 @AB}¶{r66+65 @AB}
 
 <!-- p33 -->
-{++Using ten (10) songs form Christian artistes or gospel musicians, this paper seeks to unveil the advent of code switching in Christian songs. Using two (2) excerpts only from these songs, this paper attempts to justify the existence of the following type of code switching: ++}{r68 @AB}¶{r67 @AB}
+{++Using ten (10) songs form Christian artistes or gospel musicians, this paper seeks to unveil the advent of code switching in Christian songs. Using two (2) excerpts only from these songs, this paper attempts to justify the existence of the following type of code switching: ++}{r68+67 @AB}¶{r68+67 @AB}
 
 <!-- p34 hanging 0.235in, left 0.4694in, num "(a)" -->
-1. {++Inter-sentential code switching ++}{r70 @AB}¶{r69 @AB}
+1. {++Inter-sentential code switching ++}{r70+69 @AB}¶{r70+69 @AB}
 
 <!-- p35 hanging 0.235in, left 0.4694in, num "(b)" -->
-2. {++Intra-sentential code switching ++}{r72 @AB}¶{r71 @AB}
+2. {++Intra-sentential code switching ++}{r72+71 @AB}¶{r72+71 @AB}
 
 <!-- p36 hanging 0.235in, left 0.4694in, num "(c)" -->
-3. {++Tag switching ++}{r74 @AB}¶{r73 @AB}
+3. {++Tag switching ++}{r74+73 @AB}¶{r74+73 @AB}
 
 <!-- p37 hanging 0.235in, left 0.4694in, num "(d)" -->
-4. {++Word switching       ++}{r76 @AB}¶{r75 @AB}
+4. {++Word switching       ++}{r76+75 @AB}¶{r76+75 @AB}
 
 <!-- p38 -->
-{++Inter-sentential switching occurs outside the sentence or the clause (i.e. at the sentence or the clause boundaries). It is sometimes called “extra-sentential”. Intraswitching on the other hand occurs within a sentence or a clause. Also, tag switching is the switching of either a tag phrase or word, or both, from one language to another (Mclure, 2001, p.166).   ++}{r78 @AB}¶{r77 @AB}
+{++Inter-sentential switching occurs outside the sentence or the clause (i.e. at the sentence or the clause boundaries). It is sometimes called “extra-sentential”. Intraswitching on the other hand occurs within a sentence or a clause. Also, tag switching is the switching of either a tag phrase or word, or both, from one language to another (Mclure, 2001, p.166).   ++}{r78+77 @AB}¶{r78+77 @AB}
 
 <!-- p39 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r80 @AB}¶{r79 @AB}
+{++ ++}{r80+79 @AB}¶{r80+79 @AB}
 
 <!-- p40 left, right -0.0104in, after 2pt, line 1 -->
-{++Theoretical Framework:  ++}{r82 @AB}¶{r81 @AB}
+{++Theoretical Framework:  ++}{r82+81 @AB}¶{r82+81 @AB}
 
 <!-- p41 left, right -0.0104in, after 2pt, line 1 -->
-{++Constraint-Bases Model: Poplack’s (1980) ++}{r84 @AB}¶{r83 @AB}
+{++Constraint-Bases Model: Poplack’s (1980) ++}{r84+83 @AB}¶{r84+83 @AB}
 
 <!-- p42 -->
-{++The major backdrop of this model or theory is that it provides for the classification of code switching that exists and which is deployed in the analysis of data as is the case here. They include inter-sentential, intra-sentential and tag switching and word switching. This theory is predicted on two major constraints: the freemorpheme constraints and the free equivalence constraints. The former rests on the assumption that code-switching cannot occur between lexical stem and bound morphemes. Essentially, this constraint distinguishes code-switching from borrowing. Generally borrowing occurs in the lexicon, while code-switching occurs at either the syntax level or the utterance construction level.  ++}{r86 @AB}¶{r85 @AB}
+{++The major backdrop of this model or theory is that it provides for the classification of code switching that exists and which is deployed in the analysis of data as is the case here. They include inter-sentential, intra-sentential and tag switching and word switching. This theory is predicted on two major constraints: the freemorpheme constraints and the free equivalence constraints. The former rests on the assumption that code-switching cannot occur between lexical stem and bound morphemes. Essentially, this constraint distinguishes code-switching from borrowing. Generally borrowing occurs in the lexicon, while code-switching occurs at either the syntax level or the utterance construction level.  ++}{r86+85 @AB}¶{r86+85 @AB}
 
 <!-- p43 first-line 0.47in, left -0.0104in -->
-{++The equivalence constraint predicts that the switches occur only at points where the surface structures of the languages coincide, or between sentence elements that are normally ordered in the same way by each individual grammar. To a large extent therefore, this paper seeks to use this model specifically the “free morpheme constraint” as a yardstick to test the validity or otherwise of the major propositions of this theory. Therefore, code-switching, in this context, will not occur between a lexical stem and a bound morpheme but on “utterance construction level” investigated using excerpts from Christian songs.          ++}{r88 @AB}¶{r87 @AB}
+{++The equivalence constraint predicts that the switches occur only at points where the surface structures of the languages coincide, or between sentence elements that are normally ordered in the same way by each individual grammar. To a large extent therefore, this paper seeks to use this model specifically the “free morpheme constraint” as a yardstick to test the validity or otherwise of the major propositions of this theory. Therefore, code-switching, in this context, will not occur between a lexical stem and a bound morpheme but on “utterance construction level” investigated using excerpts from Christian songs.          ++}{r88+87 @AB}¶{r88+87 @AB}
 
 <!-- p44 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r90 @AB}¶{r89 @AB}
+{++ ++}{r90+89 @AB}¶{r90+89 @AB}
 
 <!-- p45 left, right -0.0104in, after 2pt, line 1 -->
-{++Code-switching ++}{r92 @AB}¶{r91 @AB}
+{++Code-switching ++}{r92+91 @AB}¶{r92+91 @AB}
 
 <!-- p46 -->
-{++In linguistics, code-switching is the concurrent use of more than one language variety in a conversation. Code-switching can occur between sentences (intersentential). Wardhaugh (2006) is however of the view that code switching is the same thing as code mixing: “code switching (also called mixing) can occur in conversation between speakers’ turns or within a single speaker’s turn” (p.101).  To him, “code-switching is a conversational strategy used to establish, cross or destroy group boundaries; to create, evoke or change interpersonal relations with their rights or obligations”. The term “code switching” is preferred to “language shift” in order to accommodate other kinds of varieties, dialects and registers (Hudson 2005, pp.51-52). ++}{r94 @AB}¶{r93 @AB}
+{++In linguistics, code-switching is the concurrent use of more than one language variety in a conversation. Code-switching can occur between sentences (intersentential). Wardhaugh (2006) is however of the view that code switching is the same thing as code mixing: “code switching (also called mixing) can occur in conversation between speakers’ turns or within a single speaker’s turn” (p.101).  To him, “code-switching is a conversational strategy used to establish, cross or destroy group boundaries; to create, evoke or change interpersonal relations with their rights or obligations”. The term “code switching” is preferred to “language shift” in order to accommodate other kinds of varieties, dialects and registers (Hudson 2005, pp.51-52). ++}{r94+93 @AB}¶{r94+93 @AB}
 
 <!-- p47 first-line 0.47in, left -0.0104in -->
-{++Code-switching also function to announce specific identities, create certain meanings and facilitate particular and interpersonal relationships (Johnson 2000, p.184). Similarly, according to Wardhaugh (2006, p.101), it is unusual for a speaker to have command of, use only one such code system. He said that most speakers command several varieties of language they speak, and bilingualism, even multilingualism, is a norm among many people throughout the world than “monolingualism”. He emphasizes that there are two kinds of code switching: situational and metaphorical. Gumpez and Hymes (19986) make a distinction between the two thus: ++}{r96 @AB}¶{r95 @AB}
+{++Code-switching also function to announce specific identities, create certain meanings and facilitate particular and interpersonal relationships (Johnson 2000, p.184). Similarly, according to Wardhaugh (2006, p.101), it is unusual for a speaker to have command of, use only one such code system. He said that most speakers command several varieties of language they speak, and bilingualism, even multilingualism, is a norm among many people throughout the world than “monolingualism”. He emphasizes that there are two kinds of code switching: situational and metaphorical. Gumpez and Hymes (19986) make a distinction between the two thus: ++}{r96+95 @AB}¶{r96+95 @AB}
 
 <!-- p48 left 0.477in -->
-{++An important distinction is made from situational and metaphorical codeswitching. Situational code-switching is where alternation between varieties redefines a situation, being a change in governing norms. Metaphorical switching is when alternation enriches a situation, allowing for allusion to more than one social relationship within the situation. In metaphorical code-switching, the context of the conversation is undisturbed but rather the changes adhere to the social context including the roles of those involved in the conversation          ++}{r98 @AB}¶{r97 @AB}
+{++An important distinction is made from situational and metaphorical codeswitching. Situational code-switching is where alternation between varieties redefines a situation, being a change in governing norms. Metaphorical switching is when alternation enriches a situation, allowing for allusion to more than one social relationship within the situation. In metaphorical code-switching, the context of the conversation is undisturbed but rather the changes adhere to the social context including the roles of those involved in the conversation          ++}{r98+97 @AB}¶{r98+97 @AB}
 
 <!-- p49 -->
-{++It can therefore be argued that Nigeria is a typical example of code switching and code mixing situations. This is because there are over 400 hundred languages in Nigeria but English is often used for official purposes while Igbo, Hausa and Yoruba are regarded as the language of the majority. ++}{r100 @AB}¶{r99 @AB}
+{++It can therefore be argued that Nigeria is a typical example of code switching and code mixing situations. This is because there are over 400 hundred languages in Nigeria but English is often used for official purposes while Igbo, Hausa and Yoruba are regarded as the language of the majority. ++}{r100+99 @AB}¶{r100+99 @AB}
 
 <!-- p50 -->
-{++ In another submission, Martin and Nakayama (2007) concur that “code-switching is a technical term in communication that refers to the phenomenon of changing languages, dialects, or even accents. People code switch for several reasons: (1) to accommodate the other speakers, (2) to avoid   accommodating others, or (3) to express another aspect of their cultural identity (p.241). ++}{r102 @AB}¶{r101 @AB}
+{++ In another submission, Martin and Nakayama (2007) concur that “code-switching is a technical term in communication that refers to the phenomenon of changing languages, dialects, or even accents. People code switch for several reasons: (1) to accommodate the other speakers, (2) to avoid   accommodating others, or (3) to express another aspect of their cultural identity (p.241). ++}{r102+101 @AB}¶{r102+101 @AB}
 
 <!-- p51 -->
-{++Code switching occurs frequently in almost all conversations, in professional setting and even in music because of the existence of the multiple languages in the country. There is also the mixing of English and tribal languages. Code mixing between indigenous languages is rare. However, Wardhaugh (2006, p.102) summarizes the issue of code switching succinctly below: ++}{r104 @AB}¶{r103 @AB}
+{++Code switching occurs frequently in almost all conversations, in professional setting and even in music because of the existence of the multiple languages in the country. There is also the mixing of English and tribal languages. Code mixing between indigenous languages is rare. However, Wardhaugh (2006, p.102) summarizes the issue of code switching succinctly below: ++}{r104+103 @AB}¶{r104+103 @AB}
 
 <!-- p52 first-line 0.47in, left -0.0104in -->
-{++Most speakers command several varieties of any language they speak, and bilingualism even multilingualism is the norm rather than unilingualism. People, then, are usually required to select a particular code whenever they choose to speak, and they may also decide to switch from one code to another or to mix codes even within s ometimes very short utterances and thereby create a new code in a process known as code switching  Having explained the linguistic concept of code-switching, the next step, in this paper, is to explain how this term occurs in the Gospel songs of Nigerian musicians. to this effect, the data is given and analysed below.  ++}{r106 @AB}¶{r105 @AB}
+{++Most speakers command several varieties of any language they speak, and bilingualism even multilingualism is the norm rather than unilingualism. People, then, are usually required to select a particular code whenever they choose to speak, and they may also decide to switch from one code to another or to mix codes even within s ometimes very short utterances and thereby create a new code in a process known as code switching  Having explained the linguistic concept of code-switching, the next step, in this paper, is to explain how this term occurs in the Gospel songs of Nigerian musicians. to this effect, the data is given and analysed below.  ++}{r106+105 @AB}¶{r106+105 @AB}
 
 <!-- p53 left, right -0.0104in, after 2pt, line 1 -->
-{++Data Presentation and Analysis  ++}{r108 @AB}¶{r107 @AB}
+{++Data Presentation and Analysis  ++}{r108+107 @AB}¶{r108+107 @AB}
 
 <!-- p54 -->
-{++This section examines the issue of code switching in Nigerian gospel or Christian songs, and the songs have been numbered accordingly: ++}{r110 @AB}¶{r109 @AB}
+{++This section examines the issue of code switching in Nigerian gospel or Christian songs, and the songs have been numbered accordingly: ++}{r110+109 @AB}¶{r110+109 @AB}
 
 <!-- p55 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt One: “OniseIyanu” (Song) by NATHANIEL BASSEY  ++}{r112 @AB}¶{r111 @AB}
+{++Excerpt One: “OniseIyanu” (Song) by NATHANIEL BASSEY  ++}{r112+111 @AB}¶{r112+111 @AB}
 
 <!-- p56 -->
-{++In song one, two major languages are code switched: English language and Yoruba. The type of code switching evident in this song can be described as partial and total code switching.  The examples of partial code switching are given below: ++}{r114 @AB}¶{r113 @AB}
+{++In song one, two major languages are code switched: English language and Yoruba. The type of code switching evident in this song can be described as partial and total code switching.  The examples of partial code switching are given below: ++}{r114+113 @AB}¶{r114+113 @AB}
 
 <!-- p57 -->
-{++OniseIyanu ++}{r116 @AB}¶{r115 @AB}
+{++OniseIyanu ++}{r116+115 @AB}¶{r116+115 @AB}
 
 <!-- p58 -->
-{++You are the God of awesome wonders  ++}{r118 @AB}¶{r117 @AB}
+{++You are the God of awesome wonders  ++}{r118+117 @AB}¶{r118+117 @AB}
 
 <!-- p59 -->
-{++I have tasted of your power ++}{r120 @AB}¶{r119 @AB}
+{++I have tasted of your power ++}{r120+119 @AB}¶{r120+119 @AB}
 
 <!-- p60 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r122 @AB}¶{r121 @AB}
+{++ ++}{r122+121 @AB}¶{r122+121 @AB}
 
 <!-- p61 -->
-{++OniseIyanu ++}{r124 @AB}¶{r123 @AB}
+{++OniseIyanu ++}{r124+123 @AB}¶{r124+123 @AB}
 
 <!-- p62 -->
-{++You have shown me so much mercy  ++}{r126 @AB}¶{r125 @AB}
+{++You have shown me so much mercy  ++}{r126+125 @AB}¶{r126+125 @AB}
 
 <!-- p63 -->
-{++Much more than deserve ++}{r128 @AB}¶{r127 @AB}
+{++Much more than deserve ++}{r128+127 @AB}¶{r128+127 @AB}
 
 <!-- p64 -->
-{++My eyes have seen  ++}{r130 @AB}¶{r129 @AB}
+{++My eyes have seen  ++}{r130+129 @AB}¶{r130+129 @AB}
 
 <!-- p65 -->
-{++My ears of have heard…  ++}{r132 @AB}¶{r131 @AB}
+{++My ears of have heard…  ++}{r132+131 @AB}¶{r132+131 @AB}
 
 <!-- p66 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r134 @AB}¶{r133 @AB}
+{++ ++}{r134+133 @AB}¶{r134+133 @AB}
 
 <!-- p67 -->
-{++A few of these words, from the English and Yoruba language, are highlighted below: ++}{r136 @AB}¶{r135 @AB}
+{++A few of these words, from the English and Yoruba language, are highlighted below: ++}{r136+135 @AB}¶{r136+135 @AB}
 
-<!-- p68 center, size 18pt, break-del r137 @AB -->
-{--**GCSE PE – Year 10**--}{r138 @AB}
+<!-- p68 center, size 18pt, break-del r138+137 @AB -->
+{--**GCSE PE – Year 10**--}{r138+137 @AB}
 
-<!-- t0 11x5, cells t0.row0 p69-p77 t0.row1 p78-p86 t0.row2 p87-p92 t0.row3 p93-p96 t0.row4 p97-p99 t0.row5 p100-p103 t0.row6 p104-p105 t0.row7 p106-p109 t0.row8 p110-p115 t0.row9 p116-p134 t0.row10 p135-p142, p70 center, p71 center, p72 center, p73 center, p74 center, p75 center, p76 center, p79 center, p80 center, p81 center, p82 center, p83 center, p84 center, p85 center, p118 justify, p119 justify, p120 justify, p121 justify, p124 justify, p125 justify, p128 justify, p129 justify, p133 justify, p118-p121 ListParagraph, p124-p125 ListParagraph, p128-p129 ListParagraph, p133 ListParagraph, p69 after 0pt line 1.15, p71-p76 size 12pt, p77-p78 after 0pt line 1.15, p80-p85 size 12pt, p86-p87 after 0pt line 1.15, p89-p91 size 12pt, p92-p93 after 0pt line 1.15, p95 size 12pt, p96-p97 after 0pt line 1.15, p99-p100 after 0pt line 1.15, p102 size 12pt, p103-p107 after 0pt line 1.15, p108-p109 size 12pt, p110 after 0pt line 1.15, p112-p114 size 12pt, p115-p116 after 0pt line 1.15, p134-p135 after 0pt line 1.15, p137-p141 size 12pt, p142 after 0pt line 1.15 size 12pt, widths 1.146in 0.976in 0.996in 1.5924in 0.0035in, width 2.482in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t0.row0 t0.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t0.row2; top,left,bottom,right single 0.5pt 000000 in t0.row3 t0.row4 t0.row5 t0.row6 t0.row7 t0.row8 t0.row9 t0.row10, merged t0.row0.cell1 across 4; t0.row1.cell1 across 4; t0.row2.cell1 across 4; t0.row3.cell1 across 3; t0.row4.cell1 across 3; t0.row5.cell1 across 3; t0.row6.cell1 across 3; t0.row8.cell1 across 3; t0.row9.cell1 across 3; t0.row10.cell1 across 3, gaps t0.row3 after 1; t0.row4 after 1; t0.row5 after 1; t0.row6 after 1; t0.row7 after 1; t0.row8 after 1; t0.row9 after 1; t0.row10 after 1, break-del r148 @AB in p70; r151 @AB in p71; r153 @AB in p72; r155 @AB in p73; r157 @AB in p74; r159 @AB in p75; r160 @AB in p76; r171 @AB in p79; r174 @AB in p80; r176 @AB in p81; r178 @AB in p82; r180 @AB in p83; r182 @AB in p84; r183 @AB in p85; r194 @AB in p88; r197 @AB in p89; r198 @AB in p90; r200 @AB in p91; r210 @AB in p94; r213 @AB in p95; r223 @AB in p98; r235 @AB in p101; r238 @AB in p102; r274 @AB in p111; r277 @AB in p112; r278 @AB in p113; r279 @AB in p114; r289 @AB in p117; r292 @AB in p118; r294 @AB in p119; r296 @AB in p120; r298 @AB in p121; r300 @AB in p122; r301 @AB in p123; r303 @AB in p124; r305 @AB in p125; r307 @AB in p126; r308 @AB in p127; r310 @AB in p128; r312 @AB in p129; r314 @AB in p130; r315 @AB in p131; r317 @AB in p132; r318 @AB in p133; r330 @AB in p136; r333 @AB in p137; r334 @AB in p138; r336 @AB in p139; r337 @AB in p140; r339 @AB in p141, fmt r139 @AB; r140 @??; r141 @AB in t0.row0; r142 @AB in t0.row0.cell0; r143 @AB in p69; r144 @AB in p69; r147 @AB in t0.row0.cell1; r162 @AB in p77; r163 @AB in p77; r164 @AB in t0.row1; r165 @AB in t0.row1.cell0; r166 @AB in p78; r167 @AB in p78; r170 @AB in t0.row1.cell1; r185 @AB in p86; r186 @AB in p86; r187 @AB in t0.row2; r188 @AB in t0.row2.cell0; r189 @AB in p87; r190 @AB in p87; r193 @AB in t0.row2.cell1; r201 @AB in p92; r202 @AB in p92; r203 @AB in t0.row3; r204 @AB in t0.row3.cell0; r205 @AB in p93; r206 @AB in p93; r209 @AB in t0.row3.cell1; r214 @AB in p96; r215 @AB in p96; r216 @AB in t0.row4; r217 @AB in t0.row4.cell0; r218 @AB in p97; r219 @AB in p97; r222 @AB in t0.row4.cell1; r226 @AB in p99; r227 @AB in p99; r228 @AB in t0.row5; r229 @AB in t0.row5.cell0; r230 @AB in p100; r231 @AB in p100; r234 @AB in t0.row5.cell1; r239 @AB in p103; r240 @AB in p103; r241 @AB in t0.row6; r242 @AB in t0.row6.cell0; r243 @AB in p104; r244 @AB in p104; r247 @AB in t0.row6.cell1; r248 @AB in p105; r249 @AB in p105; r252 @AB in t0.row7; r253 @AB in t0.row7.cell0; r254 @AB in p106; r255 @AB in p106; r258 @AB in t0.row7.cell1; r259 @AB in p107; r260 @AB in p107; r263 @AB in t0.row7.cell2; r265 @AB in t0.row7.cell3; r267 @AB in t0.row8; r268 @AB in t0.row8.cell0; r269 @AB in p110; r270 @AB in p110; r273 @AB in t0.row8.cell1; r280 @AB in p115; r281 @AB in p115; r282 @AB in t0.row9; r283 @AB in t0.row9.cell0; r284 @AB in p116; r285 @AB in p116; r288 @AB in t0.row9.cell1; r320 @AB in p134; r321 @AB in p134; r323 @AB in t0.row10; r324 @AB in t0.row10.cell0; r325 @AB in p135; r326 @AB in p135; r329 @AB in t0.row10.cell1; r340 @AB in p142; r341 @AB in p142 -->
-|{++English Words  ++}{r145 @AB}{-- Theory Topics--}{r146 @AB}|{++Yoruba Words  ++}{r149 @AB}{--Applied anatomy and Physiology--}{r150 @AB}{--<br>Movement analysis--}{r152 @AB}{--<br>Physical training--}{r154 @AB}{--<br>Use of data--}{r156 @AB}{--<br>Sports Psychology--}{r158 @AB}<br>{--<br>Topics are worked through in the order provided by the exam boards specification. Pupils will be moved onto a new topic when the class teacher is happy with the level of understanding. This is made possible the amount of time available within the life of the course.--}{r161 @AB}<br>|||
+<!-- t0 11x5, cells t0.row0 p69-p77 t0.row1 p78-p86 t0.row2 p87-p92 t0.row3 p93-p96 t0.row4 p97-p99 t0.row5 p100-p103 t0.row6 p104-p105 t0.row7 p106-p109 t0.row8 p110-p115 t0.row9 p116-p134 t0.row10 p135-p142, p70 center, p71 center, p72 center, p73 center, p74 center, p75 center, p76 center, p79 center, p80 center, p81 center, p82 center, p83 center, p84 center, p85 center, p118 justify, p119 justify, p120 justify, p121 justify, p124 justify, p125 justify, p128 justify, p129 justify, p133 justify, p118-p121 ListParagraph, p124-p125 ListParagraph, p128-p129 ListParagraph, p133 ListParagraph, p69 after 0pt line 1.15, p71-p76 size 12pt, p77-p78 after 0pt line 1.15, p80-p85 size 12pt, p86-p87 after 0pt line 1.15, p89-p91 size 12pt, p92-p93 after 0pt line 1.15, p95 size 12pt, p96-p97 after 0pt line 1.15, p99-p100 after 0pt line 1.15, p102 size 12pt, p103-p107 after 0pt line 1.15, p108-p109 size 12pt, p110 after 0pt line 1.15, p112-p114 size 12pt, p115-p116 after 0pt line 1.15, p134-p135 after 0pt line 1.15, p137-p141 size 12pt, p142 after 0pt line 1.15 size 12pt, widths 1.146in 0.976in 0.996in 1.5924in 0.0035in, width 2.482in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t0.row0 t0.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t0.row2; top,left,bottom,right single 0.5pt 000000 in t0.row3 t0.row4 t0.row5 t0.row6 t0.row7 t0.row8 t0.row9 t0.row10, merged t0.row0.cell1 across 4; t0.row1.cell1 across 4; t0.row2.cell1 across 4; t0.row3.cell1 across 3; t0.row4.cell1 across 3; t0.row5.cell1 across 3; t0.row6.cell1 across 3; t0.row8.cell1 across 3; t0.row9.cell1 across 3; t0.row10.cell1 across 3, gaps t0.row3 after 1; t0.row4 after 1; t0.row5 after 1; t0.row6 after 1; t0.row7 after 1; t0.row8 after 1; t0.row9 after 1; t0.row10 after 1, break-del r149+150+148 @AB in p70; r152+151 @AB in p71; r154+153 @AB in p72; r156+155 @AB in p73; r158+157 @AB in p74; r159 @AB in p75; r161+160 @AB in p76; r172+173+171 @AB in p79; r175+174 @AB in p80; r177+176 @AB in p81; r179+178 @AB in p82; r181+180 @AB in p83; r182 @AB in p84; r184+183 @AB in p85; r195+196+194 @AB in p88; r197 @AB in p89; r199+198 @AB in p90; r200 @AB in p91; r211+212+210 @AB in p94; r213 @AB in p95; r224+225+223 @AB in p98; r236+237+235 @AB in p101; r238 @AB in p102; r275+276+274 @AB in p111; r277 @AB in p112; r278 @AB in p113; r279 @AB in p114; r290+291+289 @AB in p117; r293+292 @AB in p118; r295+294 @AB in p119; r297+296 @AB in p120; r299+298 @AB in p121; r300 @AB in p122; r302+301 @AB in p123; r304+303 @AB in p124; r306+305 @AB in p125; r307 @AB in p126; r309+308 @AB in p127; r311+310 @AB in p128; r313+312 @AB in p129; r314 @AB in p130; r316+315 @AB in p131; r317 @AB in p132; r319+318 @AB in p133; r331+332+330 @AB in p136; r333 @AB in p137; r335+334 @AB in p138; r336 @AB in p139; r338+337 @AB in p140; r339 @AB in p141, fmt r139 @AB; r140 @??; r141 @AB in t0.row0; r142 @AB in t0.row0.cell0; r143 @AB in p69; r144 @AB in p69; r147 @AB in t0.row0.cell1; r162 @AB in p77; r163 @AB in p77; r164 @AB in t0.row1; r165 @AB in t0.row1.cell0; r166 @AB in p78; r167 @AB in p78; r170 @AB in t0.row1.cell1; r185 @AB in p86; r186 @AB in p86; r187 @AB in t0.row2; r188 @AB in t0.row2.cell0; r189 @AB in p87; r190 @AB in p87; r193 @AB in t0.row2.cell1; r201 @AB in p92; r202 @AB in p92; r203 @AB in t0.row3; r204 @AB in t0.row3.cell0; r205 @AB in p93; r206 @AB in p93; r209 @AB in t0.row3.cell1; r214 @AB in p96; r215 @AB in p96; r216 @AB in t0.row4; r217 @AB in t0.row4.cell0; r218 @AB in p97; r219 @AB in p97; r222 @AB in t0.row4.cell1; r226 @AB in p99; r227 @AB in p99; r228 @AB in t0.row5; r229 @AB in t0.row5.cell0; r230 @AB in p100; r231 @AB in p100; r234 @AB in t0.row5.cell1; r239 @AB in p103; r240 @AB in p103; r241 @AB in t0.row6; r242 @AB in t0.row6.cell0; r243 @AB in p104; r244 @AB in p104; r247 @AB in t0.row6.cell1; r248 @AB in p105; r249 @AB in p105; r252 @AB in t0.row7; r253 @AB in t0.row7.cell0; r254 @AB in p106; r255 @AB in p106; r258 @AB in t0.row7.cell1; r259 @AB in p107; r260 @AB in p107; r263 @AB in t0.row7.cell2; r265 @AB in t0.row7.cell3; r267 @AB in t0.row8; r268 @AB in t0.row8.cell0; r269 @AB in p110; r270 @AB in p110; r273 @AB in t0.row8.cell1; r280 @AB in p115; r281 @AB in p115; r282 @AB in t0.row9; r283 @AB in t0.row9.cell0; r284 @AB in p116; r285 @AB in p116; r288 @AB in t0.row9.cell1; r320 @AB in p134; r321 @AB in p134; r323 @AB in t0.row10; r324 @AB in t0.row10.cell0; r325 @AB in p135; r326 @AB in p135; r329 @AB in t0.row10.cell1; r340 @AB in p142; r341 @AB in p142 -->
+|{++English Words  ++}{r145+146 @AB}{-- Theory Topics--}{r145+146 @AB}|{++Yoruba Words  ++}{r149+150+148 @AB}{--Applied anatomy and Physiology--}{r149+150+148 @AB}{--<br>Movement analysis--}{r152+151 @AB}{--<br>Physical training--}{r154+153 @AB}{--<br>Use of data--}{r156+155 @AB}{--<br>Sports Psychology--}{r158+157 @AB}<br>{--<br>Topics are worked through in the order provided by the exam boards specification. Pupils will be moved onto a new topic when the class teacher is happy with the level of understanding. This is made possible the amount of time available within the life of the course.--}{r161+160 @AB}<br>|||
 |:-|-|:-:|-|
-|{++You  ++}{r168 @AB}{--Practical Topics--}{r169 @AB}|{++Onise ++}{r172 @AB}{--Athletics--}{r173 @AB}{--<br>Handball--}{r175 @AB}{--<br>Badminton--}{r177 @AB}{--<br>Football--}{r179 @AB}{--<br>Netball--}{r181 @AB}<br>{--<br>Pupils are free to be assessed in any sport that is covered by the exam boards specification, but these are the sports that are routinely covered in lessons. --}{r184 @AB}<br>|||
-|{++Awesome ++}{r191 @AB}{--Assessment--}{r192 @AB}|{++Iyanu ++}{r195 @AB}{--Written end of topic test for each unit--}{r196 @AB}<br>{--<br>Ongoing practical assessment in each sport covered--}{r199 @AB}<br><br>|||
-|{++Eyes  ++}{r207 @AB}{--Building on Prior Learning--}{r208 @AB}|{++ ++}{r211 @AB}{--All practical activities taught are those activities that were taught at KS3. Sports mentioned above have been historically strong for our students, however, they are subject to change dependent on student needs. Key terminology that have been drip fed to pupils at KS3 are used and explored in greater detail. --}{r212 @AB}<br><br>|||
-|{++Mercy  ++}{r220 @AB}{--Linked learning--}{r221 @AB}|{++ ++}{r224 @AB}{--The course specification is taught in the order provided by the exam board. As the course progresses, earlier topics are re-visited through starter activities to spiral the curriculum. Reference is made to earlier topics when there is a cross over, as well as when topics that are commonly paired together in exam questions are taught.  --}{r225 @AB}<br>|||
-|{++Deserve  ++}{r232 @AB}{--Links with other subjects--}{r233 @AB}|{++ ++}{r236 @AB}{--Science, specifically related to the content on body systems. Mathematics, specifically related to interpreting data, the calculation of training intensities and the measurement / timing in athletics. English, specifically related to key words and terminology and structuring longer answer exam style questions.--}{r237 @AB}<br><br>|||
-|{++Ears  ++}{r245 @AB}{--Extracurricular opportunities--}{r246 @AB}|{++ ++}{r250 @AB}{--Numerous after school extra-curricular clubs run in the PE department throughout the year. In addition, lunch clubs run, with some targeting GCSE students. GCSE specific clubs are sometimes added to the timetable to prepare for moderations, or if there is a general developmental need. School fixtures/competitions also give opportunity to compete in full recognised competitive games/events where evidence can be gathered and used for moderation. --}{r251 @AB}|||
-|{++Heard  ++}{r256 @AB}{--Literacy--}{r257 @AB}|{++ ++}{r261 @AB}{--Use of key terminology and definitions. Ability to decipher the meaning of command words in exam questions, and in turn use the correct level of detail required. Ability to apply examples within their work to support their point. --}{r262 @AB}|{--Numeracy--}{r264 @AB}|{--Interpreting data that is presented in different formats, the calculation of training intensities, the measuring and recording of fitness testing data, the comparison of data against national averages and the measurement/timing in athletics.--}{r266 @AB}|
-|{++Seen  ++}{r271 @AB}{--A successful learner in this subject will demonstrate--}{r272 @AB}|{++ ++}{r275 @AB}{--Successful PE students will be well motivated to take up all available extra-curricular opportunities to enhance their practical grades. They will be well organised and show resilience to learn work on a weekly basis, reviewing and improving their knowledge and understanding. They will demonstrate a strong general knowledge and genuine interest in all sports to enable them to apply theoretical content to practical situations. --}{r276 @AB}<br><br><br><br>|||
-|{++Shown  ++}{r286 @AB}{--Links to SMSC--}{r287 @AB}|{++ ++}{r290 @AB}{--253. Provision for the spiritual development of pupils includes developing their:--}{r291 @AB}{--<br>ability to be reflective about their own beliefs (religious or otherwise) and perspective on life--}{r293 @AB}{--<br>sense of enjoyment and fascination in learning about themselves, others and the world around them--}{r295 @AB}{--<br>use of imagination and creativity in their learning--}{r297 @AB}{--<br>willingness to reflect on their experiences--}{r299 @AB}<br>{--<br>254. Provision for the moral development of pupils includes developing their:--}{r302 @AB}{--<br>understanding of the consequences of their behaviour and actions--}{r304 @AB}{--<br>interest in investigating and offering reasoned views about moral and ethical issues and ability to understand and appreciate the viewpoints of others on these issues--}{r306 @AB}<br>{--<br>255. Provision for the social development of pupils includes developing their:--}{r309 @AB}{--<br>use of a range of social skills in different contexts, for example working and socialising with other pupils, including those from different religious, ethnic and socio-economic backgrounds--}{r311 @AB}{--<br>willingness to participate in a variety of communities and social settings, including by volunteering, cooperating well with others and being able to resolve conflicts effectively--}{r313 @AB}<br>{--<br>256. Provision for the cultural development of pupils includes developing their:--}{r316 @AB}<br>{--<br>willingness to participate in and respond positively to artistic, musical, sporting and cultural opportunities--}{r319 @AB}{--<br>understanding and appreciation of the wide range of cultural influences that have shaped their own heritage and that of others--}{r322 @AB}|||
-|{++ ++}{r327 @AB}{--Ways to support student learning in this subject--}{r328 @AB}|{++ ++}{r331 @AB}{--Encourage students to master skills in three practical sports / activities, which must include at least one team and one individual sport / activity. --}{r332 @AB}<br>{--<br>To gain video evidence of sports / activities where necessary.--}{r335 @AB}<br>{--<br>Encourage students to watch and read about a wide range of sports / activities, which will enhance their ability to apply theory content to practical situations.--}{r338 @AB}<br>{--<br>To encourage students to learn work on a weekly basis; to complete homework to the best of their ability and submit it on time, asking their member of staff for support if unsure.--}{r342 @AB}|||
+|{++You  ++}{r168+169 @AB}{--Practical Topics--}{r168+169 @AB}|{++Onise ++}{r172+173+171 @AB}{--Athletics--}{r172+173+171 @AB}{--<br>Handball--}{r175+174 @AB}{--<br>Badminton--}{r177+176 @AB}{--<br>Football--}{r179+178 @AB}{--<br>Netball--}{r181+180 @AB}<br>{--<br>Pupils are free to be assessed in any sport that is covered by the exam boards specification, but these are the sports that are routinely covered in lessons. --}{r184+183 @AB}<br>|||
+|{++Awesome ++}{r191+192 @AB}{--Assessment--}{r191+192 @AB}|{++Iyanu ++}{r195+196+194 @AB}{--Written end of topic test for each unit--}{r195+196+194 @AB}<br>{--<br>Ongoing practical assessment in each sport covered--}{r199+198 @AB}<br><br>|||
+|{++Eyes  ++}{r207+208 @AB}{--Building on Prior Learning--}{r207+208 @AB}|{++ ++}{r211+212+210 @AB}{--All practical activities taught are those activities that were taught at KS3. Sports mentioned above have been historically strong for our students, however, they are subject to change dependent on student needs. Key terminology that have been drip fed to pupils at KS3 are used and explored in greater detail. --}{r211+212+210 @AB}<br><br>|||
+|{++Mercy  ++}{r220+221 @AB}{--Linked learning--}{r220+221 @AB}|{++ ++}{r224+225+223 @AB}{--The course specification is taught in the order provided by the exam board. As the course progresses, earlier topics are re-visited through starter activities to spiral the curriculum. Reference is made to earlier topics when there is a cross over, as well as when topics that are commonly paired together in exam questions are taught.  --}{r224+225+223 @AB}<br>|||
+|{++Deserve  ++}{r232+233 @AB}{--Links with other subjects--}{r232+233 @AB}|{++ ++}{r236+237+235 @AB}{--Science, specifically related to the content on body systems. Mathematics, specifically related to interpreting data, the calculation of training intensities and the measurement / timing in athletics. English, specifically related to key words and terminology and structuring longer answer exam style questions.--}{r236+237+235 @AB}<br><br>|||
+|{++Ears  ++}{r245+246 @AB}{--Extracurricular opportunities--}{r245+246 @AB}|{++ ++}{r250+251 @AB}{--Numerous after school extra-curricular clubs run in the PE department throughout the year. In addition, lunch clubs run, with some targeting GCSE students. GCSE specific clubs are sometimes added to the timetable to prepare for moderations, or if there is a general developmental need. School fixtures/competitions also give opportunity to compete in full recognised competitive games/events where evidence can be gathered and used for moderation. --}{r250+251 @AB}|||
+|{++Heard  ++}{r256+257 @AB}{--Literacy--}{r256+257 @AB}|{++ ++}{r261+262 @AB}{--Use of key terminology and definitions. Ability to decipher the meaning of command words in exam questions, and in turn use the correct level of detail required. Ability to apply examples within their work to support their point. --}{r261+262 @AB}|{--Numeracy--}{r264 @AB}|{--Interpreting data that is presented in different formats, the calculation of training intensities, the measuring and recording of fitness testing data, the comparison of data against national averages and the measurement/timing in athletics.--}{r266 @AB}|
+|{++Seen  ++}{r271+272 @AB}{--A successful learner in this subject will demonstrate--}{r271+272 @AB}|{++ ++}{r275+276+274 @AB}{--Successful PE students will be well motivated to take up all available extra-curricular opportunities to enhance their practical grades. They will be well organised and show resilience to learn work on a weekly basis, reviewing and improving their knowledge and understanding. They will demonstrate a strong general knowledge and genuine interest in all sports to enable them to apply theoretical content to practical situations. --}{r275+276+274 @AB}<br><br><br><br>|||
+|{++Shown  ++}{r286+287 @AB}{--Links to SMSC--}{r286+287 @AB}|{++ ++}{r290+291+289 @AB}{--253. Provision for the spiritual development of pupils includes developing their:--}{r290+291+289 @AB}{--<br>ability to be reflective about their own beliefs (religious or otherwise) and perspective on life--}{r293+292 @AB}{--<br>sense of enjoyment and fascination in learning about themselves, others and the world around them--}{r295+294 @AB}{--<br>use of imagination and creativity in their learning--}{r297+296 @AB}{--<br>willingness to reflect on their experiences--}{r299+298 @AB}<br>{--<br>254. Provision for the moral development of pupils includes developing their:--}{r302+301 @AB}{--<br>understanding of the consequences of their behaviour and actions--}{r304+303 @AB}{--<br>interest in investigating and offering reasoned views about moral and ethical issues and ability to understand and appreciate the viewpoints of others on these issues--}{r306+305 @AB}<br>{--<br>255. Provision for the social development of pupils includes developing their:--}{r309+308 @AB}{--<br>use of a range of social skills in different contexts, for example working and socialising with other pupils, including those from different religious, ethnic and socio-economic backgrounds--}{r311+310 @AB}{--<br>willingness to participate in a variety of communities and social settings, including by volunteering, cooperating well with others and being able to resolve conflicts effectively--}{r313+312 @AB}<br>{--<br>256. Provision for the cultural development of pupils includes developing their:--}{r316+315 @AB}<br>{--<br>willingness to participate in and respond positively to artistic, musical, sporting and cultural opportunities--}{r319+318 @AB}{--<br>understanding and appreciation of the wide range of cultural influences that have shaped their own heritage and that of others--}{r322 @AB}|||
+|{++ ++}{r327+328 @AB}{--Ways to support student learning in this subject--}{r327+328 @AB}|{++ ++}{r331+332+330 @AB}{--Encourage students to master skills in three practical sports / activities, which must include at least one team and one individual sport / activity. --}{r331+332+330 @AB}<br>{--<br>To gain video evidence of sports / activities where necessary.--}{r335+334 @AB}<br>{--<br>Encourage students to watch and read about a wide range of sports / activities, which will enhance their ability to apply theory content to practical situations.--}{r338+337 @AB}<br>{--<br>To encourage students to learn work on a weekly basis; to complete homework to the best of their ability and submit it on time, asking their member of staff for support if unsure.--}{r342 @AB}|||
 
 <!-- p143 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r344 @AB}¶{r343 @AB}
+{++ ++}{r344+343 @AB}¶{r344+343 @AB}
 
-<!-- t1 9x2, cells p144-p161 by row, p144-p161 after 0pt line 1.15, widths 3.0215in 2.1486in, width 5.17in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t1.row0 t1.row1 t1.row2 t1.row3 t1.row4 t1.row5; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t1.row6; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t1.row7 t1.row8, break-ins r346 @AB in p144; r348 @AB in p145; r351 @AB in p146; r353 @AB in p147; r356 @AB in p148; r358 @AB in p149; r361 @AB in p150; r363 @AB in p151; r366 @AB in p152; r368 @AB in p153; r371 @AB in p154; r373 @AB in p155; r376 @AB in p156; r378 @AB in p157; r381 @AB in p158; r383 @AB in p159; r386 @AB in p160; r388 @AB in p161, rev r345 @AB in t1.row0; r350 @AB in t1.row1; r355 @AB in t1.row2; r360 @AB in t1.row3; r365 @AB in t1.row4; r370 @AB in t1.row5; r375 @AB in t1.row6; r380 @AB in t1.row7; r385 @AB in t1.row8 -->
-|{++English Sentences  ++}{r347 @AB}|{++Yoruba Sentences (Repeated) ++}{r349 @AB}|
+<!-- t1 9x2, cells p144-p161 by row, p144-p161 after 0pt line 1.15, widths 3.0215in 2.1486in, width 5.17in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t1.row0 t1.row1 t1.row2 t1.row3 t1.row4 t1.row5; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t1.row6; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t1.row7 t1.row8, break-ins r347+346 @AB in p144; r349+348 @AB in p145; r352+351 @AB in p146; r354+353 @AB in p147; r357+356 @AB in p148; r359+358 @AB in p149; r362+361 @AB in p150; r364+363 @AB in p151; r367+366 @AB in p152; r369+368 @AB in p153; r372+371 @AB in p154; r374+373 @AB in p155; r377+376 @AB in p156; r379+378 @AB in p157; r382+381 @AB in p158; r384+383 @AB in p159; r387+386 @AB in p160; r389+388 @AB in p161, rev r345 @AB in t1.row0; r350 @AB in t1.row1; r355 @AB in t1.row2; r360 @AB in t1.row3; r365 @AB in t1.row4; r370 @AB in t1.row5; r375 @AB in t1.row6; r380 @AB in t1.row7; r385 @AB in t1.row8 -->
+|{++English Sentences  ++}{r347+346 @AB}|{++Yoruba Sentences (Repeated) ++}{r349+348 @AB}|
 |:-|:-|
-|{++You are the God of awesome wonder ++}{r352 @AB}|{++OniseIyanu ++}{r354 @AB}|
-|{++I have tasted of your power ++}{r357 @AB}|{++OniseIyanu ++}{r359 @AB}|
-|{++You have shown me so much mercy… ++}{r362 @AB}|{++OniseIyanu ++}{r364 @AB}|
-|{++My eyes have seen ++}{r367 @AB}|{++ ++}{r369 @AB}|
-|{++My ears have heard ++}{r372 @AB}|{++ ++}{r374 @AB}|
-|{++Creation bow in awe of you ++}{r377 @AB}|{++ ++}{r379 @AB}|
-|{++The words you speak turn things around ++}{r382 @AB}|{++ ++}{r384 @AB}|
-|{++Your outstretched hands has lifted me ++}{r387 @AB}|{++ ++}{r389 @AB}|
+|{++You are the God of awesome wonder ++}{r352+351 @AB}|{++OniseIyanu ++}{r354+353 @AB}|
+|{++I have tasted of your power ++}{r357+356 @AB}|{++OniseIyanu ++}{r359+358 @AB}|
+|{++You have shown me so much mercy… ++}{r362+361 @AB}|{++OniseIyanu ++}{r364+363 @AB}|
+|{++My eyes have seen ++}{r367+366 @AB}|{++ ++}{r369+368 @AB}|
+|{++My ears have heard ++}{r372+371 @AB}|{++ ++}{r374+373 @AB}|
+|{++Creation bow in awe of you ++}{r377+376 @AB}|{++ ++}{r379+378 @AB}|
+|{++The words you speak turn things around ++}{r382+381 @AB}|{++ ++}{r384+383 @AB}|
+|{++Your outstretched hands has lifted me ++}{r387+386 @AB}|{++ ++}{r389+388 @AB}|
 
 <!-- p162 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ ++}{r391 @AB}¶{r390 @AB}
+{++ ++}{r391+390 @AB}¶{r391+390 @AB}
 
 <!-- p163 -->
-{++Other examples in sentences: ++}{r393 @AB}¶{r392 @AB}
+{++Other examples in sentences: ++}{r393+392 @AB}¶{r393+392 @AB}
 
-<!-- t2 12x4, cells p164-p211 by row, p164-p211 after 0pt line 1.15, widths 1.51in 1.512in 1.512in 0.707in, width 5.24in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t2.row0 t2.row1 t2.row2 t2.row3 t2.row9 t2.row10 t2.row11; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t2.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t2.row5 t2.row6 t2.row7; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t2.row8, break-ins r395 @AB in p164; r397 @AB in p165; r399 @AB in p166; r401 @AB in p167; r404 @AB in p168; r406 @AB in p169; r408 @AB in p170; r410 @AB in p171; r413 @AB in p172; r415 @AB in p173; r417 @AB in p174; r419 @AB in p175; r422 @AB in p176; r424 @AB in p177; r426 @AB in p178; r428 @AB in p179; r431 @AB in p180; r433 @AB in p181; r435 @AB in p182; r437 @AB in p183; r440 @AB in p184; r442 @AB in p185; r444 @AB in p186; r446 @AB in p187; r449 @AB in p188; r451 @AB in p189; r453 @AB in p190; r455 @AB in p191; r458 @AB in p192; r460 @AB in p193; r462 @AB in p194; r464 @AB in p195; r467 @AB in p196; r469 @AB in p197; r471 @AB in p198; r473 @AB in p199; r476 @AB in p200; r478 @AB in p201; r480 @AB in p202; r482 @AB in p203; r485 @AB in p204; r487 @AB in p205; r489 @AB in p206; r491 @AB in p207; r494 @AB in p208; r496 @AB in p209; r498 @AB in p210; r500 @AB in p211, rev r394 @AB in t2.row0; r403 @AB in t2.row1; r412 @AB in t2.row2; r421 @AB in t2.row3; r430 @AB in t2.row4; r439 @AB in t2.row5; r448 @AB in t2.row6; r457 @AB in t2.row7; r466 @AB in t2.row8; r475 @AB in t2.row9; r484 @AB in t2.row10; r493 @AB in t2.row11 -->
-|{++Nouns  ++}{r396 @AB}|{++Verbs  ++}{r398 @AB}|{++Adjectives ++}{r400 @AB}|{++Adverbs ++}{r402 @AB}|
+<!-- t2 12x4, cells p164-p211 by row, p164-p211 after 0pt line 1.15, widths 1.51in 1.512in 1.512in 0.707in, width 5.24in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t2.row0 t2.row1 t2.row2 t2.row3 t2.row9 t2.row10 t2.row11; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t2.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t2.row5 t2.row6 t2.row7; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t2.row8, break-ins r396+395 @AB in p164; r398+397 @AB in p165; r400+399 @AB in p166; r402+401 @AB in p167; r405+404 @AB in p168; r407+406 @AB in p169; r409+408 @AB in p170; r411+410 @AB in p171; r414+413 @AB in p172; r416+415 @AB in p173; r418+417 @AB in p174; r420+419 @AB in p175; r423+422 @AB in p176; r425+424 @AB in p177; r427+426 @AB in p178; r429+428 @AB in p179; r432+431 @AB in p180; r434+433 @AB in p181; r436+435 @AB in p182; r438+437 @AB in p183; r441+440 @AB in p184; r443+442 @AB in p185; r445+444 @AB in p186; r447+446 @AB in p187; r450+449 @AB in p188; r452+451 @AB in p189; r454+453 @AB in p190; r456+455 @AB in p191; r459+458 @AB in p192; r461+460 @AB in p193; r463+462 @AB in p194; r465+464 @AB in p195; r468+467 @AB in p196; r470+469 @AB in p197; r472+471 @AB in p198; r474+473 @AB in p199; r477+476 @AB in p200; r479+478 @AB in p201; r481+480 @AB in p202; r483+482 @AB in p203; r486+485 @AB in p204; r488+487 @AB in p205; r490+489 @AB in p206; r492+491 @AB in p207; r495+494 @AB in p208; r497+496 @AB in p209; r499+498 @AB in p210; r501+500 @AB in p211, rev r394 @AB in t2.row0; r403 @AB in t2.row1; r412 @AB in t2.row2; r421 @AB in t2.row3; r430 @AB in t2.row4; r439 @AB in t2.row5; r448 @AB in t2.row6; r457 @AB in t2.row7; r466 @AB in t2.row8; r475 @AB in t2.row9; r484 @AB in t2.row10; r493 @AB in t2.row11 -->
+|{++Nouns  ++}{r396+395 @AB}|{++Verbs  ++}{r398+397 @AB}|{++Adjectives ++}{r400+399 @AB}|{++Adverbs ++}{r402+401 @AB}|
 |:-|:-|:-|:-|
-|{++God ++}{r405 @AB}|{++Are  ++}{r407 @AB}|{++Awesome ++}{r409 @AB}|{++So ++}{r411 @AB}|
-|{++Power ++}{r414 @AB}|{++Tasted ++}{r416 @AB}|{++Outstretched  ++}{r418 @AB}|{++Much ++}{r420 @AB}|
-|{++Mercy ++}{r423 @AB}|{++Have  ++}{r425 @AB}|{++ ++}{r427 @AB}|{++ ++}{r429 @AB}|
-|{++Wonders  ++}{r432 @AB}|{++Shown  ++}{r434 @AB}|{++ ++}{r436 @AB}|{++ ++}{r438 @AB}|
-|{++Praise  ++}{r441 @AB}|{++Seen  ++}{r443 @AB}|{++ ++}{r445 @AB}|{++ ++}{r447 @AB}|
-|{++Creations  ++}{r450 @AB}|{++Heard  ++}{r452 @AB}|{++ ++}{r454 @AB}|{++ ++}{r456 @AB}|
-|{++Words  ++}{r459 @AB}|{++Bow ++}{r461 @AB}|{++ ++}{r463 @AB}|{++ ++}{r465 @AB}|
-|{++Chains  ++}{r468 @AB}|{++Speak ++}{r470 @AB}|{++ ++}{r472 @AB}|{++ ++}{r474 @AB}|
-|{++Colts  ++}{r477 @AB}|{++Turn ++}{r479 @AB}|{++ ++}{r481 @AB}|{++ ++}{r483 @AB}|
-|{++Things  ++}{r486 @AB}|{++Lifted  ++}{r488 @AB}|{++ ++}{r490 @AB}|{++ ++}{r492 @AB}|
-|{++Arm ++}{r495 @AB}|{++ ++}{r497 @AB}|{++ ++}{r499 @AB}|{++ ++}{r501 @AB}|
+|{++God ++}{r405+404 @AB}|{++Are  ++}{r407+406 @AB}|{++Awesome ++}{r409+408 @AB}|{++So ++}{r411+410 @AB}|
+|{++Power ++}{r414+413 @AB}|{++Tasted ++}{r416+415 @AB}|{++Outstretched  ++}{r418+417 @AB}|{++Much ++}{r420+419 @AB}|
+|{++Mercy ++}{r423+422 @AB}|{++Have  ++}{r425+424 @AB}|{++ ++}{r427+426 @AB}|{++ ++}{r429+428 @AB}|
+|{++Wonders  ++}{r432+431 @AB}|{++Shown  ++}{r434+433 @AB}|{++ ++}{r436+435 @AB}|{++ ++}{r438+437 @AB}|
+|{++Praise  ++}{r441+440 @AB}|{++Seen  ++}{r443+442 @AB}|{++ ++}{r445+444 @AB}|{++ ++}{r447+446 @AB}|
+|{++Creations  ++}{r450+449 @AB}|{++Heard  ++}{r452+451 @AB}|{++ ++}{r454+453 @AB}|{++ ++}{r456+455 @AB}|
+|{++Words  ++}{r459+458 @AB}|{++Bow ++}{r461+460 @AB}|{++ ++}{r463+462 @AB}|{++ ++}{r465+464 @AB}|
+|{++Chains  ++}{r468+467 @AB}|{++Speak ++}{r470+469 @AB}|{++ ++}{r472+471 @AB}|{++ ++}{r474+473 @AB}|
+|{++Colts  ++}{r477+476 @AB}|{++Turn ++}{r479+478 @AB}|{++ ++}{r481+480 @AB}|{++ ++}{r483+482 @AB}|
+|{++Things  ++}{r486+485 @AB}|{++Lifted  ++}{r488+487 @AB}|{++ ++}{r490+489 @AB}|{++ ++}{r492+491 @AB}|
+|{++Arm ++}{r495+494 @AB}|{++ ++}{r497+496 @AB}|{++ ++}{r499+498 @AB}|{++ ++}{r501+500 @AB}|
 
 <!-- p212 left, first-line 0in, left 0in, after 2.75pt, line 1 -->
-{++ ++}{r503 @AB}¶{r502 @AB}
+{++ ++}{r503+502 @AB}¶{r503+502 @AB}
 
 <!-- p213 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Two: “Mai Girma” (Song) by SOLOMON LANGE ++}{r505 @AB}¶{r504 @AB}
+{++Excerpt Two: “Mai Girma” (Song) by SOLOMON LANGE ++}{r505+504 @AB}¶{r505+504 @AB}
 
 <!-- p214 -->
-{++In the second song, the two major languages being code switched are English and Hausa as seen in the first two lines of the song below: ++}{r507 @AB}¶{r506 @AB}
+{++In the second song, the two major languages being code switched are English and Hausa as seen in the first two lines of the song below: ++}{r507+506 @AB}¶{r507+506 @AB}
 
 <!-- p215 -->
-{++I will lift up my voice and sing  ++}{r509 @AB}¶{r508 @AB}
+{++I will lift up my voice and sing  ++}{r509+508 @AB}¶{r509+508 @AB}
 
 <!-- p216 -->
-{++Of the mercies of the Lord  ++}{r511 @AB}¶{r510 @AB}
+{++Of the mercies of the Lord  ++}{r511+510 @AB}¶{r511+510 @AB}
 
 <!-- p217 -->
-{++Mai girma ++}{r513 @AB}¶{r512 @AB}
+{++Mai girma ++}{r513+512 @AB}¶{r513+512 @AB}
 
 <!-- p218 -->
-{++Mai girma ne kai  ++}{r515 @AB}¶{r514 @AB}
+{++Mai girma ne kai  ++}{r515+514 @AB}¶{r515+514 @AB}
 
 <!-- p219 -->
-{++Mai mulkialmasihu ++}{r517 @AB}¶{r516 @AB}
+{++Mai mulkialmasihu ++}{r517+516 @AB}¶{r517+516 @AB}
 
 <!-- p220 -->
-{++Babu wanikamar da kai  ++}{r519 @AB}¶{r518 @AB}
+{++Babu wanikamar da kai  ++}{r519+518 @AB}¶{r519+518 @AB}
 
 <!-- p221 -->
-{++Babu wanikamar da kai  ++}{r521 @AB}¶{r520 @AB}
+{++Babu wanikamar da kai  ++}{r521+520 @AB}¶{r521+520 @AB}
 
 <!-- p222 -->
-{++Mai girmamaigirma ne kai  ++}{r523 @AB}¶{r522 @AB}
+{++Mai girmamaigirma ne kai  ++}{r523+522 @AB}¶{r523+522 @AB}
 
 <!-- p223 -->
-{++Karbasujada ++}{r525 @AB}¶{r524 @AB}
+{++Karbasujada ++}{r525+524 @AB}¶{r525+524 @AB}
 
 <!-- p224 -->
-{++Karbadaukaka ++}{r527 @AB}¶{r526 @AB}
+{++Karbadaukaka ++}{r527+526 @AB}¶{r527+526 @AB}
 
 <!-- p225 -->
-{++Karbayabo o uba ++}{r529 @AB}¶{r528 @AB}
+{++Karbayabo o uba ++}{r529+528 @AB}¶{r529+528 @AB}
 
 <!-- p226 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r531 @AB}¶{r530 @AB}
+{++ ++}{r531+530 @AB}¶{r531+530 @AB}
 
-<!-- t3 9x2, cells p227-p244 by row, p227-p244 after 0pt line 1.15, widths 1.183in 1.113in, width 2.2965in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t3.row0 t3.row1 t3.row8; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t3.row2; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t3.row3 t3.row4 t3.row5 t3.row6; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t3.row7, break-ins r533 @AB in p227; r535 @AB in p228; r538 @AB in p229; r540 @AB in p230; r543 @AB in p231; r545 @AB in p232; r548 @AB in p233; r550 @AB in p234; r553 @AB in p235; r555 @AB in p236; r558 @AB in p237; r560 @AB in p238; r563 @AB in p239; r565 @AB in p240; r568 @AB in p241; r570 @AB in p242; r573 @AB in p243; r575 @AB in p244, rev r532 @AB in t3.row0; r537 @AB in t3.row1; r542 @AB in t3.row2; r547 @AB in t3.row3; r552 @AB in t3.row4; r557 @AB in t3.row5; r562 @AB in t3.row6; r567 @AB in t3.row7; r572 @AB in t3.row8 -->
-|{++English Words  ++}{r534 @AB}|{++Hausa Words ++}{r536 @AB}|
+<!-- t3 9x2, cells p227-p244 by row, p227-p244 after 0pt line 1.15, widths 1.183in 1.113in, width 2.2965in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t3.row0 t3.row1 t3.row8; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t3.row2; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t3.row3 t3.row4 t3.row5 t3.row6; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t3.row7, break-ins r534+533 @AB in p227; r536+535 @AB in p228; r539+538 @AB in p229; r541+540 @AB in p230; r544+543 @AB in p231; r546+545 @AB in p232; r549+548 @AB in p233; r551+550 @AB in p234; r554+553 @AB in p235; r556+555 @AB in p236; r559+558 @AB in p237; r561+560 @AB in p238; r564+563 @AB in p239; r566+565 @AB in p240; r569+568 @AB in p241; r571+570 @AB in p242; r574+573 @AB in p243; r576+575 @AB in p244, rev r532 @AB in t3.row0; r537 @AB in t3.row1; r542 @AB in t3.row2; r547 @AB in t3.row3; r552 @AB in t3.row4; r557 @AB in t3.row5; r562 @AB in t3.row6; r567 @AB in t3.row7; r572 @AB in t3.row8 -->
+|{++English Words  ++}{r534+533 @AB}|{++Hausa Words ++}{r536+535 @AB}|
 |:-|:-|
-|{++I ++}{r539 @AB}|{++Mai ++}{r541 @AB}|
-|{++Will ++}{r544 @AB}|{++Girma ++}{r546 @AB}|
-|{++Lift ++}{r549 @AB}|{++Ne kai ++}{r551 @AB}|
-|{++My ++}{r554 @AB}|{++Mai ++}{r556 @AB}|
-|{++Voice ++}{r559 @AB}|{++Mulki ++}{r561 @AB}|
-|{++Sing ++}{r564 @AB}|{++Babu ++}{r566 @AB}|
-|{++Setting  ++}{r569 @AB}|{++Wani ++}{r571 @AB}|
-|{++Mercies  ++}{r574 @AB}|{++Kamar ++}{r576 @AB}|
+|{++I ++}{r539+538 @AB}|{++Mai ++}{r541+540 @AB}|
+|{++Will ++}{r544+543 @AB}|{++Girma ++}{r546+545 @AB}|
+|{++Lift ++}{r549+548 @AB}|{++Ne kai ++}{r551+550 @AB}|
+|{++My ++}{r554+553 @AB}|{++Mai ++}{r556+555 @AB}|
+|{++Voice ++}{r559+558 @AB}|{++Mulki ++}{r561+560 @AB}|
+|{++Sing ++}{r564+563 @AB}|{++Babu ++}{r566+565 @AB}|
+|{++Setting  ++}{r569+568 @AB}|{++Wani ++}{r571+570 @AB}|
+|{++Mercies  ++}{r574+573 @AB}|{++Kamar ++}{r576+575 @AB}|
 
 <!-- p245 left, first-line 0in, left 0in, after 2.2pt, line 1 -->
-{++ ++}{r578 @AB}¶{r577 @AB}
+{++ ++}{r578+577 @AB}¶{r578+577 @AB}
 
 <!-- p246 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r580 @AB}¶{r579 @AB}
+{++ ++}{r580+579 @AB}¶{r580+579 @AB}
 
 <!-- p247 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ ++}{r582 @AB}¶{r581 @AB}
+{++ ++}{r582+581 @AB}¶{r582+581 @AB}
 
-<!-- t4 5x4, cells p248-p267 by row, p248-p267 after 0pt line 1.15, widths 0.666in 0.62in 0.836in 0.64in, width 2.7625in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t4.row0.cell0 t4.row0.cell1 t4.row1.cell0 t4.row1.cell1 t4.row2.cell0 t4.row2.cell1 t4.row3.cell0 t4.row3.cell1 t4.row4.cell0 t4.row4.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t4.row0.cell2 t4.row1.cell2 t4.row2.cell2 t4.row3.cell2 t4.row4.cell2; top,bottom single 0.5pt 000000 + left,right single 0.375pt 000000 in t4.row0.cell3 t4.row1.cell3 t4.row2.cell3 t4.row3.cell3 t4.row4.cell3, break-ins r584 @AB in p248; r586 @AB in p249; r588 @AB in p250; r590 @AB in p251; r593 @AB in p252; r595 @AB in p253; r597 @AB in p254; r599 @AB in p255; r602 @AB in p256; r604 @AB in p257; r606 @AB in p258; r608 @AB in p259; r611 @AB in p260; r613 @AB in p261; r615 @AB in p262; r617 @AB in p263; r620 @AB in p264; r622 @AB in p265; r624 @AB in p266; r626 @AB in p267, rev r583 @AB in t4.row0; r592 @AB in t4.row1; r601 @AB in t4.row2; r610 @AB in t4.row3; r619 @AB in t4.row4 -->
-|{++Nouns  ++}{r585 @AB}|{++Verbs  ++}{r587 @AB}|{++Adjectives  ++}{r589 @AB}|{++Adverb ++}{r591 @AB}|
+<!-- t4 5x4, cells p248-p267 by row, p248-p267 after 0pt line 1.15, widths 0.666in 0.62in 0.836in 0.64in, width 2.7625in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t4.row0.cell0 t4.row0.cell1 t4.row1.cell0 t4.row1.cell1 t4.row2.cell0 t4.row2.cell1 t4.row3.cell0 t4.row3.cell1 t4.row4.cell0 t4.row4.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t4.row0.cell2 t4.row1.cell2 t4.row2.cell2 t4.row3.cell2 t4.row4.cell2; top,bottom single 0.5pt 000000 + left,right single 0.375pt 000000 in t4.row0.cell3 t4.row1.cell3 t4.row2.cell3 t4.row3.cell3 t4.row4.cell3, break-ins r585+584 @AB in p248; r587+586 @AB in p249; r589+588 @AB in p250; r591+590 @AB in p251; r594+593 @AB in p252; r596+595 @AB in p253; r598+597 @AB in p254; r600+599 @AB in p255; r603+602 @AB in p256; r605+604 @AB in p257; r607+606 @AB in p258; r609+608 @AB in p259; r612+611 @AB in p260; r614+613 @AB in p261; r616+615 @AB in p262; r618+617 @AB in p263; r621+620 @AB in p264; r623+622 @AB in p265; r625+624 @AB in p266; r627+626 @AB in p267, rev r583 @AB in t4.row0; r592 @AB in t4.row1; r601 @AB in t4.row2; r610 @AB in t4.row3; r619 @AB in t4.row4 -->
+|{++Nouns  ++}{r585+584 @AB}|{++Verbs  ++}{r587+586 @AB}|{++Adjectives  ++}{r589+588 @AB}|{++Adverb ++}{r591+590 @AB}|
 |:-|:-|:-|:-|
-|{++Sun ++}{r594 @AB}|{++Rising  ++}{r596 @AB}|{++Nil  ++}{r598 @AB}|{++Nil ++}{r600 @AB}|
-|{++Voice  ++}{r603 @AB}|{++Setting  ++}{r605 @AB}|{++ ++}{r607 @AB}|{++ ++}{r609 @AB}|
-|{++Mercies  ++}{r612 @AB}|{++Will  ++}{r614 @AB}|{++ ++}{r616 @AB}|{++ ++}{r618 @AB}|
-|{++Lord  ++}{r621 @AB}|{++Lift ++}{r623 @AB}|{++ ++}{r625 @AB}|{++ ++}{r627 @AB}|
+|{++Sun ++}{r594+593 @AB}|{++Rising  ++}{r596+595 @AB}|{++Nil  ++}{r598+597 @AB}|{++Nil ++}{r600+599 @AB}|
+|{++Voice  ++}{r603+602 @AB}|{++Setting  ++}{r605+604 @AB}|{++ ++}{r607+606 @AB}|{++ ++}{r609+608 @AB}|
+|{++Mercies  ++}{r612+611 @AB}|{++Will  ++}{r614+613 @AB}|{++ ++}{r616+615 @AB}|{++ ++}{r618+617 @AB}|
+|{++Lord  ++}{r621+620 @AB}|{++Lift ++}{r623+622 @AB}|{++ ++}{r625+624 @AB}|{++ ++}{r627+626 @AB}|
 
 <!-- p268 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r629 @AB}¶{r628 @AB}
+{++ ++}{r629+628 @AB}¶{r629+628 @AB}
 
-<!-- t5 6x2, cells p269-p280 by row, p269-p280 after 0pt line 1.15, widths 1.462in 1.575in, width 3.037in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t5.row0 t5.row1 t5.row2 t5.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t5.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t5.row5, break-ins r631 @AB in p269; r633 @AB in p270; r636 @AB in p271; r638 @AB in p272; r641 @AB in p273; r643 @AB in p274; r646 @AB in p275; r648 @AB in p276; r651 @AB in p277; r653 @AB in p278; r656 @AB in p279; r658 @AB in p280, rev r630 @AB in t5.row0; r635 @AB in t5.row1; r640 @AB in t5.row2; r645 @AB in t5.row3; r650 @AB in t5.row4; r655 @AB in t5.row5 -->
-|{++English Sentence(s) ++}{r632 @AB}|{++Hausa Sentences  ++}{r634 @AB}|
+<!-- t5 6x2, cells p269-p280 by row, p269-p280 after 0pt line 1.15, widths 1.462in 1.575in, width 3.037in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t5.row0 t5.row1 t5.row2 t5.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t5.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t5.row5, break-ins r632+631 @AB in p269; r634+633 @AB in p270; r637+636 @AB in p271; r639+638 @AB in p272; r642+641 @AB in p273; r644+643 @AB in p274; r647+646 @AB in p275; r649+648 @AB in p276; r652+651 @AB in p277; r654+653 @AB in p278; r657+656 @AB in p279; r659+658 @AB in p280, rev r630 @AB in t5.row0; r635 @AB in t5.row1; r640 @AB in t5.row2; r645 @AB in t5.row3; r650 @AB in t5.row4; r655 @AB in t5.row5 -->
+|{++English Sentence(s) ++}{r632+631 @AB}|{++Hausa Sentences  ++}{r634+633 @AB}|
 |:-|:-|
-|{++I will lift ++}{r637 @AB}|{++Babu wanikamar kai ++}{r639 @AB}|
-|{++ ++}{r642 @AB}|{++Karbasujada ++}{r644 @AB}|
-|{++ ++}{r647 @AB}|{++Karbadaukaka ++}{r649 @AB}|
-|{++ ++}{r652 @AB}|{++Karbayaboyau ++}{r654 @AB}|
-|{++ ++}{r657 @AB}|{++Karbasujadayau ++}{r659 @AB}|
+|{++I will lift ++}{r637+636 @AB}|{++Babu wanikamar kai ++}{r639+638 @AB}|
+|{++ ++}{r642+641 @AB}|{++Karbasujada ++}{r644+643 @AB}|
+|{++ ++}{r647+646 @AB}|{++Karbadaukaka ++}{r649+648 @AB}|
+|{++ ++}{r652+651 @AB}|{++Karbayaboyau ++}{r654+653 @AB}|
+|{++ ++}{r657+656 @AB}|{++Karbasujadayau ++}{r659+658 @AB}|
 
 <!-- p281 left, first-line 0in, left 0in, after 0.75pt, line 1.15 -->
-{++ ++}{r661 @AB}¶{r660 @AB}
+{++ ++}{r661+660 @AB}¶{r661+660 @AB}
 
-<!-- t6 3x2, cells p282-p287 by row, p282-p287 after 0pt line 1.15, widths 1.833in 0.926in, width 2.759in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t6.row0.cell0; top,bottom,right single 0.375pt 000000 + left single 0.5pt 000000 in t6.row0.cell1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t6.row1.cell0; top,right single 0.375pt 000000 + left,bottom single 0.5pt 000000 in t6.row1.cell1; top,left,bottom,right single 0.5pt 000000 in t6.row2.cell0; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t6.row2.cell1, break-ins r663 @AB in p282; r665 @AB in p283; r668 @AB in p284; r670 @AB in p285; r673 @AB in p286; r675 @AB in p287, rev r662 @AB in t6.row0; r667 @AB in t6.row1; r672 @AB in t6.row2 -->
-|{++Prepositional phrases  ++}{r664 @AB}|{++Preposition  ++}{r666 @AB}|
+<!-- t6 3x2, cells p282-p287 by row, p282-p287 after 0pt line 1.15, widths 1.833in 0.926in, width 2.759in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t6.row0.cell0; top,bottom,right single 0.375pt 000000 + left single 0.5pt 000000 in t6.row0.cell1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t6.row1.cell0; top,right single 0.375pt 000000 + left,bottom single 0.5pt 000000 in t6.row1.cell1; top,left,bottom,right single 0.5pt 000000 in t6.row2.cell0; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t6.row2.cell1, break-ins r664+663 @AB in p282; r666+665 @AB in p283; r669+668 @AB in p284; r671+670 @AB in p285; r674+673 @AB in p286; r676+675 @AB in p287, rev r662 @AB in t6.row0; r667 @AB in t6.row1; r672 @AB in t6.row2 -->
+|{++Prepositional phrases  ++}{r664+663 @AB}|{++Preposition  ++}{r666+665 @AB}|
 |:-|:-|
-|{++From the rising of the sun  ++}{r669 @AB}|{++From, of  ++}{r671 @AB}|
-|{++To the setting of the same ++}{r674 @AB}|{++To, of  ++}{r676 @AB}|
+|{++From the rising of the sun  ++}{r669+668 @AB}|{++From, of  ++}{r671+670 @AB}|
+|{++To the setting of the same ++}{r674+673 @AB}|{++To, of  ++}{r676+675 @AB}|
 
 <!-- p288 left, first-line 0in, left 0in, line 1 -->
-{++ ++}{r678 @AB}¶{r677 @AB}
+{++ ++}{r678+677 @AB}¶{r678+677 @AB}
 
 <!-- p289 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Three: “My Trust is in You” (song) by DAVID, G.   ++}{r680 @AB}¶{r679 @AB}
+{++Excerpt Three: “My Trust is in You” (song) by DAVID, G.   ++}{r680+679 @AB}¶{r680+679 @AB}
 
 <!-- p290 -->
-{++In the third song, there are four languages that have been switched notably, English, Igbo, Hausa and Yoruba:   ++}{r682 @AB}¶{r681 @AB}
+{++In the third song, there are four languages that have been switched notably, English, Igbo, Hausa and Yoruba:   ++}{r682+681 @AB}¶{r682+681 @AB}
 
 <!-- p291 -->
-{++My trust is in you  ++}{r684 @AB}¶{r683 @AB}
+{++My trust is in you  ++}{r684+683 @AB}¶{r684+683 @AB}
 
 <!-- p292 -->
-{++Oyigiyigi ++}{r686 @AB}¶{r685 @AB}
+{++Oyigiyigi ++}{r686+685 @AB}¶{r686+685 @AB}
 
 <!-- p293 -->
-{++My trust is in you  ++}{r688 @AB}¶{r687 @AB}
+{++My trust is in you  ++}{r688+687 @AB}¶{r688+687 @AB}
 
 <!-- p294 -->
-{++Serikiduniya ++}{r690 @AB}¶{r689 @AB}
+{++Serikiduniya ++}{r690+689 @AB}¶{r690+689 @AB}
 
 <!-- p295 -->
-{++My trust is in you ++}{r692 @AB}¶{r691 @AB}
+{++My trust is in you ++}{r692+691 @AB}¶{r692+691 @AB}
 
 <!-- p296 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r694 @AB}¶{r693 @AB}
+{++ ++}{r694+693 @AB}¶{r694+693 @AB}
 
 <!-- p297 right 3.837in -->
-{++I put them on you  My trust is in you  ++}{r696 @AB}¶{r695 @AB}
+{++I put them on you  My trust is in you  ++}{r696+695 @AB}¶{r696+695 @AB}
 
 <!-- p298 -->
-{++Kabiyeosi o ++}{r698 @AB}¶{r697 @AB}
+{++Kabiyeosi o ++}{r698+697 @AB}¶{r698+697 @AB}
 
 <!-- p299 -->
-{++My trust is in   ++}{r700 @AB}¶{r699 @AB}
+{++My trust is in   ++}{r700+699 @AB}¶{r700+699 @AB}
 
 <!-- p300 left, first-line 0in, left 0in, after 0.8pt, line 1.15 -->
-{++ ++}{r702 @AB}¶{r701 @AB}
+{++ ++}{r702+701 @AB}¶{r702+701 @AB}
 
-<!-- t7 6x4, cells p301-p324 by row, p301-p324 after 0pt line 1.15, widths 1.183in 1.113in 1.111in 1.297in, width 4.705in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t7.row0.cell0 t7.row0.cell1 t7.row1.cell0 t7.row1.cell1 t7.row2.cell0 t7.row2.cell1 t7.row3.cell0 t7.row3.cell1 t7.row4.cell0 t7.row4.cell1 t7.row5.cell0 t7.row5.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t7.row0.cell2 t7.row1.cell2 t7.row2.cell2 t7.row3.cell2 t7.row4.cell2 t7.row5.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t7.row0.cell3 t7.row1.cell3 t7.row2.cell3 t7.row3.cell3 t7.row4.cell3 t7.row5.cell3, break-ins r704 @AB in p301; r706 @AB in p302; r708 @AB in p303; r710 @AB in p304; r713 @AB in p305; r715 @AB in p306; r717 @AB in p307; r719 @AB in p308; r722 @AB in p309; r724 @AB in p310; r726 @AB in p311; r728 @AB in p312; r731 @AB in p313; r733 @AB in p314; r735 @AB in p315; r737 @AB in p316; r740 @AB in p317; r742 @AB in p318; r744 @AB in p319; r746 @AB in p320; r749 @AB in p321; r751 @AB in p322; r753 @AB in p323; r755 @AB in p324, rev r703 @AB in t7.row0; r712 @AB in t7.row1; r721 @AB in t7.row2; r730 @AB in t7.row3; r739 @AB in t7.row4; r748 @AB in t7.row5 -->
-|{++English words  ++}{r705 @AB}|{++Igbo Words ++}{r707 @AB}|{++Hausa words  ++}{r709 @AB}|{++Yoruba Words ++}{r711 @AB}|
+<!-- t7 6x4, cells p301-p324 by row, p301-p324 after 0pt line 1.15, widths 1.183in 1.113in 1.111in 1.297in, width 4.705in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t7.row0.cell0 t7.row0.cell1 t7.row1.cell0 t7.row1.cell1 t7.row2.cell0 t7.row2.cell1 t7.row3.cell0 t7.row3.cell1 t7.row4.cell0 t7.row4.cell1 t7.row5.cell0 t7.row5.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t7.row0.cell2 t7.row1.cell2 t7.row2.cell2 t7.row3.cell2 t7.row4.cell2 t7.row5.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t7.row0.cell3 t7.row1.cell3 t7.row2.cell3 t7.row3.cell3 t7.row4.cell3 t7.row5.cell3, break-ins r705+704 @AB in p301; r707+706 @AB in p302; r709+708 @AB in p303; r711+710 @AB in p304; r714+713 @AB in p305; r716+715 @AB in p306; r718+717 @AB in p307; r720+719 @AB in p308; r723+722 @AB in p309; r725+724 @AB in p310; r727+726 @AB in p311; r729+728 @AB in p312; r732+731 @AB in p313; r734+733 @AB in p314; r736+735 @AB in p315; r738+737 @AB in p316; r741+740 @AB in p317; r743+742 @AB in p318; r745+744 @AB in p319; r747+746 @AB in p320; r750+749 @AB in p321; r752+751 @AB in p322; r754+753 @AB in p323; r756+755 @AB in p324, rev r703 @AB in t7.row0; r712 @AB in t7.row1; r721 @AB in t7.row2; r730 @AB in t7.row3; r739 @AB in t7.row4; r748 @AB in t7.row5 -->
+|{++English words  ++}{r705+704 @AB}|{++Igbo Words ++}{r707+706 @AB}|{++Hausa words  ++}{r709+708 @AB}|{++Yoruba Words ++}{r711+710 @AB}|
 |:-|:-|:-|:-|
-|{++My ++}{r714 @AB}|{++Isi  ++}{r716 @AB}|{++Seriki ++}{r718 @AB}|{++Kabiyeosi ++}{r720 @AB}|
-|{++Trust  ++}{r723 @AB}|{++Iyi ++}{r725 @AB}|{++Duniya ++}{r727 @AB}|{++Oyigi ++}{r729 @AB}|
-|{++Put  ++}{r732 @AB}|{++Nke ++}{r734 @AB}|{++ ++}{r736 @AB}|{++Yigi ++}{r738 @AB}|
-|{++Them  ++}{r741 @AB}|{++Du ++}{r743 @AB}|{++ ++}{r745 @AB}|{++ ++}{r747 @AB}|
-|{++On  ++}{r750 @AB}|{++ ++}{r752 @AB}|{++ ++}{r754 @AB}|{++ ++}{r756 @AB}|
+|{++My ++}{r714+713 @AB}|{++Isi  ++}{r716+715 @AB}|{++Seriki ++}{r718+717 @AB}|{++Kabiyeosi ++}{r720+719 @AB}|
+|{++Trust  ++}{r723+722 @AB}|{++Iyi ++}{r725+724 @AB}|{++Duniya ++}{r727+726 @AB}|{++Oyigi ++}{r729+728 @AB}|
+|{++Put  ++}{r732+731 @AB}|{++Nke ++}{r734+733 @AB}|{++ ++}{r736+735 @AB}|{++Yigi ++}{r738+737 @AB}|
+|{++Them  ++}{r741+740 @AB}|{++Du ++}{r743+742 @AB}|{++ ++}{r745+744 @AB}|{++ ++}{r747+746 @AB}|
+|{++On  ++}{r750+749 @AB}|{++ ++}{r752+751 @AB}|{++ ++}{r754+753 @AB}|{++ ++}{r756+755 @AB}|
 
 <!-- p325 left, first-line 0in, left 0in, after 0.3pt, line 1.15 -->
-{++ ++}{r758 @AB}¶{r757 @AB}
+{++ ++}{r758+757 @AB}¶{r758+757 @AB}
 
-<!-- t8 11x4, cells p326-p369 by row, p326-p369 after 0pt line 1.15, widths 0.7194in 0.557in 0.839in 0.736in, width 2.8514in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t8.row0.cell0 t8.row0.cell1 t8.row1.cell0 t8.row1.cell1 t8.row2.cell0 t8.row2.cell1 t8.row3.cell0 t8.row3.cell1 t8.row4.cell0 t8.row4.cell1 t8.row5.cell0 t8.row5.cell1 t8.row6.cell0 t8.row6.cell1 t8.row7.cell0 t8.row7.cell1 t8.row8.cell0 t8.row8.cell1 t8.row9.cell0 t8.row9.cell1 t8.row10.cell0 t8.row10.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t8.row0.cell2 t8.row1.cell2 t8.row2.cell2 t8.row3.cell2 t8.row4.cell2 t8.row5.cell2 t8.row6.cell2 t8.row7.cell2 t8.row8.cell2 t8.row9.cell2 t8.row10.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t8.row0.cell3 t8.row1.cell3 t8.row2.cell3 t8.row3.cell3 t8.row4.cell3 t8.row5.cell3 t8.row6.cell3 t8.row7.cell3 t8.row8.cell3 t8.row9.cell3 t8.row10.cell3, break-ins r760 @AB in p326; r762 @AB in p327; r764 @AB in p328; r766 @AB in p329; r769 @AB in p330; r771 @AB in p331; r773 @AB in p332; r775 @AB in p333; r778 @AB in p334; r780 @AB in p335; r782 @AB in p336; r784 @AB in p337; r787 @AB in p338; r789 @AB in p339; r791 @AB in p340; r793 @AB in p341; r796 @AB in p342; r798 @AB in p343; r800 @AB in p344; r802 @AB in p345; r805 @AB in p346; r807 @AB in p347; r809 @AB in p348; r811 @AB in p349; r814 @AB in p350; r816 @AB in p351; r818 @AB in p352; r820 @AB in p353; r823 @AB in p354; r825 @AB in p355; r827 @AB in p356; r829 @AB in p357; r832 @AB in p358; r834 @AB in p359; r836 @AB in p360; r838 @AB in p361; r841 @AB in p362; r843 @AB in p363; r845 @AB in p364; r847 @AB in p365; r850 @AB in p366; r852 @AB in p367; r854 @AB in p368; r856 @AB in p369, rev r759 @AB in t8.row0; r768 @AB in t8.row1; r777 @AB in t8.row2; r786 @AB in t8.row3; r795 @AB in t8.row4; r804 @AB in t8.row5; r813 @AB in t8.row6; r822 @AB in t8.row7; r831 @AB in t8.row8; r840 @AB in t8.row9; r849 @AB in t8.row10 -->
-|{++Nouns  ++}{r761 @AB}|{++Verbs ++}{r763 @AB}|{++Adjectives  ++}{r765 @AB}|{++Adverbs  ++}{r767 @AB}|
+<!-- t8 11x4, cells p326-p369 by row, p326-p369 after 0pt line 1.15, widths 0.7194in 0.557in 0.839in 0.736in, width 2.8514in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t8.row0.cell0 t8.row0.cell1 t8.row1.cell0 t8.row1.cell1 t8.row2.cell0 t8.row2.cell1 t8.row3.cell0 t8.row3.cell1 t8.row4.cell0 t8.row4.cell1 t8.row5.cell0 t8.row5.cell1 t8.row6.cell0 t8.row6.cell1 t8.row7.cell0 t8.row7.cell1 t8.row8.cell0 t8.row8.cell1 t8.row9.cell0 t8.row9.cell1 t8.row10.cell0 t8.row10.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t8.row0.cell2 t8.row1.cell2 t8.row2.cell2 t8.row3.cell2 t8.row4.cell2 t8.row5.cell2 t8.row6.cell2 t8.row7.cell2 t8.row8.cell2 t8.row9.cell2 t8.row10.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t8.row0.cell3 t8.row1.cell3 t8.row2.cell3 t8.row3.cell3 t8.row4.cell3 t8.row5.cell3 t8.row6.cell3 t8.row7.cell3 t8.row8.cell3 t8.row9.cell3 t8.row10.cell3, break-ins r761+760 @AB in p326; r763+762 @AB in p327; r765+764 @AB in p328; r767+766 @AB in p329; r770+769 @AB in p330; r772+771 @AB in p331; r774+773 @AB in p332; r776+775 @AB in p333; r779+778 @AB in p334; r781+780 @AB in p335; r783+782 @AB in p336; r785+784 @AB in p337; r788+787 @AB in p338; r790+789 @AB in p339; r792+791 @AB in p340; r794+793 @AB in p341; r797+796 @AB in p342; r799+798 @AB in p343; r801+800 @AB in p344; r803+802 @AB in p345; r806+805 @AB in p346; r808+807 @AB in p347; r810+809 @AB in p348; r812+811 @AB in p349; r815+814 @AB in p350; r817+816 @AB in p351; r819+818 @AB in p352; r821+820 @AB in p353; r824+823 @AB in p354; r826+825 @AB in p355; r828+827 @AB in p356; r830+829 @AB in p357; r833+832 @AB in p358; r835+834 @AB in p359; r837+836 @AB in p360; r839+838 @AB in p361; r842+841 @AB in p362; r844+843 @AB in p363; r846+845 @AB in p364; r848+847 @AB in p365; r851+850 @AB in p366; r853+852 @AB in p367; r855+854 @AB in p368; r857+856 @AB in p369, rev r759 @AB in t8.row0; r768 @AB in t8.row1; r777 @AB in t8.row2; r786 @AB in t8.row3; r795 @AB in t8.row4; r804 @AB in t8.row5; r813 @AB in t8.row6; r822 @AB in t8.row7; r831 @AB in t8.row8; r840 @AB in t8.row9; r849 @AB in t8.row10 -->
+|{++Nouns  ++}{r761+760 @AB}|{++Verbs ++}{r763+762 @AB}|{++Adjectives  ++}{r765+764 @AB}|{++Adverbs  ++}{r767+766 @AB}|
 |:-|:-|:-|:-|
-|{++Lion  ++}{r770 @AB}|{++Is  ++}{r772 @AB}|{++Ancient  ++}{r774 @AB}|{++Nil  ++}{r776 @AB}|
-|{++Judge  ++}{r779 @AB}|{++Am ++}{r781 @AB}|{++Miracle  ++}{r783 @AB}|{++Nil  ++}{r785 @AB}|
-|{++Days  ++}{r788 @AB}|{++Put ++}{r790 @AB}|{++ ++}{r792 @AB}|{++ ++}{r794 @AB}|
-|{++Valley  ++}{r797 @AB}|{++ ++}{r799 @AB}|{++ ++}{r801 @AB}|{++ ++}{r803 @AB}|
-|{++Lilly  ++}{r806 @AB}|{++ ++}{r808 @AB}|{++ ++}{r810 @AB}|{++ ++}{r812 @AB}|
-|{++Master ++}{r815 @AB}|{++ ++}{r817 @AB}|{++ ++}{r819 @AB}|{++ ++}{r821 @AB}|
-|{++Universe  ++}{r824 @AB}|{++ ++}{r826 @AB}|{++ ++}{r828 @AB}|{++ ++}{r830 @AB}|
-|{++King  ++}{r833 @AB}|{++ ++}{r835 @AB}|{++ ++}{r837 @AB}|{++ ++}{r839 @AB}|
-|{++Father  ++}{r842 @AB}|{++ ++}{r844 @AB}|{++ ++}{r846 @AB}|{++ ++}{r848 @AB}|
-|{++Worker  ++}{r851 @AB}|{++ ++}{r853 @AB}|{++ ++}{r855 @AB}|{++ ++}{r857 @AB}|
+|{++Lion  ++}{r770+769 @AB}|{++Is  ++}{r772+771 @AB}|{++Ancient  ++}{r774+773 @AB}|{++Nil  ++}{r776+775 @AB}|
+|{++Judge  ++}{r779+778 @AB}|{++Am ++}{r781+780 @AB}|{++Miracle  ++}{r783+782 @AB}|{++Nil  ++}{r785+784 @AB}|
+|{++Days  ++}{r788+787 @AB}|{++Put ++}{r790+789 @AB}|{++ ++}{r792+791 @AB}|{++ ++}{r794+793 @AB}|
+|{++Valley  ++}{r797+796 @AB}|{++ ++}{r799+798 @AB}|{++ ++}{r801+800 @AB}|{++ ++}{r803+802 @AB}|
+|{++Lilly  ++}{r806+805 @AB}|{++ ++}{r808+807 @AB}|{++ ++}{r810+809 @AB}|{++ ++}{r812+811 @AB}|
+|{++Master ++}{r815+814 @AB}|{++ ++}{r817+816 @AB}|{++ ++}{r819+818 @AB}|{++ ++}{r821+820 @AB}|
+|{++Universe  ++}{r824+823 @AB}|{++ ++}{r826+825 @AB}|{++ ++}{r828+827 @AB}|{++ ++}{r830+829 @AB}|
+|{++King  ++}{r833+832 @AB}|{++ ++}{r835+834 @AB}|{++ ++}{r837+836 @AB}|{++ ++}{r839+838 @AB}|
+|{++Father  ++}{r842+841 @AB}|{++ ++}{r844+843 @AB}|{++ ++}{r846+845 @AB}|{++ ++}{r848+847 @AB}|
+|{++Worker  ++}{r851+850 @AB}|{++ ++}{r853+852 @AB}|{++ ++}{r855+854 @AB}|{++ ++}{r857+856 @AB}|
 
 <!-- p370 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r859 @AB}¶{r858 @AB}
+{++ ++}{r859+858 @AB}¶{r859+858 @AB}
 
 <!-- p371 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Four: “ArugboOjo” (song) by MINISTER KENN  ++}{r861 @AB}¶{r860 @AB}
+{++Excerpt Four: “ArugboOjo” (song) by MINISTER KENN  ++}{r861+860 @AB}¶{r861+860 @AB}
 
 <!-- p372 -->
-{++In the fourth song, also, two languages have been code switched. Consider the extracts below:   ++}{r863 @AB}¶{r862 @AB}
+{++In the fourth song, also, two languages have been code switched. Consider the extracts below:   ++}{r863+862 @AB}¶{r863+862 @AB}
 
 <!-- p373 -->
-{++The heavens declare your power and royalty ++}{r865 @AB}¶{r864 @AB}
+{++The heavens declare your power and royalty ++}{r865+864 @AB}¶{r865+864 @AB}
 
 <!-- p374 -->
-{++Lord you reign  ++}{r867 @AB}¶{r866 @AB}
+{++Lord you reign  ++}{r867+866 @AB}¶{r867+866 @AB}
 
 <!-- p375 -->
-{++King of all ages ++}{r869 @AB}¶{r868 @AB}
+{++King of all ages ++}{r869+868 @AB}¶{r869+868 @AB}
 
 <!-- p376 -->
-{++You are the ancient of days ++}{r871 @AB}¶{r870 @AB}
+{++You are the ancient of days ++}{r871+870 @AB}¶{r871+870 @AB}
 
 <!-- p377 -->
-{++Lord you reign  ++}{r873 @AB}¶{r872 @AB}
+{++Lord you reign  ++}{r873+872 @AB}¶{r873+872 @AB}
 
 <!-- p378 -->
-{++Your throne is established justice and righteousness ++}{r875 @AB}¶{r874 @AB}
+{++Your throne is established justice and righteousness ++}{r875+874 @AB}¶{r875+874 @AB}
 
 <!-- p379 -->
-{++Lord you reign ++}{r877 @AB}¶{r876 @AB}
+{++Lord you reign ++}{r877+876 @AB}¶{r877+876 @AB}
 
 <!-- p380 -->
-{++Great are you lord and greatly to be praised  ++}{r879 @AB}¶{r878 @AB}
+{++Great are you lord and greatly to be praised  ++}{r879+878 @AB}¶{r879+878 @AB}
 
 <!-- p381 -->
-{++Lord you reign  ++}{r881 @AB}¶{r880 @AB}
+{++Lord you reign  ++}{r881+880 @AB}¶{r881+880 @AB}
 
 <!-- p382 -->
-{++ArugboOjo (2x)  ++}{r883 @AB}¶{r882 @AB}
+{++ArugboOjo (2x)  ++}{r883+882 @AB}¶{r883+882 @AB}
 
 <!-- p383 -->
-{++(The Ancient of Days) ++}{r885 @AB}¶{r884 @AB}
+{++(The Ancient of Days) ++}{r885+884 @AB}¶{r885+884 @AB}
 
 <!-- p384 -->
-{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{r887 @AB}¶{r886 @AB}
+{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{r887+886 @AB}¶{r887+886 @AB}
 
 <!-- p385 -->
-{++(You are the creator of all creatures, He who knows the created) ++}{r889 @AB}¶{r888 @AB}
+{++(You are the creator of all creatures, He who knows the created) ++}{r889+888 @AB}¶{r889+888 @AB}
 
 <!-- p386 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r891 @AB}¶{r890 @AB}
+{++ ++}{r891+890 @AB}¶{r891+890 @AB}
 
 <!-- p387 -->
-{++ArugboOjo (2x) ++}{r893 @AB}¶{r892 @AB}
+{++ArugboOjo (2x) ++}{r893+892 @AB}¶{r893+892 @AB}
 
 <!-- p388 -->
-{++Iwo l’oniiyin, kaabo, kaabo ++}{r895 @AB}¶{r894 @AB}
+{++Iwo l’oniiyin, kaabo, kaabo ++}{r895+894 @AB}¶{r895+894 @AB}
 
 <!-- p389 -->
-{++(He who knows the created) ++}{r897 @AB}¶{r896 @AB}
+{++(He who knows the created) ++}{r897+896 @AB}¶{r897+896 @AB}
 
 <!-- p390 left, first-line 0in, left 0in, after 0.4pt, line 1.15 -->
-{++ ++}{r899 @AB}¶{r898 @AB}
+{++ ++}{r899+898 @AB}¶{r899+898 @AB}
 
-<!-- t9 6x2, cells p391-p402 by row, p391-p402 after 0pt line 1.15, widths 1.183in 1.205in, width 2.388in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t9.row0 t9.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t9.row2; top,left,bottom,right single 0.5pt 000000 in t9.row3 t9.row4 t9.row5, break-ins r901 @AB in p391; r903 @AB in p392; r906 @AB in p393; r908 @AB in p394; r911 @AB in p395; r913 @AB in p396; r916 @AB in p397; r918 @AB in p398; r921 @AB in p399; r923 @AB in p400; r926 @AB in p401; r928 @AB in p402, rev r900 @AB in t9.row0; r905 @AB in t9.row1; r910 @AB in t9.row2; r915 @AB in t9.row3; r920 @AB in t9.row4; r925 @AB in t9.row5 -->
-|{++English Words  ++}{r902 @AB}|{++Yoruba Words ++}{r904 @AB}|
+<!-- t9 6x2, cells p391-p402 by row, p391-p402 after 0pt line 1.15, widths 1.183in 1.205in, width 2.388in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t9.row0 t9.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t9.row2; top,left,bottom,right single 0.5pt 000000 in t9.row3 t9.row4 t9.row5, break-ins r902+901 @AB in p391; r904+903 @AB in p392; r907+906 @AB in p393; r909+908 @AB in p394; r912+911 @AB in p395; r914+913 @AB in p396; r917+916 @AB in p397; r919+918 @AB in p398; r922+921 @AB in p399; r924+923 @AB in p400; r927+926 @AB in p401; r929+928 @AB in p402, rev r900 @AB in t9.row0; r905 @AB in t9.row1; r910 @AB in t9.row2; r915 @AB in t9.row3; r920 @AB in t9.row4; r925 @AB in t9.row5 -->
+|{++English Words  ++}{r902+901 @AB}|{++Yoruba Words ++}{r904+903 @AB}|
 |:-|:-|
-|{++Heavens  ++}{r907 @AB}|{++Iwo  ++}{r909 @AB}|
-|{++You  ++}{r912 @AB}|{++L’aseda ++}{r914 @AB}|
-|{++Reign  ++}{r917 @AB}|{++Anugbo ++}{r919 @AB}|
-|{++Lord  ++}{r922 @AB}|{++Kaabo ++}{r924 @AB}|
-|{++Ages  ++}{r927 @AB}|{++ ++}{r929 @AB}|
+|{++Heavens  ++}{r907+906 @AB}|{++Iwo  ++}{r909+908 @AB}|
+|{++You  ++}{r912+911 @AB}|{++L’aseda ++}{r914+913 @AB}|
+|{++Reign  ++}{r917+916 @AB}|{++Anugbo ++}{r919+918 @AB}|
+|{++Lord  ++}{r922+921 @AB}|{++Kaabo ++}{r924+923 @AB}|
+|{++Ages  ++}{r927+926 @AB}|{++ ++}{r929+928 @AB}|
 
 <!-- p403 left, first-line 0in, left 0in, after 2.4pt, line 1 -->
-{++ ++}{r931 @AB}¶{r930 @AB}
+{++ ++}{r931+930 @AB}¶{r931+930 @AB}
 
 <!-- p404 left, first-line 0in, left 0in, after 0.3pt, line 1.15 -->
-{++ ++}{r933 @AB}¶{r932 @AB}
+{++ ++}{r933+932 @AB}¶{r933+932 @AB}
 
-<!-- t10 9x4, cells p405-p440 by row, p405-p440 after 0pt line 1.15, widths 0.8035in 1.008in 1.071in 0.712in, width 3.5944in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t10.row0.cell0 t10.row0.cell1 t10.row0.cell2 t10.row1.cell0 t10.row1.cell1 t10.row1.cell2 t10.row2.cell0 t10.row2.cell1 t10.row2.cell2 t10.row3.cell0 t10.row3.cell1 t10.row3.cell2 t10.row4.cell0 t10.row4.cell1 t10.row4.cell2 t10.row5.cell0 t10.row5.cell1 t10.row5.cell2 t10.row6.cell0 t10.row6.cell1 t10.row6.cell2 t10.row7.cell0 t10.row7.cell1 t10.row7.cell2 t10.row8.cell0 t10.row8.cell1 t10.row8.cell2; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t10.row0.cell3 t10.row1.cell3 t10.row2.cell3 t10.row3.cell3 t10.row4.cell3 t10.row5.cell3 t10.row6.cell3 t10.row7.cell3 t10.row8.cell3, break-ins r935 @AB in p405; r937 @AB in p406; r939 @AB in p407; r941 @AB in p408; r944 @AB in p409; r946 @AB in p410; r948 @AB in p411; r950 @AB in p412; r953 @AB in p413; r955 @AB in p414; r957 @AB in p415; r959 @AB in p416; r962 @AB in p417; r964 @AB in p418; r966 @AB in p419; r968 @AB in p420; r971 @AB in p421; r973 @AB in p422; r975 @AB in p423; r977 @AB in p424; r980 @AB in p425; r982 @AB in p426; r984 @AB in p427; r986 @AB in p428; r989 @AB in p429; r991 @AB in p430; r993 @AB in p431; r995 @AB in p432; r998 @AB in p433; r1000 @AB in p434; r1002 @AB in p435; r1004 @AB in p436; r1007 @AB in p437; r1009 @AB in p438; r1011 @AB in p439; r1013 @AB in p440, rev r934 @AB in t10.row0; r943 @AB in t10.row1; r952 @AB in t10.row2; r961 @AB in t10.row3; r970 @AB in t10.row4; r979 @AB in t10.row5; r988 @AB in t10.row6; r997 @AB in t10.row7; r1006 @AB in t10.row8 -->
-|{++Nouns  ++}{r936 @AB}|{++Verbs  ++}{r938 @AB}|{++Adjectives  ++}{r940 @AB}|{++Adverbs  ++}{r942 @AB}|
+<!-- t10 9x4, cells p405-p440 by row, p405-p440 after 0pt line 1.15, widths 0.8035in 1.008in 1.071in 0.712in, width 3.5944in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t10.row0.cell0 t10.row0.cell1 t10.row0.cell2 t10.row1.cell0 t10.row1.cell1 t10.row1.cell2 t10.row2.cell0 t10.row2.cell1 t10.row2.cell2 t10.row3.cell0 t10.row3.cell1 t10.row3.cell2 t10.row4.cell0 t10.row4.cell1 t10.row4.cell2 t10.row5.cell0 t10.row5.cell1 t10.row5.cell2 t10.row6.cell0 t10.row6.cell1 t10.row6.cell2 t10.row7.cell0 t10.row7.cell1 t10.row7.cell2 t10.row8.cell0 t10.row8.cell1 t10.row8.cell2; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t10.row0.cell3 t10.row1.cell3 t10.row2.cell3 t10.row3.cell3 t10.row4.cell3 t10.row5.cell3 t10.row6.cell3 t10.row7.cell3 t10.row8.cell3, break-ins r936+935 @AB in p405; r938+937 @AB in p406; r940+939 @AB in p407; r942+941 @AB in p408; r945+944 @AB in p409; r947+946 @AB in p410; r949+948 @AB in p411; r951+950 @AB in p412; r954+953 @AB in p413; r956+955 @AB in p414; r958+957 @AB in p415; r960+959 @AB in p416; r963+962 @AB in p417; r965+964 @AB in p418; r967+966 @AB in p419; r969+968 @AB in p420; r972+971 @AB in p421; r974+973 @AB in p422; r976+975 @AB in p423; r978+977 @AB in p424; r981+980 @AB in p425; r983+982 @AB in p426; r985+984 @AB in p427; r987+986 @AB in p428; r990+989 @AB in p429; r992+991 @AB in p430; r994+993 @AB in p431; r996+995 @AB in p432; r999+998 @AB in p433; r1001+1000 @AB in p434; r1003+1002 @AB in p435; r1005+1004 @AB in p436; r1008+1007 @AB in p437; r1010+1009 @AB in p438; r1012+1011 @AB in p439; r1014+1013 @AB in p440, rev r934 @AB in t10.row0; r943 @AB in t10.row1; r952 @AB in t10.row2; r961 @AB in t10.row3; r970 @AB in t10.row4; r979 @AB in t10.row5; r988 @AB in t10.row6; r997 @AB in t10.row7; r1006 @AB in t10.row8 -->
+|{++Nouns  ++}{r936+935 @AB}|{++Verbs  ++}{r938+937 @AB}|{++Adjectives  ++}{r940+939 @AB}|{++Adverbs  ++}{r942+941 @AB}|
 |:-|:-|:-|:-|
-|{++Heavens  ++}{r945 @AB}|{++Praised  ++}{r947 @AB}|{++Holy ++}{r949 @AB}|{++greatly ++}{r951 @AB}|
-|{++Power  ++}{r954 @AB}|{++Declare  ++}{r956 @AB}|{++Righteousness  ++}{r958 @AB}|{++ ++}{r960 @AB}|
-|{++Royalty ++}{r963 @AB}|{++Reign  ++}{r965 @AB}|{++Justice  ++}{r967 @AB}|{++ ++}{r969 @AB}|
-|{++King  ++}{r972 @AB}|{++Are  ++}{r974 @AB}|{++Majesty  ++}{r976 @AB}|{++ ++}{r978 @AB}|
-|{++Lord  ++}{r981 @AB}|{++Is  ++}{r983 @AB}|{++ ++}{r985 @AB}|{++ ++}{r987 @AB}|
-|{++Throne  ++}{r990 @AB}|{++Established  ++}{r992 @AB}|{++ ++}{r994 @AB}|{++ ++}{r996 @AB}|
-|{++God  ++}{r999 @AB}|{++Cry ++}{r1001 @AB}|{++ ++}{r1003 @AB}|{++ ++}{r1005 @AB}|
-|{++Place  ++}{r1008 @AB}|{++Fill  ++}{r1010 @AB}|{++ ++}{r1012 @AB}|{++ ++}{r1014 @AB}|
+|{++Heavens  ++}{r945+944 @AB}|{++Praised  ++}{r947+946 @AB}|{++Holy ++}{r949+948 @AB}|{++greatly ++}{r951+950 @AB}|
+|{++Power  ++}{r954+953 @AB}|{++Declare  ++}{r956+955 @AB}|{++Righteousness  ++}{r958+957 @AB}|{++ ++}{r960+959 @AB}|
+|{++Royalty ++}{r963+962 @AB}|{++Reign  ++}{r965+964 @AB}|{++Justice  ++}{r967+966 @AB}|{++ ++}{r969+968 @AB}|
+|{++King  ++}{r972+971 @AB}|{++Are  ++}{r974+973 @AB}|{++Majesty  ++}{r976+975 @AB}|{++ ++}{r978+977 @AB}|
+|{++Lord  ++}{r981+980 @AB}|{++Is  ++}{r983+982 @AB}|{++ ++}{r985+984 @AB}|{++ ++}{r987+986 @AB}|
+|{++Throne  ++}{r990+989 @AB}|{++Established  ++}{r992+991 @AB}|{++ ++}{r994+993 @AB}|{++ ++}{r996+995 @AB}|
+|{++God  ++}{r999+998 @AB}|{++Cry ++}{r1001+1000 @AB}|{++ ++}{r1003+1002 @AB}|{++ ++}{r1005+1004 @AB}|
+|{++Place  ++}{r1008+1007 @AB}|{++Fill  ++}{r1010+1009 @AB}|{++ ++}{r1012+1011 @AB}|{++ ++}{r1014+1013 @AB}|
 
 <!-- p441 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1016 @AB}¶{r1015 @AB}
+{++ ++}{r1016+1015 @AB}¶{r1016+1015 @AB}
 
 <!-- p442 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1018 @AB}¶{r1017 @AB}
+{++ ++}{r1018+1017 @AB}¶{r1018+1017 @AB}
 
 <!-- p443 left, first-line 0in, left 0in, after 0.45pt, line 1.15 -->
-{++ ++}{r1020 @AB}¶{r1019 @AB}
+{++ ++}{r1020+1019 @AB}¶{r1020+1019 @AB}
 
-<!-- t11 4x2, cells t11.row0 p444-p445 t11.row1 p446-p450 t11.row2 p451-p454 t11.row3 p455-p458, p444-p445 after 0pt line 1.15, p446 after 2.1pt line 1, p447 line 1, p448 after 0pt line 1.15, p449 line 1, p450 after 0pt line 1.15, p451 after 2.8pt line 0.975, p452 after 0pt line 1.15, p453 line 1, p454 after 0pt line 1.15, p455 line 1, p456 after 0pt line 1.15, p457 line 1, p458 after 0pt line 1.15, widths 2.69in 2.6965in, width 5.387in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t11.row0; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t11.row1 t11.row3; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t11.row2, break-ins r1022 @AB in p444; r1024 @AB in p445; r1027 @AB in p446; r1029 @AB in p447; r1031 @AB in p448; r1033 @AB in p449; r1035 @AB in p450; r1038 @AB in p451; r1040 @AB in p452; r1042 @AB in p453; r1044 @AB in p454; r1047 @AB in p455; r1049 @AB in p456; r1051 @AB in p457; r1053 @AB in p458, rev r1021 @AB in t11.row0; r1026 @AB in t11.row1; r1037 @AB in t11.row2; r1046 @AB in t11.row3 -->
-|{++English Sentences  ++}{r1023 @AB}|{++Yoruba sentences  ++}{r1025 @AB}|
+<!-- t11 4x2, cells t11.row0 p444-p445 t11.row1 p446-p450 t11.row2 p451-p454 t11.row3 p455-p458, p444-p445 after 0pt line 1.15, p446 after 2.1pt line 1, p447 line 1, p448 after 0pt line 1.15, p449 line 1, p450 after 0pt line 1.15, p451 after 2.8pt line 0.975, p452 after 0pt line 1.15, p453 line 1, p454 after 0pt line 1.15, p455 line 1, p456 after 0pt line 1.15, p457 line 1, p458 after 0pt line 1.15, widths 2.69in 2.6965in, width 5.387in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t11.row0; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t11.row1 t11.row3; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t11.row2, break-ins r1023+1022 @AB in p444; r1025+1024 @AB in p445; r1028+1027 @AB in p446; r1030+1029 @AB in p447; r1032+1031 @AB in p448; r1034+1033 @AB in p449; r1036+1035 @AB in p450; r1039+1038 @AB in p451; r1041+1040 @AB in p452; r1043+1042 @AB in p453; r1045+1044 @AB in p454; r1048+1047 @AB in p455; r1050+1049 @AB in p456; r1052+1051 @AB in p457; r1054+1053 @AB in p458, rev r1021 @AB in t11.row0; r1026 @AB in t11.row1; r1037 @AB in t11.row2; r1046 @AB in t11.row3 -->
+|{++English Sentences  ++}{r1023+1022 @AB}|{++Yoruba sentences  ++}{r1025+1024 @AB}|
 |:-|:-|
-|{++He who all praise belongs to, we ++}{r1028 @AB}{++<br>welcome you in ++}{r1030 @AB}{++<br> ++}{r1032 @AB}|{++Iwo l’oniiyin, kaabo, kaabo ++}{r1034 @AB}{++<br> ++}{r1036 @AB}|
-|{++You are the creator of all creatures, He who knows the created ++}{r1039 @AB}{++<br> ++}{r1041 @AB}|{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{r1043 @AB}{++<br> ++}{r1045 @AB}|
-|{++He who knows the created ++}{r1048 @AB}{++<br> ++}{r1050 @AB}|{++Iwo l’oniiyin, kaabo, kaabo ++}{r1052 @AB}{++<br> ++}{r1054 @AB}|
+|{++He who all praise belongs to, we ++}{r1028+1027 @AB}{++<br>welcome you in ++}{r1030+1029 @AB}{++<br> ++}{r1032+1031 @AB}|{++Iwo l’oniiyin, kaabo, kaabo ++}{r1034+1033 @AB}{++<br> ++}{r1036+1035 @AB}|
+|{++You are the creator of all creatures, He who knows the created ++}{r1039+1038 @AB}{++<br> ++}{r1041+1040 @AB}|{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{r1043+1042 @AB}{++<br> ++}{r1045+1044 @AB}|
+|{++He who knows the created ++}{r1048+1047 @AB}{++<br> ++}{r1050+1049 @AB}|{++Iwo l’oniiyin, kaabo, kaabo ++}{r1052+1051 @AB}{++<br> ++}{r1054+1053 @AB}|
 
 <!-- p459 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1056 @AB}¶{r1055 @AB}
+{++ ++}{r1056+1055 @AB}¶{r1056+1055 @AB}
 
 <!-- p460 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt five: “Who am I” (song) by NOELLA ++}{r1058 @AB}¶{r1057 @AB}
+{++Excerpt five: “Who am I” (song) by NOELLA ++}{r1058+1057 @AB}¶{r1058+1057 @AB}
 
 <!-- p461 left, right 0.668in, after 2.5pt, line 0.975 -->
-{++The fifth songcontains the three languages: English, Idoma and Hausa:   You will not suffer my foot to be moved I carry your presence everywhere! ++}{r1060 @AB}¶{r1059 @AB}
+{++The fifth songcontains the three languages: English, Idoma and Hausa:   You will not suffer my foot to be moved I carry your presence everywhere! ++}{r1060+1059 @AB}¶{r1060+1059 @AB}
 
 <!-- p462 -->
-{++Who am I? ++}{r1062 @AB}¶{r1061 @AB}
+{++Who am I? ++}{r1062+1061 @AB}¶{r1062+1061 @AB}
 
 <!-- p463 -->
-{++Your mind is so full of me! ++}{r1064 @AB}¶{r1063 @AB}
+{++Your mind is so full of me! ++}{r1064+1063 @AB}¶{r1064+1063 @AB}
 
 <!-- p464 -->
-{++Mortal man, Awesome God ++}{r1066 @AB}¶{r1065 @AB}
+{++Mortal man, Awesome God ++}{r1066+1065 @AB}¶{r1066+1065 @AB}
 
 <!-- p465 left, first-line 0in, left 0in, after 1.85pt, line 1 -->
-{++ ++}{r1068 @AB}¶{r1067 @AB}
+{++ ++}{r1068+1067 @AB}¶{r1068+1067 @AB}
 
 <!-- p466 -->
-{++Ondu me Adah ++}{r1070 @AB}¶{r1069 @AB}
+{++Ondu me Adah ++}{r1070+1069 @AB}¶{r1070+1069 @AB}
 
 <!-- p467 -->
-{++Omachalla ++}{r1072 @AB}¶{r1071 @AB}
+{++Omachalla ++}{r1072+1071 @AB}¶{r1072+1071 @AB}
 
 <!-- p468 right 4.2924in -->
-{++Onye le b’awa Omanchala Nmor eh no! ++}{r1074 @AB}¶{r1073 @AB}
+{++Onye le b’awa Omanchala Nmor eh no! ++}{r1074+1073 @AB}¶{r1074+1073 @AB}
 
 <!-- p469 -->
-{++Oyor eh no! (2x) ++}{r1076 @AB}¶{r1075 @AB}
+{++Oyor eh no! (2x) ++}{r1076+1075 @AB}¶{r1076+1075 @AB}
 
 <!-- p470 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1078 @AB}¶{r1077 @AB}
+{++ ++}{r1078+1077 @AB}¶{r1078+1077 @AB}
 
 <!-- p471 -->
-{++Ban san maiyasa ++}{r1080 @AB}¶{r1079 @AB}
+{++Ban san maiyasa ++}{r1080+1079 @AB}¶{r1080+1079 @AB}
 
 <!-- p472 -->
-{++Kana sauna ++}{r1082 @AB}¶{r1081 @AB}
+{++Kana sauna ++}{r1082+1081 @AB}¶{r1082+1081 @AB}
 
 <!-- p473 -->
-{++Ubangijiyayesu ++}{r1084 @AB}¶{r1083 @AB}
+{++Ubangijiyayesu ++}{r1084+1083 @AB}¶{r1084+1083 @AB}
 
 <!-- p474 -->
-{++Ina wan day a kai ka yesu ++}{r1086 @AB}¶{r1085 @AB}
+{++Ina wan day a kai ka yesu ++}{r1086+1085 @AB}¶{r1086+1085 @AB}
 
 <!-- p475 -->
-{++Ban ganiba, masoyina ++}{r1088 @AB}¶{r1087 @AB}
+{++Ban ganiba, masoyina ++}{r1088+1087 @AB}¶{r1088+1087 @AB}
 
 <!-- p476 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ 	 ++}{r1090 @AB}¶{r1089 @AB}
+{++ 	 ++}{r1090+1089 @AB}¶{r1090+1089 @AB}
 
 <!-- p477 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r1092 @AB}¶{r1091 @AB}
+{++ ++}{r1092+1091 @AB}¶{r1092+1091 @AB}
 
-<!-- t12 7x3, cells p478-p498 by row, p478-p498 after 0pt line 1.15, widths 1.183in 1.02in 1.113in, width 3.317in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t12.row0 t12.row1 t12.row2 t12.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t12.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t12.row5 t12.row6, break-ins r1094 @AB in p478; r1096 @AB in p479; r1098 @AB in p480; r1101 @AB in p481; r1103 @AB in p482; r1105 @AB in p483; r1108 @AB in p484; r1110 @AB in p485; r1112 @AB in p486; r1115 @AB in p487; r1117 @AB in p488; r1119 @AB in p489; r1122 @AB in p490; r1124 @AB in p491; r1126 @AB in p492; r1129 @AB in p493; r1131 @AB in p494; r1133 @AB in p495; r1136 @AB in p496; r1138 @AB in p497; r1140 @AB in p498, rev r1093 @AB in t12.row0; r1100 @AB in t12.row1; r1107 @AB in t12.row2; r1114 @AB in t12.row3; r1121 @AB in t12.row4; r1128 @AB in t12.row5; r1135 @AB in t12.row6 -->
-|{++English words ++}{r1095 @AB}|{++Hausa words ++}{r1097 @AB}|{++Idoma words ++}{r1099 @AB}|
+<!-- t12 7x3, cells p478-p498 by row, p478-p498 after 0pt line 1.15, widths 1.183in 1.02in 1.113in, width 3.317in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t12.row0 t12.row1 t12.row2 t12.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t12.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t12.row5 t12.row6, break-ins r1095+1094 @AB in p478; r1097+1096 @AB in p479; r1099+1098 @AB in p480; r1102+1101 @AB in p481; r1104+1103 @AB in p482; r1106+1105 @AB in p483; r1109+1108 @AB in p484; r1111+1110 @AB in p485; r1113+1112 @AB in p486; r1116+1115 @AB in p487; r1118+1117 @AB in p488; r1120+1119 @AB in p489; r1123+1122 @AB in p490; r1125+1124 @AB in p491; r1127+1126 @AB in p492; r1130+1129 @AB in p493; r1132+1131 @AB in p494; r1134+1133 @AB in p495; r1137+1136 @AB in p496; r1139+1138 @AB in p497; r1141+1140 @AB in p498, rev r1093 @AB in t12.row0; r1100 @AB in t12.row1; r1107 @AB in t12.row2; r1114 @AB in t12.row3; r1121 @AB in t12.row4; r1128 @AB in t12.row5; r1135 @AB in t12.row6 -->
+|{++English words ++}{r1095+1094 @AB}|{++Hausa words ++}{r1097+1096 @AB}|{++Idoma words ++}{r1099+1098 @AB}|
 |:-|:-|:-|
-|{++Hold  ++}{r1102 @AB}|{++Kai  ++}{r1104 @AB}|{++Ondu ++}{r1106 @AB}|
-|{++Close  ++}{r1109 @AB}|{++Ka ++}{r1111 @AB}|{++Me ++}{r1113 @AB}|
-|{++Feel ++}{r1116 @AB}|{++Masoyina ++}{r1118 @AB}|{++Ada  ++}{r1120 @AB}|
-|{++You ++}{r1123 @AB}|{++Kana ++}{r1125 @AB}|{++Omachalla ++}{r1127 @AB}|
-|{++Presence  ++}{r1130 @AB}|{++Ubangiji ++}{r1132 @AB}|{++ ++}{r1134 @AB}|
-|{++Everywhere  ++}{r1137 @AB}|{++ ++}{r1139 @AB}|{++ ++}{r1141 @AB}|
+|{++Hold  ++}{r1102+1101 @AB}|{++Kai  ++}{r1104+1103 @AB}|{++Ondu ++}{r1106+1105 @AB}|
+|{++Close  ++}{r1109+1108 @AB}|{++Ka ++}{r1111+1110 @AB}|{++Me ++}{r1113+1112 @AB}|
+|{++Feel ++}{r1116+1115 @AB}|{++Masoyina ++}{r1118+1117 @AB}|{++Ada  ++}{r1120+1119 @AB}|
+|{++You ++}{r1123+1122 @AB}|{++Kana ++}{r1125+1124 @AB}|{++Omachalla ++}{r1127+1126 @AB}|
+|{++Presence  ++}{r1130+1129 @AB}|{++Ubangiji ++}{r1132+1131 @AB}|{++ ++}{r1134+1133 @AB}|
+|{++Everywhere  ++}{r1137+1136 @AB}|{++ ++}{r1139+1138 @AB}|{++ ++}{r1141+1140 @AB}|
 
 <!-- p499 left, first-line 0in, left 0in, after 0.4pt, line 1.15 -->
-{++ ++}{r1143 @AB}¶{r1142 @AB}
+{++ ++}{r1143+1142 @AB}¶{r1143+1142 @AB}
 
-<!-- t13 11x4, cells p500-p543 by row, p500-p543 after 0pt line 1.15, widths 0.72in 0.742in 0.84in 0.735in, width 3.037in, indent -0.0715in, cell-borders top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t13.row0; top,left,bottom,right single 0.5pt 000000 in t13.row1 t13.row2 t13.row3 t13.row4 t13.row5 t13.row6 t13.row7 t13.row8 t13.row9 t13.row10, break-ins r1145 @AB in p500; r1147 @AB in p501; r1149 @AB in p502; r1151 @AB in p503; r1154 @AB in p504; r1156 @AB in p505; r1158 @AB in p506; r1160 @AB in p507; r1163 @AB in p508; r1165 @AB in p509; r1167 @AB in p510; r1169 @AB in p511; r1172 @AB in p512; r1174 @AB in p513; r1176 @AB in p514; r1178 @AB in p515; r1181 @AB in p516; r1183 @AB in p517; r1185 @AB in p518; r1187 @AB in p519; r1190 @AB in p520; r1192 @AB in p521; r1194 @AB in p522; r1196 @AB in p523; r1199 @AB in p524; r1201 @AB in p525; r1203 @AB in p526; r1205 @AB in p527; r1208 @AB in p528; r1210 @AB in p529; r1212 @AB in p530; r1214 @AB in p531; r1217 @AB in p532; r1219 @AB in p533; r1221 @AB in p534; r1223 @AB in p535; r1226 @AB in p536; r1228 @AB in p537; r1230 @AB in p538; r1232 @AB in p539; r1235 @AB in p540; r1237 @AB in p541; r1239 @AB in p542; r1241 @AB in p543, rev r1144 @AB in t13.row0; r1153 @AB in t13.row1; r1162 @AB in t13.row2; r1171 @AB in t13.row3; r1180 @AB in t13.row4; r1189 @AB in t13.row5; r1198 @AB in t13.row6; r1207 @AB in t13.row7; r1216 @AB in t13.row8; r1225 @AB in t13.row9; r1234 @AB in t13.row10 -->
-|{++Nouns  ++}{r1146 @AB}|{++Verbs  ++}{r1148 @AB}|{++Adjectives  ++}{r1150 @AB}|{++Adverbs  ++}{r1152 @AB}|
+<!-- t13 11x4, cells p500-p543 by row, p500-p543 after 0pt line 1.15, widths 0.72in 0.742in 0.84in 0.735in, width 3.037in, indent -0.0715in, cell-borders top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t13.row0; top,left,bottom,right single 0.5pt 000000 in t13.row1 t13.row2 t13.row3 t13.row4 t13.row5 t13.row6 t13.row7 t13.row8 t13.row9 t13.row10, break-ins r1146+1145 @AB in p500; r1148+1147 @AB in p501; r1150+1149 @AB in p502; r1152+1151 @AB in p503; r1155+1154 @AB in p504; r1157+1156 @AB in p505; r1159+1158 @AB in p506; r1161+1160 @AB in p507; r1164+1163 @AB in p508; r1166+1165 @AB in p509; r1168+1167 @AB in p510; r1170+1169 @AB in p511; r1173+1172 @AB in p512; r1175+1174 @AB in p513; r1177+1176 @AB in p514; r1179+1178 @AB in p515; r1182+1181 @AB in p516; r1184+1183 @AB in p517; r1186+1185 @AB in p518; r1188+1187 @AB in p519; r1191+1190 @AB in p520; r1193+1192 @AB in p521; r1195+1194 @AB in p522; r1197+1196 @AB in p523; r1200+1199 @AB in p524; r1202+1201 @AB in p525; r1204+1203 @AB in p526; r1206+1205 @AB in p527; r1209+1208 @AB in p528; r1211+1210 @AB in p529; r1213+1212 @AB in p530; r1215+1214 @AB in p531; r1218+1217 @AB in p532; r1220+1219 @AB in p533; r1222+1221 @AB in p534; r1224+1223 @AB in p535; r1227+1226 @AB in p536; r1229+1228 @AB in p537; r1231+1230 @AB in p538; r1233+1232 @AB in p539; r1236+1235 @AB in p540; r1238+1237 @AB in p541; r1240+1239 @AB in p542; r1242+1241 @AB in p543, rev r1144 @AB in t13.row0; r1153 @AB in t13.row1; r1162 @AB in t13.row2; r1171 @AB in t13.row3; r1180 @AB in t13.row4; r1189 @AB in t13.row5; r1198 @AB in t13.row6; r1207 @AB in t13.row7; r1216 @AB in t13.row8; r1225 @AB in t13.row9; r1234 @AB in t13.row10 -->
+|{++Nouns  ++}{r1146+1145 @AB}|{++Verbs  ++}{r1148+1147 @AB}|{++Adjectives  ++}{r1150+1149 @AB}|{++Adverbs  ++}{r1152+1151 @AB}|
 |:-|:-|:-|:-|
-|{++Foot  ++}{r1155 @AB}|{++Hold  ++}{r1157 @AB}|{++Mortal  ++}{r1159 @AB}|{++So  ++}{r1161 @AB}|
-|{++Presence  ++}{r1164 @AB}|{++Feel ++}{r1166 @AB}|{++Awesome ++}{r1168 @AB}|{++Graced  ++}{r1170 @AB}|
-|{++Mind  ++}{r1173 @AB}|{++Said  ++}{r1175 @AB}|{++Divine  ++}{r1177 @AB}|{++Blessed  ++}{r1179 @AB}|
-|{++Man  ++}{r1182 @AB}|{++Will  ++}{r1184 @AB}|{++ ++}{r1186 @AB}|{++ ++}{r1188 @AB}|
-|{++Friend  ++}{r1191 @AB}|{++Leave  ++}{r1193 @AB}|{++ ++}{r1195 @AB}|{++ ++}{r1197 @AB}|
-|{++Clay  ++}{r1200 @AB}|{++Suffer  ++}{r1202 @AB}|{++ ++}{r1204 @AB}|{++ ++}{r1206 @AB}|
-|{++Rock  ++}{r1209 @AB}|{++Carry  ++}{r1211 @AB}|{++ ++}{r1213 @AB}|{++ ++}{r1215 @AB}|
-|{++Jesus  ++}{r1218 @AB}|{++Am  ++}{r1220 @AB}|{++ ++}{r1222 @AB}|{++ ++}{r1224 @AB}|
-|{++God  ++}{r1227 @AB}|{++Is  ++}{r1229 @AB}|{++ ++}{r1231 @AB}|{++ ++}{r1233 @AB}|
-|{++Breath  ++}{r1236 @AB}|{++Took  ++}{r1238 @AB}|{++ ++}{r1240 @AB}|{++ ++}{r1242 @AB}|
+|{++Foot  ++}{r1155+1154 @AB}|{++Hold  ++}{r1157+1156 @AB}|{++Mortal  ++}{r1159+1158 @AB}|{++So  ++}{r1161+1160 @AB}|
+|{++Presence  ++}{r1164+1163 @AB}|{++Feel ++}{r1166+1165 @AB}|{++Awesome ++}{r1168+1167 @AB}|{++Graced  ++}{r1170+1169 @AB}|
+|{++Mind  ++}{r1173+1172 @AB}|{++Said  ++}{r1175+1174 @AB}|{++Divine  ++}{r1177+1176 @AB}|{++Blessed  ++}{r1179+1178 @AB}|
+|{++Man  ++}{r1182+1181 @AB}|{++Will  ++}{r1184+1183 @AB}|{++ ++}{r1186+1185 @AB}|{++ ++}{r1188+1187 @AB}|
+|{++Friend  ++}{r1191+1190 @AB}|{++Leave  ++}{r1193+1192 @AB}|{++ ++}{r1195+1194 @AB}|{++ ++}{r1197+1196 @AB}|
+|{++Clay  ++}{r1200+1199 @AB}|{++Suffer  ++}{r1202+1201 @AB}|{++ ++}{r1204+1203 @AB}|{++ ++}{r1206+1205 @AB}|
+|{++Rock  ++}{r1209+1208 @AB}|{++Carry  ++}{r1211+1210 @AB}|{++ ++}{r1213+1212 @AB}|{++ ++}{r1215+1214 @AB}|
+|{++Jesus  ++}{r1218+1217 @AB}|{++Am  ++}{r1220+1219 @AB}|{++ ++}{r1222+1221 @AB}|{++ ++}{r1224+1223 @AB}|
+|{++God  ++}{r1227+1226 @AB}|{++Is  ++}{r1229+1228 @AB}|{++ ++}{r1231+1230 @AB}|{++ ++}{r1233+1232 @AB}|
+|{++Breath  ++}{r1236+1235 @AB}|{++Took  ++}{r1238+1237 @AB}|{++ ++}{r1240+1239 @AB}|{++ ++}{r1242+1241 @AB}|
 
 <!-- p544 left, first-line 0in, left 0in, after 1.75pt, line 1 -->
-{++ ++}{r1244 @AB}¶{r1243 @AB}
+{++ ++}{r1244+1243 @AB}¶{r1244+1243 @AB}
 
 <!-- p545 -->
-{++In the last part of the song, English is code switched with Hausa: ++}{r1246 @AB}¶{r1245 @AB}
+{++In the last part of the song, English is code switched with Hausa: ++}{r1246+1245 @AB}¶{r1246+1245 @AB}
 
 <!-- p546 -->
-{++Just when I thought I knew your ways  ++}{r1248 @AB}¶{r1247 @AB}
+{++Just when I thought I knew your ways  ++}{r1248+1247 @AB}¶{r1248+1247 @AB}
 
 <!-- p547 -->
-{++That’s when you come to make me see  ++}{r1250 @AB}¶{r1249 @AB}
+{++That’s when you come to make me see  ++}{r1250+1249 @AB}¶{r1250+1249 @AB}
 
 <!-- p548 -->
-{++That all I knew was just a glimpse of you  ++}{r1252 @AB}¶{r1251 @AB}
+{++That all I knew was just a glimpse of you  ++}{r1252+1251 @AB}¶{r1252+1251 @AB}
 
 <!-- p549 -->
-{++Lord, you are more than my mind could ever think  ++}{r1254 @AB}¶{r1253 @AB}
+{++Lord, you are more than my mind could ever think  ++}{r1254+1253 @AB}¶{r1254+1253 @AB}
 
 <!-- p550 -->
-{++It is you, yes it is you I hunger for  ++}{r1256 @AB}¶{r1255 @AB}
+{++It is you, yes it is you I hunger for  ++}{r1256+1255 @AB}¶{r1256+1255 @AB}
 
 <!-- p551 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1258 @AB}¶{r1257 @AB}
+{++ ++}{r1258+1257 @AB}¶{r1258+1257 @AB}
 
 <!-- p552 -->
-{++Yesu kai kaidai ne ke so  ++}{r1260 @AB}¶{r1259 @AB}
+{++Yesu kai kaidai ne ke so  ++}{r1260+1259 @AB}¶{r1260+1259 @AB}
 
 <!-- p553 -->
-{++Yesu kai kaidai ne ke so  ++}{r1262 @AB}¶{r1261 @AB}
+{++Yesu kai kaidai ne ke so  ++}{r1262+1261 @AB}¶{r1262+1261 @AB}
 
 <!-- p554 -->
-{++Yesu kai kaidainake so koyaushe ++}{r1264 @AB}¶{r1263 @AB}
+{++Yesu kai kaidainake so koyaushe ++}{r1264+1263 @AB}¶{r1264+1263 @AB}
 
-<!-- t14 8x2, cells p555-p570 by row, p555-p570 after 0pt line 1.15, widths 1.183in 1.113in, width 2.2965in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t14.row0 t14.row1 t14.row2 t14.row3 t14.row4; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t14.row5; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t14.row6 t14.row7, break-ins r1266 @AB in p555; r1268 @AB in p556; r1271 @AB in p557; r1273 @AB in p558; r1276 @AB in p559; r1278 @AB in p560; r1281 @AB in p561; r1283 @AB in p562; r1286 @AB in p563; r1288 @AB in p564; r1291 @AB in p565; r1293 @AB in p566; r1296 @AB in p567; r1298 @AB in p568; r1301 @AB in p569; r1303 @AB in p570, rev r1265 @AB in t14.row0; r1270 @AB in t14.row1; r1275 @AB in t14.row2; r1280 @AB in t14.row3; r1285 @AB in t14.row4; r1290 @AB in t14.row5; r1295 @AB in t14.row6; r1300 @AB in t14.row7 -->
-|{++English words  ++}{r1267 @AB}|{++Hausa words  ++}{r1269 @AB}|
+<!-- t14 8x2, cells p555-p570 by row, p555-p570 after 0pt line 1.15, widths 1.183in 1.113in, width 2.2965in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t14.row0 t14.row1 t14.row2 t14.row3 t14.row4; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t14.row5; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t14.row6 t14.row7, break-ins r1267+1266 @AB in p555; r1269+1268 @AB in p556; r1272+1271 @AB in p557; r1274+1273 @AB in p558; r1277+1276 @AB in p559; r1279+1278 @AB in p560; r1282+1281 @AB in p561; r1284+1283 @AB in p562; r1287+1286 @AB in p563; r1289+1288 @AB in p564; r1292+1291 @AB in p565; r1294+1293 @AB in p566; r1297+1296 @AB in p567; r1299+1298 @AB in p568; r1302+1301 @AB in p569; r1304+1303 @AB in p570, rev r1265 @AB in t14.row0; r1270 @AB in t14.row1; r1275 @AB in t14.row2; r1280 @AB in t14.row3; r1285 @AB in t14.row4; r1290 @AB in t14.row5; r1295 @AB in t14.row6; r1300 @AB in t14.row7 -->
+|{++English words  ++}{r1267+1266 @AB}|{++Hausa words  ++}{r1269+1268 @AB}|
 |:-|:-|
-|{++When  ++}{r1272 @AB}|{++Yesu ++}{r1274 @AB}|
-|{++Thought  ++}{r1277 @AB}|{++Kai kai de  ++}{r1279 @AB}|
-|{++Come  ++}{r1282 @AB}|{++Neke so ++}{r1284 @AB}|
-|{++Make  ++}{r1287 @AB}|{++Koyaushe ++}{r1289 @AB}|
-|{++Me  ++}{r1292 @AB}|{++ ++}{r1294 @AB}|
-|{++You  ++}{r1297 @AB}|{++ ++}{r1299 @AB}|
-|{++More  ++}{r1302 @AB}|{++ ++}{r1304 @AB}|
+|{++When  ++}{r1272+1271 @AB}|{++Yesu ++}{r1274+1273 @AB}|
+|{++Thought  ++}{r1277+1276 @AB}|{++Kai kai de  ++}{r1279+1278 @AB}|
+|{++Come  ++}{r1282+1281 @AB}|{++Neke so ++}{r1284+1283 @AB}|
+|{++Make  ++}{r1287+1286 @AB}|{++Koyaushe ++}{r1289+1288 @AB}|
+|{++Me  ++}{r1292+1291 @AB}|{++ ++}{r1294+1293 @AB}|
+|{++You  ++}{r1297+1296 @AB}|{++ ++}{r1299+1298 @AB}|
+|{++More  ++}{r1302+1301 @AB}|{++ ++}{r1304+1303 @AB}|
 
 <!-- p571 left, first-line 0in, left 0in, after 0.75pt, line 1.15 -->
-{++ ++}{r1306 @AB}¶{r1305 @AB}
+{++ ++}{r1306+1305 @AB}¶{r1306+1305 @AB}
 
-<!-- t15 10x4, cells p572-p611 by row, p572-p611 after 0pt line 1.15, widths 0.71in 0.6924in 0.8375in 0.702in, width 2.942in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t15.row0; top,left,bottom,right single 0.5pt 000000 in t15.row1 t15.row2 t15.row3 t15.row4 t15.row5 t15.row6 t15.row7 t15.row8 t15.row9, break-ins r1308 @AB in p572; r1310 @AB in p573; r1312 @AB in p574; r1314 @AB in p575; r1317 @AB in p576; r1319 @AB in p577; r1321 @AB in p578; r1323 @AB in p579; r1326 @AB in p580; r1328 @AB in p581; r1330 @AB in p582; r1332 @AB in p583; r1335 @AB in p584; r1337 @AB in p585; r1339 @AB in p586; r1341 @AB in p587; r1344 @AB in p588; r1346 @AB in p589; r1348 @AB in p590; r1350 @AB in p591; r1353 @AB in p592; r1355 @AB in p593; r1357 @AB in p594; r1359 @AB in p595; r1362 @AB in p596; r1364 @AB in p597; r1366 @AB in p598; r1368 @AB in p599; r1371 @AB in p600; r1373 @AB in p601; r1375 @AB in p602; r1377 @AB in p603; r1380 @AB in p604; r1382 @AB in p605; r1384 @AB in p606; r1386 @AB in p607; r1389 @AB in p608; r1391 @AB in p609; r1393 @AB in p610; r1395 @AB in p611, rev r1307 @AB in t15.row0; r1316 @AB in t15.row1; r1325 @AB in t15.row2; r1334 @AB in t15.row3; r1343 @AB in t15.row4; r1352 @AB in t15.row5; r1361 @AB in t15.row6; r1370 @AB in t15.row7; r1379 @AB in t15.row8; r1388 @AB in t15.row9 -->
-|{++Nouns  ++}{r1309 @AB}|{++Verbs  ++}{r1311 @AB}|{++Adjectives  ++}{r1313 @AB}|{++Adverbs  ++}{r1315 @AB}|
+<!-- t15 10x4, cells p572-p611 by row, p572-p611 after 0pt line 1.15, widths 0.71in 0.6924in 0.8375in 0.702in, width 2.942in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t15.row0; top,left,bottom,right single 0.5pt 000000 in t15.row1 t15.row2 t15.row3 t15.row4 t15.row5 t15.row6 t15.row7 t15.row8 t15.row9, break-ins r1309+1308 @AB in p572; r1311+1310 @AB in p573; r1313+1312 @AB in p574; r1315+1314 @AB in p575; r1318+1317 @AB in p576; r1320+1319 @AB in p577; r1322+1321 @AB in p578; r1324+1323 @AB in p579; r1327+1326 @AB in p580; r1329+1328 @AB in p581; r1331+1330 @AB in p582; r1333+1332 @AB in p583; r1336+1335 @AB in p584; r1338+1337 @AB in p585; r1340+1339 @AB in p586; r1342+1341 @AB in p587; r1345+1344 @AB in p588; r1347+1346 @AB in p589; r1349+1348 @AB in p590; r1351+1350 @AB in p591; r1354+1353 @AB in p592; r1356+1355 @AB in p593; r1358+1357 @AB in p594; r1360+1359 @AB in p595; r1363+1362 @AB in p596; r1365+1364 @AB in p597; r1367+1366 @AB in p598; r1369+1368 @AB in p599; r1372+1371 @AB in p600; r1374+1373 @AB in p601; r1376+1375 @AB in p602; r1378+1377 @AB in p603; r1381+1380 @AB in p604; r1383+1382 @AB in p605; r1385+1384 @AB in p606; r1387+1386 @AB in p607; r1390+1389 @AB in p608; r1392+1391 @AB in p609; r1394+1393 @AB in p610; r1396+1395 @AB in p611, rev r1307 @AB in t15.row0; r1316 @AB in t15.row1; r1325 @AB in t15.row2; r1334 @AB in t15.row3; r1343 @AB in t15.row4; r1352 @AB in t15.row5; r1361 @AB in t15.row6; r1370 @AB in t15.row7; r1379 @AB in t15.row8; r1388 @AB in t15.row9 -->
+|{++Nouns  ++}{r1309+1308 @AB}|{++Verbs  ++}{r1311+1310 @AB}|{++Adjectives  ++}{r1313+1312 @AB}|{++Adverbs  ++}{r1315+1314 @AB}|
 |:-|:-|:-|:-|
-|{++Ways  ++}{r1318 @AB}|{++Thought  ++}{r1320 @AB}|{++Enough  ++}{r1322 @AB}|{++Nil  ++}{r1324 @AB}|
-|{++Glimpse  ++}{r1327 @AB}|{++Knew  ++}{r1329 @AB}|{++More  ++}{r1331 @AB}|{++ ++}{r1333 @AB}|
-|{++Lord  ++}{r1336 @AB}|{++Come  ++}{r1338 @AB}|{++ ++}{r1340 @AB}|{++ ++}{r1342 @AB}|
-|{++Mind  ++}{r1345 @AB}|{++Make  ++}{r1347 @AB}|{++ ++}{r1349 @AB}|{++ ++}{r1351 @AB}|
-|{++ ++}{r1354 @AB}|{++See  ++}{r1356 @AB}|{++ ++}{r1358 @AB}|{++ ++}{r1360 @AB}|
-|{++ ++}{r1363 @AB}|{++Are  ++}{r1365 @AB}|{++ ++}{r1367 @AB}|{++ ++}{r1369 @AB}|
-|{++ ++}{r1372 @AB}|{++Hunger  ++}{r1374 @AB}|{++ ++}{r1376 @AB}|{++ ++}{r1378 @AB}|
-|{++ ++}{r1381 @AB}|{++Cannot  ++}{r1383 @AB}|{++ ++}{r1385 @AB}|{++ ++}{r1387 @AB}|
-|{++ ++}{r1390 @AB}|{++Have  ++}{r1392 @AB}|{++ ++}{r1394 @AB}|{++ ++}{r1396 @AB}|
+|{++Ways  ++}{r1318+1317 @AB}|{++Thought  ++}{r1320+1319 @AB}|{++Enough  ++}{r1322+1321 @AB}|{++Nil  ++}{r1324+1323 @AB}|
+|{++Glimpse  ++}{r1327+1326 @AB}|{++Knew  ++}{r1329+1328 @AB}|{++More  ++}{r1331+1330 @AB}|{++ ++}{r1333+1332 @AB}|
+|{++Lord  ++}{r1336+1335 @AB}|{++Come  ++}{r1338+1337 @AB}|{++ ++}{r1340+1339 @AB}|{++ ++}{r1342+1341 @AB}|
+|{++Mind  ++}{r1345+1344 @AB}|{++Make  ++}{r1347+1346 @AB}|{++ ++}{r1349+1348 @AB}|{++ ++}{r1351+1350 @AB}|
+|{++ ++}{r1354+1353 @AB}|{++See  ++}{r1356+1355 @AB}|{++ ++}{r1358+1357 @AB}|{++ ++}{r1360+1359 @AB}|
+|{++ ++}{r1363+1362 @AB}|{++Are  ++}{r1365+1364 @AB}|{++ ++}{r1367+1366 @AB}|{++ ++}{r1369+1368 @AB}|
+|{++ ++}{r1372+1371 @AB}|{++Hunger  ++}{r1374+1373 @AB}|{++ ++}{r1376+1375 @AB}|{++ ++}{r1378+1377 @AB}|
+|{++ ++}{r1381+1380 @AB}|{++Cannot  ++}{r1383+1382 @AB}|{++ ++}{r1385+1384 @AB}|{++ ++}{r1387+1386 @AB}|
+|{++ ++}{r1390+1389 @AB}|{++Have  ++}{r1392+1391 @AB}|{++ ++}{r1394+1393 @AB}|{++ ++}{r1396+1395 @AB}|
 
 <!-- p612 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1398 @AB}¶{r1397 @AB}
+{++ ++}{r1398+1397 @AB}¶{r1398+1397 @AB}
 
 <!-- p613 left, first-line 0in, left 0in, line 1 -->
-{++ ++}{r1400 @AB}¶{r1399 @AB}
+{++ ++}{r1400+1399 @AB}¶{r1400+1399 @AB}
 
 <!-- p614 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Six: “Wekobiro” (song) by SAMSONG  ++}{r1402 @AB}¶{r1401 @AB}
+{++Excerpt Six: “Wekobiro” (song) by SAMSONG  ++}{r1402+1401 @AB}¶{r1402+1401 @AB}
 
 <!-- p615 -->
-{++The data below show cases of inter-sentential code switching thus it begins with English and ends with an indigenous language and vice versa:    ++}{r1404 @AB}¶{r1403 @AB}
+{++The data below show cases of inter-sentential code switching thus it begins with English and ends with an indigenous language and vice versa:    ++}{r1404+1403 @AB}¶{r1404+1403 @AB}
 
 <!-- p616 -->
-{++You are the present ++}{r1406 @AB}¶{r1405 @AB}
+{++You are the present ++}{r1406+1405 @AB}¶{r1406+1405 @AB}
 
 <!-- p617 -->
-{++You are the past  ++}{r1408 @AB}¶{r1407 @AB}
+{++You are the past  ++}{r1408+1407 @AB}¶{r1408+1407 @AB}
 
 <!-- p618 -->
-{++You are the future… ++}{r1410 @AB}¶{r1409 @AB}
+{++You are the future… ++}{r1410+1409 @AB}¶{r1410+1409 @AB}
 
 <!-- p619 -->
-{++Wekobiro ++}{r1412 @AB}¶{r1411 @AB}
+{++Wekobiro ++}{r1412+1411 @AB}¶{r1412+1411 @AB}
 
 <!-- p620 -->
-{++Agbada buru ++}{r1414 @AB}¶{r1413 @AB}
+{++Agbada buru ++}{r1414+1413 @AB}¶{r1414+1413 @AB}
 
 <!-- p621 -->
-{++Ovie nu tagboru ++}{r1416 @AB}¶{r1415 @AB}
+{++Ovie nu tagboru ++}{r1416+1415 @AB}¶{r1416+1415 @AB}
 
 <!-- p622 -->
-{++Wekobiro ++}{r1418 @AB}¶{r1417 @AB}
+{++Wekobiro ++}{r1418+1417 @AB}¶{r1418+1417 @AB}
 
 <!-- p623 left, right -0.0104in, after 2pt, line 1 -->
-{++English Words  	Indigenous language  ++}{r1420 @AB}¶{r1419 @AB}
+{++English Words  	Indigenous language  ++}{r1420+1419 @AB}¶{r1420+1419 @AB}
 
 <!-- p624 -->
-{++You are present  	Wekobiro ++}{r1422 @AB}¶{r1421 @AB}
+{++You are present  	Wekobiro ++}{r1422+1421 @AB}¶{r1422+1421 @AB}
 
 <!-- p625 -->
-{++You are the past 	Agbada buru ++}{r1424 @AB}¶{r1423 @AB}
+{++You are the past 	Agbada buru ++}{r1424+1423 @AB}¶{r1424+1423 @AB}
 
 <!-- p626 -->
-{++You are the future  Ovie nu tagboru ++}{r1426 @AB}¶{r1425 @AB}
+{++You are the future  Ovie nu tagboru ++}{r1426+1425 @AB}¶{r1426+1425 @AB}
 
 <!-- p627 -->
-{++ 	Wekobiro ++}{r1428 @AB}¶{r1427 @AB}
+{++ 	Wekobiro ++}{r1428+1427 @AB}¶{r1428+1427 @AB}
 
 <!-- p628 left, first-line 0in, left 0in, after 1.75pt, line 1 -->
-{++ ++}{r1430 @AB}¶{r1429 @AB}
+{++ ++}{r1430+1429 @AB}¶{r1430+1429 @AB}
 
 <!-- p629 left, after 2.5pt, line 0.975 -->
-{++Thus from the above, Samasong complete switches from English language to an indigenous language in what can better be described as a case of inter-sentential switching of codes. The extract like the others already sampled above shows the existence of code switching in Christian music. This is also the case in the song below: ++}{r1432 @AB}¶{r1431 @AB}
+{++Thus from the above, Samasong complete switches from English language to an indigenous language in what can better be described as a case of inter-sentential switching of codes. The extract like the others already sampled above shows the existence of code switching in Christian music. This is also the case in the song below: ++}{r1432+1431 @AB}¶{r1432+1431 @AB}
 
 <!-- p630 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Seven: “Obezina” (song) by PREYE ODEDE  ++}{r1434 @AB}¶{r1433 @AB}
+{++Excerpt Seven: “Obezina” (song) by PREYE ODEDE  ++}{r1434+1433 @AB}¶{r1434+1433 @AB}
 
 <!-- p631 -->
-{++Tell me why youre giving up on God  ++}{r1436 @AB}¶{r1435 @AB}
+{++Tell me why youre giving up on God  ++}{r1436+1435 @AB}¶{r1436+1435 @AB}
 
 <!-- p632 -->
-{++Tell me why youre giving up on Him  ++}{r1438 @AB}¶{r1437 @AB}
+{++Tell me why youre giving up on Him  ++}{r1438+1437 @AB}¶{r1438+1437 @AB}
 
 <!-- p633 -->
-{++Tell me why youre giving up on Him ++}{r1440 @AB}¶{r1439 @AB}
+{++Tell me why youre giving up on Him ++}{r1440+1439 @AB}¶{r1440+1439 @AB}
 
 <!-- p634 -->
-{++Hold on, change is on the way,  ++}{r1442 @AB}¶{r1441 @AB}
+{++Hold on, change is on the way,  ++}{r1442+1441 @AB}¶{r1442+1441 @AB}
 
 <!-- p635 -->
-{++Ebezina, Chukwu non so  ++}{r1444 @AB}¶{r1443 @AB}
+{++Ebezina, Chukwu non so  ++}{r1444+1443 @AB}¶{r1444+1443 @AB}
 
 <!-- p636 -->
-{++Oginibunsobubgi ++}{r1446 @AB}¶{r1445 @AB}
+{++Oginibunsobubgi ++}{r1446+1445 @AB}¶{r1446+1445 @AB}
 
 <!-- p637 -->
-{++Ima-naodiadigideh ++}{r1448 @AB}¶{r1447 @AB}
+{++Ima-naodiadigideh ++}{r1448+1447 @AB}¶{r1448+1447 @AB}
 
 <!-- p638 -->
-{++Nwannemo, jidesi eh ike…   ++}{r1450 @AB}¶{r1449 @AB}
+{++Nwannemo, jidesi eh ike…   ++}{r1450+1449 @AB}¶{r1450+1449 @AB}
 
 <!-- p639 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Eight: “All the Way” (song) by EBEN ++}{r1452 @AB}¶{r1451 @AB}
+{++Excerpt Eight: “All the Way” (song) by EBEN ++}{r1452+1451 @AB}¶{r1452+1451 @AB}
 
 <!-- p640 -->
-{++We go dey hail  ++}{r1454 @AB}¶{r1453 @AB}
+{++We go dey hail  ++}{r1454+1453 @AB}¶{r1454+1453 @AB}
 
 <!-- p641 -->
-{++Hail your name  ++}{r1456 @AB}¶{r1455 @AB}
+{++Hail your name  ++}{r1456+1455 @AB}¶{r1456+1455 @AB}
 
 <!-- p642 -->
-{++Day by day  ++}{r1458 @AB}¶{r1457 @AB}
+{++Day by day  ++}{r1458+1457 @AB}¶{r1458+1457 @AB}
 
 <!-- p643 -->
-{++All the Way(2x) ++}{r1460 @AB}¶{r1459 @AB}
+{++All the Way(2x) ++}{r1460+1459 @AB}¶{r1460+1459 @AB}
 
 <!-- p644 -->
-{++We go dey hail  ++}{r1462 @AB}¶{r1461 @AB}
+{++We go dey hail  ++}{r1462+1461 @AB}¶{r1462+1461 @AB}
 
 <!-- p645 -->
-{++Hail your name  ++}{r1464 @AB}¶{r1463 @AB}
+{++Hail your name  ++}{r1464+1463 @AB}¶{r1464+1463 @AB}
 
 <!-- p646 -->
-{++Day by day  ++}{r1466 @AB}¶{r1465 @AB}
+{++Day by day  ++}{r1466+1465 @AB}¶{r1466+1465 @AB}
 
 <!-- p647 -->
-{++All the way (2x) ++}{r1468 @AB}¶{r1467 @AB}
+{++All the way (2x) ++}{r1468+1467 @AB}¶{r1468+1467 @AB}
 
 <!-- p648 -->
-{++All the way  ++}{r1470 @AB}¶{r1469 @AB}
+{++All the way  ++}{r1470+1469 @AB}¶{r1470+1469 @AB}
 
 <!-- p649 left, first-line 0in, left 0in, after 2.25pt, line 1 -->
-{++ ++}{r1472 @AB}¶{r1471 @AB}
+{++ ++}{r1472+1471 @AB}¶{r1472+1471 @AB}
 
 <!-- p650 -->
-{++In the song “All the Way” by Eben above, there is an obvious case of intrasentential code switching. This is because the language elements from another language feature in the same sentence where another language already exists: ++}{r1474 @AB}¶{r1473 @AB}
+{++In the song “All the Way” by Eben above, there is an obvious case of intrasentential code switching. This is because the language elements from another language feature in the same sentence where another language already exists: ++}{r1474+1473 @AB}¶{r1474+1473 @AB}
 
-<!-- t16 3x4, cells p651-p662 by row, p651-p662 after 0pt line 1.15, widths 1.687in 1.758in 1.134in 0.495in, width 5.074in, indent 0.1035in, cell-borders top,left,bottom,right none in all, break-ins r1476 @AB in p651; r1478 @AB in p652; r1480 @AB in p653; r1482 @AB in p654; r1485 @AB in p655; r1487 @AB in p656; r1489 @AB in p657; r1491 @AB in p658; r1493 @AB in p659; r1495 @AB in p660; r1497 @AB in p661; r1499 @AB in p662, rev r1475 @AB in t16.row0; r1484 @AB in t16.row1; r1492 @AB in t16.row2 -->
-|{++English Words  ++}{r1477 @AB}|{++Intra-Occurrence  ++}{r1479 @AB}|{++English (continue) ++}{r1481 @AB}|{++Words ++}{r1483 @AB}|
+<!-- t16 3x4, cells p651-p662 by row, p651-p662 after 0pt line 1.15, widths 1.687in 1.758in 1.134in 0.495in, width 5.074in, indent 0.1035in, cell-borders top,left,bottom,right none in all, break-ins r1477+1476 @AB in p651; r1479+1478 @AB in p652; r1481+1480 @AB in p653; r1483+1482 @AB in p654; r1486+1485 @AB in p655; r1488+1487 @AB in p656; r1490+1489 @AB in p657; r1491 @AB in p658; r1494+1493 @AB in p659; r1496+1495 @AB in p660; r1498+1497 @AB in p661; r1499 @AB in p662, rev r1475 @AB in t16.row0; r1484 @AB in t16.row1; r1492 @AB in t16.row2 -->
+|{++English Words  ++}{r1477+1476 @AB}|{++Intra-Occurrence  ++}{r1479+1478 @AB}|{++English (continue) ++}{r1481+1480 @AB}|{++Words ++}{r1483+1482 @AB}|
 |:-|:-|:-|:-|
-|{++We go  ++}{r1486 @AB}|{++dey (Pidgin) ++}{r1488 @AB}|{++hail your name  ++}{r1490 @AB}||
-|{++We go  ++}{r1494 @AB}|{++dey (Pidgin) ++}{r1496 @AB}|{++hail your name  ++}{r1498 @AB}||
+|{++We go  ++}{r1486+1485 @AB}|{++dey (Pidgin) ++}{r1488+1487 @AB}|{++hail your name  ++}{r1490+1489 @AB}||
+|{++We go  ++}{r1494+1493 @AB}|{++dey (Pidgin) ++}{r1496+1495 @AB}|{++hail your name  ++}{r1498+1497 @AB}||
 
 <!-- p663 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1501 @AB}¶{r1500 @AB}
+{++ ++}{r1501+1500 @AB}¶{r1501+1500 @AB}
 
 <!-- p664 -->
-{++ Thus, it is common practice by some Nigerian gospel music to employ intrasentential code switching in their songs, and many reasons could be responsible for this. One of this is the desire to show one’s loyalty or affinity to one’s first language or indigenous language. And in this case, it seems most likely. This linguistic situation is similar to the one in the eight song below by Nosa.   ++}{r1503 @AB}¶{r1502 @AB}
+{++ Thus, it is common practice by some Nigerian gospel music to employ intrasentential code switching in their songs, and many reasons could be responsible for this. One of this is the desire to show one’s loyalty or affinity to one’s first language or indigenous language. And in this case, it seems most likely. This linguistic situation is similar to the one in the eight song below by Nosa.   ++}{r1503+1502 @AB}¶{r1503+1502 @AB}
 
 <!-- p665 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Nine: “Pray for you” (song) by NOSA  ++}{r1505 @AB}¶{r1504 @AB}
+{++Excerpt Nine: “Pray for you” (song) by NOSA  ++}{r1505+1504 @AB}¶{r1505+1504 @AB}
 
 <!-- p666 -->
-{++As all of us dey go our separate ways  ++}{r1507 @AB}¶{r1506 @AB}
+{++As all of us dey go our separate ways  ++}{r1507+1506 @AB}¶{r1507+1506 @AB}
 
 <!-- p667 -->
-{++Na good tory we go dey tell  ++}{r1509 @AB}¶{r1508 @AB}
+{++Na good tory we go dey tell  ++}{r1509+1508 @AB}¶{r1509+1508 @AB}
 
 <!-- p668 -->
-{++When we see again of how God don bless me  ++}{r1511 @AB}¶{r1510 @AB}
+{++When we see again of how God don bless me  ++}{r1511+1510 @AB}¶{r1511+1510 @AB}
 
 <!-- p669 -->
-{++And bless you too  ++}{r1513 @AB}¶{r1512 @AB}
+{++And bless you too  ++}{r1513+1512 @AB}¶{r1513+1512 @AB}
 
 <!-- p670 -->
-{++I go always pray for you ++}{r1515 @AB}¶{r1514 @AB}
+{++I go always pray for you ++}{r1515+1514 @AB}¶{r1515+1514 @AB}
 
 <!-- p671 -->
-{++And even if I far from you  ++}{r1517 @AB}¶{r1516 @AB}
+{++And even if I far from you  ++}{r1517+1516 @AB}¶{r1517+1516 @AB}
 
 <!-- p672 -->
-{++You go always dey my heart  ++}{r1519 @AB}¶{r1518 @AB}
+{++You go always dey my heart  ++}{r1519+1518 @AB}¶{r1519+1518 @AB}
 
 <!-- p673 -->
-{++This na true ++}{r1521 @AB}¶{r1520 @AB}
+{++This na true ++}{r1521+1520 @AB}¶{r1521+1520 @AB}
 
 <!-- p674 -->
-{++I just wan let you know say  ++}{r1523 @AB}¶{r1522 @AB}
+{++I just wan let you know say  ++}{r1523+1522 @AB}¶{r1523+1522 @AB}
 
 <!-- p675 -->
-{++Whatever I do  ++}{r1525 @AB}¶{r1524 @AB}
+{++Whatever I do  ++}{r1525+1524 @AB}¶{r1525+1524 @AB}
 
 <!-- p676 -->
-{++I go always pray for you   ++}{r1527 @AB}¶{r1526 @AB}
+{++I go always pray for you   ++}{r1527+1526 @AB}¶{r1527+1526 @AB}
 
 <!-- p677 left, first-line 0in, left 0in, after 3.25pt, line 1.15 -->
-{++ ++}{r1529 @AB}¶{r1528 @AB}
+{++ ++}{r1529+1528 @AB}¶{r1529+1528 @AB}
 
-<!-- t17 5x3, cells t17.row0 p678-p681 t17.row1 p682-p684 t17.row2 p685-p687 t17.row3 p688-p690 t17.row4 p691-p693, p678-p679 after 0pt line 1.15, p680 after 2.3pt line 1, p681-p693 after 0pt line 1.15, widths 1.767in 1.8146in 1.7in, width 5.281in, cell-borders top,left,bottom,right none in all, break-ins r1531 @AB in p678; r1533 @AB in p679; r1535 @AB in p680; r1537 @AB in p681; r1540 @AB in p682; r1542 @AB in p683; r1544 @AB in p684; r1547 @AB in p685; r1549 @AB in p686; r1551 @AB in p687; r1554 @AB in p688; r1556 @AB in p689; r1558 @AB in p690; r1561 @AB in p691; r1563 @AB in p692; r1565 @AB in p693, rev r1530 @AB in t17.row0; r1539 @AB in t17.row1; r1546 @AB in t17.row2; r1553 @AB in t17.row3; r1560 @AB in t17.row4 -->
-|{++English Words  ++}{r1532 @AB}|{++Intra-Occurrence  ++}{r1534 @AB}|{++English Words ++}{r1536 @AB}{++<br>(continue) ++}{r1538 @AB}|
+<!-- t17 5x3, cells t17.row0 p678-p681 t17.row1 p682-p684 t17.row2 p685-p687 t17.row3 p688-p690 t17.row4 p691-p693, p678-p679 after 0pt line 1.15, p680 after 2.3pt line 1, p681-p693 after 0pt line 1.15, widths 1.767in 1.8146in 1.7in, width 5.281in, cell-borders top,left,bottom,right none in all, break-ins r1532+1531 @AB in p678; r1534+1533 @AB in p679; r1536+1535 @AB in p680; r1538+1537 @AB in p681; r1541+1540 @AB in p682; r1543+1542 @AB in p683; r1545+1544 @AB in p684; r1548+1547 @AB in p685; r1550+1549 @AB in p686; r1552+1551 @AB in p687; r1555+1554 @AB in p688; r1557+1556 @AB in p689; r1559+1558 @AB in p690; r1562+1561 @AB in p691; r1564+1563 @AB in p692; r1566+1565 @AB in p693, rev r1530 @AB in t17.row0; r1539 @AB in t17.row1; r1546 @AB in t17.row2; r1553 @AB in t17.row3; r1560 @AB in t17.row4 -->
+|{++English Words  ++}{r1532+1531 @AB}|{++Intra-Occurrence  ++}{r1534+1533 @AB}|{++English Words ++}{r1536+1535 @AB}{++<br>(continue) ++}{r1538+1537 @AB}|
 |:-|:-|:-|
-|{++As all of ++}{r1541 @AB}|{++Us dey go  ++}{r1543 @AB}|{++Our separate ways  ++}{r1545 @AB}|
-|{++When we see again ++}{r1548 @AB}|{++Of how God don bless me ++}{r1550 @AB}|{++And bless you too ++}{r1552 @AB}|
-|{++And even if ++}{r1555 @AB}|{++I far  ++}{r1557 @AB}|{++from you ++}{r1559 @AB}|
-|{++This  ++}{r1562 @AB}|{++Na ++}{r1564 @AB}|{++true  ++}{r1566 @AB}|
+|{++As all of ++}{r1541+1540 @AB}|{++Us dey go  ++}{r1543+1542 @AB}|{++Our separate ways  ++}{r1545+1544 @AB}|
+|{++When we see again ++}{r1548+1547 @AB}|{++Of how God don bless me ++}{r1550+1549 @AB}|{++And bless you too ++}{r1552+1551 @AB}|
+|{++And even if ++}{r1555+1554 @AB}|{++I far  ++}{r1557+1556 @AB}|{++from you ++}{r1559+1558 @AB}|
+|{++This  ++}{r1562+1561 @AB}|{++Na ++}{r1564+1563 @AB}|{++true  ++}{r1566+1565 @AB}|
 
 <!-- p694 -->
-{++I just  	Wan let you know say 	Whatever I do ++}{r1568 @AB}¶{r1567 @AB}
+{++I just  	Wan let you know say 	Whatever I do ++}{r1568+1567 @AB}¶{r1568+1567 @AB}
 
 <!-- p695 -->
-{++I  	go always  	Pray for you ++}{r1570 @AB}¶{r1569 @AB}
+{++I  	go always  	Pray for you ++}{r1570+1569 @AB}¶{r1570+1569 @AB}
 
 <!-- p696 left, first-line 0in, left 0in, after 2.4pt, line 1 -->
-{++ ++}{r1572 @AB}¶{r1571 @AB}
+{++ ++}{r1572+1571 @AB}¶{r1572+1571 @AB}
 
 <!-- p697 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Ten: “Na you be God” (Song) by TIM GODFREY ++}{r1574 @AB}¶{r1573 @AB}
+{++Excerpt Ten: “Na you be God” (Song) by TIM GODFREY ++}{r1574+1573 @AB}¶{r1574+1573 @AB}
 
 <!-- p698 -->
-{++This last song could be considered as a example of tag switching in that it has to do with either a tag phrase or a word:  ++}{r1576 @AB}¶{r1575 @AB}
+{++This last song could be considered as a example of tag switching in that it has to do with either a tag phrase or a word:  ++}{r1576+1575 @AB}¶{r1576+1575 @AB}
 
 <!-- p699 -->
-{++Na you be God  ++}{r1578 @AB}¶{r1577 @AB}
+{++Na you be God  ++}{r1578+1577 @AB}¶{r1578+1577 @AB}
 
 <!-- p700 -->
-{++Almighty God   ++}{r1580 @AB}¶{r1579 @AB}
+{++Almighty God   ++}{r1580+1579 @AB}¶{r1580+1579 @AB}
 
 <!-- p701 -->
-{++You no be man oh, ++}{r1582 @AB}¶{r1581 @AB}
+{++You no be man oh, ++}{r1582+1581 @AB}¶{r1582+1581 @AB}
 
 <!-- p702 -->
-{++You no be man oh,  ++}{r1584 @AB}¶{r1583 @AB}
+{++You no be man oh,  ++}{r1584+1583 @AB}¶{r1584+1583 @AB}
 
 <!-- p703 right 4.2014in -->
-{++Nara Ekele Nara Otuto ++}{r1586 @AB}¶{r1585 @AB}
+{++Nara Ekele Nara Otuto ++}{r1586+1585 @AB}¶{r1586+1585 @AB}
 
 <!-- p704 -->
-{++OmeMma ++}{r1588 @AB}¶{r1587 @AB}
+{++OmeMma ++}{r1588+1587 @AB}¶{r1588+1587 @AB}
 
 <!-- p705 -->
-{++Nani Gi ka m gaefe ++}{r1590 @AB}¶{r1589 @AB}
+{++Nani Gi ka m gaefe ++}{r1590+1589 @AB}¶{r1590+1589 @AB}
 
 <!-- p706 -->
-{++A ga m ajagimma ++}{r1592 @AB}¶{r1591 @AB}
+{++A ga m ajagimma ++}{r1592+1591 @AB}¶{r1592+1591 @AB}
 
 <!-- p707 -->
-{++Si naebighebi, ebighebiruona ++}{r1594 @AB}¶{r1593 @AB}
+{++Si naebighebi, ebighebiruona ++}{r1594+1593 @AB}¶{r1594+1593 @AB}
 
 <!-- p708 -->
-{++Ebighebi (2x) ++}{r1596 @AB}¶{r1595 @AB}
+{++Ebighebi (2x) ++}{r1596+1595 @AB}¶{r1596+1595 @AB}
 
 <!-- p709 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1598 @AB}¶{r1597 @AB}
+{++ ++}{r1598+1597 @AB}¶{r1598+1597 @AB}
 
 <!-- p710 left, right -0.0104in, after 2pt, line 1 -->
-{++Pidgin Expressions  	English Expressions  ++}{r1600 @AB}¶{r1599 @AB}
+{++Pidgin Expressions  	English Expressions  ++}{r1600+1599 @AB}¶{r1600+1599 @AB}
 
 <!-- p711 -->
-{++Na you be God 	Almighty God ++}{r1602 @AB}¶{r1601 @AB}
+{++Na you be God 	Almighty God ++}{r1602+1601 @AB}¶{r1602+1601 @AB}
 
 <!-- p712 -->
-{++You no be man oh  	 ++}{r1604 @AB}¶{r1603 @AB}
+{++You no be man oh  	 ++}{r1604+1603 @AB}¶{r1604+1603 @AB}
 
 <!-- p713 -->
-{++You no be man oh 	 ++}{r1606 @AB}¶{r1605 @AB}
+{++You no be man oh 	 ++}{r1606+1605 @AB}¶{r1606+1605 @AB}
 
 <!-- p714 left, first-line 0in, left 0in, after 2.2pt, line 1 -->
-{++ ++}{r1608 @AB}¶{r1607 @AB}
+{++ ++}{r1608+1607 @AB}¶{r1608+1607 @AB}
 
 <!-- p715 -->
-{++The position of this paper however is that if you isolate the individual words in an expression like “Na you be God”, it can be guessed that there are English words as well as Pidgin expression in it thus a case of tag switching. For example, it can be argued that the only Pidgin expression is the found in the Pidgin word “Na” while the rest are English words that have been tagged with it, resulting in the advent of tag switching. The same position is also made in reference to an expression like “you no be man oh” where English words have been tagged with Pidgin to give it a local flavour which is highly intonated.  ++}{r1610 @AB}¶{r1609 @AB}
+{++The position of this paper however is that if you isolate the individual words in an expression like “Na you be God”, it can be guessed that there are English words as well as Pidgin expression in it thus a case of tag switching. For example, it can be argued that the only Pidgin expression is the found in the Pidgin word “Na” while the rest are English words that have been tagged with it, resulting in the advent of tag switching. The same position is also made in reference to an expression like “you no be man oh” where English words have been tagged with Pidgin to give it a local flavour which is highly intonated.  ++}{r1610+1609 @AB}¶{r1610+1609 @AB}
 
 <!-- p716 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1612 @AB}¶{r1611 @AB}
+{++ ++}{r1612+1611 @AB}¶{r1612+1611 @AB}
 
 <!-- p717 left, right -0.0104in, after 2pt, line 1 -->
-{++Conclusion ++}{r1614 @AB}¶{r1613 @AB}
+{++Conclusion ++}{r1614+1613 @AB}¶{r1614+1613 @AB}
 
 <!-- p718 -->
-{++This paper has attempted to investigate aspects of code-switching in Nigerian gospel music. Having examined the excerpts from ten gospel songs, it was discovered that inter-sentential code-switching is the most common type of codeswitching in gospel songs while intra-sentential and tag switching occur only sparingly. The position of this paper therefore is that inter-sentential codeswitching is a welcomed development because through it, languages can maintain their distinct peculiarities while being used to create certain kinds of effect lyrically.  ++}{r1616 @AB}¶{r1615 @AB}
+{++This paper has attempted to investigate aspects of code-switching in Nigerian gospel music. Having examined the excerpts from ten gospel songs, it was discovered that inter-sentential code-switching is the most common type of codeswitching in gospel songs while intra-sentential and tag switching occur only sparingly. The position of this paper therefore is that inter-sentential codeswitching is a welcomed development because through it, languages can maintain their distinct peculiarities while being used to create certain kinds of effect lyrically.  ++}{r1616+1615 @AB}¶{r1616+1615 @AB}
 
 <!-- p719 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ 	 ++}{r1618 @AB}¶{r1617 @AB}
+{++ 	 ++}{r1618+1617 @AB}¶{r1618+1617 @AB}
 
 <!-- p720 left, right -0.0104in, after 2pt, line 1 -->
-{++References ++}{r1620 @AB}¶{r1619 @AB}
+{++References ++}{r1620+1619 @AB}¶{r1620+1619 @AB}
 
 <!-- p721 hanging 0.47in, left 0.46in -->
-{++Akindele, F., &Adegbite, W. (1999). The Sociology and Politics of English in Nigeria. Ile-Ife: Obafemi Awolowo University Press.   ++}{r1622 @AB}¶{r1621 @AB}
+{++Akindele, F., &Adegbite, W. (1999). The Sociology and Politics of English in Nigeria. Ile-Ife: Obafemi Awolowo University Press.   ++}{r1622+1621 @AB}¶{r1622+1621 @AB}
 
 <!-- p722 -->
-{++Goddard, C. (1997). Semantic Analysis.  USA: Oxford UP.  ++}{r1624 @AB}¶{r1623 @AB}
+{++Goddard, C. (1997). Semantic Analysis.  USA: Oxford UP.  ++}{r1624+1623 @AB}¶{r1624+1623 @AB}
 
 <!-- p723 left 0.477in -->
-{++Gumpez, John, Joseph., &Hymes, Dell, H. (1986). Directions in Sociolinguistics: The Ethnography of Communication. Oxford: Basil Blackwell.  ++}{r1626 @AB}¶{r1625 @AB}
+{++Gumpez, John, Joseph., &Hymes, Dell, H. (1986). Directions in Sociolinguistics: The Ethnography of Communication. Oxford: Basil Blackwell.  ++}{r1626+1625 @AB}¶{r1626+1625 @AB}
 
 <!-- p724 -->
-{++Halliday, M.A.K .(1978). Language as Social Semiotics. London: Edward Arnold.  ++}{r1628 @AB}¶{r1627 @AB}
+{++Halliday, M.A.K .(1978). Language as Social Semiotics. London: Edward Arnold.  ++}{r1628+1627 @AB}¶{r1628+1627 @AB}
 
 <!-- p725 -->
-{++Hudson, R.A. (1996). Sociolinguistic. Cambridge: Cambridge University Press.  ++}{r1630 @AB}¶{r1629 @AB}
+{++Hudson, R.A. (1996). Sociolinguistic. Cambridge: Cambridge University Press.  ++}{r1630+1629 @AB}¶{r1630+1629 @AB}
 
 <!-- p726 hanging 0.47in, left 0.46in -->
-{++Longe, V.U, and Ofuani, O. A. (1996). English Language and Communication.  Benin City: Ilupeju.  ++}{r1632 @AB}¶{r1631 @AB}
+{++Longe, V.U, and Ofuani, O. A. (1996). English Language and Communication.  Benin City: Ilupeju.  ++}{r1632+1631 @AB}¶{r1632+1631 @AB}
 
 <!-- p727 hanging 0.47in, left 0.46in -->
-{++McClure, Erica. (2001). “Oral and Written Assyrian-English Code-Switching”. In  Radolfo Jacobson. Codeswitching Worldwide II. Berlin, New York: Mouton Gruyter.     ++}{r1634 @AB}¶{r1633 @AB}
+{++McClure, Erica. (2001). “Oral and Written Assyrian-English Code-Switching”. In  Radolfo Jacobson. Codeswitching Worldwide II. Berlin, New York: Mouton Gruyter.     ++}{r1634+1633 @AB}¶{r1634+1633 @AB}
 
 <!-- p728 hanging 0.47in, left 0.46in -->
-{++Martin, N.J., & Nakayama, T. K. (2010). Intercultural Communication in Contexts. New York: Higher Education. ++}{r1636 @AB}¶{r1635 @AB}
+{++Martin, N.J., & Nakayama, T. K. (2010). Intercultural Communication in Contexts. New York: Higher Education. ++}{r1636+1635 @AB}¶{r1636+1635 @AB}
 
 <!-- p729 hanging 0.47in, left 0.46in -->
-{++Mc Gregor, W. B. (2000). Linguistics: An Introduction. Maiden, New York: Continuum International Publishing Group.    ++}{r1638 @AB}¶{r1637 @AB}
+{++Mc Gregor, W. B. (2000). Linguistics: An Introduction. Maiden, New York: Continuum International Publishing Group.    ++}{r1638+1637 @AB}¶{r1638+1637 @AB}
 
 <!-- p730 hanging 0.47in, left 0.46in -->
-{++Olateju, M, &Oyeleye, L. (2005). Perspective on Language and Literature. Nigeria: Awolowo. UP.  ++}{r1640 @AB}¶{r1639 @AB}
+{++Olateju, M, &Oyeleye, L. (2005). Perspective on Language and Literature. Nigeria: Awolowo. UP.  ++}{r1640+1639 @AB}¶{r1640+1639 @AB}
 
 <!-- p731 hanging 0.477in, left 0.467in, after 2.1pt, line 0.975 -->
-{++Olorunfemi, Royimi. (2009). Code-Switching in Contemporary Nigerian Hip-Hop music. Ile Ife: Obafemi Awolowo University.  ++}{r1642 @AB}¶{r1641 @AB}
+{++Olorunfemi, Royimi. (2009). Code-Switching in Contemporary Nigerian Hip-Hop music. Ile Ife: Obafemi Awolowo University.  ++}{r1642+1641 @AB}¶{r1642+1641 @AB}
 
 <!-- p732 hanging 0.47in, left 0.46in -->
-{++Poplack, S. (1985). “Contrasting Patterns in Code-Switching in Two Communities” Methods V: Proceedings of the International Conference on Methods in Dialectology. “ed”. Warkentyne, H. J. Victoria: University of Victoria Press.  ++}{r1644 @AB}¶{r1643 @AB}
+{++Poplack, S. (1985). “Contrasting Patterns in Code-Switching in Two Communities” Methods V: Proceedings of the International Conference on Methods in Dialectology. “ed”. Warkentyne, H. J. Victoria: University of Victoria Press.  ++}{r1644+1643 @AB}¶{r1644+1643 @AB}
 
 <!-- p733 -->
-{++Wardhaugh, R. (2010). Introduction to Sociolinguistics. Malden: Wiley-Blackwell.  ++}{r1646 @AB}¶{r1645 @AB}
+{++Wardhaugh, R. (2010). Introduction to Sociolinguistics. Malden: Wiley-Blackwell.  ++}{r1646+1645 @AB}¶{r1646+1645 @AB}
 
 <!-- p734 left, first-line 0in, left 0in, after 2.2pt, line 1 -->
-{++ ++}{r1648 @AB}¶{r1647 @AB}
+{++ ++}{r1648+1647 @AB}¶{r1648+1647 @AB}
 
 <!-- p735 left, first-line 0in, left 0in, after 11.9pt, line 1 -->
-{++ ++}{r1650 @AB}¶{r1649 @AB}
+{++ ++}{r1650+1649 @AB}¶{r1650+1649 @AB}
 
-<!-- p736 break-del r1651 @AB -->
-{++ 	 ++}{r1652 @AB}
+<!-- p736 break-del r1652+1651 @AB -->
+{++ 	 ++}{r1652+1651 @AB}
 
 <!-- p737 empty, left, first-line 0in, left 0in, after 0pt, line 1, fmt r1653 @AB -->
 

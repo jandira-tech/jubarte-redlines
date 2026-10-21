@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 12                      # 1 mark shown as 1 change: 1 insertion; 7 in header1; 4 in footer1
+revisions: 12                      # 1 mark shown as 1 change: 1 insertion; 3 in header1 (7 marks); 4 in footer1
 comments: 0
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -13,7 +13,7 @@ page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
 headers:
-  default: {id: header1, text: "Sub {++new++}{header1.r90 @AL}{--old--}{header1.r91 @AL}. Runs {++A++}{header1.r92 @AL}{++B++}{header1.r93 @AL}{--C--}{header1.r94 @AL}{--D--}{header1.r95 @AL}. Keep {++mine++}{header1.r3 @??}"}
+  default: {id: header1, text: "Sub {++new++}{header1.r90+91 @AL}{--old--}{header1.r90+91 @AL}. Runs {++A++}{header1.r92+93+94+95 @AL}{++B++}{header1.r92+93+94+95 @AL}{--C--}{header1.r92+93+94+95 @AL}{--D--}{header1.r92+93+94+95 @AL}. Keep {++mine++}{header1.r3 @??}"}
 footers:
   default: {id: footer1, text: ["Page {--{PAGE}1{/}--}{footer1.r31 @AL} \\{PAGE}¶{footer1.r60 @AL}", ""], rev: break-del footer1.r61 @BC in footer1; break-del footer1.r40 @BC in footer1.p1}
 ---

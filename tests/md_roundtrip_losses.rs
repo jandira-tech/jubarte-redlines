@@ -237,8 +237,9 @@ fn fields_whole_in_marks(document: &str) {
     }
 }
 
-/// Distinct deletion ids stay separate and keep the link's field whole;
-/// the second mark goes after the field.
+/// Distinct deletion ids stay separate marks and keep the link's field
+/// whole; the second mark goes after the field, and both pieces read back
+/// as the one change they are.
 #[test]
 fn a_change_of_two_marks_keeps_its_link_field_in_one() {
     let line = "{--Title: [Ida Greaves](https://example.org/ida) and more words--}{r213+361 @SW}";
@@ -247,7 +248,7 @@ fn a_change_of_two_marks_keeps_its_link_field_in_one() {
     assert_eq!(document.matches("<w:del ").count(), 2, "{document}");
     fields_whole_in_marks(&document);
     assert!(
-        body.contains("{--Title: [Ida Greaves](https://example.org/ida)--}{r213 @SW}{-- and more words--}{r361 @SW}\n"),
+        body.contains("{--Title: [Ida Greaves](https://example.org/ida)--}{r213+361 @SW}{-- and more words--}{r213+361 @SW}\n"),
         "{body}"
     );
 }
@@ -331,7 +332,7 @@ fn a_range_ending_before_its_notes_paragraph_stays_out_of_it() {
     }
     // The paragraph keeps its own mark when the range end goes before it.
     let body = "<!-- p0 in c0 -->\n{==Some text==}\n\n\
-                <!-- p1 -->\n{>>c0 @SW: Hi.<<}{++After.++}{r5 @SW}¶{r6 @SW}\n\n\
+                <!-- p1 -->\n{>>c0 @SW: Hi.<<}{++After.++}{r5+6 @SW}¶{r5+6 @SW}\n\n\
                 <!-- p2 -->\nEnd.\n";
     let (got, _) = round_trip(body);
     assert!(got.contains(body), "{got}");

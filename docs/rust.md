@@ -14,7 +14,10 @@ other surfaces see [docs/python.md](python.md) (Python and `uvx`) and
 [docs/javascript.md](javascript.md) (Node, browser and `npx`); the
 [README](../README.md) covers the shared workflow and install options.
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
@@ -511,22 +514,31 @@ Examples:
 
 ```text
 $ jubarte changes --help
-List tracked changes with IDs for accept, reject and edit plans
+List tracked changes with IDs for accept, reject and edit plans.
+
+One line per logical change: the marks Word wrote for one edit are one change with a
+joined id (`r7+8+9+10`), its text followed by `(N elements)`.
 
 Usage: jubarte changes [OPTIONS] <FILE>
 
 Arguments:
-  <FILE>  The document (.docx)
+  <FILE>
+          The document (.docx)
 
 Options:
-      --json   Emit one JSON object per line
-  -q, --quiet  No status on success: no `wrote` lines, SUCCESS block or edit summary.
-               Files are still written; a reading task (`read`, `changes`, `compare`
-               without -o, `diff`, `capabilities`) still prints what it read, and
-               warnings and errors still print. `read`, `changes` and `comments` drop
-               their one stderr line naming the input's validity findings; under --json
-               and read --for-edit the output counts them, -q or not
-  -h, --help   Print help
+      --json
+          Emit one JSON object per line
+
+  -q, --quiet
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print. `read`, `changes` and `comments` drop their one stderr line
+          naming the input's validity findings; under --json and read --for-edit the
+          output counts them, -q or not
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 #### `jubarte accept`

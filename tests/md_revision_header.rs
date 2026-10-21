@@ -4,7 +4,7 @@
 //! The revisions summary describes the printed changes, including nested ones.
 mod common;
 
-use common::revision_summary::{KINDS, assert_summary, printed_counts};
+use common::revision_summary::{assert_summary, printed_counts};
 use jubarte::markdown::{MarkdownOptions, TrackChanges, docx_to_markdown};
 use regex::Regex;
 
@@ -36,16 +36,21 @@ fn revision(kind: &str, id: usize, author: &str, text: &str) -> String {
     )
 }
 
+/// The agent view of `xml`'s document. Its header counts the changes
+/// `jubarte changes` lists (#1356).
 fn agent(xml: &str) -> String {
-    docx_to_markdown(
-        &common::docx::docx(xml),
+    let docx = common::docx::docx(xml);
+    let view = docx_to_markdown(
+        &docx,
         &MarkdownOptions {
             ids: true,
             ..MarkdownOptions::default()
         },
     )
     .unwrap()
-    .markdown
+    .markdown;
+    assert_eq!(shown_summary(&view), changes_summary(&docx), "{view}");
+    view
 }
 
 fn revisions_line(view: &str) -> &str {
@@ -70,7 +75,8 @@ fn raw_summary(docx: &[u8]) -> String {
                 ChangeKind::Insertion => 0,
                 ChangeKind::Deletion => 1,
                 ChangeKind::Move => 5,
-                ChangeKind::Formatting => unreachable!(),
+                // Skipped above; no element is a replacement.
+                ChangeKind::Formatting | ChangeKind::Replacement => unreachable!(),
             },
         };
         counts[at] += 1;
@@ -201,7 +207,7 @@ fn resolved_headers_name_table_marks_and_moves_from_the_revision_list() {
 }
 
 #[test]
-fn revisions_header_counts_the_five_printed_nested_changes() {
+fn revisions_header_counts_three_changes_from_six_nested_marks() {
     let nested = format!(
         r#"<w:ins w:id="2" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t> will pay the </w:t></w:r>{}</w:ins>"#,
         revision("del", 3, "Bob", "insurers")
@@ -215,14 +221,16 @@ fn revisions_header_counts_the_five_printed_nested_changes() {
     ));
     assert_eq!(
         printed_counts(view.split("---\n").nth(2).unwrap()),
-        [4, 0, 1, 0, 0, 0]
+        [2, 0, 1, 0, 0, 0]
     );
-    assert!(view.contains("re r2 @A"), "{view}");
+    // Bob's insertions do not separate Alice's: hers are one change, and
+    // Bob's replacement starts inside it.
+    assert!(view.contains("re r0+2+5 @A"), "{view}");
     assert_summary(&view);
 }
 
 #[test]
-fn revisions_header_counts_seventeen_tags_from_eighteen_marks() {
+fn revisions_header_counts_fifteen_changes_from_eighteen_marks() {
     let mut xml = String::new();
     for id in [0, 2, 4] {
         xml.push_str(&format!(r#"<w:p><w:ins w:id="{id}" w:author="Alice" w:date="2026-10-16T10:00:00Z"><w:r><w:t>live</w:t></w:r>{}</w:ins></w:p>"#, revision("del", id + 1, "Bob", "nested")));
@@ -255,9 +263,11 @@ fn revisions_header_counts_seventeen_tags_from_eighteen_marks() {
     ));
     let view = agent(&xml);
     assert!(view.contains("revisions: 18"), "{view}");
+    // Neighbouring insertions by one author are one change: `r8+9`,
+    // `r12+13`.
     assert_eq!(
         printed_counts(view.split("---\n").nth(2).unwrap()),
-        [9, 7, 1, 0, 0, 0]
+        [7, 7, 1, 0, 0, 0]
     );
     assert_summary(&view);
 }
@@ -277,9 +287,16 @@ fn agent_fixtures(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// The printed body is the source of truth. Bless only its descriptive
-/// `shown as` summary, preserving the raw revision, formatting and story counts.
-/// Regenerate with `JUBARTE_BLESS=1 ... every_blessed_agent_view_header_matches_its_body`.
+/// A blessed view's header counts the changes `changes` lists (#1356) for
+/// the DOCX a committed view was read from, and for the document a
+/// hand-authored view writes back to: the body's tags are a proxy, and a
+/// table row printed as its cells' text counts as the row it is. A view
+/// of a source that repeats an id need not write back the changes it
+/// read, so a committed view answers to its source. Bless only the
+/// hand-authored views' descriptive `shown as` summary, preserving the
+/// raw revision, formatting and story counts (`md_fixed_point` blesses
+/// the committed ones). Regenerate with
+/// `JUBARTE_BLESS=1 ... every_blessed_agent_view_header_matches_its_body`.
 #[test]
 fn every_blessed_agent_view_header_matches_its_body() {
     let mut paths = Vec::new();
@@ -290,6 +307,17 @@ fn every_blessed_agent_view_header_matches_its_body() {
     for path in paths {
         let mut view = std::fs::read_to_string(&path).unwrap();
         eprintln!("checking {}", path.display());
+        let source = view_source(&path);
+        if let Some(docx) = &source {
+            assert_eq!(
+                shown_summary(&view),
+                changes_summary(&std::fs::read(docx).unwrap()),
+                "{} (the view of {})",
+                path.display(),
+                docx.display()
+            );
+            continue;
+        }
         if std::env::var_os("JUBARTE_BLESS").is_some()
             && !path
                 .components()
@@ -303,15 +331,9 @@ fn every_blessed_agent_view_header_matches_its_body() {
                     format!("{{{}}}", cap[1].replace(" on ", " re "))
                 })
                 .into_owned();
+            let listed = written_changes(&view);
             let (_, rest) = view.split_once("---\n").unwrap();
-            let (header, body) = rest.split_once("---\n").unwrap();
-            let counts = if header.lines().any(|line| {
-                line.starts_with("view: accept-all") || line.starts_with("view: reject-all")
-            }) {
-                [0; 6]
-            } else {
-                printed_counts(body)
-            };
+            let (header, _) = rest.split_once("---\n").unwrap();
             let line = header
                 .lines()
                 .find(|line| line.starts_with("revisions:"))
@@ -352,21 +374,12 @@ fn every_blessed_agent_view_header_matches_its_body() {
                     marks = format!("{raw} mark{}", if raw == 1 { "" } else { "s" });
                 }
             }
-            let n: usize = counts.iter().sum();
-            if n > 0 {
-                let kinds = counts
-                    .iter()
-                    .zip(KINDS)
-                    .filter(|(n, _)| **n > 0)
-                    .map(|(n, kind)| format!("{n} {kind}{}", if *n == 1 { "" } else { "s" }))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+            if !listed.starts_with("0 ") {
                 parts.insert(
                     0,
                     format!(
-                        "{} shown as {n} change{}: {kinds}",
-                        if marks.is_empty() { "0 marks" } else { &marks },
-                        if n == 1 { "" } else { "s" }
+                        "{} shown as {listed}",
+                        if marks.is_empty() { "0 marks" } else { &marks }
                     ),
                 );
             } else if !marks.is_empty() {
@@ -378,18 +391,51 @@ fn every_blessed_agent_view_header_matches_its_body() {
                 format!("{key:<35}# {}", parts.join("; "))
             };
             let blessed = view.replacen(line, &replacement, 1);
-            assert_summary(&blessed);
+            assert_eq!(shown_summary(&blessed), listed, "{}", path.display());
             if blessed != view {
                 std::fs::write(&path, blessed).unwrap();
             }
         } else {
-            assert_summary(&view);
+            assert_eq!(
+                shown_summary(&view),
+                written_changes(&view),
+                "{}",
+                path.display()
+            );
         }
     }
 }
 
+/// The DOCX a committed view under `tests/fixtures/md-roundtrip` was read
+/// from, as `views.txt` names it, when it is at hand.
+fn view_source(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = std::path::Path::new("tests/fixtures/md-roundtrip");
+    if path.parent()? != dir {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?;
+    std::fs::read_to_string(dir.join("views.txt"))
+        .ok()?
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.split_once(' '))
+        .find(|(md, _)| *md == name)
+        .map(|(_, docx)| std::path::PathBuf::from(docx.trim()))
+        .filter(|docx| docx.exists())
+}
+
+/// The changes `changes` lists for the document `view` writes back to.
+fn written_changes(view: &str) -> String {
+    use jubarte::markdown::{DocxOptions, markdown_to_docx};
+    changes_summary(
+        &markdown_to_docx(view, &DocxOptions::default())
+            .unwrap()
+            .docx,
+    )
+}
+
 #[test]
-fn every_fixture_reconstructed_view_header_matches_its_body() {
+fn every_fixture_reconstructed_view_header_counts_its_changes() {
     use jubarte::markdown::{DocxOptions, markdown_to_docx};
     let mut paths = Vec::new();
     agent_fixtures(std::path::Path::new("tests/fixtures"), &mut paths);
@@ -407,7 +453,12 @@ fn every_fixture_reconstructed_view_header_matches_its_body() {
         )
         .unwrap()
         .markdown;
-        assert_summary(&shown);
+        assert_eq!(
+            shown_summary(&shown),
+            changes_summary(&document.docx),
+            "{}",
+            path.display()
+        );
     }
 }
 
@@ -460,9 +511,304 @@ fn a_point_comment_after_an_insertion_keeps_the_header_and_body_in_step() {
     assert_summary(&view);
 }
 
+/// Two changes side by side count as two (#1356): Bob's move-from `r3`,
+/// whose text he replaced, and his insertion `r5+6`, whose paragraph mark
+/// prints `¶{r5+6 @B}` and is the same change, counted once. They print
+/// apart, as two changes do (#1363). The move's other side, `r4`, is a
+/// third. Both sides count as moves, as `changes` lists them.
+#[test]
+fn a_move_beside_an_insertion_counts_each_change_once() {
+    let at = r#"w:author="Bob" w:date="2026-10-16T10:00:00Z""#;
+    let view = agent(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="6" {at}/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:moveFromRangeStart w:id="20" {at} w:name="move1"/><w:moveFrom w:id="3" {at}><w:r><w:t>General</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:ins w:id="5" {at}><w:r><w:t>CONSENT</w:t></w:r></w:ins></w:p><w:p><w:r><w:t xml:space="preserve">Then </w:t></w:r><w:moveToRangeStart w:id="21" {at} w:name="move1"/><w:moveTo w:id="4" {at}><w:r><w:t>General</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:r><w:t xml:space="preserve"> end.</w:t></w:r></w:p>"#
+    ));
+    assert!(
+        view.contains("Pay {--General--}{r3 @B}{++CONSENT++}{r5+6 @B}¶{r5+6 @B}"),
+        "{view}"
+    );
+    assert!(
+        revisions_line(&view).ends_with("# 4 marks shown as 3 changes: 1 insertion, 2 moves"),
+        "{view}"
+    );
+}
+
+/// A mark the view splits around a change nested in it is one change
+/// (#1353 review, F3): Bob's insertion `r7` prints on both sides of
+/// Alice's deletion inside it and counts once, as `jubarte changes` lists
+/// it. One id on two marks with text between (a broken file repeating an
+/// id) is two changes, as `changes` lists them.
+#[test]
+fn a_mark_split_by_a_nest_counts_once() {
+    let split = agent(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">K </w:t></w:r><w:ins w:id="7" w:author="Bob" w:date="2026-10-16T10:00:00Z"><w:r><w:t>a</w:t></w:r>{}<w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> T.</w:t></w:r></w:p>"#,
+        revision("del", 9, "Alice", "x")
+    ));
+    assert!(
+        split.contains("K {++a++}{r7 @B}{--x--}{r9 @A re r7 @B}{++b++}{r7 @B} T."),
+        "{split}"
+    );
+    assert!(
+        revisions_line(&split).ends_with("# 2 marks shown as 2 changes: 1 insertion, 1 deletion"),
+        "{split}"
+    );
+    assert_summary(&split);
+    let apart = agent(&format!(
+        r#"<w:p>{}<w:r><w:t xml:space="preserve"> mid </w:t></w:r>{}</w:p>"#,
+        revision("ins", 5, "Bob", "a"),
+        revision("ins", 5, "Bob", "b")
+    ));
+    assert!(
+        apart.contains("{++a++}{r5 @B} mid {++b++}{r5 @B}"),
+        "{apart}"
+    );
+    assert!(
+        revisions_line(&apart).ends_with("# 2 marks shown as 2 changes: 2 insertions"),
+        "{apart}"
+    );
+    assert_summary(&apart);
+    // Touching, with no nest between: still two marks.
+    let touching = agent(&format!(
+        r#"<w:p>{}<w:ins w:id="5" w:author="Bob" w:date="2026-10-16T10:00:00Z"><w:r><w:rPr><w:b/></w:rPr><w:t>b</w:t></w:r></w:ins></w:p>"#,
+        revision("ins", 5, "Bob", "a")
+    ));
+    assert!(
+        touching.contains("{++a++}{r5 @B}{++**b**++}{r5 @B}"),
+        "{touching}"
+    );
+    assert!(
+        revisions_line(&touching).ends_with("# 2 marks shown as 2 changes: 2 insertions"),
+        "{touching}"
+    );
+    assert_summary(&touching);
+}
+
 #[test]
 fn raw_total_counts_substitution_sides_story_ids_and_paragraph_marks() {
     let view = "---\nrevisions: 4 # 4 marks shown as 3 changes: 1 insertion, 1 substitution, 1 paragraph mark\n---\n{++x++}{header1.r1 @AL}{~~old~>new~~}{header1.r2+3 @AL}¶{r4 @AL}\n";
     common::revision_summary::assert_summary(view);
     common::revision_summary::assert_raw_total(view);
+}
+
+/// The body's changes as `jubarte changes` lists them, formatting aside,
+/// in the header's words: `2 changes: 1 insertion, 1 deletion`.
+fn changes_summary(docx: &[u8]) -> String {
+    use jubarte::changes::{ChangeKind, list_logical_changes};
+    let mut counts = [0; 7];
+    for change in list_logical_changes(docx).unwrap() {
+        if change.id.contains('.') || change.kind == ChangeKind::Formatting {
+            continue;
+        }
+        let at = match change.target {
+            "paragraph_mark" => 3,
+            "table_row" => 4,
+            "table_cell" => 5,
+            _ => match change.kind {
+                ChangeKind::Insertion => 0,
+                ChangeKind::Deletion => 1,
+                ChangeKind::Replacement => 2,
+                ChangeKind::Move => 6,
+                ChangeKind::Formatting => unreachable!(),
+            },
+        };
+        counts[at] += 1;
+    }
+    let names = [
+        ("insertion", "insertions"),
+        ("deletion", "deletions"),
+        ("substitution", "substitutions"),
+        ("paragraph mark", "paragraph marks"),
+        ("table row", "table rows"),
+        ("table cell", "table cells"),
+        ("move", "moves"),
+    ];
+    let total: usize = counts.iter().sum();
+    let kinds = counts
+        .iter()
+        .zip(names)
+        .filter(|(n, _)| **n > 0)
+        .map(|(n, (one, many))| format!("{n} {}", if *n == 1 { one } else { many }))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{total} change{}: {kinds}",
+        if total == 1 { "" } else { "s" }
+    )
+}
+
+/// The header's `shown as` part: `2 changes: 1 insertion, 1 deletion`.
+fn shown_summary(view: &str) -> String {
+    let line = revisions_line(view);
+    line.split_once(" shown as ")
+        .map(|(_, shown)| shown.split("; ").next().unwrap().to_string())
+        .unwrap_or_else(|| "0 changes: ".to_string())
+}
+
+/// A change whose every piece holds a change nested in it prints only as
+/// that change's parent (`{--x--}{r9 @A re r7 @B}`); `changes` lists both,
+/// and so does the header (#1356).
+#[test]
+fn a_change_printed_only_as_a_parent_counts() {
+    let docx = common::docx::docx(
+        r#"<w:p><w:ins w:id="7" w:author="Bob" w:date="2026-10-01T10:00:00Z">
+           <w:del w:id="9" w:author="Alice" w:date="2026-10-02T11:00:00Z">
+           <w:r><w:delText>x</w:delText></w:r></w:del></w:ins></w:p>"#,
+    );
+    let view = docx_to_markdown(
+        &docx,
+        &MarkdownOptions {
+            ids: true,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert!(view.contains("{--x--}{r9 @A re r7 @B}"), "{view}");
+    assert_eq!(shown_summary(&view), "2 changes: 1 insertion, 1 deletion");
+    assert_eq!(shown_summary(&view), changes_summary(&docx));
+}
+
+fn docx_fixtures(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            docx_fixtures(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "docx") {
+            out.push(path);
+        }
+    }
+}
+
+/// #1356's acceptance: every DOCX fixture's header counts the body's
+/// changes `jubarte changes` lists, kind by kind.
+#[test]
+fn every_docx_fixture_header_counts_the_changes_changes_lists() {
+    let mut paths = Vec::new();
+    docx_fixtures(std::path::Path::new("tests/fixtures"), &mut paths);
+    paths.sort();
+    let mut wrong = Vec::new();
+    for path in paths {
+        let docx = std::fs::read(&path).unwrap();
+        let Ok(view) = docx_to_markdown(
+            &docx,
+            &MarkdownOptions {
+                ids: true,
+                ..MarkdownOptions::default()
+            },
+        ) else {
+            continue;
+        };
+        if !revisions_line(&view.markdown).contains(" shown as ") {
+            continue;
+        }
+        let (shown, listed) = (shown_summary(&view.markdown), changes_summary(&docx));
+        if shown != listed {
+            wrong.push(format!(
+                "{}: header {shown}; changes {listed}",
+                path.display()
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Each story's count on the `revisions:` line other than the body's
+/// (`3 in header1 (7 marks)`), as (story, changes, marks): the marks only
+/// print when they differ from the changes.
+fn printed_story_counts(view: &str) -> Vec<(String, usize, usize)> {
+    let story = Regex::new(r"^(\d+) in (\S+?)(?: \((\d+) marks?\))?$").unwrap();
+    let line = revisions_line(view);
+    let comment = line.split_once("# ").map_or("", |(_, comment)| comment);
+    let mut out: Vec<(String, usize, usize)> = comment
+        .split("; ")
+        .filter_map(|part| story.captures(part))
+        .map(|cap| {
+            let changes: usize = cap[1].parse().unwrap();
+            let marks = cap.get(3).map_or(changes, |m| m.as_str().parse().unwrap());
+            (cap[2].to_string(), changes, marks)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The same counts from `jubarte changes`: each story's logical changes
+/// and the elements they are made of.
+fn listed_story_counts(docx: &[u8]) -> Vec<(String, usize, usize)> {
+    use jubarte::changes::{list_changes, list_logical_changes};
+    let story = |id: &str| {
+        jubarte::ids::parse_change_ids(id)
+            .ok()
+            .and_then(|ids| ids.first().map(|id| id.story.clone()))
+            .unwrap_or_else(|| "body".to_string())
+    };
+    let mut counts: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+    for change in list_logical_changes(docx).unwrap() {
+        counts.entry(story(&change.id)).or_default().0 += 1;
+    }
+    for change in list_changes(docx).unwrap() {
+        counts.entry(story(&change.id)).or_default().1 += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(story, _)| !matches!(story.as_str(), "body" | "styles"))
+        .map(|(story, (changes, marks))| (story, changes, marks))
+        .collect()
+}
+
+/// A header's replacement of several marks is one change, as the body's
+/// is and as `jubarte changes` lists it (#1353 review); the marks follow
+/// when they differ, so the line still adds up to `revisions:`.
+#[test]
+fn a_story_counts_its_logical_changes() {
+    let docx = std::fs::read("tests/fixtures/md-roundtrip/edges/edge-authorless.docx").unwrap();
+    let view = docx_to_markdown(
+        &docx,
+        &MarkdownOptions {
+            ids: true,
+            ..MarkdownOptions::default()
+        },
+    )
+    .unwrap()
+    .markdown;
+    assert_eq!(
+        revisions_line(&view),
+        "revisions: 12                      # 1 mark shown as 1 change: 1 insertion; 3 in header1 (7 marks); 4 in footer1"
+    );
+    assert_eq!(printed_story_counts(&view), listed_story_counts(&docx));
+}
+
+/// Every DOCX fixture's header counts each other story's changes as
+/// `jubarte changes` lists them.
+#[test]
+fn every_docx_fixture_header_counts_each_storys_logical_changes() {
+    let mut paths = Vec::new();
+    docx_fixtures(std::path::Path::new("tests/fixtures"), &mut paths);
+    paths.sort();
+    let mut wrong = Vec::new();
+    for path in paths {
+        let docx = std::fs::read(&path).unwrap();
+        let Ok(view) = docx_to_markdown(
+            &docx,
+            &MarkdownOptions {
+                ids: true,
+                ..MarkdownOptions::default()
+            },
+        ) else {
+            continue;
+        };
+        let Ok(_) = jubarte::changes::list_logical_changes(&docx) else {
+            continue;
+        };
+        let (printed, listed) = (
+            printed_story_counts(&view.markdown),
+            listed_story_counts(&docx),
+        );
+        if printed != listed {
+            wrong.push(format!(
+                "{}: header {printed:?}; changes {listed:?}",
+                path.display()
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

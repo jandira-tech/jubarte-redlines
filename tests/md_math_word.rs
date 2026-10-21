@@ -251,11 +251,12 @@ fn dollar_amounts_keep_revision_ids_and_authors() {
         "---\ntrack_changes: on\nauthors:\n  A: Alice\n  ASR: Arthur Souza Rodrigues\n---\n\n{line}\n"
     );
     let (view, xml) = round_trip(&markdown);
-    assert_eq!(
-        view,
-        "The price is {--$100--}{r5 @A}{~~$120~>$110~~}{r7+8 @ASR re r6 @A}."
-    );
+    // Alice's two neighbouring deletions are one change.
+    let shown = "The price is {--$100--}{r5+6 @A}{~~$120~>$110~~}{r7+8 @ASR re r5+6 @A}.";
+    assert_eq!(view, shown);
     assert!(!xml.contains("<m:oMath"), "{xml}");
+    let (again, _) = round_trip(&markdown.replace(line, shown));
+    assert_eq!(again, shown);
 }
 
 #[test]

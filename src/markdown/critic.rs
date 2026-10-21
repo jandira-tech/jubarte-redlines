@@ -1349,27 +1349,50 @@ pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
 /// Complete attribution payloads in rendered text, paired with their mark.
 /// The delimiter prepass keeps comments, escaped literals and code spans opaque.
 pub(crate) fn attributed_notes(source: &str) -> Vec<(Token, String)> {
+    touching_notes(source)
+        .into_iter()
+        .map(|(token, note, _)| (token, note))
+        .collect()
+}
+
+/// [`attributed_notes`], each with whether its change touches the note
+/// before it: no text outside a change between them.
+pub(crate) fn touching_notes(source: &str) -> Vec<(Token, String, bool)> {
     let mut notes = Vec::new();
     let mut closer = Token::InsertEnd;
     let mut note = None;
+    // Text outside a change since the last note; the change being read,
+    // and whether it touches that note.
+    let mut gap = true;
+    let mut open = false;
+    let mut touches = false;
     Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
+        Piece::Token(Token::InsertStart | Token::DeleteStart | Token::SubstituteStart) => {
+            if !open {
+                touches = !gap;
+                open = true;
+            }
+        }
         Piece::Token(token @ (Token::InsertEnd | Token::DeleteEnd | Token::SubstituteEnd)) => {
             closer = token;
+            open = false;
         }
-        Piece::Token(Token::AttributionStart) => note = Some((closer, String::new())),
+        Piece::Token(Token::AttributionStart) => note = Some((closer, String::new(), touches)),
         Piece::Token(Token::ParagraphInsertion) => {
-            note = Some((Token::ParagraphInsertion, String::new()));
+            note = Some((Token::ParagraphInsertion, String::new(), !gap));
         }
         Piece::Token(Token::AttributionEnd) => {
             if let Some(note) = note.take() {
                 notes.push(note);
             }
+            gap = false;
         }
-        Piece::Text(text) => {
-            if let Some((_, note)) = &mut note {
-                note.push_str(text);
-            }
-        }
+        Piece::Text(text) => match &mut note {
+            Some((_, note, _)) => note.push_str(text),
+            None if !open && !text.is_empty() => gap = true,
+            None => {}
+        },
+        Piece::Token(_) if !open => gap = true,
         _ => {}
     });
     notes

@@ -132,6 +132,10 @@ reference definition holds its frame and a text-free template. Matching
 Markdown and word hashes restore the template's original structure (apart
 from package relationship and drawing ids); edited paragraphs rebuild the
 box content inside the same frame. The payload cannot override edited words.
+A box whose words carry no change of their own prints them with its
+anchor's tag (`{++box ++}{r7 @B}` inside an inserted drawing). That copy of
+a single id is the anchor's mark, which already holds the box, so the
+writer writes the words bare, with no id of their own and no warning.
 
 A text box nested in another box has an ordinary `![alt][dN]` token at its
 position inside the enclosing box's region. Its own regions follow the
@@ -338,6 +342,13 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r0 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+1 @AC} review call.
 ```
 
+`revisions:` counts the body's marks, then the changes `jubarte changes`
+lists for the body, kind by kind (#1356). That includes a change printed
+only as another's parent (`re r7 @B`), and a row whose cells all print
+its id counts once, as a table row. A selection counts the changes whose
+ids it prints. Each other story then counts the changes `jubarte changes`
+lists for it, with its marks when they differ: `3 in header1 (7 marks)`.
+
 `--track-changes accept|reject` prints the document with every change
 resolved, `--comments none` leaves the comments out of the text (their ids
 move to the id lines), `--dates` puts timestamps in notes whose author's
@@ -496,7 +507,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   A paragraph joined into the one before it hands its revisions over. In
   the tracked view, the insertions, deletions and moves its text has no
   tag for: a deleted picture, line break, field character or empty run
-  (a tracked page break has its own clause).
+  (a tracked page break has its own clause); `rev-del` names the
+  deletions among them. A replacement with no text on either side (a
+  field deleted and another put in its place) names each side by its own
+  marks, `rev r4 @D, rev-del r3 @D`: either side is one `accept --id`
+  takes.
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
 - `in c5`: with comments inline, the comment threads whose range runs on
@@ -714,8 +729,10 @@ staged in the contract's plan, not landed.
 {++quarterly++}{r0 @AC}
 {--ninety days--}{r7 @AC}
 {~~weekly~>monthly~~}{r2+1 @AC}       one author, deleted id first
+{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}  one author, insertion first
 {--old--}{r2 @JD}{++new++}{r1 @AC}    different authors stay separate
-{++bold ++}{r7 @AC}{++words++}{r8 @AC}  distinct ids stay separate
+{++bold ++}{r7+8 @AC}{++words++}{r7+8 @AC}  one change of two marks
+{++new text++}{r5+6 @AC}¶{r5+6 @AC}  a change that ends its paragraph
 {++quarterly++}{r0 @AC 2026-10-03T14:05:00Z}  with --dates
 {--deleted--}{r3 @BO re r1 @AL}        deletion inside insertion r1
 Text¶{r9 @AC}                        inserted paragraph mark
@@ -758,18 +775,43 @@ holding ` re r1 Kim` of its own stays one name. A part with a bare
 parenthesis in its name makes the note no fold: it reads as the change's
 plain attribution, or as a comment.
 
-Distinct revision ids always stay separate, including adjacent insertions or
-adjacent deletions by the same author. One id may appear on several marks.
-When writing DOCX, adjacent pieces with the same id, kind, author and date
-become one revision element, including formatting boundaries and changes
-nested inside that revision. Pieces separated by live text or a paragraph
+A tag names the logical change its piece belongs to, the one `jubarte
+changes` lists (#1261): the marks Word writes for one edit (one author's
+touching insertions, or deletions, in a story, whatever their dates; a
+deletion and that author's insertion after it; an insertion and that
+author's deletion touching it; the paragraph mark the change ends with)
+are one change with a joined id, and every piece prints it: `{++bold
+++}{r7+8 @AC}{++words++}{r7+8 @AC}`. A replacement holds one run of
+insertions and one of deletions, its ids in reading order (`r1+2` for an
+insertion first, `r2+1` for a deletion first). The pieces keep their own
+text, formatting and, under `--dates`, their own dates. Original text,
+another author's deletion, a field, a move, a table cell or the end of a
+paragraph separates two changes. So does original text the view prints
+nothing for: hidden text, a soft hyphen, a symbol, a page break. Written
+back, those two changes touch, so they read back as one (#1369). Another
+author's insertion among the marks does not, unless the marks were made
+inside it, or it sits between an insertion and the deletion after it,
+which touch only with nothing between them. Empty runs, bookmarks,
+comment ranges and Word's rendered-page-break hints separate nothing. When writing DOCX,
+the pieces that print one joined id take its ids in reading order, one
+each, so reading the DOCX back prints the same view. One id may appear on
+several marks. When writing DOCX, adjacent pieces with the same single id,
+kind, author and date become one revision element, including formatting
+boundaries and changes nested inside that revision. Pieces separated by live text or a paragraph
 boundary take distinct OOXML ids. The writer warns with the source line
 and the replacement id; reading the DOCX back prints that new id. Reusing
 an id with a different kind, author or date also requires a new id.
-Only a deletion directly followed by a live insertion by the same author
-pairs as a substitution. Proofing markers, bookmarks that print nothing,
-and empty runs may intervene; visible text and rendered content interrupt
-adjacency. An insertion followed by a deletion stays in document order.
+A substitution is one change: only a deletion directly followed by a live
+insertion of the same change, as `changes` lists it, pairs as one. Two
+changes print apart, each with its own tag (#1363): one author's deletion
+and insertion with hidden text, a soft hyphen, a symbol or a page break
+between them, a move and the insertion beside it, or a deletion and an
+insertion that repeat one `w:id` (`{--old--}{r7 @B}{++new++}{r7 @B}`:
+`changes` never joins a repeated id). Proofing markers,
+bookmarks that print nothing, and empty runs may intervene; visible text
+and rendered content interrupt adjacency. An insertion followed by a
+deletion stays in document order, one change when they touch:
+`{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}`.
 In `{~~old~>new~~}{r4+5 @B re r3 @A}`, `re` applies only to the old side;
 the new side follows the parent insertion. Story prefixes remain intact.
 
@@ -994,7 +1036,10 @@ exit 2. Table ranges (`t0-t2`) are not part of the `-p` grammar; list them
 as `t0,t1,t2`. `--head`, `--tail`, `--changed` and `--by` cannot be combined
 with `--tables`.
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
@@ -1314,9 +1359,11 @@ ends with `--force`.
   (a page break added after Word last saved turns no page) and does not
   add the blank page an odd- or even-page section start can need.
 - A table is one block for `-p`, `--head` and `--tail`.
-- Distinct revision ids keep separate attribution tags, including when a
-  comment range lies between them. Resolved views preserve them as separate
-  clauses: `rev r7 @AC; r8 @AC`.
+- A change Word wrote as several marks prints its joined id on each of its
+  pieces, as `changes` lists it (`{++bold++}{r7+8 @AC}{++ words++}{r7+8
+  @AC}`); a comment range between the marks does not part them. Separate
+  changes keep separate tags, and resolved views name each change once:
+  `rev r7+8 @AC; r9 @AC`.
 
 ## Diffs
 
