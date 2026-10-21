@@ -1015,10 +1015,20 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
         }
         ppr.push_str("/>");
     }
-    let left = indent_attr(spec.left, inherited.left);
-    let right = indent_attr(spec.right, inherited.right);
-    let first = indent_attr(spec.first_line, inherited.first_line);
-    let hanging = indent_attr(spec.hanging, inherited.hanging);
+    // The default style's omitted indent is zero, as its spacing is: the
+    // legend names it only when it is not, so a default indent from
+    // `docDefaults` is cleared (#1498 review).
+    let indent = |value: Option<i64>, given: Option<i64>| {
+        if spec.default {
+            indent_attr(value.or(Some(0)), Some(given.unwrap_or(0)))
+        } else {
+            indent_attr(value, given)
+        }
+    };
+    let left = indent(spec.left, inherited.left);
+    let right = indent(spec.right, inherited.right);
+    let first = indent(spec.first_line, inherited.first_line);
+    let hanging = indent(spec.hanging, inherited.hanging);
     if left.is_some() || right.is_some() || first.is_some() || hanging.is_some() {
         ppr.push_str("<w:ind");
         if let Some(value) = left {
@@ -1502,6 +1512,33 @@ mod tests {
         let quote = style_element(&out, "Quote");
         assert!(!quote.contains("<w:rPr"), "{quote}");
         assert!(!quote.contains("<w:pPr"), "{quote}");
+    }
+
+    #[test]
+    fn the_default_style_s_omitted_indent_is_none() {
+        // The default style's line names an indent only when it is not
+        // zero, so an omitted one is zero: a template's own default
+        // indent may not survive under it (#1498 review).
+        let styles = "<w:styles><w:docDefaults><w:pPrDefault><w:pPr>\
+            <w:ind w:left=\"360\" w:right=\"720\" w:hanging=\"360\"/>\
+            </w:pPr></w:pPrDefault></w:docDefaults></w:styles>";
+        let out = apply(
+            styles,
+            &legend("styles:\n  Normal: Calibri 11pt, left\n  Quote: Calibri 11pt, left\n"),
+        );
+        let normal = style_element(&out, "Normal");
+        assert!(
+            normal.contains("<w:ind w:left=\"0\" w:right=\"0\" w:hanging=\"0\"/>"),
+            "{normal}"
+        );
+        // A style based on the default inherits its zeros.
+        assert!(!style_element(&out, "Quote").contains("<w:ind"), "{out}");
+        // With no default indent there is nothing to clear.
+        let out = apply(
+            "<w:styles></w:styles>",
+            &legend("styles:\n  Normal: Calibri 11pt, left\n"),
+        );
+        assert!(!style_element(&out, "Normal").contains("<w:ind"), "{out}");
     }
 
     #[test]
