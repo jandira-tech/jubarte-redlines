@@ -438,7 +438,7 @@ fn path(dom: &Dom, n: NodeId) -> String {
 }
 
 fn clip(s: &str, max: usize) -> String {
-    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let s = crate::util::collapse_whitespace(s);
     if s.chars().count() <= max {
         s
     } else {

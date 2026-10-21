@@ -316,7 +316,7 @@ print or parse today:
 
 - [ ] Remove the aliases, their notes and their tests in 0.14, and say so in
   the CHANGELOG's Removed section.
-- [ ] Remove the `sha1_fingerprint*` aliases (`src/util/sha1.rs`),
+- [x] Remove the `sha1_fingerprint*` aliases (`src/util/sha1.rs`),
   deprecated since 0.10.2 and still present: the last promise of this kind
   was not kept.
 

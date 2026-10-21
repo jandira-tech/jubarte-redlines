@@ -3695,25 +3695,26 @@ fn canonicalize_style_ids(
 
     // Pass 2: drop collisions — target held by a non-renaming style, or two
     // styles racing for the same target (first wins; prefer already-matching).
-    let leaving: std::collections::HashSet<String> =
-        desired.iter().map(|(_, old, _)| old.clone()).collect();
-    let mut taken_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let leaving: std::collections::HashSet<&str> =
+        desired.iter().map(|(_, old, _)| old.as_str()).collect();
+    let mut taken_targets: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut renames: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut plan: Vec<(NodeId, String)> = Vec::new();
-    for (s, old, new_id) in desired {
-        if taken_targets.contains(&new_id) {
+    for (s, old, new_id) in &desired {
+        if taken_targets.contains(new_id.as_str()) {
             continue;
         }
         // Occupied by a style that stays put?
         let occupied_by_stayer = styles.iter().any(|&other| {
-            dom.attribute(other, &style_id) == Some(new_id.as_str()) && !leaving.contains(&new_id)
+            dom.attribute(other, &style_id) == Some(new_id.as_str())
+                && !leaving.contains(new_id.as_str())
         });
         if occupied_by_stayer {
             continue;
         }
-        taken_targets.insert(new_id.clone());
-        renames.insert(old, new_id.clone());
-        plan.push((s, new_id));
+        taken_targets.insert(new_id.as_str());
+        renames.insert(old.clone(), new_id.clone());
+        plan.push((*s, new_id.clone()));
     }
     for (s, new_id) in &plan {
         dom.set_attribute_value(*s, &style_id, Some(new_id));

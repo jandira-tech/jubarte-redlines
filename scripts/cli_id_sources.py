@@ -233,16 +233,22 @@ def parsers(fns: dict[str, Fn]) -> list[Fn]:
     return sorted(out, key=lambda f: (f.file, f.key))
 
 
+# ids.rs constants per file, kept while the file is unchanged.
+_CONSTS_CACHE: dict[Path, tuple[int, dict[str, str]]] = {}
+
+
 def messages(fn: Fn, root: Path) -> list[str]:
     """The refusals a parser can give: its id-message literals and the ids.rs
     constants it names, spelled out."""
-    consts = dict(
-        re.findall(
-            r'pub const (\w+): &str = "([^"]*)";', (root / "src" / "ids.rs").read_text(encoding="utf-8")
-        )
-    )
+    ids = root / "src" / "ids.rs"
+    stamp = ids.stat().st_mtime_ns
+    cached = _CONSTS_CACHE.get(ids)
+    if cached is None or cached[0] != stamp:
+        cached = (stamp, dict(re.findall(r'pub const (\w+): &str = "([^"]*)";', ids.read_text(encoding="utf-8"))))
+        _CONSTS_CACHE[ids] = cached
+    consts = cached[1]
     found = [m.strip('"') for m in ID_MESSAGE.findall(fn.body)]
-    found += [consts[c] for c in sorted(set(re.findall(r"\b([A-Z_]{6,})\b", fn.body))) if c in consts]
+    found += [consts[c] for c in sorted(set(re.findall(r"\b([A-Z_]{6,})\b", fn.body)).intersection(consts))]
     return sorted(set(found))
 
 

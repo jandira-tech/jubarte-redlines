@@ -889,7 +889,9 @@ fn extract_pseudo_attr(s: &str, key: &str) -> Option<String> {
 /// `&#xhh;`). Port of `unescapeXmlText`.
 ///
 /// An unknown name reference, a numeric reference that does not decode
-/// to a valid Unicode scalar, or a reference with no terminating `;`
+/// to a character XML 1.0 allows (§2.2 `Char`: no NUL, no C0 control but
+/// tab, LF and CR, no U+FFFE or U+FFFF, no surrogate), or a reference
+/// with no terminating `;`
 /// is preserved verbatim: the `&` and trailing characters are copied
 /// through. ASCII-only names (matching the TS regex `[a-zA-Z]+`) are
 /// recognized; names with non-ASCII letters (e.g. `&eacute;`) are left
@@ -933,7 +935,14 @@ fn decode_entity(body: &str) -> Option<String> {
         } else {
             body[1..].parse::<u32>().ok()?
         };
-        return char::from_u32(code).map(|c| c.to_string());
+        // XML 1.0 §2.2 `Char`: a reference to any other character is no
+        // character the document can hold, so it stays as written.
+        return char::from_u32(code)
+            .filter(|&c| {
+                matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}')
+                    || c >= '\u{10000}'
+            })
+            .map(|c| c.to_string());
     }
     // named entity — must be all ASCII letters to match the TS regex `[a-zA-Z]+`
     if !b.iter().all(|c| c.is_ascii_alphabetic()) {
@@ -1881,6 +1890,76 @@ mod tag_policy_tests {
         assert!(
             scope_inserted_bg > 0,
             "background thread observed {scope_inserted_bg} declared bytes"
+        );
+    }
+}
+
+#[cfg(test)]
+mod unescape_tests {
+    use super::unescape_xml_text;
+
+    #[test]
+    fn test_unescape_xml_text() {
+        // No ampersand
+        assert_eq!(unescape_xml_text("hello world"), "hello world");
+
+        // Basic named entities
+        assert_eq!(unescape_xml_text("&lt;hello&gt;"), "<hello>");
+        assert_eq!(unescape_xml_text("Tom &amp; Jerry"), "Tom & Jerry");
+        assert_eq!(unescape_xml_text("&quot;quote&quot;"), "\"quote\"");
+        assert_eq!(unescape_xml_text("&apos;apostrophe&apos;"), "'apostrophe'");
+
+        // Numeric entities - decimal
+        assert_eq!(unescape_xml_text("&#65;"), "A");
+        assert_eq!(unescape_xml_text("&#97;"), "a");
+
+        // Numeric entities - hexadecimal
+        assert_eq!(unescape_xml_text("&#x41;"), "A");
+        assert_eq!(unescape_xml_text("&#x61;"), "a");
+        assert_eq!(unescape_xml_text("&#X41;"), "A"); // Uppercase X
+
+        // Unicode entities
+        assert_eq!(unescape_xml_text("&#x1F433;"), "🐳");
+        assert_eq!(unescape_xml_text("&#128051;"), "🐳"); // 1F433 in decimal
+
+        // Invalid/Unknown entities (should be left as is)
+        assert_eq!(unescape_xml_text("&unknown;"), "&unknown;");
+        assert_eq!(unescape_xml_text("&123;"), "&123;");
+        assert_eq!(unescape_xml_text("&#xG;"), "&#xG;"); // Invalid hex
+        assert_eq!(unescape_xml_text("&#;"), "&#;"); // Empty numeric
+        assert_eq!(unescape_xml_text("&;"), "&;"); // Empty named
+
+        // Missing semicolon (should be left as is)
+        assert_eq!(unescape_xml_text("before &amp after"), "before &amp after");
+
+        // Multiple entities
+        assert_eq!(
+            unescape_xml_text("A &lt; B &amp; C &gt; D"),
+            "A < B & C > D"
+        );
+
+        // Mixed text and entities
+        assert_eq!(
+            unescape_xml_text("Start &#x41; middle &amp; end"),
+            "Start A middle & end"
+        );
+    }
+
+    /// XML 1.0 §2.2 `Char`: a reference to a character the production
+    /// leaves out (NUL, the C0 controls but tab, LF and CR, U+FFFE and
+    /// U+FFFF) is kept verbatim, so it never becomes text the writer then
+    /// serializes into a part no XML reader accepts.
+    #[test]
+    fn a_reference_to_a_character_xml_forbids_stays_literal() {
+        for kept in ["&#0;", "&#x0;", "&#x1F;", "&#8;", "&#xFFFE;", "&#xFFFF;"] {
+            assert_eq!(unescape_xml_text(kept), kept);
+        }
+        assert_eq!(unescape_xml_text("&#9;&#xA;&#13;"), "\t\n\r");
+        assert_eq!(unescape_xml_text("&#x20;&#xD7FF;"), " \u{D7FF}");
+        assert_eq!(unescape_xml_text("&#xE000;&#xFFFD;"), "\u{E000}\u{FFFD}");
+        assert_eq!(
+            unescape_xml_text("&#x10000;&#x10FFFF;"),
+            "\u{10000}\u{10FFFF}"
         );
     }
 }
