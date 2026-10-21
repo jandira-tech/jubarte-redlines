@@ -1745,6 +1745,26 @@ mod tests {
     }
 
     #[test]
+    fn read_rejects_missing_word_document() {
+        let mut bytes = include_bytes!("../tests/fixtures/legacy/services.doc").to_vec();
+        // Modify the "WordDocument" directory entry to "NordDocument"
+        let word_doc_utf16: Vec<u8> = "WordDocument"
+            .encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+        for i in 0..(bytes.len() - word_doc_utf16.len()) {
+            if &bytes[i..i + word_doc_utf16.len()] == word_doc_utf16.as_slice() {
+                bytes[i] = b'N';
+            }
+        }
+        let error = read(&bytes).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "LEGACY_DOC: no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password"
+        );
+    }
+
+    #[test]
     fn refuses_what_is_not_a_compound_file() {
         let error = read(b"PK\x03\x04 not ole").unwrap_err();
         assert!(
