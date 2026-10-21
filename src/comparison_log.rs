@@ -76,3 +76,18 @@ impl ComparisonLog {
             .count()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error() {
+        let mut log = ComparisonLog::new();
+        log.error("an error occurred");
+
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].code, ComparisonLogCode::Error);
+        assert_eq!(log.entries[0].message, "an error occurred");
+    }
+}
