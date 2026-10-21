@@ -68,22 +68,22 @@ Verdana font (screen-optimized)
 <!-- p16 3 -->
 ## 2.2 Different Font Sizes
 
-<!-- p17 -->
+<!-- p17 size 8pt -->
 8pt text (very small)
 
-<!-- p18 -->
+<!-- p18 size 10pt -->
 10pt text (small)
 
 <!-- p19 -->
 12pt text (standard body)
 
-<!-- p20 -->
+<!-- p20 size 14pt -->
 14pt text (slightly larger)
 
-<!-- p21 -->
+<!-- p21 size 18pt -->
 18pt text (subheading size)
 
-<!-- p22 -->
+<!-- p22 size 24pt -->
 24pt text (heading size)
 
 <!-- p23 2 -->

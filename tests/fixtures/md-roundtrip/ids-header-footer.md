@@ -42,16 +42,16 @@ footers:
     p1: {text: "Even page footer, page numbers at the right", indent: {first-line: 0.25in}}
 ---
 
-<!-- p0 -->
+<!-- p0 size 16pt -->
 This is a document with:
 
-<!-- p1 ListParagraph bullet -->
+<!-- p1 ListParagraph size 16pt, bullet -->
 - normal headers and footers defined - ON
 
-<!-- p2 ListParagraph bullet -->
+<!-- p2 ListParagraph size 16pt, bullet -->
 - odd/even headers and footers defined - ON
 
-<!-- p3 ListParagraph bullet -->
+<!-- p3 ListParagraph size 16pt, bullet -->
 - first page header and footer defined - ON
 
 <!-- p4 empty -->

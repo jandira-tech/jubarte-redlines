@@ -32,7 +32,7 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 <!-- p3 after 1pt, break-del r14 @ASR -->
 {++_Verdana italic centered creates a clean and modern look._++}{r15 @ASR}{--**eigenpal/docx-editor**         --}{r16 @ASR}
 
-<!-- p4 after 3pt, break-del r17 @ASR -->
+<!-- p4 after 3pt, size 12pt, break-del r17 @ASR -->
 {--Project Charter & Contributor Agreement         --}{r18 @ASR}
 
 <!-- p5 empty, after 3pt, break-del r19 @ASR -->
@@ -41,7 +41,7 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 |{--npm               [<u>` @eigenpal/docx-js-editor                  `</u>](https://www.npmjs.com/package/@eigenpal/docx-js-editor)--}{r22 @ASR}|{--github               [<u>` eigenpal/docx-editor                  `</u>](https://github.com/eigenpal/docx-editor)--}{r24 @ASR}|
 |-|-|
 
-<!-- p8 before 15pt, after 4pt, break-del r25 @ASR -->
+<!-- p8 before 15pt, after 4pt, size 16pt, break-del r25 @ASR -->
 {--**1. What this is**         --}{r26 @ASR}
 
 <!-- p9 before 3pt, after 3pt, break-del r27 @ASR -->
@@ -54,13 +54,13 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 
 <!-- p12 empty, before 4pt, break-del r32 @ASR -->
 
-<!-- t1 1x1, cells t1.row0 p13-p23, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r34 @ASR in p13; r36 @ASR in p14; r38 @ASR in p15; r39 @ASR in p16; r41 @ASR in p17; r43 @ASR in p18; r45 @ASR in p19; r47 @ASR in p20; r49 @ASR in p21; r51 @ASR in p22; r53 @ASR in p23, rev-del r33 @ASR in t1.row0 -->
+<!-- t1 1x1, cells t1.row0 p13-p23, p13-p14 size 9.5pt, p16-p23 size 9.5pt, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r34 @ASR in p13; r36 @ASR in p14; r38 @ASR in p15; r39 @ASR in p16; r41 @ASR in p17; r43 @ASR in p18; r45 @ASR in p19; r47 @ASR in p20; r49 @ASR in p21; r51 @ASR in p22; r53 @ASR in p23, rev-del r33 @ASR in t1.row0 -->
 |{--` import { DocxEditor } from '@eigenpal/docx-js-editor'                `--}{r35 @ASR}{--<br>` import '@eigenpal/docx-js-editor/styles.css'                `--}{r37 @ASR}<br>{--<br>` function App({ file }: { file: ArrayBuffer }) {                `--}{r40 @ASR}{--<br>` return (                `--}{r42 @ASR}{--<br>` <DocxEditor                `--}{r44 @ASR}{--<br>` documentBuffer={file}                `--}{r46 @ASR}{--<br>` onSave={(buffer) => uploadToServer(buffer)}                `--}{r48 @ASR}{--<br>` />                `--}{r50 @ASR}{--<br>` )                `--}{r52 @ASR}{--<br>` }                `--}{r54 @ASR}|
 |-|
 
 <!-- p24 empty, before 8pt, break-del r55 @ASR -->
 
-<!-- p25 before 15pt, after 4pt, break-del r56 @ASR -->
+<!-- p25 before 15pt, after 4pt, size 16pt, break-del r56 @ASR -->
 {--**2. Collaboration — Tracked Changes & Comments**         --}{r57 @ASR}
 
 <!-- p26 before 3pt, after 3pt, break-del r58 @ASR -->
@@ -102,7 +102,7 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 
 <!-- p40 empty, before 8pt, break-del r82 @ASR -->
 
-<!-- p41 before 15pt, after 4pt, break-del r83 @ASR -->
+<!-- p41 before 15pt, after 4pt, size 16pt, break-del r83 @ASR -->
 {--**3. Props**         --}{r84 @ASR}
 
 <!-- p42 before 3pt, after 3pt, break-del r85 @ASR -->
@@ -110,7 +110,7 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 
 <!-- p43 empty, before 3pt, break-del r87 @ASR -->
 
-<!-- t2 8x4, cells p44-p75 by row, widths 1.309in 1.191in 0.67in 3.33in, width 6.5in, indent -0.003in, borders single 0.5pt, break-del r89 @ASR in p44; r91 @ASR in p45; r93 @ASR in p46; r95 @ASR in p47; r98 @ASR in p48; r100 @ASR in p49; r102 @ASR in p50; r104 @ASR in p51; r107 @ASR in p52; r109 @ASR in p53; r111 @ASR in p54; r113 @ASR in p55; r116 @ASR in p56; r118 @ASR in p57; r120 @ASR in p58; r122 @ASR in p59; r125 @ASR in p60; r127 @ASR in p61; r129 @ASR in p62; r131 @ASR in p63; r134 @ASR in p64; r136 @ASR in p65; r138 @ASR in p66; r140 @ASR in p67; r143 @ASR in p68; r145 @ASR in p69; r147 @ASR in p70; r149 @ASR in p71; r152 @ASR in p72; r154 @ASR in p73; r156 @ASR in p74; r158 @ASR in p75, rev-del r88 @ASR in t2.row0; r97 @ASR in t2.row1; r106 @ASR in t2.row2; r115 @ASR in t2.row3; r124 @ASR in t2.row4; r133 @ASR in t2.row5; r142 @ASR in t2.row6; r151 @ASR in t2.row7 -->
+<!-- t2 8x4, cells p44-p75 by row, p44-p50 size 9.5pt, p51 size 10pt, p52-p54 size 9.5pt, p55 size 10pt, p56-p58 size 9.5pt, p59 size 10pt, p60-p62 size 9.5pt, p63 size 10pt, p64-p66 size 9.5pt, p67 size 10pt, p68-p70 size 9.5pt, p71 size 10pt, p72-p74 size 9.5pt, p75 size 10pt, widths 1.309in 1.191in 0.67in 3.33in, width 6.5in, indent -0.003in, borders single 0.5pt, break-del r89 @ASR in p44; r91 @ASR in p45; r93 @ASR in p46; r95 @ASR in p47; r98 @ASR in p48; r100 @ASR in p49; r102 @ASR in p50; r104 @ASR in p51; r107 @ASR in p52; r109 @ASR in p53; r111 @ASR in p54; r113 @ASR in p55; r116 @ASR in p56; r118 @ASR in p57; r120 @ASR in p58; r122 @ASR in p59; r125 @ASR in p60; r127 @ASR in p61; r129 @ASR in p62; r131 @ASR in p63; r134 @ASR in p64; r136 @ASR in p65; r138 @ASR in p66; r140 @ASR in p67; r143 @ASR in p68; r145 @ASR in p69; r147 @ASR in p70; r149 @ASR in p71; r152 @ASR in p72; r154 @ASR in p73; r156 @ASR in p74; r158 @ASR in p75, rev-del r88 @ASR in t2.row0; r97 @ASR in t2.row1; r106 @ASR in t2.row2; r115 @ASR in t2.row3; r124 @ASR in t2.row4; r133 @ASR in t2.row5; r142 @ASR in t2.row6; r151 @ASR in t2.row7 -->
 |{--**Prop**               --}{r90 @ASR}|{--**Type**               --}{r92 @ASR}|{--**Default**               --}{r94 @ASR}|{--**Description**               --}{r96 @ASR}|
 |-|-|-|-|
 |{--` documentBuffer                `--}{r99 @ASR}|{--` ArrayBuffer                `--}{r101 @ASR}|{--` —                `--}{r103 @ASR}|{--.docx file contents to load               --}{r105 @ASR}|
@@ -128,13 +128,13 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 <!-- p78 before 9pt, after 2pt, break-del r163 @ASR -->
 {--**Ref methods**         --}{r164 @ASR}
 
-<!-- t3 1x1, cells t3.row0 p79-p85, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r166 @ASR in p79; r168 @ASR in p80; r169 @ASR in p81; r171 @ASR in p82; r173 @ASR in p83; r175 @ASR in p84; r177 @ASR in p85, rev-del r165 @ASR in t3.row0 -->
+<!-- t3 1x1, cells t3.row0 p79-p85, p79 size 9.5pt, p81-p85 size 9.5pt, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r166 @ASR in p79; r168 @ASR in p80; r169 @ASR in p81; r171 @ASR in p82; r173 @ASR in p83; r175 @ASR in p84; r177 @ASR in p85, rev-del r165 @ASR in t3.row0 -->
 |{--` const ref = useRef<DocxEditorRef>(null)                `--}{r167 @ASR}<br>{--<br>` await ref.current.save() // ArrayBuffer of the .docx                `--}{r170 @ASR}{--<br>` ref.current.getDocument() // current document object                `--}{r172 @ASR}{--<br>` ref.current.setZoom(1.5) // set zoom to 150%                `--}{r174 @ASR}{--<br>` ref.current.scrollToPage(3) // scroll to page 3                `--}{r176 @ASR}{--<br>` ref.current.print() // print                `--}{r178 @ASR}|
 |-|
 
 <!-- p86 empty, before 8pt, break-del r179 @ASR -->
 
-<!-- p87 before 15pt, after 4pt, break-del r180 @ASR -->
+<!-- p87 before 15pt, after 4pt, size 16pt, break-del r180 @ASR -->
 {--**4. Contributing**         --}{r181 @ASR}
 
 <!-- p88 before 3pt, after 3pt, break-del r182 @ASR -->
@@ -162,18 +162,18 @@ _file\__{++_15_++}{r7 @ASR}{--**14**--}{r8 @ASR}_.docx_
 <!-- p96 before 9pt, after 2pt, break-del r196 @ASR -->
 {--**Dev setup**         --}{r197 @ASR}
 
-<!-- t4 1x1, cells t4.row0 p97-p98, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r199 @ASR in p97; r201 @ASR in p98, rev-del r198 @ASR in t4.row0 -->
+<!-- t4 1x1, cells t4.row0 p97-p98, p97-p98 size 9.5pt, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r199 @ASR in p97; r201 @ASR in p98, rev-del r198 @ASR in t4.row0 -->
 |{--` bun install                `--}{r200 @ASR}{--<br>` bun run dev // Vite demo on localhost:5173                `--}{r202 @ASR}|
 |-|
 
 <!-- p99 empty, before 10pt, break-del r203 @ASR -->
 
-<!-- p100 before 15pt, after 4pt, break-del r204 @ASR -->
+<!-- p100 before 15pt, after 4pt, size 16pt, break-del r204 @ASR -->
 {--**Sign-off**         --}{r205 @ASR}
 
 <!-- p101 empty, before 3pt, break-del r206 @ASR -->
 
-<!-- t5 1x2, cells t5.row0 p102-p109, p102 after 0.4pt, p103 after 16pt, p104 after 3pt, p106 after 0.4pt, p107 after 16pt, p108 after 3pt, width 6.5in, break-del r208 @ASR in p102; r210 @ASR in p103; r212 @ASR in p104; r213 @ASR in p105; r215 @ASR in p106; r217 @ASR in p107; r219 @ASR in p108; r220 @ASR in p109, rev-del r207 @ASR in t5.row0 -->
+<!-- t5 1x2, cells t5.row0 p102-p109, p102 after 0.4pt size 12pt, p103 after 16pt size 10pt, p104 after 3pt, p105 size 10pt, p106 after 0.4pt size 12pt, p107 after 16pt size 10pt, p108 after 3pt, p109 size 10pt, width 6.5in, break-del r208 @ASR in p102; r210 @ASR in p103; r212 @ASR in p104; r213 @ASR in p105; r215 @ASR in p106; r217 @ASR in p107; r219 @ASR in p108; r220 @ASR in p109, rev-del r207 @ASR in t5.row0 -->
 |{--**EigenPal**               --}{r209 @ASR}{--<br>Maintainer · eigenpal.com               --}{r211 @ASR}<br>{--<br>signature · date               --}{r214 @ASR}|{--**Contributor**               --}{r216 @ASR}{--<br>on behalf of the community               --}{r218 @ASR}<br>{--<br>signature · date               --}{r221 @ASR}|
 |-|-|
 

@@ -261,7 +261,11 @@ fn paragraph_styles(docx: &[u8]) -> HashSet<String> {
     use crate::namespaces::W;
     dom.elements(root, Some(&W::name("style")))
         .into_iter()
-        .filter(|&style| dom.attribute(style, &W::name("type")) == Some("paragraph"))
+        // No `w:type` is a paragraph style (ECMA-376 `w:style`).
+        .filter(|&style| {
+            dom.attribute(style, &W::name("type"))
+                .is_none_or(|t| t == "paragraph")
+        })
         .filter_map(|style| {
             let name = dom.element(style, &W::name("name"))?;
             Some(dom.attribute(name, &W::val())?.to_lowercase())

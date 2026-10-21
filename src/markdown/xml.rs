@@ -90,6 +90,9 @@ pub(super) struct Paragraph {
     pub ind: Indent,
     /// The spacing an id line names (`before 6pt, line 1.5`).
     pub spacing: Spacing,
+    /// The text size an id line names (`size 9pt`), in half-points: every
+    /// run's and the mark's `w:sz` (#1474).
+    pub size: Option<u32>,
     pub align: Option<&'static str>,
     /// A heading level (`w:outlineLvl`, 0 for `#`) the paragraph carries
     /// itself, when its style is one an id line names.
@@ -179,6 +182,16 @@ pub(super) struct Indent {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+}
+
+/// `9pt`, `10.5pt`: a paragraph's text size (#1474) in the half-points
+/// `w:sz` stores, Word's nearest; `None` past `ST_HpsMeasure`'s 1 to 3276
+/// (1638pt).
+pub(super) fn size_half_points(value: &str) -> Option<u32> {
+    let points: f64 = value.strip_suffix("pt")?.parse().ok()?;
+    let half = (points * 2.0).round();
+    // `as` cannot truncate: the range is checked first.
+    (half.is_finite() && (1.0..=3276.0).contains(&half)).then_some(half as u32)
 }
 
 /// A paragraph's own `w:spacing` (#1473): the space before and after it in
@@ -651,6 +664,9 @@ pub(super) struct Context<'d> {
     /// runs' as the view reads them (`{--A\n\nB--}{r8+9+10}`: `A` 8,
     /// the mark 9, `B` 10), though Word's `w:pPr` comes first.
     pub pending_marks: Vec<Option<(Kind, Option<u32>, usize)>>,
+    /// Each open paragraph's text size (`size 9pt`), in half-points: its
+    /// runs take it. A text box's paragraphs open inside their anchor's.
+    pub run_sizes: Vec<Option<u32>>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
     /// `w:numId` of each label use, by its index in `Document::label_uses`.
@@ -1003,6 +1019,7 @@ pub(super) fn story(
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
+                context.run_sizes.pop();
                 out.push_str("</w:p>");
             }
             Item::Run(Run {
@@ -2108,6 +2125,14 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
             let _ = write!(mark_properties, "<{mark}/>");
         }
     }
+    // CT_ParaRPr: the mark's change, then its size, then its formatting
+    // change.
+    if let Some(size) = paragraph.size {
+        let _ = write!(
+            mark_properties,
+            "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>"
+        );
+    }
     if let Some(format) = mark_format {
         let change = context.format_mark("w:rPrChange", format);
         let _ = write!(mark_properties, "<{change}><w:rPr/></w:rPrChange>");
@@ -2135,6 +2160,7 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     context
         .pending_marks
         .push(mark_at.map(|(kind, at)| (kind, paragraph.mark_by, start + at)));
+    context.run_sizes.push(paragraph.size);
 }
 
 /// Whether the note a reference at `position` (1-based) points to is an
@@ -2174,6 +2200,10 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     }
     if format.strike {
         out.push_str("<w:strike/>");
+    }
+    // After `w:strike`, before `w:highlight`, as CT_RPr orders them.
+    if let Some(size) = context.run_sizes.last().copied().flatten() {
+        let _ = write!(out, "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>");
     }
     if format.mark || context.highlighted(run) {
         let colour = format.mark_color.unwrap_or("yellow");
@@ -2343,6 +2373,7 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
+                context.run_sizes.pop();
                 if let Some((kind, _)) = open.take() {
                     out.push_str(close_tag(kind));
                 }

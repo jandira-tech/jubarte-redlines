@@ -117,7 +117,7 @@ This sentence carries a second footnote for testing multi-note extraction. †[^
 <!-- p46 -->
 **INFO: Tables, lists, and footnotes should each round-trip cleanly.**
 
-<!-- p47 center -->
+<!-- p47 center, size 14pt -->
 _— end of sample —_
 
 <!-- p48 Title -->
@@ -209,7 +209,7 @@ _— end of sample —_
 <!-- p94 -->
 {++**INFO: Tables, lists, and footnotes should each round-trip cleanly.**++}{r104 @ASR}¶{r103 @ASR}
 
-<!-- p95 center -->
+<!-- p95 center, size 14pt -->
 {++_— end of sample —_++}{r106 @ASR}¶{r105 @ASR}
 
 <!-- p96 -->
@@ -303,7 +303,7 @@ Below are inline runs with mixed formatting. Each run is a separate span so an e
 <!-- p143 break-del r175 @ASR -->
 {--**INFO: Tables, lists, and footnotes should each round-trip cleanly.**--}{r176 @ASR}
 
-<!-- p144 center, break-del r177 @ASR -->
+<!-- p144 center, size 14pt, break-del r177 @ASR -->
 {--_— end of sample —_--}{r178 @ASR}
 
 <!-- p145 empty -->

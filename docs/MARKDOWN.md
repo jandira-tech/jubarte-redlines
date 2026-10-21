@@ -352,7 +352,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}][ outline {n}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · before {x}pt | before auto · after {x}pt | after auto · line {r} | line {x}pt exact | line {x}pt atLeast · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · before {x}pt | before auto · after {x}pt | after auto · line {r} | line {x}pt exact | line {x}pt atLeast · size {x}pt · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -390,6 +390,18 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   paragraphs keep their spacing this way; a note's, a comment's or a text
   box's paragraph keeps only its style's for now, and spacing in lines
   (`w:beforeLines`, `w:afterLines`, for East Asian layout) is not kept.
+- `size 9pt` is the paragraph's own text size: the one `w:sz` every run of
+  its text states (`size 10.5pt`, in half points as Word keeps it), or,
+  for a paragraph with no text, its mark's, when its style (through
+  `basedOn` and the document defaults, Word's 10pt without any) gives
+  another. Runs of different sizes, or a run that states none, print
+  nothing, and neither does the mark of a paragraph with text. The writer
+  puts the size on every run of the paragraph and on its mark (`w:sz` and
+  `w:szCs`). An empty paragraph with its own size keeps its own id line:
+  it is a line of that height. Body and table-cell paragraphs keep their
+  size this way (a cell paragraph's on the table line, beside its
+  spacing: `p8-p38 line 8.65pt exact size 9pt`); a note's, a comment's
+  or a text box's paragraph keeps only its style's for now.
 - `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
   in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
   it is escaped with `\`). A level text naming a deeper level (`%3` on
@@ -470,9 +482,9 @@ than the grid has holds an empty cell the view could not tell from padding
 alignment most of a column's cell paragraphs have; left and none count
 alike, a tie or justified text prints `-`; the `center` or `right` after
 `t0` places the table itself on the page), then `p8 Quote` for each cell
-paragraph that states a style, then `p8-p10 after 0pt line 1` for cell
-paragraphs with their own spacing (the id line's clauses joined by
-spaces, one range for neighbours that say the same), then the table's
+paragraph that states a style, then `p8-p10 after 0pt line 1 size 9pt`
+for cell paragraphs with their own spacing or text size (the id line's
+clauses joined by spaces, one range for neighbours that say the same), then the table's
 geometry: `widths 1.5in 2in 3in` for the grid's columns (`w:gridCol`),
 printed when they are not an even split of the text width (the body
 section's page width less its margins); the reader writes the grid from

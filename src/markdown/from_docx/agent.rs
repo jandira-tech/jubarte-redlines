@@ -875,6 +875,72 @@ pub(crate) struct LineFacts<'a> {
     /// Tracked view: the paragraph's changes its text prints no tag for,
     /// `true` for an insertion (see [`unshown_tags`]).
     pub unshown: &'a [(bool, String)],
+    /// The text size the paragraph states and its style does not give
+    /// (`size 9pt`), in half-points: see [`own_size`].
+    pub size: Option<u32>,
+}
+
+/// The one `w:sz` every shown run of paragraph `p` states (#1474), or,
+/// with none, its mark's, in half-points: `None` when a run states none or
+/// another. A shown run holds text, a tab or a line break, all of which
+/// the writer gives the clause's size; a hidden run (`hidden` names the
+/// hidden character styles) prints nothing. A run whose `w:szCs` differs
+/// from its `w:sz` states no one size: the writer gives both the clause's.
+/// A text box sits inside a run, and Word's Fallback copy and math hold
+/// runs of their own.
+pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
+    fn half_points(value: &str) -> Option<u32> {
+        let half = value
+            .parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_half_points(value))?
+            .round();
+        // `as` cannot truncate: the range is checked first.
+        (half.is_finite() && (1.0..=3276.0).contains(&half)).then_some(half as u32)
+    }
+    fn size(rpr: Option<&Element>) -> Option<u32> {
+        let rpr = rpr?;
+        let sz = half_points(rpr.child("sz")?.attr("val")?)?;
+        match rpr.child("szCs").and_then(|cs| cs.attr("val")) {
+            Some(cs) if half_points(cs) != Some(sz) => None,
+            _ => Some(sz),
+        }
+    }
+    fn shown(run: &Element) -> bool {
+        run.elements().any(|c| match c.local() {
+            "t" | "delText" | "tab" | "noBreakHyphen" => true,
+            // A page break is the paragraph's id line, not a line.
+            "br" | "cr" => c.attr("type") != Some("page"),
+            _ => false,
+        })
+    }
+    fn walk(element: &Element, hidden: &HashSet<String>, sizes: &mut Vec<Option<u32>>) {
+        for child in element.elements() {
+            match child.local() {
+                "pPr" | "Fallback" | "oMath" | "oMathPara" => {}
+                "r" => {
+                    if shown(child) && !hidden_run(child.child("rPr"), hidden) {
+                        sizes.push(size(child.child("rPr")));
+                    }
+                }
+                _ => walk(child, hidden, sizes),
+            }
+        }
+    }
+    let mut sizes = Vec::new();
+    walk(p, hidden, &mut sizes);
+    match sizes.split_first() {
+        None => size(p.path(&["pPr", "rPr"])),
+        Some((first, rest)) => first.filter(|_| rest.iter().all(|s| s == first)),
+    }
+}
+
+/// `size 9pt`, `size 10.5pt`: the clause of a text size in half-points.
+pub(crate) fn size_clause(half_points: u32) -> String {
+    match half_points % 2 {
+        0 => format!("size {}pt", half_points / 2),
+        _ => format!("size {}.5pt", half_points / 2),
+    }
 }
 
 /// The tags of the insertions, deletions and moves in paragraph `p` whose
@@ -1716,6 +1782,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     }
     if let Some(spacing) = ppr.and_then(|pr| pr.child("spacing")) {
         clauses.extend(spacing_clauses(spacing));
+    }
+    if let Some(size) = f.size {
+        clauses.push(size_clause(size));
     }
     match f.marker {
         Some("-") => clauses.push("bullet".to_string()),
@@ -3063,6 +3132,7 @@ mod tests {
             spans: &[],
             empty: false,
             unshown: &[],
+            size: None,
         };
         let line = id_line(p, &facts, &Handles::default());
         assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
@@ -3092,6 +3162,7 @@ mod tests {
                 spans: &[],
                 empty: false,
                 unshown: &[],
+                size: None,
             };
             let line = id_line(p, &facts, &Handles::default());
             assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");
