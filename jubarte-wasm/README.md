@@ -50,9 +50,17 @@ deliberately):
 
 - `wasm-pack build` four targets: `node` (default features), `web`
   (`--out-dir pkg-web`), `node-slim` and `web-slim`
-  (`--no-default-features --features console-panic`, no PDF renderer);
+  (`--no-default-features --features console-panic`, no PDF renderer),
+  with `--remap-path-prefix` for the home directory and the checkout in
+  `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS`: the target's own variable
+  merges with the `.cargo/config.toml` recipe instead of replacing it, and
+  the panic locations no longer name the builder's home (it refuses to run
+  with `RUSTFLAGS` set);
 - copy the four artifact sets into `npm/node`, `npm/web`, `npm/node-slim`,
   `npm/web-slim`;
+- refuse the package if any artifact still names a home directory
+  (`scripts/check_npm_paths.py`, which CI also runs on the committed
+  package);
 - copy the engine `LICENSE` into `npm/` and stamp `git rev-parse HEAD` into
   `npm/ENGINE_COMMIT.txt`.
 
