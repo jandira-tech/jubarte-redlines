@@ -90,7 +90,9 @@ fn ranges(old: &str, new: &str, collapse: bool) -> Vec<(usize, usize, String)> {
     let news = units(new, collapse);
     let old_keys: Vec<&str> = olds.iter().map(|u| u.key.as_str()).collect();
     let new_keys: Vec<&str> = news.iter().map(|u| u.key.as_str()).collect();
-    let mut ops: Vec<(DiffTag, Range<usize>, Range<usize>)> = Vec::new();
+    // Each op with the equal gaps a join took in: their units stay `old`'s.
+    type Gaps = Vec<(Range<usize>, Range<usize>)>;
+    let mut ops: Vec<(DiffTag, Range<usize>, Range<usize>, Gaps)> = Vec::new();
     for op in capture_diff_slices(Algorithm::Myers, &old_keys, &new_keys) {
         let (tag, old_range, new_range) = op.as_tag_tuple();
         if !collapse && tag != DiffTag::Equal {
@@ -98,7 +100,7 @@ fn ranges(old: &str, new: &str, collapse: bool) -> Vec<(usize, usize, String)> {
             // as one, as Word Compare shows them.
             let len = ops.len();
             let joins = match ops.as_slice() {
-                [.., (a, ..), (DiffTag::Equal, gap, _)] if *a != DiffTag::Equal => {
+                [.., (a, ..), (DiffTag::Equal, gap, ..)] if *a != DiffTag::Equal => {
                     olds[gap.clone()].iter().all(|u| u.key.trim().is_empty())
                 }
                 [.., (a, ..)] => *a != DiffTag::Equal,
@@ -110,19 +112,22 @@ fn ranges(old: &str, new: &str, collapse: bool) -> Vec<(usize, usize, String)> {
                 } else {
                     len - 1
                 };
-                let (_, old_start, new_start) = ops.drain(first..).next().expect("ops to join");
+                let mut drained = ops.drain(first..);
+                let (_, old_start, new_start, mut gaps) = drained.next().expect("ops to join");
+                gaps.extend(drained.map(|(_, o, n, _)| (o, n)));
                 ops.push((
                     DiffTag::Replace,
                     old_start.start..old_range.end,
                     new_start.start..new_range.end,
+                    gaps,
                 ));
                 continue;
             }
         }
-        ops.push((tag, old_range, new_range));
+        ops.push((tag, old_range, new_range, Vec::new()));
     }
     let mut edits = Vec::new();
-    for (tag, old_range, new_range) in ops {
+    for (tag, old_range, new_range, gaps) in ops {
         if tag == DiffTag::Equal {
             for (o, n) in olds[old_range].iter().zip(&news[new_range]) {
                 let wanted = &new[n.start..n.end];
@@ -136,10 +141,19 @@ fn ranges(old: &str, new: &str, collapse: bool) -> Vec<(usize, usize, String)> {
             }
             continue;
         }
-        let replacement: String = news[new_range]
-            .iter()
-            .map(|u| &new[u.start..u.end])
-            .collect::<String>();
+        // A gap a join took in reads as `new`'s and keeps `old`'s text.
+        let replacement: String = new_range
+            .clone()
+            .map(|i| {
+                gaps.iter().find(|(_, n)| n.contains(&i)).map_or(
+                    &new[news[i].start..news[i].end],
+                    |(o, n)| {
+                        let u = &olds[o.start + (i - n.start)];
+                        &old[u.start..u.end]
+                    },
+                )
+            })
+            .collect();
         let (start, end) = match (olds.get(old_range.start), old_range.is_empty()) {
             (Some(first), false) => (first.start, olds[old_range.end - 1].end),
             _ => {
@@ -307,6 +321,26 @@ mod tests {
             replace_ranges(old, "price is twelve dollars"),
             [(9, 12, "twelve".to_string())]
         );
+    }
+
+    /// Changes a whitespace gap joins into one keep the gap as the
+    /// document writes it: a non-breaking space the replacement types as a
+    /// plain one stays (#1384 review).
+    #[test]
+    fn a_joined_replacement_keeps_its_gaps_look_alike() {
+        for (old, new, want) in [
+            ("Section\u{A0}5", "Article 6", "Article\u{A0}6"),
+            ("ten\u{A0}dollars", "twelve euros", "twelve\u{A0}euros"),
+            (
+                "a ten\u{A0}dollars b",
+                "a twelve euros b",
+                "a twelve\u{A0}euros b",
+            ),
+        ] {
+            let edits = replace_ranges(old, new);
+            assert_eq!(apply(old, &edits), want, "{edits:?}");
+            assert_eq!(edits.len(), 1, "{edits:?}");
+        }
     }
 
     #[test]
