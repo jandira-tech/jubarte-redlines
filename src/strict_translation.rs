@@ -1211,4 +1211,50 @@ mod tests {
             );
         }
     }
+
+    /// A non-ZIP byte array is returned byte-identical because it cannot be parsed.
+    #[test]
+    fn invalid_zip_is_returned_untouched() {
+        let invalid_bytes = b"not a zip file";
+        let out = strict_to_transitional_docx(invalid_bytes);
+        assert_eq!(
+            out, invalid_bytes,
+            "an invalid zip should be returned untouched"
+        );
+    }
+
+    /// Directory entries are skipped and not included in the rebuilt archive,
+    /// while valid strict parts are translated.
+    #[test]
+    fn directory_entries_are_skipped() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+        // Add a directory entry
+        writer.add_directory("word/", options).unwrap();
+
+        let strict_doc = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<w:document xmlns:w=\"http://purl.oclc.org/ooxml/wordprocessingml/main\">",
+            "<w:body/></w:document>",
+        );
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(strict_doc.as_bytes()).unwrap();
+
+        let strict_pkg = writer.finish().unwrap().into_inner();
+
+        let out = strict_to_transitional_docx(&strict_pkg);
+
+        assert_ne!(
+            out, strict_pkg,
+            "the valid strict part should cause a rewrite"
+        );
+
+        let mut reread = ZipArchive::new(Cursor::new(out)).unwrap();
+
+        // The directory should have been skipped, leaving only the file.
+        assert_eq!(reread.len(), 1, "directory entry should have been skipped");
+        let file = reread.by_index(0).unwrap();
+        assert_eq!(file.name(), "word/document.xml");
+    }
 }
