@@ -477,7 +477,7 @@ fn expected_settings(
         jubarte::comparer::WmlComparerSettings::default()
     };
     jubarte::comparer::WmlComparerSettings {
-        author_for_revisions: "Redline".to_string(),
+        author_for_revisions: "Jubarte".to_string(),
         date_time_for_revisions: "1970-01-01T00:00:00Z".to_string(),
         detail_threshold: cli_detail_threshold.unwrap_or(base.detail_threshold),
         ..base

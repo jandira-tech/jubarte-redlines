@@ -119,7 +119,7 @@ fn edit_and_add_record_into_one_plan_that_edit_applies_and_consumes() {
         "--consume deletes the plan"
     );
     let (_, view, _) = run(dir, &["read", "out/redline.docx"]);
-    assert!(view.contains("{~~his or her~>their~~}{r1+2 @R}"), "{view}");
+    assert!(view.contains("{~~his or her~>their~~}{r1+2 @J}"), "{view}");
     assert!(view.contains("Why 3?"), "{view}");
 }
 
