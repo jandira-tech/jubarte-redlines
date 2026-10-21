@@ -1,7 +1,7 @@
 ---
 view: tracked
 track_changes: off
-revisions: 1                       # 1 mark shown as 1 change: 1 insertion
+revisions: 1
 comments: 0
 authors:
   document_owner: none
@@ -11,4 +11,4 @@ page: Letter portrait, margins 1in
 ---
 
 <!-- p0 -->
-{++added++}{r1 @AL} kept
+{++added++}{>>r1 @AL<<} kept

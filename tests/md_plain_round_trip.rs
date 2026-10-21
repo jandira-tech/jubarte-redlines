@@ -58,10 +58,10 @@ fn a_cross_reference_target_survives_the_round_trip() {
 
 #[test]
 fn an_undated_author_stays_the_change_s_author() {
-    // `{r75 Di Eng}`: the number says the note names who made the
+    // `{>>r75 Di Eng<<}`: the number says the note names who made the
     // change, so it is no comment, and the change gets no date.
     let (first, second) = twice("edge-dates.docx");
-    assert!(first.contains("{++whenever++}{r75 Di Eng}"), "{first}");
+    assert!(first.contains("{++whenever++}{>>r75 Di Eng<<}"), "{first}");
     assert_eq!(first, second);
 }
 
@@ -69,7 +69,7 @@ fn an_undated_author_stays_the_change_s_author() {
 fn an_empty_author_stays_empty() {
     let (first, second) = twice("edge-authorless.docx");
     assert!(
-        first.contains("{++new++}{r5 (1970-01-01T00:00:00Z)}"),
+        first.contains("{++new++}{>>r5 (1970-01-01T00:00:00Z)<<}"),
         "{first}"
     );
     assert_eq!(first, second);
@@ -78,7 +78,8 @@ fn an_empty_author_stays_empty() {
 #[test]
 fn a_note_without_a_number_after_a_change_keeps_its_old_meaning() {
     // Hand-written CriticMarkup carries no numbers: a bare note after a
-    // change is still a comment on it, including a date-only comment.
+    // change is still a comment on it, and `(date)` alone still takes the
+    // default author.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("a.md"),
@@ -89,8 +90,11 @@ fn a_note_without_a_number_after_a_change_keeps_its_old_meaning() {
     convert(dir.path(), "b.docx", "b.md");
     let back = std::fs::read_to_string(dir.path().join("b.md")).unwrap();
     assert!(back.contains(": why<<}"), "{back}");
-    assert!(back.contains("{++two++}{r"), "{back}");
-    assert!(back.contains(": (2026-01-02T03:04:05Z)<<}"), "{back}");
+    assert!(back.contains("{++two++}{>>r"), "{back}");
+    assert!(
+        back.contains(" Redline (2026-01-02T03:04:05Z)<<}"),
+        "{back}"
+    );
 }
 
 #[test]
@@ -111,8 +115,10 @@ fn a_code_block_followed_by_a_tracked_paragraph_is_a_fixed_point() {
     convert(dir.path(), "b.docx", "two.md");
     let read = |f: &str| std::fs::read_to_string(dir.path().join(f)).unwrap();
     let (one, two) = (read("one.md"), read("two.md"));
-    assert!(one.contains("```\nsome code¶{r"), "{one}");
-    assert!(one.contains("\n```\n\n{++real change++}"), "{one}");
+    assert!(
+        one.contains("```\nsome code\n```\n\n{++real change++}"),
+        "{one}"
+    );
     assert_eq!(one, two);
 }
 
@@ -148,9 +154,9 @@ fn word_converts_to_the_agent_view_unless_commonmark_is_asked() {
         .unwrap();
     assert_eq!(view, String::from_utf8(read.stdout).unwrap());
     assert!(view.starts_with("---\n"), "{view}");
-    assert!(view.contains("{++whenever++}{r75 @DE}"), "{view}");
+    assert!(view.contains("{++whenever++}{>>r75 @DE<<}"), "{view}");
     convert(dir.path(), "a.docx", "plain.md");
     let plain = std::fs::read_to_string(dir.path().join("plain.md")).unwrap();
     assert!(!plain.contains("<!-- p0 -->"), "{plain}");
-    assert!(plain.contains("{++whenever++}{r75 Di Eng}"), "{plain}");
+    assert!(plain.contains("{++whenever++}{>>r75 Di Eng<<}"), "{plain}");
 }

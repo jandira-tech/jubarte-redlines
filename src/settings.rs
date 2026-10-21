@@ -142,7 +142,7 @@ pub const SETTINGS_ORDER: &[(&str, &str)] = &[
 /// [`Self::None`] removes the element entirely: the document is unrestricted.
 /// The other variants are the four values Word's Restrict Editing pane lets
 /// you pick (`readOnly`, `comments`, `trackedChanges`, `forms`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProtectionEdit {
     /// No restriction: the element is removed.
@@ -180,7 +180,7 @@ fn default_true() -> bool {
 /// Restrict Editing pane calls "No password (just this single user can
 /// remove the restriction)": the restriction is checked but any user can
 /// turn it off.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Protection {
     /// What the restriction allows (`ST_DocProtect`).
@@ -431,7 +431,7 @@ pub fn apply_settings_to_docx(docx: &[u8], request: &SettingsRequest) -> Result<
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

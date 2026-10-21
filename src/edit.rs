@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::changes::{Change, ChangeError, ChangeFilter, ChangeKind};
 
+use crate::comparer::WmlComparerSettings;
 use crate::inspect::{
     BODY_STORY, Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256,
 };
@@ -37,20 +38,12 @@ use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod anchor;
-mod anchor_error;
 mod controls;
 pub mod flags;
 mod images;
 mod notes;
 mod origin;
-/// One preparation path for dry run and apply: the chosen primary bytes
-/// and the checks the serialized candidate passes (V2-08).
-pub mod prepared;
-mod ranges;
 pub mod record;
-/// Caller-specific, neutral review choices for revision-blocked edits.
-pub mod refusal;
-mod replacement_order;
 pub mod resolution;
 mod rewrite;
 mod runs;
@@ -60,36 +53,8 @@ mod tracked;
 mod watermark;
 mod whole;
 
-mod comment_settlement;
-#[cfg(feature = "cli")]
-/// Compile typed inline CLI actions into the same source-bound PlanV2 contract.
-pub mod inline;
-/// Source-bound PlanV2 text-and-review requests and exact logical text codec.
-pub mod v2;
-use comment_settlement::AnchorChanges;
-pub use comment_settlement::{KeptComment, RemovedComment};
-pub mod v2_apply;
-
-/// `read --for-edit`: the working document, hashes and readiness (V2-10).
-pub mod for_edit;
-/// The one native-key policy (`w14:paraId`, revision `w:id`) shared by
-/// generation and application for paired long IDs.
-mod native_keys;
-mod source_refs;
-/// Source-bound desired-text template generation over the for-edit view.
-pub mod template;
-
-/// Exact v2 literal-anchor candidates and selection; v1 retains its fallbacks.
-pub use anchor::{NearMatches, NearOccurrence, v2_candidates, v2_select, v2_select_all};
-/// v2 anchor selection with structured, bounded, actionable refusals.
-pub use anchor_error::{AnchorRefusal, Working, v2_resolve, v2_resolve_all};
 /// Which content control a `fill_control` operation fills.
 pub use controls::ControlSelector;
-/// The shared preparation path [`apply_plan`] and [`preview_plan`] run.
-pub use prepared::{
-    CandidateChecks, PrepareOptions, PreparedEdit, PrimaryBytes, PrimaryRole, introduced_findings,
-    prepare, prepare_v2,
-};
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
 /// `section` values.
 pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
@@ -118,10 +83,6 @@ pub struct EditPlan {
     /// changes it leaves follow `existing_revisions`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolve_revisions: Option<ResolveRevisions>,
-    /// Remove threads whose anchors disappear (default), or keep them on
-    /// empty, untracked anchors at the removed text's position.
-    #[serde(default, skip_serializing_if = "RemovedAnchorComments::is_remove")]
-    pub removed_anchor_comments: RemovedAnchorComments,
     /// What to do when the source already holds tracked changes.
     #[serde(default)]
     pub existing_revisions: ExistingRevisions,
@@ -132,22 +93,6 @@ pub struct EditPlan {
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
-}
-
-/// Treatment of comment anchors removed by a plan's revision settlement.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RemovedAnchorComments {
-    /// Follow Word: remove the thread and report it.
-    #[default]
-    Remove,
-    /// Keep the thread on an empty, untracked anchor.
-    Keep,
-}
-impl RemovedAnchorComments {
-    pub(crate) fn is_remove(&self) -> bool {
-        *self == Self::Remove
-    }
 }
 
 /// The tracked changes a plan accepts and rejects before it edits, as
@@ -211,7 +156,7 @@ pub enum ExistingRevisions {
 }
 
 /// One operation. `id` defaults to `op-N` (1-based) in the report.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Caller-chosen operation id echoed in the report.
@@ -222,7 +167,7 @@ pub struct Operation {
 }
 
 /// The supported operation kinds (wire tag `kind`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationKind {
     /// Replace exactly one occurrence of `find` in the paragraph.
@@ -248,7 +193,6 @@ pub enum OperationKind {
         /// `replacement` inserted, instead of Word Compare's word-level diff.
         whole: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -256,7 +200,6 @@ pub enum OperationKind {
     /// Insert `text` after/before exactly one occurrence of an anchor, or at
     /// the paragraph's start/end. Exactly one of `after`, `before`,
     /// `position` must be given.
-    #[schemars(extend("oneOf" = exactly_one(&["after", "before", "position"])))]
     Insert {
         /// Paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -282,7 +225,6 @@ pub enum OperationKind {
         /// Comment text anchored to the changed text; blank is none.
         comment: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -294,7 +236,6 @@ pub enum OperationKind {
         /// Exact text to delete; must occur exactly once.
         find: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -302,7 +243,6 @@ pub enum OperationKind {
     /// Comment on exactly one occurrence of `find`, or on the whole paragraph.
     /// The range may cross tabs, symbols, hyperlinks, fields, content
     /// controls and revisions: a comment edits nothing.
-    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]))]
     Comment {
         /// Paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -317,7 +257,6 @@ pub enum OperationKind {
         /// must be left out.
         through: Option<Selector>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1))]
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
@@ -365,7 +304,6 @@ pub enum OperationKind {
     /// Change a paragraph's style, alignment or spacing; the redline records
     /// the old properties (`w:pPrChange`). At least one field besides
     /// `paragraph`.
-    #[schemars(extend("anyOf" = at_least_one(&["style", "alignment", "line_spacing", "space_before", "space_after"])))]
     FormatParagraph {
         /// Paragraph to format; must match exactly one.
         paragraph: Selector,
@@ -385,17 +323,6 @@ pub enum OperationKind {
         /// Space after the paragraph, in points.
         space_after: Option<Points>,
     },
-    /// Join the paragraph with the one right after it. The first's text moves
-    /// to the start of the second, whose paragraph properties (and section
-    /// break) survive, as when Word accepts a deleted paragraph mark. The
-    /// redline deletes the first paragraph's mark.
-    MergeParagraphs {
-        /// First paragraph; the next paragraph must follow it directly.
-        paragraph: Selector,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Plain text placed between the two (for example `" "`).
-        separator: Option<String>,
-    },
     /// Make the paragraph read as `text`: the engine applies the smallest
     /// word-level edits, so unchanged words keep their runs and formatting,
     /// and new words take the formatting of the run before them. A tab or a
@@ -408,6 +335,17 @@ pub enum OperationKind {
         /// The paragraph's new text, plain.
         text: String,
     },
+    /// Join the paragraph with the one right after it. The first's text moves
+    /// to the start of the second, whose paragraph properties (and section
+    /// break) survive, as when Word accepts a deleted paragraph mark. The
+    /// redline deletes the first paragraph's mark.
+    MergeParagraphs {
+        /// First paragraph; the next paragraph must follow it directly.
+        paragraph: Selector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Plain text placed between the two (for example `" "`).
+        separator: Option<String>,
+    },
     /// Reply to comment `comment_id`, as the plan's author; the reply is
     /// anchored on the same range. Word threads are one level deep, so a
     /// reply to a reply joins the thread's first comment.
@@ -415,7 +353,6 @@ pub enum OperationKind {
         /// `w:id` of the comment replied to (`jubarte comments` lists them):
         /// a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
-        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
         /// Reply text; `\n` starts a new line.
         text: String,
@@ -425,7 +362,6 @@ pub enum OperationKind {
     ResolveComment {
         /// `w:id` of the comment: a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
-        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
         #[serde(default = "resolve_done")]
         /// Resolved (default) or open.
@@ -436,7 +372,6 @@ pub enum OperationKind {
     EditComment {
         /// `w:id` of the comment: a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
-        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
         /// New text; `\n` starts a new line.
         text: String,
@@ -446,13 +381,11 @@ pub enum OperationKind {
     DeleteComment {
         /// `w:id` of the comment: a number, or `"c27"`.
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
-        #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
     },
     /// Insert a table next to the anchor paragraph. Each cell holds one
     /// paragraph in the anchor's paragraph style; the redline shows the
     /// rows inserted. Body paragraphs outside tables only.
-    #[schemars(extend("x-jubarte-targets" = ["body"]))]
     InsertTable {
         /// Anchor paragraph; must match exactly one.
         paragraph: Selector,
@@ -465,7 +398,6 @@ pub enum OperationKind {
         /// Mark the first row as a header row that repeats on each page.
         header_row: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(inner(range(min = 1, max = structural::MAX_WIDTH_DXA)))]
         /// Column widths in twentieths of a point; the text width split
         /// evenly when omitted.
         widths_dxa: Option<Vec<u32>>,
@@ -477,7 +409,6 @@ pub enum OperationKind {
     /// Make the paragraphs a list: each gets direct numbering at `level`,
     /// and `ListParagraph` when it has no style. The redline records each
     /// paragraph's old properties (`w:pPrChange`).
-    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]))]
     List {
         /// Paragraphs to number, each selector matching exactly one; body
         /// only.
@@ -486,7 +417,6 @@ pub enum OperationKind {
         /// Bullets, decimal numbers or lowercase letters.
         kind_of_list: ListKind,
         #[serde(default)]
-        #[schemars(range(min = 0, max = 8))]
         /// List level, 0 (outermost) to 8.
         level: u32,
         #[serde(default = "default_true")]
@@ -499,7 +429,6 @@ pub enum OperationKind {
     /// One per document. It is header content, not a tracked change: the
     /// clean copy and the redline both carry it.
     Watermark {
-        #[schemars(length(min = 1, max = watermark::MAX_TEXT))]
         /// The watermark text, plain, 1 to 64 characters.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -515,7 +444,6 @@ pub enum OperationKind {
     /// Fill one content control (`w:sdt`) in the body with exactly one of
     /// `text`, `choice`, `checked` or `date`. The control keeps its
     /// properties; its content becomes the value.
-    #[schemars(extend("x-jubarte-keep" = false), extend("oneOf" = exactly_one(&["text", "choice", "checked", "date"])))]
     FillControl {
         /// The control: `"p3.cc0"` / `"cc1"`, `{"id"}`, `{"tag"}` or `{"alias"}`;
         /// must match exactly one.
@@ -544,13 +472,11 @@ pub enum OperationKind {
         /// Formatting to set; fields not given stay as they are.
         format: RunFormat,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1))]
         /// Which occurrence of `find` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
     },
     /// Insert a footnote whose reference mark follows one occurrence of
     /// `after`; the note goes in the footnotes part, created when absent.
-    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]), extend("x-jubarte-keep" = false))]
     InsertFootnote {
         /// Body paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -559,13 +485,11 @@ pub enum OperationKind {
         /// Plain text of the note.
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1))]
         /// Which occurrence of `after` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
     },
     /// Insert a paragraph holding one inline picture next to the anchor
     /// paragraph. PNG, JPEG, GIF, BMP or TIFF.
-    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]), extend("x-jubarte-keep" = false))]
     InsertImage {
         /// Body paragraph the picture goes next to; must match exactly one.
         paragraph: Selector,
@@ -578,7 +502,6 @@ pub enum OperationKind {
         /// The picture's media type; checked against its bytes when given.
         content_type: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1, max = images::MAX_WIDTH_EMU))]
         /// Width in EMU (914400 per inch); the height keeps the aspect
         /// ratio. Default: the pixel size at 96 dpi, at most 6.5 inches.
         width_emu: Option<u64>,
@@ -589,7 +512,6 @@ pub enum OperationKind {
     /// Set the page size, orientation and margins of the last section or of
     /// every section; the redline records the old ones (`w:sectPrChange`).
     /// At least one of `page`, `orientation`, `margins_dxa`.
-    #[schemars(extend("x-jubarte-keep" = false), extend("anyOf" = at_least_one(&["page", "orientation", "margins_dxa"])))]
     PageSetup {
         #[serde(default)]
         /// `last` (default) or `all`.
@@ -608,7 +530,6 @@ pub enum OperationKind {
     /// "1-{levels}" \h \z \u` field, after an optional title paragraph
     /// styled `TOCHeading`. Its entries are written when the plan sets
     /// `update_fields`; otherwise the field is empty until Word updates it.
-    #[schemars(extend("x-jubarte-targets" = ["body", "table_cell"]))]
     InsertToc {
         /// Paragraph to insert next to; must match exactly one, in the body.
         paragraph: Selector,
@@ -616,7 +537,6 @@ pub enum OperationKind {
         /// Which side of the anchor paragraph.
         position: Side,
         #[serde(default = "default_toc_levels")]
-        #[schemars(range(min = 1, max = 9))]
         /// Heading levels listed, 1 to 9 (default 3).
         levels: u8,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -634,7 +554,6 @@ pub enum OperationKind {
         /// Exact text to remove.
         find: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(range(min = 1))]
         /// Which occurrence of `find` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
     },
@@ -642,7 +561,6 @@ pub enum OperationKind {
     /// Track Changes, update fields on open, editing restrictions. Settings
     /// are not revisions: the clean copy and the redline both carry them.
     /// One per plan; a setting left out stays as it is.
-    #[schemars(extend("anyOf" = at_least_one(&["track_revisions", "update_fields", "protection"])))]
     Settings {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Turn Track Changes on (`w:trackRevisions`) or off.
@@ -674,9 +592,7 @@ fn default_true() -> bool {
 }
 
 /// The numbering of a [`OperationKind::List`].
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ListKind {
     #[default]
@@ -708,9 +624,8 @@ impl ListKind {
 }
 
 /// Line spacing, stored as `w:line` (240 = single); JSON is the multiple.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
-#[schemars(transparent)]
-pub struct LineSpacing(#[schemars(with = "f64", range(min = 0.25, max = 10.0))] pub u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineSpacing(pub u32);
 
 impl Serialize for LineSpacing {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -731,9 +646,8 @@ impl<'de> Deserialize<'de> for LineSpacing {
 }
 
 /// A length stored in twips (1/20 pt); JSON is points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
-#[schemars(transparent)]
-pub struct Points(#[schemars(with = "f64", range(min = 0.0, max = 1584.0))] pub u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Points(pub u32);
 
 impl Serialize for Points {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -762,7 +676,7 @@ struct Spacing {
 }
 
 /// Paragraph alignment for [`OperationKind::FormatParagraph`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Alignment {
     /// Left (start) aligned.
@@ -789,7 +703,7 @@ impl Alignment {
 
 /// Run formatting for inserted or replacement text. Fields not given keep
 /// the neighbouring run's formatting.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunFormat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -822,9 +736,8 @@ pub struct RunFormat {
 }
 
 /// A font size stored in half points (`w:sz`); JSON is points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
-#[schemars(transparent)]
-pub struct HalfPoints(#[schemars(with = "f64", range(min = 0.0, max = 1638.0))] pub u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HalfPoints(pub u32);
 
 impl Serialize for HalfPoints {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -845,7 +758,7 @@ impl<'de> Deserialize<'de> for HalfPoints {
 }
 
 /// Paragraph edge for an insertion without a text anchor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Edge {
     /// Paragraph start.
@@ -855,9 +768,7 @@ pub enum Edge {
 }
 
 /// Side of the anchor paragraph for [`OperationKind::InsertParagraph`].
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Side {
     /// Before the anchor paragraph.
@@ -879,7 +790,7 @@ pub enum Side {
 /// settles changes first; the text forms search the settled text. An edit
 /// anchored on text follows a paragraph into the one it merged with; a
 /// whole-paragraph edit of a merged or vanished paragraph is refused.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
     /// `"p12"`, the same as `{"id": "p12"}`.
@@ -917,7 +828,7 @@ pub enum Selector {
 
 /// A run of an inserted paragraph. Formatting not given is inherited from the
 /// anchor paragraph's first run.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunSpec {
     /// Run text.
@@ -979,9 +890,6 @@ pub struct EditOutcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// The paragraph's text actually matched in that case.
     pub anchor_read_as: Option<String>,
-    /// Report-only whitespace occurrences when the literal anchor was refused.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub near: Option<NearMatches>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Error code when failed.
     pub code: Option<String>,
@@ -1057,13 +965,6 @@ pub struct EditReport {
     /// Changes `resolve_revisions` accepted and rejected.
     #[serde(default, skip_serializing_if = "ResolvedRevisions::is_empty")]
     pub resolved_revisions: ResolvedRevisions,
-    /// Threads removed with the settled text, in source comment ids.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub removed_comments: Vec<RemovedComment>,
-    /// Threads moved onto empty anchors by opt-in settlement, excluding
-    /// comments and replies subsequently deleted by the plan.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub kept_comments: Vec<KeptComment>,
     /// Source paragraph ids that name another paragraph once the plan's
     /// revisions are settled (`resolve_revisions`, `existing_revisions`
     /// accept or reject), in source order. Operations still address the
@@ -1140,12 +1041,6 @@ impl EditReport {
             if let Some(read_as) = &op.anchor_read_as {
                 map.insert("anchor_read_as".into(), read_as.clone().into());
             }
-            if let Some(near) = &op.near {
-                map.insert(
-                    "near".into(),
-                    serde_json::to_value(near).expect("near serializes"),
-                );
-            }
             if let Some(c) = &op.code {
                 map.insert("code".into(), c.clone().into());
             }
@@ -1168,8 +1063,6 @@ impl EditReport {
                       "d": self.paragraphs.to as i64 - self.paragraphs.from as i64},
             "revs": self.revisions,
             "comments": {"added": self.comments_added},
-            "removed_comments": self.removed_comments,
-            "kept_comments": self.kept_comments,
         }));
         out
     }
@@ -1186,14 +1079,6 @@ pub struct EditResult {
     pub report: EditReport,
 }
 
-#[cfg(test)]
-thread_local! {
-    static COMMENT_MARK_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Stable engine code for comment mapping conflicts, independent of prose.
-const COMMENT_ANCHOR_CONFLICT: &str = "COMMENT_ANCHOR_CONFLICT";
-
 /// Why a plan was refused. `outcomes` lists every operation's status so the
 /// caller can see which anchors resolved before the failure.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1208,15 +1093,6 @@ pub struct EditError {
     #[serde(default)]
     /// Status of every operation at the time of failure.
     pub outcomes: Vec<EditOutcome>,
-    /// Report-only whitespace occurrences; never used to resolve an operation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub near: Option<Box<NearMatches>>,
-    /// Blocking revision identities and both review choices, when applicable.
-    #[serde(
-        default,
-        skip_serializing_if = "<[refusal::RevisionRefusal]>::is_empty"
-    )]
-    pub revision_refusals: Box<[refusal::RevisionRefusal]>,
 }
 
 impl fmt::Display for EditError {
@@ -1246,12 +1122,10 @@ fn open_error(error: crate::inspect::InspectError) -> EditError {
 fn resolve_selected(
     source: &[u8],
     selection: Option<&ResolveRevisions>,
-    policy: RemovedAnchorComments,
-) -> Result<(Option<Vec<u8>>, ResolvedRevisions, AnchorChanges), EditError> {
-    let mut comments = AnchorChanges::default();
+) -> Result<(Option<Vec<u8>>, ResolvedRevisions), EditError> {
     let mut resolved = ResolvedRevisions::default();
     let Some(selection) = selection else {
-        return Ok((None, resolved, comments));
+        return Ok((None, resolved));
     };
     let change_err = |e: ChangeError| match e {
         ChangeError::UnknownChange(id) => err(
@@ -1295,19 +1169,12 @@ fn resolve_selected(
         ));
     }
     if accept.is_empty() && reject.is_empty() {
-        return Ok((None, resolved, comments));
+        return Ok((None, resolved));
     }
     let mut bytes = source.to_vec();
     if !accept.is_empty() {
-        let (document, removed, kept) = crate::changes::resolve_for_edit(
-            &bytes,
-            &ChangeFilter::ids(accept.clone()),
-            crate::revision_processor::Resolution::Accept,
-            policy == RemovedAnchorComments::Keep,
-        )
-        .map_err(change_err)?;
-        comments.extend(removed, kept, crate::revision_processor::Resolution::Accept);
-        bytes = document;
+        bytes = crate::changes::accept_changes(&bytes, &ChangeFilter::ids(accept.clone()))
+            .map_err(change_err)?;
         resolved.accepted = accept;
     }
     // A change the accepted ones took along is gone, not rejected.
@@ -1317,18 +1184,11 @@ fn resolve_selected(
         .filter(|id| left.iter().any(|c| &c.id == id))
         .collect();
     if !reject.is_empty() {
-        let (document, removed, kept) = crate::changes::resolve_for_edit(
-            &bytes,
-            &ChangeFilter::ids(reject.clone()),
-            crate::revision_processor::Resolution::Reject,
-            policy == RemovedAnchorComments::Keep,
-        )
-        .map_err(change_err)?;
-        comments.extend(removed, kept, crate::revision_processor::Resolution::Reject);
-        bytes = document;
+        bytes = crate::changes::reject_changes(&bytes, &ChangeFilter::ids(reject.clone()))
+            .map_err(change_err)?;
         resolved.rejected = reject;
     }
-    Ok((Some(bytes), resolved, comments))
+    Ok((Some(bytes), resolved))
 }
 
 /// Whether `source` still carries a tracked change of its text (body,
@@ -1337,13 +1197,9 @@ fn resolve_selected(
 /// A selection that does not resolve is the plan's error, reported when it
 /// runs; here it leaves every change in place.
 pub fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
-    let resolved = resolve_selected(
-        source,
-        plan.resolve_revisions.as_ref(),
-        plan.removed_anchor_comments,
-    )
-    .ok()
-    .and_then(|(bytes, _, _)| bytes);
+    let resolved = resolve_selected(source, plan.resolve_revisions.as_ref())
+        .ok()
+        .and_then(|(bytes, _)| bytes);
     crate::changes::list_changes(resolved.as_deref().unwrap_or(source))
         .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with("styles:")))
 }
@@ -1355,7 +1211,6 @@ struct Settled {
     base: Vec<u8>,
     opened: Opened,
     resolved_revisions: ResolvedRevisions,
-    comment_changes: AnchorChanges,
     /// Settling rewrote the document: paragraphs may have merged or gone.
     changed: bool,
 }
@@ -1364,11 +1219,8 @@ struct Settled {
 /// what `resolve_revisions` selects, then apply `existing_revisions` to the
 /// changes left.
 fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, EditError> {
-    let (resolved_source, resolved_revisions, mut comment_changes) = resolve_selected(
-        source,
-        plan.resolve_revisions.as_ref(),
-        plan.removed_anchor_comments,
-    )?;
+    let (resolved_source, resolved_revisions) =
+        resolve_selected(source, plan.resolve_revisions.as_ref())?;
     let (source, probe) = match &resolved_source {
         Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
         None => (source, probe),
@@ -1388,19 +1240,11 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
             ));
         }
         (true, policy) => {
-            let resolution = if policy == ExistingRevisions::Accept {
-                crate::revision_processor::Resolution::Accept
-            } else {
-                crate::revision_processor::Resolution::Reject
-            };
-            let (flattened, removed, kept) = crate::changes::resolve_for_edit(
-                source,
-                &ChangeFilter::default(),
-                resolution,
-                plan.removed_anchor_comments == RemovedAnchorComments::Keep,
-            )
+            let flattened = match policy {
+                ExistingRevisions::Accept => crate::document_comparer::accept_revisions(source),
+                _ => crate::document_comparer::reject_revisions(source),
+            }
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-            comment_changes.extend(removed, kept, resolution);
             let reopened = Opened::open(&flattened).map_err(open_error)?;
             (flattened, reopened, true)
         }
@@ -1409,7 +1253,6 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
         base,
         opened,
         resolved_revisions,
-        comment_changes,
         changed: resolved_source.is_some() || flattened,
     })
 }
@@ -1522,8 +1365,6 @@ fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditE
         operation: operation.map(str::to_string),
         message: message.into(),
         outcomes: Vec::new(),
-        near: None,
-        revision_refusals: Box::default(),
     }
 }
 
@@ -1560,86 +1401,10 @@ impl EditPlan {
     }
 }
 
-/// The legacy dispatcher contract, derived from its typed Serde operations.
-/// Native, Python and WASM all dispatch through `apply_plan_json` / `apply_plan`.
-/// The parser's key gate and capability discovery share these exact field facts.
-pub fn operation_schemas() -> &'static [serde_json::Value] {
-    static SCHEMAS: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(|| {
-        let settings = schemars::generate::SchemaSettings::draft2020_12()
-            .with(|s| s.inline_subschemas = true)
-            .for_deserialize();
-        let common = settings
-            .clone()
-            .into_generator()
-            .into_root_schema_for::<Operation>();
-        let common = serde_json::to_value(common).expect("common schema serializes");
-        let schema = settings
-            .into_generator()
-            .into_root_schema_for::<OperationKind>();
-        let value = serde_json::to_value(schema).expect("operation schema serializes");
-        let mut variants = value["oneOf"]
-            .as_array()
-            .expect("tagged operation variants")
-            .clone();
-        for variant in &mut variants {
-            variant["properties"]["id"] = common["properties"]["id"].clone();
-            // Closed as `check_operation_keys` is: a key outside these
-            // properties (besides the flattened `id`) is an error, not a
-            // silently ignored extra.
-            variant["additionalProperties"] = serde_json::json!(false);
-        }
-        variants
-    });
-    &SCHEMAS
-}
-
-/// Names accepted by the common v1 dispatcher, in the legacy manifest order.
-pub fn dispatched_operation_kinds() -> Vec<String> {
-    operation_schemas()
-        .iter()
-        .map(|schema| {
-            schema["properties"]["kind"]["const"]
-                .as_str()
-                .expect("operation tag")
-                .to_string()
-        })
-        .collect()
-}
-
-pub(crate) fn operation_supports_keep(kind: &str) -> bool {
-    operation_schemas()
-        .iter()
-        .find(|s| s["properties"]["kind"]["const"] == kind)
-        .is_some_and(|s| s["x-jubarte-keep"] != false)
-}
-
-fn at_least_one(fields: &[&str]) -> serde_json::Value {
-    serde_json::json!(
-        fields
-            .iter()
-            .map(|field| serde_json::json!({"required": [field]}))
-            .collect::<Vec<_>>()
-    )
-}
-
-fn exactly_one(fields: &[&str]) -> serde_json::Value {
-    // Each alternative requires one field and excludes every other field.
-    serde_json::json!(
-        fields
-            .iter()
-            .map(|field| serde_json::json!({
-                "required": [field],
-                "not": {"anyOf": fields.iter().filter(|other| *other != field)
-                    .map(|other| serde_json::json!({"required": [other]})).collect::<Vec<_>>()}
-            }))
-            .collect::<Vec<_>>()
-    )
-}
-
 /// Allowed keys per operation kind; serde's `flatten` cannot deny unknown
 /// fields itself, and a misspelled key must not silently change meaning.
 fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
-    const COMMON: &[&str] = &["id", "kind"];
+    const COMMON: &[&str] = &["id", "kind", "paragraph"];
     let Some(ops) = plan.get("operations").and_then(|o| o.as_array()) else {
         return Ok(());
     };
@@ -1652,32 +1417,91 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ));
         };
         let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-        let Some(schema) = operation_schemas()
-            .iter()
-            .find(|schema| schema["properties"]["kind"]["const"] == kind)
-        else {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                format!("operations[{i}]: unknown kind {kind:?}"),
-            ));
+        let allowed: &[&str] = match kind {
+            "replace" => &[
+                "find",
+                "replacement",
+                "format",
+                "comment",
+                "whole",
+                "occurrence",
+            ],
+            "insert" => &[
+                "after",
+                "before",
+                "position",
+                "text",
+                "format",
+                "comment",
+                "occurrence",
+            ],
+            "delete" => &["find", "occurrence"],
+            "comment" => &["find", "text", "through", "occurrence"],
+            "insert_paragraph" => &["position", "runs", "like", "style", "comment"],
+            "delete_paragraph" => &["comment"],
+            "format_paragraph" => &[
+                "style",
+                "alignment",
+                "line_spacing",
+                "space_before",
+                "space_after",
+            ],
+            "merge_paragraphs" => &["separator"],
+            "rewrite" => &["text"],
+            "reply_comment" => &["comment_id", "text"],
+            "resolve_comment" => &["comment_id", "done"],
+            "edit_comment" => &["comment_id", "text"],
+            "delete_comment" => &["comment_id"],
+            "insert_table" => &["position", "rows", "header_row", "widths_dxa", "style"],
+            "list" if map.contains_key("paragraph") => {
+                return Err(err(
+                    "INVALID_PLAN",
+                    None,
+                    format!("operations[{i}] (list): takes paragraphs, not paragraph"),
+                ));
+            }
+            "list" => &["paragraphs", "kind_of_list", "level", "restart"],
+            "watermark" => {
+                if map.contains_key("paragraph") {
+                    return Err(err(
+                        "INVALID_PLAN",
+                        None,
+                        format!("operations[{i}] (watermark): a watermark takes no paragraph"),
+                    ));
+                }
+                &["text", "color", "diagonal", "font"]
+            }
+            "fill_control" => &["control", "text", "choice", "checked", "date"],
+            "format_run" => &["find", "format", "occurrence"],
+            "insert_footnote" => &["after", "text", "occurrence"],
+            "insert_image" => &[
+                "position",
+                "image_base64",
+                "content_type",
+                "width_emu",
+                "alt",
+            ],
+            "page_setup" => &["section", "page", "orientation", "margins_dxa"],
+            "insert_toc" => &["position", "levels", "title"],
+            "redact" => &["find", "occurrence"],
+            "settings" => {
+                if map.contains_key("paragraph") {
+                    return Err(err(
+                        "INVALID_PLAN",
+                        None,
+                        format!("operations[{i}] (settings): settings take no paragraph"),
+                    ));
+                }
+                &["track_revisions", "update_fields", "protection"]
+            }
+            other => {
+                return Err(err(
+                    "INVALID_PLAN",
+                    None,
+                    format!("operations[{i}]: unknown kind {other:?}"),
+                ));
+            }
         };
-        let allowed = schema["properties"]
-            .as_object()
-            .expect("operation properties");
-        let refusal = match kind {
-            "list" => Some("takes paragraphs, not paragraph"),
-            "watermark" => Some("a watermark takes no paragraph"),
-            "settings" => Some("settings take no paragraph"),
-            _ => None,
-        };
-        if let Some(message) = refusal.filter(|_| map.contains_key("paragraph")) {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                format!("operations[{i}] ({kind}): {message}"),
-            ));
-        }
         if kind == "fill_control" && map.contains_key("paragraph") {
             return Err(err(
                 "INVALID_PLAN",
@@ -1693,7 +1517,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ));
         }
         for key in map.keys() {
-            if !COMMON.contains(&key.as_str()) && !allowed.contains_key(key) {
+            if !COMMON.contains(&key.as_str()) && !allowed.contains(&key.as_str()) {
                 return Err(err(
                     "INVALID_PLAN",
                     None,
@@ -1715,26 +1539,7 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
     apply_plan(source, &EditPlan::from_json(plan_json)?)
 }
 
-/// [`apply_plan_json`] with the shared preparation's options:
-/// `require_change` and `exact_text` reach the JSON callers the CLI
-/// already exposes.
-///
-/// # Errors
-///
-/// As [`apply_plan_json`], plus `NO_CHANGES_REQUESTED` under
-/// [`PrepareOptions::require_change`] and the [`PrepareOptions::exact_text`]
-/// form of `POSTCONDITION_FAILED`.
-pub fn apply_plan_json_with(
-    source: &[u8],
-    plan_json: &str,
-    options: &PrepareOptions,
-) -> Result<EditResult, EditError> {
-    prepared::prepare(source, &EditPlan::from_json(plan_json)?, options).map(|p| p.result)
-}
-
 /// Resolve and apply the plan; compare source and copy into a redline.
-/// Text replacements use Word's typing order: deletion before insertion.
-/// The public document comparer retains Word Compare's insertion-first order.
 ///
 /// Nothing is written: the clean copy, the redline and the report are
 /// returned in memory for the caller (the CLI) to write.
@@ -1758,7 +1563,93 @@ pub fn apply_plan_json_with(
 /// compared, `PACKAGE_WRITE` when it cannot be packaged, and
 /// `REDACTION_LEAK` when redacted text still occurs in an output.
 pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {
-    prepared::prepare(source, plan, &PrepareOptions::default()).map(|p| p.result)
+    check_update_fields(plan)?;
+    let mut tx = Transaction::start(source, plan)?;
+    tx.resolve()?;
+    tracked::check(&tx)?;
+    let emit = tx.emits_directly()?;
+    tx.apply()?;
+    let (mut clean, mut marked) = tx.finish()?;
+    if plan.existing_revisions == ExistingRevisions::Keep
+        || (emit && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
+    {
+        let result = tracked::result(&tx, clean)?;
+        tx.check_redactions(&[&result.clean, &result.redline])?;
+        return Ok(result);
+    }
+    let mut fields = Vec::new();
+    if plan.update_fields {
+        let refresh = |bytes: &[u8]| {
+            crate::fields::update_fields(bytes)
+                .map_err(|e| err("FIELDS_FAILED", None, e.to_string()))
+        };
+        let updated = refresh(&clean)?;
+        clean = updated.docx;
+        fields = updated.fields;
+        if let Some(bytes) = &marked {
+            marked = Some(refresh(bytes)?.docx);
+        }
+    }
+    let settings = WmlComparerSettings {
+        author_for_revisions: plan.author.clone(),
+        date_time_for_revisions: tx.date.clone(),
+        ..WmlComparerSettings::default()
+    };
+    let revised = marked.as_deref().unwrap_or(&clean);
+    let base = tx.commented_base()?;
+    let mut redline =
+        crate::document_comparer::compare_documents_with_settings(&base, revised, &settings)
+            .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
+    if tx
+        .resolved
+        .iter()
+        .any(|(_, r)| matches!(r, Resolved::PageSetup { .. }))
+    {
+        redline = sections::record_mid_changes(&redline, &base, &plan.author, &tx.date)?;
+    }
+    if marked.is_some() {
+        let (rewritten, fallbacks) = whole::rewrite(
+            &redline,
+            (&base, revised),
+            &tx.whole_marks,
+            &plan.author,
+            &tx.date,
+        )?;
+        redline = rewritten;
+        for (op, reason) in fallbacks {
+            tx.outcomes[op].message = Some(format!("shown as a word-level diff: {reason}"));
+        }
+    }
+    if let Some(&(_, op)) = tx
+        .deletion_comments
+        .iter()
+        .find(|&&(id, _)| comment_holds_kept_text(&redline, id))
+    {
+        let mut error = tx.conflict(
+            op,
+            "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph",
+        );
+        error.code = "UNSUPPORTED_STRUCTURE".into();
+        error.outcomes[op].code = Some(error.code.clone());
+        return Err(error);
+    }
+    // Settings are not revisions: the redline takes them as they are.
+    if let Some(request) = &tx.settings {
+        redline = crate::settings::apply_settings_to_docx(&redline, request)
+            .map_err(|m| err("PACKAGE_WRITE", None, m))?;
+    }
+    tx.check_redactions(&[&clean, &redline])?;
+    let mut report = tx.report(true);
+    report.paragraphs.to = crate::inspect::paragraphs(&clean)
+        .map(|p| p.len())
+        .unwrap_or(report.paragraphs.from);
+    report.revisions = revision_counts(&redline);
+    report.fields = fields;
+    Ok(EditResult {
+        clean,
+        redline,
+        report,
+    })
 }
 
 /// `update_fields` refreshes the clean copy the comparer reads. Under
@@ -1793,24 +1684,14 @@ fn resolved<'a>(source: &'a [u8], plan: &'a EditPlan) -> Result<Transaction<'a>,
 
 /// Resolve every operation without producing documents.
 pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
-    preview_plan_with(source, plan, &PrepareOptions::default())
-}
-
-/// [`preview_plan`] with the shared preparation's options: the dry run
-/// prepares and checks the same serialized candidate as an apply and stops
-/// before publication.
-pub fn preview_plan_with(
-    source: &[u8],
-    plan: &EditPlan,
-    options: &PrepareOptions,
-) -> Result<EditReport, EditError> {
-    // One preparation, resolved once: the dry run's report is the apply's
-    // own report — outcomes (comment ids among them), paragraphs, revisions
-    // and comments_added all come from the produced candidate. `fields`
-    // keeps its v1 dry-run meaning: a preview never publishes the clean
-    // copy the refreshes land in, so it reports none.
-    let mut report = prepared::prepare(source, plan, options)?.result.report;
-    report.fields = Vec::new();
+    let tx = resolved(source, plan)?;
+    let mut report = tx.report(true);
+    // The summary is what applying reports: apply in memory and keep its
+    // counts, so a dry run never prints `0` revisions for an edit it makes.
+    let applied = apply_plan(source, plan)?.report;
+    report.paragraphs = applied.paragraphs;
+    report.revisions = applied.revisions;
+    report.comments_added = applied.comments_added;
     Ok(report)
 }
 
@@ -1999,13 +1880,10 @@ struct Covered {
 
 struct Transaction<'p> {
     plan: &'p EditPlan,
-    revision_refusal: std::cell::RefCell<Option<refusal::RevisionRefusal>>,
     source_sha256: String,
     base: Vec<u8>,
     base_sha256: String,
     resolved_revisions: ResolvedRevisions,
-    removed_comments: Vec<RemovedComment>,
-    kept_comments: Vec<KeptComment>,
     /// The plan's date, else the time it is applied.
     date: String,
     initials: String,
@@ -2054,9 +1932,6 @@ struct Transaction<'p> {
     notes_story: Option<usize>,
     /// The plan's settings, written into the settings part at finish.
     settings: Option<crate::settings::SettingsRequest>,
-    /// The story indices `finish` last wrote, body included: the
-    /// serialized-stories check compares each one's DOM against the bytes.
-    written_stories: std::collections::BTreeSet<usize>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -2106,17 +1981,11 @@ impl<'p> Transaction<'p> {
         }
         let source_bytes = source;
         let Settled {
-            mut base,
+            base,
             mut opened,
             resolved_revisions,
-            comment_changes,
             changed,
         } = settle(source, plan, probe)?;
-        if let Some(normalized) = ranges::normalize_permission_ids(&base)? {
-            base = normalized;
-            opened = Opened::open(&base).map_err(open_error)?;
-        }
-        let (removed_comments, kept_comments) = comment_changes.records(source)?;
         let base_sha256 = source_sha256(&base);
         let Loaded {
             stories,
@@ -2158,13 +2027,10 @@ impl<'p> Transaction<'p> {
             .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
         Ok(Self {
             plan,
-            revision_refusal: std::cell::RefCell::new(None),
             source_sha256: source_hash,
             base,
             base_sha256,
             resolved_revisions,
-            removed_comments,
-            kept_comments,
             date,
             initials,
             opened,
@@ -2191,7 +2057,6 @@ impl<'p> Transaction<'p> {
             control_records,
             notes_story: None,
             settings: None,
-            written_stories: std::collections::BTreeSet::new(),
         })
     }
 
@@ -2202,27 +2067,7 @@ impl<'p> Transaction<'p> {
     /// the clean copy, which the emitted redline would then not accept to:
     /// refused beside such an edit, as under keep.
     fn emits_directly(&self) -> Result<bool, EditError> {
-        // The comparer resolves compatibility branches before comparing.
-        // Emit edits beside raw AC tables directly so an untouched Fallback
-        // survives, as it does under keep.
-        let has_alternate_table = self
-            .opened
-            .dom
-            .descendants(self.opened.body, Some(&W::tbl()))
-            .into_iter()
-            .any(|table| {
-                !crate::inspect::in_text_box(&self.opened.dom, table)
-                    && !self
-                        .opened
-                        .dom
-                        .ancestors(
-                            table,
-                            Some(&crate::namespaces::MC::name("AlternateContent")),
-                        )
-                        .is_empty()
-            });
-        let emit =
-            (self.edits_a_comment_range() || has_alternate_table) && tracked::emits_all(self);
+        let emit = self.edits_a_comment_range() && tracked::emits_all(self);
         if emit && self.plan.update_fields {
             return Err(err(
                 "INVALID_PLAN",
@@ -2274,21 +2119,18 @@ impl<'p> Transaction<'p> {
     /// Each comment range marker of paragraph `para`, in document order:
     /// its `w:id`, whether it opens the range, and its projection offset.
     fn comment_marks(&self, para: usize) -> Vec<(String, bool, usize)> {
-        #[cfg(test)]
-        COMMENT_MARK_SCANS.with(|scans| scans.set(scans.get() + 1));
         let dom = &self.opened.dom;
-        let mut ends = BTreeMap::new();
-        for segment in &self.projections[para].segments {
-            let node = match segment.piece {
-                Piece::Text { t, .. } => t,
-                Piece::Glyph { element, .. } => element,
-            };
-            ends.entry(node.0).or_insert(segment.end);
-        }
+        let segments = &self.projections[para].segments;
         let mut offset = 0;
         let mut marks = Vec::new();
         for node in dom.descendants(self.paragraph_nodes[para], None) {
-            if let Some(&end) = ends.get(&node.0) {
+            let end = segments.iter().find_map(|s| match s.piece {
+                Piece::Text { t: n, .. } | Piece::Glyph { element: n, .. } if n == node => {
+                    Some(s.end)
+                }
+                _ => None,
+            });
+            if let Some(end) = end {
                 offset = end;
                 continue;
             }
@@ -2305,34 +2147,6 @@ impl<'p> Transaction<'p> {
             }
         }
         marks
-    }
-
-    /// Every complete range in one document pass. Like `comment_text`,
-    /// retain the first start and first following end for each literal id.
-    fn comment_anchors(&self) -> BTreeMap<String, Covered> {
-        let mut open = BTreeMap::new();
-        let mut covered = BTreeMap::new();
-        for para in 0..self.paragraph_nodes.len() {
-            for (id, starts, offset) in self.comment_marks(para) {
-                if covered.contains_key(&id) {
-                    continue;
-                }
-                if starts {
-                    open.entry(id).or_insert((para, offset));
-                } else if let Some((first, start)) = open.remove(&id) {
-                    covered.insert(
-                        id,
-                        Covered {
-                            first,
-                            start,
-                            last: para,
-                            end: offset,
-                        },
-                    );
-                }
-            }
-        }
-        covered
     }
 
     /// The text comment `n` covers (`cN.text`), from its range start to
@@ -2484,25 +2298,6 @@ impl<'p> Transaction<'p> {
             date: self.date.clone(),
             existing_revisions: self.plan.existing_revisions,
             resolved_revisions: self.resolved_revisions.clone(),
-            removed_comments: self.removed_comments.clone(),
-            kept_comments: self
-                .kept_comments
-                .iter()
-                .cloned()
-                .map(|mut c| {
-                    let mut family: Vec<u32> = std::iter::once(c.id.as_str())
-                        .chain(c.replies.iter().map(String::as_str))
-                        .filter_map(|s| s.strip_prefix('c')?.parse().ok())
-                        .collect();
-                    for (&id, &parent) in &self.reply_parents {
-                        if family.contains(&parent) && !family.contains(&id) {
-                            family.push(id);
-                            c.replies.push(format!("c{id}"));
-                        }
-                    }
-                    c
-                })
-                .collect(),
             paragraph_ids: self
                 .origin
                 .as_ref()
@@ -2524,7 +2319,6 @@ impl<'p> Transaction<'p> {
     fn resolve(&mut self) -> Result<(), EditError> {
         let mut first_failure: Option<EditError> = None;
         for (i, op) in self.plan.operations.iter().enumerate() {
-            self.revision_refusal.take();
             let id = op.id.clone().unwrap_or_else(|| format!("op-{}", i + 1));
             let kind = kind_name(&op.kind).to_string();
             let window = selector_of(&op.kind)
@@ -2573,7 +2367,6 @@ impl<'p> Transaction<'p> {
                         message: None,
                         anchor_given: None,
                         anchor_read_as: None,
-                        near: None,
                     };
                     match self.resolve_page_setup(
                         *section,
@@ -2654,10 +2447,8 @@ impl<'p> Transaction<'p> {
                         .extend(resolved.into_iter().map(|resolved| (i, resolved)));
                 }
                 Err(boxed) => {
-                    let (e, outcome) = *boxed;
-                    let mut e = self.attach_revision_refusal(e);
+                    let (mut e, outcome) = *boxed;
                     e.operation = Some(id.clone());
-                    e.near = outcome.near.clone().map(Box::new);
                     self.outcomes.push(EditOutcome {
                         id,
                         kind,
@@ -2666,15 +2457,7 @@ impl<'p> Transaction<'p> {
                         message: Some(e.message.clone()),
                         ..outcome
                     });
-                    if let Some(first) = &mut first_failure {
-                        first.revision_refusals = std::mem::take(&mut first.revision_refusals)
-                            .into_vec()
-                            .into_iter()
-                            .chain(e.revision_refusals.into_vec())
-                            .collect();
-                    } else {
-                        first_failure = Some(e);
-                    }
+                    first_failure.get_or_insert(e);
                 }
             }
         }
@@ -2691,72 +2474,6 @@ impl<'p> Transaction<'p> {
         id: &str,
         kind: &OperationKind,
     ) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>> {
-        match kind {
-            OperationKind::Redact { find, .. } => {
-                let result = self.resolve_one_unreported(id, kind);
-                // A refusal can quote a selector, field, control or revision
-                // author as well as the anchor. None is safe locating help for
-                // a redaction, including the deferred revision diagnostics.
-                self.revision_refusal.take();
-                let scrub = |outcome: EditOutcome| EditOutcome {
-                    id: outcome.id,
-                    kind: outcome.kind,
-                    status: outcome.status,
-                    paragraph: outcome.paragraph,
-                    matches: outcome.matches,
-                    context: outcome.context.map(|_| format!("{{{}}}", redaction(find))),
-                    comment_id: None,
-                    anchor_given: None,
-                    anchor_read_as: None,
-                    near: None,
-                    code: None,
-                    message: None,
-                };
-                // Rebuild from safe fields on both paths. Adding an outcome
-                // field requires an explicit privacy decision here, rather
-                // than silently forwarding another copy of document text.
-                match result {
-                    Ok((resolved, outcome)) => Ok((resolved, scrub(outcome))),
-                    Err(boxed) => {
-                        let (error, outcome) = *boxed;
-                        let at = outcome.paragraph.as_ref().map_or_else(
-                            || "in the selected paragraphs".to_string(),
-                            |p| format!("in {}", crate::ids::short_paragraph(p)),
-                        );
-                        let message = match error.code.as_str() {
-                            "ANCHOR_NOT_FOUND" => format!(
-                                "the text to redact does not occur {at}{}",
-                                if outcome.near.is_some() {
-                                    "; a passage differs from it only in whitespace"
-                                } else {
-                                    ""
-                                }
-                            ),
-                            "AMBIGUOUS_ANCHOR" => format!(
-                                "the text to redact has {} matches {at}; select one paragraph and set a 1-based occurrence",
-                                outcome.matches
-                            ),
-                            "INVALID_EDIT" => format!(
-                                "the text to redact needs a nonempty find; occurrence is 1-based {at}"
-                            ),
-                            _ => format!("the text to redact cannot be edited {at}"),
-                        };
-                        Err(Box::new((
-                            err(&error.code, Some(id), message),
-                            scrub(outcome),
-                        )))
-                    }
-                }
-            }
-            _ => self.resolve_one_unreported(id, kind),
-        }
-    }
-
-    fn resolve_one_unreported(
-        &self,
-        id: &str,
-        kind: &OperationKind,
-    ) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
             kind: String::new(),
@@ -2769,7 +2486,6 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -2953,11 +2669,13 @@ impl<'p> Transaction<'p> {
             OperationKind::Redact {
                 find, occurrence, ..
             } => {
+                // Refusals name the text by its place, never by itself.
+                let hide = |m: String| m.replace(&format!("{find:?}"), "the text to redact");
                 let (start, end) = self
                     .find_range(projection, find, *occurrence, &mut outcome)
-                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                    .map_err(|(c, m)| fail(&c, hide(m), outcome.clone()))?;
                 let blocks = redaction(find);
-                outcome.context = Some(format!("{{{blocks}}}"));
+                outcome.context = Some(context(text, start, end, &format!("{{{blocks}}}")));
                 Ok((
                     Resolved::Text {
                         para,
@@ -3578,7 +3296,6 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -3609,25 +3326,11 @@ impl<'p> Transaction<'p> {
         let family = self.family.as_ref().expect("loaded in start");
         if !family.contains(target) {
             let message = if self.origin.as_ref().is_some_and(|o| o.had_comment(target)) {
-                let revisions = self
-                    .resolved_revisions
-                    .accepted
-                    .iter()
-                    .chain(&self.resolved_revisions.rejected)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                // A blanket settlement names no revision: no parenthesis.
-                let revisions = if revisions.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({revisions})")
-                };
                 format!(
-                    "c{target} is gone once the plan's revisions are settled{revisions}: its anchor and replies are removed, as Word does; a reply, edit or resolve on that thread would be lost; settle fewer revisions, drop the thread operation, or set \"removed_anchor_comments\": \"keep\"",
+                    "comment {target} is gone once the plan's revisions are settled: its anchor was text they removed; settle fewer revisions, or act on the comment in a plan of its own first"
                 )
             } else {
-                format!("no comment c{target} in the document (jubarte comments lists them)")
+                format!("no comment {target} in the document (jubarte comments lists them)")
             };
             return Err(fail("UNKNOWN_COMMENT", message, outcome));
         }
@@ -3722,7 +3425,6 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -3822,7 +3524,6 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -4121,26 +3822,6 @@ impl<'p> Transaction<'p> {
         crate::ids::paragraph_id(&self.stories[story].id, local)
     }
 
-    /// Every paragraph of the transaction's current DOM, in the fixed
-    /// projection order the expectations checker reopens bytes in: the
-    /// body's paragraphs in body order, then each story's own, story by
-    /// story (the same collectors `load_stories` numbers paragraphs
-    /// with). Structural edits shift what this walk returns; the
-    /// expectations correspondence reads it off the DOM that produced the
-    /// chosen primary bytes, so it never re-matches text.
-    pub(super) fn paragraph_walk(&self) -> Vec<NodeId> {
-        let dom = &self.opened.dom;
-        let mut nodes = Vec::new();
-        for (index, story) in self.stories.iter().enumerate() {
-            if index == 0 {
-                nodes.extend(crate::inspect::body_paragraph_nodes(dom, story.root));
-            } else {
-                nodes.extend(crate::inspect::story_paragraph_nodes(dom, story.root));
-            }
-        }
-        nodes
-    }
-
     /// The body, header, footer or note a paragraph belongs to, for the
     /// "keeps one paragraph" checks.
     fn story_container(&self, node: NodeId) -> (NodeId, &'static str) {
@@ -4180,17 +3861,20 @@ impl<'p> Transaction<'p> {
         Ok((start, end))
     }
 
-    /// Every byte of `[start, end)` must come from a direct run or an
-    /// editable insertion: text, a tab, break or non-breaking hyphen,
-    /// which an edit over it removes. A symbol is never edited: its run's font would draw the text.
+    /// Every byte of `[start, end)` must come from a direct run: its text,
+    /// or a tab, break or non-breaking hyphen, which an edit over it
+    /// removes. A symbol is never edited: its run's font would draw the text.
     fn check_range(&self, projection: &Projection, start: usize, end: usize) -> Result<(), String> {
         let mut covered = start;
         for seg in &projection.segments {
             if seg.end <= covered || seg.start >= end {
                 continue;
             }
-            if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-                return Err(self.opaque_structure(run_of(&seg.piece), "the text sits inside"));
+            if !seg.direct {
+                return Err(format!(
+                    "the text sits inside {}",
+                    self.opaque_structure(run_of(&seg.piece))
+                ));
             }
             if is_symbol(projection, seg) {
                 return Err("the text crosses a symbol".into());
@@ -4214,20 +3898,33 @@ impl<'p> Transaction<'p> {
     }
 
     /// What holds `run`, a run no edit may touch, and the way around it:
-    /// a revision by id and author first, with both review choices, else
+    /// a revision by id and author first (settling it frees the text), else
     /// the innermost hyperlink, field or content control.
-    fn opaque_structure(&self, run: NodeId, reason: &str) -> String {
+    fn opaque_structure(&self, run: NodeId) -> String {
         let dom = &self.opened.dom;
         let ancestors = dom.ancestors(run, None);
+        let story = self
+            .stories
+            .iter()
+            .find(|s| ancestors.contains(&s.root))
+            .map_or("body", |s| s.id.as_str());
         let mut inner: Option<String> = None;
         for &node in &ancestors {
             if dom.name_is(node, &W::p()) {
                 break;
             }
             let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
-            for local in ["ins", "moveTo", "del"] {
+            for (local, kind) in [
+                ("ins", "insertion"),
+                ("moveTo", "move"),
+                ("del", "deletion"),
+            ] {
                 if dom.name_is(node, &W::name(local)) {
-                    return self.revision_refusal_message(reason, &[node]);
+                    let id = crate::ids::ChangeId::new(story, attr("id")).short();
+                    return format!(
+                        "{id}, a tracked {kind} by {:?}; settle it first (\"resolve_revisions\": {{\"accept\": {{\"ids\": [\"{id}\"]}}}}, or reject), or comment on it",
+                        attr("author")
+                    );
                 }
             }
             if inner.is_some() {
@@ -4260,10 +3957,9 @@ impl<'p> Transaction<'p> {
                 ));
             }
         }
-        let structure = inner.unwrap_or_else(|| {
+        inner.unwrap_or_else(|| {
             "the result of a field; edit the text on either side of it, or comment on it".into()
-        });
-        format!("{reason} {structure}")
+        })
     }
 
     fn check_insert_position(
@@ -4277,10 +3973,11 @@ impl<'p> Transaction<'p> {
         }
         let seg = attach_segment(projection, pos, attach_before)
             .ok_or_else(|| "no run holds the insertion point".to_string())?;
-        if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-            return Err(
-                self.opaque_structure(run_of(&seg.piece), "the insertion point sits inside")
-            );
+        if !seg.direct {
+            return Err(format!(
+                "the insertion point sits inside {}",
+                self.opaque_structure(run_of(&seg.piece))
+            ));
         }
         if is_symbol(projection, seg) {
             return Err("the insertion point touches a symbol".into());
@@ -4289,22 +3986,6 @@ impl<'p> Transaction<'p> {
     }
 
     fn check_conflicts(&self) -> Result<(), EditError> {
-        self.check_conflicts_with_comments(false)
-    }
-
-    fn check_conflicts_v2(&self) -> Result<(), EditError> {
-        self.check_conflicts_with_comments(true)
-    }
-
-    fn check_conflicts_with_comments(&self, v2: bool) -> Result<(), EditError> {
-        let comment_conflict = |i, message| {
-            let mut error = self.conflict(i, message);
-            if v2 {
-                error.code = COMMENT_ANCHOR_CONFLICT.into();
-                error.outcomes[i].code = Some(error.code.clone());
-            }
-            error
-        };
         let mut deleted: Vec<usize> = Vec::new();
         for (i, r) in &self.resolved {
             if let Resolved::DeleteParagraph { para } = r {
@@ -4327,7 +4008,7 @@ impl<'p> Transaction<'p> {
                 } => (*para, *start, *end),
                 Resolved::CommentRange { para, .. } => {
                     if deleted.contains(para) {
-                        return Err(comment_conflict(*i, "comments on a deleted paragraph"));
+                        return Err(self.conflict(*i, "comments on a deleted paragraph"));
                     }
                     continue;
                 }
@@ -4358,15 +4039,8 @@ impl<'p> Transaction<'p> {
                     continue;
                 }
                 Resolved::CommentSpan { para, last, .. } => {
-                    // V2 has tested preservation across interior deletions;
-                    // the adapter separately checks content and endpoints.
-                    let removes_anchor = if v2 {
-                        deleted.contains(para) || deleted.contains(last)
-                    } else {
-                        (*para..=*last).any(|p| deleted.contains(&p))
-                    };
-                    if removes_anchor {
-                        return Err(comment_conflict(*i, "comments on a deleted paragraph"));
+                    if (*para..=*last).any(|p| deleted.contains(&p)) {
+                        return Err(self.conflict(*i, "comments on a deleted paragraph"));
                     }
                     continue;
                 }
@@ -4417,10 +4091,7 @@ impl<'p> Transaction<'p> {
                     e > s && ((*start > s && *start < e) || (*end > s && *end < e))
                 });
             if cuts {
-                return Err(comment_conflict(
-                    *i,
-                    "comment range cuts through an edited range",
-                ));
+                return Err(self.conflict(*i, "comment range cuts through an edited range"));
             }
         }
         // Formatting applies to source text: no text edit may change it.
@@ -4686,7 +4357,6 @@ impl<'p> Transaction<'p> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: &str, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -5376,7 +5046,6 @@ impl<'p> Transaction<'p> {
             date: Some(self.date.clone()),
             initials: Some(self.initials.clone()),
             resolve_revisions: None,
-            removed_anchor_comments: RemovedAnchorComments::default(),
             existing_revisions: ExistingRevisions::default(),
             operations,
             update_fields: false,
@@ -5451,7 +5120,6 @@ impl<'p> Transaction<'p> {
             Some(bytes)
         };
         self.write_stories(&written);
-        self.written_stories = written;
         if lost_reference {
             // A comment whose reference went with deleted text goes too, as
             // Accept All takes it (Word rule R1): no definition is left
@@ -5469,8 +5137,6 @@ impl<'p> Transaction<'p> {
             .pkg
             .to_zip()
             .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
-        #[cfg(test)]
-        let clean = prepared::tests::serialized_candidate(clean);
         Ok((clean, marked))
     }
 
@@ -5549,17 +5215,7 @@ impl<'p> Transaction<'p> {
         }
         for op in &ops {
             if let ThreadOp::Delete { id } = op {
-                // Rescue at settlement is provisional: both plan schemas'
-                // reports must describe the family we actually publish.
-                let removed: Vec<_> = family
-                    .remove(*id)
-                    .into_iter()
-                    .map(|id| format!("c{id}"))
-                    .collect();
-                self.kept_comments.retain(|c| !removed.contains(&c.id));
-                for kept in &mut self.kept_comments {
-                    kept.replies.retain(|id| !removed.contains(id));
-                }
+                family.remove(*id);
             }
         }
         family.store(&mut self.opened.pkg, &main);
@@ -5626,7 +5282,7 @@ fn is_range_markup(dom: &Dom, node: NodeId) -> bool {
         .is_some_and(|n| n.namespace_name() == W::URI && RANGES.contains(&n.local_name()))
 }
 
-pub(crate) fn kind_name(kind: &OperationKind) -> &'static str {
+fn kind_name(kind: &OperationKind) -> &'static str {
     match kind {
         OperationKind::Replace { .. } => "replace",
         OperationKind::Insert { .. } => "insert",
@@ -5878,9 +5534,6 @@ fn locate(
     let shown = anchor::shown(find);
     let (start, end) = match (hits.as_slice(), occurrence) {
         ([], _) => {
-            if window.is_none() {
-                outcome.near = anchor::near_matches(text, find);
-            }
             return Err((
                 "ANCHOR_NOT_FOUND".into(),
                 match window {
@@ -5915,33 +5568,6 @@ fn locate(
         }
     };
     Ok((start, end))
-}
-
-/// A run directly inside a paragraph's pending insertion is editable.
-/// Other wrappers and complex field results retain their refusal: an
-/// insertion around a field does not make that field ordinary text.
-fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
-    let run = run_of(piece);
-    let ins = dom.parent(run).filter(|&n| dom.name_is(n, &W::ins()))?;
-    let paragraph = dom.parent(ins).filter(|&n| dom.name_is(n, &W::p()))?;
-    let target = match *piece {
-        Piece::Text { t, .. } => t,
-        Piece::Glyph { element, .. } => element,
-    };
-    let mut fields = 0usize;
-    for node in dom.descendants(paragraph, None) {
-        if node == target {
-            return (fields == 0).then_some(ins);
-        }
-        if dom.name_is(node, &W::name("fldChar")) {
-            match dom.attribute(node, &W::name("fldCharType")) {
-                Some("begin") => fields += 1,
-                Some("end") => fields = fields.saturating_sub(1),
-                _ => {}
-            }
-        }
-    }
-    None
 }
 
 /// `seg` is a `w:sym`, projected as U+FFFC.
@@ -5983,43 +5609,6 @@ fn apply_text_edit(
 ) {
     if start == end {
         let seg = attach_segment(projection, start, attach_before).expect("checked at resolution");
-        // At a run edge the source range endpoints keep their side of the
-        // words. A separate run lets both the clean copy and the comparer
-        // retain that boundary instead of extending the source range.
-        let (leaf, run) = match seg.piece {
-            Piece::Text { t, run } => (t, run),
-            Piece::Glyph { element, run } => (element, run),
-        };
-        let before = start == seg.start;
-        let content: Vec<_> = dom
-            .elements(run, None)
-            .into_iter()
-            .filter(|&n| !dom.name_is(n, &W::r_pr()))
-            .collect();
-        let at_run_edge = if before {
-            content.first() == Some(&leaf)
-        } else {
-            start == seg.end && content.last() == Some(&leaf)
-        };
-        if at_run_edge {
-            let anchor = tracked::insertion_boundary_anchor(dom, run, before);
-            if anchor != run {
-                let inserted = dom.new_element(W::r());
-                if let Some(rpr) = dom.element(run, &W::r_pr()) {
-                    let rpr = tracked::clean_rpr(dom, rpr);
-                    dom.add(inserted, rpr);
-                }
-                let t = dom.new_element(W::t());
-                dom.add(inserted, t);
-                write_text(dom, t, replacement);
-                if before {
-                    dom.add_before_self(anchor, inserted);
-                } else {
-                    dom.add_after_self(anchor, inserted);
-                }
-                return;
-            }
-        }
         match seg.piece {
             Piece::Text { t, .. } => {
                 let value = dom.value(t);
@@ -6950,7 +6539,7 @@ fn toggle(dom: &mut Dom, rpr: NodeId, local: &str, value: Option<bool>) {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -7064,12 +6653,12 @@ mod tests {
 }
 // Reuse the repository's existing, entirely in-memory package fixture.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[path = "../tests/common/docx.rs"]
 mod deeper_boundary_fixture;
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deeper_boundary_tests {
     use super::deeper_boundary_fixture::{self as fixture, Part, docx, docx_with, para};
     use super::*;
@@ -7110,7 +6699,6 @@ mod deeper_boundary_tests {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         }
     }
 
@@ -7201,16 +6789,15 @@ mod deeper_boundary_tests {
             },
         ] {
             assert_eq!(
-                resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap(),
-                (None, ResolvedRevisions::default(), AnchorChanges::default())
+                resolve_selected(&source, Some(&selection)).unwrap(),
+                (None, ResolvedRevisions::default())
             );
         }
         let selection = ResolveRevisions {
             accept: None,
             reject: Some(ChangeFilter::ids(["r1"])),
         };
-        let (bytes, resolved, _) =
-            resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap();
+        let (bytes, resolved) = resolve_selected(&source, Some(&selection)).unwrap();
         assert_eq!(
             resolved,
             ResolvedRevisions {

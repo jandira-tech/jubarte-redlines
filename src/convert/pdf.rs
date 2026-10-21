@@ -1331,7 +1331,7 @@ fn hundredths(v: f32) -> i64 {
 
 /// Hundredths as the shortest decimal: `0`, `6`, `-12.5`, `0.07`.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn fmt_hundredths(h: i64) -> String {
     let mut out = String::new();
     push_hundredths(&mut out, h);
@@ -2173,7 +2173,7 @@ fn stands_upright(c: char) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::uniquify;
 
@@ -2622,7 +2622,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod residual_byte_and_geometry_contract_tests {
     use super::*;
     use std::io::Read;
