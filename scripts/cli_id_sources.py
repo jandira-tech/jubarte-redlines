@@ -242,7 +242,7 @@ def messages(fn: Fn, root: Path) -> list[str]:
         )
     )
     found = [m.strip('"') for m in ID_MESSAGE.findall(fn.body)]
-    found += [consts[c] for c in sorted(set(re.findall(r"\b([A-Z_]{6,})\b", fn.body))) if c in consts]
+    found += [consts[c] for c in sorted(set(re.findall(r"\b([A-Z_]{6,})\b", fn.body)).intersection(consts))]
     return sorted(set(found))
 
 
