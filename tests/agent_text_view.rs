@@ -420,6 +420,46 @@ fn id_line_shows_direct_alignment_indent_style_and_number() {
     );
 }
 
+/// A paragraph states its own outline level in its `w:pPr`, whatever
+/// style it carries; a style that gives no level (`Body`) must not swallow
+/// it, or the level is lost on write-back (#1524 review). One the `#` count
+/// already gives needs no clause.
+#[test]
+fn a_styled_paragraph_keeps_the_outline_level_it_states() {
+    let body_xml = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:outlineLvl w:val="8"/></w:pPr><w:r><w:t>Deep body</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Shallow body</w:t></w:r></w:p>"#,
+    );
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: STYLES_CT,
+        rel_type: STYLES_REL,
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body Text"/></w:style></w:styles>"#
+        ),
+    };
+    let full = agent(&common::docx::docx_with(body_xml, &[styles]));
+    let out = body(&full).to_string();
+    assert!(
+        out.contains("<!-- p0 Body outline 9 -->\nDeep body"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p1 Body -->\n## Shallow body"), "{out}");
+    // The level comes back beside the style the line names.
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let document = common::docx::part_string(&back, "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"<w:pStyle w:val="Body"/><w:outlineLvl w:val="8"/>"#),
+        "{document}"
+    );
+    assert!(
+        document.contains(r#"<w:pStyle w:val="Body"/><w:outlineLvl w:val="1"/>"#),
+        "{document}"
+    );
+}
+
 #[test]
 fn paragraph_marks_print_inline_and_formatting_changes_on_the_id_line() {
     let body_xml = concat!(

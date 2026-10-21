@@ -2829,8 +2829,14 @@ impl<'o, 'a> Writer<'o, 'a> {
             let styled = line.style.is_some();
             if let Some(style) = line.style {
                 paragraph.style = Some(style.into());
-                // `# Text` under its own style: the level goes with it.
-                paragraph.outline = self.heading.map(|level| level - 1);
+                // `# Text` under its own style: the level goes with it,
+                // unless the line states one of its own, which the style
+                // does not carry.
+                paragraph.outline = line
+                    .outline
+                    .and_then(|level| level.checked_sub(1))
+                    .map(|level| level as usize)
+                    .or_else(|| self.heading.map(|level| level - 1));
             } else if let Some(outline) = line.outline {
                 // `# Text` that states its own level, with no style: the
                 // writer's `HeadingN` must not step in where the document

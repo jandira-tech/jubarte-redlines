@@ -2825,17 +2825,24 @@ impl Writer<'_> {
             // which without a `w:pStyle` is the only place it can come
             // from: `outline 2`, and past the heading styles (`outline 7`
             // to `outline 9`) the only place at all, for no `#` count
-            // reaches them.
-            let own_outline = style
-                .is_none()
-                .then(|| {
-                    ppr.and_then(|pr| pr.child("outlineLvl"))
-                        .and_then(|o| o.attr("val"))
-                        .and_then(|v| v.parse::<usize>().ok())
-                        .filter(|l| *l < 9)
-                        .map(|l| l + 1)
-                })
-                .flatten();
+            // reaches them. A style the id line names does not carry a
+            // level the paragraph states past it, so a style that gives
+            // none (`Body`) names it too (#1524 review).
+            let stated = || {
+                ppr.and_then(|pr| pr.child("outlineLvl"))
+                    .and_then(|o| o.attr("val"))
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|l| *l < 9)
+                    .map(|l| l + 1)
+            };
+            // A style the `#` count implies is not printed on the line,
+            // and the writer reads the clause there as "no style", so the
+            // count keeps the level and the style with it.
+            let implied = style
+                .as_deref()
+                .is_some_and(|s| heading.is_some_and(|level| s == format!("Heading{level}")));
+            let own_outline =
+                stated().filter(|level| style.is_none() || (!implied && heading != Some(*level)));
             // An empty paragraph's own spacing is a line of the page
             // (#1473): it keeps an id line of its own to say it.
             let spaced = ppr
