@@ -1573,7 +1573,7 @@ mod public_lexical_empty_move_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod split_by_chars_tests {
     use super::*;
 
