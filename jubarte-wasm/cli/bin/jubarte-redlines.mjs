@@ -434,11 +434,16 @@ function runEdit(verb, file, o) {
   let consumed;
   if (o.consume && !o.dry_run) {
     try {
-      const stats = fs.lstatSync(o.plan);
-      if (stats.isSymbolicLink()) {
-        throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+      const fd = fs.openSync(o.plan, "r");
+      try {
+        const stats = fs.fstatSync(fd);
+        if (stats.isSymbolicLink()) {
+          throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+        }
+        consumed = fs.readFileSync(fd);
+      } finally {
+        fs.closeSync(fd);
       }
-      consumed = fs.readFileSync(o.plan);
     } catch (e) {
       if (e instanceof UsageError) throw e;
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
