@@ -691,7 +691,7 @@ fn detect_moves_memoized(
 /// (`memoized_matches_reference`); not compiled into release builds now that
 /// production dispatches to the memoized path (PR3 Phase D).
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn detect_moves_reference(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -848,7 +848,7 @@ fn detect_moves_reference(
 /// obvious-move case and thousands of seeded-random sequences under several
 /// settings profiles.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod memoized_moves_tests {
     use super::*;
     use crate::xmllinq::NodeId;
@@ -1106,7 +1106,7 @@ mod memoized_moves_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod repeated_source_anchor_promotion_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1213,7 +1213,7 @@ mod repeated_source_anchor_promotion_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod source_paragraph_promotion_boundary_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1539,7 +1539,7 @@ mod source_paragraph_promotion_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_lexical_empty_move_boundary_tests {
     use super::*;
     #[test]
@@ -1573,7 +1573,7 @@ mod public_lexical_empty_move_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod split_by_chars_tests {
     use super::*;
 
@@ -1599,12 +1599,18 @@ mod split_by_chars_tests {
 
     #[test]
     fn text_with_separators_at_edges_and_middle() {
-        assert_eq!(split_by_chars(" hello world ", &[' ']), vec!["", "hello", "world", ""]);
+        assert_eq!(
+            split_by_chars(" hello world ", &[' ']),
+            vec!["", "hello", "world", ""]
+        );
     }
 
     #[test]
     fn text_with_consecutive_separators() {
-        assert_eq!(split_by_chars("hello  world", &[' ']), vec!["hello", "", "world"]);
+        assert_eq!(
+            split_by_chars("hello  world", &[' ']),
+            vec!["hello", "", "world"]
+        );
     }
 
     #[test]

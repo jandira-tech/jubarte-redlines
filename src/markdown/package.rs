@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Write as _};
 
-use super::view_styles::{TABLE_BORDER_SIDES, TableBorders};
 use super::xml::{self, Context, Document, Relate, escape};
 use super::{DocxOptions, MarkdownError, PageSize};
 use crate::comments::CommentFamily;
@@ -82,11 +81,6 @@ fn threads(
     let mut family = CommentFamily::load(package, main).map_err(err)?;
     for comment in comments {
         family.set_thread(comment.id, comment.parent, comment.done);
-        if let Some((_, date)) = &comment.by
-            && let Some(utc) = xml::offset_date_utc(date)
-        {
-            family.set_date_utc(comment.id, &utc);
-        }
     }
     for comment in comments.iter().filter(|c| c.done && c.parent.is_none()) {
         family.set_done(comment.id, true);
@@ -103,8 +97,6 @@ fn err(message: impl std::fmt::Display) -> MarkdownError {
 pub(super) fn assemble(
     document: &Document,
     options: &DocxOptions<'_>,
-    markdown: &str,
-    warnings: &mut Vec<String>,
 ) -> Result<Vec<u8>, MarkdownError> {
     let template = match options.reference {
         Some(bytes) => bytes.to_vec(),
@@ -212,7 +204,7 @@ pub(super) fn assemble(
             .iter()
             .find(|s| s.default)
             .map_or("Normal", |s| s.id.as_str()),
-    )?;
+    );
     let default_section = section.clone();
     let section = section_stories.apply(sections, &document.section(sections, &section));
     let text_width = text_width(&section);
@@ -224,8 +216,6 @@ pub(super) fn assemble(
         next_revision,
         cursors: HashMap::new(),
         used_revisions: HashSet::new(),
-        warnings,
-        revision_prefix: "",
         pending_marks: Vec::new(),
         num_ids,
         label_nums,
@@ -311,151 +301,7 @@ pub(super) fn assemble(
     if package.content_type_for(&format!("/{main}")).is_none() {
         package.add_content_type_override(&format!("/{main}"), MAIN_CT);
     }
-    // A bound content control a drawing kept needs its store (#1427).
-    super::data_stores::write_missing(&mut package, &main, warnings);
-    // Revision attributes are assembled as XML strings. Bind the extension
-    // before parsing, then reuse the comparer's Word compatibility contract.
-    for part in package.parts() {
-        if !part.ends_with(".xml") {
-            continue;
-        }
-        let Some(mut source) = package
-            .part_string(&part)
-            .filter(|s| s.contains(" w16du:dateUtc="))
-        else {
-            continue;
-        };
-        // Only a WordprocessingML root takes the declaration. A part kept
-        // from the reference with another root (custom XML) stays as it is.
-        let Some((start, end)) = root_start_tag(&source) else {
-            continue;
-        };
-        if !source[start..].starts_with("<w:") || source[..end].ends_with('/') {
-            continue;
-        }
-        // Resolve only this start tag: a custom part may reuse `w`, or
-        // leave it unbound, regardless of declarations on its children.
-        let mut reader = quick_xml::NsReader::from_str(&source[start..=end]);
-        if !matches!(
-            reader.read_resolved_event(),
-            Ok((quick_xml::name::ResolveResult::Bound(namespace), _))
-                if namespace.as_ref() == W_NS
-        ) {
-            continue;
-        }
-        if !source[start..end].contains("xmlns:w16du=") {
-            source.insert_str(
-                end,
-                " xmlns:w16du=\"http://schemas.microsoft.com/office/word/2023/wordml/word16du\"",
-            );
-        }
-        let mut dom = Dom::new();
-        let doc = dom.parse_xdocument(&source);
-        if let Some(root) = dom.root(doc) {
-            crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut dom, root);
-            // Only rewrite the root tag. Re-serializing the content would
-            // normalize attribute whitespace inside opaque drawing payloads.
-            let declared = serialize_element(&dom, root);
-            let declared_end = declared.find('>').expect("a root start tag");
-            let source_end = start + source[start..].find('>').expect("a root start tag");
-            source.replace_range(start..=source_end, &declared[..=declared_end]);
-            package.set_part(&part, source.into_bytes());
-        }
-    }
-    unique_revision_ids(&mut package, markdown, warnings);
     package.to_zip().map_err(err)
-}
-
-/// The body allocator handles its own ids. Enforce the same invariant in
-/// every other written part too (stories, styles and property revisions).
-/// Keep every source line naming a story id: a folded mark can appear in
-/// several source tags but becomes just one XML element.
-fn unique_revision_ids(package: &mut PartFs, markdown: &str, warnings: &mut Vec<String>) {
-    let mut lines: HashMap<crate::ids::ChangeId, Vec<usize>> = HashMap::new();
-    for (line, text) in markdown.lines().enumerate() {
-        for word in text
-            .split(|c: char| c.is_whitespace() || matches!(c, '{' | '}' | ';' | ',' | '"' | '\''))
-        {
-            if let Ok(ids) = crate::ids::parse_change_ids(word) {
-                for id in ids {
-                    let found = lines.entry(id).or_default();
-                    if found.last() != Some(&(line + 1)) {
-                        found.push(line + 1);
-                    }
-                }
-            }
-        }
-    }
-    for part in package
-        .parts()
-        .into_iter()
-        .filter(|part| part.ends_with(".xml"))
-    {
-        let Some(xml) = package.part_string(&part) else {
-            continue;
-        };
-        let mut dom = Dom::new();
-        let document = dom.parse_xdocument(&xml);
-        let Some(root) = dom.root(document) else {
-            continue;
-        };
-        let renamed = crate::validate::renumber_duplicate_revision_ids(&mut dom, root);
-        if renamed.is_empty() {
-            continue;
-        }
-        let story = if package.main_document_part().as_deref() == Some(part.as_str()) {
-            "body"
-        } else {
-            part.rsplit('/')
-                .next()
-                .unwrap_or(&part)
-                .trim_end_matches(".xml")
-        };
-        for (old, new) in renamed {
-            let old = crate::ids::ChangeId::new(story, old);
-            let new = crate::ids::ChangeId::new(story, new).short();
-            let location = match lines.get(&old).map(Vec::as_slice) {
-                Some([line]) => format!("on line {line}"),
-                Some(found) => format!(
-                    "on lines {}",
-                    found
-                        .iter()
-                        .map(usize::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                None => format!("in {part}"),
-            };
-            warnings.push(format!(
-                "{} names two separate changes {location}; the second is written as {new}",
-                old.short()
-            ));
-        }
-        package.set_part(
-            &part,
-            crate::xmllinq::serialize::serialize_document(&dom, document).into_bytes(),
-        );
-    }
-}
-
-/// The byte range of the root element's start tag, `<` up to its `>`: the
-/// first tag after the declaration, comments and doctype.
-fn root_start_tag(source: &str) -> Option<(usize, usize)> {
-    let mut at = 0;
-    loop {
-        let start = at + source[at..].find('<')?;
-        let rest = &source[start..];
-        let close = if rest.starts_with("<!--") {
-            "-->"
-        } else if rest.starts_with("<?") {
-            "?>"
-        } else if rest.starts_with("<!") {
-            ">"
-        } else {
-            return Some((start, start + rest.find('>')?));
-        };
-        at = start + rest.find(close)? + close.len();
-    }
 }
 
 /// The styles part `main` relates to, made empty when there is none.
@@ -690,7 +536,7 @@ fn word_name(name: &str) -> String {
 /// with the legend's border all round when it gives one.
 fn with_table_styles(
     styles: &str,
-    wanted: &BTreeMap<String, (Option<TableBorders>, Option<String>)>,
+    wanted: &BTreeMap<String, (Option<u32>, Option<String>)>,
     theme: &str,
 ) -> String {
     let missing: String = wanted
@@ -706,11 +552,14 @@ fn with_table_styles(
                 }
                 return style;
             }
-            let borders = border.as_ref().map_or_else(String::new, |border| {
-                format!(
-                    "<w:tblPr><w:tblBorders>{}</w:tblBorders></w:tblPr>",
-                    table_border_sides(border)
-                )
+            let borders = (*border).map_or_else(String::new, |sz| {
+                let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+                    .iter()
+                    .map(|side| {
+                        format!("<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
+                    })
+                    .collect();
+                format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
             });
             let name = name
                 .clone()
@@ -729,41 +578,6 @@ fn with_table_styles(
             format!("{}{missing}{}", &styles[..at], &styles[at..])
         }
         _ => styles.to_string(),
-    }
-}
-
-/// A table style's `w:tblBorders` children for the legend's borders: one
-/// single line of the size all round, or each side the legend names, in
-/// the order Word's schema puts them.
-fn table_border_sides(border: &TableBorders) -> String {
-    match border {
-        TableBorders::All(sz) => TABLE_BORDER_SIDES
-            .iter()
-            .map(|side| {
-                format!("<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
-            })
-            .collect(),
-        TableBorders::Sides(sides) => TABLE_BORDER_SIDES
-            .iter()
-            .filter_map(|name| sides.iter().find(|s| s.side == *name))
-            .map(|s| {
-                let size = s
-                    .size
-                    .map(|sz| format!(" w:sz=\"{sz}\""))
-                    .unwrap_or_default();
-                if s.size.is_none() && s.color.is_none() && s.space.is_none() {
-                    format!("<w:{} w:val=\"{}\"/>", s.side, escape(&s.val))
-                } else {
-                    format!(
-                        "<w:{} w:val=\"{}\"{size} w:space=\"{}\" w:color=\"{}\"/>",
-                        s.side,
-                        escape(&s.val),
-                        s.space.unwrap_or(0),
-                        s.color.as_deref().unwrap_or("auto")
-                    )
-                }
-            })
-            .collect(),
     }
 }
 
@@ -1378,10 +1192,6 @@ fn footnotes(
         .filter_map(|id| u32::try_from(id).ok())
         .collect();
         let outside = std::mem::replace(&mut context.used_revisions, in_part);
-        let outside_prefix = std::mem::replace(
-            &mut context.revision_prefix,
-            if endnote { "endnotes." } else { "footnotes." },
-        );
         {
             let mut relate = PartRelate {
                 package,
@@ -1401,7 +1211,6 @@ fn footnotes(
             context.in_endnote = false;
         }
         context.used_revisions = outside;
-        context.revision_prefix = outside_prefix;
         let mut root = existing;
         let open = format!("<w:{kind}s");
         for (prefix, namespace) in [("r", R_NS), ("wp", WP_NS)] {
@@ -1729,32 +1538,17 @@ impl Relate for PartRelate<'_, '_, '_> {
             .add_document_relationship(&self.part, &format!("{RELS}/image"), &rel_target)
     }
 
-    fn drawing(
-        &mut self,
-        index: usize,
-        next_doc_pr: &mut u32,
-        story: Option<&[(String, String)]>,
-    ) -> Option<String> {
+    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String> {
         let drawing = self.document.drawings.get(index)?;
         let existing: HashSet<String> = self.package.parts().into_iter().collect();
-        let xml = super::from_docx::drawing::materialize(
+        super::from_docx::drawing::materialize(
             drawing,
             self.package,
             &self.part,
             &existing,
             &mut self.media.used,
             next_doc_pr,
-        )?;
-        // A text box's frame is refilled from the story the view printed.
-        match story {
-            Some(story) => Some(super::from_docx::drawing::fill_boxes(
-                &xml,
-                drawing,
-                story,
-                next_doc_pr,
-            )),
-            None => Some(xml),
-        }
+        )
     }
 }
 
@@ -1814,7 +1608,11 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
     let app = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
         <Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">\
         <Application>jubarte</Application></Properties>";
-    let parts = [
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::default());
+    for (name, body) in [
         ("[Content_Types].xml", content_types.to_string()),
         ("_rels/.rels", package_rels),
         ("word/document.xml", document),
@@ -1823,28 +1621,15 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
         ("word/settings.xml", settings),
         ("docProps/core.xml", core.to_string()),
         ("docProps/app.xml", app.to_string()),
-    ];
-    // jubarte writes ZIP32 only (ZIP-10/#604): the template cannot exceed
-    // the boundary, but the plan proves it before `ZipWriter::new`.
-    let plan: Vec<(&str, u64)> = parts
-        .iter()
-        .map(|(name, body)| (*name, body.len() as u64))
-        .collect();
-    crate::opc::zip32_plan(&plan)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .last_modified_time(zip::DateTime::default());
-    for (name, body) in &parts {
-        zip.start_file(*name, options)?;
+    ] {
+        zip.start_file(name, options)?;
         zip.write_all(body.as_bytes())?;
     }
     Ok(zip.finish()?.into_inner())
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1962,7 +1747,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod literal_package_metadata_contract_tests {
     use super::*;
 

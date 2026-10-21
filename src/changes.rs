@@ -14,9 +14,7 @@
 //! ([`crate::ids::ChangeId::short`]). Resolving some changes never renumbers the rest, so an
 //! id listed before stays valid after. Word moves text as one change:
 //! selecting either side of a move selects both sides and their range
-//! markers. Tracked changes inside comment bodies (`word/comments.xml`)
-//! resolve under Accept/Reject All and under author or kind filters, but
-//! they are never listed and no `--id` names them (#1223).
+//! markers.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -69,9 +67,7 @@ pub struct Change {
     /// Revision author.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
-    /// The valid UTC instant, written in the author's local offset when both
-    /// times record a whole-minute difference within ±14:00; otherwise `Z`.
-    /// Without a valid `w16du:dateUtc`, `w:date` as stored.
+    /// Revision date.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     /// The text the change covers: inserted, deleted or moved text, or the
@@ -95,174 +91,6 @@ pub struct Change {
     /// or the moved-to side) takes this one along.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inside: Option<String>,
-}
-
-/// Private audit view: public `Change` serialization stays unchanged.
-pub(crate) struct AuditStory {
-    pub part: String,
-    pub paragraphs: Vec<(String, String)>,
-    pub changes: Vec<AuditChange>,
-    pub markers: Vec<AuditMarker>,
-}
-
-/// A carrier omitted from the change listing. Only its own cursor slot can
-/// disappear transparently; any visible descendants keep their positions.
-pub(crate) struct AuditMarker {
-    pub kind: String,
-    pub paragraph: Option<usize>,
-    pub owner: String,
-    pub start: usize,
-}
-
-pub(crate) struct AuditChange {
-    pub change: Change,
-    pub owner: String,
-    pub start: usize,
-    pub end: usize,
-}
-
-/// Read paragraph text including deletions, and document positions for the
-/// same carriers as `list_changes`. Positions count visible atoms and every
-/// revision, including carriers omitted from the public listing.
-pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError> {
-    let pkg = open(docx)?;
-    let main = main_part(&pkg);
-    let mut stories = Vec::new();
-    for (part, _) in revision_bearing_parts(&pkg) {
-        let Some(xml) = pkg.part_string(&part) else {
-            continue;
-        };
-        let mut dom = Dom::new();
-        let document = dom.parse_xdocument(&xml);
-        let Some(root) = dom.root(document) else {
-            continue;
-        };
-        let story = story_id(&main, &part);
-        let found = carriers(&dom, root, &story);
-        let revision_nodes: HashSet<_> = found.iter().map(|c| c.node).collect();
-        let mut spans = HashMap::new();
-        let mut cursor = 0;
-        let mut pending = vec![(root, false)];
-        while let Some((node, closing)) = pending.pop() {
-            if closing {
-                if let Some(span) = spans.get_mut(&node) {
-                    let (_, end): &mut (usize, usize) = span;
-                    *end = cursor;
-                }
-                continue;
-            }
-            spans.insert(node, (cursor, cursor));
-            let visible = dom.name(node).is_some_and(|name| {
-                name.namespace_name() == W::URI
-                    && matches!(
-                        name.local_name(),
-                        "t" | "delText"
-                            | "instrText"
-                            | "delInstrText"
-                            | "tab"
-                            | "br"
-                            | "cr"
-                            | "drawing"
-                            | "pict"
-                            | "object"
-                            | "sym"
-                            | "noBreakHyphen"
-                            | "softHyphen"
-                            | "footnoteReference"
-                            | "endnoteReference"
-                    )
-            });
-            let empty_text = dom.name(node).is_some_and(|name| {
-                matches!(
-                    name.local_name(),
-                    "t" | "delText" | "instrText" | "delInstrText"
-                )
-            }) && dom.value(node).is_empty();
-            if revision_nodes.contains(&node) || (visible && !empty_text) {
-                cursor += 1;
-            }
-            pending.push((node, true));
-            for index in (0..dom.child_count(node)).rev() {
-                pending.push((dom.child_at(node, index), false));
-            }
-        }
-        let paragraphs = crate::inspect::story_paragraph_nodes(&dom, root)
-            .into_iter()
-            .enumerate()
-            .map(|(index, node)| (crate::ids::paragraph_id(&story, index), text_of(&dom, node)))
-            .collect();
-        let paragraph_nodes = paragraph_index(&dom, root);
-        let markers = found
-            .iter()
-            .filter(|carrier| carrier.change.is_none())
-            .map(|carrier| {
-                let paragraph = paragraph_of(&dom, carrier.node, &paragraph_nodes);
-                AuditMarker {
-                    kind: dom.name(carrier.node).unwrap().local_name().to_string(),
-                    paragraph,
-                    owner: if paragraph.is_none() {
-                        audit_owner(&dom, carrier.node)
-                    } else {
-                        String::new()
-                    },
-                    start: spans[&carrier.node].0,
-                }
-            })
-            .collect();
-        let changes = found
-            .into_iter()
-            .filter_map(|carrier| {
-                let change = carrier.change?;
-                let owner = if change.paragraph.is_none() {
-                    audit_owner(&dom, carrier.node)
-                } else {
-                    String::new()
-                };
-                let (start, end) = spans[&carrier.node];
-                Some(AuditChange {
-                    change,
-                    owner,
-                    start,
-                    end,
-                })
-            })
-            .collect();
-        stories.push(AuditStory {
-            part,
-            paragraphs,
-            changes,
-            markers,
-        });
-    }
-    Ok(stories)
-}
-
-/// Owner paths use semantic ids where OOXML defines them, otherwise the
-/// element's ordinal among same-named siblings. Revision ids never enter it.
-fn audit_owner(dom: &Dom, node: NodeId) -> String {
-    let mut path = Vec::new();
-    for ancestor in dom.ancestors(node, None).into_iter().rev() {
-        let Some(name) = dom.name(ancestor) else {
-            continue;
-        };
-        let local = name.local_name();
-        let identity = ["styleId", "abstractNumId", "numId", "ilvl", "id"]
-            .into_iter()
-            .find_map(|attr| {
-                dom.attribute(ancestor, &W::name(attr))
-                    .map(|id| format!("{attr}={id}"))
-            })
-            .unwrap_or_else(|| {
-                let ordinal = dom
-                    .nodes_before_self(ancestor)
-                    .into_iter()
-                    .filter(|&sibling| dom.name(sibling).as_ref() == Some(&name))
-                    .count();
-                ordinal.to_string()
-            });
-        path.push(format!("{local}[{identity}]"));
-    }
-    path.join("/")
 }
 
 /// Which changes to resolve. A change is selected when it matches every
@@ -451,8 +279,7 @@ pub fn changes_text(changes: &[Change]) -> String {
 }
 
 /// Every tracked change, story by story (body, headers, footers, endnotes,
-/// footnotes, styles), in document order. Revisions inside comment bodies
-/// are not listed: the view has no ids for them yet (#1223).
+/// footnotes, styles), in document order.
 ///
 /// # Errors
 ///
@@ -465,24 +292,17 @@ pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
 /// admission, and a part that does not parse lists nothing, so the view's
 /// count fails only where the package itself does.
 pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
-        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg = PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
     Ok(changes_in(&pkg))
 }
 
 /// The changes of an opened (transitional) package, as [`list_changes`]
-/// lists them. The comments part is revision-bearing (#1223) but its
-/// revisions stay unlisted — the view has no ids for them yet — so an
-/// `--id` cannot name one. Author and kind filters still resolve them.
+/// lists them.
 pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
     let main = main_part(pkg);
-    let comments = crate::revision_processor::comments_part(pkg);
     let mut out = Vec::new();
     for (part, _) in revision_bearing_parts(pkg) {
-        if Some(&part) == comments.as_ref() {
-            continue;
-        }
         let Some(xml) = pkg.part_string(&part) else {
             continue;
         };
@@ -513,7 +333,7 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
 /// listed change; [`ChangeError::Package`] when
 /// the package cannot be read or rewritten.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
-    resolve(docx, filter, Resolution::Accept).map(|(document, _, _)| document)
+    resolve(docx, filter, Resolution::Accept)
 }
 
 /// Reject the changes `filter` selects; the others stay tracked. A Strict
@@ -523,116 +343,21 @@ pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, Cha
 ///
 /// As [`accept_changes`].
 pub fn reject_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
-    resolve(docx, filter, Resolution::Reject).map(|(document, _, _)| document)
-}
-
-/// A resolved document and the comments removed with its revisions.
-#[derive(Clone, Debug)]
-pub struct ResolvedChanges {
-    /// The document after resolving the selected changes.
-    pub document: Vec<u8>,
-    /// Removed comments, including replies, with their original ids and text.
-    /// Surviving comments may be renumbered in `document`.
-    pub removed_comments: Vec<crate::comments::CommentRecord>,
-    /// Tracked changes still inside comment bodies after the resolution:
-    /// an author or kind filter resolves them, an id selection cannot name
-    /// them, so a partial selection can leave some (#1223).
-    pub comment_changes_left: usize,
-}
-
-/// Accept selected changes and report comments that disappeared with them.
-///
-/// # Errors
-/// As [`accept_changes`], or when the removed comments cannot be read.
-pub fn accept_changes_with_report(
-    docx: &[u8],
-    filter: &ChangeFilter,
-) -> Result<ResolvedChanges, ChangeError> {
-    resolve_with_report(docx, filter, Resolution::Accept)
-}
-
-/// Reject selected changes and report comments that disappeared with them.
-///
-/// # Errors
-/// As [`reject_changes`], or when the removed comments cannot be read.
-pub fn reject_changes_with_report(
-    docx: &[u8],
-    filter: &ChangeFilter,
-) -> Result<ResolvedChanges, ChangeError> {
-    resolve_with_report(docx, filter, Resolution::Reject)
-}
-
-fn resolve_with_report(
-    docx: &[u8],
-    filter: &ChangeFilter,
-    resolution: Resolution,
-) -> Result<ResolvedChanges, ChangeError> {
-    let (document, removed, comment_changes_left) = resolve(docx, filter, resolution)?;
-    let removed_comments = if removed.is_empty() {
-        Vec::new()
-    } else {
-        crate::comments::list_comments(docx)
-            .map_err(|e| ChangeError::Package(e.to_string()))?
-            .into_iter()
-            .filter(|c| removed.contains(&c.id.to_string()))
-            .collect()
-    };
-    Ok(ResolvedChanges {
-        document,
-        removed_comments,
-        comment_changes_left,
-    })
+    resolve(docx, filter, Resolution::Reject)
 }
 
 fn resolve(
     docx: &[u8],
     filter: &ChangeFilter,
     resolution: Resolution,
-) -> Result<(Vec<u8>, Vec<String>, usize), ChangeError> {
-    resolve_for_edit_or_cli(docx, filter, resolution, None)
-        .map(|out| (out.document, out.removed, out.comment_left))
-}
-
-/// Serialized document, pruned comment ids, and rescued comment ids.
-type CommentResolution = (Vec<u8>, Vec<String>, Vec<String>);
-
-/// Settlement driven by an edit plan, with stable comment ids and opt-in
-/// empty anchors. Removed ids come directly from package pruning.
-pub(crate) fn resolve_for_edit(
-    docx: &[u8],
-    filter: &ChangeFilter,
-    resolution: Resolution,
-    keep_comments: bool,
-) -> Result<CommentResolution, ChangeError> {
-    resolve_for_edit_or_cli(docx, filter, resolution, Some(keep_comments))
-        .map(|out| (out.document, out.removed, out.kept))
-}
-
-fn resolve_for_edit_or_cli(
-    docx: &[u8],
-    filter: &ChangeFilter,
-    resolution: Resolution,
-    edit: Option<bool>,
-) -> Result<ResolutionOutcome, ChangeError> {
+) -> Result<Vec<u8>, ChangeError> {
     let filter = &filter.normalized()?;
     let mut pkg = open(docx)?;
     let listed = changes_in(&pkg);
     filter.check(&listed)?;
-    // Comment-body revisions are never listed, but an author or kind
-    // filter selects them all the same (#1223).
-    let comment_changes = comment_changes_in(&pkg);
     // Nothing selected: nothing to resolve, and nothing else to touch.
-    if !listed
-        .iter()
-        .chain(comment_changes.iter())
-        .any(|c| filter.matches(c))
-    {
-        return Ok(ResolutionOutcome {
-            document: docx.to_vec(),
-            removed: Vec::new(),
-            kept: Vec::new(),
-            comment_left: comment_changes.len(),
-        });
+    if !listed.iter().any(|c| filter.matches(c)) {
+        return Ok(docx.to_vec());
     }
     let main = main_part(&pkg);
     let freeze = |part: &str, dom: &mut Dom, root: NodeId| {
@@ -657,67 +382,16 @@ fn resolve_for_edit_or_cli(
             }
         }
     };
-    let (removed, kept) = match edit {
-        Some(keep) => crate::revision_processor::resolve_package_for_edit(
-            &mut pkg,
-            resolution,
-            Some(&freeze),
-            keep,
-        ),
-        None => (
-            resolve_package(&mut pkg, resolution, Some(&freeze)),
-            Vec::new(),
-        ),
-    };
-    // The comment-body revisions a selection left tracked (#1223). The
-    // part may be gone when every comment went.
-    let comment_left = comment_changes_in(&pkg).len();
-    let document = pkg
-        .to_zip()
-        .map_err(|e| ChangeError::Package(e.to_string()))?;
-    Ok(ResolutionOutcome {
-        document,
-        removed,
-        kept,
-        comment_left,
-    })
-}
-
-/// The listed changes of the comments part only (empty when the package
-/// has none): [`changes_in`] skips it because the view has no ids there.
-fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
-    let Some(part) = crate::revision_processor::comments_part(pkg) else {
-        return Vec::new();
-    };
-    let Some(xml) = pkg.part_string(&part) else {
-        return Vec::new();
-    };
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let Some(root) = dom.root(doc) else {
-        return Vec::new();
-    };
-    carriers(&dom, root, "comments")
-        .into_iter()
-        .filter_map(|c| c.change)
-        .collect()
-}
-
-/// Serialized document, pruned comment ids, rescued comment ids, and the
-/// comment-body revisions a selection left tracked.
-struct ResolutionOutcome {
-    document: Vec<u8>,
-    removed: Vec<String>,
-    kept: Vec<String>,
-    comment_left: usize,
+    resolve_package(&mut pkg, resolution, Some(&freeze));
+    pkg.to_zip()
+        .map_err(|e| ChangeError::Package(e.to_string()))
 }
 
 /// The package, Strict normalized to transitional as `inspect` reads it.
 fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
     crate::document_comparer::admit_package(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
-        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))
 }
 
@@ -762,48 +436,6 @@ const FORMATTING: &[&str] = &[
     "numberingChange",
     "cellMerge",
 ];
-
-/// The recorded instant with the author's offset, else the stored legacy date.
-pub(crate) fn revision_date<'a>(
-    mut attribute: impl FnMut(&str, &str) -> Option<&'a str>,
-) -> Option<String> {
-    let utc = attribute(
-        "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
-        "dateUtc",
-    );
-    reported_date(attribute(W::URI, "date"), utc)
-}
-
-/// Revisions and comments share Word's wall-clock/UTC pair encoding.
-pub(crate) fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<String> {
-    let Some((utc, (instant, fraction))) =
-        utc.and_then(|utc| crate::convert::timestamp_order_key(utc).map(|key| (utc, key)))
-    else {
-        return local.map(str::to_string);
-    };
-    let paired = local
-        .and_then(|date| crate::convert::timestamp_order_key(date).map(|key| (date, key)))
-        .filter(|(_, (wall, digits))| {
-            digits == &fraction && (wall - instant) % 60 == 0 && (wall - instant).abs() <= 14 * 3600
-        });
-    // Equivalent fractions can have different precision. Keep the local
-    // spelling so writing the view preserves the original w:date bytes.
-    let (offset, display) = paired.map_or((0, utc), |(date, (wall, _))| (wall - instant, date));
-    if offset == 0 && display.ends_with('Z') {
-        return Some(display.to_string());
-    }
-    let display_fraction = display[19..]
-        .strip_prefix('.')
-        .unwrap_or_default()
-        .split(['Z', '+', '-'])
-        .next()
-        .unwrap_or_default();
-    Some(crate::convert::timestamp_with_offset(
-        instant,
-        display_fraction,
-        offset,
-    ))
-}
 
 /// The revision elements under `root`, in document order.
 fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
@@ -892,7 +524,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
                 kind,
                 target,
                 author: dom.attribute(e, &W::name("author")).map(str::to_string),
-                date: revision_date(|ns, local| dom.attribute(e, &XName::get(local, ns))),
+                date: dom.attribute(e, &W::name("date")).map(str::to_string),
                 text,
                 paragraph: None,
                 move_name,

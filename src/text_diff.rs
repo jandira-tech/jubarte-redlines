@@ -755,7 +755,7 @@ pub fn diff_documents(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::markdown::{DocxOptions, markdown_to_docx};
@@ -1102,17 +1102,17 @@ mod tests {
         let old = word("Due in {~~30~>45~~} days.\n");
         let new = word("Due in {~~30~>60~~} days.\n");
         let snapshot = document_text(Source::Docx(&old)).unwrap();
-        // The marks retain document order: the substitution writes its
-        // deletion before its insertion.
-        assert!(snapshot.contains("[-30-]{+45+}"), "{snapshot}");
+        // The marks in document order: Word Compare's substitution, the
+        // insertion then the deletion.
+        assert!(snapshot.contains("{+45+}[-30-]"), "{snapshot}");
         let out = diff_documents(
             Source::Docx(&old),
             Source::Docx(&new),
             &UnifiedOptions::default(),
         )
         .unwrap();
-        assert!(out.contains("[-30-]{+45+}"), "{out}");
-        assert!(out.contains("[-30-]{+60+}"), "{out}");
+        assert!(out.contains("{+45+}[-30-]"), "{out}");
+        assert!(out.contains("{+60+}[-30-]"), "{out}");
         assert_eq!(
             diff_documents(
                 Source::Docx(&old),
