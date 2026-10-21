@@ -43,6 +43,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **The document's default spacing stays its default through Markdown**
+  (#1420). The writer put the default paragraph style's spacing on
+  `Normal` itself. A table style's own spacing (every built-in one sets
+  none after, single) wins over the document default in its cells, but
+  not over `Normal`, so each cell took the body's spacing and the tables
+  grew: an 11-page document came back with 13 pages, in Word as in
+  jubarte. That spacing is now written as `w:pPrDefault`, where Word
+  keeps it.
 - **A table style whose borders vary keeps them through Markdown** (#1419).
   The view named such a style `Ledger, borders vary`, which the writer
   could not rebuild, so the style came back without borders. A style of

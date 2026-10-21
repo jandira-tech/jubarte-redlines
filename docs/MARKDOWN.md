@@ -471,7 +471,9 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 `tN` counts top-level body tables.
 
 `styles:` gives the default paragraph style's whole look (font, size,
-spacing, alignment), each heading level's style with what differs from
+spacing, alignment; the writer writes its spacing as the document's
+default, `w:pPrDefault`, so a table style's own spacing still wins in
+its cells), each heading level's style with what differs from
 it, then every other paragraph style the body uses, keyed by its id
 (`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
 names only what its style sets apart from the style it is based on:

@@ -10,7 +10,7 @@ use std::process::Command;
 
 mod common;
 
-use common::docx::{Part, R_NS, docx_with, para, part_string, replace_entry};
+use common::docx::{Part, R_NS, W_NS, docx_with, para, part_string, replace_entry};
 
 fn jubarte(dir: &Path, args: &[&str]) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
@@ -570,6 +570,79 @@ fn docx_round_trip(docx: &[u8]) -> (String, Vec<u8>) {
     jubarte(dir.path(), &["convert", "view.md", "-o", "out.docx"]);
     let out = std::fs::read(dir.path().join("out.docx")).unwrap();
     (view, out)
+}
+
+/// Word keeps the body's spacing in `docDefaults`, and a table style's own
+/// spacing wins over that in its cells. Read and written back, the spacing
+/// stays the document's default: on `Normal` it would beat the table
+/// style, every cell would take the body's spacing, and the table would
+/// spill onto a second page (#1420).
+#[test]
+fn the_documents_default_spacing_stays_its_default() {
+    let thin = "w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>";
+    let borders: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .iter()
+        .map(|side| format!("<w:{side} {thin}"))
+        .collect();
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders>{borders}</w:tblBorders></w:tblPr></w:style></w:styles>"#
+    );
+    let rows: String = (0..34)
+        .map(|i| {
+            format!(
+                "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"9360\" w:type=\"dxa\"/></w:tcPr>{}</w:tc></w:tr>",
+                para(&format!("Row {i}"))
+            )
+        })
+        .collect();
+    let body = format!(
+        "{}<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>{rows}</w:tbl>{}",
+        para("Before."),
+        para("After.")
+    );
+    let styles_rel = format!("{R_NS}/styles");
+    let original = docx_with(
+        &body,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: &styles_rel,
+            xml: &styles,
+        }],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.docx"), &original).unwrap();
+    jubarte(dir.path(), &["read", "a.docx", "-o", "a.md"]);
+    jubarte(dir.path(), &["convert", "a.md", "-o", "b.docx"]);
+    let written = part(
+        &std::fs::read(dir.path().join("b.docx")).unwrap(),
+        "word/styles.xml",
+    );
+    assert!(
+        written.contains(
+            "<w:pPrDefault><w:pPr><w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+             </w:pPr></w:pPrDefault>"
+        ),
+        "{written}"
+    );
+    let normal = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"Normal\""))
+        .unwrap_or_else(|| panic!("no Normal: {written}"));
+    assert!(!normal.contains("<w:spacing"), "{normal}");
+    let pages = |name: &str| {
+        jubarte(
+            dir.path(),
+            &["debug", name, "--check", "render", "--part", "(layout)"],
+        )
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("pages "))
+        .map(str::to_string)
+    };
+    assert_eq!(pages("a.docx").as_deref(), Some("pages 1"));
+    assert_eq!(pages("b.docx"), pages("a.docx"));
 }
 
 /// A docx with a floating image — a `wp:anchor` drawing with one PNG —
