@@ -146,18 +146,12 @@ shell needs a store build that embeds the new engine.
    `#[non_exhaustive]`, or a changed public fn signature, breaks struct
    literals and callers, so it needs a **minor** bump before 1.0 (0.10.1
    shipped four such fields as a patch). The same holds for the wire
-   surface rustdoc cannot show: the id contract's planned identity-schema cutover —
+   surface rustdoc cannot show: the id contract's schema-2 cutover —
    paired `short_id`/`long_id` references replacing the `id`/`ref`/`at`
    strings every JSON output emits today
    (`docs/superpowers/specs/2026-10-17-short-and-long-id-contract.md`,
    not yet implemented) — breaks every JSON consumer and wants a minor
    bump with a CHANGELOG Removed section.
-
-Snapshot schema 2 introduces the recursive table inventory only: top-level
-`tables[]` indices match the view and `summary.tables` counts those entries.
-It uses `inspect::SNAPSHOT_SCHEMA_VERSION`, independently of legacy edit-plan
-and report version 1. It does not implement the planned identity-schema change.
-The table shape and Rust `Table` field change require a minor release before 1.0.
 
 ### Release evidence: `release_info/` (step 3 refuses a release without it)
 

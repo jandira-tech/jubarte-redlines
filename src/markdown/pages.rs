@@ -234,8 +234,7 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
 /// keeps its text, which the page paints.
 fn visible_text(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
-    let line = super::critic::without_attributions(line);
-    let mut rest = line.as_str();
+    let mut rest = line;
     while let Some(ch) = rest.chars().next() {
         let skip = if rest.starts_with("](") {
             out.push(']');
@@ -394,7 +393,7 @@ fn mask(line: &str, offset: usize, unpainted: &[std::ops::Range<usize>]) -> Stri
 
 /// The labels the document's link reference definitions define.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn definitions(markdown: &str) -> Vec<String> {
     let parser = pulldown_cmark::Parser::new_ext(markdown, super::write::parser_options());
     let mut labels: Vec<String> = parser
@@ -408,7 +407,7 @@ fn definitions(markdown: &str) -> Vec<String> {
 
 /// The page text of `markdown`'s first line, as `paginate` keys it.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn line_text(markdown: &str) -> String {
     let line = markdown.split_inclusive('\n').next().unwrap_or("");
     visible_text(mask(line, 0, &unpainted(markdown)).trim_end_matches('\n'))
@@ -465,7 +464,7 @@ fn find(stream: &[(char, usize)], from: usize, key: &[char]) -> Option<usize> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -788,7 +787,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod source_autolink_boundary_tests {
     use super::*;
 

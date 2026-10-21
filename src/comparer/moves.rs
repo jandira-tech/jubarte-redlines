@@ -691,7 +691,7 @@ fn detect_moves_memoized(
 /// (`memoized_matches_reference`); not compiled into release builds now that
 /// production dispatches to the memoized path (PR3 Phase D).
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn detect_moves_reference(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -848,7 +848,7 @@ fn detect_moves_reference(
 /// obvious-move case and thousands of seeded-random sequences under several
 /// settings profiles.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod memoized_moves_tests {
     use super::*;
     use crate::xmllinq::NodeId;
@@ -1106,7 +1106,7 @@ mod memoized_moves_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod repeated_source_anchor_promotion_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1213,7 +1213,7 @@ mod repeated_source_anchor_promotion_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod source_paragraph_promotion_boundary_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1539,7 +1539,7 @@ mod source_paragraph_promotion_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_lexical_empty_move_boundary_tests {
     use super::*;
     #[test]
@@ -1594,17 +1594,9 @@ mod public_lexical_empty_move_boundary_tests {
         // Intersection = {hello} (1)
         // Union = {hello, world, foo} (3)
         // Jaccard = 1 / 3
-        assert_eq!(jaccard("hello world", "hello foo", &settings), 1.0 / 3.0);
+        assert!((jaccard("hello world", "hello foo", &settings) - 1.0 / 3.0).abs() < 1e-12);
 
         // 5. Whitespace independence
-        assert_eq!(
-            jaccard(
-                "hello    world",
-                "hello
-world",
-                &settings
-            ),
-            1.0
-        );
+        assert_eq!(jaccard("hello    world", "hello\t\nworld", &settings), 1.0);
     }
 }

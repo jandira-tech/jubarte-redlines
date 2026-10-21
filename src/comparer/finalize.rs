@@ -521,52 +521,9 @@ pub fn mark_content_as_deleted_or_inserted(
     id_gen: &mut u32,
 ) -> NodeId {
     let v = mark_content_transform(dom, root, settings, id_gen);
-    let root = v
-        .into_iter()
+    v.into_iter()
         .next()
-        .expect("root transform yields one node");
-    join_move_ranges(dom, root);
-    root
-}
-
-/// Marking emits a triple per run (and empty field), but a move names one
-/// range on each side. Word's Reject All duplicates text when the run splits
-/// give the sides different range counts (#1214). Keep every move wrapper and
-/// intervening endpoint in place; retain only the outer range boundaries.
-fn join_move_ranges(dom: &mut Dom, root: NodeId) {
-    for side in ["moveFrom", "moveTo"] {
-        let starts = dom.descendants(root, Some(&W::name(&format!("{side}RangeStart"))));
-        if starts.len() < 2 {
-            continue;
-        }
-        let ends: HashMap<String, NodeId> = dom
-            .descendants(root, Some(&W::name(&format!("{side}RangeEnd"))))
-            .into_iter()
-            .filter_map(|end| dom.attribute(end, &W::id()).map(|id| (id.to_string(), end)))
-            .collect();
-        let mut ranges: HashMap<String, (NodeId, NodeId)> = HashMap::new();
-        for start in starts {
-            let Some(name) = dom.attribute(start, &W::name("name")).map(str::to_string) else {
-                continue;
-            };
-            let Some(end) = dom
-                .attribute(start, &W::id())
-                .and_then(|id| ends.get(id))
-                .copied()
-            else {
-                continue;
-            };
-            if let Some((first, last)) = ranges.get_mut(&name) {
-                let id = dom.attribute(*first, &W::id()).unwrap().to_string();
-                dom.remove(start);
-                dom.remove(*last);
-                dom.set_attribute_value(end, &W::id(), Some(&id));
-                *last = end;
-            } else {
-                ranges.insert(name, (start, end));
-            }
-        }
-    }
+        .expect("root transform yields one node")
 }
 
 /// True when pPr carries structural body props (pStyle/numPr/spacing/jc/ind/…).
@@ -6724,7 +6681,7 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
 
 /// Every field char under `node` belongs to a field that begins and ends
 /// under it: no `fldChar` at all, or begins and ends that nest and balance.
-pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
+fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
     let mut depth = 0i32;
     for fc in dom.descendants(node, Some(fld_char)) {
         match dom.attribute(fc, &W::name("fldCharType")) {
@@ -6747,7 +6704,7 @@ pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool
 /// super_editor hyperlink_multiple_runs × diff_before10, corpus a098bd5ad9,
 /// writes "One two" inserted before the deleted "Click here now" link;
 /// the swap saw a hyperlink, not a deletion, and left the link first).
-pub(crate) fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
+fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
     if !dom.is_element(node) {
         return None;
     }
@@ -12601,7 +12558,7 @@ fn final_peel_has_identical_closing_properties(
 /// production pipeline calls
 /// [`fold_midstream_demo_title_into_numbered_heading_with_settings`].
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: NodeId) {
     let mut id = max_numeric_id(dom, root).saturating_add(1);
     fold_midstream_demo_title_into_numbered_heading_with_settings(
@@ -13128,71 +13085,27 @@ fn paragraph_texts(dom: &Dom, block: NodeId) -> Vec<String> {
         .collect()
 }
 
-/// Paragraph-owned properties captured before atomization and layout peels.
-/// Text identifies a source paragraph only when it occurs exactly once on
-/// that side; ambiguous or merged paragraphs cannot supply formatting history.
-#[derive(Default)]
-pub struct ParagraphPropertySources {
-    original: HashMap<String, Vec<NodeId>>,
-    revised: HashMap<String, Vec<NodeId>>,
-}
-
-impl ParagraphPropertySources {
-    /// Save each input paragraph's own comparable properties, including an
-    /// empty `w:pPr` for a paragraph that has none.
-    pub fn capture(dom: &mut Dom, original: NodeId, revised: NodeId) -> Self {
-        let mut capture = |body| {
-            let mut by_text: HashMap<String, Vec<NodeId>> = HashMap::new();
-            for p in dom.descendants(body, Some(&W::p())) {
-                let text = revised_text(dom, p).trim().to_string();
-                let properties = match dom.element(p, &W::p_pr()) {
-                    Some(ppr) => formatchg::project_para_properties_for_change(dom, ppr),
-                    None => dom.new_element(W::p_pr()),
-                };
-                by_text.entry(text).or_default().push(properties);
-            }
-            by_text
-        };
-        Self {
-            original: capture(original),
-            revised: capture(revised),
-        }
-    }
-
-    fn for_mix(&self, dom: &Dom, p: NodeId) -> Option<(NodeId, NodeId)> {
-        let text = |excluded| {
-            text_leaves(dom, p)
-                .into_iter()
-                .filter(|&t| text_side(dom, t, p) != excluded)
-                .map(|t| dom.value(t))
-                .collect::<String>()
-                .trim()
-                .to_string()
-        };
-        let [old] = self.original.get(&text("ins"))?.as_slice() else {
-            return None;
-        };
-        let [new] = self.revised.get(&text("del"))?.as_slice() else {
-            return None;
-        };
-        Some((*old, *new))
-    }
-}
-
-/// M452: a short title MIX can lose its old alignment during layout peels.
-/// Record it only when its own original and revised properties differ.
-/// A text-only edit must not borrow alignment from another body paragraph
-/// (#1149); the history carries the source paragraph's complete comparable pPr.
+/// M452 (right_aligned_italic × right_alignment_2 ~84.3 residual):
+/// short **title** MIX free-mesh has no pPr; Word parks original `jc` into
+/// `pPrChange` only (no live jc). Abandoned M451 tried **live** jc on title
+/// and thrash'd right_align/center_bold. Park-only matches Word.
+///
+/// Gate: first MIX, short tokens (ins+del side words ≤5), no live jc, no
+/// pPrChange, and a later body para has live `jc` (source value).
+/// M452 — park a body live `w:jc` (typically right-aligned) into
+/// the first short-title MIX paragraph's `w:pPrChange`.
+///
+/// `right_aligned_italic × right_alignment_2` residual: Word keeps
+/// the title paragraph's body `jc` only as `pPrChange` history, not
+/// as live title `jc`. Live title `jc` thrashed (the M451 attempt
+/// was abandoned). Park-only: every body MIX's `jc` history moves
+/// onto the title MIX when the title is short.
 pub fn park_jc_on_first_short_title_mix_from_body(
     dom: &mut Dom,
     root: NodeId,
-    sources: &ParagraphPropertySources,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    if !settings.detect_format_changes {
-        return;
-    }
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -13223,32 +13136,59 @@ pub fn park_jc_on_first_short_title_mix_from_body(
     if ins_w + del_w == 0 || ins_w + del_w > 5 {
         return;
     }
-    let Some((old, new)) = sources.for_mix(dom, p) else {
-        return;
-    };
-    if formatchg::normalize_para_properties(dom, old)
-        == formatchg::normalize_para_properties(dom, new)
-    {
-        return;
-    }
-    let Some(jc) = dom.element(old, &W::jc_el()) else {
-        return;
-    };
-    if !matches!(dom.attribute(jc, &W::val()), Some("right" | "center")) {
-        return;
-    }
     let ppr = match dom.element(p, &W::p_pr()) {
         Some(ppr) => ppr,
         None => {
             let ppr = dom.new_element(W::p_pr());
-            dom.add_first(p, ppr);
+            // pPr must be first child of p for Word validity.
+            if let Some(first) = dom.elements(p, None).first().copied() {
+                dom.add_before_self(first, ppr);
+            } else {
+                dom.add(p, ppr);
+            }
             ppr
         }
     };
-    if dom.element(ppr, &W::jc_el()).is_some() || dom.element(ppr, &W::p_pr_change()).is_some() {
+    // Already live jc or any pPrChange — leave alone (right_align_bold title
+    // has live jc; center_bold title already park-only after other peels).
+    if dom.element(ppr, &W::jc_el()).is_some() {
         return;
     }
-    let old_inner = dom.clone_subtree(old);
+    if dom.element(ppr, &W::p_pr_change()).is_some() {
+        return;
+    }
+    // Source live jc from a later body residual.
+    let mut jc_val: Option<String> = None;
+    for &k in &kids {
+        if k == p || !dom.name_is(k, &W::p()) {
+            continue;
+        }
+        let Some(kppr) = dom.element(k, &W::p_pr()) else {
+            continue;
+        };
+        let Some(jc) = dom.element(kppr, &W::jc_el()) else {
+            continue;
+        };
+        if let Some(v) = dom.attribute(jc, &W::val())
+            && !v.is_empty()
+        {
+            // M452b: justify thrash (−10) when parking jc=both onto title MIX.
+            // Word title park-only shapes are right/center free-mesh demos.
+            if v != "right" && v != "center" {
+                continue;
+            }
+            jc_val = Some(v.to_string());
+            break;
+        }
+    }
+    let Some(val) = jc_val else {
+        return;
+    };
+    // Park-only pPrChange(old jc).
+    let old_inner = dom.new_element(W::p_pr());
+    let old_jc = dom.new_element(W::jc_el());
+    dom.set_attribute_value(old_jc, &W::val(), Some(&val));
+    dom.add(old_inner, old_jc);
     let chg = dom.new_element(W::p_pr_change());
     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
@@ -15552,7 +15492,7 @@ fn stamp_trailing_numbering(
     append_empty_ppr_change(dom, ppr, settings, id_gen);
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_tests {
     use super::*;
 
@@ -16804,7 +16744,7 @@ mod coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_two_tests {
     use super::*;
 
@@ -18230,7 +18170,7 @@ mod coverage_round_two_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_three_tests {
     use super::*;
 
@@ -19381,7 +19321,7 @@ mod coverage_round_three_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_next_tests {
     use super::*;
 
@@ -20763,7 +20703,7 @@ mod coverage_round_next_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod fragmented_label_regression_tests {
     use super::*;
 
@@ -20920,7 +20860,7 @@ mod fragmented_label_regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deep_production_path_tests {
     use super::*;
 
@@ -23569,7 +23509,7 @@ mod deep_production_path_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod row_move_ownership_regressions {
     use super::mark_fully_revised_rows;
     use crate::comparer::WmlComparerSettings;
@@ -23647,7 +23587,7 @@ mod row_move_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod parked_paragraph_history_regressions {
     use super::*;
 
@@ -23709,7 +23649,7 @@ mod parked_paragraph_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod closing_layout_history_regressions {
     use super::*;
 
@@ -23782,7 +23722,7 @@ mod closing_layout_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod split_paragraph_boundary_regressions {
     use super::*;
 
@@ -23846,7 +23786,7 @@ mod split_paragraph_boundary_regressions {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod row_nontext_ownership_regressions {
     use super::*;
 
@@ -23991,7 +23931,7 @@ mod row_nontext_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod short_label_format_history_tests {
     use super::*;
 
@@ -24286,7 +24226,7 @@ mod short_label_format_history_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_final_batch_finalize_tests {
     use super::*;
 
@@ -24738,7 +24678,7 @@ mod coverage_final_batch_finalize_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_real_revision_merge_matrix_tests {
     use super::*;
 
@@ -28409,7 +28349,7 @@ mod coverage_real_revision_merge_matrix_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod consecutive_block_splice_tests {
     use super::*;
 
@@ -28527,7 +28467,7 @@ mod consecutive_block_splice_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod demo_title_pilcrow_history_tests {
     use super::*;
     const DATE: &str = "2001-02-03T04:05:06Z";
@@ -28903,7 +28843,7 @@ mod demo_title_pilcrow_history_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod paired_row_mark_ownership_tests {
     use super::*;
 
@@ -29187,7 +29127,7 @@ mod paired_row_mark_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod closing_authored_section_boundary_tests {
     use super::*;
 
@@ -29485,7 +29425,7 @@ mod closing_authored_section_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_distinct_boundary_contract_tests {
     use super::*;
 
@@ -30726,7 +30666,7 @@ mod finalizer_distinct_boundary_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_remaining_source_boundary_tests {
     use super::*;
 
@@ -31473,7 +31413,7 @@ mod finalizer_remaining_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_merge_source_guard_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -31906,7 +31846,7 @@ mod finalizer_merge_source_guard_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_reached_predicate_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32273,7 +32213,7 @@ mod finalizer_reached_predicate_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_body_heuristic_story_scope_tests {
     use super::*;
 
@@ -32504,15 +32444,7 @@ mod public_body_heuristic_story_scope_tests {
             ),
             (
                 "park_jc_on_first_short_title_mix_from_body",
-                |d, r, s, id| {
-                    park_jc_on_first_short_title_mix_from_body(
-                        d,
-                        r,
-                        &ParagraphPropertySources::default(),
-                        s,
-                        id,
-                    );
-                },
+                park_jc_on_first_short_title_mix_from_body,
             ),
             (
                 "ensure_empty_pprchange_on_live_heading_spacing",
@@ -32606,7 +32538,7 @@ mod public_body_heuristic_story_scope_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod default_source_property_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32789,7 +32721,7 @@ mod default_source_property_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod existing_mark_layout_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33120,7 +33052,7 @@ mod existing_mark_layout_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod interleave_terminal_source_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33339,7 +33271,7 @@ mod interleave_terminal_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod whitespace_source_mark_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33503,7 +33435,7 @@ mod whitespace_source_mark_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod fragmented_source_label_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -34011,7 +33943,7 @@ mod fragmented_source_label_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod nested_deleted_text_source_ownership_tests {
     use super::*;
 
@@ -34124,7 +34056,7 @@ mod nested_deleted_text_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod ladder_suffix_source_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -34262,7 +34194,7 @@ mod ladder_suffix_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod reached_word_document_policy_tests {
     use super::*;
     struct PolicyCase {
@@ -34455,7 +34387,7 @@ mod reached_word_document_policy_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod mid_list_optional_source_property_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -34551,7 +34483,7 @@ mod mid_list_optional_source_property_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod live_opaque_row_source_boundary_tests {
     use super::*;
 
@@ -34639,7 +34571,7 @@ mod live_opaque_row_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deleted_carrier_echo_source_owner_tests {
     use super::*;
     const DATE: &str = "1970-01-01T00:00:00Z";
