@@ -875,6 +875,8 @@ struct TablePlan {
     row_borders: Vec<(usize, crate::markdown::borders::Sides)>,
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
     styles: HashMap<usize, String>,
+    /// The cell paragraphs' own spacing (`p8 line 8.65pt exact`), #1473.
+    spacings: HashMap<usize, super::xml::Spacing>,
     /// A comment's range runs through the table (`in c5`).
     in_comment: bool,
     /// The formatting changes the line names.
@@ -1304,6 +1306,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         marks: line.marks,
         aligns: line.aligns,
         styles: line.styles,
+        spacings: line.spacings,
         style: line.style,
         borders: line.borders,
         cell_borders: line.cell_borders,
@@ -2801,6 +2804,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 left: line.left,
                 right: line.right,
             };
+            paragraph.spacing = line.spacing;
             if let Some(label) = line.label {
                 // The label stands for the list's own number, and a heading
                 // prints it before its text.
@@ -2860,6 +2864,13 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .and_then(|plan| plan.styles.get(&at).cloned())
             {
                 paragraph.style = Some(style.into());
+            }
+            if let Some(spacing) = self
+                .table_plan
+                .as_ref()
+                .and_then(|plan| plan.spacings.get(&at).copied())
+            {
+                paragraph.spacing = spacing;
             }
             let formats = self
                 .table_plan

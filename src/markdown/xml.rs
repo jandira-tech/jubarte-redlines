@@ -88,6 +88,8 @@ pub(super) struct Paragraph {
     /// The indents an id line names, in twips (`first-line 0.5in`); its
     /// `left` wins over `indent`.
     pub ind: Indent,
+    /// The spacing an id line names (`before 6pt, line 1.5`).
+    pub spacing: Spacing,
     pub align: Option<&'static str>,
     /// A heading level (`w:outlineLvl`, 0 for `#`) the paragraph carries
     /// itself, when its style is one an id line names.
@@ -177,6 +179,57 @@ pub(super) struct Indent {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+}
+
+/// A paragraph's own `w:spacing` (#1473): the space before and after it in
+/// twips, and its line as Word stores it, a height in 240ths of a line for
+/// `auto` or in twips for `exact` and `atLeast`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Spacing {
+    pub before: Option<u32>,
+    pub after: Option<u32>,
+    pub line: Option<(u32, &'static str)>,
+}
+
+impl Spacing {
+    pub(super) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// One `before 6pt`, `after 0pt`, `line 1.5` or `line 8.65pt exact`
+    /// clause into `self`; `None` when it is none of these or its value is
+    /// out of Word's range.
+    pub(super) fn clause(&mut self, word: &str, value: &str) -> Option<()> {
+        // Word keeps a space before or after a paragraph up to 1584pt.
+        let points = |value: &str| -> Option<u32> {
+            let n: f64 = value.strip_suffix("pt")?.parse().ok()?;
+            let twips = (n * 20.0).round();
+            // `as` cannot overflow: the bound is checked first.
+            (n.is_finite() && (0.0..=31_680.0).contains(&twips)).then_some(twips as u32)
+        };
+        match word {
+            "before" => self.before = Some(points(value)?),
+            "after" => self.after = Some(points(value)?),
+            "line" => {
+                self.line = Some(match value.split_once(' ') {
+                    Some((height, "exact")) => (points(height)?, "exact"),
+                    Some((height, "atLeast")) => (points(height)?, "atLeast"),
+                    Some(_) => return None,
+                    None => {
+                        let ratio: f64 = value.parse().ok()?;
+                        let line = (ratio * 240.0).round();
+                        if !(ratio.is_finite() && (0.0..=31_680.0).contains(&line)) {
+                            return None;
+                        }
+                        // `as` cannot overflow: the bound is checked first.
+                        (line as u32, "auto")
+                    }
+                });
+            }
+            _ => return None,
+        }
+        Some(())
+    }
 }
 
 /// A hyperlink's target.
@@ -1871,6 +1924,20 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         properties.push_str(
             "<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>",
         );
+    }
+    // Before `w:ind`, as the schema orders `w:pPr`.
+    let spacing = paragraph.spacing;
+    if !spacing.is_empty() {
+        properties.push_str("<w:spacing");
+        for (name, value) in [("before", spacing.before), ("after", spacing.after)] {
+            if let Some(value) = value {
+                let _ = write!(properties, " w:{name}=\"{value}\"");
+            }
+        }
+        if let Some((line, rule)) = spacing.line {
+            let _ = write!(properties, " w:line=\"{line}\" w:lineRule=\"{rule}\"");
+        }
+        properties.push_str("/>");
     }
     let ind = paragraph.ind;
     let left = ind.left.or(paragraph.indent.map(i64::from));

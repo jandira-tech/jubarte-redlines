@@ -1282,6 +1282,62 @@ pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
     .collect()
 }
 
+/// A paragraph's own spacing (`w:spacing`, #1473) in the styles legend's
+/// words, each value exact: `before 6pt`, `after 10.05pt`, `line 1.5` (a
+/// multiple of a single line) or `line 8.65pt exact` / `atLeast`. A Strict
+/// package's universal measures (`12.95pt`) read as the twips they are.
+pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String> {
+    let twips = |attr: &str| {
+        let v = spacing.attr(attr)?;
+        v.parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))
+            .filter(|t| t.is_finite() && *t >= 0.0)
+    };
+    let mut out = Vec::new();
+    for (attr, word) in [("before", "before"), ("after", "after")] {
+        if let Some(t) = twips(attr) {
+            out.push(format!("{word} {}", exact_points(t)));
+        }
+    }
+    if let Some(line) = twips("line") {
+        match spacing.attr("lineRule").unwrap_or("auto") {
+            rule @ ("exact" | "atLeast") => {
+                out.push(format!("line {} {rule}", exact_points(line)));
+            }
+            _ => out.push(format!("line {}", line_ratio(line))),
+        }
+    }
+    out
+}
+
+/// Twips as points with no more decimals than they need (`120` → `6pt`,
+/// `173` → `8.65pt`): a twip is a twentieth of a point, so two are always
+/// enough.
+fn exact_points(twips: f64) -> String {
+    let value = format!("{:.2}", twips.round() / 20.0);
+    let value = value.trim_end_matches('0').trim_end_matches('.');
+    format!("{value}pt")
+}
+
+/// An `auto` line (240ths of a line) as a multiple of a line with the
+/// fewest decimals (two at least, four at most) that read back to it:
+/// `360` → `1.5`, `249` → `1.038`.
+fn line_ratio(line: f64) -> String {
+    let ratio = line / 240.0;
+    let value = (2..=4)
+        .map(|places| format!("{ratio:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 240.0).round() == line.round())
+        })
+        .unwrap_or_else(|| format!("{ratio:.4}"));
+    value
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
+}
+
 /// Twips as inches with the fewest decimals (two at least, four at most)
 /// that read back to the same twips: `720` → `0.5in`, `1440` → `1in`,
 /// `1134` (2cm) → `0.7875in`. Four decimals are always enough: they are off
@@ -1650,6 +1706,9 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         for (name, value) in indent_clauses(ind) {
             clauses.push(format!("{name} {value}"));
         }
+    }
+    if let Some(spacing) = ppr.and_then(|pr| pr.child("spacing")) {
+        clauses.extend(spacing_clauses(spacing));
     }
     match f.marker {
         Some("-") => clauses.push("bullet".to_string()),
