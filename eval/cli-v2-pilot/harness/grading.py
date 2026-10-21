@@ -267,14 +267,14 @@ def compute_preservation_defects(
 
     def table_structure(table):
         return {
-            **{
-                k: v
-                for k, v in table.items()
-                if k not in ("index", "rows", "nested")
-            },
+            **{k: v for k, v in table.items() if k not in ("index", "rows", "nested")},
             "rows": [
                 [
-                    {k: v for k, v in cell.items() if k not in ("text", "paragraph_ids")}
+                    {
+                        k: v
+                        for k, v in cell.items()
+                        if k not in ("text", "paragraph_ids")
+                    }
                     for cell in row
                 ]
                 for row in table.get("rows", [])
@@ -700,50 +700,47 @@ def grade_one(
                 # FOREIGN_AUTHOR "gone", and rejecting a foreign
                 # insertion leaves no tracked mark, so the same removal
                 # also shows as UNTRACKED_EDIT at the revision's
-                  # paragraph. Both are the declared effect, not foreign
-                  # damage. Anything else still fails.
-                  settled_locations: set[str] = set()
-                  try:
-                      src_snap = _source_snapshot(grader_binary, audit_source)
-                      if src_snap.ok:
-                          settled_locations = {
-                              str(row.get("paragraph") or rev.get("paragraph"))
-                              for rev in src_snap.revisions
-                              for row in (rev, *rev.get("members", []))
-                              if entity_ref(row, "revision")
-                              in task.settled_revisions
-                              and (row.get("paragraph") or rev.get("paragraph"))
-                          }
-                  except (
-                      OSError,
+                # paragraph. Both are the declared effect, not foreign
+                # damage. Anything else still fails.
+                settled_locations: set[str] = set()
+                try:
+                    src_snap = _source_snapshot(grader_binary, audit_source)
+                    if src_snap.ok:
+                        settled_locations = {
+                            str(row.get("paragraph") or rev.get("paragraph"))
+                            for rev in src_snap.revisions
+                            for row in (rev, *rev.get("members", []))
+                            if entity_ref(row, "revision") in task.settled_revisions
+                            and (row.get("paragraph") or rev.get("paragraph"))
+                        }
+                except (
+                    OSError,
                     TimeoutError,
                     subprocess.TimeoutExpired,
                     ValueError,
-                  ) as exc:
-                      errors.append(f"settlement licence inspection: {exc}")
-                  failing = [
+                ) as exc:
+                    errors.append(f"settlement licence inspection: {exc}")
+                failing = [
                     f
-                      for f in validate_findings
-                      if f.get("set") in ("word", "edits")
-                      or f.get("severity") == "error"
-                  ]
-                  licensed = (
-                      (
-                          f.get("code") == "FOREIGN_AUTHOR"
-                          and any(
-                              f"{ref} in the original is gone"
-                              in (f.get("message") or "")
-                              for ref in task.settled_revisions
-                          )
+                    for f in validate_findings
+                    if f.get("set") in ("word", "edits") or f.get("severity") == "error"
+                ]
+                licensed = (
+                    (
+                        f.get("code") == "FOREIGN_AUTHOR"
+                        and any(
+                            f"{ref} in the original is gone" in (f.get("message") or "")
+                            for ref in task.settled_revisions
+                        )
                     )
-                      or (
-                          f.get("code") == "UNTRACKED_EDIT"
-                          and bool(f.get("location"))
+                    or (
+                        f.get("code") == "UNTRACKED_EDIT"
+                        and bool(f.get("location"))
                         and f.get("location") in settled_locations
                     )
                     for f in failing
-                  )
-                  if failing and all(licensed):
+                )
+                if failing and all(licensed):
                     validate_rc = 0
         except (
             OSError,
