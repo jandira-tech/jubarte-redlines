@@ -2848,3 +2848,41 @@ fn the_last_spacing_clause_for_a_side_wins_over_auto() {
         ]
     );
 }
+
+#[test]
+fn a_styles_right_indent_comes_back() {
+    // The legend dropped a style's right indent, so the written text ran
+    // wider than the source's and the document lost pages (#1489).
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style></w:styles>"#,
+        W_NS = common::docx::W_NS
+    );
+    let part = common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    };
+    let source = common::docx::docx_with(
+        r#"<w:p><w:pPr><w:pStyle w:val="Quote"/></w:pPr><w:r><w:t>Quoted</w:t></w:r></w:p><w:p><w:r><w:t>Plain</w:t></w:r></w:p>"#,
+        &[part],
+    );
+    let view = read(&source, &ReadOptions::default())
+        .expect("the docx reads")
+        .markdown;
+    assert!(
+        view.lines()
+            .any(|l| l.starts_with("  Quote: ") && l.contains("indent 0.5in, right 0.5in")),
+        "{view}"
+    );
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let quote = style_element(&part_string(&written, "word/styles.xml").unwrap(), "Quote");
+    assert!(
+        quote.contains("<w:ind w:left=\"720\" w:right=\"720\"/>"),
+        "{quote}"
+    );
+}
