@@ -186,7 +186,7 @@ impl Snapshot {
     /// [`Snapshot::retain`], keeping too the changes and comments in
     /// `stories` (`header1`, `footnotes`): those a `--changed` selection
     /// changed.
-    pub fn retain_with(&mut self, body_paragraphs: &[usize], stories: &[String]) {
+    pub(crate) fn retain_with(&mut self, body_paragraphs: &[usize], stories: &[String]) {
         let kept: BTreeSet<usize> = body_paragraphs.iter().copied().collect();
         self.paragraphs
             .retain(|p| body_index(Some(&p.id)).is_some_and(|n| kept.contains(&n)));

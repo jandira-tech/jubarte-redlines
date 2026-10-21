@@ -54,7 +54,7 @@ pub struct Capabilities {
     #[serde(default)]
     pub audit_rules: Vec<String>,
     /// Rule sets `validate --rules` accepts, with `word` (the default)
-    /// first ([`crate::validate::RULE_SETS`]).
+    /// first (`crate::validate::RULE_SETS`).
     #[serde(default)]
     pub validate_rules: Vec<String>,
     /// The file extensions each task's `-o` writes, indexed by task name
@@ -333,7 +333,7 @@ impl From<crate::admission::InputLimits> for InputBudget {
 
 /// The extensions each task's `-o` writes, by task name: Word, the agent
 /// view (`md`), a rendered PDF, PNG pages and the JSON snapshot. `diff -o`
-/// writes text under any of [`DIFF_EXTENSIONS`]. The CLI's `-o` rule reads this
+/// writes text under any of `DIFF_EXTENSIONS`. The CLI's `-o` rule reads this
 /// table, so its refusals and its help agree.
 pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
     ("compare", &["docx", "md", "pdf", "png", "json"]),
@@ -351,11 +351,11 @@ pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
 /// File extensions `diff -o` writes as text output: Markdown, plain text,
 /// and the two patch file extensions (`patch` and `diff`). Replaces the
 /// `md` row of [`OUTPUT_FORMATS`] for the `diff` task.
-pub const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"];
+pub(crate) const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"];
 
 /// One-line note describing how ids print, used as [`Ids::note`] in the
 /// manifest. Records the body vs. story prefix and the shell-safety rule.
-pub const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \
+pub(crate) const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \
      {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under their table \
      (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh";
 

@@ -1896,8 +1896,7 @@ mod nested_run_deletion_source_boundary_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -1912,7 +1911,7 @@ mod nested_run_deletion_source_boundary_tests {
             (
                 n.namespace_name().to_string(),
                 n.local_name().to_string(),
-                v.clone(),
+                *v,
             )
         });
         format!(
@@ -2118,19 +2117,12 @@ mod public_adjacent_run_replacement_owner_tests {
             return dom.text_value(node).unwrap_or_default().into();
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
             .collect::<Vec<_>>();
-        attrs.sort_by_key(|(n, v)| {
-            (
-                n.namespace_name().to_owned(),
-                n.local_name().to_owned(),
-                v.clone(),
-            )
-        });
+        attrs.sort_by_key(|(n, v)| (n.namespace_name().to_owned(), n.local_name().to_owned(), *v));
         format!(
             "{:?}{attrs:?}[{}]",
             dom.name(node),

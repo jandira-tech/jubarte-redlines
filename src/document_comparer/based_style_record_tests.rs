@@ -35,8 +35,7 @@ fn assert_tree(dom: &Dom, actual: NodeId, expected: NodeId) {
     assert_eq!(dom.name(actual), dom.name(expected));
     let attrs = |node| {
         let mut attrs: Vec<_> = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (name.clark(), value))
             .collect();

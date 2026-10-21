@@ -99,7 +99,7 @@ use crate::xmllinq::{Dom, NodeId, XName};
 pub struct Finding {
     /// Stable code (`TEXT_INSIDE_DELETION`, `MC_UNBOUND_PREFIX`, ...).
     pub code: String,
-    /// The rule set it belongs to: one of [`RULE_SETS`].
+    /// The rule set it belongs to: one of `RULE_SETS`.
     pub set: String,
     /// `error`, `warning` or `info`. A `word` finding is an `error` when
     /// Word-fatal or OOXML-invalid (`DUPLICATE_REVISION_ID`); otherwise a
@@ -124,7 +124,7 @@ pub struct Finding {
 }
 
 /// Every rule set `validate` runs, `word` (the default) first.
-pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
+pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
 
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
@@ -2567,8 +2567,8 @@ fn check_namespace_qname_context(pkg: &PartFs, part: &str, out: &mut Vec<Finding
         let Some(element_name) = dom.name(element) else {
             continue;
         };
-        for (name, value) in dom.attributes(element) {
-            if !is_namespace_qname_list(&element_name, &name) {
+        for (name, value) in dom.attributes_iter(element) {
+            if !is_namespace_qname_list(&element_name, name) {
                 continue;
             }
             for token in value.split_whitespace() {

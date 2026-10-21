@@ -128,7 +128,7 @@ impl Recorded {
 
 /// Where a recording is written: the file a symbolic link names (the link
 /// stays a link), else `plan` itself.
-pub fn plan_target(plan: &Path) -> PathBuf {
+pub(crate) fn plan_target(plan: &Path) -> PathBuf {
     if let Ok(real) = std::fs::canonicalize(plan) {
         return real;
     }
@@ -234,7 +234,7 @@ pub fn record(
 /// options, as the Python and npm CLIs parse them.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct RecordOptions {
+pub(crate) struct RecordOptions {
     /// `--author` (default `Jubarte`).
     pub author: Option<String>,
     /// `--datetime`.
@@ -257,7 +257,7 @@ pub struct RecordOptions {
 
 /// [`record`] over JSON, for the Python and npm CLIs: `verb` is `edit` or
 /// `add`, `operations` the parsed command's `operations` array, `held`
-/// PLAN.json's text, `options` a [`RecordOptions`] object. Returns `{plan,
+/// PLAN.json's text, `options` a `RecordOptions` object. Returns `{plan,
 /// json, notes, summary}`: `plan` to preview, `json` to write, `notes` and
 /// `summary` to print.
 ///

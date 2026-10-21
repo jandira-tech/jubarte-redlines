@@ -1290,8 +1290,7 @@ mod deterministic_note_boundary_tests {
     }
     fn properties(dom: &Dom, node: NodeId) -> String {
         let mut attributes: Vec<_> = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| format!("{}:{}={value}", name.namespace_name(), name.local_name()))
             .collect();
@@ -1918,8 +1917,7 @@ mod paired_note_format_history_tests {
     }
     fn signature(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();

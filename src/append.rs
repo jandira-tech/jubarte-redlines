@@ -1456,8 +1456,7 @@ mod public_memory_append_owner_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
