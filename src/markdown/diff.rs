@@ -439,11 +439,12 @@ impl Output {
             let at = self.text.len() - close.len();
             self.text.insert(at, '\n');
         } else if self.text.ends_with("~~}") {
-            // A substitution: the break goes into the side it belongs to.
+            // A substitution: the break goes into the side it belongs
+            // to — the old side ends at `~>`, the new one at `~~}`.
             let at = if inserted {
                 self.text.len() - 3
             } else {
-                self.text.rfind("~>").map_or(self.text.len(), |at| at + 2)
+                self.text.rfind("~>").unwrap_or(self.text.len())
             };
             self.text.insert(at, '\n');
         } else {
@@ -1806,6 +1807,23 @@ mod tests {
         assert_eq!(diff_markdown("a\n", "a"), "a{--\n--}");
         round_trip("a", "a\n");
         round_trip("a\n", "a");
+    }
+
+    /// A substitution's trailing break belongs to the side that has
+    /// it: the old side ends at `~>`, the new side at `~~}`. Putting
+    /// the old side's break after `~>` handed it to the insertion, so
+    /// the documents came back with a break each had not.
+    #[test]
+    fn a_substitutions_trailing_break_stays_on_the_side_that_has_it() {
+        assert_eq!(diff_markdown("a\nb\n", "a\nc"), "a\n{~~b\n~>c~~}");
+        round_trip("a\nb\n", "a\nc");
+        // The new side's break lands at the end of the new side.
+        assert_eq!(diff_markdown("a\nb", "a\nc\n"), "a\n{~~b~>c\n~~}");
+        round_trip("a\nb", "a\nc\n");
+        // A substitution that already ends in its own break keeps it on
+        // its side.
+        assert_eq!(diff_markdown("a\nb\nc", "a\nb\nd"), "a\nb\n{~~c~>d~~}");
+        round_trip("a\nb\nc", "a\nb\nd");
     }
 
     #[test]
