@@ -719,17 +719,13 @@ fn pair_by_similarity(olds: &[&str], news: &[&str]) -> Vec<(usize, usize)> {
             lines.sort_unstable();
             lines.dedup();
             // The bound counts candidates that can pair at all: a line
-            // whose block marker differs is no pair, and two lines with
-            // the same marker and the same words stand in for each
-            // other. Cutting the list before that keeps lines that can
-            // never pair and drops the one that could, which is how a
-            // long list of repeated boilerplate left its one odd line
-            // deleted whole.
-            let mut seen = std::collections::HashSet::new();
-            lines.retain(|&i| {
-                old_shape[i] == new_shape[j]
-                    && seen.insert((old_shape[i].clone(), old_multiset[i].clone()))
-            });
+            // whose block marker differs is no pair. Cutting the list
+            // before that kept lines that can never pair and dropped the
+            // one that could, which is how a long list of repeated
+            // boilerplate left its one odd line deleted whole. Equal
+            // lines all stay: pairs keep the old order, so a later new
+            // line may need the second of two.
+            lines.retain(|&i| old_shape[i] == new_shape[j]);
             lines.truncate(MAX_CANDIDATES);
         }
         candidates.push(lines);
@@ -2048,6 +2044,19 @@ mod tests {
             "the plain line was deleted whole\n{diff}"
         );
         round_trip(&old, new);
+    }
+
+    /// Identical old lines are not interchangeable candidates: pairs must
+    /// keep the old order, so the second of two equal lines is the only
+    /// partner a later new line can take once the first is spent.
+    #[test]
+    fn each_of_two_identical_old_lines_still_pairs_in_order() {
+        let old = "- alpha beta gamma delta\n- alpha beta gamma delta\n";
+        let new = "- alpha beta gamma delta one\n- alpha beta gamma delta two\n";
+        let diff = diff_markdown(old, new);
+        assert!(diff.contains("alpha beta gamma delta{++ one++}"), "{diff}");
+        assert!(diff.contains("alpha beta gamma delta{++ two++}"), "{diff}");
+        round_trip(old, new);
     }
 
     #[test]
