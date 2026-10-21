@@ -420,6 +420,78 @@ fn disagreeing_id_pair_refuses_ambiguous() {
 }
 
 #[test]
+fn a_native_key_pair_must_name_the_very_paragraph_in_the_source() {
+    // #1431 review: a `w14:paraId` long id was proven against the part
+    // and element only, so `check --expect` and guarded apply accepted
+    // any nonempty value under any attribute name while the short-id
+    // entry carried the evaluation. The pair is judged against the
+    // source's own `w14:paraId` inventory under the shared native-key
+    // policy: the value must be the exact key the pair resolver would
+    // print for the paragraph the short id names (valid range, unique
+    // in its story, raw spelling), and the attribute must be a
+    // registered long-id key. p0 and p1 carry unique paraIds; p2 and
+    // p3 repeat one, so generation spells `j:short` for them.
+    let w14 = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let bytes = docx(&format!(
+        r#"<w:p xmlns:w14="{w14}" w14:paraId="1111ABCD"><w:r><w:t>Hello world.</w:t></w:r></w:p>
+<w:p xmlns:w14="{w14}" w14:paraId="2222ABCD"><w:r><w:t>Second.</w:t></w:r></w:p>
+<w:p xmlns:w14="{w14}" w14:paraId="3333ABCD"><w:r><w:t>Third.</w:t></w:r></w:p>
+<w:p xmlns:w14="{w14}" w14:paraId="3333ABCD"><w:r><w:t>Fourth.</w:t></w:r></w:p>"#
+    ));
+    for (short_id, long_id, expected) in [
+        ("p0", "document.w:p.w14:paraId.1111ABCD", Outcome::Passed),
+        // j:short stays acceptable next to a native key.
+        ("p0", "document.w:p.j:short.p0", Outcome::Passed),
+        ("p2", "document.w:p.j:short.p2", Outcome::Passed),
+        // The value names another paragraph's key.
+        ("p0", "document.w:p.w14:paraId.2222ABCD", Outcome::Refused),
+        // No paragraph carries this key.
+        ("p0", "document.w:p.w14:paraId.DEADBEEF", Outcome::Refused),
+        // Outside Word's key range: never a native long id.
+        ("p0", "document.w:p.w14:paraId.FFFFFFFF", Outcome::Refused),
+        // The key must be spelled as generation prints it.
+        ("p0", "document.w:p.w14:paraId.1111abcd", Outcome::Refused),
+        // A repeated paraId is no key: p2's pair is j:short.
+        ("p2", "document.w:p.w14:paraId.3333ABCD", Outcome::Refused),
+        // Not a registered long-id key attribute.
+        ("p0", "document.w:p.w14:textId.1111ABCD", Outcome::Refused),
+        ("p0", "document.w:p.w:rsidR.1111ABCD", Outcome::Refused),
+    ] {
+        let spec = parse_expectations(&format!(
+            r#"{{
+    "schema_version": 1,
+    "source": {{ "sha256": "{hash}" }},
+    "text_view": "final",
+    "requirements": [
+      {{
+        "key": "k",
+        "description": "d",
+        "checks": [
+          {{
+            "kind": "text_absent",
+            "target": {{ "short_id": "{short_id}", "long_id": "{long_id}" }},
+            "text": "never present"
+          }}
+        ]
+      }}
+    ]
+  }}"#,
+            hash = source_sha256(&bytes)
+        ))
+        .expect("parse");
+        let report = evaluate(&spec, &bytes, &bytes, &identity_correspondence(&bytes));
+        assert_eq!(report.checks[0].outcome, expected, "{short_id} + {long_id}");
+        if expected == Outcome::Refused {
+            assert_eq!(
+                report.checks[0].reason,
+                Some(RefusalReason::Ambiguous),
+                "{short_id} + {long_id}"
+            );
+        }
+    }
+}
+
+#[test]
 fn an_entry_marked_identity_not_ok_refuses_ambiguous() {
     // The correspondence itself can veto a pair (V2-08's resolver will
     // set `identity_ok` when it finds the halves disagreeing while

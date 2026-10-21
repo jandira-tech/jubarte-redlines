@@ -76,8 +76,9 @@ pub mod v2_apply;
 /// `read --for-edit`: the working document, hashes and readiness (V2-10).
 pub mod for_edit;
 /// The one native-key policy (`w14:paraId`, revision `w:id`) shared by
-/// generation and application for paired long IDs.
-mod native_keys;
+/// generation, application and the expectations checker for paired
+/// long IDs.
+pub(crate) mod native_keys;
 mod source_refs;
 /// Source-bound desired-text template generation over the for-edit view.
 pub mod template;
