@@ -8,6 +8,8 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
+use super::view_styles::TableBorders;
+
 /// An inserted or a deleted tracked change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -333,18 +335,17 @@ pub(super) struct Document {
     pub author: Option<String>,
     /// `authors: document_owner:`, the core properties' owner.
     pub owner: Option<super::view_notes::Owner>,
-    /// The legend's `table:` style and its border, eighths of a point,
-    /// with the name the view gives the style when it differs from the
+    /// The legend's `table:` style and its borders, with the name the view gives the style when it differs from the
     /// writer's own (`named …`).
-    pub table_style: Option<(String, Option<u32>, Option<String>)>,
+    pub table_style: Option<(String, Option<TableBorders>, Option<String>)>,
     /// The `tables:` legend's entries, keyed by style id: a document
     /// whose tables differ, each with the border and the name its entry
     /// states.
-    pub table_legend: BTreeMap<String, (Option<u32>, Option<String>)>,
+    pub table_legend: BTreeMap<String, (Option<TableBorders>, Option<String>)>,
     /// Table styles Word has no definition of here, each with the border
     /// the legend gives it and the name the view says, when it does:
     /// defined by name.
-    pub table_styles: BTreeMap<String, (Option<u32>, Option<String>)>,
+    pub table_styles: BTreeMap<String, (Option<TableBorders>, Option<String>)>,
     /// The `track_changes:` key: Word's Track Changes switch.
     pub tracking: Option<bool>,
     pub warnings: Vec<String>,

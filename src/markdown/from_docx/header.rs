@@ -4,6 +4,7 @@
 //! The YAML header of the agent view.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 use super::agent::Handles;
 use super::ooxml::Element;
@@ -76,6 +77,12 @@ pub(crate) struct ParaFact {
     /// Its own borders (`w:pBdr`), as a border prints them (`bottom single
     /// 0.5pt 8496B0 space 4pt`).
     pub border: Option<String>,
+    /// The frame it lays out in (`w:framePr`, its style's under its own),
+    /// as [`crate::markdown::frames::describe`] prints it.
+    pub frame: Option<String>,
+    /// Its own indent (`w:ind`), as the id lines say it: `first-line`,
+    /// `hanging`, `left`, `right` and each one's inches.
+    pub indent: Vec<(&'static str, String)>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -905,23 +912,37 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     if r.character {
         return format!("character, {}", parts.join(", "));
     }
-    if differs(|x| format!("{:?}", x.before))
-        && let Some(b) = r.before.filter(|&b| b > 0.0)
-    {
-        parts.push(format!("before {}pt", points(b)));
+    // An omitted space is zero and an omitted line single. The default
+    // style names neither; a style based on it names a zero or a single
+    // line its base does not have, or the writer would give it the base's.
+    for (word, pick) in [
+        (
+            "before",
+            (|x: &Resolved| x.before) as fn(&Resolved) -> Option<f64>,
+        ),
+        ("after", |x: &Resolved| x.after),
+    ] {
+        let space = pick(r).unwrap_or(0.0);
+        let shown = match base {
+            None => space > 0.0,
+            Some(b) => space != pick(b).unwrap_or(0.0),
+        };
+        if shown {
+            parts.push(format!("{word} {}pt", points(space)));
+        }
     }
-    if differs(|x| format!("{:?}", x.after))
-        && let Some(a) = r.after.filter(|&a| a > 0.0)
-    {
-        parts.push(format!("after {}pt", points(a)));
-    }
-    if differs(|x| format!("{:?}", x.line))
-        && let Some((line, rule)) = &r.line
-    {
+    let single = (240.0, "auto".to_string());
+    let line = r.line.clone().unwrap_or_else(|| single.clone());
+    let shown = match base {
+        None => line != single,
+        Some(b) => line != b.line.clone().unwrap_or(single),
+    };
+    if shown {
+        let (line, rule) = &line;
         if rule == "auto" {
             let ratio = format!("{:.2}", line / 240.0);
             let ratio = ratio.trim_end_matches('0').trim_end_matches('.');
-            if ratio != "1" {
+            if ratio != "1" || base.is_some() {
                 parts.push(format!("line {ratio}"));
             }
         } else {
@@ -1042,8 +1063,53 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
                 pt.trim_end_matches('0').trim_end_matches('.')
             )
         }
-        _ => format!("{id}, borders vary{named}"),
+        // Word's own styles are written as Word defines them, borders
+        // and all.
+        _ if super::super::package::is_built_in_table_style(id) => {
+            format!("{id}, borders vary{named}")
+        }
+        _ => {
+            let sides: Vec<String> = sides
+                .iter()
+                .zip(super::super::view_styles::TABLE_BORDER_SIDES)
+                .filter_map(|(names, side)| {
+                    let b = names.iter().find_map(|name| borders.child(name))?;
+                    border_side(side, b)
+                })
+                .collect();
+            if sides.is_empty() {
+                format!("{id}{named}")
+            } else {
+                format!("{id}, borders {}{named}", sides.join(" "))
+            }
+        }
     }
+}
+
+/// One side of a `borders …` clause: `bottom double 0.75pt`, with
+/// `#RRGGBB` for a colour that is not `auto` and `space Npt` for a
+/// spacing that is not zero. A side with no value says nothing.
+fn border_side(side: &str, b: &Element) -> Option<String> {
+    let val = b.attr("val").filter(|v| !v.is_empty())?;
+    let mut out = format!("{side} {val}");
+    if let Some(sz) = b.attr("sz").and_then(|sz| sz.parse::<f64>().ok()) {
+        let pt = format!("{:.2}", sz / 8.0);
+        let _ = write!(out, " {}pt", pt.trim_end_matches('0').trim_end_matches('.'));
+    }
+    if let Some(color) = b
+        .attr("color")
+        .filter(|c| c.len() == 6 && c.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        let _ = write!(out, " #{color}");
+    }
+    if let Some(space) = b
+        .attr("space")
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|s| *s > 0)
+    {
+        let _ = write!(out, " space {space}pt");
+    }
+    Some(out)
 }
 
 /// The style the writer gives a `header` or `footer` paragraph the view
@@ -1053,15 +1119,20 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
 }
 
 /// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
-/// one carries its own colour or borders, or their alignments differ.
+/// one carries its own colour, borders, frame or indent, or their
+/// alignments differ.
 fn by_paragraph(s: &StoryFact) -> bool {
-    s.paras
-        .iter()
-        .any(|p| p.color.is_some() || p.border.is_some() || p.align != s.align)
+    s.paras.iter().any(|p| {
+        p.color.is_some()
+            || p.border.is_some()
+            || p.frame.is_some()
+            || !p.indent.is_empty()
+            || p.align != s.align
+    })
 }
 
-/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt}`,
-/// one per paragraph.
+/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt,
+/// frame: {wrap: none, y: 1}}`, one per paragraph.
 fn paragraph_entries(s: &StoryFact) -> Vec<String> {
     std::iter::once(&s.text)
         .chain(&s.more)
@@ -1072,11 +1143,22 @@ fn paragraph_entries(s: &StoryFact) -> Vec<String> {
             if let Some(align) = p.align {
                 inner.push_str(&format!(", {align}"));
             }
+            if !p.indent.is_empty() {
+                let sides: Vec<String> = p
+                    .indent
+                    .iter()
+                    .map(|(side, inches)| format!("{side}: {inches}"))
+                    .collect();
+                inner.push_str(&format!(", indent: {{{}}}", sides.join(", ")));
+            }
             if let Some(color) = &p.color {
                 inner.push_str(&format!(", color: {}", scalar(color, true)));
             }
             if let Some(border) = &p.border {
                 inner.push_str(&format!(", border: {}", scalar(border, true)));
+            }
+            if let Some(frame) = &p.frame {
+                inner.push_str(&format!(", frame: {frame}"));
             }
             format!("p{}: {{{inner}}}", s.first + k)
         })
@@ -2057,7 +2139,10 @@ mod tests {
         let varied = borders(
             r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
         );
-        assert_eq!(table_style_line(Some(&varied), "T"), "T, borders vary");
+        assert_eq!(
+            table_style_line(Some(&varied), "T"),
+            "T, borders top single 0.5pt left single 1pt bottom single 0.5pt right single 0.5pt insideH single 0.5pt insideV single 0.5pt"
+        );
     }
 
     #[test]
@@ -2274,6 +2359,40 @@ mod tests {
     /// A strict style carries its measures as universal measures (`11pt`,
     /// `1in`) and its font size in half-points either way: the legend reads
     /// the same as the transitional integers.
+    #[test]
+    fn a_zero_space_or_a_single_line_apart_from_the_base_is_named() {
+        let xml = format!(
+            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:styleId="Heading1"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="480" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style><w:style w:styleId="Same"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="200"/></w:pPr></w:style><w:style w:styleId="Alone"><w:pPr><w:spacing w:before="120"/></w:pPr></w:style></w:styles>"#
+        );
+        let styles = parse_xml(xml.as_bytes()).unwrap();
+        let base = resolve(Some(&styles), None, "Normal");
+        let line = |id: &str| describe(&resolve(Some(&styles), None, id), Some(&base));
+        assert_eq!(
+            describe(&base, None),
+            "Calibri 11pt, after 10pt, line 1.15, left"
+        );
+        // Written back on a style based on the default, an omitted zero
+        // would take the default's space.
+        assert_eq!(
+            line("Heading1"),
+            "Calibri bold 14pt, before 24pt, after 0pt, line 1"
+        );
+        // A zero the base has too is no deviation.
+        assert_eq!(line("Same"), "Calibri 11pt");
+        assert_eq!(line("Alone"), "Calibri 11pt, before 6pt");
+        // The default style omits them: an omitted space is zero, and an
+        // omitted line single.
+        let flat = Resolved {
+            font: Some("Calibri".to_string()),
+            size_half_points: Some(22.0),
+            before: Some(0.0),
+            after: Some(0.0),
+            line: Some((240.0, "auto".to_string())),
+            ..Resolved::default()
+        };
+        assert_eq!(describe(&flat, None), "Calibri 11pt, left");
+    }
+
     #[test]
     fn a_style_s_universal_measures_read_as_their_integers() {
         let legend = |rpr: &str, ppr: &str| {
