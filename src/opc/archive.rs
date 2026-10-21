@@ -421,12 +421,15 @@ const UTF8_FLAG: u16 = 0x0800;
 /// admit, `0o040000` admits only on a name ending in `/`, and every
 /// other type — link, device, pipe, socket — is refused. On any host,
 /// the DOS directory attribute `0x10` on a non-slash name is refused.
-/// Permission and owner bits never matter. The raw fields are read
-/// rather than zip's `is_symlink`, which is a bit-mask test that reads
-/// a mode only for the Unix host.
-fn special_entry(index: usize, name: &[u8], central: &HeaderFields) -> Option<ZipDefect> {
-    let shown = String::from_utf8_lossy(name).into_owned();
-    let slash = name.ends_with(b"/");
+/// `name` is the name the readers surface — the header name decoded as
+/// `admit` decodes it, including a 0x7075 Unicode Path override — so a
+/// directory cannot hide behind a slash-terminated raw name whose
+/// override drops the slash. Permission and owner bits never matter.
+/// The raw fields are read rather than zip's `is_symlink`, which is a
+/// bit-mask test that reads a mode only for the Unix host.
+fn special_entry(index: usize, name: &str, central: &HeaderFields) -> Option<ZipDefect> {
+    let shown = name;
+    let slash = name.ends_with('/');
     let defect = |detail: String| ZipDefect {
         kind: ZipDefectKind::SpecialEntry,
         detail,
@@ -512,7 +515,17 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             continue;
         };
         let shown = String::from_utf8_lossy(&central.name).into_owned();
-        if let Some(defect) = special_entry(i, &central.name, &central) {
+        // The entry type is judged on the name the readers surface: a
+        // 0x7075 Unicode Path field can override the header name, so a
+        // slash-terminated raw name may read as a file name. Decode it as
+        // `admit` does before testing for the trailing `/`.
+        let decoded = crate::admission::zip_entry_name_raw(
+            &central.name,
+            central.flags,
+            &central.extra,
+        )
+        .unwrap_or_else(|_| String::from_utf8_lossy(&central.name).into_owned());
+        if let Some(defect) = special_entry(i, &decoded, &central) {
             defects.push(defect);
         }
         let mismatch = |detail: String| ZipDefect {
@@ -761,9 +774,6 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
         at = at
             .saturating_add(CENTRAL_HEADER.name as u64)
             .saturating_add(step);
-        if central.name.ends_with(b"/") {
-            continue;
-        }
         // The per-entry read refuses an archive whose name fails to decode
         // with the same error; it needs no second finding here.
         let Ok(name) =
@@ -771,6 +781,13 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
         else {
             continue;
         };
+        // A directory entry is not a part — judged on the decoded name, as
+        // `special_entry` judges the type, so a Unicode Path override that
+        // drops the raw name's slash cannot smuggle a directory in as a
+        // part, nor can one adding a slash hide a duplicate.
+        if name.ends_with('/') {
+            continue;
+        }
         let identity = super::identity(&name);
         match seen.get(&identity) {
             None => {
