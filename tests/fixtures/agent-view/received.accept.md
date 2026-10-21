@@ -58,7 +58,7 @@ Client shall pay each invoice within forty-five days of receipt. {==Late amounts
 <!-- p7 rev r7+8 @AC -->
 This Agreement begins on March 1, 2026 and continues until either party ends it with sixty days written notice.
 
-<!-- t0 center 3x3, cells p8-p16 by row, header row repeats, rev r9+10 @AC in p12 -->
+<!-- t0 center 3x3, cells p8-p16 by row, widths 2.1646in 2.164in 2.1646in, header row repeats, rev r9+10 @AC in p12 -->
 |Deliverable|Due|Owner|
 |-|-|-|
 |Route-cost report|Day 15|Consultant|
