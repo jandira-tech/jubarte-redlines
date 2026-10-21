@@ -16,7 +16,7 @@ styles:
 Foot[^1] and end[^2] and end again[^3].
 
 <!-- footnotes.p0 -->
-[^1]: A footnote {++with an insertion++}{footnotes.r30 @AL}.
+[^1]: A footnote {++with an insertion++}{>>footnotes.r30 @AL<<}.
 <!-- endnotes.p0 -->
 [^2]: An endnote.
 <!-- endnotes.p1 -->

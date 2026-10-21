@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 10                      # 4 marks shown as 5 changes: 3 insertions, 1 table row, 1 table cell; 6 formatting
+revisions: 10                      # 4 marks shown as 3 changes: 2 table rows, 1 table cell; 6 formatting
 comments: 3 threads open           # 3 comments: c0, c1, c2
 authors:
   document_owner: none             # no docProps/core.xml
@@ -24,7 +24,7 @@ Changed table:
 <!-- t0 2x2, cells p2-p5 by row, p4 center, rev r103 @AL in t0.row0; r104 @AL in t0.row1.cell1, fmt r106 @AL; r107 @??; r105 @AL in p4 -->
 |||
 |-|-|
-|a2|{++b2++}{r104 @AL}|
+|a2|{++b2++}{>>r104 @AL<<}|
 
 <!-- p6 -->
 Inserted row:
@@ -32,7 +32,7 @@ Inserted row:
 <!-- t1 2x2, cells p7-p10 by row -->
 |x0|y0|
 |-|-|
-|{++x1++}{r108 @AL}|{++y1++}{r108 @AL}|
+|{++x1++}{>>r108 @AL<<}|{++y1++}{>>r108 @AL<<}|
 
 <!-- p11 -->
 Cell to cell:

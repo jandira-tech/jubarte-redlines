@@ -329,9 +329,6 @@ const DELIMITERS: [(&str, usize); 11] = [
 
 fn text_has_delimiter(text: &str) -> bool {
     DELIMITERS.iter().any(|(d, _)| text.contains(d))
-        || text
-            .match_indices('{')
-            .any(|(at, _)| super::critic::attribution_tag(&text[at..]).is_some())
 }
 
 /// Byte positions where a backslash must be inserted.
@@ -349,12 +346,6 @@ fn escape_points(text: &str) -> Vec<usize> {
             end = spans[span].end;
             span += 1;
             continue;
-        }
-        if bytes[i] == b'{'
-            && !escaped_at(text, i)
-            && super::critic::attribution_tag(&text[i..]).is_some()
-        {
-            points.push(i);
         }
         for (delimiter, insert) in DELIMITERS {
             if bytes[i..].starts_with(delimiter.as_bytes()) && !escaped_at(text, i) {
@@ -1124,7 +1115,7 @@ fn extend(open: &mut [OpenSpan], range: (usize, usize)) {
 /// it: [`numbers`] reads the sign as part of the amount, so this `$` opens
 /// no equation — even where the parser pairs it with a later `$` as math
 /// (`$250,000 … exceeds **$5,000,000**`).
-pub(super) fn opens_amount(text: &str, at: usize) -> bool {
+fn opens_amount(text: &str, at: usize) -> bool {
     text.as_bytes().get(at) == Some(&b'$')
         && text.as_bytes().get(at + 1).is_some_and(u8::is_ascii_digit)
 }
@@ -1365,7 +1356,7 @@ fn group(out: &mut Output, side: Side, lines: &[&str]) {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

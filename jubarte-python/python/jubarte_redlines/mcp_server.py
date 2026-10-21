@@ -67,9 +67,6 @@ def _plain(value: Any) -> Any:
 def build_server(*, root: Path) -> MCPServer:
     """An MCP server whose tools only touch files under ``root``."""
     root = Path(root).expanduser().resolve()
-    from . import _native
-
-    authority = _native._OutputRoot(str(root))
     mcp = MCPServer("jubarte", instructions=INSTRUCTIONS, version=__version__)
 
     def contained(path: str) -> Path:
@@ -77,14 +74,12 @@ def build_server(*, root: Path) -> MCPServer:
         p = (root / Path(path).expanduser()).resolve()
         if not p.is_relative_to(root):
             raise ToolError(f"{path} is outside root {root}")
-        # Keep the lexical path for capability-relative operations; resolving
-        # is only an early diagnostic, never the authorization for actual I/O.
-        return root / Path(path).expanduser()
+        return p
 
     def load(path: str) -> Document:
         p = contained(path)
         try:
-            return Document(authority.read(p.relative_to(root).as_posix()), p.name)
+            return Document.read(p)
         except OSError as e:
             raise ToolError(f"cannot read {path}: {e.strerror or e}") from e
 
@@ -96,19 +91,14 @@ def build_server(*, root: Path) -> MCPServer:
             raise ToolError(f"{path} is outside root {root}")
         if path.exists() and not overwrite:
             raise ToolError(f"{path} exists; pass overwrite=true to replace it")
-        return path
+        return target
 
-    def publish(files: list[tuple[Path, bytes | str]], overwrite: bool) -> None:
-        try:
-            authority.publish(
-                [(path.relative_to(root).as_posix(), data.encode("utf-8") if isinstance(data, str) else data) for path, data in files],
-                overwrite,
-            )
-        except (OSError, ValueError) as e:
-            raise ToolError(f"outside root or unsafe/unwritable output: {e}") from e
-
-    def write(path: Path, data: bytes | str, overwrite: bool) -> str:
-        publish([(path, data)], overwrite)
+    def write(path: Path, data: bytes | str) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(data, str):
+            path.write_text(data, encoding="utf-8")
+        else:
+            path.write_bytes(data)
         return str(path)
 
     def engine(call: Any) -> Any:
@@ -192,29 +182,20 @@ def build_server(*, root: Path) -> MCPServer:
         for name in names:  # check every output before writing any
             fresh(out / name, overwrite)
         report = json.loads(result.report._json) if result.report._json else _plain(result.report)
-        files: list[tuple[Path, bytes | str]] = [
-            (out / "clean.docx", result.clean.to_bytes()),
-            (out / "redline.docx", result.redline.to_bytes()),
-            (out / "patch.diff", str(result.diff)),
-            (out / "report.json", json.dumps(report, indent=2)),
-        ]
-        written: dict[str, Any] = {
-            "clean": str(out / "clean.docx"),
-            "redline": str(out / "redline.docx"),
-            "patch": str(out / "patch.diff"),
-            "report_path": str(out / "report.json"),
+        written = {
+            "clean": write(out / "clean.docx", result.clean.to_bytes()),
+            "redline": write(out / "redline.docx", result.redline.to_bytes()),
+            "patch": write(out / "patch.diff", str(result.diff)),
+            "report_path": write(out / "report.json", json.dumps(report, indent=2)),
             "report": report,
             "pages": [],
         }
         if rendered is not None:
             if rendered.pdf is not None:
-                files.append((out / "redline.pdf", rendered.pdf))
-                written["pdf"] = str(out / "redline.pdf")
-            for i, png in enumerate(rendered.pngs, start=1):
-                path = out / f"redline-page-{i:02d}.png"
-                files.append((path, png))
-                written["pages"].append(str(path))
-        publish(files, overwrite)
+                written["pdf"] = write(out / "redline.pdf", rendered.pdf)
+            written["pages"] = [
+                write(out / f"redline-page-{i:02d}.png", png) for i, png in enumerate(rendered.pngs, start=1)
+            ]
         return written
 
     @mcp.tool(annotations=_WRITE)
@@ -242,17 +223,14 @@ def build_server(*, root: Path) -> MCPServer:
             targets.append(out / "render.pdf")
         for target in targets:
             fresh(target, overwrite)
-        files = [(out / f"page-{i:02d}.png", png) for i, png in wanted]
         result: dict[str, Any] = {
             "page_count": rendered.report.page_count,
-            "pages": [str(path) for path, _ in files],
+            "pages": [write(out / f"page-{i:02d}.png", png) for i, png in wanted],
             "text": [p.text for p in rendered.report.pages],
             "fonts": _plain(rendered.report.fonts),
         }
         if rendered.pdf is not None:
-            files.append((out / "render.pdf", rendered.pdf))
-            result["pdf"] = str(out / "render.pdf")
-        publish(files, overwrite)
+            result["pdf"] = write(out / "render.pdf", rendered.pdf)
         return result
 
     @mcp.tool(annotations=_WRITE)
@@ -274,7 +252,7 @@ def build_server(*, root: Path) -> MCPServer:
         when = date if date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         options = engine(lambda: CompareOptions(date=when))
         redline = engine(lambda: a.compare(b, author=author, options=options))
-        return {"out": write(target, redline.to_bytes(), overwrite), "changes": _plain(engine(redline.changes))}
+        return {"out": write(target, redline.to_bytes()), "changes": _plain(engine(redline.changes))}
 
     @mcp.tool(annotations=_READ)
     def docx_changes(path: str) -> list[dict[str, Any]]:
@@ -295,7 +273,7 @@ def build_server(*, root: Path) -> MCPServer:
         target = fresh(contained(out), overwrite)
         method = getattr(doc, action)
         result = engine(lambda: method(ids=ids, authors=authors, kinds=kinds))
-        return {"out": write(target, result.to_bytes(), overwrite), "remaining": len(engine(result.changes))}
+        return {"out": write(target, result.to_bytes()), "remaining": len(engine(result.changes))}
 
     @mcp.tool(annotations=_WRITE)
     def docx_accept(
