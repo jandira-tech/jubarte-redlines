@@ -141,7 +141,7 @@ pub fn replace_entry(docx: &[u8], name: &str, bytes: &[u8]) -> Vec<u8> {
     let opts = SimpleFileOptions::default();
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
-        let entry = file.name().expect("decode ZIP fixture name").into_owned();
+        let entry = file.name().to_string();
         let mut data = Vec::new();
         std::io::Read::read_to_end(&mut file, &mut data).unwrap();
         zip.start_file(entry.as_str(), opts).unwrap();

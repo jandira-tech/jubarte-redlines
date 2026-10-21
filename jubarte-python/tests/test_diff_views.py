@@ -162,8 +162,7 @@ def test_unknown_output_suffix_writes_the_patch_for_word_inputs(tmp_path, capsys
     a.write_bytes(jubarte.from_markdown("old\n").to_bytes())
     b.write_bytes(jubarte.from_markdown("new\n").to_bytes())
     assert main(["diff", str(a), str(b), "-o", str(out)]) == 0
-    # The compared pair is insertion-first, as Word Compare writes it.
-    assert "{+new+}[-old-]" in out.read_text()
+    assert "[-old-]{+new+}" in out.read_text()
     assert capsys.readouterr().out == ""
 
 

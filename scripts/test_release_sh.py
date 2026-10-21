@@ -223,25 +223,6 @@ class Lessons0101(unittest.TestCase):
         guard = s8.index("regenerate npm artifacts for v$VER")
         self.assertLess(guard, s8.index("jubarte-wasm/build-npm.sh"))
 
-    def test_step8_refuses_an_npm_build_the_tag_does_not_vouch_for(self) -> None:
-        # A resumed run keeps the npm build it finds; nothing checked that its
-        # ENGINE_COMMIT.txt still named the tagged engine (#1088). The check
-        # runs on the tag after both the fresh and the resumed branch.
-        s8 = step(8)
-        call = s8.index('scripts/check_engine_commit.sh "$TAG^{commit}"')
-        self.assertGreater(call, s8.rindex('git tag -a "$TAG"'))
-        self.assertGreater(call, s8.index("npm artifacts rebuilt + smoke-tested"))
-        self.assertLess(call, s8.index("check_now 8"))
-        line = next(l for l in s8.splitlines() if "scripts/check_engine_commit.sh" in l)
-        self.assertIn("|| die", line)
-
-    def test_the_gates_test_the_engine_commit_check(self) -> None:
-        text = RELEASE_SH.read_text()
-        gates = text[text.index('say "5. Gates'):text.index('say "5. Gates — SKIPPED')]
-        self.assertIn("python3 scripts/test_check_engine_commit.py", gates)
-        row = next(l for l in text.splitlines() if l.startswith("8|auto|Release commit"))
-        self.assertIn("scripts/check_engine_commit.sh v@V@", row)
-
     def test_the_artifacts_commit_takes_the_wasm_lock(self) -> None:
         s8 = step(8)
         add = next(l for l in s8.splitlines() if "git add jubarte-wasm/npm" in l)

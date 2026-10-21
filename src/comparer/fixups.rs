@@ -119,17 +119,9 @@ pub fn fix_up_group_ids(dom: &mut Dom, root: NodeId) {
 /// [`crate::opc::OpcError`] when the package cannot be opened, the main
 /// document part is absent, or the part has no root element after parsing.
 pub fn fix_up_drawing_ids_in_package(docx: &[u8]) -> Result<Vec<u8>, crate::opc::OpcError> {
-    fix_up_drawing_ids_in_package_within(docx, crate::admission::InputLimits::compare())
-}
-
-/// Keep the identical-input comparer's already-admitted budget through the fixup.
-pub(crate) fn fix_up_drawing_ids_in_package_within(
-    docx: &[u8],
-    limits: crate::admission::InputLimits,
-) -> Result<Vec<u8>, crate::opc::OpcError> {
     use crate::opc::PartFs;
 
-    let mut pkg = PartFs::open_within(docx, limits)?;
+    let mut pkg = PartFs::open(docx)?;
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());

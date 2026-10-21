@@ -86,13 +86,7 @@ fn redline_drops_header_and_footer_parts_no_section_references() {
     // The parts went with their relationships, not only the relationships.
     let mut zip = zip::ZipArchive::new(Cursor::new(&out[..])).unwrap();
     let names: Vec<String> = (0..zip.len())
-        .map(|i| {
-            zip.by_index(i)
-                .unwrap()
-                .name()
-                .expect("decode ZIP fixture name")
-                .into_owned()
-        })
+        .map(|i| zip.by_index(i).unwrap().name().to_string())
         .collect();
     let hf_parts = names
         .iter()

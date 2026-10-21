@@ -43,12 +43,6 @@ pub(crate) enum Token {
     CommentStart,
     /// `<<}`
     CommentEnd,
-    /// The attribution after a change closer.
-    AttributionStart,
-    /// The attribution of an inserted paragraph mark.
-    ParagraphInsertion,
-    /// `}` ending an attribution.
-    AttributionEnd,
     /// A blank line inside a comment's body: a comment paragraph break.
     CommentBreak,
     /// `==` opening a highlight run (`==x==`), not CriticMarkup
@@ -64,7 +58,7 @@ pub(crate) enum Token {
 }
 
 /// Every delimiter with its stand-in (Supplemental Punctuation, all Po).
-const STAND_INS: [(Token, char); 20] = [
+const STAND_INS: [(Token, char); 17] = [
     (Token::InsertStart, '\u{2E0E}'),
     (Token::InsertEnd, '\u{2E0F}'),
     (Token::DeleteStart, '\u{2E10}'),
@@ -76,9 +70,6 @@ const STAND_INS: [(Token, char); 20] = [
     (Token::HighlightEnd, '\u{2E16}'),
     (Token::CommentStart, '\u{2E18}'),
     (Token::CommentEnd, '\u{2E19}'),
-    (Token::AttributionStart, '\u{2E2F}'),
-    (Token::ParagraphInsertion, '\u{2E30}'),
-    (Token::AttributionEnd, '\u{2E31}'),
     (Token::CommentBreak, '\u{2E2E}'),
     (Token::MarkStart, '\u{2E1B}'),
     (Token::MarkEnd, '\u{2E1E}'),
@@ -277,62 +268,6 @@ pub(crate) fn change_regions(source: &str) -> Vec<ChangeRegion> {
     regions
 }
 
-/// Refuse a legacy attribution only at a change's attribution position.
-/// Complete comments, escaped openers and verbatim Markdown stay opaque.
-pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
-    let closers = Closers::new(source);
-    for (at, _) in source.match_indices("{>>") {
-        if escaped(source, at)
-            || closers.literal.verbatim_end(at).is_some()
-            || closers
-                .comments
-                .iter()
-                .any(|range| range.0 < at && at < range.1)
-        {
-            continue;
-        }
-        let encoded = encode_spans_kept(&source[..at]);
-        let before = encoded.trim_end_matches(['*', '_', '`']);
-        if ![Token::InsertEnd, Token::DeleteEnd, Token::SubstituteEnd]
-            .into_iter()
-            .any(|token| before.ends_with(stand_in(token)))
-        {
-            continue;
-        }
-        let Some((payload, _)) = source[at + 3..].split_once("<<}") else {
-            continue;
-        };
-        let legacy_part = |part: &str| {
-            let id = part.split(' ').next().unwrap_or("");
-            let (story, id) = id
-                .rsplit_once('.')
-                .map_or((None, id), |(story, id)| (Some(story), id));
-            let numeric = id.strip_prefix('r').is_some_and(|ids| {
-                ids.split('+')
-                    .all(|id| !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit()))
-            });
-            numeric
-                && story.is_none_or(|story| {
-                    !story.is_empty()
-                        && story
-                            .bytes()
-                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
-                })
-                && super::view_notes::revision_tags(part).is_some_and(|tags| tags.len() == 1)
-        };
-        if !payload.split(" on ").all(legacy_part) {
-            continue;
-        }
-        let old = &source[at..at + 3 + payload.len() + 3];
-        let new = format!("{{{}}}", payload.replace(" on ", " re "));
-        let line = source[..at].bytes().filter(|&c| c == b'\n').count() + 1;
-        return Some(format!(
-            "line {line}: old attribution `{old}` is no longer supported; write `{new}`. A comment with that text is written `{{>>c1 @X: r1 @ASR<<}}`."
-        ));
-    }
-    None
-}
-
 /// [`encode`], plus a warning for every malformed delimiter that comes
 /// out text: an opener without its closer or separator, a closer that
 /// closed nothing.
@@ -454,33 +389,6 @@ type Cover = ((usize, usize), usize, usize);
 /// after it, its earliest covering start, its latest covering end.
 type Run = (usize, usize, usize);
 
-// Closer-search steps counted on this thread, for the tests: every
-// iteration of a loop below that walks the source text or a closer index
-// (the per-pass builders in `Closers::new`, `field_ends` and
-// `destination_ends`, and every closer lookup) counts its steps, so the
-// linear-time tests bound the work by a count instead of the clock. Per
-// thread, so tests running side by side do not disturb each other's
-// count. A scan that reintroduced the rest of the text per opener would
-// count that text and fail the bound.
-#[cfg(test)]
-thread_local! {
-    static CLOSER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Count `steps` closer-search steps. Test-only; an empty inline function
-/// in production builds, so the runtime cost is zero.
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-#[inline]
-fn count_closer_steps(steps: usize) {
-    CLOSER_STEPS.with(|count| count.set(count.get() + steps));
-}
-
-#[cfg(not(test))]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-#[inline]
-fn count_closer_steps(_steps: usize) {}
-
 /// Where every unescaped closer and separator sits in the source, found once
 /// so that an opener without its closer does not scan the rest of the text,
 /// and the parts Markdown reads literally.
@@ -520,10 +428,7 @@ impl<'a> Closers<'a> {
         let positions: [Vec<usize>; 6] = patterns.map(|pattern| {
             source
                 .match_indices(pattern)
-                .map(|(at, _)| {
-                    count_closer_steps(1);
-                    at
-                })
+                .map(|(at, _)| at)
                 // A closer behind an odd run of backslashes is Markdown's
                 // escape, but never one inside a code fence: there the
                 // reader breaks every literal delimiter itself, so a bare
@@ -543,10 +448,7 @@ impl<'a> Closers<'a> {
         let openers = |open: &str| -> Vec<usize> {
             source
                 .match_indices(open)
-                .map(|(at, _)| {
-                    count_closer_steps(1);
-                    at
-                })
+                .map(|(at, _)| at)
                 .filter(|&at| !escaped(source, at) && literal.verbatim_end(at).is_none())
                 .collect()
         };
@@ -577,7 +479,6 @@ impl<'a> Closers<'a> {
                 std::collections::VecDeque::new();
             let mut s = 0;
             for &pos in positions {
-                count_closer_steps(1);
                 while s < nested.len() && nested[s].0 <= pos {
                     open.push_back(nested[s]);
                     s += 1;
@@ -599,14 +500,12 @@ impl<'a> Closers<'a> {
             let mut run = vec![None; positions.len()];
             let mut i = 0;
             while i < positions.len() {
-                count_closer_steps(1);
                 let Some((_, mut first, mut last)) = covered[i] else {
                     i += 1;
                     continue;
                 };
                 let mut j = i + 1;
                 while j < positions.len() {
-                    count_closer_steps(1);
                     let Some((_, f, l)) = covered[j] else { break };
                     first = first.min(f);
                     last = last.max(l);
@@ -623,16 +522,10 @@ impl<'a> Closers<'a> {
 
         let bytes = source.as_bytes();
         let marks = (0..bytes.len())
-            .filter(|&at| {
-                count_closer_steps(1);
-                bytes[at..].starts_with(b"==") && mark_closes(source, &literal, at)
-            })
+            .filter(|&at| bytes[at..].starts_with(b"==") && mark_closes(source, &literal, at))
             .collect();
         let blanks = (0..bytes.len())
-            .filter(|&at| {
-                count_closer_steps(1);
-                bytes[at..].starts_with(b"\n\n")
-            })
+            .filter(|&at| bytes[at..].starts_with(b"\n\n"))
             .collect();
         let fields = field_ends(source, &literal);
         Self {
@@ -692,7 +585,6 @@ impl<'a> Closers<'a> {
             }
             at = at.max(closers.partition_point(|&c| c <= opener));
             let close_at = loop {
-                count_closer_steps(1);
                 let Some(&c) = closers.get(at) else {
                     break None;
                 };
@@ -719,7 +611,6 @@ impl<'a> Closers<'a> {
 
     /// The first `pattern` that lies whole in `from..until`.
     fn find(&self, pattern: &str, from: usize, until: usize) -> Option<usize> {
-        count_closer_steps(1);
         let slot = self.patterns.iter().position(|p| *p == pattern)?;
         let positions = &self.positions[slot];
         let at = *positions.get(positions.partition_point(|&at| at < from))?;
@@ -737,7 +628,6 @@ impl<'a> Closers<'a> {
         let positions = &self.positions[slot];
         let mut at = positions.partition_point(|&pos| pos < from);
         loop {
-            count_closer_steps(1);
             let pos = *positions.get(at)?;
             if pos + pattern.len() > until {
                 return None;
@@ -766,7 +656,6 @@ impl<'a> Closers<'a> {
     /// Where the paragraph `from` lies in ends: at its blank line, or at
     /// `until` if that comes first.
     fn paragraph_end(&self, from: usize, until: usize) -> usize {
-        count_closer_steps(1);
         self.blanks
             .get(self.blanks.partition_point(|&at| at < from))
             .filter(|&&at| at + 2 <= until)
@@ -1010,7 +899,6 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
         // before, and whether `](` did.
         let (mut bracket, mut opened) = (false, false);
         for (i, c) in line.char_indices() {
-            count_closer_steps(1);
             let at = line_start + i;
             if opened {
                 starts.push(at);
@@ -1032,7 +920,6 @@ fn destination_ends(source: &str) -> std::collections::HashMap<usize, usize> {
         let mut nearest = std::collections::HashMap::new();
         let mut starts = starts.iter().rev().peekable();
         for &(at, before, after) in levels.iter().rev() {
-            count_closer_steps(1);
             nearest.insert(after, at);
             if starts.next_if(|&&s| s == at).is_some()
                 && let Some(&end) = nearest.get(&(before - 1))
@@ -1158,33 +1045,6 @@ fn encode_range(
         {
             push_escaped(out, &text);
             at += len;
-            continue;
-        }
-        // Only a complete tag immediately following a closer (or ¶) is
-        // metadata. Backslash-escaped braces remain ordinary Markdown text.
-        let paragraph = rest.starts_with("¶{") && !escaped(source, at);
-        let tag_at = at + if paragraph { "¶".len() } else { 0 };
-        let before = out.trim_end_matches(['*', '_', '`']);
-        let follows = [
-            Token::AttributionEnd,
-            Token::InsertEnd,
-            Token::DeleteEnd,
-            Token::SubstituteEnd,
-        ]
-        .into_iter()
-        .any(|token| before.ends_with(stand_in(token)));
-        if (paragraph || follows)
-            && !escaped(source, tag_at)
-            && let Some((note, width)) = attribution_tag(&source[tag_at..range.end])
-        {
-            out.push(stand_in(if paragraph {
-                Token::ParagraphInsertion
-            } else {
-                Token::AttributionStart
-            }));
-            encode_comment(source, closers, tag_at + 1..tag_at + 1 + note.len(), out);
-            out.push(stand_in(Token::AttributionEnd));
-            at = tag_at + width;
             continue;
         }
         let span = SPANS
@@ -1325,70 +1185,6 @@ fn encode_range(
     }
 }
 
-/// A complete attribution brace and its byte length. Comments never use
-/// this grammar; callers also check the preceding closer or pilcrow.
-pub(crate) fn attribution_tag(text: &str) -> Option<(&str, usize)> {
-    let after = text.strip_prefix('{')?;
-    // An attribution is one flat line. Stopping at the next opener also
-    // bounds malformed-tag scans instead of rescanning an unclosed tail.
-    let end = after.char_indices().find_map(|(at, c)| {
-        (matches!(c, '}' | '{' | '\n') && !escaped(text, at + 1)).then_some((at, c))
-    })?;
-    if end.1 != '}' {
-        return None;
-    }
-    let end = end.0;
-    let note = &after[..end];
-    (super::view_notes::revision_tags(note).is_some()
-        || super::view_notes::nested_revision_tags(note).is_some()
-        || super::view_notes::plain_revisions(note).is_some()
-        || super::view_notes::nested_plain_revisions(note).is_some())
-    .then_some((note, end + 2))
-}
-
-/// Complete attribution payloads in rendered text, paired with their mark.
-/// The delimiter prepass keeps comments, escaped literals and code spans opaque.
-pub(crate) fn attributed_notes(source: &str) -> Vec<(Token, String)> {
-    let mut notes = Vec::new();
-    let mut closer = Token::InsertEnd;
-    let mut note = None;
-    Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
-        Piece::Token(token @ (Token::InsertEnd | Token::DeleteEnd | Token::SubstituteEnd)) => {
-            closer = token;
-        }
-        Piece::Token(Token::AttributionStart) => note = Some((closer, String::new())),
-        Piece::Token(Token::ParagraphInsertion) => {
-            note = Some((Token::ParagraphInsertion, String::new()));
-        }
-        Piece::Token(Token::AttributionEnd) => {
-            if let Some(note) = note.take() {
-                notes.push(note);
-            }
-        }
-        Piece::Text(text) => {
-            if let Some((_, note)) = &mut note {
-                note.push_str(text);
-            }
-        }
-        _ => {}
-    });
-    notes
-}
-
-/// Rendered text without revision tags or inserted paragraph marks.
-pub(crate) fn without_attributions(source: &str) -> String {
-    let mut out = String::new();
-    let mut inside = false;
-    Pieces::default().feed(&encode_spans_kept(source), |piece| match piece {
-        Piece::Token(Token::AttributionStart | Token::ParagraphInsertion) => inside = true,
-        Piece::Token(Token::AttributionEnd) => inside = false,
-        Piece::Text(text) if !inside => out.push_str(text),
-        Piece::Token(token) if !inside => out.push_str(delimiter(token)),
-        _ => {}
-    });
-    out
-}
-
 /// A comment's body: text, with every run of blank or whitespace-only
 /// lines as one [`Token::CommentBreak`] stand-in so the comment's
 /// paragraphs survive the Markdown parser without splitting the
@@ -1451,21 +1247,6 @@ fn fence_escape_at(source: &str, at: usize) -> Option<(String, usize)> {
     /// What can hold the run a closer escapes (`++` + run + `}`).
     const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="];
     let bytes = source.as_bytes();
-    if bytes.get(at) == Some(&b'\\') {
-        let run = bytes[at..].iter().take_while(|&&b| b == b'\\').count();
-        if let Some((_, width)) = attribution_tag(&source[at + run..]) {
-            let kept = if run % 2 == 1 { (run - 1) / 2 } else { run };
-            return Some((
-                format!(
-                    "{}{}",
-                    "\\".repeat(kept),
-                    &source[at + run..at + run + width]
-                ),
-                run + width,
-            ));
-        }
-    }
-
     let (head, run, tail) = {
         let shape = |head: usize, tails: &[&str]| {
             let mut run = at + head;
@@ -1648,7 +1429,6 @@ fn field_at(
     until: usize,
 ) -> Option<(std::ops::Range<usize>, usize)> {
     let code = field_code(source, at, until)?;
-    count_closer_steps(1);
     let end = *closers.fields.get(&at)?;
     (end + FIELD_END.len() <= until).then_some((code, end))
 }
@@ -1666,7 +1446,6 @@ fn field_ends(source: &str, literal: &Literal) -> std::collections::HashMap<usiz
     let mut open: Vec<usize> = Vec::new();
     let mut i = 0;
     while i < source.len() {
-        count_closer_steps(1);
         if let Some(skip) = literal.verbatim_end(i) {
             i = skip;
         } else if literal.in_fence(i) {
@@ -1740,7 +1519,6 @@ fn mark_close(source: &str, closers: &Closers<'_>, at: usize, until: usize) -> O
     let end = closers.paragraph_end(at + 2, until);
     let from = at + 2 + source[at + 2..].chars().next().map_or(1, char::len_utf8);
     let marks = &closers.marks;
-    count_closer_steps(1);
     let close = *marks.get(marks.partition_point(|&close| close < from))?;
     (close + 2 <= end).then_some(close)
 }
@@ -1852,9 +1630,6 @@ pub(crate) fn delimiter(token: Token) -> &'static str {
         Token::SubstituteEnd => "~~}",
         Token::HighlightStart => "{==",
         Token::HighlightEnd => "==}",
-        Token::AttributionStart => "{",
-        Token::ParagraphInsertion => "¶{",
-        Token::AttributionEnd => "}",
         Token::CommentStart => "{>>",
         Token::CommentEnd => "<<}",
         Token::CommentBreak => "\n\n",
@@ -1912,26 +1687,6 @@ impl Pieces {
     }
 }
 
-/// An equation may hold complete insertions and deletions, but cannot enter
-/// or leave one.
-pub(super) fn math_crosses_boundary(latex: &str) -> bool {
-    let mut open = Vec::new();
-    let mut crosses = false;
-    Pieces::default().feed(latex, |piece| {
-        if let Piece::Token(token) = piece {
-            match token {
-                Token::InsertStart => open.push(Token::InsertEnd),
-                Token::DeleteStart => open.push(Token::DeleteEnd),
-                Token::InsertEnd | Token::DeleteEnd => {
-                    crosses |= open.pop() != Some(token);
-                }
-                _ => crosses = true,
-            }
-        }
-    });
-    crosses || !open.is_empty()
-}
-
 /// The Markdown with its CriticMarkup resolved: insertions kept and
 /// deletions dropped (`accept`), or the other way round; highlights keep
 /// their text and comments go.
@@ -1939,7 +1694,7 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
     resolve_with_policy(markdown, accept, false)
 }
 
-/// Whether `note` names, after ` re `, a change the one it follows sits
+/// Whether `note` names, after ` on `, a change the one it follows sits
 /// inside (either view's grammar): resolving that change removes its text
 /// either way, for rejecting the outer removes what it holds and accepting
 /// the inner removes the text.
@@ -1974,46 +1729,11 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
     // The change span just closed, where its note would sit: a note that
-    // names the change it sits inside (` re `) folds it, and resolving
+    // names the change it sits inside (` on `) folds it, and resolving
     // removes its text either way — rejecting the outer removes what it
     // holds, accepting the inner removes the text.
     let mut folded_at: Option<usize> = None;
     let mut comment = String::new();
-    let mut paragraph_attribution = false;
-    // Rejecting an inserted paragraph mark removes its following boundary,
-    // not every blank line after it. The separator can span text pieces.
-    let mut joining_separator: Option<usize> = None;
-    let mut strip_joined_heading = false;
-    let mut empty_inserted_heading = false;
-    let heading_prefix = |text: &str| {
-        let hashes = text.bytes().take_while(|&byte| byte == b'#').count();
-        let spaces = text[hashes..]
-            .bytes()
-            .take_while(|&byte| matches!(byte, b' ' | b'\t'))
-            .count();
-        ((1..=6).contains(&hashes) && spaces > 0).then_some(hashes + spaces)
-    };
-    let list_prefix = |text: &str| {
-        let indent = text.bytes().take_while(|&b| b == b' ').take(4).count();
-        if indent > 3 {
-            return None;
-        }
-        let rest = &text[indent..];
-        let marker = if rest.starts_with(['-', '+', '*']) {
-            1
-        } else {
-            let digits = rest.bytes().take_while(u8::is_ascii_digit).take(10).count();
-            if !(1..=9).contains(&digits) || !rest[digits..].starts_with(['.', ')']) {
-                return None;
-            }
-            digits + 1
-        };
-        let spaces = rest[marker..]
-            .bytes()
-            .take_while(|&b| matches!(b, b' ' | b'\t'))
-            .count();
-        (spaces > 0).then_some(indent + marker + spaces)
-    };
     Pieces::default().feed(&encode_spans_kept(markdown), |piece| match piece {
         Piece::Text(text) => {
             if state == In::Comment {
@@ -2026,35 +1746,6 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 In::Comment => false,
             };
             if shown {
-                let mut text = text;
-                if let Some(mut consumed) = joining_separator {
-                    while consumed < 2 {
-                        if let Some(rest) = text
-                            .strip_prefix("\r\n")
-                            .or_else(|| text.strip_prefix('\n'))
-                        {
-                            text = rest;
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    if consumed == 2 || !text.is_empty() {
-                        joining_separator = None;
-                        strip_joined_heading = consumed > 0;
-                    } else {
-                        joining_separator = Some(consumed);
-                    }
-                }
-                if strip_joined_heading && !text.is_empty() {
-                    if let Some(prefix) = heading_prefix(text).or_else(|| list_prefix(text)) {
-                        text = &text[prefix..];
-                    }
-                    strip_joined_heading = false;
-                }
-                if !text.is_empty() {
-                    empty_inserted_heading = false;
-                }
                 if state == In::Text {
                     // Text after the change ended: a note now is on this
                     // point, not on the change.
@@ -2128,29 +1819,13 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                     }
                 }
                 Token::SubstituteStart => {
-                    folded_at = Some(out.len());
+                    folded_at = None;
                     Some(In::Old)
                 }
-                Token::CommentStart | Token::AttributionStart => Some(In::Comment),
-                Token::ParagraphInsertion => {
-                    paragraph_attribution = true;
-                    folded_at = None;
-                    if !accept {
-                        let start = out.rfind('\n').map_or(0, |at| at + 1);
-                        let line = &out[start..];
-                        empty_inserted_heading = heading_prefix(line) == Some(line.len());
-                        if empty_inserted_heading {
-                            out.truncate(start);
-                        }
-                    }
-                    Some(In::Comment)
-                }
+                Token::CommentStart => Some(In::Comment),
                 // A highlight shows its text as the text around it does.
                 Token::HighlightStart => Some(state),
                 Token::SubstituteSeparator => {
-                    if accept {
-                        folded_at = None;
-                    }
                     state = In::New;
                     None
                 }
@@ -2164,19 +1839,14 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
                 // A comment paragraph break: comments resolve to nothing,
                 // so the break is dropped with the comment's text.
                 Token::CommentBreak => None,
-                Token::CommentEnd | Token::AttributionEnd => {
+                Token::CommentEnd => {
                     state = outer.pop().unwrap_or(In::Text);
-                    if std::mem::take(&mut paragraph_attribution) && !accept {
-                        joining_separator = Some(0);
-                        strip_joined_heading = false;
-                    }
                     // The note folds the change it follows, naming the one
-                    // it sits inside after ` re `: its text goes, either
+                    // it sits inside after ` on `: its text goes, either
                     // way it resolves — rejecting the outer removes what it
                     // holds, accepting the inner removes the text.
                     if state == In::Text
                         && let Some(at) = folded_at.take()
-                        && token == Token::AttributionEnd
                         && names_outer(&comment)
                     {
                         out.truncate(at);
@@ -2197,14 +1867,11 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
     if remove_deleted_lines && removed_text && !visible_text {
         out.truncate(line_start);
     }
-    if empty_inserted_heading {
-        out.truncate(out.trim_end_matches('\n').len());
-    }
     out
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -2438,31 +2105,14 @@ mod tests {
         );
     }
 
-    /// [`encode`] with the closer-search steps it took: the builders in
-    /// [`Closers::new`] walk the source once each and every lookup is a
-    /// step, so a linear encode stays within a small constant times the
-    /// input, while a search that rescans the rest of the text per
-    /// opener counts that text and crosses any such bound.
-    fn encode_counted(source: &str) -> (String, usize) {
-        CLOSER_STEPS.with(|steps| steps.set(0));
-        let out = encode(source);
-        (out, CLOSER_STEPS.with(|steps| steps.get()))
-    }
-
     #[test]
     fn unclosed_openers_encode_in_linear_time() {
         // Every opener once scanned the rest of the text for its closer.
-        // #1083: a loaded runner crossed the 2 s wall-clock bound this
-        // test once asserted with no regression in sight, so the bound
-        // is a count of closer-search steps, not a time.
         let source = "{++ {-- {~~ {== {>> ~> ".repeat(40_000);
-        let (out, steps) = encode_counted(&source);
-        assert_eq!(out, source);
-        assert!(
-            steps <= 16 * source.len(),
-            "{steps} closer-search steps for {} bytes: an opener rescans the text",
-            source.len()
-        );
+        let started = std::time::Instant::now();
+        assert_eq!(encode(&source), source);
+        let elapsed = started.elapsed();
+        assert!(elapsed.as_secs() < 2, "took {elapsed:?}");
     }
 
     #[test]
@@ -2475,12 +2125,10 @@ mod tests {
             format!("{}{{/}}", "{PAGE}a ".repeat(6_000)),
             "==a ".repeat(6_000),
         ] {
-            let (_, steps) = encode_counted(&source);
-            assert!(
-                steps <= 16 * source.len(),
-                "{source:.12}: {steps} closer-search steps for {} bytes: a search rescans its line or paragraph",
-                source.len()
-            );
+            let started = std::time::Instant::now();
+            encode(&source);
+            let elapsed = started.elapsed();
+            assert!(elapsed.as_secs() < 2, "{source:.12}: took {elapsed:?}");
         }
     }
 
@@ -2749,15 +2397,16 @@ mod tests {
     fn many_failed_openers_with_comments_stay_linear() {
         // Each `{~~x` is a failed substitution opener (no separator, no
         // closer); each `{>>` opens a complete comment containing both
-        // `~~}` and `~>`. #1083: the bound is closer-search steps, not
-        // the wall clock this test once read.
+        // `~~}` and `~>`.
         let failed = "{~~x".repeat(2_000);
         let comment = "{>>payload ~~} ~> body<<} ".repeat(2_000);
         let source = format!("{failed}{comment}");
-        let (output, steps) = encode_counted(&source);
+        let started = std::time::Instant::now();
+        let output = encode(&source);
+        let elapsed = started.elapsed();
         assert!(
-            steps <= 16 * source.len(),
-            "{steps} closer-search steps for {} bytes: an opener rescans the comments",
+            elapsed.as_secs() < 2,
+            "took {elapsed:?} for {} bytes",
             source.len()
         );
         // Sanity: the failed openers leave the markers as text, the
@@ -2772,15 +2421,16 @@ mod tests {
     #[test]
     fn highlight_openers_before_comment_held_closers_stay_linear() {
         // Every `{==` fails (each `==}` sits inside a comment), and each
-        // comment is complete. #1083: the bound is closer-search steps,
-        // not the wall clock this test once read.
+        // comment is complete.
         let openers = "{==".repeat(20_000);
         let comments = "{>>x==}y<<} ".repeat(20_000);
         let source = format!("{openers}{comments}");
-        let (output, steps) = encode_counted(&source);
+        let started = std::time::Instant::now();
+        let output = encode(&source);
+        let elapsed = started.elapsed();
         assert!(
-            steps <= 16 * source.len(),
-            "{steps} closer-search steps for {} bytes: the pairing pass re-skips the comments per opener",
+            elapsed.as_secs() < 2,
+            "took {elapsed:?} for {} bytes",
             source.len()
         );
         // The openers stay text and the comments are recognised.
@@ -2857,52 +2507,6 @@ mod tests {
         let fence = "```\nfenced {\\++x++\\} code\n```\n";
         assert_eq!(resolve(fence, true), fence);
         assert_eq!(resolve(fence, false), fence);
-    }
-
-    #[test]
-    fn rejecting_inserted_paragraph_marks_joins_only_the_following_separator() {
-        for (source, accepted, rejected) in [
-            ("A¶{r1 @A}\n\nB", "A\n\nB", "AB"),
-            ("A¶{r1 @A}\n\n&#32;B", "A\n\n&#32;B", "A&#32;B"),
-            ("A¶{r1 @A}\n\n\n\nB", "A\n\n\n\nB", "A\n\nB"),
-            ("A¶{r1 @A}\n\n{--B--}{r2 @A}C", "A\n\nC", "ABC"),
-        ] {
-            assert_eq!(resolve(source, true), accepted, "accept {source:?}");
-            assert_eq!(resolve(source, false), rejected, "reject {source:?}");
-        }
-    }
-
-    #[test]
-    fn rejecting_a_whole_inserted_heading_leaves_no_empty_heading_prefix() {
-        for (source, accepted, rejected) in [
-            (
-                "Before.\n\n## {++Heading++}{r1 @A}¶{r2 @A}\n\nAfter.",
-                "Before.\n\n## Heading\n\nAfter.",
-                "Before.\n\nAfter.",
-            ),
-            (
-                "Before.¶{r0 @A}\n\n## {++Heading++}{r1 @A}¶{r2 @A}\n\nAfter.",
-                "Before.\n\n## Heading\n\nAfter.",
-                "Before.After.",
-            ),
-            (
-                "Before.\n\n## {++Heading++}{r1 @A}¶{r2 @A}",
-                "Before.\n\n## Heading",
-                "Before.",
-            ),
-        ] {
-            assert_eq!(resolve(source, true), accepted, "accept {source:?}");
-            assert_eq!(resolve(source, false), rejected, "reject {source:?}");
-        }
-    }
-
-    #[test]
-    fn resolving_literal_or_commented_paragraph_marks_keeps_real_boundaries() {
-        for accept in [true, false] {
-            let literal = "A¶\\{r1 @A}\n\nB";
-            assert_eq!(resolve(literal, accept), literal);
-            assert_eq!(resolve("A{>>¶{r1 @A}<<}\n\nB", accept), "A\n\nB");
-        }
     }
 
     #[test]

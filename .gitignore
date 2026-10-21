@@ -122,6 +122,3 @@ report.json
 # Local issue archive: scripts/fetch_issues.py downloads GitHub issues here.
 /scripts/fetch_issues.py
 .issues/
-
-# uv-managed virtualenv (created by `uv sync` in eval/cli-v2-pilot/)
-.venv/
