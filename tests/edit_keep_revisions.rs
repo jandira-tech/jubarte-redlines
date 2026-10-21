@@ -96,24 +96,15 @@ fn keep_leaves_their_changes_and_adds_mine() {
 }
 
 #[test]
-fn an_edit_inside_their_insertion_keeps_the_revision_pending() {
+fn an_edit_inside_their_insertion_is_still_refused() {
     let plan = EditPlan::from_json(
         r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
         {"kind":"replace","paragraph":"p0","find":"45","replacement":"60"}]}"#,
     )
     .unwrap();
-    let out = apply_plan(&source(), &plan);
-    assert!(out.is_ok(), "edit must succeed: {:?}", out.err());
-    let out = out.unwrap();
-    assert_word_valid_package(&out.redline);
-    assert_eq!(
-        texts(&accept_changes(&out.redline, &mine()).unwrap()),
-        texts(&out.clean)
-    );
-    assert_eq!(
-        texts(&reject_changes(&out.redline, &mine()).unwrap()),
-        texts(&source())
-    );
+    let e = apply_plan(&source(), &plan).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
+    assert!(e.message.contains("revision"));
 }
 
 #[test]

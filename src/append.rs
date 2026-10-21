@@ -316,13 +316,7 @@ fn invalid(document: &'static str, message: impl Into<String>) -> AppendError {
 fn open(document: &'static str, bytes: &[u8]) -> Result<PartFs, AppendError> {
     crate::admission::admit(bytes, InputLimits::default())
         .map_err(|error| AppendError::Admission { document, error })?;
-    let normalized =
-        crate::strict_translation::strict_to_transitional_docx(bytes).map_err(|e| {
-            AppendError::Package {
-                document,
-                message: e.to_string(),
-            }
-        })?;
+    let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);
     PartFs::open(&normalized).map_err(|e| package(document, &e))
 }
 
@@ -1349,7 +1343,7 @@ fn set_section_type(dom: &mut Dom, sect: NodeId, section_break: SectionBreak) {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1448,7 +1442,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_memory_append_owner_boundary_tests {
     use super::*;
     fn semantic(dom: &Dom, node: NodeId) -> String {
