@@ -2433,7 +2433,14 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
             });
             if touching {
                 let &last = pending.last().unwrap_or(&0);
-                if members[last].kind == members[i].kind {
+                // A code span rejoins under one fence whatever its
+                // members' fences were; any other kind joins only under
+                // the first member's own run, or the shorter member's
+                // text would come back carrying emphasis it never had.
+                if members[last].kind == members[i].kind
+                    && (members[i].kind == InlineKind::Code
+                        || members[last].marker == members[i].marker)
+                {
                     pending.push(i);
                     continue;
                 }
@@ -3473,6 +3480,30 @@ mod tests {
         assert_eq!(resolve("Say *a*{--x--}b* now.", false), "Say *a*xb* now.");
     }
 
+    /// Two spans of the same kind whose delimiter runs differ must not
+    /// fold into one: joined under the first member's run, the shorter
+    /// span's text comes back from the docx path strong, which neither
+    /// document said. `***a***` and `*b*` are an italic `a` that is also
+    /// bold and a plain italic `b`, so `***ab***` is not the joined form
+    /// — it reads as one bold italic run. The later member's run is
+    /// rewritten to the other flavour (`_`), which keeps the two spans
+    /// apart with no run left to fuse.
+    #[test]
+    fn resolve_keeps_a_shorter_emphasis_run_out_of_a_triple_star_join() {
+        let joined = resolve("***a***{--x--}*b*", true);
+        assert_eq!(joined, "***a***_b_", "{joined:?}");
+        // `b` must come back plain italic: no strong span reaches it.
+        let bolded = collect_inline_spans(&joined)
+            .into_iter()
+            .any(|span| span.kind == InlineKind::Strong && span.range.end > 7);
+        assert!(!bolded, "the second span came back bold: {joined:?}");
+        // The same holds the other way round, and for the runs that do
+        // fuse: `**a**` next to `*b*` shares one delimiter character, so
+        // the short one takes the other flavour and stays its own span.
+        let joined = resolve("**a**{--x--}*b*", true);
+        assert_eq!(joined, "**a**_b_", "{joined:?}");
+    }
+
     /// Marks next to a link do not merge it with another link: the byte
     /// before the mark is a `)` (the destination's closer) and the byte
     /// after is a `[` (the next link's opener), but CommonMark already
@@ -3837,3 +3868,4 @@ mod tests {
         }
     }
 }
+
