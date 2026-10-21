@@ -9,7 +9,7 @@ OUT=help-cli.md
 
 screen() {
   printf '\n## `jubarte %s--help`\n\n```text\n' "${*:+$* }"
-  "$JUBARTE" "$@" --help
+  "$JUBARTE" "$@" --help | sed 's/[[:blank:]]*$//'
   printf '```\n'
 }
 

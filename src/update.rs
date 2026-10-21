@@ -242,6 +242,7 @@ pub fn run(opts: &Options) -> Result<(), String> {
         .target(target)
         .current_version(current)
         .bin_path_in_archive(bin_path_in_archive(target))
+        .verify_binary(extracted_binary_is_regular_file)
         .checksum_from_asset(SUMS_ASSET)
         .show_output(false)
         .show_download_progress(interactive)
@@ -325,8 +326,33 @@ fn confirm(from: &str, to: &str) -> Result<bool, String> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes" | "YES"))
 }
 
+/// The `verify_binary` hook `run` registers (ZIP-16/#639): refuse the
+/// extracted binary when it is anything but a regular file. `self_update`
+/// already refuses a symlink *zip* entry in its single-file path, but its
+/// tar path delegates to `tar`'s `unpack_in`, which restores a symlink
+/// entry as a real link whose target is not confined to the staging
+/// directory — a crafted release archive could then install any path's
+/// contents as the new binary. `symlink_metadata`, not `metadata`, sees
+/// the entry itself rather than its target.
+fn extracted_binary_is_regular_file(path: &std::path::Path) -> self_update::Result<()> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| {
+        self_update::Error::verification_rejected(format!(
+            "the extracted binary {} cannot be inspected: {e}",
+            path.display()
+        ))
+    })?;
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(self_update::Error::verification_rejected(format!(
+            "the extracted binary {} is not a regular file",
+            path.display()
+        )))
+    }
+}
+
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -551,6 +577,34 @@ mod tests {
             // compared with this build's version.
             assert!(!first.starts_with('v'), "write {first} without the v");
             assert_eq!(signature_required(first, Some(first), true), Ok(true));
+        }
+    }
+
+    /// ZIP-16 (#639): the binary swap must never install a link or a
+    /// special file. `self_update`'s zip path refuses a symlink entry, but
+    /// its tar path hands the entry to `tar`'s `unpack_in`, which restores
+    /// a symlink as a real link whose target the crate does not confine to
+    /// the staging dir — a crafted release could install any path as the
+    /// new binary. The extracted path is checked with `symlink_metadata`
+    /// (not `metadata`, which follows the link).
+    #[test]
+    fn a_special_extracted_binary_is_refused_before_the_swap() {
+        let dir = tempfile::tempdir().unwrap();
+        let regular = dir.path().join("jubarte");
+        std::fs::write(&regular, b"binary").unwrap();
+        extracted_binary_is_regular_file(&regular).expect("a regular file installs");
+        extracted_binary_is_regular_file(dir.path())
+            .expect_err("a directory at the extracted path must be refused");
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("linked");
+            std::os::unix::fs::symlink(&regular, &link).unwrap();
+            extracted_binary_is_regular_file(&link)
+                .expect_err("a symlink at the extracted path must be refused");
+            let dangling = dir.path().join("dangling");
+            std::os::unix::fs::symlink(dir.path().join("no-such-target"), &dangling).unwrap();
+            extracted_binary_is_regular_file(&dangling)
+                .expect_err("a dangling symlink must be refused too");
         }
     }
 }
