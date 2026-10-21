@@ -317,6 +317,14 @@ mod tests {
     }
 
     #[test]
+    fn test_asset_target_calls_asset_target_for() {
+        assert_eq!(
+            asset_target(),
+            asset_target_for(std::env::consts::OS, std::env::consts::ARCH)
+        );
+    }
+
+    #[test]
     fn archive_binary_path_names_the_staged_folder() {
         let path = bin_path_in_archive("macos-aarch64");
         assert_eq!(
