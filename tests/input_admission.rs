@@ -1724,3 +1724,52 @@ fn issue650_markdown_honors_explicit_tighter_budgets() {
         assert!(result.unwrap_err().to_string().contains("INVALID_XML"));
     }
 }
+
+/// A view reads its changes under the caller's budget (#1353 review): a
+/// package past the compare budget's entry count, which the caller's budget
+/// admits, still prints a replacement's marks as one change, and its header
+/// counts that change, not each mark.
+#[test]
+fn a_view_lists_its_changes_under_the_callers_budget() {
+    let document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:body><w:p><w:r><w:t>Due in </w:t></w:r>\
+<w:del w:id=\"3\" w:author=\"Dan\" w:date=\"2026-10-18T12:00:00Z\"><w:r><w:delText>30</w:delText></w:r></w:del>\
+<w:ins w:id=\"4\" w:author=\"Dan\" w:date=\"2026-10-18T12:00:00Z\"><w:r><w:t>45</w:t></w:r></w:ins>\
+<w:r><w:t xml:space=\"preserve\"> days.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>";
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (name, body) in [
+        ("[Content_Types].xml", CONTENT_TYPES),
+        ("_rels/.rels", PACKAGE_RELS),
+        ("word/document.xml", document),
+    ] {
+        writer.start_file(name, options).unwrap();
+        writer.write_all(body.as_bytes()).unwrap();
+    }
+    let crowd = InputLimits::compare().max_entries + 10;
+    for i in 0..crowd {
+        writer
+            .start_file(format!("word/media/p{i}.bin"), options)
+            .unwrap();
+        writer.write_all(b"x").unwrap();
+    }
+    let docx = writer.finish().unwrap().into_inner();
+    let options = jubarte::markdown::MarkdownOptions {
+        ids: true,
+        page_markers: false,
+        input_limits: InputLimits {
+            max_entries: 2 * crowd,
+            ..InputLimits::default()
+        },
+        ..jubarte::markdown::MarkdownOptions::default()
+    };
+    let view = jubarte::markdown::docx_to_markdown(&docx, &options)
+        .expect("the caller's budget admits the package")
+        .markdown;
+    assert!(
+        view.contains("Due in {~~30~>45~~}{r3+4 @D} days."),
+        "{view}"
+    );
+    assert!(view.contains("2 marks shown as 1 change"), "{view}");
+}

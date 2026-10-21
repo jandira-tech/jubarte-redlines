@@ -23,8 +23,6 @@ use super::media::Extracted;
 
 /// Largest uncompressed zip entry we will inflate.
 pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024;
-/// Largest number of entries a container may declare.
-pub(crate) const MAX_ENTRIES: usize = 10_000;
 /// Deepest XML nesting we accept; deeper input is treated as hostile.
 const MAX_DEPTH: usize = crate::xmllinq::parse::PERMISSIVE_MAX_DEPTH;
 
@@ -40,10 +38,17 @@ pub(crate) struct Package<'a> {
 }
 
 impl<'a> Package<'a> {
-    pub(crate) fn open(bytes: &'a [u8], kind: &str) -> Result<Self, ConvertError> {
+    /// The package in `bytes`, read under `input_limits`: the caller's
+    /// budget, so a package it admits past the default entry count reads
+    /// (#1353 review).
+    pub(crate) fn open(
+        bytes: &'a [u8],
+        kind: &str,
+        input_limits: InputLimits,
+    ) -> Result<Self, ConvertError> {
         let archive = crate::opc::open_archive(Cursor::new(bytes))
             .map_err(|e| invalid(format!("not a valid {kind} file: {e}")))?;
-        check_limits(&archive)?;
+        check_limits(&archive, input_limits.max_entries)?;
         let names = archive
             .file_names()
             .map(|name| name.map(|name| name.into_owned()))
@@ -52,7 +57,7 @@ impl<'a> Package<'a> {
         Ok(Self {
             archive,
             names,
-            input_limits: InputLimits::default(),
+            input_limits,
         })
     }
 
@@ -187,13 +192,14 @@ impl<'a> Package<'a> {
     }
 }
 
-/// Reject containers that declare too many entries or oversized members.
+/// Reject containers that declare more than `max_entries` entries.
 pub(crate) fn check_limits<R: Read + std::io::Seek>(
     archive: &zip::ZipArchive<R>,
+    max_entries: usize,
 ) -> Result<(), ConvertError> {
-    if archive.len() > MAX_ENTRIES {
+    if archive.len() > max_entries {
         return Err(invalid(format!(
-            "container has {} entries (limit {MAX_ENTRIES})",
+            "container has {} entries (limit {max_entries})",
             archive.len()
         )));
     }
@@ -1609,7 +1615,7 @@ mod ooxml_package_boundary_tests {
             ("word/media/other.bin", b"owned chart"),
         ]);
         let frozen = bytes.clone();
-        let mut package = Package::open(&bytes, "docx").unwrap();
+        let mut package = Package::open(&bytes, "docx", InputLimits::default()).unwrap();
         let rels = package.rels("word/document.xml").unwrap();
         assert!(rels.get("incomplete").is_none());
         assert_eq!(
@@ -1686,7 +1692,7 @@ mod ooxml_package_boundary_tests {
                 .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
         );
         let bytes = package_bytes(&entries);
-        let mut package = Package::open(&bytes, "docx").unwrap();
+        let mut package = Package::open(&bytes, "docx", InputLimits::default()).unwrap();
         let rels = package.rels("word/document.xml").unwrap();
         let media = Media::load(&mut package, &rels, Some(Extracted::new("images")));
         assert_eq!(media.files.len(), MAX_MEDIA_PARTS);

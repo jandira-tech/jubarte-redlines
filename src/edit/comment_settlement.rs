@@ -127,7 +127,11 @@ impl AnchorChanges {
                 super::err("INVALID_DOCUMENT", None, e.to_string())
             };
             (
-                crate::changes::list_changes_tolerant(source).map_err(invalid)?,
+                crate::changes::list_changes_tolerant(
+                    source,
+                    crate::admission::InputLimits::compare(),
+                )
+                .map_err(invalid)?,
                 crate::changes::member_wholes(source).map_err(invalid)?,
             )
         };

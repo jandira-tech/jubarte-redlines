@@ -23,6 +23,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::admission::InputLimits;
 use crate::namespaces::{MC, W};
 use crate::opc::PartFs;
 use crate::revision_processor::{FROZEN_NS, Resolution, resolve_package, revision_bearing_parts};
@@ -603,26 +604,37 @@ pub(crate) fn check_whole_changes(docx: &[u8], filter: &ChangeFilter) -> Result<
 
 /// [`list_changes`] for a view that already renders the package: no
 /// admission, and a part that does not parse lists nothing, so the view's
-/// count fails only where the package itself does.
-pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
-    Ok(changes_in(&tolerant(docx)?))
+/// count fails only where the package itself does. The package opens
+/// under `limits`, the budget the view read it with.
+pub(crate) fn list_changes_tolerant(
+    docx: &[u8],
+    limits: InputLimits,
+) -> Result<Vec<Change>, ChangeError> {
+    Ok(changes_in(&tolerant(docx, limits)?))
 }
 
 /// [`list_logical_changes`] as [`list_changes_tolerant`] lists the marks:
 /// the changes a view's tags name.
-pub(crate) fn list_logical_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
-    Ok(logical_changes_in(&tolerant(docx)?))
+pub(crate) fn list_logical_changes_tolerant(
+    docx: &[u8],
+    limits: InputLimits,
+) -> Result<Vec<Change>, ChangeError> {
+    Ok(logical_changes_in(&tolerant(docx, limits)?))
 }
 
-/// The package a view reads, opened without admission. Its parts parse
-/// permissively, so one nesting deeper than the view reads is refused
-/// before the parser recurses into it (#1353 review).
-fn tolerant(docx: &[u8]) -> Result<PartFs, ChangeError> {
+/// The package a view reads, opened without admission under `limits`, the
+/// view's own budget (#1353 review): a package the caller admits past the
+/// compare budget still lists its changes, and a tighter budget inflates
+/// no more than the view does. Its parts parse permissively, so one
+/// nesting deeper than the view reads is refused before the parser
+/// recurses into it (#1353 review).
+fn tolerant(docx: &[u8], limits: InputLimits) -> Result<PartFs, ChangeError> {
     use crate::xmllinq::parse::{PERMISSIVE_MAX_DEPTH, nests_deeper};
 
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
+    let normalized = crate::strict_translation::strict_to_transitional_docx_within(docx, limits)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
-    let pkg = PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
+    let pkg = PartFs::open_within(&normalized, limits)
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
     for (part, _) in revision_bearing_parts(&pkg) {
         if pkg
             .part_string(&part)
@@ -786,7 +798,7 @@ pub(crate) fn why_removed(
 /// change: a removed comment's reason names the whole change, as `changes`
 /// lists it and a selection names it (#1261).
 pub(crate) fn member_wholes(docx: &[u8]) -> Result<HashMap<String, String>, ChangeError> {
-    Ok(list_logical_changes_tolerant(docx)?
+    Ok(list_logical_changes_tolerant(docx, InputLimits::compare())?
         .into_iter()
         .flat_map(|change| {
             change
@@ -835,7 +847,7 @@ fn resolve_with_report(
     }
     let comments =
         crate::comments::list_comments(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
-    let listed = list_changes_tolerant(docx)?;
+    let listed = list_changes_tolerant(docx, InputLimits::compare())?;
     let wholes = member_wholes(docx)?;
     let filter = filter.normalized()?;
     let settled: Vec<String> = listed

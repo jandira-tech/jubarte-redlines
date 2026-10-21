@@ -97,7 +97,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     // The marks Word wrote for one edit print the whole change's id, as
     // `changes` lists it (#1261). A package the listing cannot read prints
     // each mark's own.
-    let logical = crate::changes::list_logical_changes_tolerant(bytes).ok();
+    let logical = crate::changes::list_logical_changes_tolerant(bytes, options.input_limits).ok();
     let wholes = logical.as_deref().map(agent::wholes_of).unwrap_or_default();
     agent::with_wholes(wholes, || {
         agent::with_logical(logical, || convert_marks(bytes, options))
@@ -106,8 +106,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
 
 /// [`convert`], its tags naming the changes [`agent::with_wholes`] set.
 fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
-    let mut package = Package::open(bytes, "DOCX")?;
-    package.input_limits = options.input_limits;
+    let mut package = Package::open(bytes, "DOCX", options.input_limits)?;
     package.check_tag_policy()?;
     let main = package.main_part("word/document.xml")?;
     let mut document = package
@@ -1272,7 +1271,8 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                 .as_ref()
                 .is_some_and(|s| s.child("trackRevisions").is_some()),
             tags,
-            changes: crate::changes::list_changes_tolerant(bytes).map_err(ooxml::invalid)?,
+            changes: crate::changes::list_changes_tolerant(bytes, options.input_limits)
+                .map_err(ooxml::invalid)?,
             comments: comment_facts,
             handles: &handles,
             done: &threads.done,
@@ -1384,7 +1384,7 @@ fn resolve_author(by: &str, handles: &agent::Handles) -> String {
 /// indentation) and its `dcterms:created` when that is a timestamp; `None`
 /// for each the package does not tell.
 pub(crate) fn creator_created(docx: &[u8]) -> (Option<String>, Option<String>) {
-    let Some(core) = Package::open(docx, "DOCX")
+    let Some(core) = Package::open(docx, "DOCX", crate::admission::InputLimits::default())
         .ok()
         .and_then(|mut package| package.xml("docProps/core.xml").ok().flatten())
     else {
