@@ -3901,7 +3901,16 @@ fn resolve_with_comments(
         .map(|xml| style_records::Levels::parse(&xml))
         .unwrap_or_default();
     let mut kept = false;
+    // #1223 settles revisions inside comment bodies; a comments part with
+    // none is left as it is, byte for byte, as Word's redline carries it.
+    let untouched_comments = comments_part(pkg).filter(|part| {
+        comments::Parsed::load(pkg, part)
+            .is_some_and(|p| !element_has_tracked_revisions(&p.dom, p.root))
+    });
     for (part, is_styles) in parts.clone() {
+        if untouched_comments.as_ref() == Some(&part) {
+            continue;
+        }
         process_part(pkg, &part, |dom, root| {
             if let Some(freeze) = freeze {
                 freeze(&part, dom, root);

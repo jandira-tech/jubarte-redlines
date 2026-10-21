@@ -21,6 +21,8 @@ use jubarte::namespaces::W;
 use jubarte::opc::PartFs;
 use jubarte::xmllinq::Dom;
 
+use common::docx::W_NS;
+
 const FRESH: &str = "tests/corpus/fresh_docx_fixtures_and_redlines";
 const ORIG: &str = "tests/corpus/_fixtures/original_fixtures";
 
@@ -116,9 +118,6 @@ fn optional_bench_docx(name: &str) -> Option<Vec<u8>> {
 
 #[test]
 fn w1_superset_carries_revised_parts_byte_identical_with_anchors() {
-    if !orig_fixtures_present() {
-        return;
-    }
     let a_path = format!("{FRESH}/docx_lots_of_comments.docx");
     let b_path = format!("{FRESH}/docx_lots_of_comments_addition.docx");
     if !require_path(&a_path) || !require_path(&b_path) {
@@ -167,6 +166,52 @@ fn w1_superset_carries_revised_parts_byte_identical_with_anchors() {
 /// B (product-roadmap suggesting-insertions) has none. GT carries A's
 /// comments WITH anchors (they sit inside w:del around the deleted text).
 /// Current bug: parts copied but 0 anchors — an orphaned comments part.
+/// A Word comments part: rsids on the paragraph, `<w:annotationRef/>`
+/// spelled without a space, a line break after the declaration.
+fn word_comments_xml() -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<w:comments xmlns:w=\"{W_NS}\"><w:comment w:id=\"0\" w:author=\"R\" w:date=\"2026-01-01T00:00:00Z\" w:initials=\"R\"><w:p w:rsidR=\"00460ED2\" w:rsidRDefault=\"00460ED2\" w:rsidP=\"00460ED2\"><w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:annotationRef/></w:r><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"
+    )
+}
+
+/// A commented paragraph reading `text`, then `tail`: more body XML.
+fn commented_docx(text: &str, tail: &str) -> Vec<u8> {
+    let comments = word_comments_xml();
+    common::docx::docx_with(
+        &format!(
+            r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t xml:space="preserve">{text}</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>{tail}"#
+        ),
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    )
+}
+
+/// B's tracked insertion makes the compare settle both sources' revisions
+/// before the diff, and #1223 made the comments part one it settles. That
+/// must leave a comments part with no revision in it as it was: the redline
+/// carries B's part byte for byte, as Word's does, rsids and Word's spelling
+/// of empty elements included.
+#[test]
+fn a_comments_part_with_no_revision_reaches_the_redline_byte_identical() {
+    let a = commented_docx("Hello world", "");
+    let b = commented_docx(
+        "Hello there world",
+        r#"<w:p><w:ins w:id="9" w:author="R" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Added.</w:t></w:r></w:ins></w:p>"#,
+    );
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = open_valid_output(&out);
+    let pkg_b = PartFs::open(&b).unwrap();
+    assert_eq!(
+        pkg.part_string("word/comments.xml"),
+        pkg_b.part_string("word/comments.xml"),
+        "B's comments part must reach the redline byte-identical"
+    );
+}
+
 #[test]
 fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
     if !orig_fixtures_present() {
