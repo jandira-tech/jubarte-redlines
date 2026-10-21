@@ -2752,3 +2752,73 @@ fn a_style_named_like_a_spacing_word_is_not_read_as_spacing() {
         "the view:\n{view}"
     );
 }
+
+#[test]
+fn spacing_past_words_ui_range_comes_back() {
+    // Word's dialogs stop at 1584pt, but the file may hold more; the view
+    // prints what the paragraph holds, and the reader takes it back (#1479
+    // review): a clause it refused left no `w:spacing` at all.
+    let body = r#"<w:p><w:pPr><w:spacing w:before="32000"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="32000" w:lineRule="auto"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="32000" w:lineRule="exact"/></w:pPr><w:r><w:t>Three</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="40000"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+    let source = common::docx::docx(body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let want = own_spacings(&part_string(&source, "word/document.xml").unwrap());
+    let got = own_spacings(&part_string(&written, "word/document.xml").unwrap());
+    assert_eq!(got, want, "the view:\n{view}");
+}
+
+#[test]
+fn auto_spacing_comes_back_as_before_auto() {
+    // `w:beforeAutospacing` (HTML paste writes it) puts Word's automatic
+    // space before the paragraph, whatever `w:before` says: `before auto`.
+    let body = r#"<w:p><w:pPr><w:spacing w:before="100" w:beforeAutospacing="1" w:after="100" w:afterAutospacing="1"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:after="120" w:afterAutospacing="0"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:beforeAutospacing="true" w:line="276" w:lineRule="auto"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+    let source = common::docx::docx(body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert!(
+        view.contains("<!-- p0 before auto, after auto -->"),
+        "{view}"
+    );
+    assert!(view.contains("<!-- p1 after 6pt -->"), "{view}");
+    assert!(view.contains("p2 before auto line 1.15"), "{view}");
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let spacings = own_spacings(&part_string(&written, "word/document.xml").unwrap());
+    let pair = |a: &str, v: &str| (a.to_string(), v.to_string());
+    assert_eq!(
+        spacings[..3],
+        [
+            vec![
+                pair("afterAutospacing", "1"),
+                pair("beforeAutospacing", "1")
+            ],
+            vec![pair("after", "120")],
+            vec![
+                pair("beforeAutospacing", "1"),
+                pair("line", "276"),
+                pair("lineRule", "auto")
+            ],
+        ],
+        "the view:\n{view}"
+    );
+}

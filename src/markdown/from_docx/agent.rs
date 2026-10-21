@@ -1285,7 +1285,9 @@ pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
 /// A paragraph's own spacing (`w:spacing`, #1473) in the styles legend's
 /// words, each value exact: `before 6pt`, `after 10.05pt`, `line 1.5` (a
 /// multiple of a single line) or `line 8.65pt exact` / `atLeast`. A Strict
-/// package's universal measures (`12.95pt`) read as the twips they are.
+/// package's universal measures (`12.95pt`) read as the nearest twip, as
+/// Word stores them. `before auto` is Word's automatic space
+/// (`w:beforeAutospacing`), which Word puts in place of `w:before`.
 pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String> {
     let twips = |attr: &str| {
         let v = spacing.attr(attr)?;
@@ -1295,8 +1297,13 @@ pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String> {
             .filter(|t| t.is_finite() && *t >= 0.0)
     };
     let mut out = Vec::new();
-    for (attr, word) in [("before", "before"), ("after", "after")] {
-        if let Some(t) = twips(attr) {
+    for word in ["before", "after"] {
+        let auto = spacing
+            .attr(&format!("{word}Autospacing"))
+            .is_some_and(|v| matches!(v, "1" | "true" | "on"));
+        if auto {
+            out.push(format!("{word} auto"));
+        } else if let Some(t) = twips(word) {
             out.push(format!("{word} {}", exact_points(t)));
         }
     }
