@@ -547,7 +547,9 @@ fn decode(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn element_from(
+/// An element, childless, from its start tag: its name, its attributes
+/// as the parser normalizes them, and the namespaces in scope.
+pub(crate) fn element_from(
     start: &quick_xml::events::BytesStart<'_>,
     inherited: &Arc<HashMap<String, String>>,
 ) -> Result<Element, String> {

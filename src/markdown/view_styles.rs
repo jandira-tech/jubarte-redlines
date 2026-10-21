@@ -28,6 +28,10 @@
 //! The writer sets a property only when the legend's value differs from
 //! what the style already inherits: document defaults for the default and
 //! character styles, and the default paragraph style for other paragraph styles.
+//! The default style's spacing is written as the document default itself
+//! (`w:pPrDefault`), where Word keeps it.
+
+use std::fmt::Write as _;
 
 use super::from_docx::Element;
 use super::xml::{FormatMark, escape};
@@ -349,13 +353,87 @@ fn unquote(value: &str) -> Option<String> {
     }
 }
 
-/// The styles the YAML header's `styles:` block describes: the default
-/// style's line (`Normal: …`, its id quoted when it must be), each
-/// heading's (`"#": Heading1, …`) and each other style's (`TOC2: …`), after
-/// the default's. Lines that do not read are left out.
-/// The legend's `table:` style, which every table takes: its id and, when
-/// the legend says `all borders 0.5pt`, that border in eighths of a point.
-pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<String>)> {
+/// A table style's borders as its legend entry states them.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum TableBorders {
+    /// `all borders 0.5pt`: every side one single line of this size, in
+    /// eighths of a point.
+    All(u32),
+    /// `borders bottom double 0.75pt`: each side the style sets, in Word's
+    /// order (top, left, bottom, right, insideH, insideV).
+    Sides(Vec<BorderSide>),
+}
+
+/// One side of a `borders …` clause: `top single 1.5pt #FF0000 space 2pt`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BorderSide {
+    /// `top`, `left`, `bottom`, `right`, `insideH` or `insideV`.
+    pub side: String,
+    /// The `w:val`: `single`, `double`, `nil`, …
+    pub val: String,
+    /// The `w:sz`, in eighths of a point.
+    pub size: Option<u32>,
+    /// The `w:color` when it is not `auto`.
+    pub color: Option<String>,
+    /// The `w:space`, in points, when it is not zero.
+    pub space: Option<u32>,
+}
+
+/// The sides a table style's `w:tblBorders` holds, in the order Word's
+/// schema puts them.
+pub(crate) const TABLE_BORDER_SIDES: [&str; 6] =
+    ["top", "left", "bottom", "right", "insideH", "insideV"];
+
+/// A `borders …` clause's sides (`borders bottom double 0.75pt`): a side
+/// name, its value, then a size in points, a `#RRGGBB` colour and a
+/// `space Npt`, each optional. A side the grammar does not know, or one
+/// named twice, reads as no clause.
+fn border_sides(clause: &str) -> Option<Vec<BorderSide>> {
+    let mut tokens = clause.strip_prefix("borders ")?.split(' ').peekable();
+    let mut sides: Vec<BorderSide> = Vec::new();
+    while let Some(side) = tokens.next() {
+        if !TABLE_BORDER_SIDES.contains(&side) || sides.iter().any(|s| s.side == side) {
+            return None;
+        }
+        let val = tokens
+            .next()
+            .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric()))?;
+        let mut border = BorderSide {
+            side: side.to_string(),
+            val: val.to_string(),
+            size: None,
+            color: None,
+            space: None,
+        };
+        while let Some(&token) = tokens.peek() {
+            if TABLE_BORDER_SIDES.contains(&token) {
+                break;
+            }
+            tokens.next();
+            if let Some(pt) = token.strip_suffix("pt").filter(|_| border.size.is_none()) {
+                let pt = pt
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|pt| (0.0..=255.0).contains(pt))?;
+                border.size = Some((pt * 8.0).round() as u32);
+            } else if let Some(hex) = token.strip_prefix('#').filter(|_| border.color.is_none()) {
+                (hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit())).then_some(())?;
+                border.color = Some(hex.to_string());
+            } else if token == "space" && border.space.is_none() {
+                let pt = tokens.next()?.strip_suffix("pt")?.parse::<u32>().ok()?;
+                border.space = Some(pt);
+            } else {
+                return None;
+            }
+        }
+        sides.push(border);
+    }
+    (!sides.is_empty()).then_some(sides)
+}
+
+/// The legend's `table:` style, which every table takes: its id, the
+/// borders its entry states and the name it gives the style.
+pub(super) fn table_style(yaml: &str) -> Option<(String, Option<TableBorders>, Option<String>)> {
     legend_line(yaml, "table: ")
         .as_deref()
         .and_then(table_style_entry)
@@ -367,7 +445,7 @@ pub(super) fn table_style(yaml: &str) -> Option<(String, Option<u32>, Option<Str
 /// entry states.
 pub(super) fn table_legend(
     yaml: &str,
-) -> std::collections::BTreeMap<String, (Option<u32>, Option<String>)> {
+) -> std::collections::BTreeMap<String, (Option<TableBorders>, Option<String>)> {
     let mut out = std::collections::BTreeMap::new();
     let Some(value) = legend_line(yaml, "tables: ") else {
         return out;
@@ -405,7 +483,7 @@ fn legend_line(yaml: &str, key: &str) -> Option<String> {
 /// its id, the border it states and the name it gives the style, with
 /// the rest of the line after it (the `tables:` legend holds one entry
 /// per style). A clause that is none of the grammar's ends the entry.
-type TableStyleEntry = (String, Option<u32>, Option<String>);
+type TableStyleEntry = (String, Option<TableBorders>, Option<String>);
 
 fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
     let (id, mut rest) = take_clause(value);
@@ -421,7 +499,11 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
                 .and_then(|pt| pt.parse::<f64>().ok())
                 .filter(|pt| (0.25..=6.0).contains(pt))
         {
-            border = Some((pt * 8.0).round() as u32);
+            border = Some(TableBorders::All((pt * 8.0).round() as u32));
+        } else if border.is_none()
+            && let Some(sides) = border_sides(&clause)
+        {
+            border = Some(TableBorders::Sides(sides));
         } else if name.is_none()
             && let Some(named) = clause
                 .strip_prefix("named ")
@@ -497,15 +579,24 @@ pub(super) fn legend(yaml: &str) -> Vec<StyleSpec> {
 /// legend describes it, in place of its own definition. A default style
 /// other than `Normal` takes the default from the part's own.
 pub(super) fn apply(styles: &str, specs: &[StyleSpec]) -> String {
-    let defaults = document_defaults(styles);
+    let mut defaults = document_defaults(styles);
     let mut out = styles.to_string();
     let base = specs.iter().find(|s| s.default);
     let from_base = base.map(effective);
-    if base.is_some() {
+    if let Some(look) = &from_base {
         out = out.replace(
             "w:type=\"paragraph\" w:default=\"1\"",
             "w:type=\"paragraph\"",
         );
+        // The default style's spacing is the document's default, as Word
+        // keeps it: a table style's own spacing wins over `docDefaults` in
+        // its cells, and would not over the default style's (ISO/IEC 29500
+        // style precedence).
+        with_default_spacing(&mut out, look);
+        defaults.before = look.before;
+        defaults.after = look.after;
+        defaults.line_twips = look.line_twips;
+        defaults.line_rule.clone_from(&look.line_rule);
     }
     for spec in specs {
         out = without_style(&out, &spec.id);
@@ -524,6 +615,107 @@ pub(super) fn apply(styles: &str, specs: &[StyleSpec]) -> String {
         }
     }
     out
+}
+
+/// The `w:pPr` children CT_PPrBase puts after `w:spacing`.
+const AFTER_SPACING: [&str; 11] = [
+    "ind",
+    "contextualSpacing",
+    "mirrorIndents",
+    "suppressOverlap",
+    "jc",
+    "textDirection",
+    "textAlignment",
+    "textboxTightWrap",
+    "outlineLvl",
+    "divId",
+    "cnfStyle",
+];
+
+/// `out` with `look`'s spacing as the document's paragraph default
+/// (`w:docDefaults/w:pPrDefault/w:pPr/w:spacing`) in place of the spacing
+/// it had, each element made where the part lacks it: `w:docDefaults`
+/// first in `w:styles`, `w:pPrDefault` after `w:rPrDefault`, the spacing
+/// where CT_PPrBase puts it. A part with no `w:styles` takes nothing.
+fn with_default_spacing(out: &mut String, look: &Given) {
+    let mut spacing = String::from("<w:spacing");
+    if look.before > 0 {
+        let _ = write!(spacing, " w:before=\"{}\"", look.before);
+    }
+    let _ = write!(
+        spacing,
+        " w:after=\"{}\" w:line=\"{}\" w:lineRule=\"{}\"/>",
+        look.after, look.line_twips, look.line_rule
+    );
+    let ppr = format!("<w:pPr>{spacing}</w:pPr>");
+    let default = format!("<w:pPrDefault>{ppr}</w:pPrDefault>");
+    let Some(defaults) = open_tag(out, "docDefaults", 0..out.len()) else {
+        if let Some(styles) = open_tag(out, "styles", 0..out.len()).filter(|t| !t.empty) {
+            out.insert_str(
+                styles.end,
+                &format!("<w:docDefaults>{default}</w:docDefaults>"),
+            );
+        }
+        return;
+    };
+    if defaults.empty {
+        out.replace_range(
+            defaults.start..defaults.end,
+            &format!("<w:docDefaults>{default}</w:docDefaults>"),
+        );
+        return;
+    }
+    let Some(close) = out[defaults.end..]
+        .find("</w:docDefaults>")
+        .map(|at| defaults.end + at)
+    else {
+        return;
+    };
+    let Some(ppr_default) = open_tag(out, "pPrDefault", defaults.end..close) else {
+        out.insert_str(close, &default);
+        return;
+    };
+    if ppr_default.empty {
+        out.replace_range(ppr_default.start..ppr_default.end, &default);
+        return;
+    }
+    let Some(default_close) = out[ppr_default.end..close]
+        .find("</w:pPrDefault>")
+        .map(|at| ppr_default.end + at)
+    else {
+        return;
+    };
+    let Some(own) = open_tag(out, "pPr", ppr_default.end..default_close) else {
+        out.insert_str(ppr_default.end, &ppr);
+        return;
+    };
+    if own.empty {
+        out.replace_range(own.start..own.end, &ppr);
+        return;
+    }
+    let Some(mut own_close) = out[own.end..default_close]
+        .rfind("</w:pPr>")
+        .map(|at| own.end + at)
+    else {
+        return;
+    };
+    if let Some(old) = open_tag(out, "spacing", own.end..own_close) {
+        let end = if old.empty {
+            old.end
+        } else {
+            out[old.end..own_close]
+                .find("</w:spacing>")
+                .map_or(old.end, |at| old.end + at + "</w:spacing>".len())
+        };
+        out.replace_range(old.start..end, "");
+        own_close -= end - old.start;
+    }
+    let at = AFTER_SPACING
+        .iter()
+        .filter_map(|name| open_tag(out, name, own.end..own_close).map(|t| t.start))
+        .min()
+        .unwrap_or(own_close);
+    out.insert_str(at, &spacing);
 }
 
 /// `styles` without the definition of style `id`.
@@ -1120,11 +1312,16 @@ mod tests {
         assert_eq!(out.matches("w:styleId=\"Normal\"").count(), 1, "{out}");
         assert!(out.contains("w:styleId=\"Quote\""), "{out}");
         let normal = style_element(&out, "Normal");
+        // The default style's spacing is the document's default.
         assert!(
-            normal.contains("<w:spacing w:after=\"120\" w:line=\"240\" w:lineRule=\"atLeast\"/>"),
-            "{normal}"
+            out.starts_with(
+                "<w:styles><w:docDefaults><w:pPrDefault><w:pPr>\
+                 <w:spacing w:after=\"120\" w:line=\"240\" w:lineRule=\"atLeast\"/>\
+                 </w:pPr></w:pPrDefault></w:docDefaults>"
+            ),
+            "{out}"
         );
-        assert!(!normal.contains("w:before=\"0\""), "{normal}");
+        assert!(!normal.contains("<w:spacing"), "{normal}");
         assert!(!normal.contains("<w:jc"), "{normal}");
         assert!(!normal.contains("<w:b"), "{normal}");
         assert!(
@@ -1276,5 +1473,128 @@ mod tests {
         assert!(!quote.contains("w:rFonts"), "{quote}");
         assert!(!quote.contains("<w:sz"), "{quote}");
         assert!(!quote.contains("<w:jc"), "{quote}");
+    }
+
+    /// The `w:pPrDefault` of a styles part, or nothing.
+    fn paragraph_defaults(styles: &str) -> &str {
+        let Some(start) = styles.find("<w:pPrDefault") else {
+            return "";
+        };
+        let end = styles[start..]
+            .find("</w:pPrDefault>")
+            .map_or(styles.len(), |i| start + i + "</w:pPrDefault>".len());
+        &styles[start..end]
+    }
+
+    #[test]
+    fn the_default_style_s_spacing_is_the_documents_default() {
+        // Word keeps the body's spacing in `docDefaults`. A table style's
+        // own spacing then wins in its cells; over `Normal`'s it would not
+        // (ISO/IEC 29500 style precedence), so the cells would grow.
+        let styles = "<w:styles><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault>\
+            <w:pPrDefault><w:pPr><w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault>\
+            </w:docDefaults></w:styles>";
+        let out = apply(
+            styles,
+            &legend(
+                "styles:\n  Normal: Calibri 11pt, after 10pt, line 1.15, left\n  \
+                 Quote: Calibri 11pt, before 6pt, left\n",
+            ),
+        );
+        assert_eq!(
+            paragraph_defaults(&out),
+            "<w:pPrDefault><w:pPr><w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+             </w:pPr></w:pPrDefault>",
+            "{out}"
+        );
+        let normal = style_element(&out, "Normal");
+        assert!(!normal.contains("<w:spacing"), "{normal}");
+        // A style based on the default still writes what it sets apart.
+        let quote = style_element(&out, "Quote");
+        assert!(quote.contains("<w:spacing w:before=\"120\"/>"), "{quote}");
+        // An omitted spacing is none and single, as the legend says, so a
+        // template's own default does not survive under it.
+        let out = apply(styles, &legend("styles:\n  Normal: Calibri 11pt, left\n"));
+        assert_eq!(
+            paragraph_defaults(&out),
+            "<w:pPrDefault><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+             </w:pPr></w:pPrDefault>",
+            "{out}"
+        );
+        assert!(
+            !style_element(&out, "Normal").contains("<w:spacing"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn the_default_spacing_lands_where_the_schema_puts_it() {
+        let specs = legend(
+            "styles:\n  Normal: Calibri 11pt, before 3pt, after 6pt, line 12pt exact, left\n",
+        );
+        let spacing =
+            "<w:spacing w:before=\"60\" w:after=\"120\" w:line=\"240\" w:lineRule=\"exact\"/>";
+        // No docDefaults: one is made, first in the part.
+        let out = apply("<w:styles><w:latentStyles/></w:styles>", &specs);
+        assert!(
+            out.starts_with(&format!(
+                "<w:styles><w:docDefaults><w:pPrDefault><w:pPr>{spacing}</w:pPr></w:pPrDefault>\
+                 </w:docDefaults><w:latentStyles/>"
+            )),
+            "{out}"
+        );
+        // Run defaults only: the paragraph defaults follow them.
+        let out = apply(
+            "<w:styles><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault></w:docDefaults></w:styles>",
+            &specs,
+        );
+        assert!(
+            out.contains(&format!(
+                "<w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr>{spacing}</w:pPr>\
+                 </w:pPrDefault></w:docDefaults>"
+            )),
+            "{out}"
+        );
+        // Other paragraph defaults stay, the spacing between them in
+        // CT_PPrBase order (after widowControl, before ind).
+        let out = apply(
+            "<w:styles><w:docDefaults><w:pPrDefault><w:pPr><w:widowControl/>\
+             <w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/><w:ind w:left=\"0\"/></w:pPr>\
+             </w:pPrDefault></w:docDefaults></w:styles>",
+            &specs,
+        );
+        assert_eq!(
+            paragraph_defaults(&out),
+            format!(
+                "<w:pPrDefault><w:pPr><w:widowControl/>{spacing}<w:ind w:left=\"0\"/></w:pPr></w:pPrDefault>"
+            ),
+            "{out}"
+        );
+        let out = apply(
+            "<w:styles><w:docDefaults><w:pPrDefault><w:pPr><w:jc w:val=\"left\"/></w:pPr>\
+             </w:pPrDefault></w:docDefaults></w:styles>",
+            &specs,
+        );
+        assert_eq!(
+            paragraph_defaults(&out),
+            format!("<w:pPrDefault><w:pPr>{spacing}<w:jc w:val=\"left\"/></w:pPr></w:pPrDefault>"),
+            "{out}"
+        );
+        // An empty pPrDefault, or one without its pPr.
+        for empty in [
+            "<w:pPrDefault/>",
+            "<w:pPrDefault></w:pPrDefault>",
+            "<w:pPrDefault><w:pPr/></w:pPrDefault>",
+        ] {
+            let out = apply(
+                &format!("<w:styles><w:docDefaults>{empty}</w:docDefaults></w:styles>"),
+                &specs,
+            );
+            assert_eq!(
+                paragraph_defaults(&out),
+                format!("<w:pPrDefault><w:pPr>{spacing}</w:pPr></w:pPrDefault>"),
+                "{out}"
+            );
+        }
     }
 }

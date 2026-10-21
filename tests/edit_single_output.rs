@@ -576,25 +576,34 @@ fn a_forced_bundle_never_deletes_an_input_inside_the_destination() {
 }
 
 /// V2-05: a failure before the commit writes neither the output nor its
-/// staging file.
-#[cfg(unix)]
+/// staging file. The output's parent is a regular file, so staging fails
+/// with "Not a directory" for every user: a read-only directory would not
+/// stop root, and the self-hosted CI runner runs as root.
 #[test]
 fn a_failed_commit_leaves_no_output_or_staging_file() {
-    use std::os::unix::fs::PermissionsExt;
+    fn names(dir: &Path) -> Vec<std::ffi::OsString> {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    }
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     letter(dir);
-    let ro = dir.join("ro");
-    std::fs::create_dir(&ro).unwrap();
-    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    std::fs::write(dir.join("plain"), b"a file, not a directory").unwrap();
+    let before = names(dir);
     let mut args = EDIT.to_vec();
-    args.extend(["-o", "ro/out.docx"]);
+    args.extend(["-o", "plain/out.docx"]);
     let (code, _, err) = run(dir, &args);
     assert_eq!(code, 1, "{err}");
-    assert!(err.contains("ro/out.docx"), "{err}");
-    let left: Vec<_> = std::fs::read_dir(&ro).unwrap().collect();
-    assert!(left.is_empty(), "no output and no staging file: {left:?}");
-    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(err.contains("plain/out.docx"), "{err}");
+    assert_eq!(names(dir), before, "no output and no staging file");
+    assert_eq!(
+        std::fs::read(dir.join("plain")).unwrap(),
+        b"a file, not a directory"
+    );
 }
 
 /// C3/M18: one stable refusal and status for occupied destinations.

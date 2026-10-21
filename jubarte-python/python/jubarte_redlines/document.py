@@ -589,7 +589,9 @@ def diff(
 ) -> Diff:
     """The changes from ``old`` to ``new``: the changed paragraphs, each at
     its ``pN`` id in a Word document or ``line:N`` in Markdown, with
-    ``[-old-]{+new+}`` changes and CriticMarkup comments.
+    ``[-old-]{+new+}`` changes and CriticMarkup comments. When a side is a
+    Word document, a replacement inside a paragraph reads insertion first,
+    ``{+new+}[-old-]``, as Word Compare writes it.
 
     Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
     or a path (``.md``/``.markdown`` read as Markdown, anything else as
