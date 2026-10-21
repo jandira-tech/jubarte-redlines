@@ -1581,7 +1581,7 @@ fn lcs_ops(a: &[&str], b: &[&str]) -> Vec<(Option<usize>, Option<usize>)> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::io::{Cursor, Write};
@@ -2238,7 +2238,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod boundary_coverage_tests {
     use super::*;
 
@@ -2502,7 +2502,7 @@ mod boundary_coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod raw_source_projection_contract_tests {
     use super::*;
 

@@ -58,3 +58,5 @@ jobs:
             ["**/package-lock.json", "**/pnpm-lock.yaml", "**/yarn.lock", "**/bun.lock",
             "**/bun.lockb", "**/uv.lock", "**/poetry.lock", "**/Cargo.lock", "**/*.min.js",
             "**/*.map", "dist/**", "build/**", ".next/**", "node_modules/**"]
+          rules_file: ""
+          rules_directory: ""
