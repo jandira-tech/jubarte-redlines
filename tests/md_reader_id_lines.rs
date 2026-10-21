@@ -105,55 +105,50 @@ const AUTHORS: &str =
 
 #[test]
 fn revisions_keep_the_numbers_their_tags_name() {
-    let body = "<!-- p0 -->\nPay {~~thirty~>forty~~}{>>r7+9 @AC<<} days {++from today++}{>>r12 @AC<<}.\n\n\
-                <!-- p1 -->\n{--Gone.--}{>>r3 @AC<<} Kept.\n";
+    let body = "<!-- p0 -->\nPay {~~thirty~>forty~~}{r7+9 @AC} days {++from today++}{r12 @AC}.\n\n\
+                <!-- p1 -->\n{--Gone.--}{r3 @AC} Kept.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
 
 #[test]
-fn a_revision_number_is_written_as_often_as_the_view_names_it() {
-    // Two separately named changes keep the number both name (`r5` twice,
-    // as Word's own files repeat an id). A change written as several marks
-    // (two runs) keeps its number on the first; the rest take fresh ones,
-    // so a number the view names once is on no two marks.
-    let body = "<!-- p0 -->\n{++**Bold** plain++}{>>r4 @AC<<} and {++one++}{>>r5 @AC<<} \
-                {++two++}{>>r5 @AC<<}.\n";
-    let docx = markdown_to_docx(
+fn a_repeated_revision_number_is_renamed_for_a_separate_change() {
+    // Formatting stays in r4; the live separator makes the two r5 marks
+    // separate elements, so the second receives a fresh OOXML id (#1137).
+    let body = "<!-- p0 -->\n{++**Bold** plain++}{r4 @AC} and {++one++}{r5 @AC} \
+                {++two++}{r5 @AC}.\n";
+    let written = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}")),
         &DocxOptions::default(),
     )
-    .expect("the view reads")
-    .docx;
-    // The one duplicate is the twice-named `r5`, as in Word's own files;
-    // nothing else may be invalid.
-    let report = common::validity::check_word_valid_package(&docx);
-    let repeated: Vec<&jubarte::validate::Finding> = report
-        .findings
-        .iter()
-        .filter(|finding| finding.code == "DUPLICATE_REVISION_ID")
-        .collect();
-    assert_eq!(report.findings.len(), repeated.len(), "{report:#?}");
+    .expect("the view reads");
+    assert_word_valid_package(&written.docx);
+    assert_eq!(written.warnings.len(), 1, "{:?}", written.warnings);
     assert!(
-        repeated.len() == 1 && repeated[0].message.contains("'5'"),
-        "{report:#?}"
+        written.warnings[0].contains("r5")
+            && written.warnings[0].contains("r6")
+            && written.warnings[0].contains("line"),
+        "{:?}",
+        written.warnings
     );
-    let document = common::docx::part_string(&docx, "word/document.xml").expect("document.xml");
-    assert!(
-        document.matches("w:ins w:id=\"5\"").count() == 2,
-        "r5 on both changes: {document}"
-    );
-    assert!(
-        document.matches("w:ins w:id=\"4\"").count() == 1,
-        "r4 on the first mark only: {document}"
-    );
+    let document = part_string(&written.docx, "word/document.xml").expect("document.xml");
+    assert_eq!(document.matches("<w:ins ").count(), 3, "{document}");
+    for id in [4, 5, 6] {
+        assert_eq!(
+            document.matches(&format!("w:ins w:id=\"{id}\"")).count(),
+            1,
+            "{document}"
+        );
+    }
+    let renamed = body.replace("{++two++}{r5 @AC}", "{++two++}{r6 @AC}");
+    assert_eq!(round_trip(&format!("{AUTHORS}{renamed}")), renamed.trim());
 }
 
 #[test]
 fn a_paragraph_mark_change_comes_back_with_its_number() {
-    let body = "<!-- p0 break-ins r4 @AC -->\nThe break after this text is new.\n\n\
+    let body = "<!-- p0 -->\nThe break after this text is new.¶{r4 @AC}\n\n\
                 <!-- p1 -->\nNext.\n\n\
                 <!-- p2 empty, break-del r6 @AC -->\n\n\
-                <!-- p3 BodyText center, break-ins r8 @AC -->\nStyled.\n\n<!-- p4 -->\nLast.\n";
+                <!-- p3 BodyText center -->\nStyled.¶{r8 @AC}\n\n<!-- p4 -->\nLast.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
 
@@ -163,11 +158,11 @@ fn a_text_box_stays_in_its_anchor_paragraph() {
     // after the paragraph whose `rev` clause names the anchor's change,
     // and the header's `unplaced:` names the box's own carriers. Written
     // back, the box is anchored in that paragraph — no paragraph of its
-    // own, so no stamp shifts — and its carriers read back as `unplaced:`
-    // again.
+    // own, so no stamp shifts. Its paragraph mark prints inline and the
+    // remaining textless carrier reads back as `unplaced:`.
     let body = "<!-- p0 -->\nKept text.\n\n\
-                <!-- p1 break-del r2 @AC, rev r3 @AC -->\n{--Gone. --}{>>r4 @AC<<}\n\n\
-                {++Boxed.++}{>>r3 @AC<<}\n\n\
+                <!-- p1 break-del r2 @AC, rev r3 @AC -->\n{--Gone. --}{r4 @AC}\n\n\
+                {++Boxed.++}{r3 @AC}\n\n\
                 <!-- p2 -->\nAfter.\n";
     let header = "---\nauthors:\n  AC: Ann Counsel                  # 2026-10-01T09:00:00Z\n\
 unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]\n---\n\n";
@@ -209,10 +204,8 @@ unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]\n---\n\n";
     )
     .expect("the docx reads")
     .markdown;
-    assert!(
-        view.contains("unplaced: [ins r5 @AC in p1, ins r6 @AC in p1]"),
-        "{view}"
-    );
+    assert!(view.contains("unplaced: [ins r6 @AC in p1]"), "{view}");
+    assert!(view.contains("{++Boxed.¶{r5 @AC}++}{r3 @AC}"), "{view}");
     assert!(
         view.contains("<!-- p2 -->\nAfter."),
         "no stamp shift: {view}"
@@ -263,7 +256,7 @@ fn an_unshown_deletion_holds_the_comment_marks_it_wraps() {
 fn an_id_line_without_a_break_clause_leaves_the_mark_alone() {
     // Text inserted whole, its paragraph mark not: the id line says so by
     // naming no `break-ins`.
-    let body = "<!-- p0 -->\n{++All new text.++}{>>r3 @AC<<}\n\n<!-- p1 -->\nNext.\n";
+    let body = "<!-- p0 -->\n{++All new text.++}{r3 @AC}\n\n<!-- p1 -->\nNext.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
 
@@ -330,7 +323,7 @@ fn a_comment_inside_other_html_is_no_id_line_even_in_a_view() {
 fn a_number_word_cannot_read_takes_a_fresh_one() {
     // `w:id` is an `int`: 2147483648 does not fit, so the change and the
     // comment that name it are numbered afresh.
-    let body = "<!-- p0 -->\n{++Added++}{>>r2147483648 @AC<<} and \
+    let body = "<!-- p0 -->\n{++Added++}{r2147483648 @AC} and \
                 {==this==}{>>c2147483648 @AC: Note.<<}.\n";
     let docx = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}")),
@@ -345,7 +338,7 @@ fn a_number_word_cannot_read_takes_a_fresh_one() {
 
 #[test]
 fn fresh_numbers_stay_within_what_word_reads() {
-    let body = "<!-- p0 -->\n{++One++}{>>r2147483647 @AC<<} and {++two++}{>>noid @AC<<}.\n";
+    let body = "<!-- p0 -->\n{++One++}{r2147483647 @AC} and {++two++}{noid @AC}.\n";
     let docx = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}")),
         &DocxOptions::default(),
@@ -393,7 +386,7 @@ fn a_line_break_in_a_cell_stays_a_line_break() {
 fn a_cell_paragraph_keeps_the_mark_its_table_line_names() {
     let body = "<!-- p0 -->\nBefore.\n\n\
                 <!-- t0 2x2, cells t0.row0 p1-p3 t0.row1 p4-p5, break-ins r5 @AC in p1 -->\n\
-                |{++A++}{>>r6 @AC<<}{++<br>B++}{>>r7 @AC<<}|C|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
+                |{++A++}{r6 @AC}{++<br>B++}{r7 @AC}|C|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
 
@@ -451,7 +444,7 @@ fn an_inserted_row_stays_one_change_when_a_cell_holds_paragraphs() {
     // ends a cell paragraph too.
     let body = "<!-- p0 -->\nBefore.\n\n\
                 <!-- t0 2x2, cells t0.row0 p1-p3 t0.row1 p4-p5, break-ins r5 @AC in p1 -->\n\
-                |{++A<br>B++}{>>r2 @AC<<}|{++C++}{>>r2 @AC<<}|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
+                |{++A<br>B++}{r2 @AC}|{++C++}{r2 @AC}|\n|-|-|\n|D|E|\n\n<!-- p6 -->\nAfter.\n";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}")), body.trim());
 }
 
@@ -591,13 +584,12 @@ fn headers_and_footers_come_back_with_their_ids() {
 }
 
 #[test]
-fn a_substitution_by_two_authors_keeps_both_tags() {
-    // The view tags a substitution's sides one by one when two authors
-    // made them: the second tag is the insertion's, not a comment.
+fn adjacent_changes_by_two_authors_keep_both_tags() {
+    // Changes by two authors stay separate; a same-author replacement
+    // alongside them remains one substitution.
     let header = "---\nauthors:\n  AC: Ann Counsel                  # 2026-10-01T09:00:00Z\n  \
                   ASR: Arthur Souza Rodrigues      # 2026-10-09T16:13:00Z\n---\n\n";
-    let body =
-        "<!-- p0 -->\nThe {~~old~>new~~}{>>r0 @AC<<}{>>r1 @ASR<<} term {~~a~>b~~}{>>r2+3 @AC<<}.\n";
+    let body = "<!-- p0 -->\nThe {--old--}{r0 @AC}{++new++}{r1 @ASR} term {~~a~>b~~}{r2+3 @AC}.\n";
     assert_eq!(round_trip(&format!("{header}{body}")), body.trim());
 }
 
@@ -760,20 +752,25 @@ fn marks(docx: &[u8]) -> Vec<String> {
 }
 
 #[test]
-fn a_substitution_keeps_each_id_on_its_side_and_the_insertion_first() {
-    // Word numbers marks in document order and writes the insertion first,
-    // so the tag's deleted ids (`3+4`) run until the numbers drop back to
-    // the inserted ones (`1+2`); a side whose text is one run splits to
-    // take them all. Links on either side move with their text.
-    for (body, want) in [
+fn a_substitution_keeps_each_id_on_its_side_and_the_deletion_first() {
+    // The tag's deleted ids precede the inserted ones even when their
+    // numbers are higher. Distinct ids print separately, with only the
+    // adjacent deletion and insertion paired. Links move with their text.
+    for (body, want, shown) in [
         (
-            "{~~CC DD~>AA BB ~~}{>>r3+4+1+2 @AC<<}",
-            &["ins1", "ins2", "del3", "del4"][..],
+            "{~~CC DD~>AA BB ~~}{r3+4+1+2 @AC}",
+            &["del3", "del4", "ins1", "ins2"][..],
+            "{--CC --}{r3 @AC}{~~DD~>AA ~~}{r4+1 @AC}{++BB ++}{r2 @AC}",
         ),
-        ("{~~BBCC~>AA~~}{>>r2+3+1 @AC<<}", &["ins1", "del2", "del3"]),
         (
-            "{~~[old](https://example.com/)~>[new](https://example.com/)~~}{>>r2+1 @AC<<}",
-            &["ins1", "del2"],
+            "{~~BBCC~>AA~~}{r2+3+1 @AC}",
+            &["del2", "del3", "ins1"],
+            "{--BBC--}{r2 @AC}{~~C~>AA~~}{r3+1 @AC}",
+        ),
+        (
+            "{~~[old](https://example.com/)~>[new](https://example.com/)~~}{r2+1 @AC}",
+            &["del2", "ins1"],
+            "{~~[old](https://example.com/)~>[new](https://example.com/)~~}{r2+1 @AC}",
         ),
     ] {
         let view = format!("{AUTHORS}<!-- p0 -->\nA {body} z.\n");
@@ -782,7 +779,7 @@ fn a_substitution_keeps_each_id_on_its_side_and_the_insertion_first() {
             .docx;
         assert_word_valid_package(&docx);
         assert_eq!(marks(&docx), want, "{body}");
-        let again = format!("<!-- p0 -->\nA {body} z.");
+        let again = format!("<!-- p0 -->\nA {shown} z.");
         assert_eq!(round_trip(&view), again, "{body}");
     }
 }
@@ -791,9 +788,43 @@ fn a_substitution_keeps_each_id_on_its_side_and_the_insertion_first() {
 fn a_bookmark_between_two_changes_stays_between_them() {
     // `<a id>` between an insertion and a deletion: two changes, and the
     // bookmark is in neither mark.
-    let body = "<!-- p0 -->\nK {++new++}{>>r1 @AC<<}<a id=\"mark\"></a>{--old--}{>>r2 @AC<<} \
+    let body = "<!-- p0 -->\nK {++new++}{r1 @AC}<a id=\"mark\"></a>{--old--}{r2 @AC} \
                 [go](#mark)";
     assert_eq!(round_trip(&format!("{AUTHORS}{body}\n")), body);
+}
+
+#[test]
+fn latest_dates_undated_revisions_marks_and_comments() {
+    let latest = "2026-10-17T16:59:00.125+02:00";
+    // Revisions preserve the instant and offset. Plain comments retain only
+    // Word's Z-labelled wall clock because they have no extension part.
+    let stored_latest = "2026-10-17T16:59:00.125Z";
+    let explicit = "2026-10-01T09:00:00Z";
+    let view = format!(
+        "---\nauthors:\n  AL: Ann Lee  # 4 revisions, 2 comments, latest {latest}\n---\n\n\
+         <!-- p0 break-ins r3 @AL -->\n\
+         A {{~~old~>new~~}}{{r2+1 @AL}} {{++dated++}}{{r4 @AL {explicit}}} \
+         {{==one==}}{{>>c0 @AL: Undated.<<}} {{==two==}}{{>>c1 @AL {explicit}: Dated.<<}}\n\n\
+         <!-- p1 -->\nEnd.\n"
+    );
+    let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    let changes = jubarte::changes::list_changes(&docx).unwrap();
+    assert_eq!(changes.len(), 4, "{changes:?}");
+    for change in changes {
+        assert_eq!(change.author.as_deref(), Some("Ann Lee"));
+        let expected = if change.text == "dated" {
+            explicit
+        } else {
+            latest
+        };
+        assert_eq!(change.date.as_deref(), Some(expected), "{change:?}");
+    }
+    let comments = jubarte::comments::list_comments(&docx).unwrap();
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0].date.as_deref(), Some(stored_latest));
+    assert_eq!(comments[1].date.as_deref(), Some(explicit));
 }
 
 #[test]
@@ -801,7 +832,7 @@ fn a_dated_range_puts_its_last_day_on_the_mark_written_last() {
     // `first..last` comes back as the first mark's first day and the last
     // mark's last day; a substitution writes its insertion first.
     let view = "---\nauthors:\n  AL: Ann Lee                      # 2 revisions, 2026-03-02..2026-03-04\n---\n\n\
-                <!-- p0 -->\nA {~~old~>new~~}{>>r2+1 @AL<<} z.\n";
+                <!-- p0 -->\nA {~~old~>new~~}{r2+1 @AL} z.\n";
     let docx = markdown_to_docx(&as_view(view), &DocxOptions::default())
         .expect("the view reads")
         .docx;
@@ -819,11 +850,11 @@ fn a_note_inserted_or_deleted_with_its_reference_keeps_words_shape() {
     // Word marks such a note's paragraph mark (`footnotes.r11`) and wraps
     // its reference mark and text in one change (`footnotes.r12`); the
     // view prints the note in its reference's change and names both.
-    let body = "<!-- p0 -->\nAdded{++[^1]++}{>>r10 @AC<<} and cut{--[^2]--}{>>r20 @AC<<}.\n\n\
+    let body = "<!-- p0 -->\nAdded{++[^1]++}{r10 @AC} and cut{--[^2]--}{r20 @AC}.\n\n\
                 <!-- footnotes.p0 -->\n\
-                {++[^1]: An inserted note.++}{>>r10 @AC<<} <!-- rev footnotes.r11 @AC; footnotes.r12 @AC -->\n\
+                {++[^1]: An inserted note.++}{r10 @AC} <!-- rev footnotes.r11 @AC; footnotes.r12 @AC -->\n\
                 <!-- footnotes.p1 -->\n\
-                {--[^2]: A deleted note.--}{>>r20 @AC<<} <!-- rev-del footnotes.r21 @AC; footnotes.r22 @AC -->";
+                {--[^2]: A deleted note.--}{r20 @AC} <!-- rev-del footnotes.r21 @AC; footnotes.r22 @AC -->";
     let docx = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}\n")),
         &DocxOptions::default(),
@@ -877,8 +908,8 @@ fn a_tracked_note_reads_with_one_space_after_its_label() {
     .expect("the docx reads")
     .markdown;
     for line in [
-        "{++[^1]: An inserted note.++}{>>r10 @AL<<} <!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->",
-        "{--[^2]: A deleted note.--}{>>r20 @AL<<} <!-- rev-del footnotes.r21 @AL; footnotes.r22 @AL -->",
+        "{++[^1]: An inserted note.++}{r10 @AL} <!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->",
+        "{--[^2]: A deleted note.--}{r20 @AL} <!-- rev-del footnotes.r21 @AL; footnotes.r22 @AL -->",
     ] {
         assert!(view.contains(line), "{line} in {view}");
     }
@@ -900,7 +931,7 @@ fn a_note_of_two_paragraphs_keeps_them() {
     )
     .expect("the docx reads")
     .markdown;
-    let line = "<!-- footnotes.p2-p3 -->\n{++[^3]: Two paragraphs,<br>inserted.++}{>>r30 @AL<<} \
+    let line = "<!-- footnotes.p2-p3 -->\n{++[^3]: Two paragraphs,<br>inserted.++}{r30 @AL} \
                 <!-- rev footnotes.r31 @AL; footnotes.r32 @AL; footnotes.r33 @AL; footnotes.r34 @AL -->";
     assert!(view.contains(line), "{line} in {view}");
     for body in [
@@ -962,8 +993,8 @@ fn a_note_whose_own_marks_the_view_does_not_name_keeps_its_text_unmarked() {
     // A reference deleted with no mark on its note's text (`{--[^1]: …--}`
     // with no `rev` after it): the note keeps its text, and the body's mark
     // keeps the reference's id.
-    let body = "<!-- p0 -->\nBefore{--[^1]--}{>>r1 @AC<<} after.\n\n<!-- footnotes.p0 -->\n\
-                {--[^1]: Still here.--}{>>r1 @AC<<}";
+    let body = "<!-- p0 -->\nBefore{--[^1]--}{r1 @AC} after.\n\n<!-- footnotes.p0 -->\n\
+                {--[^1]: Still here.--}{r1 @AC}";
     let docx = markdown_to_docx(
         &as_view(&format!("{AUTHORS}{body}\n")),
         &DocxOptions::default(),
@@ -1026,6 +1057,11 @@ fn a_dated_range_survives_on_comments_and_paragraph_marks() {
         let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
             .expect("the view reads")
             .docx;
+        let document = part_string(&docx, "word/document.xml").unwrap();
+        let comments = part_string(&docx, "word/comments.xml").unwrap_or_default();
+        let marks = format!("{document}{comments}");
+        assert!(marks.contains("2026-03-02T00:00:00Z"), "{marks}");
+        assert!(marks.contains("2026-03-04T23:59:59Z"), "{marks}");
         let again = read(
             &docx,
             &ReadOptions {
@@ -1036,7 +1072,7 @@ fn a_dated_range_survives_on_comments_and_paragraph_marks() {
         .expect("the docx reads")
         .markdown;
         assert!(
-            again.contains("2026-03-02..2026-03-04"),
+            again.contains("latest 2026-03-04T23:59:59Z"),
             "{authors}: {again}"
         );
     }
@@ -1044,25 +1080,25 @@ fn a_dated_range_survives_on_comments_and_paragraph_marks() {
 
 #[test]
 fn a_comment_inside_a_substitution_side_keeps_the_pair() {
-    // The comment's range sits in the old text: the writer still writes the
-    // insertion first, and the view pairs the two sides again.
-    let body = "<!-- p0 -->\nA {~~aa {==bb==}{>>c0 @AC: Inside.<<} cc~>NEW~~}{>>r3+1 @AC<<} z.";
+    // The comment's range sits in the old text: the writer writes the
+    // deletion first, and the view pairs the two sides again.
+    let body = "<!-- p0 -->\nA {~~aa {==bb==}{>>c0 @AC: Inside.<<} cc~>NEW~~}{r3+1 @AC} z.";
     let view = format!("{AUTHORS}{body}\n");
     let docx = markdown_to_docx(&as_view(&view), &DocxOptions::default())
         .expect("the view reads")
         .docx;
     assert_word_valid_package(&docx);
     let ids = marks(&docx);
-    assert_eq!(ids.first().map(String::as_str), Some("ins1"), "{ids:?}");
+    assert_eq!(ids.first().map(String::as_str), Some("del3"), "{ids:?}");
     let again = round_trip(&view);
     assert!(again.contains("{~~aa {==bb==}"), "{again}");
     assert!(again.contains("~>NEW~~}"), "{again}");
 }
 
 #[test]
-fn a_heading_slug_bookmark_between_marks_keeps_the_pair_and_its_count() {
-    // The heading's own bookmark prints no anchor, so the text pairs the
-    // marks around it; the `revisions:` count must say the same.
+fn a_heading_slug_bookmark_keeps_insertion_then_deletion_and_its_count() {
+    // The heading's own bookmark prints no anchor, and insertion followed
+    // by deletion remains two changes in both text and summary.
     let mark = |kind: &str, id: u32, text: &str| {
         let t = if kind == "del" { "delText" } else { "t" };
         format!(
@@ -1087,16 +1123,19 @@ fn a_heading_slug_bookmark_between_marks_keeps_the_pair_and_its_count() {
     .expect("the docx reads")
     .markdown;
     assert!(
-        view.contains("# {~~Old~>Hello~~}{>>r55+54 @AL<<}"),
+        view.contains("# {++Hello++}{r54 @AL}{--Old--}{r55 @AL}"),
         "{view}"
     );
-    assert!(view.contains("1 change: 1 substitution"), "{view}");
+    assert!(
+        view.contains("2 changes: 1 insertion, 1 deletion"),
+        "{view}"
+    );
 }
 
 #[test]
 fn a_run_that_prints_nothing_keeps_no_two_marks_apart() {
     // An empty run, a vanished run and a page break between an insertion
-    // and a deletion: the text pairs them, and so does the count.
+    // and a deletion: their order remains unchanged in text and count.
     let mark = |kind: &str, id: u32, text: &str| {
         let t = if kind == "del" { "delText" } else { "t" };
         format!(
@@ -1130,18 +1169,18 @@ fn a_run_that_prints_nothing_keeps_no_two_marks_apart() {
     )
     .expect("the docx reads")
     .markdown;
-    assert_eq!(view.matches("{~~old~>new~~}").count(), 3, "{view}");
+    assert_eq!(view.matches("{++new++}").count(), 3, "{view}");
+    assert_eq!(view.matches("{--old--}").count(), 3, "{view}");
     assert!(
-        view.contains("6 marks shown as 3 changes: 3 substitutions"),
+        view.contains("6 marks shown as 6 changes: 3 insertions, 3 deletions"),
         "{view}"
     );
 }
 
 #[test]
-fn a_header_substitution_pairs_and_keeps_each_id_on_its_side() {
-    // As in the body: Word's insertion then deletion is one substitution,
-    // marks of one kind by one author join, and writing it back puts every
-    // id on the side it came from.
+fn a_header_keeps_insertion_then_deletion_and_distinct_ids() {
+    // As in the body: insertion then deletion remains separate, and every
+    // mark keeps its own id even beside another mark by the same author.
     let mark = |kind: &str, id: u32, text: &str| {
         let t = if kind == "del" { "delText" } else { "t" };
         format!(
@@ -1180,8 +1219,8 @@ fn a_header_substitution_pairs_and_keeps_each_id_on_its_side() {
     };
     let view = read(&docx, &options).expect("the docx reads").markdown;
     for want in [
-        "Sub {~~old~>new~~}{>>header1.r91+90 @AL<<}.",
-        "Runs {~~CD~>AB~~}{>>header1.r94+95+92+93 @AL<<}.",
+        "Sub {++new++}{header1.r90 @AL}{--old--}{header1.r91 @AL}.",
+        "Runs {++A++}{header1.r92 @AL}{++B++}{header1.r93 @AL}{--C--}{header1.r94 @AL}{--D--}{header1.r95 @AL}.",
     ] {
         assert!(view.contains(want), "{want} in {view}");
     }
@@ -1243,14 +1282,14 @@ fn a_footer_keeps_its_paragraph_marks_its_fields_and_its_literal_text() {
     let view = "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n  \
                 BC: Bo Chen                      # 2026-03-02T10:00:00Z\n\
                 headers:\n  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}\n\
-                footers:\n  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
+                footers:\n  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{footer1.r31 @AL}\", \"\"], \
                 rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
                 break-del footer1.r40 @BC in footer1.p1}\n---\n\n<!-- p0 -->\nBody.\n";
     let (again, docx) = full_trip(view);
     for line in [
         "  default: {id: header1, text: \"Text with {\\\\++literal++\\\\} braces and \\\\{PAGE} too\"}",
-        "  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{>>footer1.r31 @AL<<}\", \"\"], \
-         rev: break-ins footer1.r60 @AL in footer1; break-del footer1.r61 @BC in footer1; \
+        "  default: {id: footer1, text: [\"Page {--{PAGE}1{/}--}{footer1.r31 @AL}¶{footer1.r60 @AL}\", \"\"], \
+         rev: break-del footer1.r61 @BC in footer1; \
          break-del footer1.r40 @BC in footer1.p1}",
     ] {
         assert!(again.contains(line), "{line} in {again}");
@@ -1287,12 +1326,12 @@ fn a_footer_field_without_a_result_comes_back_without_one() {
 fn a_mark_with_no_author_keeps_its_id_and_takes_no_comment() {
     // `@??`: the reader's handle for a mark without an author's name. It
     // is a tag, not a comment, in the body and in a header.
-    let view = "---\nview: tracked\nheaders:\n  default: {id: header1, text: \"Keep {++new++}{>>header1.r3 @??<<}\"}\n\
-                ---\n\n<!-- p0 -->\nKeep {++new++}{>>r5 @??<<} it.\n";
+    let view = "---\nview: tracked\nheaders:\n  default: {id: header1, text: \"Keep {++new++}{header1.r3 @??}\"}\n\
+                ---\n\n<!-- p0 -->\nKeep {++new++}{r5 @??} it.\n";
     let (again, docx) = full_trip(view);
-    assert!(again.contains("Keep {++new++}{>>r5 @??<<} it."), "{again}");
+    assert!(again.contains("Keep {++new++}{r5 @??} it."), "{again}");
     assert!(
-        again.contains("text: \"Keep {++new++}{>>header1.r3 @??<<}\""),
+        again.contains("text: \"Keep {++new++}{header1.r3 @??}\""),
         "{again}"
     );
     assert!(again.contains("comments: 0"), "{again}");
@@ -1340,12 +1379,12 @@ fn a_note_keeps_its_line_break_apart_from_its_inserted_paragraph() {
     // paragraph is one change, its mark untracked.
     let again = note_trip(
         "footnotes.p0-p1",
-        "Keep<br/>this<br>{++added++}{>>footnotes.r2 @AL<<}",
+        "Keep<br/>this<br>{++added++}{footnotes.r2 @AL}",
     );
     assert!(
         again
             .lines()
-            .any(|l| l == "[^1]: Keep<br/>this<br>{++added++}{>>footnotes.r2 @AL<<}"),
+            .any(|l| l == "[^1]: Keep<br/>this<br>{++added++}{footnotes.r2 @AL}"),
         "{again}"
     );
     assert!(again.contains("<!-- footnotes.p0-p1 -->"), "{again}");
@@ -1363,12 +1402,12 @@ fn a_note_whose_first_paragraph_holds_only_its_reference_keeps_it() {
 #[test]
 fn a_deleted_reference_leaves_its_live_note_its_own_marks() {
     let view = "---\nview: tracked\nauthors:\n  AL: Ann Lee                      # 2026-03-02T10:00:00Z\n---\n\n\
-                <!-- p0 -->\nCut{--[^1]--}{>>r1 @AL<<}.\n\n<!-- footnotes.p0 -->\n\
-                [^1]: Still {++here++}{>>footnotes.r5 @AL<<}.\n";
+                <!-- p0 -->\nCut{--[^1]--}{r1 @AL}.\n\n<!-- footnotes.p0 -->\n\
+                [^1]: Still {++here++}{footnotes.r5 @AL}.\n";
     let (again, _) = full_trip(view);
-    assert!(again.contains("Cut{--[^1]--}{>>r1 @AL<<}."), "{again}");
+    assert!(again.contains("Cut{--[^1]--}{r1 @AL}."), "{again}");
     assert!(
-        again.contains("[^1]: Still {++here++}{>>footnotes.r5 @AL<<}."),
+        again.contains("[^1]: Still {++here++}{footnotes.r5 @AL}."),
         "{again}"
     );
 }
@@ -1899,12 +1938,12 @@ fn a_leading_space_after_a_tracked_break_round_trips() {
     // say so: a literal leading space would not come back.
     let cases = [
         (
-            "packaging{++\n\n++}{>>Bo Chen (2026-09-01T00:07:00Z)<<} but excludes.\n",
+            "packaging{++\n\n++}{r1 Bo Chen (2026-09-01T00:07:00Z)} but excludes.\n",
             " but excludes.",
             "&#32;but excludes.",
         ),
         (
-            "rate.{--\n\n--}{>>Bo Chen (2026-09-01T01:38:00Z)<<} The price.\n",
+            "rate.{--\n\n--}{r1 Bo Chen (2026-09-01T01:38:00Z)} The price.\n",
             " The price.",
             "&#32;The price.",
         ),

@@ -25,7 +25,7 @@ use super::atoms::{ComparisonUnitAtom, WmlComparerRevision};
 use super::{CorrelationStatus, WmlComparerRevisionType, WmlComparerSettings, atomize};
 use crate::namespaces::{M, PT, W};
 use crate::util::group_adjacent;
-use crate::xmllinq::{Dom, NodeId, XNamespace};
+use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 /// `RevElementsWithNoText` (:3934) — content kinds whose revisions carry no
 /// text: `m:oMath`, `m:oMathPara`, `w:drawing`.
@@ -183,7 +183,9 @@ pub fn get_revisions_from_body(
             revision_type,
             text: group_text(dom, &group),
             author: dom.attribute(rt, &W::author()).map(str::to_string),
-            date: dom.attribute(rt, &W::date()).map(str::to_string),
+            date: crate::changes::revision_date(|ns, local| {
+                dom.attribute(rt, &XName::get(local, ns))
+            }),
             content_element: Some(first.content_element),
             revision_element: Some(rt),
             part_name: part_name.to_string(),
@@ -252,7 +254,9 @@ pub fn get_revisions_from_note_definitions(
                 revision_type,
                 text: group_text(dom, &group),
                 author: dom.attribute(rt, &W::author()).map(str::to_string),
-                date: dom.attribute(rt, &W::date()).map(str::to_string),
+                date: crate::changes::revision_date(|ns, local| {
+                    dom.attribute(rt, &XName::get(local, ns))
+                }),
                 content_element: Some(first.content_element),
                 revision_element: Some(rt),
                 part_name: part_name.to_string(),
@@ -355,7 +359,7 @@ fn extract_format_change_details(
 /// `FormatChanged` revision.
 ///
 /// Pass the main document root plus each notes-part root so notes-part
-/// changes are reported alongside the body. Missing `w:author`/`w:date`
+/// changes are reported alongside the body. Missing authors and revision dates
 /// map to `""` (matching the C# `?? ""` fallback). `content_element` is
 /// intentionally left `None` — the format-change carrier is the
 /// `rPrChange` element itself.
@@ -371,10 +375,10 @@ pub fn get_format_change_revisions(
                 .attribute(rpc, &W::author())
                 .unwrap_or_default()
                 .to_string();
-            let date = dom
-                .attribute(rpc, &W::date())
-                .unwrap_or_default()
-                .to_string();
+            let date = crate::changes::revision_date(|ns, local| {
+                dom.attribute(rpc, &XName::get(local, ns))
+            })
+            .unwrap_or_default();
             let text = get_text_from_ancestor_run(dom, rpc);
             let details = extract_format_change_details(dom, rpc);
             out.push(WmlComparerRevision {
