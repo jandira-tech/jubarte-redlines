@@ -1059,6 +1059,43 @@ mod tests {
             relative_rel_target("word/document.xml", "wordy/x.xml"),
             "/wordy/x.xml"
         );
+
+        // Edge cases
+        assert_eq!(
+            relative_rel_target("a.xml", "b.xml"),
+            "/b.xml",
+            "Root level source and target"
+        );
+        assert_eq!(
+            relative_rel_target("document.xml", "media/image.bin"),
+            "/media/image.bin",
+            "Root level source"
+        );
+        assert_eq!(
+            relative_rel_target("word/theme/theme1.xml", "word/theme/themeManager.xml"),
+            "themeManager.xml",
+            "Deeply nested matching paths"
+        );
+        assert_eq!(
+            relative_rel_target("//word/document.xml", "//word/comments.xml"),
+            "comments.xml",
+            "Multiple leading slashes"
+        );
+        assert_eq!(
+            relative_rel_target("a/b.xml", "a/c/d.xml"),
+            "c/d.xml",
+            "Target as a subdirectory of the source directory"
+        );
+        assert_eq!(
+            relative_rel_target("a/b/c.xml", "a/b/d.xml"),
+            "d.xml",
+            "Target and source in the same deeply nested directory"
+        );
+        assert_eq!(
+            relative_rel_target("a/b.xml", "b/c.xml"),
+            "/b/c.xml",
+            "Target in completely different directory"
+        );
     }
 
     #[test]
