@@ -2878,40 +2878,31 @@ mod legacy_regular_sector_source_owners {
     // Repackage actual source streams under the two MS-CFB sector formats.
     // Both streams exceed the 4096-byte mini-stream cutoff, so the root owns
     // no mini stream and there is no mini FAT. All stream bytes stay literal.
-    fn regular_stream_package(word: &[u8], table: &[u8], version: u16, table_one: bool) -> Vec<u8> {
-        assert!(word.len() >= 4096 && table.len() >= 4096);
-        let sector_size = if version == 4 { 4096usize } else { 512usize };
-        let per_fat = sector_size / 4;
-        let word_count = word.len().div_ceil(sector_size);
-        let table_count = table.len().div_ceil(sector_size);
-        let data_count = 1 + word_count + table_count;
-        let mut fat_count = 1;
-        while (data_count + fat_count).div_ceil(per_fat) != fat_count {
-            fat_count = (data_count + fat_count).div_ceil(per_fat);
-        }
-        assert!(fat_count <= 109);
-        let mut bytes = vec![0u8; (1 + data_count + fat_count) * sector_size];
-        let put16 = |bytes: &mut [u8], at: usize, value: u16| {
-            bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
-        };
-        let put32 = |bytes: &mut [u8], at: usize, value: u32| {
-            bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
-        };
+
+    fn put16(bytes: &mut [u8], at: usize, value: u16) {
+        bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn put32(bytes: &mut [u8], at: usize, value: u32) {
+        bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_header(bytes: &mut [u8], version: u16, fat_count: usize, data_count: usize) {
         bytes[..8].copy_from_slice(OLE_MAGIC);
-        put16(&mut bytes, 0x18, 0x003e);
-        put16(&mut bytes, 0x1a, version);
-        put16(&mut bytes, 0x1c, 0xfffe);
-        put16(&mut bytes, 0x1e, if version == 4 { 12 } else { 9 });
-        put16(&mut bytes, 0x20, 6);
-        put32(&mut bytes, 0x28, u32::from(version == 4));
-        put32(&mut bytes, 0x2c, u32::try_from(fat_count).unwrap());
-        put32(&mut bytes, 0x30, 0);
-        put32(&mut bytes, 0x38, 4096);
-        put32(&mut bytes, 0x3c, END_OF_CHAIN);
-        put32(&mut bytes, 0x44, END_OF_CHAIN);
+        put16(bytes, 0x18, 0x003e);
+        put16(bytes, 0x1a, version);
+        put16(bytes, 0x1c, 0xfffe);
+        put16(bytes, 0x1e, if version == 4 { 12 } else { 9 });
+        put16(bytes, 0x20, 6);
+        put32(bytes, 0x28, u32::from(version == 4));
+        put32(bytes, 0x2c, u32::try_from(fat_count).unwrap());
+        put32(bytes, 0x30, 0);
+        put32(bytes, 0x38, 4096);
+        put32(bytes, 0x3c, END_OF_CHAIN);
+        put32(bytes, 0x44, END_OF_CHAIN);
         for index in 0..109 {
             put32(
-                &mut bytes,
+                bytes,
                 0x4c + index * 4,
                 if index < fat_count {
                     u32::try_from(data_count + index).unwrap()
@@ -2920,6 +2911,17 @@ mod legacy_regular_sector_source_owners {
                 },
             );
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_entries(
+        bytes: &mut [u8],
+        sector_size: usize,
+        word_count: usize,
+        word_len: usize,
+        table_len: usize,
+        table_one: bool,
+    ) {
         let entries = [
             (
                 "Root Entry",
@@ -2931,7 +2933,7 @@ mod legacy_regular_sector_source_owners {
                 END_OF_CHAIN,
                 0usize,
             ),
-            ("WordDocument", 2, 1, 2, NO_STREAM, NO_STREAM, 1, word.len()),
+            ("WordDocument", 2, 1, 2, NO_STREAM, NO_STREAM, 1, word_len),
             (
                 if table_one { "1Table" } else { "0Table" },
                 2,
@@ -2940,7 +2942,7 @@ mod legacy_regular_sector_source_owners {
                 NO_STREAM,
                 NO_STREAM,
                 u32::try_from(1 + word_count).unwrap(),
-                table.len(),
+                table_len,
             ),
         ];
         for (index, (name, kind, color, left, right, child, start, size)) in
@@ -2949,24 +2951,28 @@ mod legacy_regular_sector_source_owners {
             let base = sector_size + index * 128;
             let name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
             for (offset, character) in name.iter().enumerate() {
-                put16(&mut bytes, base + offset * 2, *character);
+                put16(bytes, base + offset * 2, *character);
             }
-            put16(
-                &mut bytes,
-                base + 64,
-                u16::try_from(name.len() * 2).unwrap(),
-            );
+            put16(bytes, base + 64, u16::try_from(name.len() * 2).unwrap());
             bytes[base + 66] = kind;
             bytes[base + 67] = color;
-            put32(&mut bytes, base + 68, left);
-            put32(&mut bytes, base + 72, right);
-            put32(&mut bytes, base + 76, child);
-            put32(&mut bytes, base + 116, start);
-            put32(&mut bytes, base + 120, u32::try_from(size).unwrap());
+            put32(bytes, base + 68, left);
+            put32(bytes, base + 72, right);
+            put32(bytes, base + 76, child);
+            put32(bytes, base + 116, start);
+            put32(bytes, base + 120, u32::try_from(size).unwrap());
         }
-        bytes[sector_size * 2..sector_size * 2 + word.len()].copy_from_slice(word);
-        let table_at = sector_size * (2 + word_count);
-        bytes[table_at..table_at + table.len()].copy_from_slice(table);
+    }
+
+    fn write_fat(
+        bytes: &mut [u8],
+        sector_size: usize,
+        per_fat: usize,
+        word_count: usize,
+        table_count: usize,
+        data_count: usize,
+        fat_count: usize,
+    ) {
         let mut fat = vec![NO_STREAM; fat_count * per_fat];
         fat[0] = END_OF_CHAIN;
         for (start, count) in [(1usize, word_count), (1 + word_count, table_count)] {
@@ -2983,8 +2989,47 @@ mod legacy_regular_sector_source_owners {
         }
         let fat_at = sector_size * (1 + data_count);
         for (index, sector) in fat.into_iter().enumerate() {
-            put32(&mut bytes, fat_at + index * 4, sector);
+            put32(bytes, fat_at + index * 4, sector);
         }
+    }
+    fn regular_stream_package(word: &[u8], table: &[u8], version: u16, table_one: bool) -> Vec<u8> {
+        assert!(word.len() >= 4096 && table.len() >= 4096);
+        let sector_size = if version == 4 { 4096usize } else { 512usize };
+        let per_fat = sector_size / 4;
+        let word_count = word.len().div_ceil(sector_size);
+        let table_count = table.len().div_ceil(sector_size);
+        let data_count = 1 + word_count + table_count;
+        let mut fat_count = 1;
+        while (data_count + fat_count).div_ceil(per_fat) != fat_count {
+            fat_count = (data_count + fat_count).div_ceil(per_fat);
+        }
+        assert!(fat_count <= 109);
+        let mut bytes = vec![0u8; (1 + data_count + fat_count) * sector_size];
+
+        write_header(&mut bytes, version, fat_count, data_count);
+        write_entries(
+            &mut bytes,
+            sector_size,
+            word_count,
+            word.len(),
+            table.len(),
+            table_one,
+        );
+
+        bytes[sector_size * 2..sector_size * 2 + word.len()].copy_from_slice(word);
+        let table_at = sector_size * (2 + word_count);
+        bytes[table_at..table_at + table.len()].copy_from_slice(table);
+
+        write_fat(
+            &mut bytes,
+            sector_size,
+            per_fat,
+            word_count,
+            table_count,
+            data_count,
+            fat_count,
+        );
+
         bytes
     }
 
