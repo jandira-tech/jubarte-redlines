@@ -21,6 +21,7 @@ use super::{
 };
 use crate::comparer::WmlComparerSettings;
 use crate::inspect::{body_paragraph_nodes, project_paragraph, source_sha256};
+use crate::namespaces::W;
 use crate::result::{Effect, codes};
 use crate::validate::{self, Finding};
 
@@ -225,6 +226,9 @@ pub fn prepare(
     tx.resolve()?;
     tracked::check(&tx)?;
     let emit = tx.emits_directly()?;
+    // `update_fields` compares an edit beside a range marker (#1156): a
+    // refused candidate then names the route that keeps the marker.
+    let compared_beside = !emit && plan.update_fields && tx.edits_beside_a_range_marker();
     tx.apply()?;
     check_dom_realized(&tx, options.exact_text)?;
     let result = produce(&mut tx, emit, options.role)?;
@@ -236,7 +240,22 @@ pub fn prepare(
             PrimaryRole::Redline => (result.redline.clone(), PrimaryBytes::Candidate),
         },
     };
-    let mut checks = check_candidates(source, &result)?;
+    let mut checks = check_candidates(source, &result)
+        .and_then(|checks| {
+            if compared_beside {
+                check_rejected_ranges(source, &result.redline)?;
+            }
+            Ok(checks)
+        })
+        .map_err(|mut e| {
+            if compared_beside && e.code == "CANDIDATE_INVALID" {
+                e.message = format!(
+                    "{}; update_fields compares an edit beside a bookmark, comment or permission range, so drop update_fields and refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
+                    e.message
+                );
+            }
+            e
+        })?;
     checks.operation_postconditions = true;
     if options.require_change && effect == Effect::Unchanged {
         return Err(err(
@@ -300,6 +319,76 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
         return Effect::Changed;
     }
     Effect::Unchanged
+}
+
+/// Reject All of `redline` gives the source back, so it keeps each of the
+/// source's bookmarks (by name; Word's own `_GoBack` aside), comment ranges
+/// and permission ranges. Compare places them by the words around them and
+/// can carry one into an insertion, which Reject All then removes: the
+/// TOC entry linking to a heading's `_Toc` bookmark reads "Error! Bookmark
+/// not defined." (#1156).
+fn check_rejected_ranges(source: &[u8], redline: &[u8]) -> Result<(), EditError> {
+    let rejected = crate::document_comparer::reject_revisions(redline).map_err(|e| {
+        err(
+            "CANDIDATE_INVALID",
+            None,
+            format!("the redline cannot be rejected: {e}"),
+        )
+    })?;
+    let (before, after) = (range_markers(source), range_markers(&rejected));
+    let lost = before
+        .bookmarks
+        .difference(&after.bookmarks)
+        .map(|name| format!("bookmark {name}"))
+        .chain((after.comments < before.comments).then(|| "a comment's range".to_string()))
+        .chain((after.permissions < before.permissions).then(|| "a permission range".to_string()))
+        .collect::<Vec<_>>();
+    if lost.is_empty() {
+        return Ok(());
+    }
+    Err(err(
+        "CANDIDATE_INVALID",
+        None,
+        format!(
+            "Reject All of the redline drops {} the source holds",
+            lost.join(", ")
+        ),
+    ))
+}
+
+/// The range markers of a package's stories: bookmark names, and how many
+/// comment and permission ranges open.
+#[derive(Default)]
+struct RangeMarkers {
+    bookmarks: std::collections::BTreeSet<String>,
+    comments: usize,
+    permissions: usize,
+}
+
+fn range_markers(docx: &[u8]) -> RangeMarkers {
+    let mut markers = RangeMarkers::default();
+    let Ok(opened) = crate::inspect::Opened::open(docx) else {
+        return markers;
+    };
+    let mut parts = vec![opened.main.clone()];
+    parts.extend(opened.story_parts().into_iter().map(|(_, _, part)| part));
+    for part in parts {
+        let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) else {
+            continue;
+        };
+        for start in dom.descendants(root, Some(&W::name("bookmarkStart"))) {
+            if let Some(name) = dom.attribute(start, &W::name("name"))
+                && name != "_GoBack"
+            {
+                markers.bookmarks.insert(name.to_string());
+            }
+        }
+        markers.comments += dom
+            .descendants(root, Some(&W::name("commentRangeStart")))
+            .len();
+        markers.permissions += dom.descendants(root, Some(&W::name("permStart"))).len();
+    }
+    markers
 }
 
 /// Findings on the input and what each serialized artifact adds. The

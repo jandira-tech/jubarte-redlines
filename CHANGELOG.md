@@ -55,6 +55,27 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **An insertion stays beside the bookmark, comment and permission markers
+  it meets (#1156).** Before, an `insert` before a bookmarked word put the
+  bookmark's start inside the new `w:ins`, and the edit was refused
+  `CANDIDATE_INVALID` (`BOOKMARK_CROSSES_REVISION`). Inserting a word
+  without a space, or an insert under `keep`, put the new words inside the
+  bookmark, so Accept All grew the bookmark over them. Compare also dropped
+  a permission range beside the insertion. Now the new words go before an
+  opening marker and after a closing one, a comment's reference included,
+  in the clean copy and in the redline alike, beside a tab or a break as
+  beside text. Each range covers its source words after Accept All and
+  Reject All. A replacement at a range's edge stays inside the range. A
+  marker inside a word the edit touches keeps its place, a comment's
+  beside a replacement's new words too: only one inside the replaced
+  text goes into the deletion. Such an edit's redline is written directly, as
+  under `keep`. A plan with `update_fields` still goes through Compare, so
+  words typed at a heading a TOC lists refresh the TOC. When Compare carries
+  the marker into an insertion, or Reject All of its redline would drop a
+  bookmark, comment range or permission range of the source (a heading
+  replaced whole, whose TOC entry would read "Error! Bookmark not
+  defined."), the plan is refused with `CANDIDATE_INVALID` and the route
+  (drop `update_fields`, then `jubarte convert FILE --update-fields`).
 - **`read --json` and `--tables` take the view's options (#1158, #1255).**
   `--comments` and `--dates` were refused with `--json`, `--tables`,
   `--for-edit` and `-o FILE.json`, and `--no-page-markers` was dropped

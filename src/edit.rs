@@ -2425,7 +2425,18 @@ impl<'p> Transaction<'p> {
     /// cannot track (a footnote, an image). `update_fields` refreshes only
     /// the clean copy, which the emitted redline would then not accept to:
     /// refused beside such an edit, as under keep.
+    ///
+    /// The comparer also places a bookmark, comment or permission marker by
+    /// the words around it, so an edit right beside one (or over one) can
+    /// carry it into the new insertion, or drop it from the rejected side:
+    /// such a plan is emitted too, and its new words join no range (#1156).
+    /// Under `update_fields` it is compared, as before: a heading the TOC
+    /// lists holds its `_Toc` bookmark around its text, and renaming it is
+    /// what a plan refreshing the TOC does.
     fn emits_directly(&self) -> Result<bool, EditError> {
+        if !tracked::emits_all(self) {
+            return Ok(false);
+        }
         // The comparer resolves compatibility branches before comparing.
         // Emit edits beside raw AC tables directly so an untouched Fallback
         // survives, as it does under keep.
@@ -2445,16 +2456,64 @@ impl<'p> Transaction<'p> {
                         )
                         .is_empty()
             });
-        let emit =
-            (self.edits_a_comment_range() || has_alternate_table) && tracked::emits_all(self);
-        if emit && self.plan.update_fields {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                "update_fields cannot be combined with replacing the text a comment covers; refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
-            ));
+        if self.edits_a_comment_range() || has_alternate_table {
+            if self.plan.update_fields {
+                return Err(err(
+                    "INVALID_PLAN",
+                    None,
+                    "update_fields cannot be combined with replacing the text a comment covers; refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
+                ));
+            }
+            return Ok(true);
         }
-        Ok(emit)
+        Ok(!self.plan.update_fields && self.edits_beside_a_range_marker())
+    }
+
+    /// Whether a text edit writes new words beside a range marker: one in
+    /// a word the edit touches (the comparer rewrites whole words), or one
+    /// at body level next to the paragraph's first or last character. A
+    /// comment's marker inside the text a replacement removes does not
+    /// count: a replacement of the text a comment covers is
+    /// [`Self::edits_a_comment_range`], and the comparer takes a comment
+    /// whose words an edit removes into the deletion, as Word does. One at
+    /// the replaced text's edge, or further into its word, counts.
+    fn edits_beside_a_range_marker(&self) -> bool {
+        let separators = crate::comparer::WmlComparerSettings::default().word_separators;
+        self.resolved.iter().any(|(_, r)| match r {
+            Resolved::Text {
+                para,
+                start,
+                end,
+                replacement,
+                ..
+            } if !replacement.is_empty() => {
+                let text = &self.projections[*para].text;
+                let (from, to) = word_window(text, *start, *end, &separators);
+                let marks = self.range_marks(*para);
+                marks.iter().any(|(name, _, at)| {
+                    (from..=to).contains(at)
+                        && !(name.starts_with("comment") && (*start + 1..*end).contains(at))
+                }) || (from == 0 && self.body_level_marker_beside(*para, true))
+                    || (to == text.len() && self.body_level_marker_beside(*para, false))
+            }
+            _ => false,
+        })
+    }
+
+    /// Whether a range marker sits at body level right before (or after)
+    /// paragraph `para`.
+    fn body_level_marker_beside(&self, para: usize, before: bool) -> bool {
+        let dom = &self.opened.dom;
+        let node = self.paragraph_nodes[para];
+        let beside = if before {
+            dom.nodes_before_self(node)
+                .into_iter()
+                .rev()
+                .find(|&n| dom.is_element(n))
+        } else {
+            dom.next_element(node)
+        };
+        beside.is_some_and(|n| range_marker(dom, n).is_some())
     }
 
     /// Whether the plan names a comment's text (`cN.text`), or one of its
@@ -2500,6 +2559,23 @@ impl<'p> Transaction<'p> {
     fn comment_marks(&self, para: usize) -> Vec<(String, bool, usize)> {
         #[cfg(test)]
         COMMENT_MARK_SCANS.with(|scans| scans.set(scans.get() + 1));
+        self.range_marks(para)
+            .into_iter()
+            .filter_map(|(name, id, offset)| {
+                let starts = match name {
+                    "commentRangeStart" => true,
+                    "commentRangeEnd" => false,
+                    _ => return None,
+                };
+                Some((id?, starts, offset))
+            })
+            .collect()
+    }
+
+    /// Each range marker of paragraph `para` (see [`range_marker`]), in
+    /// document order: its local name, its `w:id`, and its projection
+    /// offset.
+    fn range_marks(&self, para: usize) -> Vec<(&'static str, Option<String>, usize)> {
         let dom = &self.opened.dom;
         let mut ends = BTreeMap::new();
         for segment in &self.projections[para].segments {
@@ -2516,16 +2592,9 @@ impl<'p> Transaction<'p> {
                 offset = end;
                 continue;
             }
-            let Some(name) = dom.name(node).filter(|n| n.namespace_name() == W::URI) else {
-                continue;
-            };
-            let starts = match name.local_name() {
-                "commentRangeStart" => true,
-                "commentRangeEnd" => false,
-                _ => continue,
-            };
-            if let Some(id) = dom.attribute(node, &W::id()) {
-                marks.push((id.to_string(), starts, offset));
+            if let Some(name) = range_marker(dom, node) {
+                let id = dom.attribute(node, &W::id()).map(str::to_string);
+                marks.push((name, id, offset));
             }
         }
         marks
@@ -6366,6 +6435,81 @@ fn attach_segment(
     }
 }
 
+/// The byte span of the words of `text` that `[start, end)` touches: out
+/// to the nearest whitespace or comparer word separator on each side, so
+/// at least the words the comparer would rewrite. `start` and `end` are
+/// byte offsets on char boundaries, as every projection offset is.
+fn word_window(text: &str, start: usize, end: usize, separators: &[char]) -> (usize, usize) {
+    let wordy = |c: char| !c.is_whitespace() && !separators.contains(&c);
+    let from = text[..start]
+        .char_indices()
+        .rev()
+        .take_while(|&(_, c)| wordy(c))
+        .last()
+        .map_or(start, |(i, _)| i);
+    let to = text[end..]
+        .char_indices()
+        .find(|&(_, c)| !wordy(c))
+        .map_or(text.len(), |(i, _)| end + i);
+    (from, to)
+}
+
+/// `node`'s local name when it is a range marker: an opener of
+/// [`tracked::RANGE_STARTS`], a closer of [`tracked::RANGE_ENDS`], or a
+/// comment range's end.
+fn range_marker(dom: &Dom, node: NodeId) -> Option<&'static str> {
+    let name = dom.name(node).filter(|n| n.namespace_name() == W::URI)?;
+    tracked::RANGE_STARTS
+        .into_iter()
+        .chain(tracked::RANGE_ENDS)
+        .chain([tracked::COMMENT_RANGE_END])
+        .find(|&marker| marker == name.local_name())
+}
+
+/// Insert `replacement` at `at` of `t` (of `len` bytes: a `w:t`, or a tab
+/// or break glyph) in its own run, formatted as `run`, when `at` is an edge
+/// of `run` with a range marker beside it: the new words then join no range
+/// they meet, as the redline writes them (#1156). Whether it did.
+fn insert_outside_ranges(
+    dom: &mut Dom,
+    run: NodeId,
+    t: NodeId,
+    at: usize,
+    len: usize,
+    replacement: &str,
+) -> bool {
+    let content: Vec<NodeId> = dom
+        .elements(run, None)
+        .into_iter()
+        .filter(|&n| !dom.name_is(n, &W::r_pr()))
+        .collect();
+    let before = if at == 0 && content.first() == Some(&t) {
+        true
+    } else if at == len && content.last() == Some(&t) {
+        false
+    } else {
+        return false;
+    };
+    let beside = tracked::outside_ranges(dom, run, before);
+    if beside == run {
+        return false;
+    }
+    let new = dom.new_element(W::r());
+    if let Some(rpr) = dom.element(run, &W::r_pr()) {
+        let rpr = tracked::clean_rpr(dom, rpr);
+        dom.add(new, rpr);
+    }
+    let text = dom.new_element(W::t());
+    dom.add(new, text);
+    write_text(dom, text, replacement);
+    if before {
+        dom.add_before_self(beside, new);
+    } else {
+        dom.add_after_self(beside, new);
+    }
+    true
+}
+
 /// Replace `[start, end)` of the paragraph's projection with `replacement`.
 /// The replacement goes to the first piece of the range; the other pieces
 /// lose their text; a tab, a line break or a non-breaking hyphen in the range
@@ -6418,22 +6562,27 @@ fn apply_text_edit(
             }
         }
         match seg.piece {
-            Piece::Text { t, .. } => {
+            Piece::Text { t, run } => {
                 let value = dom.value(t);
                 let at = start - seg.start;
-                let updated = format!("{}{}{}", &value[..at], replacement, &value[at..]);
-                write_text_new_in(dom, t, &updated, at..at + replacement.len());
+                if !insert_outside_ranges(dom, run, t, at, value.len(), replacement) {
+                    let updated = format!("{}{}{}", &value[..at], replacement, &value[at..]);
+                    write_text_new_in(dom, t, &updated, at..at + replacement.len());
+                }
             }
             // Beside a tab or a break: new text of the glyph's run, after it
             // when it holds the char before the point.
-            Piece::Glyph { element, .. } => {
-                let t = dom.new_element(W::t());
-                if seg.end == start {
-                    dom.add_after_self(element, t);
-                } else {
-                    dom.add_before_self(element, t);
+            Piece::Glyph { element, run } => {
+                let (at, len) = (start - seg.start, seg.end - seg.start);
+                if !insert_outside_ranges(dom, run, element, at, len, replacement) {
+                    let t = dom.new_element(W::t());
+                    if seg.end == start {
+                        dom.add_after_self(element, t);
+                    } else {
+                        dom.add_before_self(element, t);
+                    }
+                    write_text(dom, t, replacement);
                 }
-                write_text(dom, t, replacement);
             }
         }
         return;
