@@ -116,13 +116,9 @@ mod tests {
 
         assert_ne!(unid1, unid2, "Consecutive UNIDs must be different");
 
-        // Parse the hexadecimal strings into integers to compare their values
-        // Note: The maximum value generated is initially 1, so it will fit in u128.
-        let val1 = u128::from_str_radix(&unid1, 16).expect("Valid hex string");
-        let val2 = u128::from_str_radix(&unid2, 16).expect("Valid hex string");
-
+        // Fixed-width, zero-padded lowercase hex orders as its counter does.
         assert!(
-            val2 > val1,
+            unid2 > unid1,
             "Subsequent UNIDs should have a greater counter value"
         );
     }

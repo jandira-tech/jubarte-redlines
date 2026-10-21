@@ -1765,7 +1765,9 @@ mod tests {
 
     #[test]
     fn is_compound_file_returns_true_for_ole_magic() {
-        let mut bytes = OLE_MAGIC.to_vec();
+        // The OLE signature, spelled out apart from `OLE_MAGIC`.
+        let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        assert_eq!(bytes, OLE_MAGIC);
         bytes.push(0x42);
         assert!(is_compound_file(&bytes));
     }

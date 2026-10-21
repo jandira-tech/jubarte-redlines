@@ -7271,22 +7271,22 @@ fn compare_documents_impl(
         });
         if let Some(defined) = defined {
             // Main document + common related parts that can carry pStyle/rStyle.
-            let parts = out.parts();
-            let mut part_names: Vec<&str> = std::iter::once(main1.as_str())
-                .chain(parts.iter().filter_map(|p| {
-                    let is_style_carrier = p.starts_with("word/header")
-                        || p.starts_with("word/footer")
-                        || p == "word/footnotes.xml"
-                        || p == "word/endnotes.xml"
-                        || p == "word/comments.xml"
-                        || p.starts_with("word/comments");
-                    is_style_carrier.then_some(p.as_str())
-                }))
-                .collect();
+            let mut part_names: Vec<String> = vec![main1.clone()];
+            for p in out.parts() {
+                let is_style_carrier = p.starts_with("word/header")
+                    || p.starts_with("word/footer")
+                    || p == "word/footnotes.xml"
+                    || p == "word/endnotes.xml"
+                    || p == "word/comments.xml"
+                    || p.starts_with("word/comments");
+                if is_style_carrier {
+                    part_names.push(p);
+                }
+            }
             part_names.sort();
             part_names.dedup();
             for part in part_names {
-                let Some(xml) = out.part_string(part) else {
+                let Some(xml) = out.part_string(&part) else {
                     continue;
                 };
                 let mut pd = Dom::new();
@@ -7298,7 +7298,7 @@ fn compare_documents_impl(
                     &mut pd, root, &defined,
                 );
                 if n > 0 {
-                    out.set_part(part, pd.serialize_element(root).into_bytes());
+                    out.set_part(&part, pd.serialize_element(root).into_bytes());
                 }
             }
         }

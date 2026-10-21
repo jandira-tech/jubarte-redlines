@@ -1594,23 +1594,15 @@ mod public_lexical_empty_move_boundary_tests {
         // Intersection = {hello} (1)
         // Union = {hello, world, foo} (3)
         // Jaccard = 1 / 3
-        assert_eq!(jaccard("hello world", "hello foo", &settings), 1.0 / 3.0);
+        assert!((jaccard("hello world", "hello foo", &settings) - 1.0 / 3.0).abs() < 1e-12);
 
         // 5. Whitespace independence
-        assert_eq!(
-            jaccard(
-                "hello    world",
-                "hello
-world",
-                &settings
-            ),
-            1.0
-        );
+        assert_eq!(jaccard("hello    world", "hello\nworld", &settings), 1.0);
     }
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod split_by_chars_tests {
     use super::*;
 
