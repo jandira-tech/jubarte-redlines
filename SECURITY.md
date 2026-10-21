@@ -58,9 +58,12 @@ user authentication, password storage, encryption or key agreement.
 
 ### Temporary dependency exceptions
 
-`rdocx-opc` 0.2 requires patched quick-xml 0.41, fixing RUSTSEC-2026-0194
+`oxml-opc` 0.14.2 requires patched quick-xml 0.41, fixing RUSTSEC-2026-0194
 and RUSTSEC-2026-0195 in every binding and the public relationship parser.
 There are no exceptions for these vulnerabilities in the advisory policy.
+`zip` >= 9.0.5 closes GHSA-m665-v7pm-7grj (zip cloaking). Admission still
+refuses a local header that disagrees with the central directory
+(`ZIP_HEADER_MISMATCH`); that advisory is not ignored.
 OPC package admission retains its 256-attribute budget as an additional
 resource limit; a direct `Relationships::from_xml` call does not enforce
 that package-specific limit. Callers still need process/input resource limits

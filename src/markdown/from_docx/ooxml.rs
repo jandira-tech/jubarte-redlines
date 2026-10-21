@@ -39,7 +39,11 @@ impl<'a> Package<'a> {
         let archive = zip::ZipArchive::new(Cursor::new(bytes))
             .map_err(|e| invalid(format!("not a valid {kind} file: {e}")))?;
         check_limits(&archive)?;
-        let names = archive.file_names().map(str::to_string).collect();
+        let names = archive
+            .file_names()
+            .map(|name| name.map(|name| name.into_owned()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| invalid(format!("not a valid {kind} file: {e}")))?;
         Ok(Self { archive, names })
     }
 

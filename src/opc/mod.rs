@@ -35,8 +35,11 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
-use rdocx_opc::{ContentTypes, OpcPackage};
-pub use rdocx_opc::{OpcError, Relationship, Relationships};
+use oxml_opc::{ContentTypes, OpcPackage};
+pub use oxml_opc::{OpcError, Relationship, Relationships};
+
+mod archive;
+pub(crate) use archive::{open_archive, open_archive_unchecked, zip_defects};
 
 /// Input the engine refuses before or while reading it, as an `Err` the
 /// caller can handle rather than a panic, which would abort a WASM instance
@@ -51,8 +54,10 @@ where
 {
     OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
+#[cfg(test)]
+use zip::ZipArchive;
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, ZipWriter};
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
@@ -157,14 +162,17 @@ fn denorm(name: &str) -> String {
 /// `Override` have the same parser. Re-read those files from the zip with
 /// each explicit close folded into an empty element.
 fn reparse_explicitly_closed(pkg: &mut OpcPackage, bytes: &[u8]) {
-    let Ok(mut zip) = ZipArchive::new(Cursor::new(bytes)) else {
+    let Ok(mut zip) = open_archive(Cursor::new(bytes)) else {
         return;
     };
     for i in 0..zip.len() {
         let Ok(mut file) = zip.by_index(i) else {
             continue;
         };
-        let name = file.name().to_string();
+        let Ok(name) = file.name() else {
+            continue;
+        };
+        let name = name.into_owned();
         let is_rels = name.ends_with(".rels");
         if !is_rels && name != "[Content_Types].xml" {
             continue;
@@ -274,10 +282,11 @@ fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
 }
 
 fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let mut archive = open_archive(Cursor::new(bytes))?;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        if entry.name() != "[Content_Types].xml" && !entry.name().ends_with(".rels") {
+        let name = entry.name()?;
+        if name != "[Content_Types].xml" && !name.ends_with(".rels") {
             continue;
         }
         let mut xml = Vec::new();
@@ -363,10 +372,14 @@ impl PartFs {
                 );
             }
         }
-        let source_order = ZipArchive::new(Cursor::new(bytes))
+        let source_order = open_archive(Cursor::new(bytes))
             .map(|zip| {
                 (0..zip.len())
-                    .filter_map(|i| zip.name_for_index(i).map(|n| (n.to_string(), i)))
+                    .filter_map(|i| {
+                        zip.name_for_index(i)
+                            .and_then(Result::ok)
+                            .map(|name| (name.into_owned(), i))
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -865,7 +878,7 @@ mod tests {
         let names: Vec<String> = ZipArchive::new(Cursor::new(&zip))
             .unwrap()
             .file_names()
-            .map(str::to_string)
+            .map(|name| name.unwrap().into_owned())
             .collect();
         assert_eq!(
             names,
@@ -895,7 +908,7 @@ mod tests {
                 entry.last_modified(),
                 Some(zip::DateTime::default()),
                 "{}",
-                entry.name()
+                entry.name().unwrap()
             );
         }
     }

@@ -954,7 +954,7 @@ fn google_docs_images_share_one_definition_per_payload() {
     // them, shared by the three blips the document.xml holds.
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&docx)).unwrap();
     let media: Vec<String> = (0..zip.len())
-        .map(|i| zip.by_index(i).unwrap().name().to_string())
+        .map(|i| zip.by_index(i).unwrap().name().unwrap().into_owned())
         .filter(|name| name.starts_with("word/media/"))
         .collect();
     assert_eq!(media.len(), 2, "{media:?}");

@@ -36,7 +36,7 @@ fn package() -> PartFs {
 fn names(pkg: &PartFs) -> Vec<String> {
     let zip = ZipArchive::new(Cursor::new(pkg.to_zip().unwrap())).unwrap();
     (0..zip.len())
-        .map(|i| zip.name_for_index(i).unwrap().to_string())
+        .map(|i| zip.name_for_index(i).unwrap().unwrap().into_owned())
         .collect()
 }
 

@@ -754,7 +754,7 @@ fn macro_packages_are_refused() {
         let mut data = Vec::new();
         std::io::Read::read_to_end(&mut f, &mut data).unwrap();
         out.start_file(
-            f.name().to_string(),
+            f.name().unwrap().into_owned(),
             zip::write::SimpleFileOptions::default(),
         )
         .unwrap();

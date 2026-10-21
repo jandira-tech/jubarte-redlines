@@ -143,6 +143,13 @@ pub enum AdmissionErrorKind {
     UnsupportedPackage,
     /// Not a readable ZIP, or an entry fails its CRC (`INVALID_PACKAGE`).
     InvalidPackage,
+    /// A ZIP local file header disagrees with the central directory
+    /// (`ZIP_HEADER_MISMATCH`): a dual-header ("zip cloaking",
+    /// GHSA-m665-v7pm-7grj) package whose two headers describe different
+    /// entries. Every reader here trusts the central directory; a tool
+    /// scanning local headers would see another package, so admission
+    /// refuses the file instead of picking a side.
+    ZipHeaderMismatch,
     /// An XML part is malformed or nests too deep (`INVALID_XML`).
     InvalidXml,
     /// A Word 97-2003 `.doc`, or an encrypted document of any Word version:
@@ -159,17 +166,19 @@ impl AdmissionErrorKind {
             Self::DuplicatePart => "DUPLICATE_PART",
             Self::UnsupportedPackage => "UNSUPPORTED_PACKAGE",
             Self::InvalidPackage => "INVALID_PACKAGE",
+            Self::ZipHeaderMismatch => "ZIP_HEADER_MISMATCH",
             Self::InvalidXml => "INVALID_XML",
             Self::LegacyDocument => "LEGACY_DOC",
         }
     }
 
     /// Every kind, in code order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::InputLimit,
         Self::DuplicatePart,
         Self::UnsupportedPackage,
         Self::InvalidPackage,
+        Self::ZipHeaderMismatch,
         Self::InvalidXml,
         Self::LegacyDocument,
     ];
@@ -252,7 +261,7 @@ pub struct AdmissionError {
 }
 
 impl AdmissionError {
-    fn new(kind: AdmissionErrorKind, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: AdmissionErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -306,7 +315,8 @@ const OFFICE_DOCUMENT_REL: &[&str] = &[
 /// An [`AdmissionError`] naming the first budget or rule the package
 /// breaks; the kind's [`AdmissionErrorKind::code`] is the stable string
 /// the CLI and bindings print (`INPUT_LIMIT`, `DUPLICATE_PART`,
-/// `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`, `INVALID_XML`, `LEGACY_DOC`).
+/// `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`, `ZIP_HEADER_MISMATCH`,
+/// `INVALID_XML`, `LEGACY_DOC`).
 pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, AdmissionError> {
     use AdmissionErrorKind as K;
 
@@ -332,7 +342,10 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             ),
         ));
     }
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
+    // The shared open (`crate::opc::open_archive`) runs this same check, but
+    // as a plain zip error; admission opens unchecked so the refusal keeps
+    // its typed kind.
+    let mut archive = crate::opc::open_archive_unchecked(Cursor::new(bytes))
         .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("not a ZIP file: {e}")))?;
     // The reader keys entries by name, so exact duplicates collapse into one.
     if (archive.len() as u64) < declared {
@@ -341,14 +354,29 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             "two ZIP entries have the same name",
         ));
     }
+    // GHSA-m665-v7pm-7grj (zip <= 9.0.4) and a local header that disagrees
+    // with the central directory: a scanner trusting local headers would
+    // see a different package. `ZipArchive` reads names and content through
+    // the central directory, so the two records must agree (`zip_defects`).
+    // zip 9.0.5's own consistency check also refuses a local time or a
+    // central-only Unicode Path field, both of which real Word-opened files
+    // carry, so admission uses the narrower check.
+    if let Some(defect) = crate::opc::zip_defects(&archive, &mut Cursor::new(bytes))
+        .into_iter()
+        .next()
+    {
+        return Err(defect.refusal());
+    }
 
     let mut canonical = HashSet::new();
     for i in 0..archive.len() {
         let entry = archive
             .by_index_raw(i)
             .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
-        let name = entry.name();
-        check_part_name(name)?;
+        let name = entry
+            .name()
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?;
+        check_part_name(&name)?;
         if !canonical.insert(name.to_ascii_lowercase()) {
             return Err(AdmissionError::new(
                 K::DuplicatePart,
@@ -394,7 +422,10 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, e.to_string()))?
+            .into_owned();
         let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let lower = name.to_ascii_lowercase();
@@ -1220,12 +1251,42 @@ mod tests {
                 "DUPLICATE_PART",
                 "UNSUPPORTED_PACKAGE",
                 "INVALID_PACKAGE",
+                "ZIP_HEADER_MISMATCH",
                 "INVALID_XML",
                 "LEGACY_DOC"
             ]
         );
         let e = AdmissionError::new(K::InputLimit, "x");
         assert_eq!(e.to_string(), "INPUT_LIMIT: x");
+    }
+
+    /// Change only a local name in the synthetic writer's package.
+    fn rename_local_header(bytes: &mut [u8], from: &[u8], to: &[u8]) {
+        assert_eq!(from.len(), to.len());
+        let at = {
+            let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+            archive
+                .by_name(std::str::from_utf8(from).unwrap())
+                .unwrap()
+                .header_start() as usize
+        };
+        assert_eq!(&bytes[at..at + 4], b"PK\x03\x04");
+        assert_eq!(&bytes[at + 30..at + 30 + from.len()], from);
+        bytes[at + 30..at + 30 + from.len()].copy_from_slice(to);
+    }
+
+    /// GHSA-m665-v7pm-7grj (zip <= 9.0.4): a local header may name an entry
+    /// differently than the central directory, so a scanner trusting local
+    /// headers reviews a different package than the one readers open.
+    /// Admission refuses the disagreement with `ZIP_HEADER_MISMATCH`.
+    #[test]
+    fn a_dual_header_package_is_refused() {
+        let mut bytes = docx_with(&[]);
+        rename_local_header(&mut bytes, b"word/document.xml", b"w0rd/document.xml");
+        let err = admit(&bytes, InputLimits::default()).expect_err("refused");
+        assert_eq!(err.kind.code(), "ZIP_HEADER_MISMATCH");
+        assert_eq!(err.code(), "ZIP_HEADER_MISMATCH");
+        assert!(err.message.contains("headers disagree"), "{}", err.message);
     }
 
     #[test]
