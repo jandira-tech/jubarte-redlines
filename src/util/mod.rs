@@ -40,12 +40,6 @@ pub fn shell_word(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', r"'\''"))
 }
 
-/// Former name of [`sha1::fnv1a_64`] at this path. It never computed SHA-1.
-#[deprecated(since = "0.10.2", note = "renamed to `fnv1a_64`; this was never SHA-1")]
-pub fn sha1_fingerprint(s: &str) -> u64 {
-    sha1::fnv1a_64(s)
-}
-
 /// A universal measure (`"612pt"`, `"1in"`, `"2.54cm"`, `"1mm"`, `"6pc"`) as
 /// twips, `None` for a plain number or an unknown unit. Strict packages write
 /// these on attributes whose Transitional form is integer twips

@@ -17,6 +17,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Breaking
 
+- **The `sha1_fingerprint` aliases are gone** (#1456). `util::sha1_fingerprint`,
+  `util::sha1::sha1_fingerprint` and `util::sha1::sha1_fingerprint128`,
+  deprecated since 0.10.2, are removed; call `util::sha1::fnv1a_64` and
+  `util::sha1::fnv1a_128`. They never computed SHA-1.
+
 - **`replace` keeps what it keeps** (plan 12, #1262). A `replace` with
   neither `whole` nor `format` writes only the words that differ from
   `replacement`, so the words it keeps keep their formatting (a bold
