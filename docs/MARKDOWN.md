@@ -738,14 +738,16 @@ staged in the contract's plan, not landed.
 Text¶{r9 @AC}                        inserted paragraph mark
 ```
 
-A change that was the only content of another — `A` inserted text, `B`
-later deleted it — has nothing of the outer change left to split around
-it, so its note names the outer one after ` re ` and the outer change's
-own tag, each with its own timestamp as notes print them: `r3 @BO re
+A change inside another — `A` inserted text, `B` later deleted some or
+all of it — names the outer one after ` re ` and the outer change's own
+tag, whether or not text of the outer change is left beside it (#1111),
+each with its own timestamp as notes print them: `r3 @BO re
 r1 @AL`, or `r3 Ben Ode (2026-09-30T09:00:00Z) re r1 Ana Lima
 (2026-09-29T14:05:00Z)` in the plain view. The writer puts the change
 back inside the one it names. A row's or cell's own mark is never
-named: the writer rebuilds those where they stand. Deeper nests chain
+named: the writer rebuilds those where they stand, and the table line
+that places the mark places the changes inside it (#1376). A formatting
+change's `fmt` tag names no parent yet (#1377). Deeper nests chain
 the same way, innermost first (`r5 @CD re r3 @BO re r1 @AL`). The body
 writer currently rebuilds only the first outer a chain names; headers and
 footers rebuild the full chain. Word opens `ins > del > ins` but misreads
