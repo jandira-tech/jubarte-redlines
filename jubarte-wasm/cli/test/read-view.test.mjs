@@ -75,7 +75,7 @@ for (const trackChanges of ["accept", "reject"]) {
   test(`readView changed retains author metadata in the ${trackChanges} view`, () => {
     const view = read(received, { changed: true, by: "AC", trackChanges });
     assert.deepEqual(blockIds(view), ["p3", "p5", "p7", "t0", "p18"]);
-    assert.match(body(view), /<!-- p3 rev r0 @AC; r1 @AC; r2 @AC -->/);
+    assert.match(body(view), /<!-- p3 rev r0 @AC; r1\+2 @AC -->/);
     assert.doesNotMatch(body(view), /\{(?:\+\+|--|~~)/);
     assert.ok(body(view).includes(trackChanges === "accept" ? "Day 15" : "Day 10"));
   });
