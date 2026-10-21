@@ -1970,8 +1970,34 @@ pub(super) fn math_crosses_boundary(latex: &str) -> bool {
 /// back are the joined form's. CommonMark would otherwise read the
 /// touching delimiters as one run holding the inner ones as text.
 pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
-    let merged = merge_across_marks(markdown, accept);
+    let merged = merge_seam_levels(markdown, accept);
     resolve_with_policy(&merged, accept, false)
+}
+
+/// How many times [`merge_seam_levels`] re-reads its own output. Every
+/// pass that changes the text folds at least one pair of spans into one
+/// or drops at least one mark, so a document's inline nesting settles
+/// far below this; the bound only stops a hand-made input from spinning.
+const SEAM_PASSES: usize = 32;
+
+/// [`merge_across_marks`] until the text stops changing.
+///
+/// One pass joins the spans at a level, but a group's replacement is
+/// written from its members' raw source: where the group spans a
+/// container, the joins that container's own level made fall inside it
+/// and go unused, so the inner spans come out still touching and
+/// CommonMark fuses them. Re-reading the text the pass left picks those
+/// joins up, because the pass before it wrote them out.
+fn merge_seam_levels(markdown: &str, accept: bool) -> String {
+    let mut merged = merge_across_marks(markdown, accept);
+    for _ in 0..SEAM_PASSES {
+        let next = merge_across_marks(&merged, accept);
+        if next == merged {
+            break;
+        }
+        merged = next;
+    }
+    merged
 }
 
 /// Whether `note` names, after ` re `, a change the one it follows sits
@@ -3502,6 +3528,28 @@ mod tests {
         // the short one takes the other flavour and stays its own span.
         let joined = resolve("**a**{--x--}*b*", true);
         assert_eq!(joined, "**a**_b_", "{joined:?}");
+    }
+
+    /// A join that spans a container must not lose the joins the
+    /// container's own spans made: a group's replacement is written
+    /// from its members' raw source, so the splices those members'
+    /// inner level produced fall inside it and are dropped as covered —
+    /// the inner spans come out still touching and CommonMark fuses
+    /// them. Both levels must therefore be walked: the inner join
+    /// first, the outer one on the text it left.
+    #[test]
+    fn resolve_keeps_an_inner_join_inside_a_joined_container() {
+        // The two code spans inside the strong join into `bc`, and the
+        // two strong spans around the deleted `y` into one.
+        let joined = resolve("**A `b`{--x--}`c` D**{--y--}**E**", true);
+        assert_eq!(joined, "**A `bc` DE**", "{joined:?}");
+        // The same for emphasis, whose touching runs fuse as readily.
+        let joined = resolve("**A *b*{--x--}*c* D**{--y--}**E**", true);
+        assert_eq!(joined, "**A *bc* DE**", "{joined:?}");
+        // A container that joins with nothing keeps its inner join:
+        // it was already the only splice on the pass.
+        let joined = resolve("*`a`{--x--}`b`*", true);
+        assert_eq!(joined, "*`ab`*", "{joined:?}");
     }
 
     /// Marks next to a link do not merge it with another link: the byte
