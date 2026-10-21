@@ -208,3 +208,30 @@ fn a_size_out_of_range_is_left_out() {
     assert_eq!(got[1].0, ["-"]);
     assert_eq!(got[2].0, ["3276"]);
 }
+
+#[test]
+fn a_style_without_a_type_is_a_paragraph_style() {
+    // ECMA-376 `w:style`: "If this attribute is not specified, then the
+    // default value shall be assumed to be paragraph." A paragraph at its
+    // untyped style's size says no `size`, and an untyped default style
+    // is the one unstyled paragraphs compare against (#1485 review).
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:default="1" w:styleId="Body"><w:name w:val="Body"/><w:rPr><w:sz w:val="24"/></w:rPr></w:style><w:style w:styleId="Quiet"><w:name w:val="Quiet"/><w:basedOn w:val="Body"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style></w:styles>"#,
+        W_NS = common::docx::W_NS
+    );
+    let part = common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    };
+    let source = common::docx::docx_with(
+        r#"<w:p><w:pPr><w:pStyle w:val="Quiet"/></w:pPr><w:r><w:rPr><w:sz w:val="16"/></w:rPr><w:t>Quiet</w:t></w:r></w:p><w:p><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>Body</w:t></w:r></w:p>"#,
+        &[part],
+    );
+    let shown = view(&source);
+    assert!(shown.contains("<!-- p0 Quiet -->"), "{shown}");
+    assert!(shown.contains("<!-- p1 -->"), "{shown}");
+    assert!(!shown.contains("size"), "{shown}");
+}

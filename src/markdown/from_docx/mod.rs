@@ -271,7 +271,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let default_style = styles_root.as_ref().and_then(|root| {
         root.children_named("style")
             .find(|s| {
-                s.attr("type") == Some("paragraph")
+                header::is_paragraph_style(s)
                     && s.attr("default").is_some_and(|d| d == "1" || d == "true")
             })
             .and_then(|s| s.attr("styleId"))
@@ -866,8 +866,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     && (!in_box
                         || styles_root.as_ref().is_some_and(|root| {
                             root.children_named("style").any(|s| {
-                                s.attr("type") == Some("paragraph")
-                                    && s.attr("styleId") == Some(style)
+                                header::is_paragraph_style(s) && s.attr("styleId") == Some(style)
                             })
                         }))
                 {
@@ -898,9 +897,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let source = note_style_sources.get(style).map_or(style, String::as_str);
             if style != default_style.as_deref().unwrap_or("Normal")
                 && styles_root.as_ref().is_some_and(|root| {
-                    root.children_named("style").any(|s| {
-                        s.attr("type") == Some("paragraph") && s.attr("styleId") == Some(source)
-                    })
+                    root.children_named("style")
+                        .any(|s| header::is_paragraph_style(s) && s.attr("styleId") == Some(source))
                 })
                 && !heading_styles.iter().any(|(_, h)| h == style)
                 && !other_styles.iter().any(|o| o == style)
@@ -1839,7 +1837,7 @@ impl Styles {
             .and_then(font_of);
         let default_paragraph = root
             .children_named("style")
-            .find(|s| s.attr("type") == Some("paragraph") && s.attr("default") == Some("1"))
+            .find(|s| header::is_paragraph_style(s) && s.attr("default") == Some("1"))
             .and_then(|s| s.attr("styleId"))
             .map(str::to_string);
         Self {
@@ -4794,9 +4792,10 @@ fn story_frame(p: &Element, styles: Option<&Element>, default: Option<&str>) -> 
             if !seen.insert(sid.clone()) {
                 break;
             }
-            let Some(style) = styles.children_named("style").find(|s| {
-                s.attr("styleId") == Some(sid.as_str()) && s.attr("type") == Some("paragraph")
-            }) else {
+            let Some(style) = styles
+                .children_named("style")
+                .find(|s| s.attr("styleId") == Some(sid.as_str()) && header::is_paragraph_style(s))
+            else {
                 break;
             };
             if let Some(frame) = style.path(&["pPr", "framePr"]) {
