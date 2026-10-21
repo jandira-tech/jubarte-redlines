@@ -298,11 +298,13 @@ impl Spacing {
             // `as` cannot overflow: the bound is checked first.
             (n.is_finite() && (0.0..=most).contains(&twips)).then_some(twips as u32)
         };
+        // Word puts `w:beforeAutospacing` in place of `w:before`, so a side
+        // keeps one of the two: the clause said last (#1479 review).
         match (word, value) {
-            ("before", "auto") => self.before_auto = true,
-            ("after", "auto") => self.after_auto = true,
-            ("before", _) => self.before = Some(points(value)?),
-            ("after", _) => self.after = Some(points(value)?),
+            ("before", "auto") => (self.before, self.before_auto) = (None, true),
+            ("after", "auto") => (self.after, self.after_auto) = (None, true),
+            ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
+            ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
             ("line", _) => {
                 self.line = Some(match value.split_once(' ') {
                     Some((height, "exact")) => (points(height)?, "exact"),
