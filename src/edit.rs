@@ -8599,6 +8599,10 @@ mod tests {
     fn plan_json_rejects_malformed_json() {
         let e = EditPlan::from_json("{").unwrap_err();
         assert!(e.to_string().starts_with("INVALID_PLAN: "));
+        let bad_schema = r#"{"schema_version":2,"author":"A","operations":[]}"#;
+        let e = EditPlan::from_json(bad_schema).unwrap_err();
+        assert_eq!(e.code, "UNSUPPORTED_SCHEMA");
+        assert!(e.to_string().starts_with("UNSUPPORTED_SCHEMA: schema_version 2 is not supported (expected 1)"));
     }
 
     #[test]
