@@ -10,7 +10,7 @@ use std::process::Command;
 
 mod common;
 
-use common::docx::{Part, R_NS, docx_with, para, part_string, replace_entry};
+use common::docx::{Part, R_NS, W_NS, docx_with, para, part_string, replace_entry};
 
 fn jubarte(dir: &Path, args: &[&str]) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
@@ -572,6 +572,79 @@ fn docx_round_trip(docx: &[u8]) -> (String, Vec<u8>) {
     (view, out)
 }
 
+/// Word keeps the body's spacing in `docDefaults`, and a table style's own
+/// spacing wins over that in its cells. Read and written back, the spacing
+/// stays the document's default: on `Normal` it would beat the table
+/// style, every cell would take the body's spacing, and the table would
+/// spill onto a second page (#1420).
+#[test]
+fn the_documents_default_spacing_stays_its_default() {
+    let thin = "w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>";
+    let borders: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .iter()
+        .map(|side| format!("<w:{side} {thin}"))
+        .collect();
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders>{borders}</w:tblBorders></w:tblPr></w:style></w:styles>"#
+    );
+    let rows: String = (0..34)
+        .map(|i| {
+            format!(
+                "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"9360\" w:type=\"dxa\"/></w:tcPr>{}</w:tc></w:tr>",
+                para(&format!("Row {i}"))
+            )
+        })
+        .collect();
+    let body = format!(
+        "{}<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>{rows}</w:tbl>{}",
+        para("Before."),
+        para("After.")
+    );
+    let styles_rel = format!("{R_NS}/styles");
+    let original = docx_with(
+        &body,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: &styles_rel,
+            xml: &styles,
+        }],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.docx"), &original).unwrap();
+    jubarte(dir.path(), &["read", "a.docx", "-o", "a.md"]);
+    jubarte(dir.path(), &["convert", "a.md", "-o", "b.docx"]);
+    let written = part(
+        &std::fs::read(dir.path().join("b.docx")).unwrap(),
+        "word/styles.xml",
+    );
+    assert!(
+        written.contains(
+            "<w:pPrDefault><w:pPr><w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+             </w:pPr></w:pPrDefault>"
+        ),
+        "{written}"
+    );
+    let normal = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"Normal\""))
+        .unwrap_or_else(|| panic!("no Normal: {written}"));
+    assert!(!normal.contains("<w:spacing"), "{normal}");
+    let pages = |name: &str| {
+        jubarte(
+            dir.path(),
+            &["debug", name, "--check", "render", "--part", "(layout)"],
+        )
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("pages "))
+        .map(str::to_string)
+    };
+    assert_eq!(pages("a.docx").as_deref(), Some("pages 1"));
+    assert_eq!(pages("b.docx"), pages("a.docx"));
+}
+
 /// A docx with a floating image — a `wp:anchor` drawing with one PNG —
 /// as `docx_with` builds it.
 fn floating_image_docx() -> Vec<u8> {
@@ -651,6 +724,12 @@ fn a_drawing_payload_is_a_reference_definition() {
 /// holds the box's frame only. A docx whose middle paragraph anchors a
 /// plain text box reading `Added box`.
 fn text_box_docx() -> Vec<u8> {
+    text_box_docx_with("", &[])
+}
+
+/// [`text_box_docx`] whose box paragraph has the properties `ppr` (a
+/// `w:pPr`, or nothing), with the extra parts `extras`.
+fn text_box_docx_with(ppr: &str, extras: &[Part<'_>]) -> Vec<u8> {
     let box_run = "<w:r><w:drawing><wp:anchor \
         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
         distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
@@ -671,14 +750,15 @@ fn text_box_docx() -> Vec<u8> {
         <a:ext cx=\"2374265\" cy=\"457200\"/></a:xfrm>\
         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
         <wps:txbx><w:txbxContent>\
-        <w:p><w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r></w:p>\
+        <w:p>{ppr}<w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r></w:p>\
         </w:txbxContent></wps:txbx><wps:bodyPr rot=\"0\" vert=\"horz\" \
         wrap=\"square\" lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\" \
         anchor=\"t\"/></wps:wsp></a:graphicData></a:graphic></wp:anchor>\
-        </w:drawing></w:r>";
+        </w:drawing></w:r>"
+        .replace("{ppr}", ppr);
     docx_with(
-        &(para("Before.") + "<w:p>" + box_run + "</w:p>" + &para("After.")),
-        &[],
+        &(para("Before.") + "<w:p>" + &box_run + "</w:p>" + &para("After.")),
+        extras,
     )
 }
 
@@ -2034,4 +2114,219 @@ fn fallback_only_box_commands_do_not_warn_about_nesting() {
             !String::from_utf8_lossy(&output.stderr).contains("Word cannot open this document")
         );
     }
+}
+
+/// A paragraph style used only inside a text box is the legend's too: the
+/// written docx defines it as the original did, name and spacing, so the
+/// box's paragraph does not fall back to Normal (#1423).
+#[test]
+fn a_text_box_s_paragraph_style_is_defined_in_the_written_docx() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="NoSpacing"><w:name w:val="No Spacing"/><w:uiPriority w:val="1"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style></w:styles>"#
+    );
+    let styles_rel = format!("{R_NS}/styles");
+    let original = text_box_docx_with(
+        "<w:pPr><w:pStyle w:val=\"NoSpacing\"/></w:pPr>",
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: &styles_rel,
+            xml: &styles,
+        }],
+    );
+    let (view, out) = docx_round_trip(&original);
+    assert!(view.contains("\n  NoSpacing: "), "{view}");
+    let written = part(&out, "word/styles.xml");
+    let no_spacing = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"NoSpacing\""))
+        .unwrap_or_else(|| panic!("NoSpacing is not defined: {written}"));
+    assert!(
+        no_spacing.contains("<w:name w:val=\"No Spacing\"/>"),
+        "{no_spacing}"
+    );
+    assert!(no_spacing.contains("w:after=\"0\""), "{no_spacing}");
+    assert!(part(&out, "word/document.xml").contains("<w:pStyle w:val=\"NoSpacing\"/>"));
+}
+
+/// The cover page's Abstract: a content control bound to the custom XML
+/// store `{55AF091B-…}` (CoverPageProperties).
+const ABSTRACT_STORE: &str = "{55AF091B-3C7A-41E3-B477-F2FDAA23CFDA}";
+const COVER_NS: &str = "http://schemas.microsoft.com/office/2006/coverPageProps";
+
+/// [`text_box_docx`] whose box holds a content control bound to the cover
+/// page's Abstract, reading `My abstract`, with its custom XML store.
+fn bound_text_box_docx() -> Vec<u8> {
+    bound_text_box_docx_with("/ns0:CoverPageProperties[1]/ns0:Abstract[1]", "<w:text/>")
+}
+
+/// [`bound_text_box_docx`] whose control binds `xpath` and is of the type
+/// `control` names (`<w:text/>`, a check box, …).
+fn bound_text_box_docx_with(xpath: &str, control: &str) -> Vec<u8> {
+    let sdt = format!(
+        "<w:sdt><w:sdtPr><w:alias w:val=\"Abstract\"/><w:id w:val=\"7\"/>\
+         <w:dataBinding w:prefixMappings=\"xmlns:ns0='{COVER_NS}'\" \
+         w:xpath=\"{xpath}\" w:storeItemID=\"{ABSTRACT_STORE}\"/>\
+         {control}</w:sdtPr><w:sdtContent><w:r><w:t>My abstract</w:t></w:r></w:sdtContent></w:sdt>"
+    );
+    let item = format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><CoverPageProperties xmlns=\"{COVER_NS}\"><PublishDate/><Abstract>My abstract</Abstract></CoverPageProperties>"
+    );
+    let props = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><ds:datastoreItem ds:itemID=\"{ABSTRACT_STORE}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs><ds:schemaRef ds:uri=\"{COVER_NS}\"/></ds:schemaRefs></ds:datastoreItem>"
+    );
+    let item_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{R_NS}/customXmlProps\" Target=\"itemProps1.xml\"/></Relationships>"
+    );
+    let docx = text_box_docx_with(
+        "",
+        &[
+            Part {
+                name: "customXml/item1.xml",
+                content_type: "application/xml",
+                rel_type: "",
+                xml: &item,
+            },
+            Part {
+                name: "customXml/itemProps1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.customXmlProperties+xml",
+                rel_type: "",
+                xml: &props,
+            },
+            Part {
+                name: "customXml/_rels/item1.xml.rels",
+                content_type: "application/vnd.openxmlformats-package.relationships+xml",
+                rel_type: "",
+                xml: &item_rels,
+            },
+        ],
+    );
+    let document = part(&docx, "word/document.xml").replace(
+        "<w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r>",
+        &sdt,
+    );
+    assert!(document.contains(ABSTRACT_STORE), "{document}");
+    let docx = replace_entry(&docx, "word/document.xml", document.as_bytes());
+    let rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rIdC1\" Type=\"{R_NS}/customXml\" Target=\"../customXml/item1.xml\"/></Relationships>"
+    );
+    replace_entry(&docx, "word/_rels/document.xml.rels", rels.as_bytes())
+}
+
+/// A content control in a text box bound to a custom XML store keeps its
+/// text in Word: Word fills a bound control from its store when it opens
+/// the file, so the docx written back holds the store, the bound node
+/// reading what the control shows (#1427).
+#[test]
+fn a_bound_content_control_s_store_is_written_back() {
+    let original = bound_text_box_docx();
+    let (view, out) = docx_round_trip(&original);
+    assert!(view.contains("My abstract"), "{view}");
+    let document = part(&out, "word/document.xml");
+    assert!(
+        document.contains(ABSTRACT_STORE),
+        "the binding is kept: {document}"
+    );
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+    let names: Vec<String> = (0..zip.len())
+        .map(|i| zip.by_index(i).unwrap().name().unwrap().to_string())
+        .collect();
+    let mut read = |name: &str| {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name(name).unwrap(), &mut text).unwrap();
+        text
+    };
+    let props: Vec<String> = names
+        .iter()
+        .filter(|n| n.starts_with("customXml/itemProps"))
+        .map(|n| read(n))
+        .collect();
+    assert!(
+        props
+            .iter()
+            .any(|p| p.contains(&format!("ds:itemID=\"{ABSTRACT_STORE}\""))),
+        "no store {ABSTRACT_STORE} among {names:?}: {props:?}"
+    );
+    let items: Vec<String> = names
+        .iter()
+        .filter(|n| n.starts_with("customXml/item") && !n.contains("Props") && n.ends_with(".xml"))
+        .map(|n| read(n))
+        .collect();
+    assert!(
+        items
+            .iter()
+            .any(|i| i.contains(COVER_NS) && i.contains(">My abstract</")),
+        "{items:?}"
+    );
+    let rels = read("word/_rels/document.xml.rels");
+    assert!(rels.contains("relationships/customXml\""), "{rels}");
+    let types = read("[Content_Types].xml");
+    assert!(types.contains("customXmlProperties+xml"), "{types}");
+    common::validity::assert_word_valid_package(&out);
+}
+
+/// A binding no store can be built for (a path to an attribute, a check
+/// box, whose store value is not its text) loses its `w:dataBinding`, so
+/// Word keeps the text the control shows instead of emptying it for a
+/// store the package lacks (#1427).
+#[test]
+fn a_binding_with_no_store_to_build_leaves_its_control_s_text() {
+    for (xpath, control) in [
+        ("/ns0:CoverPageProperties[1]/@ns0:Abstract", "<w:text/>"),
+        (
+            "/ns0:CoverPageProperties[1]/ns0:Abstract[1]",
+            "<w14:checkbox xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">\
+             <w14:checked w14:val=\"0\"/></w14:checkbox>",
+        ),
+    ] {
+        let (view, out) = docx_round_trip(&bound_text_box_docx_with(xpath, control));
+        assert!(view.contains("My abstract"), "{view}");
+        let document = part(&out, "word/document.xml");
+        assert!(!document.contains("dataBinding"), "{xpath}: {document}");
+        assert!(
+            xml_element(&document, "w:txbxContent").contains("My abstract"),
+            "{document}"
+        );
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+        let names: Vec<String> = (0..zip.len())
+            .map(|i| zip.by_index(i).unwrap().name().unwrap().to_string())
+            .collect();
+        assert!(
+            names.iter().all(|n| !n.starts_with("customXml/")),
+            "{xpath}: {names:?}"
+        );
+        common::validity::assert_word_valid_package(&out);
+    }
+}
+
+/// An edit of a bound control's text in the view shows in Word: the box
+/// is written with the edited words (#1101 A), and no store is left
+/// holding the old text for Word to fill a control with (#1427).
+#[test]
+fn an_edited_bound_control_shows_its_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), bound_text_box_docx()).unwrap();
+    let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
+    let edited = view.replace("My abstract", "Edited abstract");
+    assert_ne!(edited, view);
+    std::fs::write(dir.path().join("edit.md"), edited).unwrap();
+    jubarte(dir.path(), &["convert", "edit.md", "-o", "out.docx"]);
+    let out = std::fs::read(dir.path().join("out.docx")).unwrap();
+    let document = part(&out, "word/document.xml");
+    let boxed = xml_element(&document, "w:txbxContent");
+    assert!(boxed.contains("Edited abstract"), "{document}");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).unwrap();
+        let mut text = String::new();
+        if std::io::Read::read_to_string(&mut entry, &mut text).is_ok() {
+            assert!(
+                !text.contains("My abstract"),
+                "{}: {text}",
+                entry.name().unwrap()
+            );
+        }
+    }
+    drop(zip);
+    common::validity::assert_word_valid_package(&out);
 }

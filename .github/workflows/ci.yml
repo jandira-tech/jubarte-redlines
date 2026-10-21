@@ -174,6 +174,9 @@ jobs:
         with:
           toolchain: "1.94"
       - uses: ./.github/actions/mbx
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
+        with:
+          tool: cargo-nextest
       # The whole suite, not `cargo check`: README.md promises MSRV *testing*,
       # and dev-dependencies and test-only code are exactly what a compile
       # check of the library skips. One Linux run on the declared
@@ -181,7 +184,9 @@ jobs:
       # The strict Markdown round trip is red until the reader work lands
       # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
       # keeps reporting every other test.
-      - run: cargo test --all-features --no-fail-fast -- --skip markdown_and_docx_round_trip_exactly
+      - run: cargo nextest run --all-features --no-fail-fast -E 'not test(markdown_and_docx_round_trip_exactly)'
+      # nextest runs no doctests.
+      - run: cargo test --all-features --doc
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
@@ -307,4 +312,4 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      - run: node --test jubarte-wasm/cli/test/cli.test.mjs
+      - run: node --test jubarte-wasm/cli/test/*.test.mjs

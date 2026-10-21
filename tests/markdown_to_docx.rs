@@ -2126,12 +2126,19 @@ fn scholar_sets_a_manuscript_as_latex_does() {
     for expected in [
         r#"w:ascii="Latin Modern Roman""#,
         r#"<w:sz w:val="20"/>"#,
-        r#"w:line="240" w:lineRule="exact""#,
-        r#"w:after="120""#,
         r#"<w:jc w:val="both"/>"#,
     ] {
         assert!(normal.contains(expected), "{expected}: {normal}");
     }
+    // The body's spacing is the document's default, where Word keeps it.
+    let styles = part_string(&docx, "word/styles.xml").unwrap();
+    assert!(
+        styles.contains(
+            r#"<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="240" w:lineRule="exact"/></w:pPr></w:pPrDefault>"#
+        ),
+        "{styles}"
+    );
+    assert!(!normal.contains("<w:spacing"), "{normal}");
     // A heading takes Latin Modern Roman from Normal, which it is based
     // on, so it names no font of its own. Heading 3 is 10pt like Normal,
     // so it names no size either.

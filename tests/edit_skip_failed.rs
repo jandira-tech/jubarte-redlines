@@ -6,6 +6,7 @@
 //! leaves the failed ones out, with a runnable plan of the failures beside
 //! the plan; a clean dry run prints the command that applies it; every
 //! write prints the output's SHA-256.
+#![cfg(feature = "cli")]
 
 mod common;
 
@@ -328,6 +329,19 @@ fn cli(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// The binary as a `next:` line words it: bare when it holds only
+/// `[A-Za-z0-9-_./:=@%+,]`, else single-quoted, so a Windows path's `\`
+/// makes it a quoted word (#1350).
+fn shown_bin() -> String {
+    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
+    if bin.chars().all(safe) {
+        bin.to_string()
+    } else {
+        format!("'{}'", bin.replace('\'', r"'\''"))
+    }
+}
+
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -460,7 +474,7 @@ fn dry_run_prints_the_next_command() {
         {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
     ]);
     let dir = workspace(&good);
-    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let bin = shown_bin();
     let out = cli(
         dir.path(),
         &[
@@ -673,7 +687,7 @@ fn a_dry_run_over_an_existing_output_says_next_replaces_it() {
     ]);
     let dir = workspace(&good);
     std::fs::write(dir.path().join("out.docx"), b"older").unwrap();
-    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let bin = shown_bin();
     let args = [
         "edit",
         "in.docx",
@@ -850,7 +864,7 @@ fn next_quotes_shell_metacharacters() {
         {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
     ]);
     let dir = workspace(&good);
-    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let bin = shown_bin();
     let out = cli(
         dir.path(),
         &[
@@ -880,7 +894,7 @@ fn a_dry_run_over_an_empty_out_dir_says_next_replaces_it() {
     ]);
     let dir = workspace(&good);
     std::fs::create_dir(dir.path().join("out")).unwrap();
-    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let bin = shown_bin();
     let apply = ["edit", "in.docx", "--plan", "plan.json", "--out-dir", "out"];
     let out = cli(dir.path(), &[&apply[..], &["--dry-run"]].concat());
     let says = stderr(&out);
@@ -910,7 +924,7 @@ fn the_next_command_keeps_what_follows_the_delimiter() {
     let dir = workspace(&good);
     std::fs::copy(dir.path().join("in.docx"), dir.path().join("--dry-run")).unwrap();
     std::fs::write(dir.path().join("out.docx"), b"older").unwrap();
-    let bin = env!("CARGO_BIN_EXE_jubarte");
+    let bin = shown_bin();
     let out = cli(
         dir.path(),
         &[

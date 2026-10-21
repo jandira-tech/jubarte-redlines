@@ -40,7 +40,7 @@ def append_jsonl(path: Path, records: Iterable[BaseModel]) -> int:
     if not payload:
         return 0
 
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         offset = 0

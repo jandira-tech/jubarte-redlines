@@ -446,6 +446,16 @@ fn schema_integer_and_timestamp_boundaries_agree() {
         v["coverage"]["eligible_paragraphs"] = number;
         agrees(&v, false);
     }
+    // A float spelling is exact only below 2^53: the last one below it
+    // reads, 2^53 itself does not.
+    for (number, reads) in [
+        (json!(9_007_199_254_740_991.0_f64), true),
+        (json!(9_007_199_254_740_992.0_f64), false),
+    ] {
+        let mut v = base();
+        v["coverage"]["eligible_paragraphs"] = number.clone();
+        assert_eq!(PlanV2::from_json(&v.to_string()).is_ok(), reads, "{number}");
+    }
     let mut v = with_ops(all_operations());
     v["operations"][0]["occurrence"] = json!(1.0);
     assert!(SCHEMA.is_valid(&v));
