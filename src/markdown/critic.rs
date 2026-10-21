@@ -1239,7 +1239,7 @@ fn encode_range(
                 if labels
                     && start != Token::CommentStart
                     && (at == 0 || source[..at].ends_with('\n'))
-                    && let Some(label) = footnote_label(&source[body.clone()])
+                    && let Some(label) = footnote_label(&source[body.start..body.end])
                     && split.is_none_or(|(mid, _)| mid >= body.start + label.len())
                 {
                     push_escaped(out, label);
@@ -1274,7 +1274,7 @@ fn encode_range(
                 {
                     out.push(stand_in(Token::FieldStart));
                     // The code is text to the end: no Markdown reads it.
-                    for c in source[code.clone()].trim().chars() {
+                    for c in source[code.start..code.end].trim().chars() {
                         if c.is_ascii_punctuation() {
                             out.push('\\');
                         }
