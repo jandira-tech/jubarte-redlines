@@ -389,8 +389,7 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
             )
             .unwrap_or(u64::MAX)
         };
-        crate::admission::account_inflated(&mut total, read, &name, cap, &limits)
-            .map_err(refused)?;
+        crate::admission::tally_inflated(&mut total, read, &name, cap, &limits).map_err(refused)?;
         if directory {
             continue;
         }

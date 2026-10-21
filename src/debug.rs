@@ -134,6 +134,9 @@ pub struct Options {
     /// `text`/`xml`/`runs` of two files: common lines shown around each
     /// change.
     pub context: usize,
+    /// `text`, `xml`, `runs`, `changes`, `styledefs`, `numbering`, `render`:
+    /// each line whole, not clipped at 200 characters.
+    pub full_lines: bool,
 }
 
 impl Default for Options {
@@ -144,6 +147,7 @@ impl Default for Options {
             grep: None,
             limit: 5,
             context: 0,
+            full_lines: false,
         }
     }
 }
@@ -275,7 +279,7 @@ impl Package {
                     continue;
                 }
             };
-            crate::admission::account_inflated(&mut total, read as u64, &name, cap, &limits)
+            crate::admission::tally_inflated(&mut total, read as u64, &name, cap, &limits)
                 .map_err(|e| e.to_string())?;
             entries.push(Entry {
                 name,
@@ -2353,12 +2357,9 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
             }
             for l in lines {
-                if opts.grep.is_some() {
-                    // Asked for by name: the whole paragraph.
-                    let _ = writeln!(out, "{l}");
-                } else {
-                    line(&mut out, l);
-                }
+                // Asked for by name (`--grep`) or `--full-lines`: the whole
+                // paragraph.
+                whole_or_clipped(&mut out, l, opts.grep.is_some() || opts.full_lines);
             }
         }
         return out;
@@ -2413,6 +2414,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
             // A line paired with its counterpart is clipped from a little
             // before their first difference, so the change stays visible.
             let from = |i: usize| match (del.get(i), add.get(i)) {
+                _ if opts.full_lines => 0,
                 (Some(x), Some(y)) => x
                     .chars()
                     .zip(y.chars())
@@ -2421,18 +2423,19 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                     .saturating_sub(WIDTH / 3),
                 _ => 0,
             };
+            let whole = opts.full_lines;
             for l in &la[at.saturating_sub(opts.context)..*at] {
-                line(&mut out, &format!("   {l}"));
+                whole_or_clipped(&mut out, &format!("   {l}"), whole);
             }
             for (i, l) in del.iter().enumerate() {
-                line(&mut out, &format!("-A {}", clip_from(l, from(i))));
+                whole_or_clipped(&mut out, &format!("-A {}", clip_from(l, from(i))), whole);
             }
             for (i, l) in add.iter().enumerate() {
-                line(&mut out, &format!("+B {}", clip_from(l, from(i))));
+                whole_or_clipped(&mut out, &format!("+B {}", clip_from(l, from(i))), whole);
             }
             let after = at + del.len();
             for l in &la[after..(after + opts.context).min(la.len())] {
-                line(&mut out, &format!("   {l}"));
+                whole_or_clipped(&mut out, &format!("   {l}"), whole);
             }
         }
     }
@@ -2467,6 +2470,15 @@ fn line_has(l: &str, g: &str) -> bool {
 
 fn line(out: &mut String, s: &str) {
     let _ = writeln!(out, "{}", clip_line(s));
+}
+
+/// `s` as a report line: whole when `whole`, else clipped at `WIDTH`.
+fn whole_or_clipped(out: &mut String, s: &str, whole: bool) {
+    if whole {
+        let _ = writeln!(out, "{s}");
+    } else {
+        line(out, s);
+    }
 }
 
 /// `s` from its `from`-th character, the dropped head marked `…`.
@@ -4623,6 +4635,38 @@ mod residual_byte_diagnostic_contract_tests {
             strip_namespace_declarations("<x xmlns:a=\"unterminated"),
             "<x xmlns:a=\"unterminated"
         );
+    }
+
+    /// `--full-lines` prints a listing's lines whole, in one file and in
+    /// the lines two files differ by, where a report clips them at
+    /// `WIDTH` characters around their first difference.
+    #[test]
+    fn full_lines_prints_listing_lines_whole() {
+        let long = "漢".repeat(300);
+        let a = source(&format!("<w:p><w:r><w:t>{long}a</w:t></w:r></w:p>"));
+        let b = source(&format!("<w:p><w:r><w:t>{long}b</w:t></w:r></w:p>"));
+        let runs = Options {
+            checks: vec![Check::Runs],
+            ..Options::default()
+        };
+        let clipped = report(&a, Some(&b), &runs).unwrap();
+        assert!(!clipped.contains(&long), "{clipped}");
+        let opts = Options {
+            full_lines: true,
+            ..runs.clone()
+        };
+        let whole = report(&a, Some(&b), &opts).unwrap();
+        assert!(
+            whole.contains(&format!("-A   ¶  [] ¶«» «»{long}a\n")),
+            "{whole}"
+        );
+        assert!(
+            whole.contains(&format!("+B   ¶  [] ¶«» «»{long}b\n")),
+            "{whole}"
+        );
+        let one = report(&a, None, &opts).unwrap();
+        assert!(one.contains(&format!("  ¶  [] ¶«» «»{long}a\n")), "{one}");
+        assert!(!report(&a, None, &runs).unwrap().contains(&long));
     }
 
     #[test]

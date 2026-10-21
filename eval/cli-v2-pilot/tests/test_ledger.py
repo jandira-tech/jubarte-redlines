@@ -48,6 +48,12 @@ def test_repeated_appends_concatenate(tmp_path: Path) -> None:
     assert [r["n"] for r in rows] == [1, 2, 3]
 
 
+def test_a_new_ledger_is_readable_only_by_its_owner(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.jsonl"
+    append_jsonl(path, [Row(n=1)])
+    assert path.stat().st_mode & 0o077 == 0
+
+
 def test_read_jsonl_handles_empty_or_missing(tmp_path: Path) -> None:
     assert read_jsonl(tmp_path / "missing.jsonl") == []
     empty = tmp_path / "empty.jsonl"

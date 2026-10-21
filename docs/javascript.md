@@ -97,16 +97,6 @@ cutover and retires the transitional spellings — `noid`, colon ids
 (`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
 the fields the wire carries today are the ones named above.
 
-> **Stale-artifact note (2026-10-19).** The generated sections below —
-> this API reference and the CLI `--help` block at the end — quote the
-> committed 0.12.x artifacts, which were built before the short-id
-> migration: the `.d.ts`'s `body:rev:1`, `body:p:N` and `[body:p:N]`
-> examples and the `-p` help's `p17-`/`-p3` describe spellings the current
-> engine refuses on input, accepts only transitionally, or no longer
-> advertises (`src/cli.rs`). The source comments the next package build
-> will carry already say `pN`, `[pN]` and "settled spelling"
-> (`jubarte-wasm/src/lib.rs:181-186`, `:304-306`, `:965-966`).
-
 <!-- gen:wasm-api:start -->
 Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the slim entry points drop `docxToPdf` and `pdfPageCount`).
 
@@ -492,7 +482,9 @@ diffDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string, c
 The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 with `[-old-]{+new+}` changes and CriticMarkup comments, at its
-`pN` id in a Word document or `line:N` in Markdown.
+`pN` id in a Word document or `line:N` in Markdown. When a side is a
+Word document, a replacement inside a paragraph reads insertion first,
+`{+new+}[-old-]`, as Word Compare writes it.
 
 Each side is a `.docx` package or UTF-8 Markdown
 (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -628,8 +620,10 @@ inspectDocument(docx: Uint8Array): string
 ```
 
 The inspection snapshot as JSON: `schema_version`, `source_sha256`,
-`summary` and `paragraphs` (ids, text, style, formatting spans,
-limitations). Oversized or malformed packages are refused before parsing.
+`summary`, `paragraphs` (ids, text, style, formatting spans,
+limitations) and top-level `tables` with recursive `nested` entries.
+Snapshot schema 2 counts top-level tables; nested entries have `parent`
+cell paths and no `index`. Oversized or malformed packages are refused before parsing.
 
 Mirrors `jubarte::inspect::inspect_json`.
 
@@ -893,8 +887,9 @@ tablesText(docx: Uint8Array): string
 ```
 
 The grids `jubarte read --tables` prints: a `table N: RxC …` line per
-body table, then a line per row of `ids=text` cells; `no tables` when
-there are none.
+top-level body table, then a line per row of `ids=text` cells; nested
+tables follow their cell row, indented two spaces per level and labelled
+`nested in CELL_PATH`. `no tables` prints when there are none.
 
 Mirrors `jubarte::inspect::tables_text`.
 
@@ -935,6 +930,22 @@ The line a writing task prints on stderr for the file it wrote:
 
 Mirrors `jubarte::cli::wrote_line`.
 <!-- gen:wasm-api:end -->
+
+### Auditing existing revision history
+
+`auditTracked`: Existing foreign revisions may remain: `FOREIGN_AUTHOR` reports
+foreign history added, changed or removed against `original`. Paragraphs
+align by full text, including deleted text, within each story. An untracked
+paragraph merge or split around another author's revisions reports those
+revisions as new and gone alongside `UNTRACKED_EDIT`. Groups with
+the same author, kind, target, date and move side are compared in document
+order within the aligned paragraph or non-paragraph owner (for example, a
+style id). Revision ids do not define identity. Split carriers combine only
+when they touch, with no visible content or still-present revision between
+them. A boundary explained solely by a missing separator revision adds no
+finding beyond that separator. Changed revisions say `differs from the
+original`; new revisions say `is new`. These messages name ids and authors,
+never revision text.
 
 ## CLI usage
 
@@ -988,19 +999,19 @@ Tasks:
   edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
                 --reply, --accept, --reject or --style (several -p per command), or a
                 JSON plan. Writes FILE_modified.docx (--out-dir: the bundle), then
-                prints the changed paragraphs as the agent view (a pure
-                --accept/--reject prints the resolved changes; refusal: exit 3)
+                prints SUCCESS and a fenced before/after diff of the full agent views
+                (refusal: exit 3)
   add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
-                -p per command). Writes FILE_modified.docx, as edit does, and prints the
-                changed paragraphs as the agent view
+                -p per command). Writes FILE_modified.docx, as edit does, and prints
+                SUCCESS and a fenced before/after diff of the full agent views
   capabilities  What this binary can do, for agents choosing an operation
   help          Print this message or the help of the given subcommand(s)
 
 Options:
-  -q, --quiet    No status on success: no `wrote` lines, and no summary or view of what
-                 `edit`/`add` changed. Files are still written; a reading task (`read`,
-                 `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-                 what it read, and warnings and errors still print
+  -q, --quiet    No status on success: no `wrote` lines, SUCCESS block or edit summary.
+                 Files are still written; a reading task (`read`, `changes`, `compare`
+                 without -o, `diff`, `capabilities`) still prints what it read, and
+                 warnings and errors still print
   -h, --help     Print help
   -V, --version  Print version
 
@@ -1069,10 +1080,10 @@ Options:
           [default: word]
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1132,7 +1143,8 @@ Rendering (-o FILE.pdf or FILE.png):
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected; the id lines then list what changed; not with --json,
+          --tables or --for-edit
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -1141,7 +1153,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; not with --json, --tables or --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -1151,16 +1163,21 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); not with --json, --tables or
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; dropped with a warning with --json, --tables, --for-edit or -o
+          FILE.json
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, select top-level
+          tables (including their nested tables) by the same tN as the view, or by a pN
+          inside them; lists and paragraph ranges must contain only table paragraphs.
+          Print their grid, then a blank line and the same view as read -p SPEC
 
           [alias: --select]
 
@@ -1185,9 +1202,16 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
-          header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS header_rows=H
+          widths=W,...` line, then one line per row of tab-separated `ids=text` cells.
+          Use -p t0,t2 or -p pN (a cell paragraph) to select top-level tables and all
+          their nested tables, in document order, each once. tN is the view's top-level
+          index; nested entries follow their cell row, indented two spaces per level,
+          labelled `nested in t0.row2.cell0` (recursively, e.g.
+          `t0.row2.cell0.t0.row0.cell1`). Every selected paragraph must be inside a
+          table. With -p, follow the selected grids with a blank line and the same view
+          as read -p SPEC, including its YAML header. Without -p, print only the
+          inventory
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -1273,10 +1297,10 @@ Arguments:
 
 Options:
       --json   Emit one JSON object per line
-  -q, --quiet  No status on success: no `wrote` lines, and no summary or view of what
-               `edit`/`add` changed. Files are still written; a reading task (`read`,
-               `changes`, `compare` without -o, `diff`, `capabilities`) still prints
-               what it read, and warnings and errors still print
+  -q, --quiet  No status on success: no `wrote` lines, SUCCESS block or edit summary.
+               Files are still written; a reading task (`read`, `changes`, `compare`
+               without -o, `diff`, `capabilities`) still prints what it read, and
+               warnings and errors still print
   -h, --help   Print help
 ```
 
@@ -1317,10 +1341,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1402,10 +1426,10 @@ Options:
           - formatting: Changes to text or paragraph formatting
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1556,10 +1580,10 @@ Options:
           left out
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1671,10 +1695,10 @@ Arguments:
 
 Options:
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1762,7 +1786,7 @@ $ jubarte-redlines read --help
 Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments with ids
 
 A YAML header, then Markdown with an `<!-- pN -->` id line before every paragraph,
-tracked changes as CriticMarkup followed by their ids (`{++text++}{>>r12 @AC<<}`) and
+tracked changes as CriticMarkup followed by their ids (`{++text++}{r12 @AC}`) and
 comments with theirs (`{>>c5 @AC: …<<}`).
 
 Usage: jubarte-redlines read [OPTIONS] <FILE>
@@ -1780,10 +1804,10 @@ Options:
           Overwrite the output file if it already exists
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1791,7 +1815,8 @@ Options:
 Read options:
       --track-changes <CHOICE>
           Tracked changes inline (all, the default), or the text with every change
-          accepted or rejected; the id lines then list what changed
+          accepted or rejected; the id lines then list what changed; not with --json,
+          --tables or --for-edit
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -1800,7 +1825,7 @@ Read options:
 
       --comments <MODE>
           Comments inline (default) or hidden, with their ids on the id line of the
-          paragraph that holds them
+          paragraph that holds them; not with --json, --tables or --for-edit
 
           Possible values:
           - inline: Comments inline, with their ids
@@ -1810,16 +1835,21 @@ Read options:
 
       --dates
           Timestamps on the notes of an author whose changes do not all share one (the
-          header shows an author's single timestamp)
+          header shows an author's single timestamp); not with --json, --tables or
+          --for-edit
 
       --no-page-markers
           Skip the layout pass; page count from Word's cached breaks, no `<!-- page N of
-          M -->` lines
+          M -->` lines; dropped with a warning with --json, --tables, --for-edit or -o
+          FILE.json
 
   -p, --paragraphs <SPEC>
           Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended `p17-` /
           `-p3` spellings still parse, transitionally; the 17 October 2026 contract
-          retires them — spell the end, `p17-p20`)
+          retires them — spell the end, `p17-p20`). With --tables, select top-level
+          tables (including their nested tables) by the same tN as the view, or by a pN
+          inside them; lists and paragraph ranges must contain only table paragraphs.
+          Print their grid, then a blank line and the same view as read -p SPEC
 
           [alias: --select]
 
@@ -1844,9 +1874,16 @@ Read options:
           them, whoever made it; the rest of the snapshot stays whole
 
       --tables
-          Print each body table as a grid instead of the view: a `table N: ROWSxCOLS
-          header_rows=H widths=W,...` line, then one line per row of tab-separated
-          `ids=text` cells
+          Print each top-level body table as a grid: a `table N: ROWSxCOLS header_rows=H
+          widths=W,...` line, then one line per row of tab-separated `ids=text` cells.
+          Use -p t0,t2 or -p pN (a cell paragraph) to select top-level tables and all
+          their nested tables, in document order, each once. tN is the view's top-level
+          index; nested entries follow their cell row, indented two spaces per level,
+          labelled `nested in t0.row2.cell0` (recursively, e.g.
+          `t0.row2.cell0.t0.row0.cell1`). Every selected paragraph must be inside a
+          table. With -p, follow the selected grids with a blank line and the same view
+          as read -p SPEC, including its YAML header. Without -p, print only the
+          inventory
 
       --for-edit
           The working document template/apply derive, as JSON: source hash, paired
@@ -1918,8 +1955,8 @@ Read options:
 $ jubarte-redlines edit --help
 Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply,
 --accept, --reject or --style (several -p per command), or a JSON plan. Writes
-FILE_modified.docx (--out-dir: the bundle), then prints the changed paragraphs as the
-agent view (a pure --accept/--reject prints the resolved changes; refusal: exit 3)
+FILE_modified.docx (--out-dir: the bundle), then prints SUCCESS and a fenced
+before/after diff of the full agent views (refusal: exit 3)
 
 Usage: jubarte-redlines edit [OPTIONS] <FILE>
 
@@ -2019,10 +2056,10 @@ Options:
           Resolve and report only; write nothing
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
       --require-change
           Refuse when the edit would change nothing in the document
@@ -2092,8 +2129,8 @@ Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
 ```text
 $ jubarte-redlines add --help
 Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per command).
-Writes FILE_modified.docx, as edit does, and prints the changed paragraphs as the agent
-view
+Writes FILE_modified.docx, as edit does, and prints SUCCESS and a fenced before/after
+diff of the full agent views
 
 Usage: jubarte-redlines add [OPTIONS] <FILE>
 
@@ -2179,10 +2216,10 @@ Options:
           Replace an existing output (the bundle directory's files)
 
   -q, --quiet
-          No status on success: no `wrote` lines, and no summary or view of what
-          `edit`/`add` changed. Files are still written; a reading task (`read`,
-          `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it
-          read, and warnings and errors still print
+          No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
+          are still written; a reading task (`read`, `changes`, `compare` without -o,
+          `diff`, `capabilities`) still prints what it read, and warnings and errors
+          still print
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2213,11 +2250,11 @@ Options:
                                execution conditions
       --field <FIELD>          Discover one field, optionally within --operation
       --matrix                 Publish operation × target × policy edit support
-  -q, --quiet                  No status on success: no `wrote` lines, and no summary or
-                               view of what `edit`/`add` changed. Files are still
-                               written; a reading task (`read`, `changes`, `compare`
-                               without -o, `diff`, `capabilities`) still prints what it
-                               read, and warnings and errors still print
+  -q, --quiet                  No status on success: no `wrote` lines, SUCCESS block or
+                               edit summary. Files are still written; a reading task
+                               (`read`, `changes`, `compare` without -o, `diff`,
+                               `capabilities`) still prints what it read, and warnings
+                               and errors still print
   -h, --help                   Print help
 ```
 <!-- gen:cli-npm:end -->

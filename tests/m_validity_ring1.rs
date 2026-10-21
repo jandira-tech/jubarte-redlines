@@ -2163,3 +2163,84 @@ fn probe_duplicate_zip_part_identity_fails() {
         .expect_err("Word refuses two entries with the same name");
     assert!(err.to_string().contains("DUPLICATE_PART"), "{err}");
 }
+
+/// A bound content control (#1427): Word fills it from the custom XML
+/// store its `w:storeItemID` names, and shows it empty when the main part
+/// reaches no such store. Word opens the file, so it is a lead.
+fn bound_control_package(with_store: bool) -> Vec<u8> {
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:sdt><w:sdtPr><w:dataBinding w:prefixMappings="xmlns:ns0='urn:probe'" w:xpath="/ns0:root[1]/ns0:abstract[1]" w:storeItemID="{11111111-2222-3333-4444-555555555555}"/><w:text/></w:sdtPr>
+      <w:sdtContent><w:p><w:r><w:t>Abstract</w:t></w:r></w:p></w:sdtContent></w:sdt>
+    <w:sdt><w:sdtPr><w:dataBinding w:xpath="/ns1:coreProperties[1]/ns0:title[1]" w:storeItemID="{6C3C8BC8-F283-45AE-878A-BAB7291924A1}"/><w:text/></w:sdtPr>
+      <w:sdtContent><w:p><w:r><w:t>Title</w:t></w:r></w:p></w:sdtContent></w:sdt>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+    let rels = if with_store {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/>
+</Relationships>"#
+    } else {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#
+    };
+    // The store's parts are there either way: only the relationship from
+    // the main part makes Word load them.
+    zip_with_parts(&[
+        ("word/document.xml", doc),
+        ("word/_rels/document.xml.rels", rels),
+        (
+            "customXml/item1.xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><root xmlns="urn:probe"><abstract>Abstract</abstract></root>"#,
+        ),
+        (
+            "customXml/_rels/item1.xml.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps" Target="itemProps1.xml"/>
+</Relationships>"#,
+        ),
+        (
+            "customXml/itemProps1.xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?><ds:datastoreItem ds:itemID="{11111111-2222-3333-4444-555555555555}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs><ds:schemaRef ds:uri="urn:probe"/></ds:schemaRefs></ds:datastoreItem>"#,
+        ),
+    ])
+}
+
+#[test]
+fn probe_data_binding_without_store_is_a_lead() {
+    let report = check_word_valid_package(&bound_control_package(false));
+    let findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.code == "DATA_BINDING_WITHOUT_STORE")
+        .collect();
+    // The core properties' store lives in docProps: no finding for it.
+    assert_eq!(findings.len(), 1, "{:?}", report.findings);
+    assert!(!findings[0].word_fatal);
+    assert_eq!(findings[0].severity, "warning");
+    assert_eq!(findings[0].part, "word/document.xml");
+    assert!(
+        findings[0]
+            .message
+            .contains("{11111111-2222-3333-4444-555555555555}"),
+        "{}",
+        findings[0].message
+    );
+}
+
+#[test]
+fn a_data_binding_whose_store_the_main_part_reaches_passes_ring1() {
+    let report = check_word_valid_package(&bound_control_package(true));
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.code != "DATA_BINDING_WITHOUT_STORE"),
+        "{:?}",
+        report.findings
+    );
+}

@@ -127,6 +127,128 @@ fn a_paragraph_changed_with_its_mark_is_a_hunk_of_its_own() {
     assert_eq!(merged.hunks[0].at, Locator::Line(1));
 }
 
+/// A redline whose body holds `first`, then `second` and `third` as
+/// Word writes the last of them deleted (`ins` false) or inserted: its
+/// text in the change `r2`, and, the last paragraph's mark being the
+/// story's, the mark before it in the change `r1`.
+/// A body whose last paragraph is deleted (or inserted) whole with the
+/// mark before it: `mark` made the mark's change and Claude the
+/// paragraph's, one `w:del` (`w:ins`) per item of `changes`, whose runs
+/// are text or `"\n"` for a line break.
+fn last_paragraph(ins: bool, mark: &str, changes: &[&[&str]]) -> Vec<u8> {
+    let (kind, text) = if ins {
+        ("ins", "t")
+    } else {
+        ("del", "delText")
+    };
+    let by = |author: &str| format!(r#"w:author="{author}" w:date="2026-09-25T12:00:00Z""#);
+    let mut last = String::new();
+    for (n, runs) in changes.iter().enumerate() {
+        let runs: String = runs
+            .iter()
+            .map(|run| match *run {
+                "\n" => "<w:r><w:br/></w:r>".to_string(),
+                run => format!("<w:r><w:{text}>{run}</w:{text}></w:r>"),
+            })
+            .collect();
+        last += &format!(
+            r#"<w:{kind} w:id="{}" {}>{runs}</w:{kind}>"#,
+            n + 2,
+            by("Claude")
+        );
+    }
+    common::docx::docx(&format!(
+        r#"<w:p><w:r><w:t>Heading</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:{kind} w:id="1" {}/></w:rPr></w:pPr><w:r><w:t>Kept.</w:t></w:r></w:p><w:p>{last}</w:p>"#,
+        by(mark)
+    ))
+}
+
+fn last_paragraph_change(ins: bool) -> Vec<u8> {
+    last_paragraph(ins, "Claude", &[&["Last."]])
+}
+
+/// Claude's own changes: the hunks carry no author note.
+fn claude() -> PatchOptions {
+    PatchOptions {
+        owner: Attribution {
+            author: "Claude".to_string(),
+            date: "2026-09-25T12:00:00Z".to_string(),
+        },
+        ..options("a.docx", "b.docx")
+    }
+}
+
+fn hunks(docx: &[u8]) -> Vec<(Locator, bool, String)> {
+    let patch = jubarte::markdown::patch_redline(docx, &claude()).expect("the redline patches");
+    patch
+        .hunks
+        .iter()
+        .map(|h| (h.at.clone(), h.removed, h.text.clone()))
+        .collect()
+}
+
+fn body(index: usize) -> Locator {
+    Locator::Paragraph {
+        story: "body".to_string(),
+        index,
+    }
+}
+
+/// The last paragraph of a story, deleted or inserted, is a hunk of its
+/// own: the view writes its text and the mark before it as two changes
+/// (`r1`, `r2`), and the break still leads the paragraph it ends.
+#[test]
+fn a_story_s_last_paragraph_changed_with_the_mark_before_it_is_a_hunk_of_its_own() {
+    assert_eq!(
+        hunks(&last_paragraph_change(false)),
+        [(body(2), true, "[-Last.-]".to_string())]
+    );
+    assert_eq!(
+        hunks(&last_paragraph_change(true)),
+        [(body(2), false, "{+Last.+}".to_string())]
+    );
+}
+
+/// Word splits a paragraph's runs into several changes (a spell check, a
+/// run property, a line break between): the last paragraph deleted or
+/// inserted in pieces is a hunk of its own too.
+#[test]
+fn a_story_s_last_paragraph_changed_in_pieces_is_a_hunk_of_its_own() {
+    let pieces: &[&[&str]] = &[&["La"], &["st."]];
+    assert_eq!(
+        hunks(&last_paragraph(false, "Claude", pieces)),
+        [(body(2), true, "[-La-][-st.-]".to_string())]
+    );
+    assert_eq!(
+        hunks(&last_paragraph(true, "Claude", pieces)),
+        [(body(2), false, "{+La+}{+st.+}".to_string())]
+    );
+    let broken: &[&[&str]] = &[&["La", "\n", "st."]];
+    assert_eq!(
+        hunks(&last_paragraph(false, "Claude", broken)),
+        [(body(2), true, "[-La\\\nst.-]".to_string())]
+    );
+    assert_eq!(
+        hunks(&last_paragraph(true, "Claude", broken)),
+        [(body(2), false, "{+La\\\nst.+}".to_string())]
+    );
+}
+
+/// When another author deleted the mark before the last paragraph,
+/// accepting that change alone joins the two paragraphs: the mark is a
+/// change of its own and stays in the hunk, named after its author.
+#[test]
+fn another_author_s_mark_before_the_last_paragraph_stays_a_change_of_its_own() {
+    assert_eq!(
+        hunks(&last_paragraph(false, "Ana", &[&["Last."]])),
+        [(
+            body(1),
+            false,
+            "Kept.[-\n\n-]{>>Ana (2026-09-25T12:00:00Z)<<}[-Last.-]".to_string()
+        )]
+    );
+}
+
 const AGREEMENT: &str = "# Agreement
 
 2.1 Closing. The Closing shall take place on {~~04/20/26~>10/30/26~~}{>>Arthur Rodrigues (2026-09-30T14:05:00Z): Buyer needs time.<<}, or at such other time.
