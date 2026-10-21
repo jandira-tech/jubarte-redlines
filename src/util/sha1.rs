@@ -181,12 +181,3 @@ pub fn fnv1a_128(s: &str) -> u128 {
 pub fn sha1_fingerprint(s: &str) -> u64 {
     fnv1a_64(s)
 }
-
-/// Former name of [`fnv1a_128`]. It never computed SHA-1.
-#[deprecated(
-    since = "0.10.2",
-    note = "renamed to `fnv1a_128`; this was never SHA-1"
-)]
-pub fn sha1_fingerprint128(s: &str) -> u128 {
-    fnv1a_128(s)
-}
