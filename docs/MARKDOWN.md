@@ -979,11 +979,14 @@ near reporting adds no new successful match.
   paragraph; `frame: {}` is an empty `w:framePr`. A frame naming another
   attribute, or a value the schema does not allow, does not read, and the
   story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
-  {first-line: 0.25in, right: 0.25in}`, its sides as the id lines name
-  them (`first-line`, `hanging`, `left`, `right`) in inches; a stated 0 is
-  printed, since it overrides the style's. It is a map of its own because
-  `left` and `right` alone are the alignment. A side it does not name, or
-  a value that is no length up to 22in, does not read, and the story entry
+  {first-line: 0.25in, right: 0.25in}` right after the alignment
+  (`p1: {text: …, left, indent: {right: 0.25in}, color: …}`), its sides as
+  the id lines name them (`first-line`, `hanging`, `left`, `right`; Strict's
+  `start` and `end` read as `left` and `right`) in inches, negative for an
+  outdent; a stated 0 is printed, since it overrides the style's. It is a
+  map of its own because `left` and `right` alone are the alignment. A side
+  it does not name or names twice, or a value that is not inches
+  (`0.25in`) or is over 22in either way, does not read, and the story entry
   with it.
 - Page markers need the layout pass; `--no-page-markers` skips it. With
   `--json`, `--tables`, `--for-edit` or `-o FILE.json`, it is dropped with a

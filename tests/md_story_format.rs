@@ -332,9 +332,9 @@ fn a_story_paragraph_keeps_its_own_indent() {
     assert_eq!(view(&again), first);
 }
 
-/// An indent that is no length, names a side the id lines do not, or is no
-/// map does not read, and the story entry with it, as a border that does
-/// not read (#1422).
+/// An indent that is no length, names a side the id lines do not or one
+/// twice, or is no map does not read, and the story entry with it, as a
+/// border that does not read (#1422).
 #[test]
 fn a_story_indent_that_is_no_length_does_not_read() {
     let first = view(&with_header(FOOTER_FRAME));
@@ -344,6 +344,7 @@ fn a_story_indent_that_is_no_length_does_not_read() {
         "indent: {first-line: 0.25}",
         "indent: {start: 0.25in}",
         "indent: 0.25in",
+        "indent: {first-line: 0.25in, first-line: 0.5in}",
     ] {
         let edited = first.replace("indent: {first-line: 0.25in}", bad);
         assert_ne!(edited, first, "{first}");
@@ -367,4 +368,26 @@ fn a_story_paragraph_s_alignment_and_indent_keep_apart() {
         xml.contains(r#"<w:ind w:right="1440"/><w:jc w:val="right"/>"#),
         "{xml}"
     );
+}
+
+/// Strict's `w:start` and `w:end` are Transitional's `w:left` and
+/// `w:right` renamed: they read as `left` and `right` and are written so.
+/// A negative indent is an outdent, and an explicit `left` alignment stays
+/// apart from a right indent (#1422).
+#[test]
+fn a_story_indent_reads_strict_sides_and_outdents() {
+    let strict = r#"<w:p><w:pPr><w:ind w:start="-360" w:end="720"/><w:jc w:val="left"/></w:pPr><w:r><w:t>Out</w:t></w:r></w:p>"#;
+    let first = view(&with_header(strict));
+    assert!(
+        headers_block(&first)
+            .contains("p0: {text: Out, left, indent: {left: -0.25in, right: 0.5in}}"),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(r#"<w:ind w:left="-360" w:right="720"/><w:jc w:val="left"/>"#),
+        "{xml}"
+    );
+    assert_eq!(view(&again), first);
 }

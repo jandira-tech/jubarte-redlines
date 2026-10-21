@@ -124,13 +124,16 @@ impl ParaFormat {
             None => None,
         };
         // An indent, `indent: {first-line: 0.25in, right: 0.25in}`: the id
-        // lines' sides in inches, within Word's 22in. Any other side or
-        // value does not read.
+        // lines' sides in inches, within Word's 22in, each named once.
+        // Any other side or value does not read.
         let mut indent = [None; 4];
         match entries.iter().find(|(k, _)| k == "indent") {
             Some((_, Value::Map(items))) => {
                 for (side, value) in items {
                     let slot = INDENT_SIDES.iter().position(|s| s == side)?;
+                    if indent[slot].is_some() {
+                        return None;
+                    }
                     let Value::Text(value) = value else {
                         return None;
                     };
@@ -1618,7 +1621,8 @@ fn story_part(
         if let Some(sides) = own.and_then(|f| f.border.as_ref()) {
             let _ = write!(base, "<w:pBdr>{}</w:pBdr>", super::borders::xml(sides));
         }
-        // `w:ind` follows `w:pBdr`, before `w:jc`.
+        // CT_PPrBase puts `w:ind` after `w:pBdr` (and `w:spacing`, which
+        // a story paragraph does not write) and before `w:jc`.
         if let Some(format) = own {
             let sides = [
                 ("left", format.left),
