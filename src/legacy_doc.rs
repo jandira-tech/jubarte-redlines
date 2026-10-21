@@ -1726,6 +1726,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn is_compound_file_returns_true_for_ole_magic() {
+        let mut bytes = OLE_MAGIC.to_vec();
+        bytes.push(0x42);
+        assert!(is_compound_file(&bytes));
+    }
+
+    #[test]
+    fn is_compound_file_returns_false_for_invalid_magic() {
+        let bytes = b"PK\x03\x04\x14\x00\x06\x00";
+        assert!(!is_compound_file(bytes));
+    }
+
+    #[test]
+    fn is_compound_file_handles_short_input() {
+        let bytes = b"\xD0\xCF\x11";
+        assert!(!is_compound_file(bytes));
+    }
+
+    #[test]
     fn escapes_markdown_significant_text() {
         assert_eq!(escape_line("1. not a list"), "1\\. not a list");
         assert_eq!(escape_line("- not a bullet"), "\\- not a bullet");
@@ -1742,6 +1761,26 @@ mod tests {
         assert_eq!(cp1252(0x80), '\u{20AC}');
         assert_eq!(cp1252(b'A'), 'A');
         assert_eq!(cp1252(0xE9), 'é');
+    }
+
+    #[test]
+    fn read_rejects_missing_word_document() {
+        let mut bytes = include_bytes!("../tests/fixtures/legacy/services.doc").to_vec();
+        // Modify the "WordDocument" directory entry to "NordDocument"
+        let word_doc_utf16: Vec<u8> = "WordDocument"
+            .encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+        for i in 0..(bytes.len() - word_doc_utf16.len()) {
+            if &bytes[i..i + word_doc_utf16.len()] == word_doc_utf16.as_slice() {
+                bytes[i] = b'N';
+            }
+        }
+        let error = read(&bytes).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "LEGACY_DOC: no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password"
+        );
     }
 
     #[test]

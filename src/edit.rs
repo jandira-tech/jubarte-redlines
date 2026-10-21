@@ -8525,7 +8525,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_json_roundtrips_and_rejects_unknown_fields() {
+    fn plan_json_roundtrips() {
         let json = r#"{"schema_version":1,"author":"A","operations":[
             {"kind":"replace","paragraph":{"index":0},"find":"a","replacement":"b"},
             {"kind":"insert","paragraph":{"id":"p1"},"after":"x","text":"y","comment":"c"},
@@ -8538,12 +8538,45 @@ mod tests {
         assert_eq!(plan.existing_revisions, ExistingRevisions::Refuse);
         let again = EditPlan::from_json(&plan.to_json()).unwrap();
         assert_eq!(again, plan);
+    }
+
+    #[test]
+    fn plan_json_rejects_unknown_fields() {
         let bad = r#"{"schema_version":1,"author":"A","extra":1,"operations":[]}"#;
         assert_eq!(EditPlan::from_json(bad).unwrap_err().code, "INVALID_PLAN");
         let bad = r#"{"schema_version":1,"author":"A","operations":[{"kind":"replace","paragraph":{"index":0},"find":"a","replacement":"b","typo":1}]}"#;
         assert_eq!(EditPlan::from_json(bad).unwrap_err().code, "INVALID_PLAN");
+    }
+
+    #[test]
+    fn plan_json_rejects_malformed_json() {
         let e = EditPlan::from_json("{").unwrap_err();
         assert!(e.to_string().starts_with("INVALID_PLAN: "));
+    }
+
+    #[test]
+    fn plan_json_refuses_another_schema_version() {
+        let other = SCHEMA_VERSION + 1;
+        let json = format!(r#"{{"schema_version":{other},"author":"A","operations":[]}}"#);
+        let e = EditPlan::from_json(&json).unwrap_err();
+        assert_eq!(e.code, "UNSUPPORTED_SCHEMA");
+        assert!(e.to_string().starts_with(&format!(
+            "UNSUPPORTED_SCHEMA: schema_version {other} is not supported (expected {SCHEMA_VERSION})"
+        )));
+    }
+
+    #[test]
+    fn plan_to_json_is_pretty_and_a_fixed_point() {
+        let pretty = r#"{
+  "schema_version": 1,
+  "source_sha256": "sha",
+  "author": "Author",
+  "date": "2024-01-01T00:00:00Z",
+  "initials": "A",
+  "existing_revisions": "refuse",
+  "operations": []
+}"#;
+        assert_eq!(EditPlan::from_json(pretty).unwrap().to_json(), pretty);
     }
 
     #[test]
