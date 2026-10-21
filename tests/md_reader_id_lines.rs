@@ -2822,3 +2822,29 @@ fn auto_spacing_comes_back_as_before_auto() {
         "the view:\n{view}"
     );
 }
+
+#[test]
+fn the_last_spacing_clause_for_a_side_wins_over_auto() {
+    // `w:beforeAutospacing` puts Word's automatic space in place of
+    // `w:before`, so a hand edit that adds `before 6pt` after `before auto`
+    // must clear the auto, or Word ignores the 6pt (#1479 review). And the
+    // other way round: `auto` last drops the number.
+    let markdown = "---\nview: tracked\n---\n\n<!-- p0 before auto, before 6pt, after 3pt, after auto -->\nOne\n\n<!-- p1 before 12pt, line 1.5, before auto -->\nTwo\n";
+    let written = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let spacings = own_spacings(&part_string(&written, "word/document.xml").unwrap());
+    let pair = |a: &str, v: &str| (a.to_string(), v.to_string());
+    assert_eq!(
+        spacings[..2],
+        [
+            vec![pair("afterAutospacing", "1"), pair("before", "120")],
+            vec![
+                pair("beforeAutospacing", "1"),
+                pair("line", "360"),
+                pair("lineRule", "auto")
+            ],
+        ]
+    );
+}
