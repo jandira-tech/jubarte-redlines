@@ -339,7 +339,8 @@ class Repairs0112(unittest.TestCase):
         def stale(readme: str) -> bool:
             with tempfile.TemporaryDirectory() as d:
                 (Path(d) / "README.md").write_text(readme)
-                run = subprocess.run(["bash", "-c", "set -euo pipefail\nVER=0.11.2\n" + fn + "\nstale_readme_pin"],
+                script = "set -euo pipefail\nVER=0.11.2\n" + fn + "\nstale_readme_pin"
+                run = subprocess.run(["bash"], input=script,
                                      cwd=d, capture_output=True, text=True)
             return run.returncode == 0
 
