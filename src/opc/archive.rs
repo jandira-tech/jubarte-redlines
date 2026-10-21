@@ -1098,6 +1098,40 @@ mod tests {
         assert_eq!(actual, b"payload");
     }
 
+    /// The compatibility companion: a bit-3 entry whose local header
+    /// carries a 0x0001 field *prescribes* the 24-byte descriptor
+    /// (APPNOTE 4.3.9.2), but a writer that emits the narrow 16-byte
+    /// descriptor still admits when its CRC and sizes match the central
+    /// record — the prescribed width wins only when both match
+    /// (`descriptor_extent`). Refusing would close the file to a shape
+    /// real writers produce and Word opens; the extent still ends before
+    /// the next record, so nothing else is smuggled.
+    #[test]
+    fn open_archive_admits_a_zip64_local_extra_narrow_descriptor() {
+        use crate::admission::zip_names;
+
+        let extra = zip_names::zip64_extra(0, 0);
+        let package = zip_names::assembled(
+            b"",
+            &[zip_names::AssembledEntry {
+                local_extra: extra.as_slice(),
+                ..zip_names::AssembledEntry::plain(b"payload.bin", b"payload")
+                    .with_descriptor(zip_names::Descriptor::Signed)
+            }],
+            None,
+            b"",
+        );
+        let mut archive =
+            open_archive(Cursor::new(&package)).expect("the narrow descriptor admits");
+        let mut actual = Vec::new();
+        archive
+            .by_name("payload.bin")
+            .unwrap()
+            .read_to_end(&mut actual)
+            .unwrap();
+        assert_eq!(actual, b"payload");
+    }
+
     /// The header check refuses only headers that disagree: every `.docx`
     /// the repository commits under `tests/` (fixtures, corpus, goldens)
     /// must still open. A refusal here means a conforming writer produced
