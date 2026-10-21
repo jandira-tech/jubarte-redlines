@@ -494,9 +494,13 @@ the grid does not have are dropped with a warning and the columns split
 the text width evenly. `width auto`, `width 6in` or `width 80%` is the
 table's preferred width (`w:tblW`); without one the table fills the text
 width (`5000` fiftieths of a percent), so a table Word sizes to its
-contents says `width auto`. `indent 0.5in` is its indent from the margin
-(`w:tblInd`), and `layout fixed` keeps its column widths as set instead
-of fitting them to the text (`w:tblLayout`). After that come `header row
+contents, or whose `w:tblW` gives no width or 0, says `width auto`; the
+reader takes up to 22in or 600%, and the view prints no width past
+either. `indent 0.5in` is its indent from the margin (`w:tblInd`), and
+`layout fixed` keeps its column widths as set instead of fitting them to
+the text (`w:tblLayout`). Only a numbered table has a table line, so the
+geometry is a body table's: a table nested in a cell, or in a note,
+header or footer, prints none and its widths are not kept. After that come `header row
 repeats`, the table's `style` and its `borders`, then `merged t0.row0.cell1 across 2; t0.row1.cell0
 down 3` for a cell spanning grid columns or a vertical merge and the rows
 it covers (the view prints a span's other columns as empty cells, and

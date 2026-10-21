@@ -224,9 +224,9 @@ fn widths_that_do_not_count_the_columns_are_not_written() {
     assert!(edited.contains(", widths 1in 2in -->"), "{edited}");
     let out = markdown_to_docx(&edited, &DocxOptions::default()).expect("the Markdown reads");
     assert_word_valid_package(&out.docx);
+    // Letter less two 1in margins, over three columns.
     let grid = geometry(tables(&document(&out.docx))[0]).grid;
-    assert_eq!(grid.len(), 3);
-    assert!(grid.iter().all(|w| *w == grid[0]), "{grid:?}");
+    assert_eq!(grid, ["3120", "3120", "3120"]);
     assert!(
         out.warnings
             .iter()
@@ -234,4 +234,60 @@ fn widths_that_do_not_count_the_columns_are_not_written() {
         "{:?}",
         out.warnings
     );
+}
+
+/// A two-column table whose `w:tblPr` holds `properties` after its style.
+fn table_with(properties: &str) -> Vec<u8> {
+    docx(&format!(
+        "<w:tbl><w:tblPr>{properties}</w:tblPr><w:tblGrid><w:gridCol w:w=\"4680\"/>\
+         <w:gridCol w:w=\"4680\"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl><w:p/>",
+        cell("A", 4680, None),
+        cell("B", 4680, None),
+    ))
+}
+
+/// Table `t0`'s line in `view`.
+fn line_of(view: &str) -> &str {
+    view.lines()
+        .find(|l| l.starts_with("<!-- t0 "))
+        .expect("a table line")
+}
+
+#[test]
+fn a_percent_the_reader_refuses_does_not_print() {
+    // The reader takes 0% to 600% (#1483 review): a view that printed
+    // `width 800%` named a width its own reader drops, with no warning.
+    let shown = view(&table_with("<w:tblW w:w=\"40000\" w:type=\"pct\"/>"));
+    assert!(!line_of(&shown).contains("width"), "{shown}");
+    let shown = view(&table_with("<w:tblW w:w=\"30000\" w:type=\"pct\"/>"));
+    assert!(line_of(&shown).contains(", width 600%"), "{shown}");
+    let again = write(&shown);
+    assert_eq!(
+        geometry(tables(&document(&again))[0]).width,
+        (Some("30000".into()), Some("pct".into()))
+    );
+}
+
+#[test]
+fn a_preferred_width_of_zero_is_auto() {
+    // Word reads a `w:tblW` of no width, or 0, as no preference: auto. The
+    // writer's 100% was a width the source never asked for.
+    for properties in [
+        "<w:tblW w:type=\"pct\"/>",
+        "<w:tblW w:w=\"0\" w:type=\"pct\"/>",
+        "<w:tblW w:w=\"0\" w:type=\"dxa\"/>",
+        "<w:tblW w:w=\"0\"/>",
+    ] {
+        let shown = view(&table_with(properties));
+        assert!(
+            line_of(&shown).ends_with(", width auto -->"),
+            "{properties}: {shown}"
+        );
+        let again = write(&shown);
+        assert_eq!(
+            geometry(tables(&document(&again))[0]).width,
+            (Some("0".into()), Some("auto".into())),
+            "{properties}"
+        );
+    }
 }

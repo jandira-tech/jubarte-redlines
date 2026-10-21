@@ -43,6 +43,14 @@ class HomePaths(unittest.TestCase):
     def test_the_word_users_alone_is_not_a_home(self) -> None:
         self.assertEqual(check_npm_paths.home_paths(b"/Users/ and Users/x"), {})
 
+    def test_a_user_name_with_a_space_or_past_ascii_is_a_home(self) -> None:
+        # The gate backs up the remap: a home it misses must not pass.
+        data = "/Users/john smith/src/x.rs /home/\u00c5sa/.cargo/y.rs".encode()
+        self.assertEqual(
+            check_npm_paths.home_paths(data),
+            {"/Users/*/src": 1, "/home/*/.cargo": 1},
+        )
+
 
 class Main(unittest.TestCase):
     def setUp(self) -> None:
@@ -75,6 +83,11 @@ class Main(unittest.TestCase):
         self.write("README.md", b"built in /Users/alice/src")
         self.write("node/a.wasm", b"clean")
         self.assertEqual(run(str(self.dir))[0], 0)
+
+    def test_a_cli_module_in_a_directory_is_searched(self) -> None:
+        # jubarte-wasm/cli ships `.mjs`: the CLI package is published too.
+        self.write("bin/cli.mjs", b"import x from '/Users/dana/src/x.js'")
+        self.assertEqual(run(str(self.dir))[0], 1)
 
     def test_a_file_given_is_searched_whatever_its_suffix(self) -> None:
         path = self.write("notes.txt", b"/home/carol/x")

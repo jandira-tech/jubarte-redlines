@@ -1058,7 +1058,14 @@ else
       || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --no-wait to consent to the partial set"
     # The wheel's panic locations would name this home and checkout (#1480);
     # jubarte-python has no .cargo/config.toml recipe for RUSTFLAGS to replace.
-    RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$PWD=jubarte-redlines" \
+    # As build-npm.sh does: the checkout by both its paths, and no whitespace,
+    # which cargo would split the list on.
+    repo_logical=$(pwd -L)
+    repo_physical=$(pwd -P)
+    case "$HOME$repo_logical$repo_physical" in
+      *[[:space:]]*) die "whitespace in \$HOME or the checkout path; cargo splits RUSTFLAGS on it" ;;
+    esac
+    RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$repo_logical=jubarte-redlines --remap-path-prefix=$repo_physical=jubarte-redlines" \
       uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     echo "  ! only the local-platform wheel + sdist will reach PyPI (--no-wait given)" >&2

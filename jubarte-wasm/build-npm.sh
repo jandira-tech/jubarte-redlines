@@ -42,8 +42,8 @@ fi
 repo_logical=$(cd .. && pwd -L)
 repo_physical=$(cd .. && pwd -P)
 case "$HOME$repo_logical$repo_physical" in
-  *" "*)
-    echo "ERROR: a space in \$HOME or the checkout path; the rustflags list is space-separated." >&2
+  *[[:space:]]*)
+    echo "ERROR: whitespace in \$HOME or the checkout path; cargo splits the rustflags list on it." >&2
     exit 1
     ;;
 esac
