@@ -3720,7 +3720,7 @@ impl Writer<'_> {
             .and_then(|s| s.attr("val"))
             .and_then(|id| sizes.get(id))
             .unwrap_or(default);
-        agent::own_size(p).filter(|size| size != given)
+        agent::own_size(p, &self.hidden_styles).filter(|size| size != given)
     }
 
     /// `p8-p38 line 8.65pt exact size 9pt`: the cell paragraphs' own

@@ -880,13 +880,16 @@ pub(crate) struct LineFacts<'a> {
     pub size: Option<u32>,
 }
 
-/// The one `w:sz` every text run of paragraph `p` states (#1474), or, with
-/// no text, its mark's, in half-points: `None` when a run states none or
-/// another. A text box, Word's Fallback copy and math hold runs of their
-/// own.
-pub(crate) fn own_size(p: &Element) -> Option<u32> {
-    fn size(rpr: Option<&Element>) -> Option<u32> {
-        let value = rpr?.child("sz")?.attr("val")?;
+/// The one `w:sz` every shown run of paragraph `p` states (#1474), or,
+/// with none, its mark's, in half-points: `None` when a run states none or
+/// another. A shown run holds text, a tab or a line break, all of which
+/// the writer gives the clause's size; a hidden run (`hidden` names the
+/// hidden character styles) prints nothing. A run whose `w:szCs` differs
+/// from its `w:sz` states no one size: the writer gives both the clause's.
+/// A text box sits inside a run, and Word's Fallback copy and math hold
+/// runs of their own.
+pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
+    fn half_points(value: &str) -> Option<u32> {
         let half = value
             .parse::<f64>()
             .ok()
@@ -895,21 +898,37 @@ pub(crate) fn own_size(p: &Element) -> Option<u32> {
         // `as` cannot truncate: the range is checked first.
         (half.is_finite() && (1.0..=3276.0).contains(&half)).then_some(half as u32)
     }
-    fn walk(element: &Element, sizes: &mut Vec<Option<u32>>) {
+    fn size(rpr: Option<&Element>) -> Option<u32> {
+        let rpr = rpr?;
+        let sz = half_points(rpr.child("sz")?.attr("val")?)?;
+        match rpr.child("szCs").and_then(|cs| cs.attr("val")) {
+            Some(cs) if half_points(cs) != Some(sz) => None,
+            _ => Some(sz),
+        }
+    }
+    fn shown(run: &Element) -> bool {
+        run.elements().any(|c| match c.local() {
+            "t" | "delText" | "tab" | "noBreakHyphen" => true,
+            // A page break is the paragraph's id line, not a line.
+            "br" | "cr" => c.attr("type") != Some("page"),
+            _ => false,
+        })
+    }
+    fn walk(element: &Element, hidden: &HashSet<String>, sizes: &mut Vec<Option<u32>>) {
         for child in element.elements() {
             match child.local() {
                 "pPr" | "Fallback" | "oMath" | "oMathPara" => {}
                 "r" => {
-                    if child.child("t").is_some() || child.child("delText").is_some() {
+                    if shown(child) && !hidden_run(child.child("rPr"), hidden) {
                         sizes.push(size(child.child("rPr")));
                     }
                 }
-                _ => walk(child, sizes),
+                _ => walk(child, hidden, sizes),
             }
         }
     }
     let mut sizes = Vec::new();
-    walk(p, &mut sizes);
+    walk(p, hidden, &mut sizes);
     match sizes.split_first() {
         None => size(p.path(&["pPr", "rPr"])),
         Some((first, rest)) => first.filter(|_| rest.iter().all(|s| s == first)),
