@@ -165,7 +165,7 @@ def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert main(["redline", str(a), str(b), "-d", "1970-01-01T00:00:00Z", "-o", str(tmp_path / "a_v_b.docx")]) == 0
     capsys.readouterr()
     assert main(["changes", str(tmp_path / "a_v_b.docx"), "--json"]) == 0
-    assert {r["kind"] for r in _listed(capsys.readouterr().out)} >= {"insertion", "deletion"}
+    assert {r["kind"] for r in _listed(capsys.readouterr().out)} == {"replacement"}
 
 
 def test_a_legacy_doc_is_refused_with_a_save_as_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -309,7 +309,7 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     assert written.out == "" and f"wrote {redline} (docx, " in written.err
     assert main(["changes", str(redline), "--json"]) == 0
     rows = _listed(capsys.readouterr().out)
-    assert {r["kind"] for r in rows} >= {"insertion", "deletion"}
+    assert {r["kind"] for r in rows} == {"replacement"}
     assert all(r["author"] == "Legal" for r in rows)
     assert {r["date"] for r in rows} == {"1970-01-01T00:00:00Z"}
     # Without -d the revisions are dated now (D17), as the native CLI does.
@@ -504,7 +504,7 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     for name in ("clean.docx", "redline.docx", "patch.diff", "report.jsonl"):
         assert (bundle / name).is_file(), name
     assert f"\nsource: {bundle / 'redline.docx'}\n" in out, out
-    assert "\nrange: changed by @R (p0, p1) of p0-p2\n" in out, out
+    assert "\nrange: changed by @J (p0, p1) of p0-p2\n" in out, out
     assert "{~~his or her~>an~~}" in out and "{--Heading--}" in out, out
     # A recording takes no --out-dir; flags without an operation are usage errors.
     for bad in (["--plan", "x.json", "-p", "p1", "--delete"], ["-p", "p1"], ["--anchor", "a", "-p", "p1", "--content", "b"]):
@@ -829,16 +829,17 @@ def test_editing_mode_keep_is_usage_error_before_output(
 def test_editing_mode_takes_a_plan_that_settles_every_change(
     tracked: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Codex on #425: what -p rN --accept settles is not kept.
+    # Codex on #425: what -p rN --accept settles is not kept. The
+    # tracked fixture's substitution is one grouped change (r1+2); a member
+    # id alone leaves the group unsettled, which --editing-mode refuses.
     assert main(["changes", str(tracked), "--json"]) == 0
     refs = [row["ref"] for row in _listed(capsys.readouterr().out)]
-    assert len(refs) > 1
     settle = [arg for ref in refs for arg in ("-p", ref, "--accept")]
     clean = tmp_path / "clean.docx"
     assert main(["edit", str(tracked), *settle, "--editing-mode", "-o", str(clean)]) == 0
     assert "<w:ins " not in zipfile.ZipFile(clean).read("word/document.xml").decode()
     with pytest.raises(SystemExit) as error:
-        main(["edit", str(tracked), *settle[:3], "--editing-mode", "-o", str(tmp_path / "partial.docx")])
+        main(["edit", str(tracked), "-p", "r1", "--accept", "--editing-mode", "-o", str(tmp_path / "partial.docx")])
     assert error.value.code == 2
 
 
@@ -872,7 +873,7 @@ def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, caps
     # edit writes the deletion before the insertion, as typing over a
     # selection does; the view pairs only an insertion before a deletion,
     # so these are two changes under the comment.
-    assert "{=={~~his or her~>their~~}{r1+2 @R}==}" in capsys.readouterr().out
+    assert "{=={~~his or her~>their~~}{r1+2 @J}==}" in capsys.readouterr().out
     assert main(["edit", str(commented), "-p", "c0.text", "--anchor", "signs", "--content", "x", "-o", str(tmp_path / "no.docx")]) == 3
     assert "not in the text c0 covers" in capsys.readouterr().err
 

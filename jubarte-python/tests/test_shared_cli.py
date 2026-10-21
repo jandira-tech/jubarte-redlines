@@ -92,12 +92,12 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert out.startswith(f"---\nsource: {word} (not written; -o keeps it)\n"), out
     # Compare writes the pair insertion-first, as Word Compare does, so it
     # prints as two marks; only a deletion-first pair is one {~~old~>new~~}.
-    assert "Due in {++45++}{r1 @R}{--30--}{r2 @R} days." in out, out
+    assert "Due in {++45++}{r1+2 @J}{--30--}{r1+2 @J} days." in out, out
     assert not word.exists()
     # The view is the output, so --quiet does not hide it (pi review av5 F6);
     # read options apply to it.
     assert main([str(a), str(b), "--quiet", "-d", "1970-01-01T00:00:00Z"]) == 0
-    assert "{++45++}{r1 @R}{--30--}{r2 @R}" in capsys.readouterr().out
+    assert "{++45++}{r1+2 @J}{--30--}{r1+2 @J}" in capsys.readouterr().out
     assert main([str(a), str(b), "--track-changes", "accept", "-d", "1970-01-01T00:00:00Z"]) == 0
     accepted = capsys.readouterr().out
     assert "{~~" not in accepted and "<!-- p0 rev r" in accepted, accepted
@@ -118,7 +118,7 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     for by in ("AC", "Ann Counsel"):
         assert main(["read", str(signed), "--changed", "--by", by, "--no-page-markers"]) == 0
         out = capsys.readouterr().out
-        assert "\nrange: changed by @AC (p0) of p0" in out and "{++45++}{r1 @AC}{--30--}{r2 @AC}" in out, out
+        assert "\nrange: changed by @AC (p0) of p0" in out and "{++45++}{r1+2 @AC}{--30--}{r1+2 @AC}" in out, out
     # diff prints its patch and writes nothing.
     assert main(["diff", str(word), str(word)]) == 0
     assert not (tmp_path / "before_v_after_v_before_v_after.docx").exists()
@@ -173,7 +173,7 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
     view = (tmp_path / "c.md").read_text()
     redline = word.with_name(f"{word.stem}_v_{b.stem}.docx")
     assert view.startswith(f"---\nsource: {redline} (not written; -o keeps it)\n"), view
-    assert "{++45++}{r1 @R}{--30--}{r2 @R}" in view, view
+    assert "{++45++}{r1+2 @J}{--30--}{r1+2 @J}" in view, view
 
     # --format critic needs two Markdown documents.
     assert main(["diff", str(word), str(b), "--format", "critic"]) == 1
