@@ -617,18 +617,11 @@ pub struct CompareArgs {
 /// lists the tasks; `jubarte compare --help` and `jubarte read --help` show
 /// every option.
 pub fn top_level_command() -> clap::Command {
-    let hidden: std::collections::HashSet<clap::Id> =
-        <CompareArgs as clap::Args>::augment_args(clap::Command::new("shorthand"))
-            .get_arguments()
-            .map(|a| a.get_id().clone())
-            .collect();
-    Cli::command().mut_args(move |a| {
-        if hidden.contains(a.get_id()) {
-            a.hide(true)
-        } else {
-            a
-        }
-    })
+    let mut cmd = Cli::command();
+    for arg in <CompareArgs as clap::Args>::augment_args(clap::Command::new("shorthand")).get_arguments() {
+        cmd = cmd.mut_arg(arg.get_id(), |a| a.hide(true));
+    }
+    cmd
 }
 
 impl std::ops::Deref for Cli {
