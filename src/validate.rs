@@ -49,6 +49,7 @@
 //! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
+//! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -198,7 +199,8 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 27] = [
+const RING1_CODES: [&str; 28] = [
+    "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
     "MC_UNBOUND_PREFIX",
@@ -482,7 +484,50 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_style_names(pkg, &mut out);
     check_nested_text_boxes(pkg, &mut out);
     check_move_range_counts(pkg, &mut out);
+    check_data_bindings_have_stores(pkg, &mut out);
     out
+}
+
+/// Word fills a bound content control from the custom XML store its
+/// `w:storeItemID` names, and shows the control empty when the main part
+/// reaches no such store (#1427). Word opens the file: a lead. Word's own
+/// stores (the document properties) live in `docProps`.
+fn check_data_bindings_have_stores(pkg: &PartFs, out: &mut Vec<Finding>) {
+    use crate::markdown::data_stores::{built_in, stores};
+    let Some(main) = main_part(pkg) else {
+        return;
+    };
+    let mut held: Option<Vec<String>> = None;
+    for part in xml_parts(pkg) {
+        if part.starts_with("customXml/")
+            || !pkg
+                .part_bytes(&part)
+                .is_some_and(|bytes| bytes.windows(11).any(|w| w == b"dataBinding"))
+        {
+            continue;
+        }
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        for binding in dom.descendants(root, Some(&W::name("dataBinding"))) {
+            let Some(store) = dom.attribute(binding, &W::name("storeItemID")) else {
+                continue;
+            };
+            if built_in(store)
+                || held
+                    .get_or_insert_with(|| stores(pkg, &main))
+                    .contains(&store.to_ascii_uppercase())
+            {
+                continue;
+            }
+            out.push(Finding::new(
+                "DATA_BINDING_WITHOUT_STORE",
+                &part,
+                element_path(&dom, binding),
+                format!("{store}: no custom XML store the main part reaches holds it; Word shows the bound control empty (#1427)"),
+            ));
+        }
+    }
 }
 
 /// Word opens unequal per-name move ranges cleanly, but Reject All can

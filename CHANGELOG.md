@@ -43,6 +43,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A bound content control in a text box keeps its text in Word**
+  (#1427). A cover page's Abstract, bound to a custom XML store, came
+  back empty: the drawing kept the control's binding but not the store
+  it names, and Word fills a bound control from its store. The writer
+  now builds every store a plain text, date or list control's binding
+  names and the main part does not reach, and drops any other binding
+  so Word keeps the control's text. `jubarte validate` reports a
+  binding with no store as `DATA_BINDING_WITHOUT_STORE` (a warning).
 - **A text box's paragraph style survives Markdown** (#1423). The
   `styles:` legend listed only the styles of the body's own paragraphs,
   so a style used only inside a text box (a cover page's `No Spacing`)
