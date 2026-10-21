@@ -240,6 +240,22 @@ pub fn assert_summary(view: &str) {
     let mut stated = [0; 6];
     let mut total = 0;
     if let Some((raw, summary)) = line.split_once(" shown as ") {
+        // The raw mark count the header states before `shown as`, against
+        // the marks the body prints: a right shown-change count excuses no
+        // wrong mark count (#1521 review).
+        let mut words = raw.split_whitespace().rev();
+        let stated_marks = match words.next() {
+            Some("marks" | "mark") => words.next().and_then(|n| n.parse::<usize>().ok()),
+            _ => None,
+        };
+        let Some(stated_marks) = stated_marks else {
+            panic!("{line} states no raw mark count");
+        };
+        let marks = printed_changes(body)
+            .iter()
+            .map(|change| change.marks)
+            .sum::<usize>();
+        assert_eq!(stated_marks, marks, "{line}\n{body}");
         total = summary
             .split_whitespace()
             .next()

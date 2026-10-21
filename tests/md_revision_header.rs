@@ -59,6 +59,15 @@ fn revisions_line(view: &str) -> &str {
         .unwrap()
 }
 
+/// A right shown-change count with a wrong raw mark count in front of
+/// `shown as` must fail the shared gate (#1521 review).
+#[test]
+#[should_panic(expected = "left: 9")]
+fn a_wrong_raw_mark_count_fails_the_summary_gate() {
+    let view = "---\nview: tracked\nrevisions: 2   # 9 marks shown as 2 changes: 1 insertion, 1 deletion\n---\n\n{++a++}{r0 @A} {--b--}{r1 @A}\n";
+    assert_summary(&view);
+}
+
 /// The revision list is the source of truth once the body has been resolved.
 fn raw_summary(docx: &[u8]) -> String {
     use jubarte::changes::{ChangeKind, list_changes};
