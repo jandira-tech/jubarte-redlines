@@ -2678,7 +2678,7 @@ mod paragraph_id_collision_owner_tests {
             let mut expected = before.clone();
             for (name, bytes) in &mut expected {
                 if name == "word/document.xml" || name == "word/commentsExtended.xml" {
-                    *bytes = String::from_utf8(bytes.clone())
+                    *bytes = std::str::from_utf8(bytes)
                         .unwrap()
                         .replace(&format!("=\"{old_id}\""), "=\"00000003\"")
                         .into_bytes();
