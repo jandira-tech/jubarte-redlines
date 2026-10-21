@@ -309,7 +309,18 @@ fn describe(edit: &Edit, paragraphs: &[Paragraph], blocks: &[Block]) -> String {
 /// typed numbering left out.
 fn key(text: &str) -> String {
     let spaced = text.replace('\u{FFFC}', " ");
-    let collapsed = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut words = spaced.split_whitespace();
+    let collapsed = if let Some(first) = words.next() {
+        let mut out = String::with_capacity(spaced.len());
+        out.push_str(first);
+        for word in words {
+            out.push(' ');
+            out.push_str(word);
+        }
+        out
+    } else {
+        String::new()
+    };
     collapsed[enumerator_len(&collapsed)..].to_string()
 }
 

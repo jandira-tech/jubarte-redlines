@@ -125,7 +125,18 @@ fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
 }
 
 fn normalized_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut words = text.split_whitespace();
+    if let Some(first) = words.next() {
+        let mut out = String::with_capacity(text.len());
+        out.push_str(first);
+        for word in words {
+            out.push(' ');
+            out.push_str(word);
+        }
+        out
+    } else {
+        String::new()
+    }
 }
 
 /// Build an id-independent identity from the comment body and its anchored

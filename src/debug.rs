@@ -330,7 +330,18 @@ fn path(dom: &Dom, n: NodeId) -> String {
 }
 
 fn clip(s: &str, max: usize) -> String {
-    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut words = s.split_whitespace();
+    let s = if let Some(first) = words.next() {
+        let mut out = String::with_capacity(s.len());
+        out.push_str(first);
+        for word in words {
+            out.push(' ');
+            out.push_str(word);
+        }
+        out
+    } else {
+        String::new()
+    };
     if s.chars().count() <= max {
         s
     } else {

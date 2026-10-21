@@ -493,7 +493,18 @@ fn push_text(stack: &mut [Element], text: &str) {
 }
 
 pub(crate) fn collapse_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut words = s.split_whitespace();
+    if let Some(first) = words.next() {
+        let mut out = String::with_capacity(s.len());
+        out.push_str(first);
+        for word in words {
+            out.push(' ');
+            out.push_str(word);
+        }
+        out
+    } else {
+        String::new()
+    }
 }
 
 /// How a stretch of inline text is set: the marks printed around it.

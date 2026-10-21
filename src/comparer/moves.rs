@@ -116,7 +116,18 @@ pub fn count_words_and_tokenize(
 /// Collapse runs of whitespace so reformatted charter paragraphs (dense vs
 /// spaced) compare as the same text for move detection.
 fn collapse_ws(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut words = text.split_whitespace();
+    if let Some(first) = words.next() {
+        let mut out = String::with_capacity(text.len());
+        out.push_str(first);
+        for word in words {
+            out.push(' ');
+            out.push_str(word);
+        }
+        out
+    } else {
+        String::new()
+    }
 }
 
 /// Jaccard similarity over unique word sets: `|intersection| / |union|`,
