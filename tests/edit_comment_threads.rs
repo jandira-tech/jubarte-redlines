@@ -708,7 +708,9 @@ fn removed_anchor_default_reports_thread_and_still_removes_it() {
         ),
     )
     .unwrap();
-    let expected = serde_json::json!([{"id":"c0","author":"Bob","replies":["c1"]}]);
+    // Plan 10 adds why the thread went (#1159).
+    let expected = serde_json::json!([{"id":"c0","author":"Bob","replies":["c1"],
+        "why":"anchor removed by rejecting r1"}]);
     assert_eq!(
         serde_json::to_value(&out.report).unwrap()["removed_comments"],
         expected
@@ -1276,7 +1278,7 @@ fn receipt_1193_blanket_reject_says_rejection() {
         serde_json::json!([]),
     );
     let (text, _) = run_thread_cli(&inserted_comment(), &plan, false);
-    assert!(text.contains("the rejection removed"), "{text}");
+    assert!(text.contains("anchor removed by rejecting r"), "{text}");
 }
 
 #[test]
@@ -1293,16 +1295,16 @@ fn receipt_1193_mixed_decisions_name_each_removing_pass() {
         serde_json::json!([]),
     );
     let (text, _) = run_thread_cli(&pkg.to_zip().unwrap(), &plan, false);
-    for (id, word) in [("c0", "rejection"), ("c1", "acceptance")] {
+    // Each line names the pass that removed the thread, and its change.
+    for (id, why) in [
+        ("c0", "anchor removed by rejecting r1"),
+        ("c1", "anchor removed by accepting r2"),
+    ] {
         let line = text
             .lines()
             .find(|l| l.contains(&format!("removed {id} ")))
             .unwrap();
-        assert!(
-            line.contains(&format!("the {word} removed"))
-                || line.contains("the settlement removed"),
-            "{line}"
-        );
+        assert!(line.ends_with(why), "{line}");
     }
 }
 

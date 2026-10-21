@@ -992,18 +992,20 @@ fn produce(
         .iter()
         .find(|&&(id, _)| comment_holds_kept_text(&redline, id))
     {
-        let message = if matches!(plan.operations[op].kind, OperationKind::Delete { .. }) {
-            // Under keep the deletion is written as given, and its comment
-            // wraps the words named.
-            let keep = match tx.syntax {
-                super::PlanSyntax::Flags | super::PlanSyntax::Typed => "--existing-revisions keep",
-                super::PlanSyntax::V1 | super::PlanSyntax::V2 => r#""existing_revisions": "keep""#,
-            };
-            format!(
+        // Under keep the deletion is written as given, and its comment
+        // wraps the words named, its reply the struck paragraph.
+        let keep = match tx.syntax {
+            super::PlanSyntax::Flags | super::PlanSyntax::Typed => "--existing-revisions keep",
+            super::PlanSyntax::V1 | super::PlanSyntax::V2 => r#""existing_revisions": "keep""#,
+        };
+        let message = match plan.operations[op].kind {
+            OperationKind::Delete { .. } => format!(
                 "the comparer deleted the same words elsewhere instead, so the comment would sit on text that stays; pass {keep} to write the deletion as given, or delete without a comment"
-            )
-        } else {
-            "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph".to_string()
+            ),
+            OperationKind::ReplyComment { .. } => format!(
+                "the comparer deleted an identical paragraph instead, so the reply would sit on text that stays; pass {keep} to write the deletion as given"
+            ),
+            _ => "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph".to_string(),
         };
         let mut error = tx.conflict(op, &message);
         error.code = "UNSUPPORTED_STRUCTURE".into();

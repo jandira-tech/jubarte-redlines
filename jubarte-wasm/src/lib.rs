@@ -116,7 +116,8 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
 /// List the tracked changes one by one as a JSON array string, each with the
 /// id `acceptChanges` / `rejectChanges` select by (the same objects as
 /// `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
-/// `text`, `move_name`, `move_side`, `inside`).
+/// `text`, `move_name`, `move_side`, `inside`, and `holds_comments` when
+/// the change holds comment marks).
 ///
 /// Mirrors `jubarte::changes::list_changes`.
 #[wasm_bindgen(js_name = listChanges)]
@@ -630,12 +631,13 @@ pub fn flag_plan(
 }
 
 /// Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
-/// it keeps and does not itself accept or reject; `undefined` when none.
+/// it keeps and does not itself accept or reject, or a reply to a comment
+/// on a paragraph it deletes; `undefined` when neither.
 ///
 /// Mirrors `jubarte::edit::flags::editing_mode_conflict`.
 #[wasm_bindgen(js_name = editingModeConflict)]
 pub fn editing_mode_conflict(plan: &str, docx: &[u8]) -> Option<String> {
-    jubarte::edit::flags::editing_mode_conflict_json(plan, docx).map(str::to_string)
+    jubarte::edit::flags::editing_mode_conflict_json(plan, docx)
 }
 
 /// `record_plan` as JSON: `{ok: true, recorded: {plan, json, notes,

@@ -482,10 +482,10 @@ fn run_resolution(
         })?;
         write_output(out, Produced::Docx(&resolved.document))
             .map_err(|f| (ExitCode::from(f.code), f.message))?;
-        for comment in &resolved.removed_comments {
+        for (comment, why) in resolved.removed_comments.iter().zip(&resolved.removed_why) {
             let preview: String = comment.text.chars().take(60).collect();
             eprintln!(
-                "warning: {what} removed comment c{} ({}: {preview:?}): its whole range was deleted",
+                "warning: {what} removed comment c{} ({}: {preview:?}): {why}",
                 comment.id, comment.author,
             );
         }
@@ -2125,9 +2125,15 @@ fn settlement_notes(
     };
     let mut lines = Vec::new();
     for c in removed {
-        let decision = c.decision.as_deref().unwrap_or(decision);
+        // A receipt read from an older report has no `why`.
+        let why = if c.why.is_empty() {
+            let decision = c.decision.as_deref().unwrap_or(decision);
+            format!("their anchor was text the {decision} removed")
+        } else {
+            c.why.clone()
+        };
         lines.push(format!(
-            "removed {} ({}){}: their anchor was text the {decision} removed",
+            "removed {} ({}){}: {why}",
             c.id,
             c.author,
             reply_text(&c.replies)
@@ -2550,7 +2556,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     if flags.options.editing_mode
         && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan, &source)
     {
-        return Err((EXIT_USAGE, message.to_string()));
+        return Err((EXIT_USAGE, message));
     }
     let target = flags.options.target(flags.file);
     let job = EditJob {

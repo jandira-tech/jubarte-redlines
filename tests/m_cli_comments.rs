@@ -138,7 +138,7 @@ fn accept_warns_for_a_dead_range_with_a_surviving_reference() {
     let (output, stderr) = resolve_probe('a', "accept");
     assert_eq!(
         stderr,
-        "warning: accept removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\n"
+        "warning: accept removed comment c0 (Alice: \"Existing range\"): anchor removed by accepting the changes that held all its text\n"
     );
     dead_comments::assert_state(&output, false, &[]);
 }
@@ -146,9 +146,10 @@ fn accept_warns_for_a_dead_range_with_a_surviving_reference() {
 #[test]
 fn accept_warns_when_the_reference_is_deleted_too() {
     let (output, stderr) = resolve_probe('b', "accept");
+    // The deletion r7 held the mark itself.
     assert_eq!(
         stderr,
-        "warning: accept removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\n"
+        "warning: accept removed comment c0 (Alice: \"Existing range\"): anchor removed by accepting r7\n"
     );
     dead_comments::assert_state(&output, false, &[]);
 }
@@ -158,7 +159,7 @@ fn reject_warns_for_a_dead_inserted_range() {
     let (output, stderr) = resolve_probe('d', "reject");
     assert_eq!(
         stderr,
-        "warning: reject removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\n"
+        "warning: reject removed comment c0 (Alice: \"Existing range\"): anchor removed by rejecting the changes that held all its text\n"
     );
     dead_comments::assert_state(&output, false, &[]);
 }
@@ -168,7 +169,7 @@ fn accept_warns_once_per_thread_member_using_original_ids() {
     let (output, stderr) = resolve_probe('e', "accept");
     assert_eq!(
         stderr,
-        "warning: accept removed comment c0 (Alice: \"Existing range\"): its whole range was deleted\nwarning: accept removed comment c1 (Bob: \"Reply to range\"): its whole range was deleted\n"
+        "warning: accept removed comment c0 (Alice: \"Existing range\"): anchor removed by accepting the changes that held all its text\nwarning: accept removed comment c1 (Bob: \"Reply to range\"): anchor removed by accepting the changes that held all its text\n"
     );
     dead_comments::assert_state(&output, true, &[(0, "Kept range", None)]);
 }

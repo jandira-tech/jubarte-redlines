@@ -990,9 +990,10 @@ fn read_view(
 }
 
 /// Why `--editing-mode` cannot apply `plan_json` to `docx`: the tracked
-/// changes it keeps and does not itself accept or reject, or `None`.
+/// changes it keeps and does not itself accept or reject, or a reply to a
+/// comment on a paragraph it deletes; `None` when neither.
 #[pyfunction]
-fn editing_mode_conflict(py: Python<'_>, plan_json: &str, docx: &[u8]) -> Option<&'static str> {
+fn editing_mode_conflict(py: Python<'_>, plan_json: &str, docx: &[u8]) -> Option<String> {
     py.detach(|| jubarte::edit::flags::editing_mode_conflict_json(plan_json, docx))
 }
 

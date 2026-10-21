@@ -502,6 +502,28 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Changed
 
+- **What a settle removes is said before and after (#1159, plan 10).**
+  `changes` ends a change's line with a tab and `holds comment c4's mark`
+  (`holds comment marks c4, c5`) when it holds a comment's reference mark,
+  a field after any `inside r1`, and
+  `--json` lists them in `holds_comments` (Python `Change.holds_comments`):
+  accepting that deletion, or rejecting that insertion, removes the
+  threads. The agent view says it too: a note printed outside the change
+  that holds its mark names it last, `{>>c4 @AC in r13: …<<}`, and
+  converting the view back puts the mark inside r13 again (before, it came
+  back outside, so accepting r13 no longer removed the thread). Every
+  `removed_comments` record says `why`, `anchor removed by accepting r13`,
+  naming the change the pass settled (the side of a move the plan named,
+  the innermost of nested changes), and the receipt line and `jubarte
+  accept`/`reject`'s warnings say the same (`ResolvedChanges::removed_why`).
+  A reply to a comment whose paragraph the same plan
+  deletes is no longer refused as `OVERLAPPING_EDITS`: it goes on the
+  deleted text beside its parent, where Word shows the thread; a v2 plan
+  with `"track": "off"` removes the anchor and is refused with
+  `COMMENT_ANCHOR_REMOVED`, as any untracked deletion of an anchor is, and
+  `--editing-mode` refuses the reply (exit 2): its clean copy keeps no
+  thread for the reply to join.
+
 - **`read`, `changes` and `comments` name the input's validity findings
   once (#1256).** An input `validate` would flag earns one stderr line,
   `input has 2 validity warnings; jubarte validate FILE lists them` (`1

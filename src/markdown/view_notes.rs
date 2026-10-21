@@ -553,7 +553,8 @@ pub(super) fn plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
 pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
 
 /// A comment head the view writes: `c5 @AC: `, `c5 @AC 2026-…: `,
-/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `.
+/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `, and any of them with
+/// `in r13` last (`c6 @AS re c5 in r13: `).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CommentHead {
     /// The comment's number in the source (`c5` → 5).
@@ -563,6 +564,9 @@ pub(super) struct CommentHead {
     /// The number of the comment this one replies to.
     pub reply_to: Option<u32>,
     pub resolved: bool,
+    /// The `w:id`s of the change that holds the comment's reference mark
+    /// (`in r13` → 13): the note prints outside it, so it says so.
+    pub held_in: Vec<u32>,
 }
 
 /// The cells a `cell-borders` group names: every cell, a row's, or one.
@@ -1570,6 +1574,7 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         date: None,
         reply_to: None,
         resolved: false,
+        held_in: Vec::new(),
     };
     if let Some(handle) = words.peek().and_then(|w| w.strip_prefix('@')) {
         if !is_handle(handle) {
@@ -1582,10 +1587,24 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         parsed.date = Some((*date).to_string());
         words.next();
     }
-    match (words.next(), words.next(), words.next()) {
-        (None, ..) => {}
-        (Some("resolved"), None, _) => parsed.resolved = true,
-        (Some("re"), Some(root), None) if root.starts_with('c') => {
+    let mut rest: Vec<&str> = words.collect();
+    // `in r13` last: the change whose mark holds the reference.
+    if let [.., "in", change] = rest.as_slice() {
+        let ids = crate::ids::parse_change_ids(change).ok()?;
+        if change.starts_with(|c: char| c.is_ascii_digit()) || ids.iter().any(|c| c.story != "body")
+        {
+            return None;
+        }
+        parsed.held_in = ids
+            .iter()
+            .map(|c| c.wid.parse().ok().filter(|&id| id <= MOST_ID))
+            .collect::<Option<_>>()?;
+        rest.truncate(rest.len() - 2);
+    }
+    match rest.as_slice() {
+        [] => {}
+        ["resolved"] => parsed.resolved = true,
+        ["re", root] if root.starts_with('c') => {
             parsed.reply_to = Some(crate::ids::parse_comment_id(root).ok()?);
         }
         _ => return None,
@@ -2030,7 +2049,8 @@ mod tests {
                 handle: Some("AC".into()),
                 date: None,
                 reply_to: None,
-                resolved: false
+                resolved: false,
+                held_in: Vec::new(),
             }
         );
         assert_eq!(text, "Is one percent the cap?");
@@ -2051,6 +2071,32 @@ mod tests {
             "c5 @AC maybe: x",
             "p5 @AC: x",
             "c5 @A-C: x",
+        ] {
+            assert_eq!(comment_head(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_head_names_the_change_that_holds_its_mark_last() {
+        let (head, text) = comment_head("c0 @B in r13: Bob's note.").unwrap();
+        assert_eq!(
+            (head.held_in, head.reply_to, text),
+            (vec![13], None, "Bob's note.")
+        );
+        let (head, _) = comment_head("c1 @C re c0 in r13: Carol agrees.").unwrap();
+        assert_eq!((head.reply_to, head.held_in), (Some(0), vec![13]));
+        let (head, _) = comment_head("c2 @B 2026-10-01T09:00:00Z resolved in r4+5: ok").unwrap();
+        assert!(head.resolved);
+        assert_eq!(head.held_in, [4, 5]);
+        let (head, text) = comment_head("c3 in r7:").unwrap();
+        assert_eq!((head.handle, head.held_in, text), (None, vec![7], ""));
+        for text in [
+            "c0 @B in: x",
+            "c0 @B in c3: x",
+            "c0 @B in 13: x",
+            "c0 @B in r13 re c1: x",
+            "c0 @B in r13 in r14: x",
+            "c0 @B in footnotes.r2: x",
         ] {
             assert_eq!(comment_head(text), None, "{text}");
         }

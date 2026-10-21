@@ -468,7 +468,7 @@ fn patterns() -> &'static Patterns {
         // `r12 @AC`, `header1.r1+2 @AC`, `Header_1:rev:4 @AC`, with a date.
         tag: Regex::new(r"^(\S+) @[A-Za-z0-9?]+(?: \S+)?$").unwrap(),
         comment_head: Regex::new(
-            r"^c(\d+)(?: @[A-Za-z0-9?]+)?(?: \S+)?(?: re c(\d+)| resolved)?: ",
+            r"^c(\d+)(?: @[A-Za-z0-9?]+)?(?: \S+)?(?: re c(\d+)| resolved)?(?: in r\d+(?:\+\d+)*)?: ",
         )
         .unwrap(),
         reply: Regex::new(r" re c(\d+)").unwrap(),

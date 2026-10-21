@@ -382,11 +382,13 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         "one row per revision before the summary"
     );
     for line in &lines {
-        // ref \t kind \t target \t author \t paragraph \t {text:?}
-        // This 6-field count assumes the fixture's revision authors contain no
-        // literal tab (they don't). The human row format is tab-delimited by
-        // contract, so a tab inside an author would need `changes` to escape
-        // it before this could stay parseable.
+        // ref \t kind \t target \t author \t paragraph \t {text:?}, then
+        // `\tinside r1` for a change inside another and `\tholds comment
+        // c4's mark` for one holding a comment's mark: this fixture has
+        // neither, so six fields. The count assumes the fixture's revision
+        // authors contain no literal tab (they don't). The human row format
+        // is tab-delimited by contract, so a tab inside an author would need
+        // `changes` to escape it before this could stay parseable.
         assert_eq!(
             line.split('\t').count(),
             6,

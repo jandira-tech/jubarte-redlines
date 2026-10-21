@@ -2466,13 +2466,16 @@ pub(crate) fn threads(comments: Option<&Element>, extended: Option<&Element>) ->
 }
 
 /// `c5 @AC: `, `c5 @AC resolved: `, `c6 @AS re c5: `, or `c5: ` with
-/// no author. `date` is the inline timestamp, when wanted.
+/// no author. `date` is the inline timestamp, when wanted; `held`, the
+/// change whose mark holds the comment's reference when the note prints
+/// outside it (`c5 @AC in r13: `).
 pub(crate) fn comment_head(
     id: &str,
     author: Option<&str>,
     date: Option<&str>,
     handles: &Handles,
     threads: &Threads,
+    held: Option<u32>,
 ) -> String {
     let mut head = format!("c{id}");
     if let Some(handle) = handles.of(author) {
@@ -2486,6 +2489,9 @@ pub(crate) fn comment_head(
         head.push_str(&format!(" re c{root}"));
     } else if threads.done.contains(id) {
         head.push_str(" resolved");
+    }
+    if let Some(change) = held {
+        head.push_str(&format!(" in r{change}"));
     }
     head.push_str(": ");
     head
