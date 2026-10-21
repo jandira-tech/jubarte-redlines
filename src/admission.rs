@@ -364,6 +364,27 @@ pub(crate) fn input_over_entries(declared: u64, limits: &InputLimits) -> Admissi
     )
 }
 
+/// `name` as a message may print it: each control character spelled as
+/// its escape (`\u{1b}`), everything else as the archive spells it, so a
+/// crafted entry name cannot write terminal sequences while an ordinary
+/// one (quotes, non-ASCII) reads unchanged.
+pub(crate) fn shown(name: &str) -> Cow<'_, str> {
+    if name.chars().any(char::is_control) {
+        name.chars()
+            .map(|c| {
+                if c.is_control() {
+                    c.escape_default().to_string()
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect::<String>()
+            .into()
+    } else {
+        name.into()
+    }
+}
+
 /// `INPUT_LIMIT` for an entry whose declared inflated size already passes
 /// the per-part budget: refused before anything inflates.
 pub(crate) fn part_declared_over(
@@ -375,7 +396,7 @@ pub(crate) fn part_declared_over(
         AdmissionErrorKind::InputLimit,
         format!(
             "{} declares {declared} inflated bytes; the part limit is {}",
-            name.escape_debug(),
+            shown(name),
             limits.max_part_bytes
         ),
     )
@@ -391,7 +412,7 @@ pub(crate) fn part_inflated_over(name: &str, cap: u64, limits: &InputLimits) -> 
     };
     AdmissionError::new(
         AdmissionErrorKind::InputLimit,
-        format!("{} inflates past {cap} bytes; {which}", name.escape_debug()),
+        format!("{} inflates past {cap} bytes; {which}", shown(name)),
     )
 }
 
@@ -485,7 +506,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         if entry.encrypted() {
             return Err(AdmissionError::new(
                 K::UnsupportedPackage,
-                format!("{} is encrypted", name.escape_debug()),
+                format!("{} is encrypted", shown(&name)),
             ));
         }
         if !matches!(
@@ -496,7 +517,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
                 K::UnsupportedPackage,
                 format!(
                     "{} uses unsupported compression {}",
-                    name.escape_debug(),
+                    shown(&name),
                     entry.compression()
                 ),
             ));
@@ -529,7 +550,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         let read = if is_xml {
             let mut buf = Vec::new();
             limited.read_to_end(&mut buf).map_err(|e| {
-                AdmissionError::new(K::InvalidPackage, format!("{}: {e}", name.escape_debug()))
+                AdmissionError::new(K::InvalidPackage, format!("{}: {e}", shown(&name)))
             })?;
             let n = buf.len() as u64;
             if n <= cap {
@@ -541,7 +562,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             n
         } else {
             std::io::copy(&mut limited, &mut std::io::sink()).map_err(|e| {
-                AdmissionError::new(K::InvalidPackage, format!("{}: {e}", name.escape_debug()))
+                AdmissionError::new(K::InvalidPackage, format!("{}: {e}", shown(&name)))
             })?
         };
         tally_inflated(&mut total, read, &name, cap, &limits)?;
@@ -553,20 +574,14 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
     let lower = main_part.to_ascii_lowercase();
     if !(lower.ends_with(".xml") || lower.ends_with(".rels")) {
         let mut entry = archive.by_name(&main_part).map_err(|e| {
-            AdmissionError::new(
-                K::InvalidPackage,
-                format!("{}: {e}", main_part.escape_debug()),
-            )
+            AdmissionError::new(K::InvalidPackage, format!("{}: {e}", shown(&main_part)))
         })?;
         let mut buf = Vec::new();
         (&mut entry)
             .take(limits.max_part_bytes.saturating_add(1))
             .read_to_end(&mut buf)
             .map_err(|e| {
-                AdmissionError::new(
-                    K::InvalidPackage,
-                    format!("{}: {e}", main_part.escape_debug()),
-                )
+                AdmissionError::new(K::InvalidPackage, format!("{}: {e}", shown(&main_part)))
             })?;
         check_xml_depth(&main_part, &buf, limits)?;
     }
@@ -870,7 +885,7 @@ fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), Ad
     let invalid = |why: String| {
         AdmissionError::new(
             AdmissionErrorKind::InvalidXml,
-            format!("{}: {why}", name.escape_debug()),
+            format!("{}: {why}", shown(name)),
         )
     };
     let text = part_text(xml);
@@ -1425,6 +1440,30 @@ pub(crate) mod zip_names {
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
+    /// A name prints with its control characters escaped and nothing else
+    /// changed: quotes and non-ASCII stay as the archive spells them.
+    #[test]
+    fn a_shown_name_escapes_control_characters_only() {
+        assert_eq!(shown("word/it's \"é\".xml"), "word/it's \"é\".xml");
+        assert_eq!(shown("a\u{1b}[31mb\n"), "a\\u{1b}[31mb\\n");
+    }
+
+    /// A limit message names the part as the archive spells it: an
+    /// apostrophe is not escaped (review of gid=94's fix).
+    #[test]
+    fn a_limit_message_keeps_an_ordinary_part_name_verbatim() {
+        let error = part_declared_over(
+            "word/it's.xml",
+            10,
+            &InputLimits {
+                max_part_bytes: 1,
+                ..InputLimits::default()
+            },
+        );
+        let text = error.to_string();
+        assert!(text.contains("word/it's.xml declares"), "{text}");
+    }
+
     use std::io::Write;
 
     use zip::write::SimpleFileOptions;

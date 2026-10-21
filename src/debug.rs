@@ -227,7 +227,7 @@ impl Package {
             // result lives, so the central name is resolved first.
             let shown = zip.name_for_index(i).and_then(Result::ok).map_or_else(
                 || "unnamed".to_string(),
-                |name| format!("'{}'", name.escape_debug()),
+                |name| format!("'{}'", crate::admission::shown(&name)),
             );
             let mut f = match zip.by_index(i) {
                 Ok(f) => f,
@@ -243,7 +243,7 @@ impl Package {
             // control characters so a crafted name cannot write terminal
             // sequences when the report is displayed.
             let name = match f.name() {
-                Ok(name) => name.escape_debug().to_string(),
+                Ok(name) => crate::admission::shown(&name).into_owned(),
                 Err(error) => {
                     defects.push(crate::opc::ZipDefect {
                         kind: crate::opc::ZipDefectKind::EntryRead,
