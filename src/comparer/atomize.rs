@@ -692,7 +692,7 @@ fn group_by_ancestor_unid(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod break_payload_identity_regressions {
     use super::atom_hash;
     use crate::comparer::WmlComparerSettings;
@@ -731,7 +731,7 @@ mod break_payload_identity_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod final_section_table_ownership_tests {
     use super::*;
 
@@ -808,7 +808,7 @@ mod final_section_table_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_atomizer_owned_boundaries {
     use super::*;
 
@@ -1058,7 +1058,7 @@ mod coverage_atomizer_owned_boundaries {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_atomizer_field_chain_boundaries {
     use super::*;
 
@@ -1205,7 +1205,7 @@ mod coverage_atomizer_field_chain_boundaries {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_atomizer_leaf_stamp_boundaries {
     use super::*;
 

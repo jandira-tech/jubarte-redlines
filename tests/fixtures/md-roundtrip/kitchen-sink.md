@@ -30,7 +30,7 @@ This Master Services Agreement is made between Northwind Logistics LLC ("Provide
 ## 1. Definitions
 
 <!-- p3 ListParagraph num "1." -->
-1. "Services" means the work in each {++signed ++}{r0 @AC}Statement of Work.
+1. "Services" means the work in each {++signed ++}{>>r0 @AC<<}Statement of Work.
 
 <!-- p4 ListParagraph num "2." -->
 2. "Deliverables" means the reports listed in Section 3.
@@ -45,10 +45,10 @@ This Master Services Agreement is made between Northwind Logistics LLC ("Provide
 ## 2. Fees
 
 <!-- p8 first-line 0.5in -->
-Customer shall pay each invoice within {~~thirty~>forty-five~~}{r1+2 @AC} days. {==Late amounts accrue interest at one percent per month.==}{>>c3 @AC: Is one percent the cap?<<}{>>c4 @JD re c3: It is in Delaware.<<}
+Customer shall pay each invoice within {~~thirty~>forty-five~~}{>>r1+2 @AC<<} days. {==Late amounts accrue interest at one percent per month.==}{>>c3 @AC: Is one percent the cap?<<}{>>c4 @JD re c3: It is in Delaware.<<}
 
 <!-- p9 -->
-Payments go to the account in [the payment portal](https://pay.example.com/northwind "Northwind payment portal"). {--Cheques are not accepted.--}{r5 @JD}
+Payments go to the account in [the payment portal](https://pay.example.com/northwind "Northwind payment portal"). {--Cheques are not accepted.--}{>>r5 @JD<<}
 
 <!-- p10-p11 empty -->
 
@@ -58,7 +58,7 @@ Payments go to the account in [the payment portal](https://pay.example.com/north
 <!-- t0 center 3x3, cells p13-p21 by row, header row repeats -->
 |Deliverable|Due|Owner|
 |-|-|-|
-|Route report|Day {~~10~>15~~}{r6+7 @JD}|Provider|
+|Route report|Day {~~10~>15~~}{>>r6+7 @JD<<}|Provider|
 |Cost review|Quarterly|_Both_|
 
 <!-- p22 -->

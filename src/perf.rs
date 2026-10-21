@@ -306,7 +306,7 @@ mod active {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -331,9 +331,22 @@ mod tests {
 
     #[test]
     fn reset_zeroes_all_counters() {
-        set_atom_count(100);
+        record_stage_ns(Stage::PackageOpen, 100);
+        record_stage_ns(Stage::Preprocess, 200);
+        record_stage_ns(Stage::Atomize, 300);
+        record_stage_ns(Stage::Unitize, 400);
+        record_stage_ns(Stage::Lcs, 500);
+        record_stage_ns(Stage::Produce, 600);
+        record_stage_ns(Stage::Serialize, 700);
+        record_stage_ns(Stage::Zip, 800);
+
         inc_lcs_calls();
-        record_stage_ns(Stage::Atomize, 500);
+        add_lcs_window_area(2, 3);
+        inc_corr_run_scans();
+        inc_corr_run_hits();
+        add_unit_clones(10);
+        set_atom_count(100);
+        set_unit_count(50);
 
         reset();
 

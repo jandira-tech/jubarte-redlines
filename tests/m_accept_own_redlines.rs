@@ -1571,7 +1571,7 @@ fn with_custom_props(docx: &[u8], props: &[(&str, &str)]) -> Vec<u8> {
     let opts = zip::write::SimpleFileOptions::default();
     for i in 0..src.len() {
         let mut f = src.by_index(i).unwrap();
-        let name = f.name().expect("decode ZIP fixture name").into_owned();
+        let name = f.name().to_string();
         let mut s = String::new();
         f.read_to_string(&mut s).unwrap();
         if name == "_rels/.rels" {
