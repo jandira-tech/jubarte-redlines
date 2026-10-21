@@ -37,7 +37,10 @@ and the 8 MB shadow stack `-zstack-size=8388608`) is pinned in `.cargo/config.to
 and an env-var `RUSTFLAGS` would REPLACE — not merge — those flags. A bare
 `wasm-pack build` is the only invocation that guarantees both land. wasm-opt flags
 (`-O3`, SIMD, bulk-memory, …) live in `Cargo.toml [package.metadata.wasm-pack.profile.*]`;
-together those two files are the complete, pinnable recipe. This applies to every
+together those two files are the complete, pinnable recipe for the code. The
+published npm bytes also take `build-npm.sh`'s path remaps (below), which change
+only the paths in panic locations, so a rebuild from the two files alone differs
+in those strings. This applies to every
 `wasm-pack` invocation below, which all pass only the documented flags.
 
 ### Publish flow (`build-npm.sh`)
