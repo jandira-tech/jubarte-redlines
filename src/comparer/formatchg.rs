@@ -394,7 +394,7 @@ pub fn detect_format_changes_in_atom_list(
 /// is the direct guard the review asked for (the corpus goldens guard it only
 /// through the volatility-tolerant structural comparator).
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn detect_format_changes_reference(
     dom: &mut Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -539,7 +539,7 @@ fn detect_format_changes_impl(
 /// and on cache hits, so that swapping [`are_run_properties_equal`] for a cached
 /// `==` in [`detect_format_changes_in_atom_list`] is behavior-preserving.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod format_change_cache_tests {
     use super::*;
 
@@ -767,7 +767,7 @@ mod format_change_cache_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod nested_paragraph_property_source_history_tests {
     use super::*;
     use std::sync::Arc;

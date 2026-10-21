@@ -3,8 +3,7 @@
 
 //! A note's paragraph style survives the round trip docx → view → docx:
 //! its id line names it after the id (`<!-- endnotes.p2 Endnote -->`) only
-//! when its name differs from Word's `footnote text` or `endnote text`
-//! beyond ASCII case (spaces matter), and the writer
+//! when it is not Word's `footnote text` or `endnote text`, and the writer
 //! stamps FootnoteText or EndnoteText only where the line is silent.
 
 mod common;
@@ -369,145 +368,30 @@ fn an_empty_quoted_note_style_names_none() {
     assert!(!styles.contains(r#"w:styleId="""#), "{styles}");
 }
 
-/// Case changes keep Word's built-in identity; the legend keeps the spelling.
+/// A document that renames Word's note style keeps its name: `FootnoteText`
+/// named `Footnote Text` is not Word's `footnote text`, so the view names
+/// the style and the legend the name (ids-comments, #528).
 #[test]
 fn a_renamed_word_note_style_keeps_its_name() {
-    builtin_note_name_cycles("footnote", "FootnoteText", "Footnote Text");
-}
-
-/// Check the style's own name, rather than a different definition's name.
-fn assert_style_name(docx: &[u8], id: &str, name: &str) {
-    let styles = part(docx, "word/styles.xml");
+    let styles = styles_xml()
+        .replace(r#"<w:name w:val="footnote text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText""#, r#"<w:name w:val="Footnote Text"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="EndnoteText""#);
+    assert!(
+        styles.contains(r#"<w:name w:val="Footnote Text"/>"#),
+        "{styles}"
+    );
+    let docx = docx_with_styles("footnote", &[Some("FootnoteText")], &styles);
+    let (view, again, view_again) = round_trip(&docx);
+    assert!(view.contains(" FootnoteText -->"), "{view}");
+    assert!(view.contains("named Footnote Text"), "{view}");
+    assert_eq!(note_styles(&again, "footnote"), ["FootnoteText"]);
+    let styles = part(&again, "word/styles.xml");
     let definition = styles
         .split("<w:style ")
-        .find(|s| s.contains(&format!(r#"w:styleId="{id}""#)))
-        .unwrap_or_else(|| panic!("no {id}: {styles}"));
+        .find(|s| s.contains("w:styleId=\"FootnoteText\""))
+        .unwrap_or_else(|| panic!("no FootnoteText: {styles}"));
     assert!(
-        definition.contains(&format!(r#"<w:name w:val="{name}"/>"#)),
+        definition.contains(r#"<w:name w:val="Footnote Text"/>"#),
         "{definition}"
     );
-}
-
-/// Two read/write cycles keep the spelling while the note's id stays silent.
-fn builtin_note_name_cycles(kind: &str, source_id: &str, name: &str) {
-    let (own, own_name) = if kind == "footnote" {
-        ("FootnoteText", "footnote text")
-    } else {
-        ("EndnoteText", "endnote text")
-    };
-    let styles = styles_xml().replace(
-        &format!(r#"w:styleId="{own}"><w:name w:val="{own_name}""#),
-        &format!(r#"w:styleId="{source_id}"><w:name w:val="{name}""#),
-    );
-    let docx = docx_with_styles(kind, &[Some(source_id)], &styles);
-    let (view, again, view_again) = round_trip(&docx);
-    assert!(view.contains(&format!("<!-- {kind}s.p0 -->")), "{view}");
-    if name != own_name {
-        assert!(view.contains(&format!("named {name}")), "{view}");
-    }
-    assert_style_name(&again, own, name);
-    assert_eq!(note_styles(&again, kind), [own]);
-    assert_eq!(view_again, view);
-    let (second_view, twice, twice_view) = round_trip(&again);
-    assert_style_name(&twice, own, name);
-    assert_eq!(note_styles(&twice, kind), [own]);
-    assert_eq!(second_view, view);
-    assert_eq!(twice_view, view);
-}
-
-#[test]
-fn lowercase_word_note_style_keeps_its_name() {
-    builtin_note_name_cycles("footnote", "FootnoteText", "footnote text");
-}
-
-#[test]
-fn a_case_renamed_word_endnote_style_keeps_its_name() {
-    builtin_note_name_cycles("endnote", "EndnoteText", "Endnote Text");
-}
-
-#[test]
-fn uppercase_word_note_style_keeps_its_name() {
-    builtin_note_name_cycles("footnote", "FootnoteText", "FOOTNOTE TEXT");
-}
-
-#[test]
-fn a_localized_case_renamed_footnote_style_is_words_own() {
-    builtin_note_name_cycles("footnote", "LocalNote", "Footnote Text");
-}
-
-#[test]
-fn a_localized_case_renamed_endnote_style_is_words_own() {
-    builtin_note_name_cycles("endnote", "LocalEndnote", "Endnote Text");
-}
-
-#[test]
-fn a_silent_note_line_uses_the_legends_exact_name() {
-    // Exercise the writer independently: no reader-produced id or legend.
-    let view = "---\nview: tracked\nstyles:\n  Normal: Calibri 11pt\n  FootnoteText: Calibri 10pt, named Footnote Text\n---\n\n<!-- p0 -->\nAlice's clause.[^1]\n\n<!-- footnotes.p0 -->\n[^1]: Bob's note.\n";
-    let (docx, warnings) = write(view);
-    assert!(warnings.is_empty(), "{warnings:?}");
-    assert_style_name(&docx, "FootnoteText", "Footnote Text");
-    assert_eq!(note_styles(&docx, "footnote"), ["FootnoteText"]);
-}
-
-#[test]
-fn note_style_names_keep_significant_spaces_and_real_renames() {
-    for name in [
-        "Notes",
-        "FootnoteText",
-        "Footnote  Text",
-        " Footnote Text",
-        "Footnote Text ",
-        "Footnote\u{a0}Text",
-    ] {
-        let styles = styles_xml().replacen(
-            r#"<w:name w:val="footnote text"/>"#,
-            &format!(r#"<w:name w:val="{name}"/>"#),
-            1,
-        );
-        let docx = docx_with_styles("footnote", &[Some("FootnoteText")], &styles);
-        let view = read(
-            &docx,
-            &ReadOptions {
-                page_markers: false,
-                ..ReadOptions::default()
-            },
-        )
-        .unwrap()
-        .markdown;
-        assert!(view.contains(" FootnoteText -->"), "{name:?}: {view}");
-        if name != "FootnoteText" {
-            assert!(view.contains("named "), "{view}");
-        }
-    }
-}
-
-#[test]
-fn a_case_renamed_style_in_single_and_mixed_notes_is_listed_once() {
-    let styles = styles_xml().replacen(
-        r#"<w:name w:val="footnote text"/>"#,
-        r#"<w:name w:val="Footnote Text"/>"#,
-        1,
-    );
-    let docx = docx_paragraphs_in(
-        "footnote",
-        &[
-            vec![Some("FootnoteText")],
-            vec![Some("FootnoteText"), Some("My Note")],
-        ],
-        Some(styles),
-    );
-    let (view, again, view_again) = round_trip(&docx);
-    assert!(view.contains("<!-- footnotes.p0 -->"), "{view}");
-    assert!(
-        view.contains(r#"<!-- footnotes.p1-p2 FootnoteText, "My Note" -->"#),
-        "{view}"
-    );
-    assert_eq!(view.matches("  FootnoteText:").count(), 1, "{view}");
-    assert_style_name(&again, "FootnoteText", "Footnote Text");
-    let paragraphs = paragraph_styles(&again, "footnote");
-    assert_eq!(paragraphs.len(), 2);
-    assert_eq!(paragraphs[0], ["FootnoteText"]);
-    assert_eq!(paragraphs[1], ["FootnoteText", "My Note"]);
     assert_eq!(view_again, view);
 }

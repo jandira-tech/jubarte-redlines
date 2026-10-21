@@ -305,20 +305,18 @@ pub fn comment_text_id(token: &str) -> Option<u32> {
     }
 }
 
-// The same wire shape feeds deserialization and legacy field discovery.
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub(crate) enum RawCommentId {
-    Number(u32),
-    Text(String),
-}
-
 /// A serde `deserialize_with` for a comment id: a JSON number (a typed
 /// value, not a spelling), or a string [`parse_comment_id`] reads (`"c27"`).
 pub fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
-    match RawCommentId::deserialize(deserializer)? {
-        RawCommentId::Number(n) => Ok(n),
-        RawCommentId::Text(text) => parse_comment_id(&text).map_err(serde::de::Error::custom),
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Number(u32),
+        Text(String),
+    }
+    match Raw::deserialize(deserializer)? {
+        Raw::Number(n) => Ok(n),
+        Raw::Text(text) => parse_comment_id(&text).map_err(serde::de::Error::custom),
     }
 }
 
