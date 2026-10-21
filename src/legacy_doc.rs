@@ -1759,7 +1759,7 @@ fn flush_table(out: &mut Vec<Block>, rows: &mut Vec<(Vec<String>, bool)>, row: &
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -2707,7 +2707,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod legacy_byte_source_boundary_tests {
     use super::*;
     const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");
@@ -2908,7 +2908,7 @@ mod legacy_byte_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod legacy_regular_sector_source_owners {
     use super::*;
     const SOURCE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");

@@ -52,6 +52,10 @@ fn a_refused_edit_names_what_holds_the_text_and_the_way_around_it() {
             r#"{"kind":"replace","paragraph":"p3","find":"Ann","replacement":"Bo"}"#,
             r#"the text sits inside a content control (alias "Signer"); change its text with fill_control"#,
         ),
+        (
+            r#"{"kind":"replace","paragraph":"p4","find":"45","replacement":"60"}"#,
+            r#"the text sits inside r7, a tracked insertion by "Trainer 1 - LargeCo"; settle it first ("resolve_revisions": {"accept": {"ids": ["r7"]}}, or reject)"#,
+        ),
     ] {
         let e = apply_plan(&source(), &plan("", &format!("[{op}]"))).unwrap_err();
         assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{op}: {e}");
@@ -128,35 +132,4 @@ fn rewrite_keeps_the_structures_it_leaves_alone_and_names_the_one_it_would_chang
         assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{text}: {e}");
         assert!(e.message.contains(says), "{text}: {e}");
     }
-}
-
-#[test]
-fn editing_the_named_insertion_preserves_its_owner_and_nests_the_deletion() {
-    let out = apply_plan(
-        &source(),
-        &plan(
-            "",
-            r#"[{"kind":"replace","paragraph":"p4","find":"45","replacement":"60"}]"#,
-        ),
-    );
-    assert!(out.is_ok(), "edit must succeed: {:?}", out.err());
-    let out = out.unwrap();
-    common::validity::assert_word_valid_package(&out.redline);
-    let xml = common::docx::part_string(&out.redline, "word/document.xml").unwrap();
-    let mut dom = jubarte::xmllinq::Dom::new();
-    let document = dom.parse_xdocument(&xml);
-    let w = jubarte::namespaces::W::name;
-    let del = dom.descendants(document, Some(&w("del")))[0];
-    let ins = dom.parent(del).unwrap();
-    assert!(dom.name_is(ins, &w("ins")));
-    assert_eq!(dom.attribute(ins, &w("id")), Some("7"));
-    assert_eq!(dom.attribute(del, &w("id")), Some("8"));
-    assert_eq!(
-        dom.value(dom.descendants(del, Some(&w("delText")))[0]),
-        "45"
-    );
-    let next = dom.next_element(ins).unwrap();
-    assert!(dom.name_is(next, &w("ins")));
-    assert_eq!(dom.attribute(next, &w("id")), Some("9"));
-    assert_eq!(dom.value(next), "60");
 }

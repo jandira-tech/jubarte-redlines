@@ -5,7 +5,7 @@ revisions: 2                       # 2 formatting
 comments: 0
 authors:
   document_owner: Christoffer Krogager  # dc:creator
-  APS: Alcaldia Pasto SSI          # 2 revisions, 2026-09-22T12:47:00-04:00
+  APS: Alcaldia Pasto SSI          # 2 revisions, 2026-09-22T12:47:00Z
 body: p0-p142, 1 table, 2 pages    # pages from layout
 page: 8.264x11.6944in portrait, margins top 1.181in, right 0.7875in, bottom 1.181in, left 0.7875in, header/footer 0.492in
 styles:

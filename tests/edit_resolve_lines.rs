@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Pure revision decisions are confirmed by full before/after view diffs.
+//! `edit -p rN --accept/--reject` prints the resolved changes, not the view.
 
 mod common;
 
@@ -24,7 +24,7 @@ fn edit_cli(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn edit_accept_confirms_the_resolved_insertion() {
+fn edit_accept_prints_the_resolved_insertion_not_the_view() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(received_path(), dir.path().join("received.docx")).unwrap();
     let out = edit_cli(
@@ -37,22 +37,13 @@ fn edit_accept_confirms_the_resolved_insertion() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(stdout.starts_with("SUCCESS:\n~~~~diff\n"), "{stdout}");
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('-') && line.contains("{++quarterly++}")),
-        "{stdout}"
-    );
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('+') && line.contains("including quarterly route-cost")),
+    assert_eq!(
+        stdout, "accepted r0 in p3: \"{++quarterly++}\" > \"quarterly\"\n",
         "{stdout}"
     );
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(stderr.starts_with("wrote out.docx (docx, "), "{stderr}");
-    assert!(stdout.contains("+source: out.docx\n"), "{stdout}");
+    assert!(!stdout.contains("source:"), "{stdout}");
 }
 
 #[test]
@@ -69,17 +60,8 @@ fn edit_reject_prints_the_resolved_insertion_as_empty() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(stdout.starts_with("SUCCESS:\n~~~~diff\n"), "{stdout}");
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('-') && line.contains("{++quarterly++}")),
-        "{stdout}"
-    );
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('+') && line.contains("including  route-cost")),
+    assert_eq!(
+        stdout, "rejected r0 in p3: \"{++quarterly++}\" > \"\"\n",
         "{stdout}"
     );
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -87,7 +69,7 @@ fn edit_reject_prints_the_resolved_insertion_as_empty() {
 }
 
 #[test]
-fn edit_accept_confirms_a_substitution_pair() {
+fn edit_accept_prints_a_substitution_pair_as_one_line() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(received_path(), dir.path().join("received.docx")).unwrap();
     let out = edit_cli(
@@ -100,17 +82,8 @@ fn edit_accept_confirms_a_substitution_pair() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(stdout.starts_with("SUCCESS:\n~~~~diff\n"), "{stdout}");
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('-') && line.contains("{~~weekly~>monthly~~}")),
-        "{stdout}"
-    );
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('+') && line.contains("and a monthly review call.")),
+    assert_eq!(
+        stdout, "accepted r1+2 in p3: \"{~~weekly~>monthly~~}\" > \"monthly\"\n",
         "{stdout}"
     );
 }
@@ -129,17 +102,8 @@ fn edit_reject_prints_a_single_deletion_half() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(stdout.starts_with("SUCCESS:\n~~~~diff\n"), "{stdout}");
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('-') && line.contains("{~~thirty~>forty-five~~}")),
-        "{stdout}"
-    );
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('+') && line.contains("within thirty{++forty-five++}")),
+    assert_eq!(
+        stdout, "rejected r3 in p5: \"{--thirty--}\" > \"thirty\"\n",
         "{stdout}"
     );
 }

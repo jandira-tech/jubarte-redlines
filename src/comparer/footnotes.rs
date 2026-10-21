@@ -1277,7 +1277,7 @@ pub fn process_footnote_endnote(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deterministic_note_boundary_tests {
     use super::*;
 
@@ -1701,7 +1701,7 @@ mod deterministic_note_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_custom_note_owner_boundaries {
     use super::*;
 
@@ -1801,7 +1801,7 @@ mod coverage_custom_note_owner_boundaries {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod moved_reference_definition_owner_tests {
     use super::*;
 
@@ -1904,7 +1904,7 @@ mod moved_reference_definition_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod paired_note_format_history_tests {
     use super::*;
     use crate::comparer::atoms::ComparisonUnitAtom;
