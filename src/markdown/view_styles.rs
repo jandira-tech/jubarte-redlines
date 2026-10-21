@@ -224,7 +224,7 @@ fn points(value: &str, scale: f64) -> Option<u32> {
 }
 
 /// `0.5in` as twips. Word's indent is at most 22in (31680 twips) either way.
-fn twips_in(value: &str) -> Option<i64> {
+pub(super) fn twips_in(value: &str) -> Option<i64> {
     let n: f64 = value.strip_suffix("in")?.parse().ok()?;
     if !n.is_finite() {
         return None;

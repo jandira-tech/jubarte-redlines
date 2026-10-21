@@ -389,6 +389,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             styles.len() > 1 || (!styles.is_empty() && unstyled)
         },
         custom_grid: custom_table_grid(styles_root.as_ref()),
+        text_width: header::text_width(document.child("body").and_then(|b| b.child("sectPr"))),
         bookmarks: bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
@@ -2351,6 +2352,9 @@ struct Writer<'a> {
     /// The source defines Table Grid with borders of its own
     /// ([`custom_table_grid`]), so the view names it.
     custom_grid: bool,
+    /// The body's text width in twips: a table's grid that splits it
+    /// evenly is the writer's own and prints no widths (#1472).
+    text_width: u32,
     /// In a heading: the name a Markdown link names it by, whose bookmark
     /// the writer makes again and so prints no `<a id>`.
     heading_slug: Option<String>,
@@ -2489,6 +2493,7 @@ impl Writer<'_> {
                                 self.column_alignments(child).1,
                                 self.cell_styles(child),
                                 self.cell_spacings(child),
+                                agent::geometry_clauses(child, self.text_width),
                             ]
                             .concat(),
                             self.resolved,

@@ -1949,6 +1949,87 @@ fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
     clauses
 }
 
+/// `widths 2.1424in 0.985in`, `width auto`, `indent 0.25in`, `layout
+/// fixed`: the table's geometry where it is not what the writer writes by
+/// itself (#1472), columns that split `text_width` evenly over 100% of it,
+/// no indent and an autofit layout. A grid column with no width, or one
+/// past Word's 22in, prints no widths at all: the writer would read them
+/// as another grid.
+pub(crate) fn geometry_clauses(tbl: &Element, text_width: u32) -> Vec<String> {
+    const MOST: f64 = 31_680.0;
+    let twips = |e: &Element, attr: &str| -> Option<f64> {
+        let v = e.attr(attr)?;
+        v.parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))
+            .filter(|t| t.is_finite())
+    };
+    let mut out = Vec::new();
+    let widths: Option<Vec<f64>> = tbl.child("tblGrid").and_then(|grid| {
+        grid.children_named("gridCol")
+            .map(|col| twips(col, "w").filter(|w| (0.0..=MOST).contains(&w.round())))
+            .collect()
+    });
+    if let Some(widths) = widths.filter(|w| !w.is_empty()) {
+        let count = u32::try_from(widths.len()).unwrap_or(u32::MAX);
+        let even = f64::from(text_width / count.max(1));
+        if widths.iter().any(|w| w.round() != even) {
+            let listed: Vec<String> = widths.iter().map(|&w| inches(w)).collect();
+            out.push(format!("widths {}", listed.join(" ")));
+        }
+    }
+    let properties = tbl.child("tblPr");
+    // No `w:tblW`, or `nil`, is Word's auto; `w:type` left out is `dxa`.
+    let width = properties.and_then(|p| p.child("tblW"));
+    match width.and_then(|w| w.attr("type")).unwrap_or(match width {
+        Some(_) => "dxa",
+        None => "auto",
+    }) {
+        "pct" => {
+            // `5000` fiftieths of a percent, or `100%`.
+            let fiftieths =
+                width
+                    .and_then(|w| w.attr("w"))
+                    .and_then(|v| match v.strip_suffix('%') {
+                        Some(percent) => percent.parse::<f64>().ok().map(|p| p * 50.0),
+                        None => v.parse::<f64>().ok(),
+                    });
+            if let Some(f) = fiftieths.filter(|f| f.is_finite() && *f >= 0.0)
+                && f.round() != 5000.0
+            {
+                let percent = format!("{:.2}", f.round() / 50.0);
+                let percent = percent.trim_end_matches('0').trim_end_matches('.');
+                out.push(format!("width {percent}%"));
+            }
+        }
+        "dxa" => {
+            if let Some(w) = width
+                .and_then(|w| twips(w, "w"))
+                .filter(|w| (0.0..=MOST).contains(&w.round()))
+            {
+                out.push(format!("width {}", inches(w)));
+            }
+        }
+        _ => out.push("width auto".to_string()),
+    }
+    if let Some(indent) = properties
+        .and_then(|p| p.child("tblInd"))
+        .filter(|i| i.attr("type").is_none_or(|t| t == "dxa"))
+        .and_then(|i| twips(i, "w"))
+        .filter(|w| w.round() != 0.0 && w.round().abs() <= MOST)
+    {
+        out.push(format!("indent {}", inches(indent)));
+    }
+    if properties
+        .and_then(|p| p.child("tblLayout"))
+        .and_then(|l| l.attr("type"))
+        == Some("fixed")
+    {
+        out.push("layout fixed".to_string());
+    }
+    out
+}
+
 /// `<!-- t0 center 3x3, cells p8-p16 by row, p9 center, header row repeats -->`
 /// (`aligned`: the cell paragraphs aligned against their column);
 /// `None` for a nested table (not numbered). With `comments` (comments
