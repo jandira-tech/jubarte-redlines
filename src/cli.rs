@@ -3025,12 +3025,13 @@ fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap:
     )
 }
 
-/// Parse arguments (excluding argv0) for native-compatible adapters.
+/// The subcommand's JSON value, before [`parse_json`] adds `args.quiet` and
+/// `notes`.
 ///
-/// `supported` contains canonical command names; empty enables every command.
-/// Aliases follow their canonical command. Unsupported commands are absent
-/// from help and rejected. Success contains `{exit_code, command, args,
-/// notes}`: `args.quiet` is the global `-q`, and `notes` holds the
+/// `matches` is the parsed task and `arguments` supplies retired spellings.
+/// `accepts` is the adapter's command filter. `command` reports a usage
+/// error, including a compare whose result is the agent view when `read` is
+/// absent. Success is `{exit_code, command, args}` with `exit_code` 0.
 fn parse_subcommand_json(
     command: &mut clap::Command,
     matches: &clap::ArgMatches,
@@ -3193,6 +3194,12 @@ fn parse_implicit_compare_json(
     Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))
 }
 
+/// Parse arguments (excluding argv0) for native-compatible adapters.
+///
+/// `supported` contains canonical command names; empty enables every command.
+/// Aliases follow their canonical command. Unsupported commands are absent
+/// from help and rejected. Success contains `{exit_code, command, args,
+/// notes}`: `args.quiet` is the global `-q`, and `notes` holds the
 /// [`retired_note`] of each retired spelling used. `args` has
 /// native snake_case field names, flattened Args groups, canonical enum strings,
 /// string paths, defaults and null optional fields. Nested subcommands use
