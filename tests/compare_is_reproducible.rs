@@ -86,13 +86,7 @@ fn text_paragraph(text: &str) -> String {
 fn entry_names(docx: &[u8]) -> Vec<String> {
     let mut zip = zip::ZipArchive::new(Cursor::new(docx.to_vec())).unwrap();
     (0..zip.len())
-        .map(|i| {
-            zip.by_index(i)
-                .unwrap()
-                .name()
-                .expect("decode ZIP fixture name")
-                .into_owned()
-        })
+        .map(|i| zip.by_index(i).unwrap().name().to_string())
         .collect()
 }
 
