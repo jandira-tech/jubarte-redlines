@@ -4568,12 +4568,7 @@ impl<'p> Transaction<'p> {
                 .next_back()
                 .is_some_and(|c| c != '\u{FFFC}');
             let checked = if s == e {
-                self.check_insert_position(projection, s, attach_before)
-                    .or_else(|first| {
-                        self.check_insert_position(projection, s, !attach_before)
-                            .map(|()| attach_before = !attach_before)
-                            .map_err(|_| first)
-                    })
+                self.check_insert_either(projection, s, &mut attach_before)
             } else {
                 self.check_range(projection, s, e)
             };
@@ -4700,12 +4695,7 @@ impl<'p> Transaction<'p> {
                 .next_back()
                 .is_some_and(|c| c != '\u{FFFC}');
             let checked = if start == end {
-                self.check_insert_position(projection, start, attach_before)
-                    .or_else(|first| {
-                        self.check_insert_position(projection, start, !attach_before)
-                            .map(|()| attach_before = !attach_before)
-                            .map_err(|_| first)
-                    })
+                self.check_insert_either(projection, start, &mut attach_before)
             } else {
                 self.check_range(projection, start, end)
             };
@@ -5364,6 +5354,27 @@ impl<'p> Transaction<'p> {
         let dom = &self.opened.dom;
         hint::removed_holder(dom, self.paragraph_nodes[para], find)
             .map(|revision| self.revision_hint(revision, "the text is inside"))
+    }
+
+    /// [`Self::check_insert_position`] on the side `attach_before` names,
+    /// else on the other, which `attach_before` then names. A first side
+    /// that failed leaves no refusal behind when the other holds: its
+    /// revision did not block the edit (#1308 review).
+    fn check_insert_either(
+        &self,
+        projection: &Projection,
+        pos: usize,
+        attach_before: &mut bool,
+    ) -> Result<(), String> {
+        self.check_insert_position(projection, pos, *attach_before)
+            .or_else(|first| {
+                self.check_insert_position(projection, pos, !*attach_before)
+                    .map(|()| {
+                        *attach_before = !*attach_before;
+                        self.revision_refusal.take();
+                    })
+                    .map_err(|_| first)
+            })
     }
 
     fn check_insert_position(
@@ -8719,6 +8730,32 @@ mod deeper_boundary_tests {
     }
 
     // Baseline gaps: 113, 916, 933, 936, 942, 945, 958.
+    /// A retry that holds clears the refusal its first side stored, so a
+    /// later failure of the same operation names no revision that did not
+    /// block it (#1308 review).
+    #[test]
+    fn a_retried_insertion_point_leaves_no_refusal() {
+        let source = docx(concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Alpha </w:t></w:r>"#,
+            r#"<w:moveTo w:id="9" w:author="Bob" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Beta</w:t></w:r></w:moveTo>"#,
+            r#"<w:r><w:t>Gamma</w:t></w:r></w:p>"#,
+        ));
+        let plan = EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Carol","date":"2026-02-02T00:00:00Z","existing_revisions":"keep","operations":[]}"#,
+        )
+        .unwrap();
+        let tx = Transaction::start(&source, &plan).unwrap();
+        let projection = &tx.projections[0];
+        assert_eq!(projection.text, "Alpha BetaGamma");
+        let mut attach_before = true;
+        assert_eq!(
+            tx.check_insert_either(projection, 10, &mut attach_before),
+            Ok(())
+        );
+        assert!(!attach_before);
+        assert!(tx.revision_refusal.borrow().is_none());
+    }
+
     #[test]
     fn report_optional_fields_and_resolution_truth_table() {
         let source = docx(&format!(
