@@ -830,6 +830,42 @@ fn changes_without_text_name_their_ids() {
     }
 }
 
+/// The legend's own order governs `style_changes:`: `docDefaults` leads,
+/// then the default style. `usize::MIN` is zero, so a part that lists the
+/// default style before its defaults used to win the tie (#1521 review).
+#[test]
+fn the_style_changes_legend_leads_with_the_document_defaults() {
+    let rpr_change = |id: u32| {
+        format!(
+            r#"<w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr>"#
+        )
+    };
+    // Word writes `w:docDefaults` first; a part that lists the styles
+    // before it is read the same way, and the legend order still holds.
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>{}</w:style><w:docDefaults><w:rPrDefault>{}</w:rPrDefault></w:docDefaults></w:styles>"#,
+        rpr_change(9),
+        rpr_change(11)
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+        r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    assert!(
+        header_lines(&out).iter().any(|l| {
+            l.starts_with(r#"style_changes: {docDefaults: styles.r11 @AC, Normal: styles.r9 @AC}"#)
+        }),
+        "{out}"
+    );
+}
+
 /// Task 5b, from Word redlines: an empty row's deletion has no text to tag,
 /// a first-page header still exists when different-first-page is off, and
 /// Word's footnote separators carry formatting changes no note shows.
