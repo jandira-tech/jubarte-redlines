@@ -43,6 +43,11 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A text box's paragraph style survives Markdown** (#1423). The
+  `styles:` legend listed only the styles of the body's own paragraphs,
+  so a style used only inside a text box (a cover page's `No Spacing`)
+  was left undefined in the docx written back, and the box's paragraph
+  fell back to Normal. The legend now describes it too.
 - **A header's or footer's paragraph indent survives Markdown** (#1422).
   A story paragraph's own `w:ind` was dropped, so the footer text next to
   a framed page number ran under the number. It now prints in the

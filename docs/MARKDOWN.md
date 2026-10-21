@@ -474,7 +474,8 @@ for a cell's own insertion, deletion or merge in the tracked view, and
 spacing, alignment; the writer writes its spacing as the document's
 default, `w:pPrDefault`, so a table style's own spacing still wins in
 its cells), each heading level's style with what differs from
-it, then every other paragraph style the body uses, keyed by its id
+it, then every other paragraph style the body uses, a text box's
+paragraphs included, keyed by its id
 (`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
 names only what its style sets apart from the style it is based on:
 font and size, `before`/`after` (`after 0pt` too, when the base has

@@ -1543,6 +1543,22 @@ pub(crate) fn paragraphs(e: &Element) -> Vec<&Element> {
     out
 }
 
+/// Every paragraph under `e` in document order, a text box's too: a
+/// paragraph, then the paragraphs of the boxes it anchors.
+pub(crate) fn paragraphs_and_boxes(e: &Element) -> Vec<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+        for c in e.elements() {
+            if c.is("p") {
+                out.push(c);
+            }
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
 /// Indices of the paragraphs whose section break starts a new page: the
 /// section after them is not `continuous` or `nextColumn` (a section's
 /// `w:type` says how that section starts).

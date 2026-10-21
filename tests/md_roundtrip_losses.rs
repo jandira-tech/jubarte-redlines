@@ -724,6 +724,12 @@ fn a_drawing_payload_is_a_reference_definition() {
 /// holds the box's frame only. A docx whose middle paragraph anchors a
 /// plain text box reading `Added box`.
 fn text_box_docx() -> Vec<u8> {
+    text_box_docx_with("", &[])
+}
+
+/// [`text_box_docx`] whose box paragraph has the properties `ppr` (a
+/// `w:pPr`, or nothing), with the extra parts `extras`.
+fn text_box_docx_with(ppr: &str, extras: &[Part<'_>]) -> Vec<u8> {
     let box_run = "<w:r><w:drawing><wp:anchor \
         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
         distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
@@ -744,14 +750,15 @@ fn text_box_docx() -> Vec<u8> {
         <a:ext cx=\"2374265\" cy=\"457200\"/></a:xfrm>\
         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
         <wps:txbx><w:txbxContent>\
-        <w:p><w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r></w:p>\
+        <w:p>{ppr}<w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r></w:p>\
         </w:txbxContent></wps:txbx><wps:bodyPr rot=\"0\" vert=\"horz\" \
         wrap=\"square\" lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\" \
         anchor=\"t\"/></wps:wsp></a:graphicData></a:graphic></wp:anchor>\
-        </w:drawing></w:r>";
+        </w:drawing></w:r>"
+        .replace("{ppr}", ppr);
     docx_with(
-        &(para("Before.") + "<w:p>" + box_run + "</w:p>" + &para("After.")),
-        &[],
+        &(para("Before.") + "<w:p>" + &box_run + "</w:p>" + &para("After.")),
+        extras,
     )
 }
 
@@ -2107,4 +2114,37 @@ fn fallback_only_box_commands_do_not_warn_about_nesting() {
             !String::from_utf8_lossy(&output.stderr).contains("Word cannot open this document")
         );
     }
+}
+
+/// A paragraph style used only inside a text box is the legend's too: the
+/// written docx defines it as the original did, name and spacing, so the
+/// box's paragraph does not fall back to Normal (#1423).
+#[test]
+fn a_text_box_s_paragraph_style_is_defined_in_the_written_docx() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="NoSpacing"><w:name w:val="No Spacing"/><w:uiPriority w:val="1"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style></w:styles>"#
+    );
+    let styles_rel = format!("{R_NS}/styles");
+    let original = text_box_docx_with(
+        "<w:pPr><w:pStyle w:val=\"NoSpacing\"/></w:pPr>",
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: &styles_rel,
+            xml: &styles,
+        }],
+    );
+    let (view, out) = docx_round_trip(&original);
+    assert!(view.contains("\n  NoSpacing: "), "{view}");
+    let written = part(&out, "word/styles.xml");
+    let no_spacing = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"NoSpacing\""))
+        .unwrap_or_else(|| panic!("NoSpacing is not defined: {written}"));
+    assert!(
+        no_spacing.contains("<w:name w:val=\"No Spacing\"/>"),
+        "{no_spacing}"
+    );
+    assert!(no_spacing.contains("w:after=\"0\""), "{no_spacing}");
+    assert!(part(&out, "word/document.xml").contains("<w:pStyle w:val=\"NoSpacing\"/>"));
 }

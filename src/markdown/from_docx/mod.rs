@@ -848,13 +848,26 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             // Every other paragraph style the body uses, in the order it
             // first does (the stories' follow): the legend describes each,
             // so the docx the view writes defines it as the original did.
-            for p in &ps {
+            // A text box's paragraphs count too (#1423): the writer gives
+            // them their styles back, so the docx must define those; a
+            // style only a box uses counts when the styles part defines it.
+            let outside: HashSet<*const Element> =
+                ps.iter().map(|p| std::ptr::from_ref(*p)).collect();
+            for p in agent::paragraphs_and_boxes(body) {
                 let Some(style) = p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) else {
                     continue;
                 };
+                let in_box = !outside.contains(&std::ptr::from_ref(p));
                 if style != default_style.as_deref().unwrap_or("Normal")
                     && !heading_styles.iter().any(|(_, h)| h == style)
                     && !other_styles.iter().any(|o| o == style)
+                    && (!in_box
+                        || styles_root.as_ref().is_some_and(|root| {
+                            root.children_named("style").any(|s| {
+                                s.attr("type") == Some("paragraph")
+                                    && s.attr("styleId") == Some(style)
+                            })
+                        }))
                 {
                     other_styles.push(style.to_string());
                 }
