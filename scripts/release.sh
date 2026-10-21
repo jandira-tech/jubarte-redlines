@@ -1056,7 +1056,10 @@ else
     # missing wheels only after the release is out.
     [ "$NO_WAIT" = 1 ] \
       || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --no-wait to consent to the partial set"
-    uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
+    # The wheel's panic locations would name this home and checkout (#1480);
+    # jubarte-python has no .cargo/config.toml recipe for RUSTFLAGS to replace.
+    RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$PWD=jubarte-redlines" \
+      uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     echo "  ! only the local-platform wheel + sdist will reach PyPI (--no-wait given)" >&2
   fi

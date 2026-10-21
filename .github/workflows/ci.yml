@@ -289,6 +289,9 @@ jobs:
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 scripts/test_release_sh.py
       - run: python3 scripts/test_check_engine_commit.py
+      - run: python3 scripts/test_check_npm_paths.py
+      # The committed npm artifacts name no builder's home (#1480).
+      - run: python3 scripts/check_npm_paths.py
       - name: Oracle dependency and advisory record tests with coverage
         run: |
           uv run --with coverage coverage run --branch --include='scripts/test_oracle_dependency.py' scripts/test_oracle_dependency.py
