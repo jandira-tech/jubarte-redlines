@@ -6599,7 +6599,10 @@ fn compare_documents_impl(
 
     // After prep, packages may still be byte-identical (rare non-self paths).
     if original_owned == modified_owned {
-        return crate::comparer::fixups::fix_up_drawing_ids_in_package(&original_owned);
+        return crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
+            &original_owned,
+            settings.input_limits,
+        );
     }
 
     let original: &[u8] = &original_owned;
