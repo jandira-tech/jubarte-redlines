@@ -187,9 +187,20 @@ export function capabilities(): string;
 export function capabilitiesText(manifest_json?: string | null): string;
 
 /**
+ * Focused edit discovery; no filters returns this runtime's edit support matrix.
+ */
+export function capabilityQuery(operation?: string | null, field?: string | null): string;
+
+/**
+ * Render a focused query in the same text form as the native CLI.
+ */
+export function capabilityQueryText(operation?: string | null, field?: string | null): string;
+
+/**
  * `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
- * in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
- * change id throws `jubarte-wasm: c5: expected a change id …`, which the
+ * in its settled spelling (`r1+2` → `r1`, `r2`). An id that is no change
+ * id, the expired `body:rev:1` among them, throws `jubarte-wasm: c5:
+ * expected a change id …` (naming `r1` for `body:rev:1`), which the
  * binary reports as a usage error before reading the document.
  *
  * Mirrors `jubarte::changes::ChangeFilter::normalized`.
@@ -252,7 +263,9 @@ export function convertMarkdown(docx: Uint8Array, track_changes: string, page_ma
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
- * `body:p:N` id in a Word document or `line:N` in Markdown.
+ * `pN` id in a Word document or `line:N` in Markdown. When a side is a
+ * Word document, a replacement inside a paragraph reads insertion first,
+ * `{+new+}[-old-]`, as Word Compare writes it.
  *
  * Each side is a `.docx` package or UTF-8 Markdown
  * (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -278,7 +291,7 @@ export function diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: 
 export function diffDocumentsView(old: Uint8Array, next: Uint8Array, options_json?: string | null): string;
 
 /**
- * Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
+ * Body paragraphs as Markdown, each preceded by its `[pN]` id: the
  * coordinates an edit plan uses.
  *
  * Mirrors `jubarte::inspect::markdown`.
@@ -355,8 +368,10 @@ export function initPanicHook(): void;
 
 /**
  * The inspection snapshot as JSON: `schema_version`, `source_sha256`,
- * `summary` and `paragraphs` (ids, text, style, formatting spans,
- * limitations). Oversized or malformed packages are refused before parsing.
+ * `summary`, `paragraphs` (ids, text, style, formatting spans,
+ * limitations) and top-level `tables` with recursive `nested` entries.
+ * Snapshot schema 2 counts top-level tables; nested entries have `parent`
+ * cell paths and no `index`. Oversized or malformed packages are refused before parsing.
  *
  * Mirrors `jubarte::inspect::inspect_json`.
  */
@@ -528,6 +543,15 @@ export function renderPdf(docx: Uint8Array, revisions?: string | null, revision_
 export function repairDocument(docx: Uint8Array): RepairOutput;
 
 /**
+ * The lines `edit -p rN --accept/--reject` prints for a pure resolution:
+ * one per resolved change from `source` (the bytes before resolution) and
+ * `resolvedJson` (`{"accepted": [...], "rejected": [...]}` short ids).
+ *
+ * Mirrors `jubarte::edit::resolution::resolution_text`.
+ */
+export function resolutionText(docx: Uint8Array, resolved_json: string): string;
+
+/**
  * Remove who touched a document: author names (as one alias), rsids, the
  * people and dates in the document properties, and comments.
  * `optionsJson` is `{"author_alias": string, "rsids": bool, "docprops":
@@ -548,8 +572,9 @@ export function sourceSha256(docx: Uint8Array): string;
 
 /**
  * The grids `jubarte read --tables` prints: a `table N: RxC …` line per
- * body table, then a line per row of `ids=text` cells; `no tables` when
- * there are none.
+ * top-level body table, then a line per row of `ids=text` cells; nested
+ * tables follow their cell row, indented two spaces per level and labelled
+ * `nested in CELL_PATH`. `no tables` prints when there are none.
  *
  * Mirrors `jubarte::inspect::tables_text`.
  */
@@ -602,6 +627,8 @@ export interface InitOutput {
     readonly auditTracked: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly capabilities: (a: number) => void;
     readonly capabilitiesText: (a: number, b: number, c: number) => void;
+    readonly capabilityQuery: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly capabilityQueryText: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly changeFilter: (a: number, b: number, c: number) => void;
     readonly changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly changesText: (a: number, b: number, c: number) => void;
@@ -649,6 +676,7 @@ export interface InitOutput {
     readonly repairDocument: (a: number, b: number, c: number) => void;
     readonly repairoutput_docx: (a: number, b: number) => void;
     readonly repairoutput_json: (a: number, b: number) => void;
+    readonly resolutionText: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly scrubDocument: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly sourceSha256: (a: number, b: number, c: number) => void;
     readonly tablesText: (a: number, b: number, c: number) => void;
