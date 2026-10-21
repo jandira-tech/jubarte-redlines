@@ -7,7 +7,7 @@
 
 - **Does:** Whether `name` names one of Word's built-in styles, in any case.
 - **Calls (std/external/unresolved):** `.binary_search_by`, `.bytes`, `.cmp`, `.is_ok`, `.map`, `.to_ascii_lowercase`
-- **Called by:** `style_key` (append.rs:825); `tests::built_in_names_match_in_any_case` (builtin_styles.rs:410); `tests::is_built_in_matches_the_lowercasing_definition` (builtin_styles.rs:463); `style_match_key` (document_comparer.rs:1843)
+- **Called by:** `style_key` (append.rs:831); `tests::built_in_names_match_in_any_case` (builtin_styles.rs:410); `tests::is_built_in_matches_the_lowercasing_definition` (builtin_styles.rs:463); `style_match_key` (document_comparer.rs:1843)
 
 ## Test functions (5)
 

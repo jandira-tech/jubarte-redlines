@@ -7,7 +7,7 @@
 
 - **Does:** The command the reader prints for an n-ary operator.
 - **Calls (std/external/unresolved):** `.find`, `.iter`, `.map`
-- **Called by:** `math_inner` (markdown/from_docx/mod.rs:3946); `tests::more_nary_operators_and_their_limits` (markdown/math.rs:2014)
+- **Called by:** `math_inner` (markdown/from_docx/mod.rs:4216); `tests::more_nary_operators_and_their_limits` (markdown/math.rs:2014)
 
 #### `accent_command`  (L532-537, pub(super))
 `pub(super) fn accent_command(chr: char) -> Option<&'static str>`
@@ -21,7 +21,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.chars`, `.collect`, `.get`, `.is_ascii_alphabetic`, `.is_some_and`, `.iter`, `.len`, `.push`, `.to_string`, `Some`, `Token::Change`, `Token::Char`, `Token::Command`, `Vec::new`
-- **Called by:** `reflow_body` (markdown/diff.rs:547) (?); `words` (markdown/diff.rs:870) (?); `words_diff` (markdown/diff.rs:911) (?); `Parser::new` (markdown/math.rs:792)
+- **Called by:** `reflow_body` (markdown/diff.rs:556) (?); `words` (markdown/diff.rs:879) (?); `words_diff` (markdown/diff.rs:920) (?); `Parser::new` (markdown/math.rs:792)
 
 #### `closer`  (L682-689)
 `fn closer(token: &Token) -> Option<Token>`
@@ -67,7 +67,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.get`
-- **Called by:** `body_looks_like_section_number` (comparer/finalize.rs:1971) (?); `drawings_follow_page_break` (convert/mod.rs:9505) (?); `code_words` (fields.rs:452) (?); `unescape_markdown` (markdown/anchor.rs:50) (?); `plain_anchor` (markdown/anchor.rs:251) (?); `Writer::list_marker` (markdown/from_docx/mod.rs:2898) (?); `field_words` (markdown/from_docx/mod.rs:4491) (?); `Parser::stopped` (markdown/math.rs:813); `Parser::skip_spaces` (markdown/math.rs:824) (?); `Parser::flat` (markdown/math.rs:845); `Parser::nested_list` (markdown/math.rs:867); `Parser::group` (markdown/math.rs:917); +16 more
+- **Called by:** `body_looks_like_section_number` (comparer/finalize.rs:2013) (?); `drawings_follow_page_break` (convert/mod.rs:9506) (?); `merged` (edit/skip.rs:247) (?); `code_words` (fields.rs:452) (?); `unescape_markdown` (markdown/anchor.rs:50) (?); `read_anchor` (markdown/anchor.rs:273) (?); `Writer::list_marker` (markdown/from_docx/mod.rs:3095) (?); `field_words` (markdown/from_docx/mod.rs:4769) (?); `Parser::stopped` (markdown/math.rs:813); `Parser::skip_spaces` (markdown/math.rs:824) (?); `Parser::flat` (markdown/math.rs:845); `Parser::nested_list` (markdown/math.rs:867); +18 more
 
 #### `Parser::text`  (L809-811)
 `fn text(&self, text: &str, style: Style) -> Node`
@@ -255,7 +255,7 @@
 
 - **Does:** How many primes `text` is, if it is only primes.
 - **Calls (std/external/unresolved):** `.chars`, `.then_some`
-- **Called by:** `math_inner` (markdown/from_docx/mod.rs:3946)
+- **Called by:** `math_inner` (markdown/from_docx/mod.rs:4216)
 
 #### `negated`  (L1492-1523)
 `fn negated(relation: &str) -> String`
@@ -343,7 +343,7 @@
 - **Does:** `inner` inside a fresh `w:ins` or `w:del` when `change` is one.
 - **Calls (std/external/unresolved):** `.next`, `.push_str`, `.split_whitespace`, `.to_string`, `.unwrap_or`
 - **Macros:** `write!`
-- **Called by:** `Writer::control` (markdown/math.rs:1685); `Writer::run` (markdown/math.rs:1698); `build_with` (markdown/unified.rs:522) (?)
+- **Called by:** `Writer::control` (markdown/math.rs:1685); `Writer::run` (markdown/math.rs:1698); `build_with` (markdown/unified.rs:532) (?)
 
 #### `Writer::control`  (L1685-1689)
 `fn control(&mut self)`
@@ -351,7 +351,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Writer::marked` (markdown/math.rs:1674) L1687
 - **Calls (std/external/unresolved):** `.push_str`
-- **Called by:** `Transaction::select_control` (edit/controls.rs:205) (?); `Writer::properties` (markdown/math.rs:1692)
+- **Called by:** `Transaction::select_control` (edit/controls.rs:207) (?); `Writer::properties` (markdown/math.rs:1692)
 
 #### `Writer::properties`  (L1692-1696)
 `fn properties(&mut self, name: &str, properties: &str)`
@@ -365,10 +365,10 @@
 `fn run(&mut self, text: &str, style: Style, change: Option<Kind>)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Writer::marked` (markdown/math.rs:1674) L1714; `escape` (markdown/xml.rs:426) L1715
+- **Calls (crate):** `Writer::marked` (markdown/math.rs:1674) L1714; `escape` (markdown/xml.rs:601) L1715
 - **Calls (std/external/unresolved):** `.ends_with`, `.into`, `.or`, `.push_str`, `.starts_with`, `String::new`
 - **Macros:** `format!`
-- **Called by:** `boundary_coverage_tests::run_projection_preserves_field_delimiters_breaks_and_old_formatting` (debug/diff.rs:2372) (?); `raw_source_projection_contract_tests::recorded_run_properties_and_saved_page_breaks_keep_exact_raw_source_projection` (debug/diff.rs:2538) (?); `Writer::inline` (markdown/from_docx/mod.rs:3021) (?); `Writer::node` (markdown/math.rs:1734) (?)
+- **Called by:** `boundary_coverage_tests::run_projection_preserves_field_delimiters_breaks_and_old_formatting` (debug/diff.rs:2372) (?); `raw_source_projection_contract_tests::recorded_run_properties_and_saved_page_breaks_keep_exact_raw_source_projection` (debug/diff.rs:2538) (?); `Writer::inline` (markdown/from_docx/mod.rs:3218) (?); `Writer::node` (markdown/math.rs:1734) (?)
 
 #### `Writer::argument`  (L1722-1726)
 `fn argument(&mut self, name: &str, nodes: &[Node])`
@@ -383,13 +383,13 @@
 
 - **Does:** _no doc comment_
 - **Calls (crate):** `Writer::node` (markdown/math.rs:1734) L1730
-- **Called by:** `public_memory_append_owner_boundary_tests::semantic` (append.rs:1448) (?); `CommentFamily::set_text` (comments.rs:737) (?); `coverage_real_revision_merge_matrix_tests::multiple_original_paragraphs_before_a_live_blank_control_tail_keep_exact_phase_payloads` (comparer/finalize.rs:25406) (?); `finalizer_distinct_boundary_contract_tests::semantic` (comparer/finalize.rs:29448) (?); `finalizer_remaining_source_boundary_tests::semantic` (comparer/finalize.rs:30689) (?); `finalizer_merge_source_guard_tests::semantic` (comparer/finalize.rs:31431) (?); `finalizer_reached_predicate_boundary_tests::semantic` (comparer/finalize.rs:31868) (?); `public_body_heuristic_story_scope_tests::canonical` (comparer/finalize.rs:32220) (?); `default_source_property_carrier_tests::semantic` (comparer/finalize.rs:32559) (?); `existing_mark_layout_ownership_tests::semantic` (comparer/finalize.rs:32742) (?); `interleave_terminal_source_ownership_tests::semantic` (comparer/finalize.rs:33070) (?); `whitespace_source_mark_carrier_tests::semantic` (comparer/finalize.rs:33289) (?); +14 more
+- **Called by:** `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `CommentFamily::set_text` (comments.rs:793) (?); `coverage_real_revision_merge_matrix_tests::multiple_original_paragraphs_before_a_live_blank_control_tail_keep_exact_phase_payloads` (comparer/finalize.rs:25428) (?); `finalizer_distinct_boundary_contract_tests::semantic` (comparer/finalize.rs:29465) (?); `finalizer_remaining_source_boundary_tests::semantic` (comparer/finalize.rs:30705) (?); `finalizer_merge_source_guard_tests::semantic` (comparer/finalize.rs:31446) (?); `finalizer_reached_predicate_boundary_tests::semantic` (comparer/finalize.rs:31882) (?); `public_body_heuristic_story_scope_tests::canonical` (comparer/finalize.rs:32233) (?); `default_source_property_carrier_tests::semantic` (comparer/finalize.rs:32768) (?); `existing_mark_layout_ownership_tests::semantic` (comparer/finalize.rs:32950) (?); `interleave_terminal_source_ownership_tests::semantic` (comparer/finalize.rs:33277) (?); `whitespace_source_mark_carrier_tests::semantic` (comparer/finalize.rs:33495) (?); +14 more
 
 #### `Writer::node`  (L1734-1914)
 `fn node(&mut self, node: &Node)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `.run` (ambiguous: `Writer::run` (markdown/from_docx/mod.rs:3119); `Writer::run` (markdown/math.rs:1698)) L1736; `Writer::nodes` (markdown/math.rs:1728) L1737; `Writer::properties` (markdown/math.rs:1692) L1745,1757,1769,1783,1806,1814...; `Writer::argument` (markdown/math.rs:1722) L1746,1747,1758,1759,1770,1772...; `escape` (markdown/xml.rs:426) L1798,1801,1804
+- **Calls (crate):** `.run` (ambiguous: `Writer::run` (markdown/from_docx/mod.rs:3324); `Writer::run` (markdown/math.rs:1698)) L1736; `Writer::nodes` (markdown/math.rs:1728) L1737; `Writer::properties` (markdown/math.rs:1692) L1745,1757,1769,1783,1806,1814...; `Writer::argument` (markdown/math.rs:1722) L1746,1747,1758,1759,1770,1772...; `escape` (markdown/xml.rs:601) L1798,1801,1804
 - **Calls (std/external/unresolved):** `.get`, `.is_empty`, `.is_none`, `.iter`, `.map_or`, `.map`, `.max`, `.push_str`, `.unwrap_or`, `String::new`
 - **Macros:** `format!`, `matches!`, `write!`
 - **Called by:** `Writer::nodes` (markdown/math.rs:1728)
@@ -401,7 +401,7 @@
 - **Calls (crate):** `Writer::nodes` (markdown/math.rs:1728) L1943; `equation` (markdown/math.rs:1630) L1943
 - **Calls (std/external/unresolved):** `.as_str`, `.push_str`, `String::new`
 - **Macros:** `format!`, `write!`
-- **Called by:** `tests::shape` (markdown/math.rs:1956); `tests::more_nary_operators_and_their_limits` (markdown/math.rs:2014); `tests::a_change_marks_every_run_and_control_inside` (markdown/math.rs:2177); `tests::a_change_inside_marks_only_its_runs` (markdown/math.rs:2190); `tests::display_lines_are_an_equation_array` (markdown/math.rs:2204); `story` (markdown/xml.rs:587)
+- **Called by:** `tests::shape` (markdown/math.rs:1956); `tests::more_nary_operators_and_their_limits` (markdown/math.rs:2014); `tests::a_change_marks_every_run_and_control_inside` (markdown/math.rs:2177); `tests::a_change_inside_marks_only_its_runs` (markdown/math.rs:2190); `tests::display_lines_are_an_equation_array` (markdown/math.rs:2204); `story` (markdown/xml.rs:786)
 
 ## Test functions (19)
 

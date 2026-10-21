@@ -7,7 +7,7 @@
 
 - **Does:** Lay out `node` (`m:oMath`, or one `m:f` / `m:rad` / `m:d`).
 - **Calls (crate):** `layout` (convert/math_layout.rs:86) L57
-- **Called by:** `layout_omml` (convert/math_layout.rs:64); `emit_math_box` (convert/mod.rs:15882)
+- **Called by:** `layout_omml` (convert/math_layout.rs:64); `emit_math_box` (convert/mod.rs:15918)
 
 #### `layout`  (L86-120)
 `fn layout( dom: &Dom, node: NodeId, font: &MathFont, size: f32, display: bool, depth: u32, ) -> MathBox`
@@ -23,7 +23,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Dom::name_is` (xmllinq/mod.rs:535) L123
 - **Calls (std/external/unresolved):** `M::name`
-- **Called by:** `layout` (convert/math_layout.rs:86); `nary` (convert/math_layout.rs:472); `mark_close` (markdown/critic.rs:1556) (?); `mark_closes` (markdown/critic.rs:1580) (?)
+- **Called by:** `layout` (convert/math_layout.rs:86); `nary` (convert/math_layout.rs:472); `mark_close` (markdown/critic.rs:1750) (?); `mark_closes` (markdown/critic.rs:1774) (?)
 
 #### `is_property`  (L126-129)
 `fn is_property(dom: &Dom, node: NodeId) -> bool`
@@ -45,7 +45,7 @@
 `fn val_of(dom: &Dom, node: NodeId) -> Option<&str>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Dom::attribute` (xmllinq/mod.rs:874) L136; `attr_any` (convert/mod.rs:19957) L137
+- **Calls (crate):** `Dom::attribute` (xmllinq/mod.rs:874) L136; `attr_any` (convert/mod.rs:19993) L137
 - **Calls (std/external/unresolved):** `.or_else`, `M::name`
 - **Called by:** `flag_on` (convert/math_layout.rs:141); `fraction` (convert/math_layout.rs:197); `nary` (convert/math_layout.rs:472); `fence_char` (convert/math_layout.rs:559)
 
@@ -79,7 +79,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.append`
-- **Called by:** `hstack` (convert/math_layout.rs:165); `fraction` (convert/math_layout.rs:197); `stacked` (convert/math_layout.rs:277); `radical` (convert/math_layout.rs:305); `delimiter` (convert/math_layout.rs:369); `scripts` (convert/math_layout.rs:439); `nary` (convert/math_layout.rs:472); `wrap_listing_runs` (convert/mod.rs:8108) (?)
+- **Called by:** `hstack` (convert/math_layout.rs:165); `fraction` (convert/math_layout.rs:197); `stacked` (convert/math_layout.rs:277); `radical` (convert/math_layout.rs:305); `delimiter` (convert/math_layout.rs:369); `scripts` (convert/math_layout.rs:439); `nary` (convert/math_layout.rs:472); `wrap_listing_runs` (convert/mod.rs:8109) (?)
 
 #### `shifted`  (L193-195)
 `fn shifted(part: &MathBox, dy: f32) -> (f32, f32)`
@@ -94,7 +94,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `child` (convert/math_layout.rs:131) L205,206,238,241; `val_of` (convert/math_layout.rs:135) L207; `stacked` (convert/math_layout.rs:277) L210; `row_children` (convert/math_layout.rs:148) L213; `MathFont::constants` (convert/math_font.rs:131) L215; `MathFont::scale` (convert/math_font.rs:136) L216,217,244,245,246,247; `layout` (convert/math_layout.rs:86) L239,242; `append` (convert/math_layout.rs:179) L262,263; `fit` (convert/math_layout.rs:730) L271
 - **Calls (std/external/unresolved):** `.and_then`, `.eq_ignore_ascii_case`, `.map`, `.max`, `.push`, `.unwrap_or_default`, `.unwrap_or`, `MathBox::default`
-- **Called by:** `layout` (convert/math_layout.rs:86); `theme_colour` (markdown/package.rs:763) (?)
+- **Called by:** `layout` (convert/math_layout.rs:86); `theme_colour` (markdown/package.rs:964) (?)
 
 #### `stacked`  (L277-303)
 `fn stacked( dom: &Dom, node: NodeId, font: &MathFont, size: f32, display: bool, depth: u32, ) -> MathBox`
@@ -140,7 +140,7 @@
 `fn math_run(dom: &Dom, node: NodeId, font: &MathFont, size: f32) -> MathBox`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `math_run_upright` (convert/mod.rs:15939) L510; `text_run` (convert/math_layout.rs:530) L511; `text_in` (convert/math_layout.rs:514) L511
+- **Calls (crate):** `math_run_upright` (convert/mod.rs:15975) L510; `text_run` (convert/math_layout.rs:530) L511; `text_in` (convert/math_layout.rs:514) L511
 - **Calls (std/external/unresolved):** `Some`
 - **Called by:** `layout` (convert/math_layout.rs:86)
 
@@ -164,9 +164,9 @@
 `fn text_run(font: &MathFont, text: &str, upright: bool, size: f32) -> MathBox`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `math_alphanumerics_cover` (convert/mod.rs:15972) L534; `MathFont::glyph_id` (convert/math_font.rs:150) L539,541; `MathFont::scale` (convert/math_font.rs:136) L543; `MathFont::glyph` (convert/math_font.rs:155) L543; `fit` (convert/math_layout.rs:730) L554
+- **Calls (crate):** `math_alphanumerics_cover` (convert/mod.rs:16008) L534; `MathFont::glyph_id` (convert/math_font.rs:150) L539,541; `MathFont::scale` (convert/math_font.rs:136) L543; `MathFont::glyph` (convert/math_font.rs:155) L543; `fit` (convert/math_layout.rs:730) L554
 - **Calls (std/external/unresolved):** `.chars`, `.collect`, `.map`, `.or_else`, `.push`, `.to_string`, `.unwrap_or`, `.zip`, `MathBox::default`
-- **Called by:** `holds_only_text` (comparer/finalize.rs:13578) (?); `nary` (convert/math_layout.rs:472); `math_run` (convert/math_layout.rs:509); `stretch_glyph` (convert/math_layout.rs:575)
+- **Called by:** `holds_only_text` (comparer/finalize.rs:13600) (?); `nary` (convert/math_layout.rs:472); `math_run` (convert/math_layout.rs:509); `stretch_glyph` (convert/math_layout.rs:575)
 
 #### `fence_char`  (L559-571)
 `fn fence_char(dom: &Dom, pr: Option<NodeId>, local: &str, default: char) -> Option<char>`

@@ -7,7 +7,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.into`
-- **Called by:** `<TextOptions as Default>::default` (text_diff.rs:83); `tests::patch_has_git_headers_ranges_and_context` (text_diff.rs:996); `tests::every_change_and_long_unicode_line_is_preserved` (text_diff.rs:1089); `tests::word_snapshot_preserves_existing_marks_and_compares_them` (text_diff.rs:1101)
+- **Called by:** `prepare_and_publish` (bin/jubarte/edit_typed.rs:398); `<TextOptions as Default>::default` (text_diff.rs:83); `tests::patch_has_git_headers_ranges_and_context` (text_diff.rs:996); `tests::every_change_and_long_unicode_line_is_preserved` (text_diff.rs:1089); `tests::word_snapshot_preserves_existing_marks_and_compares_them` (text_diff.rs:1101)
 
 #### `<TextOptions as Default>::default`  (L83-90, impl Default)
 `fn default() -> Self`
@@ -30,13 +30,13 @@
 - **Does:** Compares two DOCX bytes or Markdown text snapshots in the review presentation `options.format` names.
 - **Calls (crate):** `view_snapshot` (text_diff.rs:145) L132,133; `render_view` (text_diff.rs:152) L134
 - **Calls (std/external/unresolved):** `Ok`
-- **Called by:** `run_text_diff` (bin/jubarte.rs:2378)
+- **Called by:** `run_text_diff` (bin/jubarte.rs:3327)
 
 #### `accepted_text`  (L137-143)
 `fn accepted_text(text: &str, accept: bool) -> std::borrow::Cow<'_, str>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `accepted_clauses` (markdown/mod.rs:155) L139
+- **Calls (crate):** `accepted_clauses` (markdown/mod.rs:159) L139
 - **Calls (std/external/unresolved):** `.into`
 - **Called by:** `diff_text_view` (text_diff.rs:101); `view_snapshot` (text_diff.rs:145)
 
@@ -44,7 +44,7 @@
 `fn view_snapshot(source: Source<'_>, accept: bool, critic: bool) -> Result<String, String>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `accepted_text` (text_diff.rs:137) L147; `document_text_view` (debug.rs:2011) L148
+- **Calls (crate):** `accepted_text` (text_diff.rs:137) L147; `document_text_view` (debug.rs:2181) L148
 - **Calls (std/external/unresolved):** `.into_owned`, `Ok`
 - **Called by:** `diff_documents_view` (text_diff.rs:125)
 
@@ -161,7 +161,7 @@
 `fn context_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `git_path` (text_diff.rs:710) L412; `label` (markdown/from_docx/drawing.rs:245) (by name) L415,416; `address` (text_diff.rs:372) L424,440; `op_windows` (text_diff.rs:315) L427; `mark_unterminated` (text_diff.rs:194) L437,449
+- **Calls (crate):** `git_path` (text_diff.rs:710) L412; `label` (markdown/from_docx/drawing.rs:399) (by name) L415,416; `address` (text_diff.rs:372) L424,440; `op_windows` (text_diff.rs:315) L427; `mark_unterminated` (text_diff.rs:194) L437,449
 - **Calls (std/external/unresolved):** `.collect`, `.first`, `.grouped_ops`, `.iter`, `.last`, `.map`, `.new_range`, `.new_slice`, `.old_range`, `.old_slice`, `.push_str`, `.replacen`, `.tag`, `.unwrap`, `.zip`
 - **Macros:** `format!`, `writeln!`
 - **Called by:** `render_view` (text_diff.rs:152)
@@ -171,7 +171,7 @@
 
 - **Does:** Escape literal text before surrounding it with generated revision marks.
 - **Calls (std/external/unresolved):** `.replace`, `crate::markdown::diff_markdown`
-- **Called by:** `text_lines::{fn walk}` (debug.rs:1575); `critic_line` (text_diff.rs:513); `tests::word_changes_preserve_literal_syntax_and_changed_clause_numbers` (text_diff.rs:941)
+- **Called by:** `text_lines::{fn walk}` (debug.rs:1745); `critic_line` (text_diff.rs:513); `tests::word_changes_preserve_literal_syntax_and_changed_clause_numbers` (text_diff.rs:941)
 
 #### `Piece::texts`  (L473-478)
 `fn texts(&self) -> [&str; 2]`
@@ -199,7 +199,7 @@
 `fn critic_line(pieces: &[Piece], window: Option<usize>) -> String`
 
 - **Does:** The pieces as CriticMarkup, keeping `window` scalars of text around the first change.
-- **Calls (crate):** `critic_literal` (text_diff.rs:458) L534; `visible` (ambiguous: `coverage_final_batch_finalize_tests::visible` (comparer/finalize.rs:24243); `visible` (markdown/unified.rs:920)) L545,581; `Piece::texts` (text_diff.rs:473) (by name) L567
+- **Calls (crate):** `critic_literal` (text_diff.rs:458) L534; `visible` (ambiguous: `coverage_final_batch_finalize_tests::visible` (comparer/finalize.rs:24265); `visible` (markdown/unified.rs:1128)) L545,581; `Piece::texts` (text_diff.rs:473) (by name) L567
 - **Calls (std/external/unresolved):** `.chars`, `.clamp`, `.collect`, `.count`, `.enumerate`, `.iter`, `.len`, `.map`, `.min`, `.push_str`, `.push`, `.saturating_add`, `.saturating_sub`, `.skip`, `.sum`, `.take_while`, `.take`, `.then_some`, `Piece::Replace`, `Piece::Same`, `String::new`, `slice`
 - **Macros:** `matches!`
 - **Called by:** `word_change` (text_diff.rs:505); `rows_view` (text_diff.rs:601)
@@ -217,7 +217,7 @@
 `pub fn document_text(source: Source<'_>) -> Result<String, String>`
 
 - **Does:** Reads a complete textual snapshot of `source` — the same view `jubarte debug --check text` prints, preserving the snapshots' tracked marks.
-- **Calls (crate):** `document_text` (debug.rs:2001) L681
+- **Calls (crate):** `document_text` (debug.rs:2171) L681
 - **Calls (std/external/unresolved):** `.to_string`, `Ok`
 - **Called by:** `diff_documents` (text_diff.rs:745); `tests::word_snapshot_preserves_existing_marks_and_compares_them` (text_diff.rs:1101); `tests::invalid_docx_is_refused` (text_diff.rs:1128); `tests::markdown_and_mixed_sources_share_the_same_formatter` (text_diff.rs:1133)
 
@@ -244,7 +244,7 @@
 - **Does:** Compares two DOCX byte slices or two Markdown strings as a standard unified patch without constructing a redline.
 - **Calls (crate):** `diff_text` (text_diff.rs:690) L750; `document_text` (text_diff.rs:678) L751,752
 - **Calls (std/external/unresolved):** `Ok`
-- **Called by:** `tests::word_snapshot_preserves_existing_marks_and_compares_them` (text_diff.rs:1101); `tests::markdown_and_mixed_sources_share_the_same_formatter` (text_diff.rs:1133)
+- **Called by:** `prepare_and_publish` (bin/jubarte/edit_typed.rs:398); `tests::word_snapshot_preserves_existing_marks_and_compares_them` (text_diff.rs:1101); `tests::markdown_and_mixed_sources_share_the_same_formatter` (text_diff.rs:1133)
 
 ## Test functions (20)
 

@@ -13,7 +13,7 @@
 `pub fn redline( original: Source<'_>, modified: Source<'_>, options: &RedlineOptions<'_>, ) -> Result<Vec<u8>, MarkdownError>`
 
 - **Does:** Compares `original` against `modified` and returns a Word tracked-changes document: the original with every difference as a revision, as [`crate::document_comparer::compare_documents_with_settings`] writes it.
-- **Calls (crate):** `markdown_to_docx` (markdown/write.rs:59) L118; `apply_markdown` (markdown/patch.rs:121) L143,147; `word` (ambiguous, 5 candidates) L150; `compare_documents_with_settings` (document_comparer.rs:6414) L152
+- **Calls (crate):** `markdown_to_docx` (markdown/write.rs:59) L118; `apply_markdown` (markdown/patch.rs:121) L143,147; `word` (ambiguous, 5 candidates) L150; `compare_documents_with_settings` (document_comparer.rs:6422) L152
 - **Calls (std/external/unresolved):** `.clone`, `.map_err`, `.to_vec`, `MarkdownError::Package`, `Ok`
 - **Macros:** `format!`
 - **Called by:** `patch_documents` (markdown/unified.rs:337)

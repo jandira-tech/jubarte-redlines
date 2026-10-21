@@ -71,7 +71,7 @@
 
 - **Does:** True when the requested family was not drawn with its own face (or its `w:altName`): Word's substitution table, a bundled open fallback for another family, a generic family, or the last resort.
 - **Calls (crate):** `FontReportEntry::physical_is_requested_family` (convert/font.rs:360) L353
-- **Called by:** `audit_report_with` (audit.rs:177) (?); `run_convert` (bin/jubarte.rs:507) (?); `FontReportEntry::to_json` (convert/font.rs:377) (?); `tests::a_family_placed_by_its_name_class_is_substituted` (convert/font.rs:5013) (?); `deeper_boundary_tests::open_fallback_reports_require_a_nonempty_matching_family` (convert/font.rs:5841) (?); `residual_embedded_style_contract_tests::four_embedded_style_slots_preserve_requested_names_and_physical_font_identity` (convert/font.rs:6609) (?); `residual_embedded_style_contract_tests::a_single_embedded_style_answers_every_requested_style_without_host_lookup` (convert/font.rs:6662) (?)
+- **Called by:** `audit_report_with` (audit.rs:177) (?); `run_convert` (bin/jubarte.rs:646) (?); `FontReportEntry::to_json` (convert/font.rs:377) (?); `tests::a_family_placed_by_its_name_class_is_substituted` (convert/font.rs:5013) (?); `deeper_boundary_tests::open_fallback_reports_require_a_nonempty_matching_family` (convert/font.rs:5841) (?); `residual_embedded_style_contract_tests::four_embedded_style_slots_preserve_requested_names_and_physical_font_identity` (convert/font.rs:6609) (?); `residual_embedded_style_contract_tests::a_single_embedded_style_answers_every_requested_style_without_host_lookup` (convert/font.rs:6662) (?)
 
 #### `FontReportEntry::physical_is_requested_family`  (L360-370)
 `fn physical_is_requested_family(&self) -> bool`
@@ -155,7 +155,7 @@
 
 - **Does:** _no doc comment_
 - **Calls:** none
-- **Called by:** `Catalogue::get` (convert/font.rs:1432); `tree` (markdown/from_docx/critic.rs:474) (?)
+- **Called by:** `Catalogue::get` (convert/font.rs:1432); `tree` (markdown/from_docx/critic.rs:545) (?)
 
 #### `FaceId::key`  (L564-570, pub(crate))
 `pub(crate) fn key(self) -> FaceKey`
@@ -163,7 +163,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `FaceId::logical_family` (convert/font.rs:572) L566; `FaceId::is_bold_style` (convert/font.rs:617) L567; `FaceId::is_italic_style` (convert/font.rs:645) L568
 - **Calls (std/external/unresolved):** `.to_string`
-- **Called by:** `ComparisonUnit::sha1_key` (comparer/atoms.rs:367) (?); `sha1_keyed_tests::new_derives_both_keys_from_the_hash` (comparer/atoms.rs:580) (?); `sha1_keyed_tests::set_hash_leaves_no_key_behind` (comparer/atoms.rs:588) (?); `sha1_keyed_tests::a_colliding_key_changes_only_the_u64_key` (comparer/atoms.rs:597) (?); `group_by_key_stable` (comparer/produce.rs:692) (?); `Fonts::catalogue_slot` (convert/font.rs:1676); `tests::faceid_key_is_unique_for_every_catalogue_slot` (convert/font.rs:4067) (?); `tests::faceid_key_calibri_bold_italic` (convert/font.rs:4085) (?); `comment_listing_review_tests::fonts` (convert/mod.rs:46442) (?); `coverage_round_two_tests::fonts` (convert/mod.rs:48464) (?); `coverage_round_three_tests::fonts` (convert/mod.rs:49413) (?); `rendering_uncovered_contract_tests::embedded_fonts` (convert/mod.rs:56672) (?); +1 more
+- **Called by:** `ComparisonUnit::sha1_key` (comparer/atoms.rs:367) (?); `sha1_keyed_tests::new_derives_both_keys_from_the_hash` (comparer/atoms.rs:580) (?); `sha1_keyed_tests::set_hash_leaves_no_key_behind` (comparer/atoms.rs:588) (?); `sha1_keyed_tests::a_colliding_key_changes_only_the_u64_key` (comparer/atoms.rs:597) (?); `group_by_key_stable` (comparer/produce.rs:692) (?); `Fonts::catalogue_slot` (convert/font.rs:1676); `tests::faceid_key_is_unique_for_every_catalogue_slot` (convert/font.rs:4067) (?); `tests::faceid_key_calibri_bold_italic` (convert/font.rs:4085) (?); `comment_listing_review_tests::fonts` (convert/mod.rs:46478) (?); `coverage_round_two_tests::fonts` (convert/mod.rs:48500) (?); `coverage_round_three_tests::fonts` (convert/mod.rs:49449) (?); `rendering_uncovered_contract_tests::embedded_fonts` (convert/mod.rs:56708) (?); +1 more
 
 #### `FaceId::logical_family`  (L572-615)
 `fn logical_family(self) -> &'static str`
@@ -191,7 +191,7 @@
 
 - **Does:** _no doc comment_
 - **Calls:** none
-- **Called by:** `catalogue` (convert/font.rs:1421); `tests::faceid_key_is_unique_for_every_catalogue_slot` (convert/font.rs:4067); `comment_listing_review_tests::fonts` (convert/mod.rs:46442); `coverage_round_two_tests::fonts` (convert/mod.rs:48464); `coverage_round_three_tests::fonts` (convert/mod.rs:49413); `rendering_uncovered_contract_tests::embedded_fonts` (convert/mod.rs:56672); `automatic_column_source_matrix_tests::fonts` (convert/mod.rs:64256)
+- **Called by:** `catalogue` (convert/font.rs:1421); `tests::faceid_key_is_unique_for_every_catalogue_slot` (convert/font.rs:4067); `comment_listing_review_tests::fonts` (convert/mod.rs:46478); `coverage_round_two_tests::fonts` (convert/mod.rs:48500); `coverage_round_three_tests::fonts` (convert/mod.rs:49449); `rendering_uncovered_contract_tests::embedded_fonts` (convert/mod.rs:56708); `automatic_column_source_matrix_tests::fonts` (convert/mod.rs:64292)
 
 #### `FaceId::bytes`  (L728-820, pub(crate))
 `pub(crate) fn bytes(self) -> &'static [u8]`
@@ -290,7 +290,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Face::shape_kern` (convert/font.rs:1218) L1163
 - **Calls (std/external/unresolved):** `.into_iter`, `.map`, `.sum`
-- **Called by:** `tests::an_ideograph_a_face_lacks_still_measures_one_em` (convert/font.rs:3738); `tests::calibri_gpos_kern_off_at_body_size_matches_hmtx` (convert/font.rs:4112) (?); `cell_content_extent` (convert/mod.rs:10019) (?); `cell_para_widths` (convert/mod.rs:14467) (?); `hf_pic_trails_line` (convert/mod.rs:21857) (?); `hf_line_chars` (convert/mod.rs:22003) (?); `Layout::paint_tab_leader` (convert/mod.rs:26345) (?); `Layout::paint_meta_texts` (convert/mod.rs:27592) (?); `Layout::paint_box_at` (convert/mod.rs:29078) (?); `Layout::emit_chart_radar` (convert/mod.rs:29405) (?); `Layout::emit_chart_scatter` (convert/mod.rs:29439) (?); `Layout::emit_chart_area` (convert/mod.rs:29480) (?); +35 more
+- **Called by:** `tests::an_ideograph_a_face_lacks_still_measures_one_em` (convert/font.rs:3738); `tests::calibri_gpos_kern_off_at_body_size_matches_hmtx` (convert/font.rs:4112) (?); `cell_content_extent` (convert/mod.rs:10020) (?); `cell_para_widths` (convert/mod.rs:14503) (?); `hf_pic_trails_line` (convert/mod.rs:21893) (?); `hf_line_chars` (convert/mod.rs:22039) (?); `Layout::paint_tab_leader` (convert/mod.rs:26381) (?); `Layout::paint_meta_texts` (convert/mod.rs:27628) (?); `Layout::paint_box_at` (convert/mod.rs:29114) (?); `Layout::emit_chart_radar` (convert/mod.rs:29441) (?); `Layout::emit_chart_scatter` (convert/mod.rs:29475) (?); `Layout::emit_chart_area` (convert/mod.rs:29516) (?); +35 more
 
 #### `Face::width_pt_kern`  (L1169-1174, pub(crate))
 `pub(crate) fn width_pt_kern(&self, text: &str, size: f32, kern: bool) -> f32`
@@ -298,49 +298,49 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Face::shape_kern` (convert/font.rs:1218) L1170
 - **Calls (std/external/unresolved):** `.into_iter`, `.map`, `.sum`
-- **Called by:** `tests::calibri_gpos_kerns_av_at_28pt` (convert/font.rs:4100) (?); `tests::calibri_gpos_kern_off_at_body_size_matches_hmtx` (convert/font.rs:4112) (?); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `hanging_punct_width` (convert/mod.rs:32580) (?); `wrap_runs_segment` (convert/mod.rs:33192) (?); `rendering_uncovered_contract_tests::typed_hanging_tabs_choose_earlier_stop_or_indent_and_preserve_source_text` (convert/mod.rs:58676) (?)
+- **Called by:** `tests::calibri_gpos_kerns_av_at_28pt` (convert/font.rs:4100) (?); `tests::calibri_gpos_kern_off_at_body_size_matches_hmtx` (convert/font.rs:4112) (?); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `hanging_punct_width` (convert/mod.rs:32616) (?); `wrap_runs_segment` (convert/mod.rs:33228) (?); `rendering_uncovered_contract_tests::typed_hanging_tabs_choose_earlier_stop_or_indent_and_preserve_source_text` (convert/mod.rs:58712) (?)
 
 #### `Face::ascent_pt`  (L1176-1181, pub(crate))
 `pub(crate) fn ascent_pt(&self, size: f32) -> f32`
 
 - **Does:** _no doc comment_
 - **Calls:** none
-- **Called by:** `tests::an_east_asian_face_takes_word_s_taller_line` (convert/font.rs:3872) (?); `tests::an_office_365_east_asian_face_takes_its_box_for_the_line` (convert/font.rs:3896) (?); `tests::a_typo_metrics_face_sets_its_line_gap_above_the_text` (convert/font.rs:3926) (?); `tests::macos_helvetica_takes_word_s_one_point_two_em_line` (convert/font.rs:4549) (?); `deeper_boundary_tests::metric_tables_select_hhea_typo_helvetica_and_east_asian_lines` (convert/font.rs:6093) (?); `list_comments_at_end` (convert/mod.rs:7943) (?); `paint_comment_balloons` (convert/mod.rs:8196) (?); `line_box_for_math` (convert/mod.rs:10374) (?); `cell_baseline_drop` (convert/mod.rs:10402); `cell_lead_rise` (convert/mod.rs:10584) (?); `chrome_line_metrics` (convert/mod.rs:22868) (?); `Layout::line_face_metrics` (convert/mod.rs:23832) (?); +11 more
+- **Called by:** `tests::an_east_asian_face_takes_word_s_taller_line` (convert/font.rs:3872) (?); `tests::an_office_365_east_asian_face_takes_its_box_for_the_line` (convert/font.rs:3896) (?); `tests::a_typo_metrics_face_sets_its_line_gap_above_the_text` (convert/font.rs:3926) (?); `tests::macos_helvetica_takes_word_s_one_point_two_em_line` (convert/font.rs:4549) (?); `deeper_boundary_tests::metric_tables_select_hhea_typo_helvetica_and_east_asian_lines` (convert/font.rs:6093) (?); `list_comments_at_end` (convert/mod.rs:7944) (?); `paint_comment_balloons` (convert/mod.rs:8197) (?); `line_box_for_math` (convert/mod.rs:10375) (?); `cell_baseline_drop` (convert/mod.rs:10403); `cell_lead_rise` (convert/mod.rs:10585) (?); `chrome_line_metrics` (convert/mod.rs:22904) (?); `Layout::line_face_metrics` (convert/mod.rs:23868) (?); +11 more
 
 #### `Face::descent_pt`  (L1183-1185, pub(crate))
 `pub(crate) fn descent_pt(&self, size: f32) -> f32`
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.abs`
-- **Called by:** `Layout::paint_run` (convert/mod.rs:26583) (?); `Layout::place_run_comments` (convert/mod.rs:26893) (?); `Layout::paint_meta_texts` (convert/mod.rs:27592) (?); `Layout::chrome_parts` (convert/mod.rs:31404) (?); `coverage_round_three_tests::coverage_round_four_tests::tint_without_range_identity_and_checked_forms_produce_visible_marks` (convert/mod.rs:52156) (?); `coverage_round_three_tests::coverage_deep_layout_tests::metafile_text_alignment_crop_cell_metrics_and_aspect_have_exact_coordinates` (convert/mod.rs:52817) (?); `rendering_uncovered_contract_tests::header_footer_table_order_uses_parsed_source_and_reserves_exact_body_clearance` (convert/mod.rs:59114) (?)
+- **Called by:** `Layout::paint_run` (convert/mod.rs:26619) (?); `Layout::place_run_comments` (convert/mod.rs:26929) (?); `Layout::paint_meta_texts` (convert/mod.rs:27628) (?); `Layout::chrome_parts` (convert/mod.rs:31440) (?); `coverage_round_three_tests::coverage_round_four_tests::tint_without_range_identity_and_checked_forms_produce_visible_marks` (convert/mod.rs:52192) (?); `coverage_round_three_tests::coverage_deep_layout_tests::metafile_text_alignment_crop_cell_metrics_and_aspect_have_exact_coordinates` (convert/mod.rs:52853) (?); `rendering_uncovered_contract_tests::header_footer_table_order_uses_parsed_source_and_reserves_exact_body_clearance` (convert/mod.rs:59150) (?)
 
 #### `Face::single_line_pt`  (L1187-1189, pub(crate))
 `pub(crate) fn single_line_pt(&self, size: f32) -> f32`
 
 - **Does:** _no doc comment_
 - **Calls:** none
-- **Called by:** `tests::an_east_asian_face_takes_word_s_taller_line` (convert/font.rs:3872) (?); `tests::an_office_365_east_asian_face_takes_its_box_for_the_line` (convert/font.rs:3896) (?); `tests::macos_helvetica_takes_word_s_one_point_two_em_line` (convert/font.rs:4549) (?); `tests::times_new_roman_uses_the_installed_face_word_uses` (convert/font.rs:5160) (?); `tests::single_line_is_the_hhea_line_not_the_typo_line` (convert/font.rs:5193) (?); `deeper_boundary_tests::metric_tables_select_hhea_typo_helvetica_and_east_asian_lines` (convert/font.rs:6093) (?); `para_line_box` (convert/mod.rs:9724); `line_box_for_math` (convert/mod.rs:10374) (?); `cell_font_line_box` (convert/mod.rs:10426) (?); `picture_line_leading` (convert/mod.rs:10595) (?); `para_single_line_pt` (convert/mod.rs:11052) (?); `para_first_line_pt` (convert/mod.rs:11059) (?); +22 more
+- **Called by:** `tests::an_east_asian_face_takes_word_s_taller_line` (convert/font.rs:3872) (?); `tests::an_office_365_east_asian_face_takes_its_box_for_the_line` (convert/font.rs:3896) (?); `tests::macos_helvetica_takes_word_s_one_point_two_em_line` (convert/font.rs:4549) (?); `tests::times_new_roman_uses_the_installed_face_word_uses` (convert/font.rs:5160) (?); `tests::single_line_is_the_hhea_line_not_the_typo_line` (convert/font.rs:5193) (?); `deeper_boundary_tests::metric_tables_select_hhea_typo_helvetica_and_east_asian_lines` (convert/font.rs:6093) (?); `para_line_box` (convert/mod.rs:9725); `line_box_for_math` (convert/mod.rs:10375) (?); `cell_font_line_box` (convert/mod.rs:10427) (?); `picture_line_leading` (convert/mod.rs:10596) (?); `para_single_line_pt` (convert/mod.rs:11053) (?); `para_first_line_pt` (convert/mod.rs:11060) (?); +22 more
 
 #### `Face::line_descent_pt`  (L1193-1195, pub(crate))
 `pub(crate) fn line_descent_pt(&self, size: f32) -> f32`
 
 - **Does:** The single line's part below the baseline (hhea descender, the same table as `single_line_pt`).
 - **Calls:** none
-- **Called by:** `deeper_boundary_tests::metric_tables_select_hhea_typo_helvetica_and_east_asian_lines` (convert/font.rs:6093) (?); `line_box_for_math` (convert/mod.rs:10374) (?); `cell_font_line_box` (convert/mod.rs:10426) (?); `chrome_part_xml` (convert/mod.rs:20750) (?); `chrome_pic_line` (convert/mod.rs:22782) (?); `chrome_pic_descent` (convert/mod.rs:22810) (?); `chrome_pic_top` (convert/mod.rs:22819) (?); `Layout::line_face_metrics` (convert/mod.rs:23832) (?); `Layout::emit_inline_pictures` (convert/mod.rs:27675) (?); `coverage_round_three_tests::coverage_deep_layout_tests::chrome_picture_lines_add_flat_shape_height_wrapped_tabs_and_mark_descents` (convert/mod.rs:53533) (?)
+- **Called by:** `deeper_boundary_tests::metric_tables_select_hhea_typo_helvetica_and_east_asian_lines` (convert/font.rs:6093) (?); `line_box_for_math` (convert/mod.rs:10375) (?); `cell_font_line_box` (convert/mod.rs:10427) (?); `chrome_part_xml` (convert/mod.rs:20786) (?); `chrome_pic_line` (convert/mod.rs:22818) (?); `chrome_pic_descent` (convert/mod.rs:22846) (?); `chrome_pic_top` (convert/mod.rs:22855) (?); `Layout::line_face_metrics` (convert/mod.rs:23868) (?); `Layout::emit_inline_pictures` (convert/mod.rs:27711) (?); `coverage_round_three_tests::coverage_deep_layout_tests::chrome_picture_lines_add_flat_shape_height_wrapped_tabs_and_mark_descents` (convert/mod.rs:53569) (?)
 
 #### `Face::strike_pos_pt`  (L1198-1200, pub(crate))
 `pub(crate) fn strike_pos_pt(&self, size: f32) -> f32`
 
 - **Does:** The strikeout line's top over the baseline.
 - **Calls:** none
-- **Called by:** `Layout::paint_run` (convert/mod.rs:26583) (?)
+- **Called by:** `Layout::paint_run` (convert/mod.rs:26619) (?)
 
 #### `Face::strike_size_pt`  (L1203-1205, pub(crate))
 `pub(crate) fn strike_size_pt(&self, size: f32) -> f32`
 
 - **Does:** The strikeout line's thickness.
 - **Calls:** none
-- **Called by:** `Layout::paint_run` (convert/mod.rs:26583) (?)
+- **Called by:** `Layout::paint_run` (convert/mod.rs:26619) (?)
 
 #### `Face::glyphs`  (L1207-1211, pub(crate))
 `pub(crate) fn glyphs(&self, text: &str) -> Vec<u16>`
@@ -348,14 +348,14 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Face::shape` (convert/font.rs:1214) L1210
 - **Calls (std/external/unresolved):** `.collect`, `.into_iter`, `.map`
-- **Called by:** `tests::a_text_face_in_the_symbol_slot_paints_symbol_codes_as_unicode` (convert/font.rs:3985) (?); `Layout::paint_run` (convert/mod.rs:26583) (?); `Layout::paint_meta_texts` (convert/mod.rs:27592) (?); `Layout::paint_box_at` (convert/mod.rs:29078) (?); `Layout::emit_diag_shapes` (convert/mod.rs:29270) (?); `Layout::emit_label` (convert/mod.rs:29377) (?); `Layout::draw_line_of_runs_at` (convert/mod.rs:31210) (?); `Layout::chrome_parts` (convert/mod.rs:31404) (?); `Layout::patch_pagerefs` (convert/mod.rs:32055) (?); `Layout::patch_stylerefs` (convert/mod.rs:32122) (?); `Layout::patch_chap_page` (convert/mod.rs:32216) (?); `patch_numpages` (convert/mod.rs:32319) (?); +8 more
+- **Called by:** `tests::a_text_face_in_the_symbol_slot_paints_symbol_codes_as_unicode` (convert/font.rs:3985) (?); `Layout::paint_run` (convert/mod.rs:26619) (?); `Layout::paint_meta_texts` (convert/mod.rs:27628) (?); `Layout::paint_box_at` (convert/mod.rs:29114) (?); `Layout::emit_diag_shapes` (convert/mod.rs:29306) (?); `Layout::emit_label` (convert/mod.rs:29413) (?); `Layout::draw_line_of_runs_at` (convert/mod.rs:31246) (?); `Layout::chrome_parts` (convert/mod.rs:31440) (?); `Layout::patch_pagerefs` (convert/mod.rs:32091) (?); `Layout::patch_stylerefs` (convert/mod.rs:32158) (?); `Layout::patch_chap_page` (convert/mod.rs:32252) (?); `patch_numpages` (convert/mod.rs:32355) (?); +8 more
 
 #### `Face::shape`  (L1214-1216, pub(crate))
 `pub(crate) fn shape(&self, text: &str, size: f32) -> Vec<(u16, f32)>`
 
 - **Does:** HarfBuzz-compatible glyph ids + advances in points.
 - **Calls (crate):** `Face::shape_kern` (convert/font.rs:1218) L1215
-- **Called by:** `Face::glyphs` (convert/font.rs:1207); `tests::an_ideograph_a_face_lacks_still_measures_one_em` (convert/font.rs:3738) (?); `tests::aptos_twelve_stays_unligated_after_mini_727` (convert/font.rs:4124) (?); `tests::calibri_eleven_does_not_ligate_fl` (convert/font.rs:4135) (?); `tests::aptos_ten_five_does_not_ligate_fl` (convert/font.rs:4147) (?); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `deeper_boundary_tests::shaping_cache_clears_only_above_fifty_thousand_entries` (convert/font.rs:5956); `face_lacks_ink` (convert/mod.rs:9778)
+- **Called by:** `Face::glyphs` (convert/font.rs:1207); `tests::an_ideograph_a_face_lacks_still_measures_one_em` (convert/font.rs:3738) (?); `tests::aptos_twelve_stays_unligated_after_mini_727` (convert/font.rs:4124) (?); `tests::calibri_eleven_does_not_ligate_fl` (convert/font.rs:4135) (?); `tests::aptos_ten_five_does_not_ligate_fl` (convert/font.rs:4147) (?); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `deeper_boundary_tests::shaping_cache_clears_only_above_fifty_thousand_entries` (convert/font.rs:5956); `face_lacks_ink` (convert/mod.rs:9779)
 
 #### `Face::shape_kern`  (L1218-1233, pub(crate))
 `pub(crate) fn shape_kern(&self, text: &str, size: f32, kern: bool) -> Vec<(u16, f32)>`
@@ -363,7 +363,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Face::glyph` (convert/font.rs:1106) L1222; `Face::advance_pt` (convert/font.rs:1152) L1222; `Face::shaped_units` (convert/font.rs:1272) L1225; `word_device_track` (convert/font.rs:454) L1229
 - **Calls (std/external/unresolved):** `.as_ref`, `.chars`, `.collect`, `.iter`, `.map`
-- **Called by:** `Face::width_pt` (convert/font.rs:1162); `Face::width_pt_kern` (convert/font.rs:1169); `Face::shape` (convert/font.rs:1214); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `deeper_boundary_tests::poisoned_shape_caches_do_not_change_glyphs_or_character_ownership` (convert/font.rs:6500) (?); `paint_listing_line` (convert/mod.rs:8083) (?); `paint_comment_balloons` (convert/mod.rs:8196) (?); `advance` (convert/mod.rs:8379) (?); `Layout::run_width_pt` (convert/mod.rs:26294) (?); `Layout::paint_run` (convert/mod.rs:26583) (?); `comment_listing_review_tests::a_script_listing_phrase_keeps_spaces_and_word_order_when_shaping` (convert/mod.rs:46539) (?)
+- **Called by:** `Face::width_pt` (convert/font.rs:1162); `Face::width_pt_kern` (convert/font.rs:1169); `Face::shape` (convert/font.rs:1214); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `deeper_boundary_tests::poisoned_shape_caches_do_not_change_glyphs_or_character_ownership` (convert/font.rs:6500) (?); `paint_listing_line` (convert/mod.rs:8084) (?); `paint_comment_balloons` (convert/mod.rs:8197) (?); `advance` (convert/mod.rs:8380) (?); `Layout::run_width_pt` (convert/mod.rs:26330) (?); `Layout::paint_run` (convert/mod.rs:26619) (?); `comment_listing_review_tests::a_script_listing_phrase_keeps_spaces_and_word_order_when_shaping` (convert/mod.rs:46575) (?)
 
 #### `Face::glyph_texts`  (L1239-1267, pub(crate))
 `pub(crate) fn glyph_texts(&self, text: &str, kern: bool) -> Vec<String>`
@@ -371,7 +371,7 @@
 - **Does:** The text behind each glyph `shape_kern(text, _, kern)` returns: its cluster's characters on the cluster's first glyph, empty on the rest.
 - **Calls (crate):** `Face::painted` (convert/font.rs:1121) L1241,1263; `Face::shaped_units` (convert/font.rs:1272) L1243
 - **Calls (std/external/unresolved):** `.as_ref`, `.chars`, `.collect`, `.copied`, `.dedup`, `.find`, `.get`, `.insert`, `.iter`, `.len`, `.map`, `.sort_unstable`, `.to_string`, `.unwrap_or_default`, `.unwrap_or`, `String::new`, `std::collections::HashSet::new`
-- **Called by:** `tests::a_non_breaking_hyphen_reads_as_a_hyphen_with_or_without_shaping` (convert/font.rs:3760) (?); `tests::a_text_face_in_the_symbol_slot_paints_symbol_codes_as_unicode` (convert/font.rs:3985) (?); `tests::a_text_face_paints_wingdings_bullets_with_its_nearest_shape` (convert/font.rs:4009) (?); `tests::a_symbol_face_keeps_its_own_codes` (convert/font.rs:4025) (?); `tests::a_precomposed_czech_letter_paints_as_its_own_glyph` (convert/font.rs:5178) (?); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `deeper_boundary_tests::repeated_shaping_clusters_attach_text_to_the_first_glyph_only` (convert/font.rs:5940) (?); `deeper_boundary_tests::poisoned_shape_caches_do_not_change_glyphs_or_character_ownership` (convert/font.rs:6500) (?); `Layout::paint_run` (convert/mod.rs:26583) (?)
+- **Called by:** `tests::a_non_breaking_hyphen_reads_as_a_hyphen_with_or_without_shaping` (convert/font.rs:3760) (?); `tests::a_text_face_in_the_symbol_slot_paints_symbol_codes_as_unicode` (convert/font.rs:3985) (?); `tests::a_text_face_paints_wingdings_bullets_with_its_nearest_shape` (convert/font.rs:4009) (?); `tests::a_symbol_face_keeps_its_own_codes` (convert/font.rs:4025) (?); `tests::a_precomposed_czech_letter_paints_as_its_own_glyph` (convert/font.rs:5178) (?); `pure_font_boundary_tests::font_without_shaping_support_preserves_unicode_and_uses_glyph_advances` (convert/font.rs:5638) (?); `deeper_boundary_tests::repeated_shaping_clusters_attach_text_to_the_first_glyph_only` (convert/font.rs:5940) (?); `deeper_boundary_tests::poisoned_shape_caches_do_not_change_glyphs_or_character_ownership` (convert/font.rs:6500) (?); `Layout::paint_run` (convert/mod.rs:26619) (?)
 
 #### `Face::shaped_units`  (L1272-1371)
 `fn shaped_units(&self, face: &rustybuzz::Face, text: &str, kern: bool) -> ShapedUnits`
@@ -480,7 +480,7 @@
 - **Does:** The face `add_script_fallback` loaded under `key`.
 - **Calls (crate):** `Fonts::embedded_index` (convert/font.rs:1592) L1559
 - **Calls (std/external/unresolved):** `.map`
-- **Called by:** `script_glyph_fallback` (convert/mod.rs:4486)
+- **Called by:** `script_glyph_fallback` (convert/mod.rs:4487)
 
 #### `Fonts::thaana_glyph_fallback`  (L1563-1566, pub(crate))
 `pub(crate) fn thaana_glyph_fallback(&self, bold: bool) -> Option<FaceRef>`
@@ -488,7 +488,7 @@
 - **Does:** Word's Thaana face (MV Boli) for Dhivehi the resolved face lacks.
 - **Calls (crate):** `Fonts::embedded_index` (convert/font.rs:1592) L1564
 - **Calls (std/external/unresolved):** `.map`
-- **Called by:** `script_glyph_fallback` (convert/mod.rs:4486); `rendering_uncovered_contract_tests::missing_thaana_face_routes_owned_text_to_style_specific_bundled_fallback` (convert/mod.rs:59486) (?)
+- **Called by:** `script_glyph_fallback` (convert/mod.rs:4487); `rendering_uncovered_contract_tests::missing_thaana_face_routes_owned_text_to_style_specific_bundled_fallback` (convert/mod.rs:59522) (?)
 
 #### `Fonts::cjk_glyph_fallback`  (L1574-1583, pub(crate))
 `pub(crate) fn cjk_glyph_fallback(&self, bold: bool, ea: Option<&str>) -> Option<FaceRef>`
@@ -496,7 +496,7 @@
 - **Does:** The CJK face for a glyph the run's East Asian face lacks: MS Gothic for Times New Roman, which `ea` falls back to when the run names none, else MS Mincho, whatever the language (Word 16 probes jf and 33g, 2026-10-02: Verdana, Arial, Calibri and absent faces are all MS Mincho; zh-CN and ko-KR text too).
 - **Calls (crate):** `fold_family` (convert/font.rs:2658) L1575; `Fonts::embedded_index` (convert/font.rs:1592) L1580,1581
 - **Calls (std/external/unresolved):** `.is_none_or`, `.map`, `.or_else`
-- **Called by:** `script_glyph_fallback` (convert/mod.rs:4486); `comment_listing_review_tests::comment_listing_uses_loaded_script_fallback_for_paint_and_width` (convert/mod.rs:46573) (?)
+- **Called by:** `script_glyph_fallback` (convert/mod.rs:4487); `comment_listing_review_tests::comment_listing_uses_loaded_script_fallback_for_paint_and_width` (convert/mod.rs:46609) (?)
 
 #### `Fonts::hangul_glyph_fallback`  (L1587-1590, pub(crate))
 `pub(crate) fn hangul_glyph_fallback(&self, bold: bool) -> Option<FaceRef>`
@@ -504,7 +504,7 @@
 - **Does:** Word's Hangul face (Malgun Gothic) for a glyph the resolved face lacks: YaHei, the CJK fallback, has no Hangul.
 - **Calls (crate):** `Fonts::embedded_index` (convert/font.rs:1592) L1588
 - **Calls (std/external/unresolved):** `.map`
-- **Called by:** `script_glyph_fallback` (convert/mod.rs:4486)
+- **Called by:** `script_glyph_fallback` (convert/mod.rs:4487)
 
 #### `Fonts::embedded_index`  (L1592-1619)
 `fn embedded_index(&self, family: &str, bold: bool, italic: bool) -> Option<u16>`
@@ -519,7 +519,7 @@
 - **Does:** `family` is present and not an East Asian face: Calibri, not SimSun (or a CJK name that is not installed, whose substitute says nothing).
 - **Calls (crate):** `cjk_file_stems` (convert/font.rs:2784) L1624; `Fonts::embedded_index` (convert/font.rs:1592) L1628; `catalogue_paints_family` (convert/font.rs:3481) L1628; `Fonts::get` (convert/font.rs:1659) L1629; `Fonts::resolve` (convert/font.rs:1715) L1629
 - **Calls (std/external/unresolved):** `.is_ascii`, `.is_empty`, `.is_some`
-- **Called by:** `deeper_boundary_tests::embedded_faces_answer_family_properties_and_invalidate_catalogue_slots` (convert/font.rs:6209) (?); `mark_ideograph_words` (convert/mod.rs:6935)
+- **Called by:** `deeper_boundary_tests::embedded_faces_answer_family_properties_and_invalidate_catalogue_slots` (convert/font.rs:6209) (?); `mark_ideograph_words` (convert/mod.rs:6936)
 
 #### `Fonts::family_is_east_asian`  (L1635-1642, pub(crate))
 `pub(crate) fn family_is_east_asian(&self, family: &str) -> bool`
@@ -527,7 +527,7 @@
 - **Does:** Whether `family` is an East Asian face: a name written in CJK or one we know as CJK, or a present face whose code pages are East Asian.
 - **Calls (crate):** `cjk_file_stems` (convert/font.rs:2784) L1636; `Fonts::embedded_index` (convert/font.rs:1592) L1640; `catalogue_paints_family` (convert/font.rs:3481) L1640; `Fonts::get` (convert/font.rs:1659) L1641; `Fonts::resolve` (convert/font.rs:1715) L1641
 - **Calls (std/external/unresolved):** `.any`, `.chars`, `.is_empty`, `.is_some`
-- **Called by:** `tests::an_accented_latin_name_is_not_an_east_asian_face` (convert/font.rs:3683) (?); `deeper_boundary_tests::embedded_faces_answer_family_properties_and_invalidate_catalogue_slots` (convert/font.rs:6209) (?); `balance_spaces` (convert/mod.rs:6981); `east_asian_layout` (convert/mod.rs:7009); `balance_run_spaces` (convert/mod.rs:7045)
+- **Called by:** `tests::an_accented_latin_name_is_not_an_east_asian_face` (convert/font.rs:3683) (?); `deeper_boundary_tests::embedded_faces_answer_family_properties_and_invalidate_catalogue_slots` (convert/font.rs:6209) (?); `balance_spaces` (convert/mod.rs:6982); `east_asian_layout` (convert/mod.rs:7010); `balance_run_spaces` (convert/mod.rs:7046)
 
 #### `Fonts::east_asia_avg_em`  (L1648-1650, pub(crate))
 `pub(crate) fn east_asia_avg_em(&self, family: &str) -> Option<f32>`
@@ -535,7 +535,7 @@
 - **Does:** An installed or embedded eastAsia face's average character width as an em fraction (Word 16 probe sp2: MS Mincho and MS Gothic 0.5em), the width a balanced space takes under `w:balanceSingleByteDoubleByteWidth`; `None` for an absent name.
 - **Calls (crate):** `Fonts::east_asia_face` (convert/font.rs:1653) L1649
 - **Calls (std/external/unresolved):** `.map`
-- **Called by:** `deeper_boundary_tests::embedded_faces_answer_family_properties_and_invalidate_catalogue_slots` (convert/font.rs:6209) (?); `balance_run_spaces` (convert/mod.rs:7045)
+- **Called by:** `deeper_boundary_tests::embedded_faces_answer_family_properties_and_invalidate_catalogue_slots` (convert/font.rs:6209) (?); `balance_run_spaces` (convert/mod.rs:7046)
 
 #### `Fonts::east_asia_face`  (L1653-1657, pub(crate))
 `pub(crate) fn east_asia_face(&self, family: &str) -> Option<&Face<'a>>`
@@ -543,7 +543,7 @@
 - **Does:** `family`'s face when installed or embedded.
 - **Calls (crate):** `Fonts::embedded_index` (convert/font.rs:1592) L1655; `catalogue_paints_family` (convert/font.rs:3481) L1655; `Fonts::get` (convert/font.rs:1659) L1656; `Fonts::resolve` (convert/font.rs:1715) L1656
 - **Calls (std/external/unresolved):** `.is_some`, `.then`
-- **Called by:** `Fonts::east_asia_avg_em` (convert/font.rs:1648); `balance_spaces` (convert/mod.rs:6981)
+- **Called by:** `Fonts::east_asia_avg_em` (convert/font.rs:1648); `balance_spaces` (convert/mod.rs:6982)
 
 #### `Fonts::get`  (L1659-1673, pub(crate))
 `pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face<'a>`
@@ -574,7 +574,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Fonts::classify_in` (convert/font.rs:1723) L1717; `record_font_resolution` (convert/font.rs:255) L1718
 - **Calls (std/external/unresolved):** `.borrow`, `.with`
-- **Called by:** `Fonts::family_is_latin_only` (convert/font.rs:1623); `Fonts::family_is_east_asian` (convert/font.rs:1635); `Fonts::east_asia_face` (convert/font.rs:1653); `tests::resolve_keeps_quoted_css_list_intact` (convert/font.rs:4187); `tests::resolve_quoted_cambria_still_finds_cambria` (convert/font.rs:4208) (?); `tests::resolve_dejavu_sans_mono_follows_word_subst_verdana` (convert/font.rs:4221) (?); `tests::resolve_unknown_family_is_cambria_not_calibri` (convert/font.rs:4231) (?); `tests::resolve_wide_latin_stays_calibri_mini_505` (convert/font.rs:4262) (?); `tests::resolve_empty_family_is_times_new_roman` (convert/font.rs:4272) (?); `tests::resolve_prefers_embedded_unknown_family` (convert/font.rs:4798) (?); `tests::embedded_faces_borrow_the_conversion_bytes` (convert/font.rs:4820); `tests::resolve_embedded_does_not_steal_unrelated_families` (convert/font.rs:4838) (?); +80 more
+- **Called by:** `Fonts::family_is_latin_only` (convert/font.rs:1623); `Fonts::family_is_east_asian` (convert/font.rs:1635); `Fonts::east_asia_face` (convert/font.rs:1653); `tests::resolve_keeps_quoted_css_list_intact` (convert/font.rs:4187); `tests::resolve_quoted_cambria_still_finds_cambria` (convert/font.rs:4208) (?); `tests::resolve_dejavu_sans_mono_follows_word_subst_verdana` (convert/font.rs:4221) (?); `tests::resolve_unknown_family_is_cambria_not_calibri` (convert/font.rs:4231) (?); `tests::resolve_wide_latin_stays_calibri_mini_505` (convert/font.rs:4262) (?); `tests::resolve_empty_family_is_times_new_roman` (convert/font.rs:4272) (?); `tests::resolve_prefers_embedded_unknown_family` (convert/font.rs:4798) (?); `tests::embedded_faces_borrow_the_conversion_bytes` (convert/font.rs:4820); `tests::resolve_embedded_does_not_steal_unrelated_families` (convert/font.rs:4838) (?); +82 more
 
 #### `Fonts::classify_in`  (L1723-1785, pub(crate))
 `pub(crate) fn classify_in( &self, family: &str, bold: bool, italic: bool, table: &super::font_table::FontTable, ) -> (FaceRef, FontReportEntry)`
@@ -598,7 +598,7 @@
 - **Does:** `family` names an installed catalogue face directly (the report's `explicit` step, no altName / substitution / generic hop).
 - **Calls (crate):** `family_token` (convert/font.rs:1956) L1897; `Fonts::mapped_face` (convert/font.rs:1991) L1905; `Fonts::catalogue_step` (convert/font.rs:1909) L1906
 - **Calls (std/external/unresolved):** `.is_some_and`, `.replace`, `.starts_with`, `.to_ascii_lowercase`
-- **Called by:** `tests::a_precomposed_czech_letter_paints_as_its_own_glyph` (convert/font.rs:5178); `deeper_boundary_tests::unmatched_single_quotes_and_quoted_lists_stop_before_font_discovery` (convert/font.rs:5885); `paragraph_block` (convert/mod.rs:11573)
+- **Called by:** `tests::a_precomposed_czech_letter_paints_as_its_own_glyph` (convert/font.rs:5178); `deeper_boundary_tests::unmatched_single_quotes_and_quoted_lists_stop_before_font_discovery` (convert/font.rs:5885); `paragraph_block` (convert/mod.rs:11574)
 
 #### `Fonts::catalogue_step`  (L1909-1915)
 `fn catalogue_step(id: FaceId) -> FontStep`
@@ -680,7 +680,7 @@
 `fn sorted_dir_listing(dir: &Path) -> Arc<Vec<PathBuf>>`
 
 - **Does:** A font folder's entries, sorted, listed once per process: every family lookup walks the same system folders (hundreds of entries).
-- **Calls (crate):** `Element::path` (markdown/from_docx/ooxml.rs:320) (by name) L2248
+- **Calls (crate):** `Element::path` (markdown/from_docx/ooxml.rs:391) (by name) L2248
 - **Calls (std/external/unresolved):** `.and_then`, `.cloned`, `.collect`, `.flatten`, `.get`, `.insert`, `.lock`, `.map`, `.ok`, `.sort`, `.to_path_buf`, `.unwrap_or_default`, `Arc::clone`, `Arc::new`, `HashMap::new`, `LazyLock::new`, `Mutex::new`, `fs::read_dir`
 - **Called by:** `font_name_index` (convert/font.rs:2593)
 
@@ -688,7 +688,7 @@
 `pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>)>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `cjk_file_stems` (convert/font.rs:2784) L2259; `cjk_family_faces` (convert/font.rs:2807) L2261; `user_font_dir` (convert/font.rs:2637) L2263; `cloud_font_dir` (convert/font.rs:2228) L2265; `Dom::parent` (xmllinq/mod.rs:597) (by name) L2266; `indexed_faces` (convert/font.rs:3236) L2272; `scan_family_faces` (convert/font.rs:2281) L2273
+- **Calls (crate):** `cjk_file_stems` (convert/font.rs:2784) L2259; `cjk_family_faces` (convert/font.rs:2807) L2261; `user_font_dir` (convert/font.rs:2637) L2263; `cloud_font_dir` (convert/font.rs:2228) L2265; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L2266; `indexed_faces` (convert/font.rs:3236) L2272; `scan_family_faces` (convert/font.rs:2281) L2273
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.clone`, `.display`, `.extend`, `.is_empty`, `.map`, `.unwrap_or`, `Path::new`, `std::env::var_os`
 - **Macros:** `format!`
 - **Called by:** `add_script_fallback` (convert/font.rs:3003); `add_thaana_fallback` (convert/font.rs:3019); `add_installed_faces` (convert/font.rs:3395); `tests::word_s_own_stand_in_for_an_absent_family_beats_its_alt_name` (convert/font.rs:4435); `tests::an_absent_face_claiming_thaana_draws_in_mv_boli` (convert/font.rs:4458); `tests::word_cloud_fonts_are_found_despite_numeric_file_names` (convert/font.rs:4514); `tests::a_system_collection_face_is_found_by_its_family` (convert/font.rs:4534); `tests::macos_helvetica_takes_word_s_one_point_two_em_line` (convert/font.rs:4549); `tests::a_collection_whose_upright_face_is_medium_is_the_regular` (convert/font.rs:4579); `tests::a_collection_prefers_its_normal_width_face` (convert/font.rs:4594); `tests::cjk_family_takes_its_own_face_out_of_word_s_collection` (convert/font.rs:4657)
@@ -697,7 +697,7 @@
 `fn scan_family_faces(family: &str, user: Option<&Path>) -> (SourcedFaces, Vec<PathBuf>)`
 
 - **Does:** `family`'s faces from the system, Word and cloud-font folders and jubarte's own, with the folders the search listed.
-- **Calls (crate):** `norm` (opc/mod.rs:120) (by name) L2297; `windows_font_dirs` (convert/font.rs:2833) L2303; `cloud_font_dirs` (convert/font.rs:2324) L2309; `faces_with_user_fonts` (convert/font.rs:2430) L2315
+- **Calls (crate):** `norm` (opc/mod.rs:147) (by name) L2297; `windows_font_dirs` (convert/font.rs:2833) L2303; `cloud_font_dirs` (convert/font.rs:2324) L2309; `faces_with_user_fonts` (convert/font.rs:2430) L2315
 - **Calls (std/external/unresolved):** `.chain`, `.chars`, `.clone`, `.collect`, `.extend`, `.filter`, `.is_ascii_alphanumeric`, `.is_empty`, `.iter`, `.len`, `.map`, `.to_ascii_lowercase`, `Vec::new`
 - **Called by:** `installed_family_faces` (convert/font.rs:2258)
 
@@ -713,7 +713,7 @@
 `fn cloud_font_dirs_with( family: &str, home: Option<&Path>, listing: &impl Fn(&Path) -> Arc<Vec<PathBuf>>, is_dir: &impl Fn(&Path) -> bool, folder_names: &impl Fn(&Path) -> Arc<FolderNames>, ) -> Vec<(PathBuf, bool)>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `cloud_font_dir` (convert/font.rs:2228) L2345,2350; `Dom::parent` (xmllinq/mod.rs:597) (by name) L2350; `fold_family` (convert/font.rs:2658) L2354,2359
+- **Calls (crate):** `cloud_font_dir` (convert/font.rs:2228) L2345,2350; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L2350; `fold_family` (convert/font.rs:2658) L2354,2359
 - **Calls (std/external/unresolved):** `.all`, `.and_then`, `.as_ref`, `.chars`, `.clone`, `.collect`, `.contains`, `.count`, `.extend`, `.file_name`, `.filter`, `.into_iter`, `.iter`, `.len`, `.map`, `.push`, `.starts_with`, `.to_str`, `Vec::new`, `folder_names`, `is_dir`, `listing`
 - **Macros:** `vec!`
 - **Called by:** `cloud_font_dirs` (convert/font.rs:2324); `cloud_font_memory_owner_tests::cloud_folder_selection_preserves_own_parent_and_localized_source_owners` (convert/font.rs:7099)
@@ -730,7 +730,7 @@
 `fn cloud_folder_names_with( root: &Path, listing: &impl Fn(&Path) -> Arc<Vec<PathBuf>>, is_dir: &impl Fn(&Path) -> bool, read: &impl Fn(&Path) -> Option<Vec<u8>>, ) -> FolderNames`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `read` (ambiguous: `read` (legacy_doc.rs:180); `read` (markdown/mod.rs:749); `read` (markdown/write.rs:125)) L2410; `face_family_names` (convert/font.rs:2793) L2414,2415
+- **Calls (crate):** `read` (ambiguous, 5 candidates) L2410; `face_family_names` (convert/font.rs:2793) L2414,2415
 - **Calls (std/external/unresolved):** `.clone`, `.dedup`, `.extend`, `.filter`, `.find_map`, `.iter`, `.push`, `.sort`, `Vec::new`, `is_dir`, `listing`, `ttf_parser::Face::parse`
 - **Called by:** `cloud_folder_names` (convert/font.rs:2385); `cloud_font_memory_owner_tests::cloud_name_scan_uses_first_readable_font_and_keeps_each_folder_source` (convert/font.rs:7190)
 
@@ -762,7 +762,7 @@
 `fn family_faces_in_with( family: &str, dirs: &[(PathBuf, bool)], mut list: impl FnMut(&Path) -> Arc<Vec<PathBuf>>, mut read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>, mut names: impl FnMut(&Path) -> FontNameIndex, ) -> SourcedFaces`
 
 - **Does:** The discovery policy, with directory/cache reads supplied by the caller.
-- **Calls (crate):** `norm` (opc/mod.rs:120) (by name) L2486; `list` (ambiguous: `list` (debug.rs:2331); `list` (markdown/from_docx/mermaid.rs:230)) L2500; `read` (ambiguous: `read` (legacy_doc.rs:180); `read` (markdown/mod.rs:749); `read` (markdown/write.rs:125)) L2513,2540,2558,2576; `ttc_face_bytes` (convert/font.rs:2953) L2518; `face_family_style` (convert/font.rs:3570) L2521,2543,2561,2579; `FaceSource::new` (convert/font.rs:3069) L2522,2546,2554,2580; `windows_fonts_dir` (convert/font.rs:2844) L2552; `names` (ambiguous: `deeper_boundary_tests::names` (edit.rs:6691); `canonical::{fn names}` (markdown/from_docx/drawing.rs:872); `move_range_bookmark_regressions::names` (revision_processor/bookmarks.rs:172)) L2553,2572; `sourced` (convert/font.rs:3083) L2585; `pick_ranked_faces` (convert/font.rs:3504) L2585
+- **Calls (crate):** `norm` (opc/mod.rs:147) (by name) L2486; `list` (ambiguous: `list` (debug.rs:2509); `list` (markdown/from_docx/mermaid.rs:230)) L2500; `read` (ambiguous, 5 candidates) L2513,2540,2558,2576; `ttc_face_bytes` (convert/font.rs:2953) L2518; `face_family_style` (convert/font.rs:3570) L2521,2543,2561,2579; `FaceSource::new` (convert/font.rs:3069) L2522,2546,2554,2580; `windows_fonts_dir` (convert/font.rs:2844) L2552; `names` (ambiguous: `deeper_boundary_tests::names` (edit.rs:8709); `canonical::{fn names}` (markdown/from_docx/drawing.rs:1098); `move_range_bookmark_regressions::names` (revision_processor/bookmarks.rs:192)) L2553,2572; `sourced` (convert/font.rs:3083) L2585; `pick_ranked_faces` (convert/font.rs:3504) L2585
 - **Calls (std/external/unresolved):** `.all`, `.and_then`, `.any`, `.append`, `.as_deref`, `.chars`, `.clone`, `.collect`, `.contains`, `.ends_with`, `.eq_ignore_ascii_case`, `.extension`, `.file_stem`, `.filter`, `.is_ascii_alphanumeric`, `.is_empty`, `.is_some_and`, `.iter`, `.len`, `.map`, `.push`, `.starts_with`, `.to_ascii_lowercase`, `.to_str`, `.unwrap_or`, `Some`, `Vec::new`, `ttf_parser::fonts_in_collection`
 - **Called by:** `family_faces_in` (convert/font.rs:2460); `MemoryFiles::discover` (convert/font.rs:6745)
 
@@ -770,7 +770,7 @@
 `fn font_name_index(dir: &Path) -> FontNameIndex`
 
 - **Does:** Each `.ttf`/`.otf` in `dir` with its normalised family names (name IDs 1 and 16), read once per process.
-- **Calls (crate):** `sorted_dir_listing` (convert/font.rs:2241) L2606; `norm` (opc/mod.rs:120) (by name) L2622
+- **Calls (crate):** `sorted_dir_listing` (convert/font.rs:2241) L2606; `norm` (opc/mod.rs:147) (by name) L2622
 - **Calls (std/external/unresolved):** `.and_then`, `.chars`, `.clone`, `.cloned`, `.collect`, `.eq_ignore_ascii_case`, `.extension`, `.filter_map`, `.filter`, `.get`, `.insert`, `.into_iter`, `.is_ascii_alphanumeric`, `.is_unicode`, `.iter`, `.lock`, `.map`, `.names`, `.ok`, `.push`, `.to_ascii_lowercase`, `.to_path_buf`, `.to_str`, `.to_string`, `.unwrap_or`, `Arc::clone`, `Arc::new`, `HashMap::new`, `LazyLock::new`, `Mutex::new`, `Vec::new`, `fs::read`, `ttf_parser::Face::parse`
 - **Macros:** `matches!`
 - **Called by:** none found in src
@@ -852,7 +852,7 @@
 `fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces`
 
 - **Does:** `cjk_family_faces` read from disk.
-- **Calls (crate):** `scan_cjk_family_faces_with` (convert/font.rs:2881) L2867; `cjk_dirs` (convert/font.rs:2823) L2870; `Element::path` (markdown/from_docx/ooxml.rs:320) (by name) L2874
+- **Calls (crate):** `scan_cjk_family_faces_with` (convert/font.rs:2881) L2867; `cjk_dirs` (convert/font.rs:2823) L2870; `Element::path` (markdown/from_docx/ooxml.rs:391) (by name) L2874
 - **Calls (std/external/unresolved):** `.collect`, `.flatten`, `.map`, `.ok`, `fs::read_dir`, `fs::read`
 - **Called by:** `cjk_family_faces` (convert/font.rs:2807)
 
@@ -860,7 +860,7 @@
 `fn scan_cjk_family_faces_with( family: &str, stems: &[&str], dirs: &[PathBuf], listing: &impl Fn(&Path) -> Option<Vec<PathBuf>>, read: &impl Fn(&Path) -> Option<Vec<u8>>, ) -> SourcedFaces`
 
 - **Does:** The discovery policy shared by disk and deterministic in-memory font sources.
-- **Calls (crate):** `fold_family` (convert/font.rs:2658) L2888; `read` (ambiguous: `read` (legacy_doc.rs:180); `read` (markdown/mod.rs:749); `read` (markdown/write.rs:125)) L2913; `face_family_names` (convert/font.rs:2793) L2924,2926; `ttc_face_bytes` (convert/font.rs:2953) L2937; `FaceSource::new` (convert/font.rs:3069) L2944; `sourced` (convert/font.rs:3083) L2947; `pick_ranked_faces` (convert/font.rs:3504) L2947
+- **Calls (crate):** `fold_family` (convert/font.rs:2658) L2888; `read` (ambiguous, 5 candidates) L2913; `face_family_names` (convert/font.rs:2793) L2924,2926; `ttc_face_bytes` (convert/font.rs:2953) L2937; `FaceSource::new` (convert/font.rs:3069) L2944; `sourced` (convert/font.rs:3083) L2947; `pick_ranked_faces` (convert/font.rs:3504) L2947
 - **Calls (std/external/unresolved):** `.all`, `.and_then`, `.any`, `.clone`, `.contains`, `.eq_ignore_ascii_case`, `.extension`, `.file_name`, `.file_stem`, `.is_bold`, `.is_italic`, `.is_none`, `.is_some_and`, `.iter`, `.map`, `.position`, `.push`, `.sort`, `.tables`, `.to_str`, `.unwrap_or`, `Some`, `Vec::new`, `listing`, `ttf_parser::Face::parse`, `ttf_parser::fonts_in_collection`
 - **Called by:** `scan_cjk_family_faces` (convert/font.rs:2866); `cjk_memory_discovery_source_contract_tests::cjk_font_discovery_preserves_ranked_source_faces_without_host_fonts` (convert/font.rs:7281); `cjk_memory_discovery_source_contract_tests::cjk_collection_discovery_keeps_face_indices_and_skips_invalid_duplicate_sources` (convert/font.rs:7338)
 
@@ -899,7 +899,7 @@
 `fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) -> SharedFaces`
 
 - **Does:** Installed-face lookups, cached for the process: a long-lived caller (the Python and WASM bindings) would otherwise re-read 10-20 MB font collections for every conversion.
-- **Calls (crate):** `drawing_tests::load` (convert/mod.rs:38653) L3050
+- **Calls (crate):** `drawing_tests::load` (convert/mod.rs:38689) L3050
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.get`, `.insert`, `.into_iter`, `.lock`, `.map`, `.to_string`, `Arc::from`, `HashMap::new`, `LazyLock::new`, `Mutex::new`
 - **Called by:** `add_script_fallback` (convert/font.rs:3003); `add_thaana_fallback` (convert/font.rs:3019); `add_cjk_fallbacks` (convert/font.rs:3367); `add_installed_faces` (convert/font.rs:3395); `tests::installed_faces_are_read_once_per_process` (convert/font.rs:4368)
 
@@ -921,7 +921,7 @@
 `fn font_index_path() -> Option<PathBuf>`
 
 - **Does:** `$JUBARTE_FONT_INDEX` (empty or `off` disables it), else `font-index.tsv` beside jubarte's font folder.
-- **Calls (crate):** `Dom::parent` (xmllinq/mod.rs:597) (by name) L3104; `user_font_dir` (convert/font.rs:2637) L3104
+- **Calls (crate):** `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L3104; `user_font_dir` (convert/font.rs:2637) L3104
 - **Calls (std/external/unresolved):** `.is_empty`, `.join`, `.map`, `PathBuf::from`, `Some`, `std::env::var_os`
 - **Called by:** none found in src
 
@@ -961,13 +961,13 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `mtime_of` (convert/font.rs:3115) L3196; `file_stamp` (convert/font.rs:3126) L3203; `FontIndex::save` (convert/font.rs:3213) L3208
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.insert`, `.iter`, `.map`, `.to_string`
-- **Called by:** `comments_in` (comments.rs:136) (?); `deeper_boundary_tests::unstamped_index_faces_are_rejected_before_any_filesystem_access` (convert/font.rs:6433)
+- **Called by:** `comments_in` (comments.rs:138) (?); `deeper_boundary_tests::unstamped_index_faces_are_rejected_before_any_filesystem_access` (convert/font.rs:6433)
 
 #### `FontIndex::save`  (L3213-3231)
 `fn save(&self)`
 
 - **Does:** Writes the index, merged over what other processes wrote since it was read, through a rename so a reader never sees half a file.
-- **Calls (crate):** `parse_font_index` (convert/font.rs:3314) L3218; `format_font_index` (convert/font.rs:3264) L3221; `Dom::parent` (xmllinq/mod.rs:597) (by name) L3223
+- **Calls (crate):** `parse_font_index` (convert/font.rs:3314) L3218; `format_font_index` (convert/font.rs:3264) L3221; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L3223
 - **Calls (std/external/unresolved):** `.as_deref`, `.clone`, `.extend`, `.is_ok`, `.is_some_and`, `.iter`, `.map`, `.unwrap_or_default`, `.with_extension`, `fs::create_dir_all`, `fs::read_to_string`, `fs::remove_file`, `fs::rename`, `fs::write`, `std::process::id`
 - **Macros:** `format!`
 - **Called by:** `FontIndex::record` (convert/font.rs:3192)
@@ -1023,7 +1023,7 @@
 `pub(crate) fn catalogue_paints_family(family: &str) -> bool`
 
 - **Does:** The catalogue slot for `family` really is that family, not a stand-in (Tahoma, Trebuchet and Roboto all fold into the Arial slot).
-- **Calls (crate):** `catalogue` (convert/font.rs:1421) L3493; `Fonts::id_from_key` (convert/font.rs:1711) L3493; `norm` (opc/mod.rs:120) (by name) L3496,3497; `Face::pdf_name` (convert/font.rs:946) (by name) L3497
+- **Calls (crate):** `catalogue` (convert/font.rs:1421) L3493; `Fonts::id_from_key` (convert/font.rs:1711) L3493; `norm` (opc/mod.rs:147) (by name) L3496,3497; `Face::pdf_name` (convert/font.rs:946) (by name) L3497
 - **Calls (std/external/unresolved):** `.chars`, `.collect`, `.filter`, `.get`, `.is_ascii_alphanumeric`, `.is_empty`, `.map`, `.starts_with`, `.to_ascii_lowercase`
 - **Called by:** `Fonts::family_is_latin_only` (convert/font.rs:1623); `Fonts::family_is_east_asian` (convert/font.rs:1635); `Fonts::east_asia_face` (convert/font.rs:1653); `add_installed_faces` (convert/font.rs:3395); `load_embedded_fonts` (convert/font_table.rs:205)
 
@@ -1045,7 +1045,7 @@
 `fn cjk_code_pages(face: &ttf_parser::Face) -> bool`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `.table` (ambiguous: `Build::table` (debug/diff.rs:1076); `Writer::table` (markdown/from_docx/mod.rs:3498)) L3533
+- **Calls (crate):** `.table` (ambiguous: `Build::table` (debug/diff.rs:1076); `Writer::table` (markdown/from_docx/mod.rs:3689)) L3533
 - **Calls (std/external/unresolved):** `.and_then`, `.get`, `.is_some_and`, `.map`, `.raw_face`, `ttf_parser::Tag::from_bytes`, `u32::from_be_bytes`
 - **Called by:** `Face::from_bytes` (convert/font.rs:973); `deeper_boundary_tests::panose_average_width_and_code_pages_have_exact_numeric_boundaries` (convert/font.rs:6165)
 
@@ -1053,7 +1053,7 @@
 `fn panose_serif(face: &ttf_parser::Face) -> bool`
 
 - **Does:** OS/2 xAvgCharWidth in font units, when positive.
-- **Calls (crate):** `.table` (ambiguous: `Build::table` (debug/diff.rs:1076); `Writer::table` (markdown/from_docx/mod.rs:3498)) L3544
+- **Calls (crate):** `.table` (ambiguous: `Build::table` (debug/diff.rs:1076); `Writer::table` (markdown/from_docx/mod.rs:3689)) L3544
 - **Calls (std/external/unresolved):** `.and_then`, `.contains`, `.get`, `.is_some_and`, `.raw_face`, `ttf_parser::Tag::from_bytes`
 - **Called by:** `Face::from_bytes` (convert/font.rs:973); `deeper_boundary_tests::panose_average_width_and_code_pages_have_exact_numeric_boundaries` (convert/font.rs:6165)
 
@@ -1061,7 +1061,7 @@
 `fn avg_char_width(face: &ttf_parser::Face) -> Option<f32>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `.table` (ambiguous: `Build::table` (debug/diff.rs:1076); `Writer::table` (markdown/from_docx/mod.rs:3498)) L3551
+- **Calls (crate):** `.table` (ambiguous: `Build::table` (debug/diff.rs:1076); `Writer::table` (markdown/from_docx/mod.rs:3689)) L3551
 - **Calls (std/external/unresolved):** `.and_then`, `.filter`, `.get`, `.map`, `.raw_face`, `f32::from`, `i16::from_be_bytes`, `ttf_parser::Tag::from_bytes`
 - **Called by:** `Face::from_bytes` (convert/font.rs:973); `deeper_boundary_tests::panose_average_width_and_code_pages_have_exact_numeric_boundaries` (convert/font.rs:6165)
 
@@ -1085,7 +1085,7 @@
 `fn cloud_font_override(id: FaceId) -> Option<PathBuf>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Element::path` (markdown/from_docx/ooxml.rs:320) (by name) L3624; `ttf_postscript_name` (convert/font.rs:3644) L3631; `FaceId::postscript` (convert/font.rs:822) L3637
+- **Calls (crate):** `Element::path` (markdown/from_docx/ooxml.rs:391) (by name) L3624; `ttf_postscript_name` (convert/font.rs:3644) L3631; `FaceId::postscript` (convert/font.rs:822) L3637
 - **Calls (std/external/unresolved):** `.and_then`, `.clone`, `.extension`, `.find`, `.flatten`, `.iter`, `.join`, `.map`, `.push`, `.to_str`, `LazyLock::new`, `PathBuf::from`, `Some`, `Vec::new`, `fs::read_dir`, `fs::read`, `std::env::var_os`
 - **Called by:** `system_override_uncached` (convert/font.rs:2124)
 

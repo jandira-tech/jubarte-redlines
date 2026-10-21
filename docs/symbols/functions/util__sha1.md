@@ -1,6 +1,6 @@
 # Functions and methods in `src/util/sha1.rs`
 
-13 non-test, 0 test. Part of the [symbol manifest](../README.md).
+11 non-test, 0 test. Part of the [symbol manifest](../README.md).
 
 #### `hex_string_from_bytes`  (L22-31, pub(crate))
 `pub(crate) fn hex_string_from_bytes(bytes: &[u8]) -> String`
@@ -76,25 +76,11 @@
 
 - **Does:** 64-bit FNV-1a of the string's bytes (offset basis `0xcbf29ce484222325`, prime `0x100000001b3`).
 - **Calls (std/external/unresolved):** `.as_bytes`, `.wrapping_mul`
-- **Called by:** `Sha1Keyed::new` (comparer/atoms.rs:237); `sha1_keyed_tests::new_derives_both_keys_from_the_hash` (comparer/atoms.rs:580); `sha1_keyed_tests::set_hash_leaves_no_key_behind` (comparer/atoms.rs:588); `sha1_keyed_tests::a_colliding_key_changes_only_the_u64_key` (comparer/atoms.rs:597); `sha1_fingerprint` (util/sha1.rs:181)
+- **Called by:** `Sha1Keyed::new` (comparer/atoms.rs:237); `sha1_keyed_tests::new_derives_both_keys_from_the_hash` (comparer/atoms.rs:580); `sha1_keyed_tests::set_hash_leaves_no_key_behind` (comparer/atoms.rs:588); `sha1_keyed_tests::a_colliding_key_changes_only_the_u64_key` (comparer/atoms.rs:597)
 
 #### `fnv1a_128`  (L168-177, pub)
 `pub fn fnv1a_128(s: &str) -> u128`
 
 - **Does:** 128-bit FNV-1a of the string's bytes (offset basis `0x6c62272e07bb014262b821756295c58d`, prime `0x1000000000000000000013b`).
 - **Calls (std/external/unresolved):** `.as_bytes`, `.wrapping_mul`
-- **Called by:** `Sha1Keyed::new` (comparer/atoms.rs:237); `sha1_keyed_tests::new_derives_both_keys_from_the_hash` (comparer/atoms.rs:580); `sha1_keyed_tests::set_hash_leaves_no_key_behind` (comparer/atoms.rs:588); `sha1_keyed_tests::a_colliding_key_changes_only_the_u64_key` (comparer/atoms.rs:597); `sha1_fingerprint128` (util/sha1.rs:190)
-
-#### `sha1_fingerprint`  (L181-183, pub)
-`pub fn sha1_fingerprint(s: &str) -> u64`
-
-- **Does:** Former name of [`fnv1a_64`].
-- **Calls (crate):** `fnv1a_64` (util/sha1.rs:143) L182
-- **Called by:** none found in src
-
-#### `sha1_fingerprint128`  (L190-192, pub)
-`pub fn sha1_fingerprint128(s: &str) -> u128`
-
-- **Does:** Former name of [`fnv1a_128`].
-- **Calls (crate):** `fnv1a_128` (util/sha1.rs:168) L191
-- **Called by:** none found in src
+- **Called by:** `Sha1Keyed::new` (comparer/atoms.rs:237); `sha1_keyed_tests::new_derives_both_keys_from_the_hash` (comparer/atoms.rs:580); `sha1_keyed_tests::set_hash_leaves_no_key_behind` (comparer/atoms.rs:588); `sha1_keyed_tests::a_colliding_key_changes_only_the_u64_key` (comparer/atoms.rs:597)

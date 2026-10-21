@@ -6,7 +6,7 @@
 `pub(crate) fn parse_table(src: &str) -> Vec<SubstRow>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `flush` (markdown/view_stories.rs:755) (by name) L48,59; `unquote` (convert/word_subst.rs:63) L52,54; `parse_string_array` (convert/word_subst.rs:89) L56
+- **Calls (crate):** `flush` (markdown/view_stories.rs:1334) (by name) L48,59; `unquote` (convert/word_subst.rs:63) L52,54; `parse_string_array` (convert/word_subst.rs:89) L56
 - **Calls (std/external/unresolved):** `.clear`, `.is_empty`, `.lines`, `.push`, `.starts_with`, `.strip_prefix`, `.take`, `.trim`, `Some`, `Vec::new`, `std::mem::take`
 - **Called by:** none found in src
 
@@ -44,7 +44,7 @@
 
 - **Does:** _no doc comment_
 - **Calls:** none
-- **Called by:** `CommentFamily::read_meta` (comments.rs:457) (?); `lookup_physical` (convert/word_subst.rs:136); `unknown_physical` (convert/word_subst.rs:144); `tests::stems_keep_commas_and_escaped_quotes_inside_a_string` (convert/word_subst.rs:221); `tests::table_contains_required_rows` (convert/word_subst.rs:327)
+- **Called by:** `CommentFamily::read_meta` (comments.rs:485) (?); `lookup_physical` (convert/word_subst.rs:136); `unknown_physical` (convert/word_subst.rs:144); `tests::stems_keep_commas_and_escaped_quotes_inside_a_string` (convert/word_subst.rs:221); `tests::table_contains_required_rows` (convert/word_subst.rs:327)
 
 #### `lookup_physical`  (L136-142, pub(crate))
 `pub(crate) fn lookup_physical(requested: &str) -> Option<String>`

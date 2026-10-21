@@ -6,7 +6,7 @@
 `pub fn from_bytes(bytes: &[u8]) -> Result<Self, OpcError>`
 
 - **Does:** Opens `bytes` as a `.docx`, admits it under [`InputLimits::compare`](crate::admission::InputLimits::compare), and lazily parses the main document part on the first [`Self::main_document`] call.
-- **Calls (crate):** `admit` (admission.rs:310) L51; `InputLimits::compare` (admission.rs:75) L51; `PartFs::open` (opc/mod.rs:456) L55; `Dom::new` (xmllinq/mod.rs:387) L56
+- **Calls (crate):** `admit` (admission.rs:439) L51; `InputLimits::compare` (admission.rs:87) L51; `PartFs::open` (opc/mod.rs:585) L55; `Dom::new` (xmllinq/mod.rs:387) L56
 - **Calls (std/external/unresolved):** `.map_err`, `.to_vec`, `Ok`, `String::new`
 - **Called by:** none found in src
 
@@ -21,7 +21,7 @@
 `pub fn main_document_part_name(&self) -> String`
 
 - **Does:** The main document part name (`word/document.xml` unless OPC relationships name otherwise).
-- **Calls (crate):** `PartFs::main_document_part` (opc/mod.rs:829) L72
+- **Calls (crate):** `PartFs::main_document_part` (opc/mod.rs:1070) L72
 - **Calls (std/external/unresolved):** `.to_string`, `.unwrap_or_else`
 - **Called by:** `WmlDocument::main_document` (wml_document.rs:85); `WmlDocument::main_document_root` (wml_document.rs:105)
 
@@ -29,7 +29,7 @@
 `pub fn main_document(&mut self) -> Result<NodeId, OpcError>`
 
 - **Does:** Parses the main document part (once) and returns its document node.
-- **Calls (crate):** `WmlDocument::main_document_part_name` (wml_document.rs:71) L89; `PartFs::part_string` (opc/mod.rs:498) (by name) L90; `Dom::parse_xdocument` (xmllinq/mod.rs:1283) L94
+- **Calls (crate):** `WmlDocument::main_document_part_name` (wml_document.rs:71) L89; `PartFs::part_string` (opc/mod.rs:636) (by name) L90; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L94
 - **Calls (std/external/unresolved):** `.clone`, `.ok_or_else`, `Ok`, `OpcError::PartNotFound`, `Some`
 - **Called by:** `WmlDocument::main_document_root` (wml_document.rs:105)
 

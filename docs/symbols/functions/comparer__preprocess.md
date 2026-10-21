@@ -66,7 +66,7 @@
 `fn strip_nsdecls(dom: &mut Dom, id: NodeId)`
 
 - **Does:** remove all namespace-declaration attributes across the result (index walk — no descendants_and_self / attributes() Vec per node) _(from a code comment)_
-- **Calls (crate):** `Dom::is_element` (xmllinq/mod.rs:502) L135; `Dom::attr_count` (xmllinq/mod.rs:895) L136; `Dom::attr_at` (xmllinq/mod.rs:906) L139; `Dom::is_namespace_declaration` (xmllinq/mod.rs:996) L140; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L145; `Dom::child_count` (xmllinq/mod.rs:622) L147; `Dom::child_at` (xmllinq/mod.rs:632) L149; `clone_block_level_content_for_hashing::{fn strip_nsdecls}` (comparer/preprocess.rs:134) L150
+- **Calls (crate):** `Dom::is_element` (xmllinq/mod.rs:502) L135; `Dom::attr_count` (xmllinq/mod.rs:909) L136; `Dom::attr_at` (xmllinq/mod.rs:920) L139; `Dom::is_namespace_declaration` (xmllinq/mod.rs:1012) L140; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L145; `Dom::child_count` (xmllinq/mod.rs:622) L147; `Dom::child_at` (xmllinq/mod.rs:632) L149; `clone_block_level_content_for_hashing::{fn strip_nsdecls}` (comparer/preprocess.rs:134) L150
 - **Calls (std/external/unresolved):** `.clone`, `.push`, `Vec::new`
 - **Called by:** `clone_block_level_content_for_hashing` (comparer/preprocess.rs:120); `clone_block_level_content_for_hashing::{fn strip_nsdecls}` (comparer/preprocess.rs:134)
 
@@ -74,7 +74,7 @@
 `fn new_with_filtered_attrs( dom: &mut Dom, name: XName, src: NodeId, drop: impl Fn(&XName) -> bool, children: Vec<NodeId>, ) -> NodeId`
 
 - **Does:** Build a new element named `name`, copying `src`'s attributes except those for which `drop(name)` is true, then appending `children`.
-- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L169; `Dom::attr_count` (xmllinq/mod.rs:895) L171; `Dom::attr_at` (xmllinq/mod.rs:906) L173; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L182; `Dom::add` (xmllinq/mod.rs:1058) L185
+- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L169; `Dom::attr_count` (xmllinq/mod.rs:909) L171; `Dom::attr_at` (xmllinq/mod.rs:920) L173; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L182; `Dom::add` (xmllinq/mod.rs:1074) L185
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.filter_map`, `.to_string`, `Some`, `drop`
 - **Called by:** `clone_internal_unsalted` (comparer/preprocess.rs:245)
 
@@ -90,7 +90,7 @@
 `fn clone_internal( dom: &mut Dom, node: NodeId, include_related_parts: bool, settings: &WmlComparerSettings, rel_hash: &RelHashResolver, ) -> Vec<NodeId>`
 
 - **Does:** Port of `CloneBlockLevelContentForHashingInternal` (:5160).
-- **Calls (crate):** `clone_internal_unsalted` (comparer/preprocess.rs:245) L232; `Dom::is_element` (xmllinq/mod.rs:502) L233,237; `Dom::attribute` (xmllinq/mod.rs:874) L234; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L238
+- **Calls (crate):** `clone_internal_unsalted` (comparer/preprocess.rs:245) L232; `Dom::is_element` (xmllinq/mod.rs:502) L233,237; `Dom::attribute` (xmllinq/mod.rs:874) L234; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L238
 - **Calls (std/external/unresolved):** `PT::name`, `Some`
 - **Called by:** `clone_block_level_content_for_hashing` (comparer/preprocess.rs:120); `clone_children` (comparer/preprocess.rs:193); `clone_internal_unsalted` (comparer/preprocess.rs:245); `clone_children_elements` (comparer/preprocess.rs:531)
 
@@ -98,7 +98,7 @@
 `fn clone_internal_unsalted( dom: &mut Dom, node: NodeId, include_related_parts: bool, settings: &WmlComparerSettings, rel_hash: &RelHashResolver, ) -> Vec<NodeId>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Dom::is_element` (xmllinq/mod.rs:502) L252,291,345; `Dom::is_text` (xmllinq/mod.rs:506) L254; `Dom::text_value` (xmllinq/mod.rs:547) L255; `apply_text_transform` (comparer/preprocess.rs:84) L258,320; `Dom::new_text` (xmllinq/mod.rs:483) (by name) L262; `Dom::clone_subtree` (xmllinq/mod.rs:1215) (by name) L265; `Dom::name` (xmllinq/mod.rs:526) L267,348; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L277; `Dom::new_element` (xmllinq/mod.rs:478) (by name) L283; `clone_children` (comparer/preprocess.rs:193) L288,447,455,470,480,484...; `group_adjacent` (util/group_adjacent.rs:20) L297; `is_single_t_run` (comparer/preprocess.rs:544) L298; `Dom::attribute` (xmllinq/mod.rs:874) L300,409; `new_with_filtered_attrs` (comparer/preprocess.rs:162) L306,456,471,481,485,496; `is_rsid_attr` (comparer/preprocess.rs:48) L310; `is_pt` (comparer/preprocess.rs:63) L310,435,461,475,489,500; `is_volatile_para_attr` (comparer/preprocess.rs:71) L310,500; `Dom::value_str` (xmllinq/mod.rs:1179) L318; `Dom::new_element` (xmllinq/mod.rs:478) L321,325,352,369,381,390...; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L323,411,440,444; `Dom::add_text` (xmllinq/mod.rs:1071) L326; `Dom::add` (xmllinq/mod.rs:1058) L327,328,331,354,371,383...; `Dom::child_count` (xmllinq/mod.rs:622) L342; `Dom::child_at` (xmllinq/mod.rs:632) L344; `clone_internal` (comparer/preprocess.rs:225) L351,367,379,400; `element_children_named` (comparer/preprocess.rs:519) L365,377,398; `clone_children_elements` (comparer/preprocess.rs:531) L389,416; `XName::get` (xmllinq/mod.rs:180) L411,462,463,464,475,489; `Dom::attr_count` (xmllinq/mod.rs:895) L428; `Dom::attr_at` (xmllinq/mod.rs:906) L430
+- **Calls (crate):** `Dom::is_element` (xmllinq/mod.rs:502) L252,291,345; `Dom::is_text` (xmllinq/mod.rs:506) L254; `Dom::text_value` (xmllinq/mod.rs:547) L255; `apply_text_transform` (comparer/preprocess.rs:84) L258,320; `Dom::new_text` (xmllinq/mod.rs:483) (by name) L262; `Dom::clone_subtree` (xmllinq/mod.rs:1231) (by name) L265; `Dom::name` (xmllinq/mod.rs:526) L267,348; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L277; `Dom::new_element` (xmllinq/mod.rs:478) (by name) L283; `clone_children` (comparer/preprocess.rs:193) L288,447,455,470,480,484...; `group_adjacent` (util/group_adjacent.rs:20) L297; `is_single_t_run` (comparer/preprocess.rs:544) L298; `Dom::attribute` (xmllinq/mod.rs:874) L300,409; `new_with_filtered_attrs` (comparer/preprocess.rs:162) L306,456,471,481,485,496; `is_rsid_attr` (comparer/preprocess.rs:48) L310; `is_pt` (comparer/preprocess.rs:63) L310,435,461,475,489,500; `is_volatile_para_attr` (comparer/preprocess.rs:71) L310,500; `Dom::value_str` (xmllinq/mod.rs:1195) L318; `Dom::new_element` (xmllinq/mod.rs:478) L321,325,352,369,381,390...; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L323,411,440,444; `Dom::add_text` (xmllinq/mod.rs:1087) L326; `Dom::add` (xmllinq/mod.rs:1074) L327,328,331,354,371,383...; `Dom::child_count` (xmllinq/mod.rs:622) L342; `Dom::child_at` (xmllinq/mod.rs:632) L344; `clone_internal` (comparer/preprocess.rs:225) L351,367,379,400; `element_children_named` (comparer/preprocess.rs:519) L365,377,398; `clone_children_elements` (comparer/preprocess.rs:531) L389,416; `XName::get` (xmllinq/mod.rs:180) L411,462,463,464,475,489; `Dom::attr_count` (xmllinq/mod.rs:909) L428; `Dom::attr_at` (xmllinq/mod.rs:920) L430
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.contains`, `.copied`, `.filter`, `.flat_map`, `.into_iter`, `.into_owned`, `.is_some`, `.iter`, `.map`, `.push`, `.to_string`, `.unwrap_or`, `.unwrap`, `O::name`, `PT::name`, `R::name`, `Some`, `VML::name`, `Vec::new`, `W::bookmark_end`, `W::bookmark_start`, `W::grid_span`, `W::name`, `W::object`, `W::p_pr`, `W::p`, `W::r_pr`, `W::r`, `W::t`, `W::tbl`, `W::tc_pr`, `W::tc`, `W::tr`, `W::txbx_content`, `W::val`, `WP::name`, `rel_hash`
 - **Macros:** `vec!`
 - **Called by:** `clone_internal` (comparer/preprocess.rs:225)
@@ -139,9 +139,9 @@
 `pub fn remove_existing_powertools_markup(dom: &mut Dom, root: NodeId)`
 
 - **Does:** M4.B.1 — `RemoveExistingPowerToolsMarkup` (WmlComparer.ts :5049): drop every `pt:*` attribute EXCEPT `pt:Unid`, across `root` and all descendants.
-- **Calls (crate):** `Dom::for_each_descendant_and_self` (xmllinq/mod.rs:753) L576; `Dom::attr_count` (xmllinq/mod.rs:895) L580; `Dom::attr_at` (xmllinq/mod.rs:906) L582; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L583; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L588
+- **Calls (crate):** `Dom::for_each_descendant_and_self` (xmllinq/mod.rs:753) L576; `Dom::attr_count` (xmllinq/mod.rs:909) L580; `Dom::attr_at` (xmllinq/mod.rs:920) L582; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L583; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L588
 - **Calls (std/external/unresolved):** `.clone`, `.push`, `PT::unid`, `Vec::new`
-- **Called by:** `get_revisions` (document_comparer.rs:6285)
+- **Called by:** `get_revisions` (document_comparer.rs:6293)
 
 #### `test_for_invalid_content`  (L602-624, pub)
 `pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String>`
@@ -150,13 +150,13 @@
 - **Calls (crate):** `Dom::for_each_descendant_element` (xmllinq/mod.rs:677) L610; `Dom::name` (xmllinq/mod.rs:526) L614; `XName::local_name` (xmllinq/mod.rs:208) (by name) L617
 - **Calls (std/external/unresolved):** `.contains`, `.is_some`, `Err`, `Ok`, `Some`, `W::name`
 - **Macros:** `format!`
-- **Called by:** `get_revisions` (document_comparer.rs:6285)
+- **Called by:** `get_revisions` (document_comparer.rs:6293)
 
 #### `block_hash_string`  (L630-637, pub)
 `pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String`
 
 - **Does:** M4.B.2 — the block hash *string*: serialize the clone, then strip the single re-emitted wordprocessingml default-xmlns declaration (the wrapper has already stripped every `xmlns` decl, so exactly one is re-emitted on the root).
-- **Calls (crate):** `Dom::serialize_element` (xmllinq/mod.rs:1299) L631
+- **Calls (crate):** `Dom::serialize_element` (xmllinq/mod.rs:1315) L631
 - **Calls (std/external/unresolved):** `.drain`, `.find`, `.len`
 - **Called by:** none found in src
 
@@ -164,7 +164,7 @@
 `pub fn block_sha1(dom: &Dom, clone: NodeId) -> String`
 
 - **Does:** M4.B.2 — SHA-1 of the block hash string.
-- **Calls (crate):** `Dom::serialize_element_sha1_hex` (xmllinq/mod.rs:1309) L644
+- **Calls (crate):** `Dom::serialize_element_sha1_hex` (xmllinq/mod.rs:1325) L644
 - **Called by:** `block_sha1_from_source` (comparer/preprocess.rs:657); `add_sha1_hash_to_block_level_content` (comparer/preprocess.rs:1259)
 
 #### `block_sha1_from_source`  (L657-680, pub)
@@ -193,7 +193,7 @@
 `fn filtered_p_attr_xml(dom: &Dom, node: NodeId) -> Option<String>`
 
 - **Does:** Paragraph attrs surviving rsid/pt/volatile filter (w: or empty ns only).
-- **Calls (crate):** `Dom::attr_count` (xmllinq/mod.rs:895) L744; `Dom::attr_at` (xmllinq/mod.rs:906) L745; `Dom::is_namespace_declaration` (xmllinq/mod.rs:996) L746; `is_rsid_attr` (comparer/preprocess.rs:48) L749; `is_pt` (comparer/preprocess.rs:63) L749; `is_volatile_para_attr` (comparer/preprocess.rs:71) L749; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L752; `XName::local_name` (xmllinq/mod.rs:208) (by name) L753; `escape_xml_attr` (comparer/preprocess.rs:1191) L759,765
+- **Calls (crate):** `Dom::attr_count` (xmllinq/mod.rs:909) L744; `Dom::attr_at` (xmllinq/mod.rs:920) L745; `Dom::is_namespace_declaration` (xmllinq/mod.rs:1012) L746; `is_rsid_attr` (comparer/preprocess.rs:48) L749; `is_pt` (comparer/preprocess.rs:63) L749; `is_volatile_para_attr` (comparer/preprocess.rs:71) L749; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L752; `XName::local_name` (xmllinq/mod.rs:208) (by name) L753; `escape_xml_attr` (comparer/preprocess.rs:1191) L759,765
 - **Calls (std/external/unresolved):** `.is_empty`, `.push_str`, `.push`, `Some`, `String::new`
 - **Called by:** `try_stream_hash_simple_paragraph` (comparer/preprocess.rs:690); `stream_simple_p_fragment` (comparer/preprocess.rs:1156)
 
@@ -201,7 +201,7 @@
 `fn collect_simple_p_fragments( dom: &Dom, node: NodeId, settings: &WmlComparerSettings, correlated_ws: bool, ) -> Option<Vec<RunFrag>>`
 
 - **Does:** Expand runs under `w:p` to fragments; empty runs skipped; complex → None.
-- **Calls (crate):** `Dom::child_count` (xmllinq/mod.rs:622) L782,797; `Dom::child_at` (xmllinq/mod.rs:632) L784,798; `Dom::is_element` (xmllinq/mod.rs:502) L785,799; `Dom::name` (xmllinq/mod.rs:526) L788,802; `apply_text_transform` (comparer/preprocess.rs:84) L808; `Dom::value_str` (xmllinq/mod.rs:1179) L808; `whitespace_invariant_for_hash` (comparer/preprocess.rs:80) L810; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L816; `is_streamable_empty_run_leaf` (comparer/preprocess.rs:734) L817; `XName::local_name` (xmllinq/mod.rs:208) (by name) L817,823; `has_element_child` (comparer/preprocess.rs:835) L818; `filtered_leaf_attr_xml` (comparer/preprocess.rs:846) L820
+- **Calls (crate):** `Dom::child_count` (xmllinq/mod.rs:622) L782,797; `Dom::child_at` (xmllinq/mod.rs:632) L784,798; `Dom::is_element` (xmllinq/mod.rs:502) L785,799; `Dom::name` (xmllinq/mod.rs:526) L788,802; `apply_text_transform` (comparer/preprocess.rs:84) L808; `Dom::value_str` (xmllinq/mod.rs:1195) L808; `whitespace_invariant_for_hash` (comparer/preprocess.rs:80) L810; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L816; `is_streamable_empty_run_leaf` (comparer/preprocess.rs:734) L817; `XName::local_name` (xmllinq/mod.rs:208) (by name) L817,823; `has_element_child` (comparer/preprocess.rs:835) L818; `filtered_leaf_attr_xml` (comparer/preprocess.rs:846) L820
 - **Calls (std/external/unresolved):** `.push`, `.to_string`, `RunFrag::Text`, `Some`, `Vec::new`, `W::bookmark_end`, `W::bookmark_start`, `W::p_pr`, `W::r_pr`, `W::r`, `W::t`
 - **Called by:** `try_stream_hash_simple_paragraph` (comparer/preprocess.rs:690); `stream_simple_p_fragment` (comparer/preprocess.rs:1156)
 
@@ -216,7 +216,7 @@
 `fn filtered_leaf_attr_xml(dom: &Dom, node: NodeId) -> Option<String>`
 
 - **Does:** Attrs on empty leaf after clone's default filter (pt / volatile / trim set).
-- **Calls (crate):** `Dom::attr_count` (xmllinq/mod.rs:895) L848; `Dom::attr_at` (xmllinq/mod.rs:906) L849; `Dom::is_namespace_declaration` (xmllinq/mod.rs:996) L850; `is_pt` (comparer/preprocess.rs:63) L853; `is_volatile_para_attr` (comparer/preprocess.rs:71) L853; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L856; `XName::local_name` (xmllinq/mod.rs:208) (by name) L857; `escape_xml_attr` (comparer/preprocess.rs:1191) L863,869
+- **Calls (crate):** `Dom::attr_count` (xmllinq/mod.rs:909) L848; `Dom::attr_at` (xmllinq/mod.rs:920) L849; `Dom::is_namespace_declaration` (xmllinq/mod.rs:1012) L850; `is_pt` (comparer/preprocess.rs:63) L853; `is_volatile_para_attr` (comparer/preprocess.rs:71) L853; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L856; `XName::local_name` (xmllinq/mod.rs:208) (by name) L857; `escape_xml_attr` (comparer/preprocess.rs:1191) L863,869
 - **Calls (std/external/unresolved):** `.contains`, `.is_empty`, `.push_str`, `.push`, `Some`, `String::new`
 - **Called by:** `collect_simple_p_fragments` (comparer/preprocess.rs:775)
 
@@ -313,14 +313,14 @@
 `pub fn structure_sha1(dom: &Dom, node: NodeId) -> String`
 
 - **Does:** HASH-STREAM-02: SHA-1 of the structure projection of `node` (elements + attrs only).
-- **Calls (crate):** `Dom::serialize_element_structure_sha1_hex` (xmllinq/mod.rs:1317) L1214
+- **Calls (crate):** `Dom::serialize_element_structure_sha1_hex` (xmllinq/mod.rs:1333) L1214
 - **Called by:** `add_sha1_hash_to_block_level_content` (comparer/preprocess.rs:1259)
 
 #### `clone_for_structure_hash`  (L1221-1245, pub)
 `pub fn clone_for_structure_hash(dom: &mut Dom, node: NodeId) -> Option<NodeId>`
 
 - **Does:** M4.B.3 — `CloneForStructureHash` (WmlComparer.ts :5121): keep element name + attributes + element nesting, drop ALL text/value nodes.
-- **Calls (crate):** `Dom::is_element` (xmllinq/mod.rs:502) L1222; `Dom::name` (xmllinq/mod.rs:526) L1225; `Dom::new_element` (xmllinq/mod.rs:478) L1226; `Dom::attr_count` (xmllinq/mod.rs:895) L1228; `Dom::attr_at` (xmllinq/mod.rs:906) L1230; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L1235; `Dom::child_count` (xmllinq/mod.rs:622) L1237; `Dom::child_at` (xmllinq/mod.rs:632) L1239; `clone_for_structure_hash` (comparer/preprocess.rs:1221) L1240; `Dom::add` (xmllinq/mod.rs:1058) L1241
+- **Calls (crate):** `Dom::is_element` (xmllinq/mod.rs:502) L1222; `Dom::name` (xmllinq/mod.rs:526) L1225; `Dom::new_element` (xmllinq/mod.rs:478) L1226; `Dom::attr_count` (xmllinq/mod.rs:909) L1228; `Dom::attr_at` (xmllinq/mod.rs:920) L1230; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L1235; `Dom::child_count` (xmllinq/mod.rs:622) L1237; `Dom::child_at` (xmllinq/mod.rs:632) L1239; `clone_for_structure_hash` (comparer/preprocess.rs:1221) L1240; `Dom::add` (xmllinq/mod.rs:1074) L1241
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.map`, `.to_string`, `.unwrap`, `Some`
 - **Called by:** `clone_for_structure_hash` (comparer/preprocess.rs:1221)
 
@@ -328,18 +328,18 @@
 `pub fn add_sha1_hash_to_block_level_content( dom: &mut Dom, content_parent: NodeId, settings: &WmlComparerSettings, rel_hash: &RelHashResolver, )`
 
 - **Does:** M4.B.5 — `AddSha1HashToBlockLevelContent` (WmlComparer.ts :5080): stamp `pt:SHA1Hash` on every [`super::tables::ELEMENTS_TO_HAVE_SHA1`] descendant of `content_parent`; additionally `pt:StructureSHA1Hash` on `w:tbl` / `w:tr` (the structure-clone of the hashing-clone).
-- **Calls (crate):** `Dom::for_each_descendant_element` (xmllinq/mod.rs:677) L1267; `Dom::name` (xmllinq/mod.rs:526) L1268,1276; `block_sha1_from_source` (comparer/preprocess.rs:657) L1280; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L1281,1288,1291,1297,1301; `try_stream_hash_simple_table_or_tr` (comparer/preprocess.rs:928) L1286; `clone_block_level_content_for_hashing` (comparer/preprocess.rs:120) L1295; `block_sha1` (comparer/preprocess.rs:641) L1296; `structure_sha1` (comparer/preprocess.rs:1213) L1300
+- **Calls (crate):** `Dom::for_each_descendant_element` (xmllinq/mod.rs:677) L1267; `Dom::name` (xmllinq/mod.rs:526) L1268,1276; `block_sha1_from_source` (comparer/preprocess.rs:657) L1280; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L1281,1288,1291,1297,1301; `try_stream_hash_simple_table_or_tr` (comparer/preprocess.rs:928) L1286; `clone_block_level_content_for_hashing` (comparer/preprocess.rs:120) L1295; `block_sha1` (comparer/preprocess.rs:641) L1296; `structure_sha1` (comparer/preprocess.rs:1213) L1300
 - **Calls (std/external/unresolved):** `.contains`, `.is_some_and`, `.push`, `.unwrap`, `PT::sha1_hash`, `PT::structure_sha1_hash`, `Some`, `Vec::new`, `W::p`, `W::tbl`, `W::tc`, `W::tr`
-- **Called by:** `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners::{fn member}` (comparer/cross_para.rs:3260); `process_footnote_endnote` (comparer/footnotes.rs:1115); `coverage_real_source_route_matrix_tests::source` (comparer/lcs.rs:18303); `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1187); `deterministic_table_dispatch_tests::source` (comparer/lcs_table.rs:1621); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:209); `repeated_source_anchor_promotion_tests::authored_units` (comparer/moves.rs:1114); `source_paragraph_promotion_boundary_tests::source` (comparer/moves.rs:1234)
+- **Called by:** `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners::{fn member}` (comparer/cross_para.rs:3257); `process_footnote_endnote` (comparer/footnotes.rs:1115); `coverage_real_source_route_matrix_tests::source` (comparer/lcs.rs:18303); `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1186); `deterministic_table_dispatch_tests::source` (comparer/lcs_table.rs:1620); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `repeated_source_anchor_promotion_tests::authored_units` (comparer/moves.rs:1114); `source_paragraph_promotion_boundary_tests::source` (comparer/moves.rs:1234)
 
 #### `hash_block_level_content`  (L1317-1370, pub)
 `pub fn hash_block_level_content( dom: &mut Dom, source_root: NodeId, after_proc_root: NodeId, settings: &WmlComparerSettings, rel_hash: &RelHashResolver, ) -> Result<(), String>`
 
 - **Does:** M4.B.6 — `HashBlockLevelContent` (WmlComparer.ts :832): hash every `w:p` / `w:tbl` / `w:tr` block of the `after_proc` projection and store it as `pt:CorrelatedSHA1Hash` back onto the corresponding ORIGINAL `source_root` element (matched by surviving `pt:Unid`).
-- **Calls (crate):** `Dom::for_each_descendant_element` (xmllinq/mod.rs:677) L1331,1347; `Dom::name` (xmllinq/mod.rs:526) L1335,1348; `markdown_pairing_boundary_tests::block` (markdown/patch.rs:893) (by name) L1335,1348; `Dom::attribute` (xmllinq/mod.rs:874) L1336,1363; `block_sha1_from_source` (comparer/preprocess.rs:657) L1355; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L1366
+- **Calls (crate):** `Dom::for_each_descendant_element` (xmllinq/mod.rs:677) L1331,1347; `Dom::name` (xmllinq/mod.rs:526) L1335,1348; `markdown_pairing_boundary_tests::block` (markdown/patch.rs:912) (by name) L1335,1348; `Dom::attribute` (xmllinq/mod.rs:874) L1336,1363; `block_sha1_from_source` (comparer/preprocess.rs:657) L1355; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L1366
 - **Calls (std/external/unresolved):** `.get`, `.insert`, `.is_some_and`, `.is_some`, `.map`, `.push`, `.to_string`, `Err`, `HashMap::new`, `Ok`, `PT::correlated_sha1_hash`, `PT::unid`, `Some`, `Vec::new`, `W::p`, `W::tbl`, `W::tr`
 - **Macros:** `format!`
-- **Called by:** `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1187); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:209)
+- **Called by:** `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1186); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215)
 
 ## Test functions (4)
 

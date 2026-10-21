@@ -1,48 +1,51 @@
 # Constants and statics
 
-673 items (non-test). Part of the [symbol manifest](README.md).
+726 items (non-test). Part of the [symbol manifest](README.md).
 
 | Name | Defined at | Vis | Does | Detail |
 |---|---|---|---|---|
-| `InputLimits::MIB` | src/admission.rs:57 | private | _no doc comment_ | const MIB: u64 = 1024 * 1024 |
-| `InputLimits::MIB` | src/admission.rs:76 | private | _no doc comment_ | const MIB: u64 = 1024 * 1024 |
-| `AdmissionErrorKind::ALL` | src/admission.rs:168 | pub | Every kind, in code order. | pub const ALL: [Self; 6] = [ Self::InputLimit, Self::DuplicatePart, Self::UnsupportedPackage, Self::InvalidPackage, Self::InvalidXml, Self::LegacyDocument, ] |
-| `OLE_MAGIC` | src/admission.rs:206 | private | The first bytes of an OLE compound file: a Word 97-2003 `.doc`, or a password-encrypted document of any Word version. | const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1" |
-| `MAIN_CONTENT_TYPES` | src/admission.rs:288 | private | _no doc comment_ | const MAIN_CONTENT_TYPES: &[&str] = &[ "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", "application/vnd.openxmlformats-offic |
-| `OFFICE_DOCUMENT_REL` | src/admission.rs:295 | private | _no doc comment_ | const OFFICE_DOCUMENT_REL: &[&str] = &[ "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "http://purl.oclc.org/ooxml/office |
-| `EOCD` | src/admission.rs:471 | private | _no doc comment_ | const EOCD: [u8; 4] = [0x50, 0x4b, 0x05, 0x06] |
-| `LOCATOR` | src/admission.rs:472 | private | _no doc comment_ | const LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07] |
-| `EOCD64` | src/admission.rs:473 | private | _no doc comment_ | const EOCD64: [u8; 4] = [0x50, 0x4b, 0x06, 0x06] |
-| `CP437_HIGH` | src/admission.rs:521 | private | IBM code page 437's high half, byte 0x80–0xFF to its Unicode character (the Unicode Consortium's CP437 mapping, which zip 8 used for flag-clear names; zip 9 keeps its own `cp437` module private, so the table lives beside the only users). | const CP437_HIGH: [char; 128] = [ '\u{00C7}', '\u{00FC}', '\u{00E9}', '\u{00E2}', '\u{00E4}', '\u{00E0}', '\u{00E5}', '\u{00E7}', '\u{00EA}', '\u{00EB}', '\u{00 |
+| `InputLimits::MIB` | src/admission.rs:65 | private | _no doc comment_ | const MIB: u64 = 1024 * 1024 |
+| `InputLimits::MIB` | src/admission.rs:88 | private | _no doc comment_ | const MIB: u64 = 1024 * 1024 |
+| `AdmissionErrorKind::ALL` | src/admission.rs:210 | pub | Every kind, in code order. | pub const ALL: [Self; 7] = [ Self::InputLimit, Self::DuplicatePart, Self::UnsupportedPackage, Self::InvalidPackage, Self::ZipHeaderMismatch, Self::InvalidXml, S |
+| `OLE_MAGIC` | src/admission.rs:249 | private | The first bytes of an OLE compound file: a Word 97-2003 `.doc`, or a password-encrypted document of any Word version. | const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1" |
+| `MAIN_CONTENT_TYPES` | src/admission.rs:331 | private | _no doc comment_ | const MAIN_CONTENT_TYPES: &[&str] = &[ "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", "application/vnd.openxmlformats-offic |
+| `OFFICE_DOCUMENT_REL` | src/admission.rs:338 | private | _no doc comment_ | const OFFICE_DOCUMENT_REL: &[&str] = &[ "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "http://purl.oclc.org/ooxml/office |
+| `EOCD` | src/admission.rs:572 | private | _no doc comment_ | const EOCD: [u8; 4] = [0x50, 0x4b, 0x05, 0x06] |
+| `LOCATOR` | src/admission.rs:573 | private | _no doc comment_ | const LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07] |
+| `EOCD64` | src/admission.rs:574 | private | _no doc comment_ | const EOCD64: [u8; 4] = [0x50, 0x4b, 0x06, 0x06] |
+| `CP437_HIGH` | src/admission.rs:622 | private | IBM code page 437's high half, byte 0x80–0xFF to its Unicode character (the Unicode Consortium's CP437 mapping, which zip 8 used for flag-clear names; zip 9 keeps its own `cp437` module private, so the table lives beside the only users). | const CP437_HIGH: [char; 128] = [ '\u{00C7}', '\u{00FC}', '\u{00E9}', '\u{00E2}', '\u{00E4}', '\u{00E0}', '\u{00E5}', '\u{00E7}', '\u{00EA}', '\u{00EB}', '\u{00 |
 | `RELS` | src/append.rs:32 | private | _no doc comment_ | const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
 | `XMLNS` | src/append.rs:33 | private | _no doc comment_ | const XMLNS: &str = "http://www.w3.org/2000/xmlns/" |
-| `NOT_ANNOTATIONS` | src/append.rs:478 | private | Elements whose `w:id` is not an annotation id: notes and their references are renumbered with the notes themselves, comment anchors with the comments ([`stage_comments`]). | const NOT_ANNOTATIONS: &[&str] = &[ "footnoteReference", "endnoteReference", "footnote", "endnote", "commentRangeStart", "commentRangeEnd", "commentReference",  |
-| `NOTE_KINDS` | src/append.rs:640 | private | _no doc comment_ | const NOTE_KINDS: [NoteKind; 2] = [ NoteKind { element: "footnote", file: "footnotes.xml", rel: "/footnotes", content_type: "application/vnd.openxmlformats-offi |
-| `STYLE_REFERENCES` | src/append.rs:808 | private | Elements whose `w:val` names a style. | const STYLE_REFERENCES: &[&str] = &["pStyle", "rStyle", "tblStyle", "numStyleLink", "styleLink"] |
-| `STYLE_CHAIN` | src/append.rs:810 | private | A style's own references to other styles. | const STYLE_CHAIN: &[&str] = &["basedOn", "link", "next"] |
-| `BEFORE_TYPE` | src/append.rs:1316 | private | Elements a `w:sectPr` lists before `w:type`. | const BEFORE_TYPE: &[&str] = &[ "headerReference", "footerReference", "footnotePr", "endnotePr", ] |
+| `NOT_ANNOTATIONS` | src/append.rs:484 | private | Elements whose `w:id` is not an annotation id: notes and their references are renumbered with the notes themselves, comment anchors with the comments ([`stage_comments`]). | const NOT_ANNOTATIONS: &[&str] = &[ "footnoteReference", "endnoteReference", "footnote", "endnote", "commentRangeStart", "commentRangeEnd", "commentReference",  |
+| `NOTE_KINDS` | src/append.rs:646 | private | _no doc comment_ | const NOTE_KINDS: [NoteKind; 2] = [ NoteKind { element: "footnote", file: "footnotes.xml", rel: "/footnotes", content_type: "application/vnd.openxmlformats-offi |
+| `STYLE_REFERENCES` | src/append.rs:814 | private | Elements whose `w:val` names a style. | const STYLE_REFERENCES: &[&str] = &["pStyle", "rStyle", "tblStyle", "numStyleLink", "styleLink"] |
+| `STYLE_CHAIN` | src/append.rs:816 | private | A style's own references to other styles. | const STYLE_CHAIN: &[&str] = &["basedOn", "link", "next"] |
+| `BEFORE_TYPE` | src/append.rs:1322 | private | Elements a `w:sectPr` lists before `w:type`. | const BEFORE_TYPE: &[&str] = &[ "headerReference", "footerReference", "footnotePr", "endnotePr", ] |
 | `RULES` | src/audit.rs:37 | pub | Every rule: `(code, rule set, severity)`, in report order. | pub const RULES: &[(&str, &str, &str)] = &[ ("HEADING_SKIP", "a11y", "warning"), ("IMAGE_NO_DESCR", "a11y", "error"), ("TABLE_NO_HEADER_ROW", "a11y", "warning") |
 | `RULE_SETS` | src/audit.rs:51 | private | The rule sets [`RULES`] groups codes into: the last three of [`crate::validate::RULE_SETS`]. | const RULE_SETS: &[&str] = crate::validate::RULE_SETS.split_at(2).1 |
 | `LITERAL_MARKERS` | src/audit.rs:54 | private | Characters typed as list markers instead of using Word numbering. | const LITERAL_MARKERS: &[char] = &['•', '◦', '▪', '-', '*', '·'] |
-| `GLOBAL` | src/bin/jubarte.rs:60 | private | CLI-only global allocator. | static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc |
-| `Output::VIEW` | src/bin/jubarte.rs:233 | private | _no doc comment_ | static VIEW: std::sync::LazyLock<ReadArgs> = std::sync::LazyLock::new(ReadArgs::default) |
-| `EXIT_TIMEOUT` | src/bin/jubarte.rs:456 | private | `convert --timeout`: the deadline passed. | const EXIT_TIMEOUT: i32 = 124 |
-| `EXIT_FONT_SUBSTITUTED` | src/bin/jubarte.rs:473 | private | `convert --fail-on-substitution`: the outputs were written, but a requested font was drawn with a substitute. | const EXIT_FONT_SUBSTITUTED: u8 = 4 |
-| `EXIT_PLAN_REFUSED` | src/bin/jubarte.rs:920 | private | Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the per-operation report is on stdout and nothing was written. | const EXIT_PLAN_REFUSED: u8 = 3 |
-| `EXIT_USAGE` | src/bin/jubarte.rs:923 | private | Exit 2: the operation flags do not describe an operation. | const EXIT_USAGE: u8 = 2 |
-| `STACK_BYTES` | src/bin/jubarte.rs:2884 | private | The stack the CLI runs on: what Linux and macOS give a main thread. | const STACK_BYTES: usize = 8 * 1024 * 1024 |
+| `GLOBAL` | src/bin/jubarte.rs:67 | private | CLI-only global allocator. | static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc |
+| `Output::VIEW` | src/bin/jubarte.rs:307 | private | _no doc comment_ | static VIEW: std::sync::LazyLock<ReadArgs> = std::sync::LazyLock::new(ReadArgs::default) |
+| `EXIT_TIMEOUT` | src/bin/jubarte.rs:589 | private | `convert --timeout`: the deadline passed. | const EXIT_TIMEOUT: i32 = 124 |
+| `EXIT_FONT_SUBSTITUTED` | src/bin/jubarte.rs:606 | private | `convert --fail-on-substitution`: the outputs were written, but a requested font was drawn with a substitute. | const EXIT_FONT_SUBSTITUTED: u8 = 4 |
+| `EXIT_PLAN_REFUSED` | src/bin/jubarte.rs:1288 | private | Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the per-operation report is on stdout and nothing was written. | const EXIT_PLAN_REFUSED: u8 = 3 |
+| `EXIT_USAGE` | src/bin/jubarte.rs:1291 | private | Exit 2: the operation flags do not describe an operation. | const EXIT_USAGE: u8 = 2 |
+| `FORCE_BUNDLE_ONLY` | src/bin/jubarte.rs:1935 | private | What to do about a bundle directory --force will not replace. | const FORCE_BUNDLE_ONLY: &str = "--force replaces only a jubarte bundle, so move those files or name another --out-dir" |
+| `JSON_ERRORS` | src/bin/jubarte.rs:2991 | private | Set when the command line asks for JSON (`--json` before any `--`): an error then prints on stdout too, as one [`jubarte::cli::json_error`] line, for a reader that pipes stdout to a JSON parser (#1158). | static JSON_ERRORS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false) |
+| `STACK_BYTES` | src/bin/jubarte.rs:3919 | private | The stack the CLI runs on: what Linux and macOS give a main thread. | const STACK_BYTES: usize = 8 * 1024 * 1024 |
+| `COMMAND` | src/bin/jubarte/check.rs:26 | private | _no doc comment_ | const COMMAND: &str = "check" |
 | `BUILT_IN` | src/builtin_styles.rs:10 | private | Word's built-in style names, lowercased and sorted. | const BUILT_IN: [&str; 376] = [ "annotation reference", "annotation subject", "annotation text", "balloon text", "bibliography", "block text", "body text", "bod |
-| `OUTPUT_FORMATS` | src/capabilities.rs:326 | pub | The extensions each task's `-o` writes, by task name: Word, the agent view (`md`), a rendered PDF, PNG pages and the JSON snapshot. | pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[ ("compare", &["docx", "md", "pdf", "png", "json"]), ("convert", &["docx", "md", "pdf", "png", "json"]), ("read |
-| `DIFF_EXTENSIONS` | src/capabilities.rs:342 | pub | File extensions `diff -o` writes as text output: Markdown, plain text, and the two patch file extensions (`patch` and `diff`). | pub const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"] |
-| `IDS_NOTE` | src/capabilities.rs:346 | pub | One-line note describing how ids print, used as [`Ids::note`] in the manifest. | pub const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \ {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under  |
-| `V2` | src/capabilities/discovery.rs:12 | private | _no doc comment_ | static V2: LazyLock<Value> = LazyLock::new(\\|\\| { serde_json::from_str(crate::edit::v2::SCHEMA_JSON).expect("production V2 schema") }) |
-| `FORMATTING` | src/changes.rs:427 | private | _no doc comment_ | const FORMATTING: &[&str] = &[ "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "tblPrExChange", "tblGridChange", "trPrChange", "tcPrChange", "numbering |
-| `RETIRED` | src/cli.rs:1758 | pub | Every retired task name and flag (D13). | pub const RETIRED: &[Retired] = &[ Retired { old: "diff-render", now: "visual-diff", on: None, }, Retired { old: "text", now: "read", on: None, }, Retired { old |
-| `REMOVED_TASKS` | src/cli.rs:1824 | pub | Every task name that is gone and parses as the shorthand's first file again (`jubarte revisions x.docx` compares a file called `revisions`): a [`removed_task_note`] names what to say instead. | pub const REMOVED_TASKS: &[Retired] = &[Retired { old: "revisions", now: "changes", on: None, }] |
-| `REMOVED` | src/cli.rs:1847 | pub | Every flag that is gone: it no longer parses, and the error names what to say instead, where clap's own tip may name a lookalike (`compare --date` would be told `--dates`). | pub const REMOVED: &[Retired] = &[ Retired { old: "--date", now: "--datetime", on: Some("compare"), }, Retired { old: "--date", now: "--datetime", on: Some("dif |
-| `READ_OPTION_IDS` | src/cli.rs:2470 | private | Cross-option constraints whose meaning depends on an enum value or output extension. | const READ_OPTION_IDS: [&str; 11] = [ "track_changes", "comments", "dates", "no_page_markers", "paragraphs", "head", "tail", "changed", "by", "json", "tables",  |
-| `COMPARE_ONLY` | src/cli.rs:2888 | private | The ids of the options only a comparison takes; `jubarte FILE` refuses them. | const COMPARE_ONLY: [&str; 9] = [ "author", "datetime", "detail_threshold", "mode", "powertools_faithful", "no_paragraph_merge", "reference_doc", "critic", "res |
-| `RENDER_ONLY` | src/cli.rs:2901 | private | The [`RenderArgs`] ids: options of a PDF or PNG output only. | const RENDER_ONLY: [&str; 7] = [ "move_comments", "comment_notes", "changed_pages", "pages", "dpi", "revisions", "revision_palette", ] |
+| `OUTPUT_FORMATS` | src/capabilities.rs:338 | pub | The extensions each task's `-o` writes, by task name: Word, the agent view (`md`), a rendered PDF, PNG pages and the JSON snapshot. | pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[ ("compare", &["docx", "md", "pdf", "png", "json"]), ("convert", &["docx", "md", "pdf", "png", "json"]), ("read |
+| `DIFF_EXTENSIONS` | src/capabilities.rs:354 | pub(crate) | File extensions `diff -o` writes as text output: Markdown, plain text, and the two patch file extensions (`patch` and `diff`). | pub(crate) const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"] |
+| `IDS_NOTE` | src/capabilities.rs:358 | pub(crate) | One-line note describing how ids print, used as [`Ids::note`] in the manifest. | pub(crate) const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \ {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit |
+| `V2` | src/capabilities/discovery.rs:13 | private | _no doc comment_ | static V2: LazyLock<Value> = LazyLock::new(\\|\\| { serde_json::from_str(crate::edit::v2::SCHEMA_JSON).expect("production V2 schema") }) |
+| `FORMATTING` | src/changes.rs:1068 | private | _no doc comment_ | const FORMATTING: &[&str] = &[ "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "tblPrExChange", "tblGridChange", "trPrChange", "tcPrChange", "numbering |
+| `RETIRED` | src/cli.rs:2166 | pub | Every retired task name and flag (D13). | pub const RETIRED: &[Retired] = &[ Retired { old: "diff-render", now: "visual-diff", on: None, }, Retired { old: "text", now: "read", on: None, }, Retired { old |
+| `REMOVED_TASKS` | src/cli.rs:2232 | pub(crate) | Every task name that is gone and parses as the shorthand's first file again (`jubarte revisions x.docx` compares a file called `revisions`): a [`removed_task_note`] names what to say instead. | pub(crate) const REMOVED_TASKS: &[Retired] = &[Retired { old: "revisions", now: "changes", on: None, }] |
+| `REMOVED` | src/cli.rs:2255 | pub | Every flag that is gone: it no longer parses, and the error names what to say instead, where clap's own tip may name a lookalike (`compare --date` would be told `--dates`). | pub const REMOVED: &[Retired] = &[ Retired { old: "--date", now: "--datetime", on: Some("compare"), }, Retired { old: "--date", now: "--datetime", on: Some("dif |
+| `READ_OPTION_IDS` | src/cli.rs:2895 | private | Cross-option constraints whose meaning depends on an enum value or output extension. | const READ_OPTION_IDS: [&str; 11] = [ "track_changes", "comments", "dates", "no_page_markers", "paragraphs", "head", "tail", "changed", "by", "json", "tables",  |
+| `COMPARE_ONLY` | src/cli.rs:3335 | private | The ids of the options only a comparison takes; `jubarte FILE` refuses them. | const COMPARE_ONLY: [&str; 9] = [ "author", "datetime", "detail_threshold", "mode", "powertools_faithful", "no_paragraph_merge", "reference_doc", "critic", "res |
+| `RENDER_ONLY` | src/cli.rs:3348 | private | The [`RenderArgs`] ids: options of a PDF or PNG output only. | const RENDER_ONLY: [&str; 7] = [ "move_comments", "comment_notes", "changed_pages", "pages", "dpi", "revisions", "revision_palette", ] |
 | `CID` | src/comments.rs:33 | private | _no doc comment_ | const CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid" |
 | `CEX` | src/comments.rs:34 | private | _no doc comment_ | const CEX: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex" |
 | `PEOPLE_REL` | src/comments.rs:35 | private | _no doc comment_ | const PEOPLE_REL: &str = "http://schemas.microsoft.com/office/2011/relationships/people" |
@@ -61,22 +64,22 @@
 | `JUNCTION_GROW_RATIO` | src/comparer/cross_para.rs:831 | private | Size parity on lone shared-word evidence (`JunctionGrowRatio`). | const JUNCTION_GROW_RATIO: f64 = 1.0 / 3.0 |
 | `JUNCTION_PAIR_SCALE_CEILING` | src/comparer/cross_para.rs:833 | private | Grid bound of the junction pass (`JunctionPairScaleCeiling`). | const JUNCTION_PAIR_SCALE_CEILING: usize = 10_000 |
 | `FUNCTION_WORDS` | src/comparer/cross_para.rs:1474 | private | _no doc comment_ | const FUNCTION_WORDS: &[&str] = &[ "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "of", "in", "on", "at", "by", "for", "with", "to", "from", "as", "i |
-| `WORD_IGNORABLE_NAMESPACES` | src/comparer/finalize.rs:835 | private | Word's ignorable extension namespaces, with the prefix Word writes for each, in the order Word lists them in `mc:Ignorable`. | const WORD_IGNORABLE_NAMESPACES: [(&str, &str); 10] = [ ( "w14", "http://schemas.microsoft.com/office/word/2010/wordml", ), ( "w15", "http://schemas.microsoft.c |
-| `DONT_CONSOLIDATE` | src/comparer/finalize.rs:1038 | private | ── CoalesceAdjacentRunsWithIdenticalFormatting (PtOpenXmlUtil.ts:4458) ─────── Merges adjacent single-w:t runs with identical rPr into one run. _(from a code comment)_ | const DONT_CONSOLIDATE: &str = "DontConsolidate" |
-| `VALID` | src/comparer/finalize.rs:1314 | private | Valid CT_SdtPr w: children (ECMA-376). _(from a code comment)_ | const VALID: &[&str] = &[ "rPr", "alias", "lock", "placeholder", "showingPlcHdr", "dataBinding", "temporary", "id", "tag", "group", "comboBox", "date", "dropDow |
-| `BOILER` | src/comparer/finalize.rs:2620 | private | Shared significant tokens only (len≥5, not boilerplate). _(from a code comment)_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
-| `BOILER` | src/comparer/finalize.rs:7945 | private | _no doc comment_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
-| `SOLE_DEL_FOLD_MIN_JACCARD` | src/comparer/finalize.rs:7979 | private | Minimum body-text Jaccard to fold a pure-del into a pure-ins at an I…I D…D boundary. | const SOLE_DEL_FOLD_MIN_JACCARD: f64 = 0.12 |
-| `MULTI_DEL_GAP_MAX_DOC_FRACTION` | src/comparer/finalize.rs:7985 | private | Multi-del boundary fold (C1 / KNOWN ISSUE #2): when the I…I D…D gap covers more than this fraction of the container's body-word atoms **and** the boundary pair fails [`should_fold_ins_del_pair`], skip the fold so unrelated whole-document replacements stay pure-ins + pure-del (no mixed first p). | const MULTI_DEL_GAP_MAX_DOC_FRACTION: f64 = 0.60 |
-| `MULTI_DEL_GAP_MIN_WORDS_TO_SKIP` | src/comparer/finalize.rs:7988 | private | Absolute floor: short demos must still fold (file_54 / bullet_list). | const MULTI_DEL_GAP_MIN_WORDS_TO_SKIP: usize = 40 |
-| `SHORT_LIST_ITEM_MAX_WORDS` | src/comparer/finalize.rs:8104 | private | M308d (tight): skip fold for *short-item list-wholesale* pure-I/D. _(from a code comment)_ | const SHORT_LIST_ITEM_MAX_WORDS: usize = 12 |
-| `TBLPR_ORDER` | src/comparer/finalize.rs:10428 | private | `w:tblPr` child ranks (PtOpenXmlUtil.cs Order_tblPr) — shared between `wml_order_elements_per_standard`, [`synthesize_table_cell_margins`] and [`align_word_table_and_comment_chrome`] so the three can't drift apart. | const TBLPR_ORDER: [(&str, i32); 17] = [ ("tblStyle", 10), ("tblpPr", 20), ("tblOverlap", 30), ("bidiVisual", 40), ("tblStyleRowBandSize", 50), ("tblStyleColBan |
-| `CNF_FLAGS` | src/comparer/finalize.rs:11322 | private | _no doc comment_ | const CNF_FLAGS: [&str; 12] = [ "firstRow", "lastRow", "firstColumn", "lastColumn", "oddVBand", "evenVBand", "oddHBand", "evenHBand", "firstRowFirstColumn", "fi |
-| `DRAWING_NS` | src/comparer/finalize.rs:11445 | private | Strict DrawingML percent attributes ("0%" on a:scrgbClr r/g/b, "65%" on a:lumMod, "0%" defRPr baseline etc.): Transitional DrawingML types are per-thousand ints across the board, so any percent-suffixed attribute on a drawingml-family element is a Strict leftover (strict01's diagram and chart parts evidence). _(from a code comment)_ | const DRAWING_NS: [&str; 4] = [ "http://schemas.openxmlformats.org/drawingml/2006/main", "http://schemas.openxmlformats.org/drawingml/2006/diagram", "http://sch |
-| `TWIPS_ATTRS` | src/comparer/finalize.rs:11501 | private | Cell-margin children (w:tcMar / w:tblCellMar) carry @w:w in twips; the like-named border elements carry @w:sz (eighth-points) and never @w:w, so keying on (element local, attr) stays safe. _(from a code comment)_ | const TWIPS_ATTRS: [(&str, &[&str]); 22] = [ ("pgSz", &["w", "h"]), ("gridCol", &["w"]), ( "pgMar", &[ "top", "right", "bottom", "left", "header", "footer", "gu |
-| `BOILER` | src/comparer/finalize.rs:13687 | private | _no doc comment_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
-| `SHORT_OK` | src/comparer/finalize.rs:13805 | private | _no doc comment_ | const SHORT_OK: &[&str] = &["is", "of", "to", "be"] |
-| `BOILER` | src/comparer/finalize.rs:14119 | private | _no doc comment_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
+| `WORD_IGNORABLE_NAMESPACES` | src/comparer/finalize.rs:878 | private | Word's ignorable extension namespaces, with the prefix Word writes for each, in the order Word lists them in `mc:Ignorable`. | const WORD_IGNORABLE_NAMESPACES: [(&str, &str); 10] = [ ( "w14", "http://schemas.microsoft.com/office/word/2010/wordml", ), ( "w15", "http://schemas.microsoft.c |
+| `DONT_CONSOLIDATE` | src/comparer/finalize.rs:1080 | private | ── CoalesceAdjacentRunsWithIdenticalFormatting (PtOpenXmlUtil.ts:4458) ─────── Merges adjacent single-w:t runs with identical rPr into one run. _(from a code comment)_ | const DONT_CONSOLIDATE: &str = "DontConsolidate" |
+| `VALID` | src/comparer/finalize.rs:1356 | private | Valid CT_SdtPr w: children (ECMA-376). _(from a code comment)_ | const VALID: &[&str] = &[ "rPr", "alias", "lock", "placeholder", "showingPlcHdr", "dataBinding", "temporary", "id", "tag", "group", "comboBox", "date", "dropDow |
+| `BOILER` | src/comparer/finalize.rs:2662 | private | Shared significant tokens only (len≥5, not boilerplate). _(from a code comment)_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
+| `BOILER` | src/comparer/finalize.rs:7950 | private | _no doc comment_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
+| `SOLE_DEL_FOLD_MIN_JACCARD` | src/comparer/finalize.rs:7984 | private | Minimum body-text Jaccard to fold a pure-del into a pure-ins at an I…I D…D boundary. | const SOLE_DEL_FOLD_MIN_JACCARD: f64 = 0.12 |
+| `MULTI_DEL_GAP_MAX_DOC_FRACTION` | src/comparer/finalize.rs:7990 | private | Multi-del boundary fold (C1 / KNOWN ISSUE #2): when the I…I D…D gap covers more than this fraction of the container's body-word atoms **and** the boundary pair fails [`should_fold_ins_del_pair`], skip the fold so unrelated whole-document replacements stay pure-ins + pure-del (no mixed first p). | const MULTI_DEL_GAP_MAX_DOC_FRACTION: f64 = 0.60 |
+| `MULTI_DEL_GAP_MIN_WORDS_TO_SKIP` | src/comparer/finalize.rs:7993 | private | Absolute floor: short demos must still fold (file_54 / bullet_list). | const MULTI_DEL_GAP_MIN_WORDS_TO_SKIP: usize = 40 |
+| `SHORT_LIST_ITEM_MAX_WORDS` | src/comparer/finalize.rs:8109 | private | M308d (tight): skip fold for *short-item list-wholesale* pure-I/D. _(from a code comment)_ | const SHORT_LIST_ITEM_MAX_WORDS: usize = 12 |
+| `TBLPR_ORDER` | src/comparer/finalize.rs:10433 | private | `w:tblPr` child ranks (PtOpenXmlUtil.cs Order_tblPr) — shared between `wml_order_elements_per_standard`, [`synthesize_table_cell_margins`] and [`align_word_table_and_comment_chrome`] so the three can't drift apart. | const TBLPR_ORDER: [(&str, i32); 17] = [ ("tblStyle", 10), ("tblpPr", 20), ("tblOverlap", 30), ("bidiVisual", 40), ("tblStyleRowBandSize", 50), ("tblStyleColBan |
+| `CNF_FLAGS` | src/comparer/finalize.rs:11327 | private | _no doc comment_ | const CNF_FLAGS: [&str; 12] = [ "firstRow", "lastRow", "firstColumn", "lastColumn", "oddVBand", "evenVBand", "oddHBand", "evenHBand", "firstRowFirstColumn", "fi |
+| `DRAWING_NS` | src/comparer/finalize.rs:11450 | private | Strict DrawingML percent attributes ("0%" on a:scrgbClr r/g/b, "65%" on a:lumMod, "0%" defRPr baseline etc.): Transitional DrawingML types are per-thousand ints across the board, so any percent-suffixed attribute on a drawingml-family element is a Strict leftover (strict01's diagram and chart parts evidence). _(from a code comment)_ | const DRAWING_NS: [&str; 4] = [ "http://schemas.openxmlformats.org/drawingml/2006/main", "http://schemas.openxmlformats.org/drawingml/2006/diagram", "http://sch |
+| `TWIPS_ATTRS` | src/comparer/finalize.rs:11506 | private | Cell-margin children (w:tcMar / w:tblCellMar) carry @w:w in twips; the like-named border elements carry @w:sz (eighth-points) and never @w:w, so keying on (element local, attr) stays safe. _(from a code comment)_ | const TWIPS_ATTRS: [(&str, &[&str]); 22] = [ ("pgSz", &["w", "h"]), ("gridCol", &["w"]), ( "pgMar", &[ "top", "right", "bottom", "left", "header", "footer", "gu |
+| `BOILER` | src/comparer/finalize.rs:13709 | private | _no doc comment_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
+| `SHORT_OK` | src/comparer/finalize.rs:13827 | private | _no doc comment_ | const SHORT_OK: &[&str] = &["is", "of", "to", "be"] |
+| `BOILER` | src/comparer/finalize.rs:14141 | private | _no doc comment_ | const BOILER: &[&str] = &[ "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than", "then", "when", "what", "which", "into", "ove |
 | `SHORT_LIST_ITEM_MAX_CONTENT_UNITS` | src/comparer/lcs.rs:752 | private | M308c: Word pure-I/D list wholesale only when contentful items are short (bullet/number items). | const SHORT_LIST_ITEM_MAX_CONTENT_UNITS: usize = 12 |
 | `STAMP_CONFETTI_MAX_BODY_OVERLAP` | src/comparer/lcs.rs:1157 | private | When stamped pairs share substantial body vocabulary, Word runs full LCS — not stamp-confetti replace-rest. | const STAMP_CONFETTI_MAX_BODY_OVERLAP: f64 = 0.55 |
 | `RELATED_STAMP_MIN_BODY_TOKENS` | src/comparer/lcs.rs:1162 | private | Related stamped variants (file_175 charter v1/v2): both sides carry a substantial vocabulary and share most of it. | const RELATED_STAMP_MIN_BODY_TOKENS: usize = 40 |
@@ -103,12 +106,12 @@
 | `PARAGRAPH_WINDOW_CELL_CAP` | src/comparer/lcs.rs:9703 | private | Largest word-by-word table the paragraph resolver computes — about 5 000 words a side, every space being a unit; a longer pair keeps the run-by-run resolvers. | const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000 |
 | `TRACE` | src/comparer/lcs.rs:9863 | private | _no doc comment_ | static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new() |
 | `WORD_TABLE_CONTEXT` | src/comparer/lcs_table.rs:370 | private | These observed Word table-mesh families retain a phantom cell on one projection. _(from a code comment)_ | const WORD_TABLE_CONTEXT: &str = "WordTableMeshContext" |
-| `PREDELETE_STAMP_ORIG` | src/comparer/mod.rs:60 | pub | Side-stamp applied to A-side preserved deletions in Word-alignment mode so atomize never correlates them `Equal` against B's live text (a stale A history would otherwise miss M-MOVE/S1). | pub const PREDELETE_STAMP_ORIG: &str = "orig" |
-| `PREDELETE_STAMP_REV` | src/comparer/mod.rs:65 | pub | Sentinel stamp for B-side preserved (shared) deletions; readers gate strictly on `Some("orig")` and ignore `Some("rev")` so the gate fails closed when only the sentinel survives. | pub const PREDELETE_STAMP_REV: &str = "rev" |
-| `SECT_GEOMETRY` | src/comparer/mod.rs:237 | private | Save the original (body1) sectPr up front, keeping the page-geometry children (type/pgSz/pgMar/cols/titlePg/docGrid) AND doc A's header/footer references. _(from a code comment)_ | const SECT_GEOMETRY: [&str; 6] = ["type", "pgSz", "pgMar", "cols", "titlePg", "docGrid"] |
-| `DEFAULT_AUTHOR_FOR_REVISIONS` | src/comparer/mod.rs:1322 | pub | Default placeholder author when the caller does not override [`WmlComparerSettings::author_for_revisions`]; matches the C# `WmlComparerSettings.DefaultAuthorForRevisions`. | pub const DEFAULT_AUTHOR_FOR_REVISIONS: &str = "Open-Xml-PowerTools" |
-| `DEFAULT_DETAIL_THRESHOLD` | src/comparer/mod.rs:1412 | pub | Word-visual default for [`WmlComparerSettings::detail_threshold`] — the single source for the struct default, the CLI `--detail-threshold` default, and the CLI faithful-preset sentinel check. | pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02 |
-| `WORD_LEVEL_KEPT_RATIO` | src/comparer/mod.rs:1419 | pub | Word's threshold for marking one changed paragraph word-by-word instead of replacing it whole. | pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.15 |
+| `PREDELETE_STAMP_ORIG` | src/comparer/mod.rs:66 | pub | Side-stamp applied to A-side preserved deletions in Word-alignment mode so atomize never correlates them `Equal` against B's live text (a stale A history would otherwise miss M-MOVE/S1). | pub const PREDELETE_STAMP_ORIG: &str = "orig" |
+| `PREDELETE_STAMP_REV` | src/comparer/mod.rs:71 | pub | Sentinel stamp for B-side preserved (shared) deletions; readers gate strictly on `Some("orig")` and ignore `Some("rev")` so the gate fails closed when only the sentinel survives. | pub const PREDELETE_STAMP_REV: &str = "rev" |
+| `SECT_GEOMETRY` | src/comparer/mod.rs:243 | private | Save the original (body1) sectPr up front, keeping the page-geometry children (type/pgSz/pgMar/cols/titlePg/docGrid) AND doc A's header/footer references. _(from a code comment)_ | const SECT_GEOMETRY: [&str; 6] = ["type", "pgSz", "pgMar", "cols", "titlePg", "docGrid"] |
+| `DEFAULT_AUTHOR_FOR_REVISIONS` | src/comparer/mod.rs:1340 | pub | Default placeholder author when the caller does not override [`WmlComparerSettings::author_for_revisions`]; matches the C# `WmlComparerSettings.DefaultAuthorForRevisions`. | pub const DEFAULT_AUTHOR_FOR_REVISIONS: &str = "Open-Xml-PowerTools" |
+| `DEFAULT_DETAIL_THRESHOLD` | src/comparer/mod.rs:1430 | pub | Word-visual default for [`WmlComparerSettings::detail_threshold`] — the single source for the struct default, the CLI `--detail-threshold` default, and the CLI faithful-preset sentinel check. | pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02 |
+| `WORD_LEVEL_KEPT_RATIO` | src/comparer/mod.rs:1437 | pub | Word's threshold for marking one changed paragraph word-by-word instead of replacing it whole. | pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.15 |
 | `PPR_ORDER` | src/comparer/order_tables.rs:18 | pub | Schema ranks for `w:pPr` children (PtOpenXmlUtil `Order_pPr`). | pub const PPR_ORDER: &[(&str, i32)] = &[ ("pStyle", 10), ("keepNext", 20), ("keepLines", 30), ("pageBreakBefore", 40), ("framePr", 50), ("widowControl", 60), (" |
 | `NUMPR_ORDER` | src/comparer/order_tables.rs:63 | pub | Schema ranks for `w:numPr` children (`CT_NumPr` sequence). | pub const NUMPR_ORDER: &[(&str, i32)] = &[ ("ilvl", 10), ("numId", 20), ("numberingChange", 30), ("ins", 40), ] |
 | `RPR_ORDER` | src/comparer/order_tables.rs:73 | pub | Schema ranks for `w:rPr` children (PtOpenXmlUtil `Order_rPr`), with the `moveFrom`/`moveTo`/`ins`/`del`/`numberingChange` PowerTools divergences allowlisted in the schema oracle. | pub const RPR_ORDER: &[(&str, i32)] = &[ ("moveFrom", 5), ("moveTo", 7), ("ins", 10), ("del", 20), ("rStyle", 30), ("rFonts", 40), ("b", 50), ("bCs", 60), ("i", |
@@ -116,7 +119,7 @@
 | `MAX_CARRY_DEPTH` | src/comparer/parts.rs:588 | private | Nesting a carried part may reach: header to chart to embedding is three. | const MAX_CARRY_DEPTH: usize = 8 |
 | `WML_DEFAULT_XMLNS` | src/comparer/preprocess.rs:565 | private | _no doc comment_ | const WML_DEFAULT_XMLNS: &str = " xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" |
 | `REV_ID` | src/comparer/produce.rs:30 | private | _no doc comment_ | static REV_ID: AtomicU64 = AtomicU64::new(1) |
-| `TBLPR_CHILD_ORDER` | src/comparer/produce.rs:1626 | private | CT_TblPrBase child order (wml.xsd). | const TBLPR_CHILD_ORDER: &[&str] = &[ "tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize", "tblW", "jc", "tblCellSpac |
+| `TBLPR_CHILD_ORDER` | src/comparer/produce.rs:1625 | private | CT_TblPrBase child order (wml.xsd). | const TBLPR_CHILD_ORDER: &[&str] = &[ "tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize", "tblW", "jc", "tblCellSpac |
 | `WORD_BREAK_ELEMENTS` | src/comparer/tables.rs:38 | pub | `WordBreakElements` (WmlComparer.ts :8469) — a non-`w:t` content atom whose name is in this set forces a word boundary during atomization. | pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(\\|\\| { set(&[ W::p_pr(), W::name("tab"), W::name("br"), W::name("continuationSeparator" |
 | `ALLOWABLE_RUN_CHILDREN` | src/comparer/tables.rs:71 | pub | `AllowableRunChildren` (WmlComparer.ts :8998) — run-level leaves emitted as a single verbatim atom by `super::atomize::recurse`. | pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(\\|\\| { set(&[ W::name("br"), W::drawing(), W::name("cr"), W::name("dayLong"), W::nam |
 | `ELEMENTS_TO_THROW_AWAY` | src/comparer/tables.rs:101 | pub | `ElementsToThrowAway` (WmlComparer.ts :9023) — the atomizer descends into these elements (or skips over them) but never emits an atom for them: bookmarks, proofErr, table/section properties, move-range markers, and the legacy separator/continuationSeparator inside a notes part. | pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(\\|\\| { set(&[ W::bookmark_start(), W::bookmark_end(), W::name("commentRangeStart"),  |
@@ -168,138 +171,138 @@
 | `FONTS` | src/convert/mod.rs:66 | private | _no doc comment_ | static FONTS: LazyLock<Fonts<'static>> = LazyLock::new(Fonts::new) |
 | `RevisionPalette::CONVENTIONAL` | src/convert/mod.rs:172 | pub | The legal-redline convention, as Litera Compare sets Word's track changes: an insertion or deletion is marked once (blue underline, red strike) and a move twice, in green (double strike where it left, double underline where it landed), so a move never reads as an insertion by its colour alone. | pub const CONVENTIONAL: Self = Self { deleted: RevisionMark { color: [0xFF, 0x00, 0x00], strike: MarkLines::Single, underline: MarkLines::None, }, inserted: Rev |
 | `MAX_PNG_DPI` | src/convert/mod.rs:570 | pub | Highest PNG resolution [`render`] accepts (`1.0..=1200.0`). | pub const MAX_PNG_DPI: f32 = 1200.0 |
-| `PTAB_CENTER` | src/convert/mod.rs:1282 | private | A header/footer `w:ptab alignment="center"` stop: the middle of the text area, resolved when the line paints (`draw_line_of_runs`). | const PTAB_CENTER: f32 = -1.0 |
-| `PTAB_RIGHT` | src/convert/mod.rs:1284 | private | A header/footer `w:ptab alignment="right"` stop: the right margin. | const PTAB_RIGHT: f32 = -2.0 |
-| `FOOTNOTE_SEP_W` | src/convert/mod.rs:2042 | private | Word's note separator rule is 2in (144pt) wide. | const FOOTNOTE_SEP_W: f32 = 144.0 |
-| `TXBX_INSETS` | src/convert/mod.rs:2557 | private | Word's default text box insets: 0.1in left/right, 0.05in top/bottom. | const TXBX_INSETS: [f32; 4] = [7.2, 3.6, 7.2, 3.6] |
-| `LABEL_OVERRUN` | src/convert/mod.rs:3182 | private | How far a list label may pass the indent before its suffix tab moves the text to the next stop: past rounding, not a real overrun. | const LABEL_OVERRUN: f32 = 0.05 |
-| `MIN_SIDE_FLOAT_ROOM_PT` | src/convert/mod.rs:3843 | private | Narrower than this beside a floating table, no text fits: Word moves the line below the table. | const MIN_SIDE_FLOAT_ROOM_PT: f32 = 18.0 |
-| `MIN_SIDE_FRAME_ROOM_PT` | src/convert/mod.rs:3847 | private | A text frame needs a wider gap: text goes under it through an inch or less (live Word: 72pt under, 76pt beside). | const MIN_SIDE_FRAME_ROOM_PT: f32 = 72.5 |
-| `ONES` | src/convert/mod.rs:5905 | private | _no doc comment_ | const ONES: [&str; 20] = [ "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "F |
-| `TENS` | src/convert/mod.rs:5927 | private | _no doc comment_ | const TENS: [&str; 10] = [ "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety", ] |
-| `MARKS` | src/convert/mod.rs:6015 | private | _no doc comment_ | const MARKS: [&str; 4] = ["*", "†", "‡", "§"] |
-| `DIGITS` | src/convert/mod.rs:6021 | private | _no doc comment_ | const DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
-| `IDEOGRAPH_STEMS` | src/convert/mod.rs:6035 | private | Heavenly stems. | const IDEOGRAPH_STEMS: [char; 10] = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'] |
-| `IDEOGRAPH_BRANCHES` | src/convert/mod.rs:6037 | private | Earthly branches. | const IDEOGRAPH_BRANCHES: [char; 12] = [ '子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥', ] |
-| `JAPANESE` | src/convert/mod.rs:6060 | private | _no doc comment_ | const JAPANESE: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
-| `LEGAL` | src/convert/mod.rs:6062 | private | Traditional legal digits: [MS-DOCX] U+58F9, U+8CB3, U+53C3, … _(from a code comment)_ | const LEGAL: [char; 10] = ['零', '壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖'] |
-| `ENCLOSED` | src/convert/mod.rs:6102 | private | U+3220..=U+3229 are ㈠–㈩. _(from a code comment)_ | const ENCLOSED: [char; 10] = ['㈠', '㈡', '㈢', '㈣', '㈤', '㈥', '㈦', '㈧', '㈨', '㈩'] |
-| `CHINESE_DIGITS` | src/convert/mod.rs:6110 | private | _no doc comment_ | const CHINESE_DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
-| `AIUEO` | src/convert/mod.rs:6198 | private | MS-DOCX aiueo: half-width katakana ｱｲｳ… (U+FF71). | const AIUEO: [char; 46] = [ 'ｱ', 'ｲ', 'ｳ', 'ｴ', 'ｵ', 'ｶ', 'ｷ', 'ｸ', 'ｹ', 'ｺ', 'ｻ', 'ｼ', 'ｽ', 'ｾ', 'ｿ', 'ﾀ', 'ﾁ', 'ﾂ', 'ﾃ', 'ﾄ', 'ﾅ', 'ﾆ', 'ﾇ', 'ﾈ', 'ﾉ', 'ﾊ', 'ﾋ |
-| `IROHA` | src/convert/mod.rs:6205 | private | MS-DOCX iroha: half-width ｲﾛﾊ… (U+FF72). | const IROHA: [char; 47] = [ 'ｲ', 'ﾛ', 'ﾊ', 'ﾆ', 'ﾎ', 'ﾍ', 'ﾄ', 'ﾁ', 'ﾘ', 'ﾇ', 'ﾙ', 'ｦ', 'ﾜ', 'ｶ', 'ﾖ', 'ﾀ', 'ﾚ', 'ｿ', 'ﾂ', 'ﾈ', 'ﾅ', 'ﾗ', 'ﾑ', 'ｳ', 'ｲ', 'ﾉ', 'ｵ |
-| `DIGITS` | src/convert/mod.rs:6213 | private | _no doc comment_ | const DIGITS: [char; 10] = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'] |
-| `GANADA` | src/convert/mod.rs:6221 | private | MS-DOCX ganada: U+AC00, U+B098, U+B2E4… 가나다라마바사아자차카타파하. | const GANADA: [char; 14] = [ '가', '나', '다', '라', '마', '바', '사', '아', '자', '차', '카', '타', '파', '하', ] |
-| `CHOSUNG` | src/convert/mod.rs:6226 | private | MS-DOCX chosung: U+3131, U+3134, U+3137… ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ. | const CHOSUNG: [char; 14] = [ 'ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ', ] |
-| `DECIMAL_ENCLOSED_CIRCLE` | src/convert/mod.rs:6231 | private | MS-DOCX decimalEnclosedCircle: U+2460…U+2473 (①–⑳). | const DECIMAL_ENCLOSED_CIRCLE: [char; 20] = [ '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳', ] |
-| `DECIMAL_ENCLOSED_PAREN` | src/convert/mod.rs:6236 | private | MS-DOCX decimalEnclosedParen: U+2474…U+2487 (⑴–⒇). | const DECIMAL_ENCLOSED_PAREN: [char; 20] = [ '⑴', '⑵', '⑶', '⑷', '⑸', '⑹', '⑺', '⑻', '⑼', '⑽', '⑾', '⑿', '⒀', '⒁', '⒂', '⒃', '⒄', '⒅', '⒆', '⒇', ] |
-| `DECIMAL_ENCLOSED_FULLSTOP` | src/convert/mod.rs:6241 | private | MS-DOCX decimalEnclosedFullstop: U+2488…U+249B (⒈–⒛). | const DECIMAL_ENCLOSED_FULLSTOP: [char; 20] = [ '⒈', '⒉', '⒊', '⒋', '⒌', '⒍', '⒎', '⒏', '⒐', '⒑', '⒒', '⒓', '⒔', '⒕', '⒖', '⒗', '⒘', '⒙', '⒚', '⒛', ] |
-| `HUNDREDS` | src/convert/mod.rs:6263 | private | _no doc comment_ | const HUNDREDS: [&str; 9] = ["ק", "ר", "ש", "ת", "תק", "תר", "תש", "תת", "תתק"] |
-| `TENS` | src/convert/mod.rs:6277 | private | _no doc comment_ | const TENS: [char; 9] = ['י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'] |
-| `ONES` | src/convert/mod.rs:6278 | private | _no doc comment_ | const ONES: [char; 9] = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'] |
-| `HEBREW2` | src/convert/mod.rs:6291 | private | MS-DOCX hebrew2: Hebrew alphabet אבג… (U+05D0, U+05D1, U+05D2). | const HEBREW2: [char; 22] = [ 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ', 'ק', 'ר', 'ש', 'ת', ] |
-| `ARABIC_ALPHA` | src/convert/mod.rs:6297 | private | MS-DOCX arabicAlpha: أ ب ت… (U+0623, U+0628, U+062A). | const ARABIC_ALPHA: [char; 28] = [ 'أ', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ', 'ف', 'ق', 'ك', 'ل', 'م', 'ن',  |
-| `ARABIC_ABJAD` | src/convert/mod.rs:6303 | private | MS-DOCX arabicAbjad: أ ب ج… (U+0623, U+0628, U+062C). | const ARABIC_ABJAD: [char; 28] = [ 'أ', 'ب', 'ج', 'د', 'ه', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر', 'ش', 'ت', 'ث', 'خ', 'ذ',  |
-| `RUSSIAN_LOWER` | src/convert/mod.rs:6309 | private | MS-DOCX russianLower: абв… (U+0430). | const RUSSIAN_LOWER: [char; 33] = [ 'а', 'б', 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', |
-| `RUSSIAN_UPPER` | src/convert/mod.rs:6314 | private | MS-DOCX russianUpper: АБВ… (U+0410). | const RUSSIAN_UPPER: [char; 33] = [ 'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', |
-| `DIGITS` | src/convert/mod.rs:6321 | private | _no doc comment_ | const DIGITS: [char; 10] = ['๐', '๑', '๒', '๓', '๔', '๕', '๖', '๗', '๘', '๙'] |
-| `THAI_LETTERS` | src/convert/mod.rs:6329 | private | MS-DOCX/ECMA thaiLetters: ก ข ค… (U+0E01, U+0E02, U+0E04). | const THAI_LETTERS: [char; 42] = [ 'ก', 'ข', 'ค', 'ฆ', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ', 'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท', 'ธ', 'น', 'บ', 'ป',  |
-| `ONES` | src/convert/mod.rs:6337 | private | _no doc comment_ | const ONES: [&str; 10] = [ "", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า", ] |
-| `DIGITS` | src/convert/mod.rs:6375 | private | _no doc comment_ | const DIGITS: [char; 10] = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'] |
-| `HINDI_VOWELS` | src/convert/mod.rs:6383 | private | MS-DOCX hindiVowels: क ख ग… (U+0915). | const HINDI_VOWELS: [char; 33] = [ 'क', 'ख', 'ग', 'घ', 'ङ', 'च', 'छ', 'ज', 'झ', 'ञ', 'ट', 'ठ', 'ड', 'ढ', 'ण', 'त', 'थ', 'द', 'ध', 'न', 'प', 'फ', 'ब', 'भ', 'म',  |
-| `HINDI_CONSONANTS` | src/convert/mod.rs:6389 | private | MS-DOCX hindiConsonants: अ आ इ… (U+0905). | const HINDI_CONSONANTS: [char; 11] = ['अ', 'आ', 'इ', 'ई', 'उ', 'ऊ', 'ऋ', 'ए', 'ऐ', 'ओ', 'औ'] |
-| `WORDS` | src/convert/mod.rs:6393 | private | _no doc comment_ | const WORDS: [&str; 21] = [ "शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ", "दस", "ग्यारह", "बारह", "तेरह", "चौदह", "पंद्रह", "सोलह", "सत्रह |
-| `DIGITS` | src/convert/mod.rs:6426 | private | _no doc comment_ | const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"] |
-| `UNITS` | src/convert/mod.rs:6427 | private | _no doc comment_ | const UNITS: [(u32, &str); 3] = [(1000, "천"), (100, "백"), (10, "십")] |
-| `DIGITS` | src/convert/mod.rs:6451 | private | _no doc comment_ | const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"] |
-| `DIGITS` | src/convert/mod.rs:6460 | private | _no doc comment_ | const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
-| `ONES` | src/convert/mod.rs:6469 | private | _no doc comment_ | const ONES: [&str; 10] = [ "", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉", ] |
-| `TENS` | src/convert/mod.rs:6472 | private | _no doc comment_ | const TENS: [&str; 10] = [ "", "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔", ] |
-| `ALPHA_LABEL_MAX` | src/convert/mod.rs:6492 | pub(crate) | The last letter label Word writes, thirty z's. | pub(crate) const ALPHA_LABEL_MAX: u32 = 26 * 30 |
-| `ROMAN_LABEL_MAX` | src/convert/mod.rs:6494 | pub(crate) | The last Roman numeral Word writes. | pub(crate) const ROMAN_LABEL_MAX: u32 = 32767 |
-| `MAP` | src/convert/mod.rs:6514 | private | _no doc comment_ | const MAP: &[(u32, &str)] = &[ (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"), (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), |
-| `TEMPLATE_NORMAL` | src/convert/mod.rs:7207 | private | The stock Normal.dotm's Normal as Word resolves it over the template's docDefaults: theme minor font, 12pt, kern 1pt, after=160, line=278. | const TEMPLATE_NORMAL: &str = "<w:name w:val=\"Normal\"/><w:qFormat/>\ <w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\ <w:rPr><w |
-| `WORD_COMPAT_SETTING_URI` | src/convert/mod.rs:7264 | private | The setting is keyed by `name` *and* `uri`: another vendor's `compatibilityMode` under its own URI is not Word's. | const WORD_COMPAT_SETTING_URI: &str = "http://schemas.microsoft.com/office/word" |
-| `TABLE` | src/convert/mod.rs:7831 | private | _no doc comment_ | const TABLE: [([u8; 3], [u8; 3]); 10] = [ ([0xD1, 0x34, 0x38], [248, 220, 221]), ([0x00, 0x78, 0xD4], [213, 237, 255]), ([0x5C, 0x2E, 0x91], [234, 223, 244]), ( |
-| `MARGIN` | src/convert/mod.rs:7944 | private | _no doc comment_ | const MARGIN: f32 = 72.0 |
-| `HEADING` | src/convert/mod.rs:7945 | private | _no doc comment_ | const HEADING: f32 = 14.0 |
-| `SIZE` | src/convert/mod.rs:7946 | private | _no doc comment_ | const SIZE: f32 = 10.0 |
-| `INDENT` | src/convert/mod.rs:7947 | private | _no doc comment_ | const INDENT: f32 = 18.0 |
-| `PITCH` | src/convert/mod.rs:7948 | private | _no doc comment_ | const PITCH: f32 = 1.25 |
-| `GAP` | src/convert/mod.rs:7949 | private | _no doc comment_ | const GAP: f32 = 8.0 |
-| `BOX_LEFT` | src/convert/mod.rs:8197 | private | _no doc comment_ | const BOX_LEFT: f32 = 16.67 |
-| `BOX_RIGHT_GAP` | src/convert/mod.rs:8198 | private | _no doc comment_ | const BOX_RIGHT_GAP: f32 = 3.4 |
-| `INSET` | src/convert/mod.rs:8199 | private | _no doc comment_ | const INSET: f32 = 3.4 |
-| `STROKE` | src/convert/mod.rs:8200 | private | _no doc comment_ | const STROKE: f32 = 0.358 |
-| `CONNECTOR` | src/convert/mod.rs:8201 | private | _no doc comment_ | const CONNECTOR: f32 = 0.179 |
-| `BRACKET_OFF` | src/convert/mod.rs:8202 | private | _no doc comment_ | const BRACKET_OFF: f32 = 0.09 |
-| `BRACKET_SERIF` | src/convert/mod.rs:8203 | private | _no doc comment_ | const BRACKET_SERIF: f32 = 0.18 |
-| `DOT` | src/convert/mod.rs:8204 | private | _no doc comment_ | const DOT: f32 = 0.5376 |
-| `STACK_GAP` | src/convert/mod.rs:8205 | private | _no doc comment_ | const STACK_GAP: f32 = 0.717 |
-| `PANE_LEAD` | src/convert/mod.rs:8206 | private | _no doc comment_ | const PANE_LEAD: f32 = 3.5 |
-| `ELBOW_DROP` | src/convert/mod.rs:8207 | private | _no doc comment_ | const ELBOW_DROP: f32 = 4.6 |
-| `CORNER` | src/convert/mod.rs:8208 | private | _no doc comment_ | const CORNER: f32 = 2.4 |
-| `FIRST_LINE_TOP` | src/convert/mod.rs:8209 | private | _no doc comment_ | const FIRST_LINE_TOP: f32 = 2.67 |
-| `BOX_PAD` | src/convert/mod.rs:8210 | private | _no doc comment_ | const BOX_PAD: f32 = 4.31 |
-| `PITCH` | src/convert/mod.rs:8211 | private | _no doc comment_ | const PITCH: f32 = 1.236 |
-| `WORD_MAX_TABLE_RIGHT` | src/convert/mod.rs:9870 | private | Word's widest page, 22in: no table ends further right of the margin. | const WORD_MAX_TABLE_RIGHT: f32 = 1584.0 |
-| `WORD_SQUEEZED_COL` | src/convert/mod.rs:9872 | private | What Word leaves each column past the 22in limit. | const WORD_SQUEEZED_COL: f32 = 1.4 |
-| `BOOKMARK_NOT_DEFINED` | src/convert/mod.rs:12015 | private | Word Save-as-PDF result for `PAGEREF` whose bookmark is gone (`_Toc218523836` / `_Toc218523837` on sd_2517 / file_22). | const BOOKMARK_NOT_DEFINED: &str = "Error! Bookmark not defined." |
-| `REF_NOT_FOUND` | src/convert/mod.rs:12017 | private | Word Save-as-PDF result for `REF` whose bookmark is gone. | const REF_NOT_FOUND: &str = "Error! Reference source not found." |
-| `KINDS` | src/convert/mod.rs:12164 | private | _no doc comment_ | const KINDS: [&str; 6] = ["NUMPAGES", "SECTION", "STYLEREF", "REF", "DATE", "SEQ"] |
-| `MONTHS_FULL` | src/convert/mod.rs:12233 | private | _no doc comment_ | const MONTHS_FULL: [&str; 12] = [ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December", ] |
-| `MONTHS_ABBR` | src/convert/mod.rs:12247 | private | _no doc comment_ | const MONTHS_ABBR: [&str; 12] = [ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", ] |
-| `WEEKDAYS_FULL` | src/convert/mod.rs:12250 | private | _no doc comment_ | const WEEKDAYS_FULL: [&str; 7] = [ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", ] |
-| `WEEKDAYS_ABBR` | src/convert/mod.rs:12259 | private | _no doc comment_ | const WEEKDAYS_ABBR: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] |
-| `RENUMBER_AUTHOR` | src/convert/mod.rs:12899 | private | The author Word charges a list's renumbering to: the next ink after the document's own authors (probe lbl0930: msi's 394146, then 0B6A0B). | const RENUMBER_AUTHOR: &str = "\u{1}renumbered" |
-| `STALE_SPAN_SLACK_PT` | src/convert/mod.rs:14137 | private | _no doc comment_ | const STALE_SPAN_SLACK_PT: f32 = 20.0 |
-| `AuthorColors::PALETTE` | src/convert/mod.rs:15060 | private | _no doc comment_ | const PALETTE: [u32; 20] = [ 0xD13438, 0x0078D4, 0x5C2E91, 0x498205, 0xCC3595, 0x7160E8, 0x038387, 0x6D5700, 0xCF0F1F, 0x4E6AED, 0xB146C2, 0x394146, 0x0B6A0B, 0 |
-| `HF_REV_COLOR` | src/convert/mod.rs:15088 | private | Header/footer revisions take the first author's ink (`AuthorColors`). | const HF_REV_COLOR: [f32; 3] = [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0] |
-| `MATH` | src/convert/mod.rs:15829 | private | _no doc comment_ | const MATH: &str = "\"http://schemas.openxmlformats.org/officeDocument/2006/math\"" |
-| `MARKED` | src/convert/mod.rs:15865 | private | _no doc comment_ | const MARKED: [&str; 4] = [ "rPrChange", "commentRangeStart", "commentRangeEnd", "commentReference", ] |
-| `PAGE_BREAK_MARK` | src/convert/mod.rs:16095 | private | A body run's text keeps its page breaks as `PAGE_BREAK_MARK`, so its paragraph can split there (`split_page_breaks`, which removes every mark). | const PAGE_BREAK_MARK: char = '\u{FDD0}' |
-| `COLUMN_BREAK_MARK` | src/convert/mod.rs:16099 | private | A body run's column break, split like `PAGE_BREAK_MARK`: the text after it opens the next column (live Word, 019d92d9's continuous columns). | const COLUMN_BREAK_MARK: char = '\u{FDD1}' |
-| `CHECKBOX_SPACE` | src/convert/mod.rs:16106 | private | An em space: a FORMCHECKBOX's advance at 115% scaling (see `TextRun::checkbox`). | const CHECKBOX_SPACE: &str = "\u{2003}" |
-| `VML_BOXES` | src/convert/mod.rs:19176 | private | VML elements that carry their own `style` box (and so their own position) around a `v:imagedata`. | const VML_BOXES: [&str; 6] = ["shape", "rect", "roundrect", "oval", "image", "group"] |
-| `HF_LINE_BREAK` | src/convert/mod.rs:21507 | private | _no doc comment_ | const HF_LINE_BREAK: &str = "\n" |
-| `Layout::W` | src/convert/mod.rs:25669 | private | _no doc comment_ | const W: f32 = 0.72 |
-| `Layout::FULL` | src/convert/mod.rs:29611 | private | _no doc comment_ | const FULL: f32 = 21_600_000.0 |
-| `NUMPAGES_MARK` | src/convert/mod.rs:32308 | private | _no doc comment_ | const NUMPAGES_MARK: &str = "@@N@@" |
-| `CHAP_PAGE_MARK` | src/convert/mod.rs:32309 | private | _no doc comment_ | const CHAP_PAGE_MARK: &str = "@@P@@" |
-| `Squeeze::NONE` | src/convert/mod.rs:32973 | private | _no doc comment_ | const NONE: Self = Self { share: 0.0, word_cap: false, face_bound: false, line_share: 0.0, } |
-| `JUSTIFY_SQUEEZE` | src/convert/mod.rs:33002 | private | Word 2013+ layout (compatibilityMode 15) keeps a justified line's last word by narrowing its spaces, up to a quarter of their total width (Word 16 probes 2026-10-03, bench `scripts/probe_justify*.py`: Calibri, Times, Cambria, Arial, Tahoma, Verdana, 4 to 25 spaces, every boundary between 0.244 and 0.251 of the spaces)... | const JUSTIFY_SQUEEZE: Squeeze = Squeeze { share: 0.25, word_cap: true, face_bound: false, line_share: 0.0, } |
-| `WP_SQUEEZE` | src/convert/mod.rs:33020 | private | WordPerfect justification (`w:compat/w:wpJustification`, the Texas statutes' compat set): a justified line keeps its last word while its natural width is within 1.04 of the measure, whatever its spaces (3 or 21) or the word's length, and paints every advance narrower alike. | const WP_SQUEEZE: Squeeze = Squeeze { share: 0.0, word_cap: false, face_bound: false, line_share: 0.04, } |
-| `SQUEEZE_WORD_SHARE` | src/convert/mod.rs:33035 | private | The second bound of `JUSTIFY_SQUEEZE`: the overflow may be at most this share of the last word plus one space. | const SQUEEZE_WORD_SHARE: f32 = 0.345 |
-| `PUNCT_SQUEEZE` | src/convert/mod.rs:33041 | private | Before compatibility mode 15, `compressPunctuation` lets a line of any alignment keep its last word on spaces up to a fifth narrower, however short the word (Word 16 probes, Times 12 compat 14: 19.97% fits, 20.3% moves the word; a 26.7pt word keeps a 17.2pt overflow). | const PUNCT_SQUEEZE: Squeeze = Squeeze { share: 0.2, word_cap: false, face_bound: true, line_share: 0.0, } |
-| `STEPS` | src/convert/mod.rs:34284 | private | _no doc comment_ | const STEPS: i32 = 24 |
-| `STEPS` | src/convert/mod.rs:34561 | private | OOXML flowChartTerminator in 21600 space: stadium, rx=3475, ry=10800. _(from a code comment)_ | const STEPS: i32 = 8 |
-| `ST` | src/convert/mod.rs:35298 | private | OOXML flowChartDelay: M l,t L hc,t arcTo wd2,hd2 stAng=3cd4 swAng=cd2 L l,b Z. _(from a code comment)_ | const ST: f32 = 16_200_000.0 |
-| `SW` | src/convert/mod.rs:35299 | private | _no doc comment_ | const SW: f32 = 10_800_000.0 |
-| `ST_R` | src/convert/mod.rs:35407 | private | OOXML flowChartOnlineStorage in 6×6 space: horizontal cylinder, right arc stAng=3cd4 swAng=-cd2, left arc stAng=cd4 swAng=cd2. _(from a code comment)_ | const ST_R: f32 = 16_200_000.0 |
-| `SW_R` | src/convert/mod.rs:35408 | private | _no doc comment_ | const SW_R: f32 = -10_800_000.0 |
-| `ST_L` | src/convert/mod.rs:35409 | private | _no doc comment_ | const ST_L: f32 = 5_400_000.0 |
-| `SW_L` | src/convert/mod.rs:35410 | private | _no doc comment_ | const SW_L: f32 = 10_800_000.0 |
-| `ST` | src/convert/mod.rs:35447 | private | OOXML flowChartDisplay in 6×6 space: pointed left, right semicircle. _(from a code comment)_ | const ST: f32 = 16_200_000.0 |
-| `SW` | src/convert/mod.rs:35448 | private | _no doc comment_ | const SW: f32 = 10_800_000.0 |
-| `PW` | src/convert/mod.rs:35486 | private | OOXML cloud path w=h=43200: 11 arcTo lobes, then close. _(from a code comment)_ | const PW: f32 = 43_200.0 |
-| `ARCS` | src/convert/mod.rs:35490 | private | _no doc comment_ | const ARCS: [(f32, f32, f32, f32); 11] = [ (6_753.0, 9_190.0, -11_429_249.0, 7_426_832.0), (5_333.0, 7_267.0, -8_646_143.0, 5_396_714.0), (4_365.0, 5_945.0, -8_ |
-| `PW` | src/convert/mod.rs:35760 | private | OOXML lightningBolt path w=h=21600. _(from a code comment)_ | const PW: f32 = 21_600.0 |
-| `CD4` | src/convert/mod.rs:35876 | private | OOXML plaque adj=16667: square with concave quarter-circles at corners. _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
-| `CD2` | src/convert/mod.rs:35877 | private | _no doc comment_ | const CD2: f32 = 10_800_000.0 |
-| `CD3_4` | src/convert/mod.rs:35878 | private | _no doc comment_ | const CD3_4: f32 = 16_200_000.0 |
-| `ST` | src/convert/mod.rs:35898 | private | OOXML chord adj1=2700000 adj2=16200000: 225° arc then close (no pie centre). _(from a code comment)_ | const ST: f32 = 2_700_000.0 |
-| `SW` | src/convert/mod.rs:35899 | private | _no doc comment_ | const SW: f32 = 13_500_000.0 |
-| `ST` | src/convert/mod.rs:35912 | private | OOXML arc adj1=16200000 adj2=0: 90° wedge from 12 o'clock clockwise to 3. _(from a code comment)_ | const ST: f32 = 16_200_000.0 |
-| `SW` | src/convert/mod.rs:35913 | private | _no doc comment_ | const SW: f32 = 5_400_000.0 |
-| `CD4` | src/convert/mod.rs:35940 | private | OOXML round1Rect adj=16667: rectangle with a 90° arc at top-right. _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
-| `CD3_4` | src/convert/mod.rs:35941 | private | _no doc comment_ | const CD3_4: f32 = 16_200_000.0 |
-| `CD4` | src/convert/mod.rs:35972 | private | OOXML round2SameRect adj1=16667 adj2=0: both top corners rounded; bottom corners stay square (adj2 radius is 0). _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
-| `CD2` | src/convert/mod.rs:35973 | private | _no doc comment_ | const CD2: f32 = 10_800_000.0 |
-| `CD3_4` | src/convert/mod.rs:35974 | private | _no doc comment_ | const CD3_4: f32 = 16_200_000.0 |
-| `CD4` | src/convert/mod.rs:36008 | private | OOXML round2DiagRect adj1=16667 adj2=0: round top-left and bottom-right; the other two corners stay square (adj2 radius is 0). _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
+| `PTAB_CENTER` | src/convert/mod.rs:1283 | private | A header/footer `w:ptab alignment="center"` stop: the middle of the text area, resolved when the line paints (`draw_line_of_runs`). | const PTAB_CENTER: f32 = -1.0 |
+| `PTAB_RIGHT` | src/convert/mod.rs:1285 | private | A header/footer `w:ptab alignment="right"` stop: the right margin. | const PTAB_RIGHT: f32 = -2.0 |
+| `FOOTNOTE_SEP_W` | src/convert/mod.rs:2043 | private | Word's note separator rule is 2in (144pt) wide. | const FOOTNOTE_SEP_W: f32 = 144.0 |
+| `TXBX_INSETS` | src/convert/mod.rs:2558 | private | Word's default text box insets: 0.1in left/right, 0.05in top/bottom. | const TXBX_INSETS: [f32; 4] = [7.2, 3.6, 7.2, 3.6] |
+| `LABEL_OVERRUN` | src/convert/mod.rs:3183 | private | How far a list label may pass the indent before its suffix tab moves the text to the next stop: past rounding, not a real overrun. | const LABEL_OVERRUN: f32 = 0.05 |
+| `MIN_SIDE_FLOAT_ROOM_PT` | src/convert/mod.rs:3844 | private | Narrower than this beside a floating table, no text fits: Word moves the line below the table. | const MIN_SIDE_FLOAT_ROOM_PT: f32 = 18.0 |
+| `MIN_SIDE_FRAME_ROOM_PT` | src/convert/mod.rs:3848 | private | A text frame needs a wider gap: text goes under it through an inch or less (live Word: 72pt under, 76pt beside). | const MIN_SIDE_FRAME_ROOM_PT: f32 = 72.5 |
+| `ONES` | src/convert/mod.rs:5906 | private | _no doc comment_ | const ONES: [&str; 20] = [ "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "F |
+| `TENS` | src/convert/mod.rs:5928 | private | _no doc comment_ | const TENS: [&str; 10] = [ "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety", ] |
+| `MARKS` | src/convert/mod.rs:6016 | private | _no doc comment_ | const MARKS: [&str; 4] = ["*", "†", "‡", "§"] |
+| `DIGITS` | src/convert/mod.rs:6022 | private | _no doc comment_ | const DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
+| `IDEOGRAPH_STEMS` | src/convert/mod.rs:6036 | private | Heavenly stems. | const IDEOGRAPH_STEMS: [char; 10] = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'] |
+| `IDEOGRAPH_BRANCHES` | src/convert/mod.rs:6038 | private | Earthly branches. | const IDEOGRAPH_BRANCHES: [char; 12] = [ '子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥', ] |
+| `JAPANESE` | src/convert/mod.rs:6061 | private | _no doc comment_ | const JAPANESE: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
+| `LEGAL` | src/convert/mod.rs:6063 | private | Traditional legal digits: [MS-DOCX] U+58F9, U+8CB3, U+53C3, … _(from a code comment)_ | const LEGAL: [char; 10] = ['零', '壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖'] |
+| `ENCLOSED` | src/convert/mod.rs:6103 | private | U+3220..=U+3229 are ㈠–㈩. _(from a code comment)_ | const ENCLOSED: [char; 10] = ['㈠', '㈡', '㈢', '㈣', '㈤', '㈥', '㈦', '㈧', '㈨', '㈩'] |
+| `CHINESE_DIGITS` | src/convert/mod.rs:6111 | private | _no doc comment_ | const CHINESE_DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
+| `AIUEO` | src/convert/mod.rs:6199 | private | MS-DOCX aiueo: half-width katakana ｱｲｳ… (U+FF71). | const AIUEO: [char; 46] = [ 'ｱ', 'ｲ', 'ｳ', 'ｴ', 'ｵ', 'ｶ', 'ｷ', 'ｸ', 'ｹ', 'ｺ', 'ｻ', 'ｼ', 'ｽ', 'ｾ', 'ｿ', 'ﾀ', 'ﾁ', 'ﾂ', 'ﾃ', 'ﾄ', 'ﾅ', 'ﾆ', 'ﾇ', 'ﾈ', 'ﾉ', 'ﾊ', 'ﾋ |
+| `IROHA` | src/convert/mod.rs:6206 | private | MS-DOCX iroha: half-width ｲﾛﾊ… (U+FF72). | const IROHA: [char; 47] = [ 'ｲ', 'ﾛ', 'ﾊ', 'ﾆ', 'ﾎ', 'ﾍ', 'ﾄ', 'ﾁ', 'ﾘ', 'ﾇ', 'ﾙ', 'ｦ', 'ﾜ', 'ｶ', 'ﾖ', 'ﾀ', 'ﾚ', 'ｿ', 'ﾂ', 'ﾈ', 'ﾅ', 'ﾗ', 'ﾑ', 'ｳ', 'ｲ', 'ﾉ', 'ｵ |
+| `DIGITS` | src/convert/mod.rs:6214 | private | _no doc comment_ | const DIGITS: [char; 10] = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'] |
+| `GANADA` | src/convert/mod.rs:6222 | private | MS-DOCX ganada: U+AC00, U+B098, U+B2E4… 가나다라마바사아자차카타파하. | const GANADA: [char; 14] = [ '가', '나', '다', '라', '마', '바', '사', '아', '자', '차', '카', '타', '파', '하', ] |
+| `CHOSUNG` | src/convert/mod.rs:6227 | private | MS-DOCX chosung: U+3131, U+3134, U+3137… ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ. | const CHOSUNG: [char; 14] = [ 'ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ', ] |
+| `DECIMAL_ENCLOSED_CIRCLE` | src/convert/mod.rs:6232 | private | MS-DOCX decimalEnclosedCircle: U+2460…U+2473 (①–⑳). | const DECIMAL_ENCLOSED_CIRCLE: [char; 20] = [ '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳', ] |
+| `DECIMAL_ENCLOSED_PAREN` | src/convert/mod.rs:6237 | private | MS-DOCX decimalEnclosedParen: U+2474…U+2487 (⑴–⒇). | const DECIMAL_ENCLOSED_PAREN: [char; 20] = [ '⑴', '⑵', '⑶', '⑷', '⑸', '⑹', '⑺', '⑻', '⑼', '⑽', '⑾', '⑿', '⒀', '⒁', '⒂', '⒃', '⒄', '⒅', '⒆', '⒇', ] |
+| `DECIMAL_ENCLOSED_FULLSTOP` | src/convert/mod.rs:6242 | private | MS-DOCX decimalEnclosedFullstop: U+2488…U+249B (⒈–⒛). | const DECIMAL_ENCLOSED_FULLSTOP: [char; 20] = [ '⒈', '⒉', '⒊', '⒋', '⒌', '⒍', '⒎', '⒏', '⒐', '⒑', '⒒', '⒓', '⒔', '⒕', '⒖', '⒗', '⒘', '⒙', '⒚', '⒛', ] |
+| `HUNDREDS` | src/convert/mod.rs:6264 | private | _no doc comment_ | const HUNDREDS: [&str; 9] = ["ק", "ר", "ש", "ת", "תק", "תר", "תש", "תת", "תתק"] |
+| `TENS` | src/convert/mod.rs:6278 | private | _no doc comment_ | const TENS: [char; 9] = ['י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'] |
+| `ONES` | src/convert/mod.rs:6279 | private | _no doc comment_ | const ONES: [char; 9] = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'] |
+| `HEBREW2` | src/convert/mod.rs:6292 | private | MS-DOCX hebrew2: Hebrew alphabet אבג… (U+05D0, U+05D1, U+05D2). | const HEBREW2: [char; 22] = [ 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ', 'ק', 'ר', 'ש', 'ת', ] |
+| `ARABIC_ALPHA` | src/convert/mod.rs:6298 | private | MS-DOCX arabicAlpha: أ ب ت… (U+0623, U+0628, U+062A). | const ARABIC_ALPHA: [char; 28] = [ 'أ', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ', 'ف', 'ق', 'ك', 'ل', 'م', 'ن',  |
+| `ARABIC_ABJAD` | src/convert/mod.rs:6304 | private | MS-DOCX arabicAbjad: أ ب ج… (U+0623, U+0628, U+062C). | const ARABIC_ABJAD: [char; 28] = [ 'أ', 'ب', 'ج', 'د', 'ه', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر', 'ش', 'ت', 'ث', 'خ', 'ذ',  |
+| `RUSSIAN_LOWER` | src/convert/mod.rs:6310 | private | MS-DOCX russianLower: абв… (U+0430). | const RUSSIAN_LOWER: [char; 33] = [ 'а', 'б', 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', |
+| `RUSSIAN_UPPER` | src/convert/mod.rs:6315 | private | MS-DOCX russianUpper: АБВ… (U+0410). | const RUSSIAN_UPPER: [char; 33] = [ 'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', |
+| `DIGITS` | src/convert/mod.rs:6322 | private | _no doc comment_ | const DIGITS: [char; 10] = ['๐', '๑', '๒', '๓', '๔', '๕', '๖', '๗', '๘', '๙'] |
+| `THAI_LETTERS` | src/convert/mod.rs:6330 | private | MS-DOCX/ECMA thaiLetters: ก ข ค… (U+0E01, U+0E02, U+0E04). | const THAI_LETTERS: [char; 42] = [ 'ก', 'ข', 'ค', 'ฆ', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ', 'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท', 'ธ', 'น', 'บ', 'ป',  |
+| `ONES` | src/convert/mod.rs:6338 | private | _no doc comment_ | const ONES: [&str; 10] = [ "", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า", ] |
+| `DIGITS` | src/convert/mod.rs:6376 | private | _no doc comment_ | const DIGITS: [char; 10] = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'] |
+| `HINDI_VOWELS` | src/convert/mod.rs:6384 | private | MS-DOCX hindiVowels: क ख ग… (U+0915). | const HINDI_VOWELS: [char; 33] = [ 'क', 'ख', 'ग', 'घ', 'ङ', 'च', 'छ', 'ज', 'झ', 'ञ', 'ट', 'ठ', 'ड', 'ढ', 'ण', 'त', 'थ', 'द', 'ध', 'न', 'प', 'फ', 'ब', 'भ', 'म',  |
+| `HINDI_CONSONANTS` | src/convert/mod.rs:6390 | private | MS-DOCX hindiConsonants: अ आ इ… (U+0905). | const HINDI_CONSONANTS: [char; 11] = ['अ', 'आ', 'इ', 'ई', 'उ', 'ऊ', 'ऋ', 'ए', 'ऐ', 'ओ', 'औ'] |
+| `WORDS` | src/convert/mod.rs:6394 | private | _no doc comment_ | const WORDS: [&str; 21] = [ "शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ", "दस", "ग्यारह", "बारह", "तेरह", "चौदह", "पंद्रह", "सोलह", "सत्रह |
+| `DIGITS` | src/convert/mod.rs:6427 | private | _no doc comment_ | const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"] |
+| `UNITS` | src/convert/mod.rs:6428 | private | _no doc comment_ | const UNITS: [(u32, &str); 3] = [(1000, "천"), (100, "백"), (10, "십")] |
+| `DIGITS` | src/convert/mod.rs:6452 | private | _no doc comment_ | const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"] |
+| `DIGITS` | src/convert/mod.rs:6461 | private | _no doc comment_ | const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'] |
+| `ONES` | src/convert/mod.rs:6470 | private | _no doc comment_ | const ONES: [&str; 10] = [ "", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉", ] |
+| `TENS` | src/convert/mod.rs:6473 | private | _no doc comment_ | const TENS: [&str; 10] = [ "", "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔", ] |
+| `ALPHA_LABEL_MAX` | src/convert/mod.rs:6493 | pub(crate) | The last letter label Word writes, thirty z's. | pub(crate) const ALPHA_LABEL_MAX: u32 = 26 * 30 |
+| `ROMAN_LABEL_MAX` | src/convert/mod.rs:6495 | pub(crate) | The last Roman numeral Word writes. | pub(crate) const ROMAN_LABEL_MAX: u32 = 32767 |
+| `MAP` | src/convert/mod.rs:6515 | private | _no doc comment_ | const MAP: &[(u32, &str)] = &[ (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"), (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), |
+| `TEMPLATE_NORMAL` | src/convert/mod.rs:7208 | private | The stock Normal.dotm's Normal as Word resolves it over the template's docDefaults: theme minor font, 12pt, kern 1pt, after=160, line=278. | const TEMPLATE_NORMAL: &str = "<w:name w:val=\"Normal\"/><w:qFormat/>\ <w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\ <w:rPr><w |
+| `WORD_COMPAT_SETTING_URI` | src/convert/mod.rs:7265 | private | The setting is keyed by `name` *and* `uri`: another vendor's `compatibilityMode` under its own URI is not Word's. | const WORD_COMPAT_SETTING_URI: &str = "http://schemas.microsoft.com/office/word" |
+| `TABLE` | src/convert/mod.rs:7832 | private | _no doc comment_ | const TABLE: [([u8; 3], [u8; 3]); 10] = [ ([0xD1, 0x34, 0x38], [248, 220, 221]), ([0x00, 0x78, 0xD4], [213, 237, 255]), ([0x5C, 0x2E, 0x91], [234, 223, 244]), ( |
+| `MARGIN` | src/convert/mod.rs:7945 | private | _no doc comment_ | const MARGIN: f32 = 72.0 |
+| `HEADING` | src/convert/mod.rs:7946 | private | _no doc comment_ | const HEADING: f32 = 14.0 |
+| `SIZE` | src/convert/mod.rs:7947 | private | _no doc comment_ | const SIZE: f32 = 10.0 |
+| `INDENT` | src/convert/mod.rs:7948 | private | _no doc comment_ | const INDENT: f32 = 18.0 |
+| `PITCH` | src/convert/mod.rs:7949 | private | _no doc comment_ | const PITCH: f32 = 1.25 |
+| `GAP` | src/convert/mod.rs:7950 | private | _no doc comment_ | const GAP: f32 = 8.0 |
+| `BOX_LEFT` | src/convert/mod.rs:8198 | private | _no doc comment_ | const BOX_LEFT: f32 = 16.67 |
+| `BOX_RIGHT_GAP` | src/convert/mod.rs:8199 | private | _no doc comment_ | const BOX_RIGHT_GAP: f32 = 3.4 |
+| `INSET` | src/convert/mod.rs:8200 | private | _no doc comment_ | const INSET: f32 = 3.4 |
+| `STROKE` | src/convert/mod.rs:8201 | private | _no doc comment_ | const STROKE: f32 = 0.358 |
+| `CONNECTOR` | src/convert/mod.rs:8202 | private | _no doc comment_ | const CONNECTOR: f32 = 0.179 |
+| `BRACKET_OFF` | src/convert/mod.rs:8203 | private | _no doc comment_ | const BRACKET_OFF: f32 = 0.09 |
+| `BRACKET_SERIF` | src/convert/mod.rs:8204 | private | _no doc comment_ | const BRACKET_SERIF: f32 = 0.18 |
+| `DOT` | src/convert/mod.rs:8205 | private | _no doc comment_ | const DOT: f32 = 0.5376 |
+| `STACK_GAP` | src/convert/mod.rs:8206 | private | _no doc comment_ | const STACK_GAP: f32 = 0.717 |
+| `PANE_LEAD` | src/convert/mod.rs:8207 | private | _no doc comment_ | const PANE_LEAD: f32 = 3.5 |
+| `ELBOW_DROP` | src/convert/mod.rs:8208 | private | _no doc comment_ | const ELBOW_DROP: f32 = 4.6 |
+| `CORNER` | src/convert/mod.rs:8209 | private | _no doc comment_ | const CORNER: f32 = 2.4 |
+| `FIRST_LINE_TOP` | src/convert/mod.rs:8210 | private | _no doc comment_ | const FIRST_LINE_TOP: f32 = 2.67 |
+| `BOX_PAD` | src/convert/mod.rs:8211 | private | _no doc comment_ | const BOX_PAD: f32 = 4.31 |
+| `PITCH` | src/convert/mod.rs:8212 | private | _no doc comment_ | const PITCH: f32 = 1.236 |
+| `WORD_MAX_TABLE_RIGHT` | src/convert/mod.rs:9871 | private | Word's widest page, 22in: no table ends further right of the margin. | const WORD_MAX_TABLE_RIGHT: f32 = 1584.0 |
+| `WORD_SQUEEZED_COL` | src/convert/mod.rs:9873 | private | What Word leaves each column past the 22in limit. | const WORD_SQUEEZED_COL: f32 = 1.4 |
+| `BOOKMARK_NOT_DEFINED` | src/convert/mod.rs:12016 | private | Word Save-as-PDF result for `PAGEREF` whose bookmark is gone (`_Toc218523836` / `_Toc218523837` on sd_2517 / file_22). | const BOOKMARK_NOT_DEFINED: &str = "Error! Bookmark not defined." |
+| `REF_NOT_FOUND` | src/convert/mod.rs:12018 | private | Word Save-as-PDF result for `REF` whose bookmark is gone. | const REF_NOT_FOUND: &str = "Error! Reference source not found." |
+| `KINDS` | src/convert/mod.rs:12165 | private | _no doc comment_ | const KINDS: [&str; 6] = ["NUMPAGES", "SECTION", "STYLEREF", "REF", "DATE", "SEQ"] |
+| `MONTHS_FULL` | src/convert/mod.rs:12234 | private | _no doc comment_ | const MONTHS_FULL: [&str; 12] = [ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December", ] |
+| `MONTHS_ABBR` | src/convert/mod.rs:12248 | private | _no doc comment_ | const MONTHS_ABBR: [&str; 12] = [ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", ] |
+| `WEEKDAYS_FULL` | src/convert/mod.rs:12251 | private | _no doc comment_ | const WEEKDAYS_FULL: [&str; 7] = [ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", ] |
+| `WEEKDAYS_ABBR` | src/convert/mod.rs:12260 | private | _no doc comment_ | const WEEKDAYS_ABBR: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] |
+| `RENUMBER_AUTHOR` | src/convert/mod.rs:12935 | private | The author Word charges a list's renumbering to: the next ink after the document's own authors (probe lbl0930: msi's 394146, then 0B6A0B). | const RENUMBER_AUTHOR: &str = "\u{1}renumbered" |
+| `STALE_SPAN_SLACK_PT` | src/convert/mod.rs:14173 | private | _no doc comment_ | const STALE_SPAN_SLACK_PT: f32 = 20.0 |
+| `AuthorColors::PALETTE` | src/convert/mod.rs:15096 | private | _no doc comment_ | const PALETTE: [u32; 20] = [ 0xD13438, 0x0078D4, 0x5C2E91, 0x498205, 0xCC3595, 0x7160E8, 0x038387, 0x6D5700, 0xCF0F1F, 0x4E6AED, 0xB146C2, 0x394146, 0x0B6A0B, 0 |
+| `HF_REV_COLOR` | src/convert/mod.rs:15124 | private | Header/footer revisions take the first author's ink (`AuthorColors`). | const HF_REV_COLOR: [f32; 3] = [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0] |
+| `MATH` | src/convert/mod.rs:15865 | private | _no doc comment_ | const MATH: &str = "\"http://schemas.openxmlformats.org/officeDocument/2006/math\"" |
+| `MARKED` | src/convert/mod.rs:15901 | private | _no doc comment_ | const MARKED: [&str; 4] = [ "rPrChange", "commentRangeStart", "commentRangeEnd", "commentReference", ] |
+| `PAGE_BREAK_MARK` | src/convert/mod.rs:16131 | private | A body run's text keeps its page breaks as `PAGE_BREAK_MARK`, so its paragraph can split there (`split_page_breaks`, which removes every mark). | const PAGE_BREAK_MARK: char = '\u{FDD0}' |
+| `COLUMN_BREAK_MARK` | src/convert/mod.rs:16135 | private | A body run's column break, split like `PAGE_BREAK_MARK`: the text after it opens the next column (live Word, 019d92d9's continuous columns). | const COLUMN_BREAK_MARK: char = '\u{FDD1}' |
+| `CHECKBOX_SPACE` | src/convert/mod.rs:16142 | private | An em space: a FORMCHECKBOX's advance at 115% scaling (see `TextRun::checkbox`). | const CHECKBOX_SPACE: &str = "\u{2003}" |
+| `VML_BOXES` | src/convert/mod.rs:19212 | private | VML elements that carry their own `style` box (and so their own position) around a `v:imagedata`. | const VML_BOXES: [&str; 6] = ["shape", "rect", "roundrect", "oval", "image", "group"] |
+| `HF_LINE_BREAK` | src/convert/mod.rs:21543 | private | _no doc comment_ | const HF_LINE_BREAK: &str = "\n" |
+| `Layout::W` | src/convert/mod.rs:25705 | private | _no doc comment_ | const W: f32 = 0.72 |
+| `Layout::FULL` | src/convert/mod.rs:29647 | private | _no doc comment_ | const FULL: f32 = 21_600_000.0 |
+| `NUMPAGES_MARK` | src/convert/mod.rs:32344 | private | _no doc comment_ | const NUMPAGES_MARK: &str = "@@N@@" |
+| `CHAP_PAGE_MARK` | src/convert/mod.rs:32345 | private | _no doc comment_ | const CHAP_PAGE_MARK: &str = "@@P@@" |
+| `Squeeze::NONE` | src/convert/mod.rs:33009 | private | _no doc comment_ | const NONE: Self = Self { share: 0.0, word_cap: false, face_bound: false, line_share: 0.0, } |
+| `JUSTIFY_SQUEEZE` | src/convert/mod.rs:33038 | private | Word 2013+ layout (compatibilityMode 15) keeps a justified line's last word by narrowing its spaces, up to a quarter of their total width (Word 16 probes 2026-10-03, bench `scripts/probe_justify*.py`: Calibri, Times, Cambria, Arial, Tahoma, Verdana, 4 to 25 spaces, every boundary between 0.244 and 0.251 of the spaces)... | const JUSTIFY_SQUEEZE: Squeeze = Squeeze { share: 0.25, word_cap: true, face_bound: false, line_share: 0.0, } |
+| `WP_SQUEEZE` | src/convert/mod.rs:33056 | private | WordPerfect justification (`w:compat/w:wpJustification`, the Texas statutes' compat set): a justified line keeps its last word while its natural width is within 1.04 of the measure, whatever its spaces (3 or 21) or the word's length, and paints every advance narrower alike. | const WP_SQUEEZE: Squeeze = Squeeze { share: 0.0, word_cap: false, face_bound: false, line_share: 0.04, } |
+| `SQUEEZE_WORD_SHARE` | src/convert/mod.rs:33071 | private | The second bound of `JUSTIFY_SQUEEZE`: the overflow may be at most this share of the last word plus one space. | const SQUEEZE_WORD_SHARE: f32 = 0.345 |
+| `PUNCT_SQUEEZE` | src/convert/mod.rs:33077 | private | Before compatibility mode 15, `compressPunctuation` lets a line of any alignment keep its last word on spaces up to a fifth narrower, however short the word (Word 16 probes, Times 12 compat 14: 19.97% fits, 20.3% moves the word; a 26.7pt word keeps a 17.2pt overflow). | const PUNCT_SQUEEZE: Squeeze = Squeeze { share: 0.2, word_cap: false, face_bound: true, line_share: 0.0, } |
+| `STEPS` | src/convert/mod.rs:34320 | private | _no doc comment_ | const STEPS: i32 = 24 |
+| `STEPS` | src/convert/mod.rs:34597 | private | OOXML flowChartTerminator in 21600 space: stadium, rx=3475, ry=10800. _(from a code comment)_ | const STEPS: i32 = 8 |
+| `ST` | src/convert/mod.rs:35334 | private | OOXML flowChartDelay: M l,t L hc,t arcTo wd2,hd2 stAng=3cd4 swAng=cd2 L l,b Z. _(from a code comment)_ | const ST: f32 = 16_200_000.0 |
+| `SW` | src/convert/mod.rs:35335 | private | _no doc comment_ | const SW: f32 = 10_800_000.0 |
+| `ST_R` | src/convert/mod.rs:35443 | private | OOXML flowChartOnlineStorage in 6×6 space: horizontal cylinder, right arc stAng=3cd4 swAng=-cd2, left arc stAng=cd4 swAng=cd2. _(from a code comment)_ | const ST_R: f32 = 16_200_000.0 |
+| `SW_R` | src/convert/mod.rs:35444 | private | _no doc comment_ | const SW_R: f32 = -10_800_000.0 |
+| `ST_L` | src/convert/mod.rs:35445 | private | _no doc comment_ | const ST_L: f32 = 5_400_000.0 |
+| `SW_L` | src/convert/mod.rs:35446 | private | _no doc comment_ | const SW_L: f32 = 10_800_000.0 |
+| `ST` | src/convert/mod.rs:35483 | private | OOXML flowChartDisplay in 6×6 space: pointed left, right semicircle. _(from a code comment)_ | const ST: f32 = 16_200_000.0 |
+| `SW` | src/convert/mod.rs:35484 | private | _no doc comment_ | const SW: f32 = 10_800_000.0 |
+| `PW` | src/convert/mod.rs:35522 | private | OOXML cloud path w=h=43200: 11 arcTo lobes, then close. _(from a code comment)_ | const PW: f32 = 43_200.0 |
+| `ARCS` | src/convert/mod.rs:35526 | private | _no doc comment_ | const ARCS: [(f32, f32, f32, f32); 11] = [ (6_753.0, 9_190.0, -11_429_249.0, 7_426_832.0), (5_333.0, 7_267.0, -8_646_143.0, 5_396_714.0), (4_365.0, 5_945.0, -8_ |
+| `PW` | src/convert/mod.rs:35796 | private | OOXML lightningBolt path w=h=21600. _(from a code comment)_ | const PW: f32 = 21_600.0 |
+| `CD4` | src/convert/mod.rs:35912 | private | OOXML plaque adj=16667: square with concave quarter-circles at corners. _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
+| `CD2` | src/convert/mod.rs:35913 | private | _no doc comment_ | const CD2: f32 = 10_800_000.0 |
+| `CD3_4` | src/convert/mod.rs:35914 | private | _no doc comment_ | const CD3_4: f32 = 16_200_000.0 |
+| `ST` | src/convert/mod.rs:35934 | private | OOXML chord adj1=2700000 adj2=16200000: 225° arc then close (no pie centre). _(from a code comment)_ | const ST: f32 = 2_700_000.0 |
+| `SW` | src/convert/mod.rs:35935 | private | _no doc comment_ | const SW: f32 = 13_500_000.0 |
+| `ST` | src/convert/mod.rs:35948 | private | OOXML arc adj1=16200000 adj2=0: 90° wedge from 12 o'clock clockwise to 3. _(from a code comment)_ | const ST: f32 = 16_200_000.0 |
+| `SW` | src/convert/mod.rs:35949 | private | _no doc comment_ | const SW: f32 = 5_400_000.0 |
+| `CD4` | src/convert/mod.rs:35976 | private | OOXML round1Rect adj=16667: rectangle with a 90° arc at top-right. _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
+| `CD3_4` | src/convert/mod.rs:35977 | private | _no doc comment_ | const CD3_4: f32 = 16_200_000.0 |
+| `CD4` | src/convert/mod.rs:36008 | private | OOXML round2SameRect adj1=16667 adj2=0: both top corners rounded; bottom corners stay square (adj2 radius is 0). _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
 | `CD2` | src/convert/mod.rs:36009 | private | _no doc comment_ | const CD2: f32 = 10_800_000.0 |
-| `CD4` | src/convert/mod.rs:36062 | private | OOXML teardrop adj=100000: 3/4 ellipse + two quads to the top-right tip. _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
-| `CD2` | src/convert/mod.rs:36063 | private | _no doc comment_ | const CD2: f32 = 10_800_000.0 |
-| `STEPS` | src/convert/mod.rs:36126 | private | _no doc comment_ | const STEPS: i32 = 4 |
+| `CD3_4` | src/convert/mod.rs:36010 | private | _no doc comment_ | const CD3_4: f32 = 16_200_000.0 |
+| `CD4` | src/convert/mod.rs:36044 | private | OOXML round2DiagRect adj1=16667 adj2=0: round top-left and bottom-right; the other two corners stay square (adj2 radius is 0). _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
+| `CD2` | src/convert/mod.rs:36045 | private | _no doc comment_ | const CD2: f32 = 10_800_000.0 |
+| `CD4` | src/convert/mod.rs:36098 | private | OOXML teardrop adj=100000: 3/4 ellipse + two quads to the top-right tip. _(from a code comment)_ | const CD4: f32 = 5_400_000.0 |
+| `CD2` | src/convert/mod.rs:36099 | private | _no doc comment_ | const CD2: f32 = 10_800_000.0 |
+| `STEPS` | src/convert/mod.rs:36162 | private | _no doc comment_ | const STEPS: i32 = 4 |
 | `MARKUP_PANE_W` | src/convert/pdf.rs:244 | private | _no doc comment_ | const MARKUP_PANE_W: f32 = 257.3 |
 | `MARKUP_PANE_GAP` | src/convert/pdf.rs:245 | private | _no doc comment_ | const MARKUP_PANE_GAP: f32 = 9.15 |
 | `MARKUP_FIT_INSET` | src/convert/pdf.rs:251 | private | The fit Word scales by: paper width less this, over the page's text edge plus `MARKUP_FIT_SPAN` (36 and 1107 300-dpi pixels; the widest margins to the 1/300 boundaries over the 14 geometries, 0.06/300; the pane's own gap and width sum to 266.45). | const MARKUP_FIT_INSET: f32 = 8.64 |
@@ -320,21 +323,21 @@
 | `USB0_HEBREW` | src/convert/word_subst.rs:172 | private | _no doc comment_ | const USB0_HEBREW: u32 = 1 << 11 |
 | `USB2_THAANA` | src/convert/word_subst.rs:173 | private | _no doc comment_ | const USB2_THAANA: u32 = 1 << (72 - 64) |
 | `MAP` | src/convert/word_subst.rs:194 | private | _no doc comment_ | const MAP: &[(&str, &str)] = &[ ("myriad pro", "Segoe UI"), ("proxima nova", "Tahoma"), ("futura", "Century Gothic"), ("adobe garamond pro", "Garamond"), ("adob |
-| `TRIAGE` | src/debug.rs:112 | pub | The checks a bare `jubarte debug FILE` runs. | pub const TRIAGE: [Check; 5] = [ Check::Orphans, Check::Fields, Check::Bookmarks, Check::Package, Check::Structure, ] |
-| `WIDTH` | src/debug.rs:151 | private | Longest line a report prints. | const WIDTH: usize = 200 |
-| `TEXTBOX_XML` | src/debug.rs:153 | private | Longest text box XML a report prints. | const TEXTBOX_XML: usize = 1500 |
-| `STORIES` | src/debug.rs:312 | private | Story boundaries: a text box is a story inside the story that anchors it. | const STORIES: [&str; 7] = [ "txbxContent", "body", "hdr", "ftr", "footnote", "endnote", "comment", ] |
-| `REVISIONS` | src/debug.rs:321 | private | _no doc comment_ | const REVISIONS: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"] |
-| `SINGLE_VALUE_CONTROLS` | src/debug.rs:652 | private | Content controls that hold one value. | const SINGLE_VALUE_CONTROLS: [&str; 6] = [ "text", "dropDownList", "comboBox", "date", "picture", "checkbox", ] |
-| `RELATIONSHIPS_NS` | src/debug.rs:673 | private | _no doc comment_ | const RELATIONSHIPS_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
-| `OFFICE_TRASH` | src/debug.rs:742 | pub(crate) | Office's legacy `[trash]/` folder: its entries are no parts and need no content type; Word ignores them. | pub(crate) const OFFICE_TRASH: &str = "[trash]/" |
-| `CT` | src/debug.rs:745 | private | _no doc comment_ | const CT: &str = "[Content_Types].xml" |
-| `REVISION_IDS` | src/debug.rs:941 | private | Revision elements: they share one id space across the package. | const REVISION_IDS: [&str; 18] = [ "ins", "del", "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange", "numberin |
-| `STYLES_PART` | src/debug.rs:987 | private | _no doc comment_ | const STYLES_PART: &str = "word/styles.xml" |
-| `TEXT_PARTS` | src/debug.rs:1187 | private | Root elements of the parts `text` walks. | const TEXT_PARTS: [&str; 6] = [ "document", "hdr", "ftr", "footnotes", "endnotes", "comments", ] |
-| `CHANGE_RECORDS` | src/debug.rs:1241 | private | The property-change records `changes` lists. | const CHANGE_RECORDS: [&str; 8] = [ "pPrChange", "rPrChange", "tblPrChange", "tblPrExChange", "trPrChange", "tcPrChange", "sectPrChange", "tblGridChange", ] |
-| `STRICT` | src/debug.rs:2128 | private | Revision transforms use Transitional Word names. _(from a code comment)_ | const STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main" |
-| `WORD` | src/debug.rs:2129 | private | _no doc comment_ | const WORD: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main" |
+| `TRIAGE` | src/debug.rs:113 | pub | The checks a bare `jubarte debug FILE` runs. | pub const TRIAGE: [Check; 5] = [ Check::Orphans, Check::Fields, Check::Bookmarks, Check::Package, Check::Structure, ] |
+| `WIDTH` | src/debug.rs:156 | private | Longest line a report prints. | const WIDTH: usize = 200 |
+| `TEXTBOX_XML` | src/debug.rs:158 | private | Longest text box XML a report prints. | const TEXTBOX_XML: usize = 1500 |
+| `STORIES` | src/debug.rs:416 | private | Story boundaries: a text box is a story inside the story that anchors it. | const STORIES: [&str; 7] = [ "txbxContent", "body", "hdr", "ftr", "footnote", "endnote", "comment", ] |
+| `REVISIONS` | src/debug.rs:425 | private | _no doc comment_ | const REVISIONS: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"] |
+| `SINGLE_VALUE_CONTROLS` | src/debug.rs:774 | private | Content controls that hold one value. | const SINGLE_VALUE_CONTROLS: [&str; 6] = [ "text", "dropDownList", "comboBox", "date", "picture", "checkbox", ] |
+| `RELATIONSHIPS_NS` | src/debug.rs:795 | private | _no doc comment_ | const RELATIONSHIPS_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
+| `OFFICE_TRASH` | src/debug.rs:864 | pub(crate) | Office's legacy `[trash]/` folder: its entries are no parts and need no content type; Word ignores them. | pub(crate) const OFFICE_TRASH: &str = "[trash]/" |
+| `CT` | src/debug.rs:867 | private | _no doc comment_ | const CT: &str = "[Content_Types].xml" |
+| `REVISION_IDS` | src/debug.rs:1104 | private | Revision elements: they share one id space across the package. | const REVISION_IDS: [&str; 18] = [ "ins", "del", "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange", "numberin |
+| `STYLES_PART` | src/debug.rs:1150 | private | _no doc comment_ | const STYLES_PART: &str = "word/styles.xml" |
+| `TEXT_PARTS` | src/debug.rs:1357 | private | Root elements of the parts `text` walks. | const TEXT_PARTS: [&str; 6] = [ "document", "hdr", "ftr", "footnotes", "endnotes", "comments", ] |
+| `CHANGE_RECORDS` | src/debug.rs:1411 | private | The property-change records `changes` lists. | const CHANGE_RECORDS: [&str; 8] = [ "pPrChange", "rPrChange", "tblPrChange", "tblPrExChange", "trPrChange", "tcPrChange", "sectPrChange", "tblGridChange", ] |
+| `STRICT` | src/debug.rs:2298 | private | Revision transforms use Transitional Word names. _(from a code comment)_ | const STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main" |
+| `WORD` | src/debug.rs:2299 | private | _no doc comment_ | const WORD: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main" |
 | `W_NS` | src/debug/diff.rs:185 | private | _no doc comment_ | const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main" |
 | `R_NS` | src/debug/diff.rs:186 | private | _no doc comment_ | const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
 | `MC_NS` | src/debug/diff.rs:187 | private | _no doc comment_ | const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006" |
@@ -374,39 +377,57 @@
 | `THEME_PART` | src/document_comparer.rs:3479 | private | _no doc comment_ | const THEME_PART: &str = "word/theme/theme1.xml" |
 | `THEME_REL` | src/document_comparer.rs:3508 | private | _no doc comment_ | const THEME_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" |
 | `IMPLICIT_LANG` | src/document_comparer.rs:4549 | private | Language: only the attributes B's effective value changes against A's docDefaults, a missing one read as Word's en-US / en-US / ar-SA (159 of 161 corpus Word redlines). _(from a code comment)_ | const IMPLICIT_LANG: [(&str, &str); 3] = [("val", "en-US"), ("eastAsia", "en-US"), ("bidi", "ar-SA")] |
-| `NOTES_ROOT_NAMESPACE_ATTRS` | src/document_comparer.rs:4931 | private | The namespace declarations C# attaches to a freshly-created `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/ `FreshNamespaceAttributes` :1580–:1602), verbatim. | const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!( "xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" ", "xmlns:mc=\"http://schema |
-| `CUSTOM_PROPS_REL` | src/document_comparer.rs:6169 | private | M481 — Word-repair: wire core parts the package carries but the main document never references. | const CUSTOM_PROPS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties" |
-| `CORE` | src/document_comparer.rs:6251 | private | _no doc comment_ | const CORE: [(&str, &str); 5] = [ ("word/styles.xml", "styles"), ("word/settings.xml", "settings"), ("word/webSettings.xml", "webSettings"), ("word/fontTable.xm |
-| `SCHEMAS` | src/edit.rs:1447 | private | _no doc comment_ | static SCHEMAS: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(\\|\\| { let settings = schemars::generate::SchemaSettings::draft2020_12()  |
-| `COMMON` | src/edit.rs:1522 | private | _no doc comment_ | const COMMON: &[&str] = &["id", "kind"] |
-| `RANGES` | src/edit.rs:5281 | private | _no doc comment_ | const RANGES: &[&str] = &[ "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "permStart", "permEnd", "proofErr", ] |
-| `WINDOW` | src/edit.rs:5422 | private | _no doc comment_ | const WINDOW: usize = 20 |
-| `PPR_ORDER` | src/edit.rs:6123 | private | Schema order of `w:pPr` children (CT_PPrBase, then rPr/sectPr/pPrChange). | const PPR_ORDER: &[&str] = &[ "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd", "t |
-| `HIGHLIGHTS` | src/edit.rs:6413 | pub(crate) | `ST_HighlightColor`. | pub(crate) const HIGHLIGHTS: &[&str] = &[ "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "darkBlue", "darkCyan", "darkGreen", "darkMagen |
-| `RPR_ORDER` | src/edit.rs:6475 | private | Schema order of the `w:rPr` children this module writes. | const RPR_ORDER: &[&str] = &[ "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "n |
-| `UNFILLABLE` | src/edit/controls.rs:69 | private | Kinds a fill cannot write. | const UNFILLABLE: &[&str] = &["picture", "group", "repeating", "building_block"] |
-| `RANGE_STARTS` | src/edit/controls.rs:559 | private | Range markers a fill carries over: starts go before the new run, ends after it, so bookmarks, comment ranges and permissions keep both halves. | const RANGE_STARTS: &[&str] = &["bookmarkStart", "commentRangeStart", "permStart"] |
-| `RANGE_ENDS` | src/edit/controls.rs:560 | private | _no doc comment_ | const RANGE_ENDS: &[&str] = &["bookmarkEnd", "commentRangeEnd", "permEnd"] |
-| `T` | src/edit/controls.rs:690 | private | _no doc comment_ | const T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4] |
-| `MONTHS` | src/edit/controls.rs:696 | private | _no doc comment_ | const MONTHS: [&str; 12] = [ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December", ] |
-| `DAYS` | src/edit/controls.rs:710 | private | _no doc comment_ | const DAYS: [&str; 7] = [ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", ] |
+| `NOTES_ROOT_NAMESPACE_ATTRS` | src/document_comparer.rs:4933 | private | The namespace declarations C# attaches to a freshly-created `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/ `FreshNamespaceAttributes` :1580–:1602), verbatim. | const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!( "xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" ", "xmlns:mc=\"http://schema |
+| `CUSTOM_PROPS_REL` | src/document_comparer.rs:6177 | private | M481 — Word-repair: wire core parts the package carries but the main document never references. | const CUSTOM_PROPS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties" |
+| `CORE` | src/document_comparer.rs:6259 | private | _no doc comment_ | const CORE: [(&str, &str); 5] = [ ("word/styles.xml", "styles"), ("word/settings.xml", "settings"), ("word/webSettings.xml", "webSettings"), ("word/fontTable.xm |
+| `COMMENT_ANCHOR_CONFLICT` | src/edit.rs:1376 | private | Stable engine code for comment mapping conflicts, independent of prose. | const COMMENT_ANCHOR_CONFLICT: &str = "COMMENT_ANCHOR_CONFLICT" |
+| `SCHEMAS` | src/edit.rs:1855 | private | _no doc comment_ | static SCHEMAS: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(\\|\\| { let settings = schemars::generate::SchemaSettings::draft2020_12()  |
+| `PLAN_FIELDS` | src/edit.rs:1943 | private | The top-level fields of a plan, as [`EditPlan`] reads them. | const PLAN_FIELDS: &[&str] = &[ "author", "date", "existing_revisions", "initials", "operations", "removed_anchor_comments", "resolve_revisions", "rewrite_other |
+| `ALIASES` | src/edit.rs:1959 | private | A field one kind's operations take under another name, read as meant with a note: (written, read as, kinds). | const ALIASES: &[(&str, &str, &[&str])] = &[ ("comment", "text", &["comment", "reply_comment"]), ("anchor", "find", &["replace", "delete", "comment"]), ] |
+| `COMMON` | src/edit.rs:2073 | private | _no doc comment_ | const COMMON: &[&str] = &["id", "kind", "group", "why"] |
+| `RANGES` | src/edit.rs:6930 | private | _no doc comment_ | const RANGES: &[&str] = &[ "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "permStart", "permEnd", "proofErr", ] |
+| `WINDOW` | src/edit.rs:7101 | private | _no doc comment_ | const WINDOW: usize = 20 |
+| `SELECTOR_CHARS` | src/edit.rs:7322 | private | How many characters of a paragraph's text a suggested `contains` selector quotes at most. | const SELECTOR_CHARS: usize = 60 |
+| `PPR_ORDER` | src/edit.rs:8095 | private | Schema order of `w:pPr` children (CT_PPrBase, then rPr/sectPr/pPrChange). | const PPR_ORDER: &[&str] = &[ "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd", "t |
+| `HIGHLIGHTS` | src/edit.rs:8385 | pub(crate) | `ST_HighlightColor`. | pub(crate) const HIGHLIGHTS: &[&str] = &[ "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "darkBlue", "darkCyan", "darkGreen", "darkMagen |
+| `RPR_ORDER` | src/edit.rs:8447 | private | Schema order of the `w:rPr` children this module writes. | const RPR_ORDER: &[&str] = &[ "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "n |
+| `WINDOW` | src/edit/anchor_error.rs:57 | private | Characters of context on either side of a match, of the actual target text shown on a miss, and of the anchor the message quotes. | const WINDOW: usize = 20 |
+| `MAX_SUGGESTED_TARGETS` | src/edit/anchor_error.rs:59 | private | Other paragraphs a refusal may suggest at most. | const MAX_SUGGESTED_TARGETS: usize = 5 |
+| `READ_SUGGESTION_HEAD` | src/edit/anchor_error.rs:61 | private | Blocks the read continuation of a missing target suggests. | const READ_SUGGESTION_HEAD: usize = 20 |
+| `UNFILLABLE` | src/edit/controls.rs:70 | private | Kinds a fill cannot write. | const UNFILLABLE: &[&str] = &["picture", "group", "repeating", "building_block"] |
+| `T` | src/edit/controls.rs:693 | private | _no doc comment_ | const T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4] |
+| `MONTHS` | src/edit/controls.rs:699 | private | _no doc comment_ | const MONTHS: [&str; 12] = [ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December", ] |
+| `DAYS` | src/edit/controls.rs:713 | private | _no doc comment_ | const DAYS: [&str; 7] = [ "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", ] |
+| `PlanSyntax::ALL` | src/edit/hint.rs:30 | pub | Every syntax, for the tests that check each one's fragments. | pub const ALL: [Self; 4] = [Self::V1, Self::Flags, Self::V2, Self::Typed] |
+| `QUOTED` | src/edit/hint.rs:207 | private | The longest stretch of a revision's text the hint quotes. | const QUOTED: usize = 60 |
+| `OPERATION_TARGET` | src/edit/hint.rs:276 | pub(super) | The target a v2 comment route names until [`super::v2_apply`] writes in the refused operation's own: valid JSON, left to fill in like `find`. | pub(super) const OPERATION_TARGET: &str = r#"{"short_id":"…","long_id":"…"}"# |
 | `IMAGE_REL` | src/edit/images.rs:21 | private | _no doc comment_ | const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" |
 | `WP_NS` | src/edit/images.rs:22 | private | _no doc comment_ | const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" |
 | `MAX_WIDTH_EMU` | src/edit/images.rs:25 | pub(super) | The largest picture Word lays out: 22 inches, in EMU. | pub(super) const MAX_WIDTH_EMU: u64 = 20_116_800 |
 | `SUPPORTED` | src/edit/images.rs:28 | private | Content types the engine embeds. | const SUPPORTED: &[&str] = &[ "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff", ] |
+| `SOURCE_ONLY` | src/edit/origin.rs:634 | pub(super) | The prefix the plan of the fixes (`--skip-failed`) gives a name of the source's that has no one-to-one paragraph or control in the output: no document resolves it, so the operation runs only once given again. | pub(super) const SOURCE_ONLY: &str = "source:" |
+| `BLOCKING_CODES` | src/edit/prepared.rs:58 | private | A non-`word_fatal` finding code that still blocks publication when the edit introduces it. | const BLOCKING_CODES: &[&str] = &["BOOKMARK_CROSSES_REVISION"] |
 | `APPLY_ONLY` | src/edit/record.rs:18 | private | Flags that take effect when a plan is applied, so a recording refuses them. | const APPLY_ONLY: &[&str] = &[ "--consume", "--out-dir", "--output", "--force", "--editing-mode", "--suggesting-mode", "--pdf", "--png", "--dpi", "--revisions", |
 | `RECORD_ONLY` | src/edit/record.rs:34 | private | Flags that describe recorded operations, so applying a plan refuses them: the plan names its own. | const RECORD_ONLY: &[&str] = &["--author", "--datetime", "--existing-revisions"] |
+| `INSERTION_SIDE_PREFIX` | src/edit/refusal.rs:16 | pub(super) | What v2 puts before a refusal it cannot place on the requested side of an insertion point (`UNSUPPORTED_INSERTION_SIDE`). | pub(super) const INSERTION_SIDE_PREFIX: &str = "requested insertion side cannot be preserved: " |
 | `DELIMITERS` | src/edit/resolution.rs:28 | private | _no doc comment_ | const DELIMITERS: [(&str, &str); 11] = [ ("{++", "{\\++"), ("{--", "{\\--"), ("{~~", "{\\~~"), ("{>>", "{\\>>"), ("{==", "{\\=="), ("++}", "++\\}"), ("--}", "-- |
 | `MAX_SIDE` | src/edit/sections.rs:115 | private | The largest page side Word accepts: 22 inches. | const MAX_SIDE: u32 = 31_680 |
 | `Geometry::WORD_DEFAULT` | src/edit/sections.rs:136 | private | Word's default section: Letter, portrait, one-inch margins. | const WORD_DEFAULT: Self = Self { width: 12_240, height: 15_840, landscape: false, keep_code: true, top: 1440, right: 1440, bottom: 1440, left: 1440, header: 72 |
 | `SECT_ORDER` | src/edit/sections.rs:268 | private | `CT_SectPr` child order. | const SECT_ORDER: &[&str] = &[ "headerReference", "footerReference", "footnotePr", "endnotePr", "type", "pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType", " |
+| `GROUP_FAILED` | src/edit/skip.rs:24 | private | The outcome code of an operation skipped because another operation of its group failed. | const GROUP_FAILED: &str = "GROUP_FAILED" |
 | `MAX_COLUMNS` | src/edit/structural.rs:19 | private | Word's column limit. | const MAX_COLUMNS: usize = 63 |
 | `MAX_WIDTH_DXA` | src/edit/structural.rs:21 | pub(super) | The widest cell Word accepts: 22 inches, in twentieths of a point. | pub(super) const MAX_WIDTH_DXA: u32 = 31_680 |
 | `BUILTIN_TABLE_STYLES` | src/edit/structural.rs:23 | private | Table styles a document may lack that the engine can add: `(id, name)`. | const BUILTIN_TABLE_STYLES: &[(&str, &str)] = &[("TableGrid", "Table Grid")] |
-| `DELETED` | src/edit/tracked.rs:963 | private | Revision elements of a paragraph mark that delete it. | const DELETED: [&str; 2] = ["del", "moveFrom"] |
-| `TRACKED` | src/edit/tracked.rs:965 | private | Every revision element a paragraph mark can carry. | const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"] |
+| `RANGE_STARTS` | src/edit/tracked.rs:1297 | pub(super) | The range openers an insertion can hold: they travel with the words to their right. | pub(super) const RANGE_STARTS: [&str; 5] = [ "bookmarkStart", "commentRangeStart", "permStart", "moveFromRangeStart", "moveToRangeStart", ] |
+| `RANGE_ENDS` | src/edit/tracked.rs:1306 | pub(super) | The range closers that travel with the words to their left; a comment's end also takes its reference, so it is read on its own. | pub(super) const RANGE_ENDS: [&str; 4] = [ "bookmarkEnd", "permEnd", "moveFromRangeEnd", "moveToRangeEnd", ] |
+| `COMMENT_RANGE_END` | src/edit/tracked.rs:1315 | pub(super) | A comment range's closer: it travels with the words to its left, and takes its reference along. | pub(super) const COMMENT_RANGE_END: &str = "commentRangeEnd" |
+| `TYPED` | src/edit/tracked.rs:1568 | private | What a run may hold and still go outright: text Word types, nothing a field or a note needs. | const TYPED: [&str; 9] = [ "rPr", "t", "tab", "br", "cr", "sym", "noBreakHyphen", "softHyphen", "lastRenderedPageBreak", ] |
+| `DELETED` | src/edit/tracked.rs:1623 | private | Revision elements of a paragraph mark that delete it. | const DELETED: [&str; 2] = ["del", "moveFrom"] |
+| `TRACKED` | src/edit/tracked.rs:1625 | pub(super) | Every revision element a paragraph mark can carry. | pub(super) const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"] |
 | `SCHEMA_JSON` | src/edit/v2.rs:25 | pub | Production Draft 2020-12 schema for this library's text-and-review profile. | pub const SCHEMA_JSON: &str = include_str!("../../schemas/edit-plan-v2.schema.json") |
 | `TEXT_CODEC_VERSION` | src/edit/v2.rs:27 | pub | Exact logical text codec version, fixed by PlanV2. | pub const TEXT_CODEC_VERSION: u32 = 1 |
+| `PLAIN` | src/edit/visible.rs:157 | private | The run content a struck or restored run may hold: text and the characters typed beside it. | const PLAIN: [&str; 10] = [ "rPr", "t", "delText", "tab", "br", "cr", "sym", "noBreakHyphen", "softHyphen", "lastRenderedPageBreak", ] |
+| `MARKERS` | src/edit/visible.rs:171 | private | Markers a revision may hold beside its runs; they are not its words. | const MARKERS: [&str; 10] = [ "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "permStart", "permEnd", "moveFromRangeStart", "moveFromRan |
 | `HEADER_REL` | src/edit/watermark.rs:18 | private | _no doc comment_ | const HEADER_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" |
 | `HEADER_CT` | src/edit/watermark.rs:20 | private | _no doc comment_ | const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml" |
 | `VML_URI` | src/edit/watermark.rs:21 | private | _no doc comment_ | const VML_URI: &str = "urn:schemas-microsoft-com:vml" |
@@ -418,29 +439,31 @@
 | `PREFIX` | src/edit/whole.rs:24 | private | _no doc comment_ | const PREFIX: &str = "_jubarte_whole_" |
 | `MARKERS` | src/edit/whole.rs:27 | private | Range markup that may sit inside the rewritten span. | const MARKERS: &[&str] = &[ "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "proofErr", "permStart", "permEnd", ] |
 | `REFERENCES` | src/edit/whole.rs:38 | private | Reference runs that stay once, on the inserted side. | const REFERENCES: &[&str] = &["commentReference", "footnoteReference", "endnoteReference"] |
+| `EXPECTATIONS_SCHEMA_VERSION` | src/expect.rs:43 | pub | The expected schema version, per `jubarte-expectations-v1.schema.json`. | pub const EXPECTATIONS_SCHEMA_VERSION: u32 = 1 |
 | `BOOKMARK_NOT_DEFINED` | src/fields.rs:38 | pub | What Word writes for a `PAGEREF` to a bookmark the document lacks. | pub const BOOKMARK_NOT_DEFINED: &str = "Error! Bookmark not defined." |
 | `REFERENCE_NOT_FOUND` | src/fields.rs:41 | pub | What Word writes for a `REF` to a bookmark the document lacks. | pub const REFERENCE_NOT_FOUND: &str = "Error! Reference source not found." |
 | `NO_TOC_ENTRIES` | src/fields.rs:44 | pub | What Word writes for a `TOC` that finds no heading. | pub const NO_TOC_ENTRIES: &str = "No table of contents entries found." |
 | `UNREPRESENTABLE` | src/fields.rs:530 | private | A number format a `\*` switch asks for, among those written here. | const UNREPRESENTABLE: &str = "Error! Number cannot be represented in specified format." |
 | `BEFORE_TABS` | src/fields.rs:1329 | private | Schema order: pStyle, keepNext, keepLines, pageBreakBefore, framePr, widowControl, numPr, suppressLineNumbers, pBdr, shd, tabs, ... _(from a code comment)_ | const BEFORE_TABS: [&str; 10] = [ "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd" |
-| `CHANGE_EXPECTED` | src/ids.rs:43 | pub | Why a change id was refused. | pub const CHANGE_EXPECTED: &str = "expected a change id such as r12, r1+2 or header1.r1" |
-| `COMMENT_EXPECTED` | src/ids.rs:45 | pub | Why a comment id was refused. | pub const COMMENT_EXPECTED: &str = "expected a comment id such as c27" |
-| `LOCATION_EXPECTED` | src/ids.rs:47 | pub | Why a `-p` value was refused, when no narrower reason applies. | pub const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12), a story or its paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a comment |
-| `LOCATION_NOT_YET` | src/ids.rs:49 | pub | Why a settled id `-p` cannot edit yet was refused. | pub const LOCATION_NOT_YET: &str = "a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tables of  |
-| `TABLE_NEEDS_CELL` | src/ids.rs:51 | pub | Why a table id without its row and cell was refused. | pub const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row1.cell2" |
-| `CELL_NEEDS_TABLE` | src/ids.rs:54 | pub | Message returned for a `-p` value that names a row or cell without its table. | pub const CELL_NEEDS_TABLE: &str = "a row or cell needs its table, as t0.row1.cell2" |
-| `CHANGE_SPELLINGS` | src/ids.rs:58 | pub | The change spellings the manifest advertises: the settled ones only (module doc). | pub const CHANGE_SPELLINGS: &[&str] = &["r12", "r1+2", "header1.r1", "footnotes.r3"] |
-| `COMMENT_SPELLINGS` | src/ids.rs:60 | pub | The comment spellings the manifest advertises. | pub const COMMENT_SPELLINGS: &[&str] = &["c27"] |
-| `COMMENT_TEXT_SPELLINGS` | src/ids.rs:62 | pub | The spellings of the text a comment covers the manifest advertises. | pub const COMMENT_TEXT_SPELLINGS: &[&str] = &["c27.text"] |
-| `PARAGRAPH_SPELLINGS` | src/ids.rs:66 | pub | The paragraph spellings the manifest advertises. | pub const PARAGRAPH_SPELLINGS: &[&str] = &[ "p12", "header1", "header1.p2", "footnotes.p3", "t0.row1.cell2", "t0.row1.cell2.p1", ] |
-| `TABLE_SPELLINGS` | src/ids.rs:78 | pub | Sample table-id spellings the capabilities manifest advertises ([`crate::capabilities::Ids::table`]); rows and cells sit under the table, as in [`PARAGRAPH_SPELLINGS`]. | pub const TABLE_SPELLINGS: &[&str] = &["t0"] |
-| `CONTROL_SPELLINGS` | src/ids.rs:82 | pub | The content control spellings the manifest advertises: a block control, one in a paragraph, and one in a cell's first paragraph. | pub const CONTROL_SPELLINGS: &[&str] = &["cc0", "p12.cc0", "t0.row1.cell2.cc0"] |
+| `CHANGE_EXPECTED` | src/ids.rs:43 | pub(crate) | Why a change id was refused. | pub(crate) const CHANGE_EXPECTED: &str = "expected a change id such as r12, r1+2 or header1.r1" |
+| `COMMENT_EXPECTED` | src/ids.rs:45 | pub(crate) | Why a comment id was refused. | pub(crate) const COMMENT_EXPECTED: &str = "expected a comment id such as c27" |
+| `LOCATION_EXPECTED` | src/ids.rs:47 | pub(crate) | Why a `-p` value was refused, when no narrower reason applies. | pub(crate) const LOCATION_EXPECTED: &str = "-p takes a paragraph (p12), a story or its paragraph (header1, header1.p2, footnotes.p3), a cell (t0.row1.cell2), a  |
+| `LOCATION_NOT_YET` | src/ids.rs:49 | pub(crate) | Why a settled id `-p` cannot edit yet was refused. | pub(crate) const LOCATION_NOT_YET: &str = "a settled id, but -p does not edit tables, rows, nested tables, text boxes, content controls, ranges, sections or tab |
+| `TABLE_NEEDS_CELL` | src/ids.rs:51 | pub(crate) | Why a table id without its row and cell was refused. | pub(crate) const TABLE_NEEDS_CELL: &str = "a table id needs a row and a cell, as t0.row1.cell2" |
+| `CELL_NEEDS_TABLE` | src/ids.rs:54 | pub(crate) | Message returned for a `-p` value that names a row or cell without its table. | pub(crate) const CELL_NEEDS_TABLE: &str = "a row or cell needs its table, as t0.row1.cell2" |
+| `CHANGE_SPELLINGS` | src/ids.rs:58 | pub(crate) | The change spellings the manifest advertises: the settled ones only (module doc). | pub(crate) const CHANGE_SPELLINGS: &[&str] = &["r12", "r1+2", "header1.r1", "footnotes.r3"] |
+| `COMMENT_SPELLINGS` | src/ids.rs:60 | pub(crate) | The comment spellings the manifest advertises. | pub(crate) const COMMENT_SPELLINGS: &[&str] = &["c27"] |
+| `COMMENT_TEXT_SPELLINGS` | src/ids.rs:62 | pub(crate) | The spellings of the text a comment covers the manifest advertises. | pub(crate) const COMMENT_TEXT_SPELLINGS: &[&str] = &["c27.text"] |
+| `PARAGRAPH_SPELLINGS` | src/ids.rs:66 | pub(crate) | The paragraph spellings the manifest advertises. | pub(crate) const PARAGRAPH_SPELLINGS: &[&str] = &[ "p12", "header1", "header1.p2", "footnotes.p3", "t0.row1.cell2", "t0.row1.cell2.p1", ] |
+| `TABLE_SPELLINGS` | src/ids.rs:78 | pub(crate) | Sample table-id spellings the capabilities manifest advertises ([`crate::capabilities::Ids::table`]); rows and cells sit under the table, as in [`PARAGRAPH_SPELLINGS`]. | pub(crate) const TABLE_SPELLINGS: &[&str] = &["t0"] |
+| `CONTROL_SPELLINGS` | src/ids.rs:82 | pub(crate) | The content control spellings the manifest advertises: a block control, one in a paragraph, and one in a cell's first paragraph. | pub(crate) const CONTROL_SPELLINGS: &[&str] = &["cc0", "p12.cc0", "t0.row1.cell2.cc0"] |
 | `SHORT_EXPECTED` | src/ids/short.rs:42 | pub | Why a short id was refused, when no narrower reason applies. | pub const SHORT_EXPECTED: &str = "expected a short id such as p12, header1.p0, t0.row1.cell2, p14.box0.p0, cc0, p3-p7, r12, r1+2, header1.r1, c5, c5.text, s0 or |
 | `PARTS` | src/ids/short.rs:199 | private | The parts other than the body that hold blocks or changes the view names; headers and footers are `headerN` and `footerN`. | const PARTS: &[&str] = &["footnotes", "endnotes", "comments", "styles", "numbering"] |
-| `SCHEMA_VERSION` | src/inspect.rs:32 | pub | Wire schema version of [`inspect_json`] and of the [`crate::edit`] plan that consumes it. | pub const SCHEMA_VERSION: u32 = 1 |
-| `BODY_STORY` | src/inspect.rs:36 | pub(crate) | The story every document has; its paragraph ids are `pN`, and a selector without a `story` searches it. | pub(crate) const BODY_STORY: &str = "body" |
-| `STORY_KINDS` | src/inspect.rs:44 | pub(crate) | Kinds of part an edit plan addresses as a story besides the body, in the order [`stories`] lists them. | pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endnotes"] |
-| `SDT_PROPERTIES` | src/inspect.rs:881 | private | `w:sdtPr` children that are properties, not the control's type. | const SDT_PROPERTIES: &[&str] = &[ "rPr", "alias", "tag", "id", "lock", "placeholder", "temporary", "showingPlcHdr", "dataBinding", "label", "tabIndex", ] |
+| `SCHEMA_VERSION` | src/inspect.rs:32 | pub | Wire schema version of legacy [`crate::edit`] plans and reports. | pub const SCHEMA_VERSION: u32 = 1 |
+| `SNAPSHOT_SCHEMA_VERSION` | src/inspect.rs:39 | pub | Snapshot wire schema. | pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3 |
+| `BODY_STORY` | src/inspect.rs:43 | pub(crate) | The story every document has; its paragraph ids are `pN`, and a selector without a `story` searches it. | pub(crate) const BODY_STORY: &str = "body" |
+| `STORY_KINDS` | src/inspect.rs:51 | pub(crate) | Kinds of part an edit plan addresses as a story besides the body, in the order [`stories`] lists them. | pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endnotes"] |
+| `SDT_PROPERTIES` | src/inspect.rs:1122 | private | `w:sdtPr` children that are properties, not the control's type. | const SDT_PROPERTIES: &[&str] = &[ "rPr", "alias", "tag", "id", "lock", "placeholder", "temporary", "showingPlcHdr", "dataBinding", "label", "tabIndex", ] |
 | `OLE_MAGIC` | src/legacy_doc.rs:55 | private | The first bytes of an OLE compound file. | const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1" |
 | `WORD_IDENT` | src/legacy_doc.rs:58 | private | `wIdent` of a Word binary document. | const WORD_IDENT: u16 = 0xA5EC |
 | `NFIB_WORD97` | src/legacy_doc.rs:61 | private | Lowest `nFib` of the Word 97 format; Word 6 and 95 files are older. | const NFIB_WORD97: u16 = 0x00C1 |
@@ -456,58 +479,69 @@
 | `TABLE_SIDES` | src/markdown/borders.rs:20 | pub(crate) | A table's sides (`w:tblBorders`), in schema order. | pub(crate) const TABLE_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "insideH", "insideV"] |
 | `CELL_SIDES` | src/markdown/borders.rs:23 | pub(crate) | A cell's sides (`w:tcBorders`), in schema order. | pub(crate) const CELL_SIDES: [&str; 8] = [ "top", "left", "bottom", "right", "insideH", "insideV", "tl2br", "tr2bl", ] |
 | `PARAGRAPH_SIDES` | src/markdown/borders.rs:28 | pub(crate) | A paragraph's sides (`w:pBdr`), in schema order. | pub(crate) const PARAGRAPH_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"] |
-| `STAND_INS` | src/markdown/critic.rs:61 | private | Every delimiter with its stand-in (Supplemental Punctuation, all Po). | const STAND_INS: [(Token, char); 17] = [ (Token::InsertStart, '\u{2E0E}'), (Token::InsertEnd, '\u{2E0F}'), (Token::DeleteStart, '\u{2E10}'), (Token::DeleteEnd,  |
-| `ESCAPE` | src/markdown/critic.rs:82 | private | Put before a stand-in character (or itself) that was in the source. | const ESCAPE: char = '\u{F0000}' |
-| `SPANS` | src/markdown/critic.rs:86 | private | A span's opening delimiter, its closing one, and the separator a substitution needs between them. | const SPANS: [(&str, &str, Option<&str>, Token, Token); 5] = [ ("{++", "++}", None, Token::InsertStart, Token::InsertEnd), ("{--", "--}", None, Token::DeleteSta |
-| `INSERT` | src/markdown/critic.rs:353 | private | _no doc comment_ | const INSERT: Allowed = 1 |
-| `DELETE` | src/markdown/critic.rs:354 | private | _no doc comment_ | const DELETE: Allowed = 2 |
-| `SUBSTITUTE` | src/markdown/critic.rs:355 | private | _no doc comment_ | const SUBSTITUTE: Allowed = 4 |
-| `HIGHLIGHT` | src/markdown/critic.rs:356 | private | _no doc comment_ | const HIGHLIGHT: Allowed = 8 |
-| `COMMENT` | src/markdown/critic.rs:357 | private | _no doc comment_ | const COMMENT: Allowed = 16 |
-| `FIELD` | src/markdown/critic.rs:358 | private | _no doc comment_ | const FIELD: Allowed = 32 |
-| `MARK` | src/markdown/critic.rs:360 | private | A `==highlight==` run. | const MARK: Allowed = 64 |
-| `CHANGES` | src/markdown/critic.rs:361 | private | _no doc comment_ | const CHANGES: Allowed = INSERT \\| DELETE \\| SUBSTITUTE |
-| `ALL` | src/markdown/critic.rs:362 | private | _no doc comment_ | const ALL: Allowed = CHANGES \\| HIGHLIGHT \\| COMMENT \\| FIELD \\| MARK |
-| `OPENER` | src/markdown/critic.rs:1294 | private | What can follow the backslash run an opener holds (`{` + run). | const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="] |
-| `CLOSER` | src/markdown/critic.rs:1296 | private | What can hold the run a closer escapes (`++` + run + `}`). | const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="] |
-| `FIELD_END` | src/markdown/critic.rs:1340 | private | What closes a body field. | const FIELD_END: &str = "{/}" |
-| `FIELD_NAMES` | src/markdown/critic.rs:1344 | private | The field names ECMA-376 Part 1 §17.16.5 lists. | const FIELD_NAMES: [&str; 76] = [ "ADDRESSBLOCK", "ADVANCE", "ASK", "AUTHOR", "AUTONUM", "AUTONUMLGL", "AUTONUMOUT", "AUTOTEXT", "AUTOTEXTLIST", "BARCODE", "BIB |
-| `LONGEST_FIELD_CODE` | src/markdown/critic.rs:1436 | private | The longest field code read, in characters: no field code comes near it, and it keeps a paragraph of `{` from being scanned once per brace. | const LONGEST_FIELD_CODE: usize = 1024 |
+| `STAND_INS` | src/markdown/critic.rs:67 | private | Every delimiter with its stand-in (Supplemental Punctuation, all Po). | const STAND_INS: [(Token, char); 20] = [ (Token::InsertStart, '\u{2E0E}'), (Token::InsertEnd, '\u{2E0F}'), (Token::DeleteStart, '\u{2E10}'), (Token::DeleteEnd,  |
+| `ESCAPE` | src/markdown/critic.rs:91 | private | Put before a stand-in character (or itself) that was in the source. | const ESCAPE: char = '\u{F0000}' |
+| `SPANS` | src/markdown/critic.rs:95 | private | A span's opening delimiter, its closing one, and the separator a substitution needs between them. | const SPANS: [(&str, &str, Option<&str>, Token, Token); 5] = [ ("{++", "++}", None, Token::InsertStart, Token::InsertEnd), ("{--", "--}", None, Token::DeleteSta |
+| `INSERT` | src/markdown/critic.rs:418 | private | _no doc comment_ | const INSERT: Allowed = 1 |
+| `DELETE` | src/markdown/critic.rs:419 | private | _no doc comment_ | const DELETE: Allowed = 2 |
+| `SUBSTITUTE` | src/markdown/critic.rs:420 | private | _no doc comment_ | const SUBSTITUTE: Allowed = 4 |
+| `HIGHLIGHT` | src/markdown/critic.rs:421 | private | _no doc comment_ | const HIGHLIGHT: Allowed = 8 |
+| `COMMENT` | src/markdown/critic.rs:422 | private | _no doc comment_ | const COMMENT: Allowed = 16 |
+| `FIELD` | src/markdown/critic.rs:423 | private | _no doc comment_ | const FIELD: Allowed = 32 |
+| `MARK` | src/markdown/critic.rs:425 | private | A `==highlight==` run. | const MARK: Allowed = 64 |
+| `CHANGES` | src/markdown/critic.rs:426 | private | _no doc comment_ | const CHANGES: Allowed = INSERT \\| DELETE \\| SUBSTITUTE |
+| `ALL` | src/markdown/critic.rs:427 | private | _no doc comment_ | const ALL: Allowed = CHANGES \\| HIGHLIGHT \\| COMMENT \\| FIELD \\| MARK |
+| `OPENER` | src/markdown/critic.rs:1473 | private | What can follow the backslash run an opener holds (`{` + run). | const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="] |
+| `CLOSER` | src/markdown/critic.rs:1475 | private | What can hold the run a closer escapes (`++` + run + `}`). | const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="] |
+| `FIELD_END` | src/markdown/critic.rs:1534 | private | What closes a body field. | const FIELD_END: &str = "{/}" |
+| `FIELD_NAMES` | src/markdown/critic.rs:1538 | private | The field names ECMA-376 Part 1 §17.16.5 lists. | const FIELD_NAMES: [&str; 76] = [ "ADDRESSBLOCK", "ADVANCE", "ASK", "AUTHOR", "AUTONUM", "AUTONUMLGL", "AUTONUMOUT", "AUTOTEXT", "AUTOTEXTLIST", "BARCODE", "BIB |
+| `LONGEST_FIELD_CODE` | src/markdown/critic.rs:1630 | private | The longest field code read, in characters: no field code comes near it, and it keeps a paragraph of `{` from being scanned once per brace. | const LONGEST_FIELD_CODE: usize = 1024 |
+| `RELS` | src/markdown/data_stores.rs:32 | private | _no doc comment_ | const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
+| `DS_NS` | src/markdown/data_stores.rs:33 | private | _no doc comment_ | const DS_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/customXml" |
+| `PROPS_CT` | src/markdown/data_stores.rs:34 | private | _no doc comment_ | const PROPS_CT: &str = "application/vnd.openxmlformats-officedocument.customXmlProperties+xml" |
+| `BUILT_IN` | src/markdown/data_stores.rs:38 | private | Word's own stores, which `docProps` holds: the core and the extended document properties. | const BUILT_IN: [&str; 2] = [ "{6C3C8BC8-F283-45AE-878A-BAB7291924A1}", "{6668398D-A668-4E3E-A5EB-62B293D839F1}", ] |
+| `SHOWS` | src/markdown/data_stores.rs:335 | private | Empty run content that shows something plain text cannot hold. | const SHOWS: [&str; 16] = [ "fldChar", "sym", "ptab", "noBreakHyphen", "softHyphen", "footnoteReference", "endnoteReference", "pgNum", "dayShort", "dayLong", "m |
 | `WORD_DIFF_SIMILARITY` | src/markdown/diff.rs:27 | private | Lines that share less than this share of their words are replaced whole rather than word by word. | const WORD_DIFF_SIMILARITY: f64 = 0.3 |
 | `RARE_LINE_SHARE` | src/markdown/diff.rs:32 | private | A word shared by more old lines than this does not suggest a pairing; candidates come from the rarer words a line has. | const RARE_LINE_SHARE: usize = 8 |
 | `MAX_CANDIDATES` | src/markdown/diff.rs:35 | private | At most this many candidate old lines are scored against one new line. | const MAX_CANDIDATES: usize = 64 |
 | `REFLOW_MAX_BYTES` | src/markdown/diff.rs:40 | private | A reflow whose two sides hold more than this many bytes is left to the line pairing: Myers on the tokens is O((n+m)·d), and a rewrap this large can have a distance to match. | const REFLOW_MAX_BYTES: usize = 400_000 |
 | `DELIMITERS` | src/markdown/diff.rs:316 | private | Openers and the separator take the backslash before their first character; closers take it before `}`, which is how the marks are written today (`\{++`, `++\}`, `~\>`). | const DELIMITERS: [(&str, usize); 11] = [ ("{++", 0), ("{--", 0), ("{~~", 0), ("{==", 0), ("{>>", 0), ("++}", 2), ("--}", 2), ("~~}", 2), ("==}", 2), ("<<}", 2) |
-| `INDEX` | src/markdown/from_docx/agent.rs:16 | pub(crate) | Attribute stamped on every numbered `w:p`: its `pN` index. | pub(crate) const INDEX: &str = "\u{E000}jubarteIndex" |
-| `TABLE` | src/markdown/from_docx/agent.rs:18 | pub(crate) | Attribute stamped on every top-level `w:tbl`: its `t{N}` number. | pub(crate) const TABLE: &str = "\u{E000}jubarteTable" |
-| `REVS` | src/markdown/from_docx/agent.rs:22 | pub(crate) | Attribute stamped on a `w:p` that holds revisions: `kind:tag` entries separated by spaces (`ins:0@AC sub:1+2@AC fmt:3@JD mark-ins:4@AC`), recorded before resolution. | pub(crate) const REVS: &str = "\u{E000}jubarteRevs" |
-| `TAG` | src/markdown/from_docx/critic.rs:65 | pub(crate) | Agent-view attribution: an internal tag (`0@AC`, `1+2@AC`, `header1#1@AC`, optionally `0@AC 2026-10-03T14:05:00Z`) behind this sentinel, so that it is never mistaken for an author's note. | pub(crate) const TAG: &str = "\u{E000}" |
-| `PLAIN` | src/markdown/from_docx/critic.rs:71 | pub(crate) | Plain-view attribution: the change's ids and its `Author (date)` note as an internal tag (`agent::plain_tag_of`) behind this sentinel, so that neighbours join their ids as the agent view's do. | pub(crate) const PLAIN: &str = "\u{E001}" |
-| `ON` | src/markdown/from_docx/critic.rs:97 | private | The changes a note names sit behind this sentinel after the change's own tag (`\u{E000}3@BO\u{E002}1@AL`), with each tag's optional timestamp before it, exactly as [`display`] prints them: `r3 @BO on r1 @AL`. | const ON: &str = "\u{E002}" |
-| `CARRIED` | src/markdown/from_docx/critic.rs:103 | pub(crate) | Marks an attribution the container carries (a row's or cell's own mark, opened around each paragraph it covers) rather than a change on the content: a sole change under one is not folded into a note, for the writer rebuilds container marks itself, not as a wrap. | pub(crate) const CARRIED: &str = "\u{E003}" |
-| `DELIMITERS` | src/markdown/from_docx/critic.rs:1010 | private | _no doc comment_ | const DELIMITERS: [(&str, &str); 11] = [ ("{++", "{\\++"), ("{--", "{\\--"), ("{~~", "{\\~~"), ("{>>", "{\\>>"), ("{==", "{\\=="), ("++}", "++\\}"), ("--}", "-- |
-| `OPENER` | src/markdown/from_docx/critic.rs:1040 | private | What can follow the backslash run an opener holds (`{` + run). | const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="] |
-| `CLOSER` | src/markdown/from_docx/critic.rs:1042 | private | What can hold the run a closer escapes (`++` + run + `}`). | const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="] |
-| `SPACED` | src/markdown/from_docx/critic.rs:1094 | private | _no doc comment_ | const SPACED: [(&str, &str); 11] = [ ("{++", "{ ++"), ("{--", "{ --"), ("{~~", "{ ~~"), ("{>>", "{ >>"), ("{==", "{ =="), ("++}", "++ }"), ("--}", "-- }"), ("~~ |
-| `GROUPED` | src/markdown/from_docx/critic.rs:1109 | private | Openers before closers, so `{--` broken as `{{}--` still has a `--}` for the closer to break. _(from a code comment)_ | const GROUPED: [(&str, &str); 11] = [ ("{++", "{{}++"), ("{--", "{{}--"), ("{~~", "{{}~~"), ("{>>", "{{}>>"), ("{==", "{{}=="), ("++}", "++{}}"), ("--}", "--{}} |
+| `ATTRIBUTES` | src/markdown/frames.rs:18 | pub(crate) | CT_FramePr's attributes, in the schema's order. | pub(crate) const ATTRIBUTES: [&str; 15] = [ "dropCap", "lines", "w", "h", "vSpace", "hSpace", "wrap", "hAnchor", "vAnchor", "x", "xAlign", "y", "yAlign", "hRule |
+| `INDEX` | src/markdown/from_docx/agent.rs:18 | pub(crate) | Attribute stamped on every numbered `w:p`: its `pN` index. | pub(crate) const INDEX: &str = "\u{E000}jubarteIndex" |
+| `TABLE` | src/markdown/from_docx/agent.rs:20 | pub(crate) | Attribute stamped on every top-level `w:tbl`: its `t{N}` number. | pub(crate) const TABLE: &str = "\u{E000}jubarteTable" |
+| `REVS` | src/markdown/from_docx/agent.rs:24 | pub(crate) | Attribute stamped on a `w:p` that holds revisions: `kind:tag` entries separated by spaces (`ins:0@AC sub:1+2@AC fmt:3@JD mark-ins:4@AC`), recorded before resolution. | pub(crate) const REVS: &str = "\u{E000}jubarteRevs" |
+| `MOST` | src/markdown/from_docx/agent.rs:2288 | private | The reader's bounds (`xml.rs`): 22in, and 600% of the text width. _(from a code comment)_ | const MOST: f64 = 31_680.0 |
+| `MOST_PERCENT` | src/markdown/from_docx/agent.rs:2289 | private | _no doc comment_ | const MOST_PERCENT: f64 = 600.0 |
+| `INSERTED_MARK` | src/markdown/from_docx/agent.rs:2883 | private | A paragraph mark's piece of a change, by its side: alone, either counts as a paragraph mark. | const INSERTED_MARK: &str = "mark+" |
+| `DELETED_MARK` | src/markdown/from_docx/agent.rs:2884 | private | _no doc comment_ | const DELETED_MARK: &str = "mark-" |
+| `TAG` | src/markdown/from_docx/critic.rs:66 | pub(crate) | Agent-view attribution: an internal tag (`0@AC`, `1+2@AC`, `header1#1@AC`, optionally `0@AC 2026-10-03T14:05:00Z`) behind this sentinel, so that it is never mistaken for an author's note. | pub(crate) const TAG: &str = "\u{E000}" |
+| `PLAIN` | src/markdown/from_docx/critic.rs:72 | pub(crate) | Plain-view attribution: the change's ids and its `Author (date)` note as an internal tag (`agent::plain_tag_of`) behind this sentinel, so that distinct neighbouring ids remain separate. | pub(crate) const PLAIN: &str = "\u{E001}" |
+| `ON` | src/markdown/from_docx/critic.rs:112 | private | The changes a note names sit behind this sentinel after the change's own tag (`\u{E000}3@BO\u{E002}1@AL`), with each tag's optional timestamp before it, exactly as [`display`] prints them: `r3 @BO re r1 @AL`. | const ON: &str = "\u{E002}" |
+| `CARRIED` | src/markdown/from_docx/critic.rs:118 | pub(crate) | Marks an attribution the container carries (a row's or cell's own mark, opened around each paragraph it covers) rather than a change on the content: a sole change under one is not folded into a note, for the writer rebuilds container marks itself, not as a wrap. | pub(crate) const CARRIED: &str = "\u{E003}" |
+| `DELIMITERS` | src/markdown/from_docx/critic.rs:1136 | private | _no doc comment_ | const DELIMITERS: [(&str, &str); 11] = [ ("{++", "{\\++"), ("{--", "{\\--"), ("{~~", "{\\~~"), ("{>>", "{\\>>"), ("{==", "{\\=="), ("++}", "++\\}"), ("--}", "-- |
+| `OPENER` | src/markdown/from_docx/critic.rs:1174 | private | What can follow the backslash run an opener holds (`{` + run). | const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="] |
+| `CLOSER` | src/markdown/from_docx/critic.rs:1176 | private | What can hold the run a closer escapes (`++` + run + `}`). | const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="] |
+| `SPACED` | src/markdown/from_docx/critic.rs:1241 | private | _no doc comment_ | const SPACED: [(&str, &str); 11] = [ ("{++", "{ ++"), ("{--", "{ --"), ("{~~", "{ ~~"), ("{>>", "{ >>"), ("{==", "{ =="), ("++}", "++ }"), ("--}", "-- }"), ("~~ |
+| `GROUPED` | src/markdown/from_docx/critic.rs:1256 | private | Openers before closers, so `{--` broken as `{{}--` still has a `--}` for the closer to break. _(from a code comment)_ | const GROUPED: [(&str, &str); 11] = [ ("{++", "{{}++"), ("{--", "{{}--"), ("{~~", "{{}~~"), ("{>>", "{{}>>"), ("{==", "{{}=="), ("++}", "++{}}"), ("--}", "--{}} |
 | `REL_NS` | src/markdown/from_docx/drawing.rs:55 | private | The relationship namespaces (`r`), transitional and Strict: an attribute prefixed by a prefix bound to one holds a relationship id of the part the element sits in. | const REL_NS: [&str; 2] = [ "http://schemas.openxmlformats.org/officeDocument/2006/relationships", "http://purl.oclc.org/ooxml/officeDocument/relationships", ] |
 | `MAX_DEPS` | src/markdown/from_docx/drawing.rs:61 | private | The most dependent parts a `drawing:` payload holds. | const MAX_DEPS: usize = 64 |
 | `MAX_DEP_RELS` | src/markdown/from_docx/drawing.rs:63 | private | The most relationships one part of a payload holds. | const MAX_DEP_RELS: usize = 64 |
 | `MAX_DEP_BYTES` | src/markdown/from_docx/drawing.rs:65 | private | The most bytes one dependent part holds. | const MAX_DEP_BYTES: u64 = 16 * 1024 * 1024 |
 | `MAX_PENDING` | src/markdown/from_docx/drawing.rs:67 | private | The most `drawing:` payloads one document queues. | const MAX_PENDING: usize = 4096 |
-| `RASTER` | src/markdown/from_docx/drawing.rs:647 | private | _no doc comment_ | const RASTER: [&str; 5] = [ "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff", ] |
-| `RESERVED` | src/markdown/from_docx/header.rs:175 | private | _no doc comment_ | const RESERVED: [&str; 12] = [ "true", "false", "yes", "no", "on", "off", "y", "n", "null", "~", ".nan", ".inf", ] |
+| `RASTER` | src/markdown/from_docx/drawing.rs:815 | private | _no doc comment_ | const RASTER: [&str; 5] = [ "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff", ] |
+| `RESERVED` | src/markdown/from_docx/header.rs:186 | private | _no doc comment_ | const RESERVED: [&str; 12] = [ "true", "false", "yes", "no", "on", "off", "y", "n", "null", "~", ".nan", ".inf", ] |
 | `MAX_PIXELS` | src/markdown/from_docx/media.rs:13 | private | Pictures with more pixels than this stay alt text (checked on the header). | const MAX_PIXELS: u64 = 50_000_000 |
-| `FACES` | src/markdown/from_docx/mod.rs:1910 | private | _no doc comment_ | const FACES: [&str; 12] = [ "consolas", "lucida console", "lucida sans typewriter", "menlo", "monaco", "inconsolata", "andale mono", "ocr a extended", "letter g |
-| `FIELD_END` | src/markdown/from_docx/mod.rs:2049 | private | What closes a field the agent view prints as `{CODE}result{/}`. | const FIELD_END: &str = "{/}" |
-| `MAX_ENTRY_BYTES` | src/markdown/from_docx/ooxml.rs:21 | pub(crate) | Largest uncompressed zip entry we will inflate. | pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024 |
-| `MAX_ENTRIES` | src/markdown/from_docx/ooxml.rs:23 | pub(crate) | Largest number of entries a container may declare. | pub(crate) const MAX_ENTRIES: usize = 10_000 |
-| `MAX_DEPTH` | src/markdown/from_docx/ooxml.rs:25 | private | Deepest XML nesting we accept; deeper input is treated as hostile. | const MAX_DEPTH: usize = 512 |
-| `TITLE` | src/markdown/from_docx/ooxml.rs:248 | pub(crate) | Between a link's destination and its title where the two travel as one string; the link is written `[t](url "title")`. | pub(crate) const TITLE: char = '\u{1f}' |
-| `MARKS` | src/markdown/from_docx/ooxml.rs:686 | private | CommonMark's email local part, besides ASCII alphanumerics. _(from a code comment)_ | const MARKS: &[u8] = b".!#$%&'*+/=?^_`{\\|}~-" |
-| `MAX_MEDIA_PARTS` | src/markdown/from_docx/ooxml.rs:1038 | private | Most image parts read from one part's relationships. | const MAX_MEDIA_PARTS: usize = 512 |
-| `MAX_MEDIA_BYTES` | src/markdown/from_docx/ooxml.rs:1040 | private | Most image bytes read from one part's relationships. | const MAX_MEDIA_BYTES: usize = 256 * 1024 * 1024 |
-| `BREAK_GONE` | src/markdown/from_docx/revise.rs:207 | private | Set on a paragraph, before it is resolved, when its break goes away. | const BREAK_GONE: &str = "anymd:break-gone" |
+| `FACES` | src/markdown/from_docx/mod.rs:1993 | private | _no doc comment_ | const FACES: [&str; 12] = [ "consolas", "lucida console", "lucida sans typewriter", "menlo", "monaco", "inconsolata", "andale mono", "ocr a extended", "letter g |
+| `FIELD_END` | src/markdown/from_docx/mod.rs:2132 | private | What closes a field the agent view prints as `{CODE}result{/}`. | const FIELD_END: &str = "{/}" |
+| `MAX_ENTRY_BYTES` | src/markdown/from_docx/ooxml.rs:25 | pub(crate) | Largest uncompressed zip entry we will inflate. | pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024 |
+| `MAX_ENTRIES` | src/markdown/from_docx/ooxml.rs:27 | pub(crate) | Largest number of entries a container may declare. | pub(crate) const MAX_ENTRIES: usize = 10_000 |
+| `MAX_DEPTH` | src/markdown/from_docx/ooxml.rs:29 | private | Deepest XML nesting we accept; deeper input is treated as hostile. | const MAX_DEPTH: usize = crate::xmllinq::parse::PERMISSIVE_MAX_DEPTH |
+| `TITLE` | src/markdown/from_docx/ooxml.rs:287 | pub(crate) | Between a link's destination and its title where the two travel as one string; the link is written `[t](url "title")`. | pub(crate) const TITLE: char = '\u{1f}' |
+| `Element::COMMENT_DATE` | src/markdown/from_docx/ooxml.rs:348 | pub(crate) | A reporting-only stamp supplied by the linked comment family. | pub(crate) const COMMENT_DATE: &str = "\u{E000}jubarteCommentDate" |
+| `MARKS` | src/markdown/from_docx/ooxml.rs:787 | private | CommonMark's email local part, besides ASCII alphanumerics. _(from a code comment)_ | const MARKS: &[u8] = b".!#$%&'*+/=?^_`{\\|}~-" |
+| `MAX_MEDIA_PARTS` | src/markdown/from_docx/ooxml.rs:1171 | private | Most image parts read from one part's relationships. | const MAX_MEDIA_PARTS: usize = 512 |
+| `MAX_MEDIA_BYTES` | src/markdown/from_docx/ooxml.rs:1173 | private | Most image bytes read from one part's relationships. | const MAX_MEDIA_BYTES: usize = 256 * 1024 * 1024 |
+| `BREAK_GONE` | src/markdown/from_docx/revise.rs:220 | private | Set on a paragraph, before it is resolved, when its break goes away. | const BREAK_GONE: &str = "anymd:break-gone" |
 | `INSERT_START` | src/markdown/math.rs:21 | pub(super) | Where an insertion inside the math starts (`{++`) and ends (`++}`), and a deletion (`{--`, `--}`): the characters CriticMarkup's stand-ins use. | pub(super) const INSERT_START: char = '\u{2E0E}' |
 | `INSERT_END` | src/markdown/math.rs:22 | pub(super) | _no doc comment_ | pub(super) const INSERT_END: char = '\u{2E0F}' |
 | `DELETE_START` | src/markdown/math.rs:23 | pub(super) | _no doc comment_ | pub(super) const DELETE_START: char = '\u{2E10}' |
@@ -521,60 +555,75 @@
 | `SYMBOLS` | src/markdown/math.rs:101 | private | Characters LaTeX writes as a command: Greek, operators, relations, arrows and the literal brackets and specials the reader escapes. | const SYMBOLS: &[(&str, &str)] = &[ ("alpha", "α"), ("beta", "β"), ("gamma", "γ"), ("delta", "δ"), ("epsilon", "ϵ"), ("varepsilon", "ε"), ("zeta", "ζ"), ("eta", |
 | `MOST_NESTING` | src/markdown/math.rs:775 | private | Deeper than any equation Word builds. | const MOST_NESTING: usize = 64 |
 | `NEGATED` | src/markdown/math.rs:1493 | private | _no doc comment_ | const NEGATED: [(&str, &str); 24] = [ ("=", "≠"), ("<", "≮"), (">", "≯"), ("∈", "∉"), ("∋", "∌"), ("⊂", "⊄"), ("⊃", "⊅"), ("⊆", "⊈"), ("⊇", "⊉"), ("≡", "≢"), (" |
-| `SELECT_EXPECTED` | src/markdown/mod.rs:600 | private | Why a `read -p` pick was refused. | const SELECT_EXPECTED: &str = "expected pN, pN-pM or tN" |
-| `RELS` | src/markdown/package.rs:18 | private | _no doc comment_ | const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
-| `MAIN_CT` | src/markdown/package.rs:19 | private | _no doc comment_ | const MAIN_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml" |
-| `W_NS` | src/markdown/package.rs:21 | private | _no doc comment_ | const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main" |
-| `R_NS` | src/markdown/package.rs:22 | private | _no doc comment_ | const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
-| `WP_NS` | src/markdown/package.rs:23 | private | _no doc comment_ | const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" |
-| `LETTER_SECTION` | src/markdown/package.rs:27 | private | Page setup when there is no reference document: US Letter, one-inch margins, as Word's default template. | const LETTER_SECTION: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\ <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \ w:he |
-| `A4_SECTION` | src/markdown/package.rs:34 | private | Page setup for [`PageSize::A4`]: A4 with the same one-inch margins as Letter. | const A4_SECTION: &str = "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\ <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \ w:header |
-| `BASE_STYLES` | src/markdown/package.rs:48 | private | The styles every document gets, so a reference without them still resolves the defaults the others are based on. | const BASE_STYLES: [&str; 4] = ["Normal", "DefaultParagraphFont", "TableNormal", "NoList"] |
-| `KEPT` | src/markdown/package.rs:52 | private | Relationship types of the main part a reference document keeps; the rest belong to its body, which is replaced. | const KEPT: [&str; 14] = [ "/styles", "/stylesWithEffects", "/numbering", "/settings", "/webSettings", "/fontTable", "/theme", "/header", "/footer", "/footnotes |
-| `OPEN` | src/markdown/package.rs:508 | private | _no doc comment_ | const OPEN: &str = "<w:name w:val=\"" |
-| `WORD_TABLE_STYLES` | src/markdown/package.rs:588 | private | Word's built-in Grid Table and List Table styles (1 to 7, plain and Accent 1 to 6), one template per family as Word writes them, `{C}` for the theme colour and `@` for each colour resolved from it (written by scripts/table_styles_asset.py). | const WORD_TABLE_STYLES: &str = include_str!("word_table_styles.tsv") |
-| `OLD_TABLE_FAMILIES` | src/markdown/package.rs:653 | private | The table-style families Word named before its Grid and List Tables (`LightShading-Accent1`, `MediumList2`), each with the accents 1 to 6. | const OLD_TABLE_FAMILIES: [&str; 15] = [ "TableGrid", "LightShading", "LightList", "LightGrid", "MediumShading1", "MediumShading2", "MediumList1", "MediumList2" |
-| `DRAWINGML` | src/markdown/package.rs:748 | private | _no doc comment_ | const DRAWINGML: &str = "=\"http://schemas.openxmlformats.org/drawingml/2006/main\"" |
-| `DC_NS` | src/markdown/package.rs:1325 | private | The Dublin Core namespace of `dc:title` and `dc:creator`. | const DC_NS: &str = "http://purl.org/dc/elements/1.1/" |
-| `CP_NS` | src/markdown/package.rs:1327 | private | The core properties namespace of `cp:lastModifiedBy`. | const CP_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties" |
-| `CORE_PROPERTIES` | src/markdown/package.rs:1470 | private | The package relationship to the core properties part. | const CORE_PROPERTIES: &str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" |
+| `SELECT_EXPECTED` | src/markdown/mod.rs:608 | private | Why a `read -p` pick was refused. | const SELECT_EXPECTED: &str = "expected pN, pN-pM or tN" |
+| `RELS` | src/markdown/package.rs:19 | private | _no doc comment_ | const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
+| `MAIN_CT` | src/markdown/package.rs:20 | private | _no doc comment_ | const MAIN_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml" |
+| `W_NS` | src/markdown/package.rs:22 | private | _no doc comment_ | const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main" |
+| `R_NS` | src/markdown/package.rs:23 | private | _no doc comment_ | const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
+| `WP_NS` | src/markdown/package.rs:24 | private | _no doc comment_ | const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" |
+| `LETTER_SECTION` | src/markdown/package.rs:28 | private | Page setup when there is no reference document: US Letter, one-inch margins, as Word's default template. | const LETTER_SECTION: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\ <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \ w:he |
+| `A4_SECTION` | src/markdown/package.rs:35 | private | Page setup for [`PageSize::A4`]: A4 with the same one-inch margins as Letter. | const A4_SECTION: &str = "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\ <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \ w:header |
+| `BASE_STYLES` | src/markdown/package.rs:49 | private | The styles every document gets, so a reference without them still resolves the defaults the others are based on. | const BASE_STYLES: [&str; 4] = ["Normal", "DefaultParagraphFont", "TableNormal", "NoList"] |
+| `KEPT` | src/markdown/package.rs:53 | private | Relationship types of the main part a reference document keeps; the rest belong to its body, which is replaced. | const KEPT: [&str; 14] = [ "/styles", "/stylesWithEffects", "/numbering", "/settings", "/webSettings", "/fontTable", "/theme", "/header", "/footer", "/footnotes |
+| `OPEN` | src/markdown/package.rs:677 | private | _no doc comment_ | const OPEN: &str = "<w:name w:val=\"" |
+| `WORD_TABLE_STYLES` | src/markdown/package.rs:789 | private | Word's built-in Grid Table and List Table styles (1 to 7, plain and Accent 1 to 6), one template per family as Word writes them, `{C}` for the theme colour and `@` for each colour resolved from it (written by scripts/table_styles_asset.py). | const WORD_TABLE_STYLES: &str = include_str!("word_table_styles.tsv") |
+| `OLD_TABLE_FAMILIES` | src/markdown/package.rs:854 | private | The table-style families Word named before its Grid and List Tables (`LightShading-Accent1`, `MediumList2`), each with the accents 1 to 6. | const OLD_TABLE_FAMILIES: [&str; 15] = [ "TableGrid", "LightShading", "LightList", "LightGrid", "MediumShading1", "MediumShading2", "MediumList1", "MediumList2" |
+| `DRAWINGML` | src/markdown/package.rs:949 | private | _no doc comment_ | const DRAWINGML: &str = "=\"http://schemas.openxmlformats.org/drawingml/2006/main\"" |
+| `DC_NS` | src/markdown/package.rs:1531 | private | The Dublin Core namespace of `dc:title` and `dc:creator`. | const DC_NS: &str = "http://purl.org/dc/elements/1.1/" |
+| `CP_NS` | src/markdown/package.rs:1533 | private | The core properties namespace of `cp:lastModifiedBy`. | const CP_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties" |
+| `CORE_PROPERTIES` | src/markdown/package.rs:1676 | private | The package relationship to the core properties part. | const CORE_PROPERTIES: &str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" |
 | `KEY_CHARS` | src/markdown/pages.rs:26 | private | Characters of a block's opening text that must match the page text. | const KEY_CHARS: usize = 24 |
 | `SHORT_KEY_CHARS` | src/markdown/pages.rs:30 | private | The shorter key tried beside it, for text the page wraps beside other text (table cells, columns) after its first few words. | const SHORT_KEY_CHARS: usize = 12 |
 | `SEARCH_WINDOW` | src/markdown/pages.rs:35 | private | How far past the last match a block's opening text is looked for, in letters and digits. | const SEARCH_WINDOW: usize = 20_000 |
-| `HTML_ELEMENTS` | src/markdown/pages.rs:273 | private | HTML elements a Markdown line may carry: the writer's own (`br`, `sup`, `sub`) and the inline and block elements an author writes. | const HTML_ELEMENTS: [&str; 52] = [ "a", "abbr", "b", "bdi", "bdo", "big", "blockquote", "br", "center", "cite", "code", "col", "colgroup", "data", "dd", "del", |
+| `HTML_ELEMENTS` | src/markdown/pages.rs:274 | private | HTML elements a Markdown line may carry: the writer's own (`br`, `sup`, `sub`) and the inline and block elements an author writes. | const HTML_ELEMENTS: [&str; 52] = [ "a", "abbr", "b", "bdi", "bdo", "big", "blockquote", "br", "center", "cite", "code", "col", "colgroup", "data", "dd", "del", |
 | `PAIR_SIMILARITY` | src/markdown/patch.rs:36 | private | Paragraphs that share less than this share of their words pair only when nothing better is left between two pairs. | const PAIR_SIMILARITY: f64 = 0.3 |
 | `MAX_PAIRINGS` | src/markdown/patch.rs:40 | private | Pairing compares every paragraph of a changed stretch with every block of it; above this many comparisons they pair by position. | const MAX_PAIRINGS: usize = 2_500 |
 | `DEFAULT_COLUMNS` | src/markdown/unified.rs:41 | pub | The column width the [`Patch`] display formatter wraps to; passed to [`Patch::render`] as `columns` to change it. | pub const DEFAULT_COLUMNS: usize = 72 |
-| `OPENERS` | src/markdown/unified.rs:1209 | private | The markers that open and close a deletion, insertion, highlight and comment. | const OPENERS: [&str; 4] = ["[-", "{+", "{==", "{>>"] |
-| `CLOSERS` | src/markdown/unified.rs:1210 | private | _no doc comment_ | const CLOSERS: [&str; 4] = ["-]", "+}", "==}", "<<}"] |
-| `DATES` | src/markdown/view_notes.rs:145 | private | _no doc comment_ | const DATES: [&str; 4] = ["last_modified", "modified", "date", "created"] |
-| `UNNAMED` | src/markdown/view_notes.rs:312 | pub(super) | The handle of a mark with no author's name. | pub(super) const UNNAMED: &str = "??" |
-| `MOST_ID` | src/markdown/view_notes.rs:536 | pub(super) | The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a larger number a view names is left for a fresh one. | pub(super) const MOST_ID: u32 = 0x7FFF_FFFF |
-| `MOST_GRID` | src/markdown/view_notes.rs:749 | private | The most grid columns a table has, and rows one merged cell reaches: a bound on what a hand-edited table line can make the reader write (Word takes 63 columns). | const MOST_GRID: usize = 64 |
-| `MOST_EMPTY` | src/markdown/view_notes.rs:1036 | private | The most empty paragraphs one id line stands for: a bound on what a hand-edited range (`p0-p4294967295 empty`) can make the reader write. | const MOST_EMPTY: usize = 100_000 |
-| `CLAUSE_WORDS` | src/markdown/view_notes.rs:1137 | private | The words that open an id line's clauses (`center`, `left 0.5in`, `break-ins r3 @AC`): any other word after the id is a style. | const CLAUSE_WORDS: [&str; 21] = [ "empty", "outline", "center", "right", "justify", "left", "first-line", "hanging", "bullet", "num", "level", "page-break", "p |
-| `TABLE_WORDS` | src/markdown/view_notes.rs:1164 | private | The words that open a id line's clauses (`center`, `left 0.5in`, `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not read as. | const TABLE_WORDS: [&str; 10] = [ "cells", "borders", "cell-borders", "row-borders", "merged", "gaps", "style", "header", "rev-del", "rev-merge", ] |
-| `WORD_PAGE_SIZES` | src/markdown/view_notes.rs:1948 | pub(super) | The sheet sizes Word's own paper list names, in the twips Word writes them, short side first. | pub(super) const WORD_PAGE_SIZES: &[(&str, u32, u32)] = &[ ("Letter", 12_240, 15_840), ("Legal", 12_240, 20_160), ("Executive", 10_440, 15_120), ("Tabloid", 15_ |
-| `MOST_COLUMNS` | src/markdown/view_notes.rs:2032 | private | The most text columns Word lets a section have. | const MOST_COLUMNS: u32 = 45 |
-| `MOST_PAGE` | src/markdown/view_notes.rs:2035 | private | The largest page side or margin a view can set: Word's 22 inches. | const MOST_PAGE: u32 = 31_680 |
+| `OPENERS` | src/markdown/unified.rs:1417 | private | The markers that open and close a deletion, insertion, highlight and comment. | const OPENERS: [&str; 4] = ["[-", "{+", "{==", "{>>"] |
+| `CLOSERS` | src/markdown/unified.rs:1418 | private | _no doc comment_ | const CLOSERS: [&str; 4] = ["-]", "+}", "==}", "<<}"] |
+| `DATES` | src/markdown/view_notes.rs:153 | private | _no doc comment_ | const DATES: [&str; 4] = ["last_modified", "modified", "date", "created"] |
+| `UNNAMED` | src/markdown/view_notes.rs:320 | pub(super) | The handle of a mark with no author's name. | pub(super) const UNNAMED: &str = "??" |
+| `MOST_ID` | src/markdown/view_notes.rs:553 | pub(super) | The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a larger number a view names is left for a fresh one. | pub(super) const MOST_ID: u32 = 0x7FFF_FFFF |
+| `MOST_GRID` | src/markdown/view_notes.rs:779 | private | The most grid columns a table has, and rows one merged cell reaches: a bound on what a hand-edited table line can make the reader write (Word takes 63 columns). | const MOST_GRID: usize = 64 |
+| `MOST_EMPTY` | src/markdown/view_notes.rs:1089 | private | The most empty paragraphs one id line stands for: a bound on what a hand-edited range (`p0-p4294967295 empty`) can make the reader write. | const MOST_EMPTY: usize = 100_000 |
+| `CLAUSE_WORDS` | src/markdown/view_notes.rs:1190 | private | The words that open an id line's clauses (`center`, `left 0.5in`, `break-ins r3 @AC`): any other word after the id is a style. | const CLAUSE_WORDS: [&str; 25] = [ "empty", "outline", "center", "right", "justify", "left", "first-line", "hanging", "before", "after", "line", "size", "bullet |
+| `TABLE_WORDS` | src/markdown/view_notes.rs:1221 | private | The words that open a id line's clauses (`center`, `left 0.5in`, `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not read as. | const TABLE_WORDS: [&str; 14] = [ "cells", "widths", "width", "indent", "layout", "borders", "cell-borders", "row-borders", "merged", "gaps", "style", "header", |
+| `WORD_PAGE_SIZES` | src/markdown/view_notes.rs:2122 | pub(super) | The sheet sizes Word's own paper list names, in the twips Word writes them, short side first. | pub(super) const WORD_PAGE_SIZES: &[(&str, u32, u32)] = &[ ("Letter", 12_240, 15_840), ("Legal", 12_240, 20_160), ("Executive", 10_440, 15_120), ("Tabloid", 15_ |
+| `MOST_COLUMNS` | src/markdown/view_notes.rs:2206 | private | The most text columns Word lets a section have. | const MOST_COLUMNS: u32 = 45 |
+| `MOST_PAGE` | src/markdown/view_notes.rs:2209 | private | The largest page side or margin a view can set: Word's 22 inches. | const MOST_PAGE: u32 = 31_680 |
 | `W_NS` | src/markdown/view_stories.rs:29 | private | _no doc comment_ | const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main" |
 | `R_NS` | src/markdown/view_stories.rs:30 | private | _no doc comment_ | const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
 | `RELS` | src/markdown/view_stories.rs:31 | private | _no doc comment_ | const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
-| `MOST_DEPTH` | src/markdown/view_stories.rs:254 | private | The most nested maps one flow map holds: the view prints three. | const MOST_DEPTH: usize = 8 |
-| `MOST_PARAGRAPH` | src/markdown/view_stories.rs:380 | private | The most empty paragraphs a story id can put before its text. | const MOST_PARAGRAPH: usize = 1_000 |
-| `DELIMITERS` | src/markdown/view_stories.rs:775 | private | _no doc comment_ | const DELIMITERS: [(&str, &str); 11] = [ ("{\\++", "{++"), ("{\\--", "{--"), ("{\\~~", "{~~"), ("{\\>>", "{>>"), ("{\\==", "{=="), ("++\\}", "++}"), ("--\\}", " |
-| `FIELD_END` | src/markdown/view_stories.rs:909 | private | What closes a field's result, as in the body. | const FIELD_END: &str = "{/}" |
-| `SETTINGS_AFTER_EVEN_ODD` | src/markdown/view_stories.rs:1367 | private | The `w:settings` children that follow `w:evenAndOddHeaders`, the later Office extensions (`w14:`, `w15:`, `w16…:`) last. | const SETTINGS_AFTER_EVEN_ODD: [&str; 53] = [ "<w:bookFoldRevPrinting", "<w:bookFoldPrinting", "<w:bookFoldPrintingSheets", "<w:drawingGridHorizontalSpacing", " |
-| `MOST_POINTS` | src/markdown/view_styles.rs:212 | private | The largest font size and spacing the legend can set: Word's 1638pt. | const MOST_POINTS: f64 = 1638.0 |
-| `SCHOLAR_STYLES` | src/markdown/write.rs:293 | private | The styles [`DocxOptions::scholar`] sets, as the front matter's `styles:` legend writes them: LaTeX's article class at 10pt (`\section` `\Large`, `\subsection` `\large`, `\subsubsection` `\normalsize`, with their spacing before and after). | const SCHOLAR_STYLES: [(&str, &str); 4] = [ ( "Normal", "Latin Modern Roman 10pt, after 6pt, line 12pt exact, justify", ), ( "\"#\"", "Heading1, Latin Modern Ro |
-| `PAGE_BREAK_LINE` | src/markdown/write.rs:402 | pub(super) | The line the writers print for a page break where no id line can carry it (the plain Markdown of `convert --to md`); the reader takes it back. | pub(super) const PAGE_BREAK_LINE: &str = "<!-- page-break -->" |
-| `COMMANDS` | src/markdown/write.rs:409 | private | _no doc comment_ | const COMMANDS: [&str; 4] = [ r"\newpage", r"\pagebreak", r"\clearpage", r"\cleardoublepage", ] |
-| `HTML_BLOCKS` | src/markdown/write.rs:1198 | private | The elements that start a paragraph of their own in HTML. | const HTML_BLOCKS: [&str; 39] = [ "address", "article", "aside", "blockquote", "br", "caption", "dd", "details", "div", "dl", "dt", "fieldset", "figcaption", "f |
-| `HEADINGS` | src/markdown/write.rs:1451 | private | _no doc comment_ | const HEADINGS: [&str; 6] = [ "Heading1", "Heading2", "Heading3", "Heading4", "Heading5", "Heading6", ] |
-| `MAX_PICTURE_WIDTH` | src/markdown/write.rs:1457 | private | Picture width cap: 6.5 inches in EMU, the text width of a Letter page with one-inch margins. | const MAX_PICTURE_WIDTH: u64 = 5_943_600 |
-| `MOST_BOOKMARK` | src/markdown/write.rs:4935 | private | The longest bookmark name Word's schema takes. | const MOST_BOOKMARK: usize = 40 |
-| `GLYPHS` | src/markdown/xml.rs:2124 | private | _no doc comment_ | const GLYPHS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"] |
-| `HEADINGS` | src/markdown/xml.rs:2270 | private | Heading 7-9 and Title are not written from Markdown; a `.doc` converted through it restores them (`legacy_doc`). _(from a code comment)_ | const HEADINGS: [(&str, &str); 9] = [ ("32", ""), ("28", ""), ("24", ""), ("22", "<w:i/><w:iCs/>"), ("22", ""), ("22", "<w:i/><w:iCs/>"), ("22", ""), ("22", "<w |
+| `INDENT_SIDES` | src/markdown/view_stories.rs:88 | private | The sides an `indent:` map names, in [`ParaFormat`]'s order. | const INDENT_SIDES: [&str; 4] = ["first-line", "hanging", "left", "right"] |
+| `MOST_DEPTH` | src/markdown/view_stories.rs:583 | private | The most nested maps one flow map holds: the view prints three. | const MOST_DEPTH: usize = 8 |
+| `MOST_PARAGRAPH` | src/markdown/view_stories.rs:709 | private | The most empty paragraphs a story id can put before its text. | const MOST_PARAGRAPH: usize = 1_000 |
+| `DELIMITERS` | src/markdown/view_stories.rs:1354 | private | _no doc comment_ | const DELIMITERS: [(&str, &str); 11] = [ ("{\\++", "{++"), ("{\\--", "{--"), ("{\\~~", "{~~"), ("{\\>>", "{>>"), ("{\\==", "{=="), ("++\\}", "++}"), ("--\\}", " |
+| `FIELD_END` | src/markdown/view_stories.rs:1495 | private | What closes a field's result, as in the body. | const FIELD_END: &str = "{/}" |
+| `SETTINGS_AFTER_EVEN_ODD` | src/markdown/view_stories.rs:2030 | private | The `w:settings` children that follow `w:evenAndOddHeaders`, the later Office extensions (`w14:`, `w15:`, `w16…:`) last. | const SETTINGS_AFTER_EVEN_ODD: [&str; 53] = [ "<w:bookFoldRevPrinting", "<w:bookFoldPrinting", "<w:bookFoldPrintingSheets", "<w:drawingGridHorizontalSpacing", " |
+| `MOST_POINTS` | src/markdown/view_styles.rs:220 | private | The largest font size and spacing the legend can set: Word's 1638pt. | const MOST_POINTS: f64 = 1638.0 |
+| `TABLE_BORDER_SIDES` | src/markdown/view_styles.rs:389 | pub(crate) | The sides a table style's `w:tblBorders` holds, in the order Word's schema puts them. | pub(crate) const TABLE_BORDER_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "insideH", "insideV"] |
+| `AFTER_SPACING` | src/markdown/view_styles.rs:626 | private | The `w:pPr` children CT_PPrBase puts after `w:spacing`. | const AFTER_SPACING: [&str; 11] = [ "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc", "textDirection", "textAlignment", "textboxTightWrap",  |
+| `SCHOLAR_STYLES` | src/markdown/write.rs:476 | private | The styles [`DocxOptions::scholar`] sets, as the front matter's `styles:` legend writes them: LaTeX's article class at 10pt (`\section` `\Large`, `\subsection` `\large`, `\subsubsection` `\normalsize`, with their spacing before and after). | const SCHOLAR_STYLES: [(&str, &str); 4] = [ ( "Normal", "Latin Modern Roman 10pt, after 6pt, line 12pt exact, justify", ), ( "\"#\"", "Heading1, Latin Modern Ro |
+| `PAGE_BREAK_LINE` | src/markdown/write.rs:585 | pub(super) | The line the writers print for a page break where no id line can carry it (the plain Markdown of `convert --to md`); the reader takes it back. | pub(super) const PAGE_BREAK_LINE: &str = "<!-- page-break -->" |
+| `COMMANDS` | src/markdown/write.rs:592 | private | _no doc comment_ | const COMMANDS: [&str; 4] = [ r"\newpage", r"\pagebreak", r"\clearpage", r"\cleardoublepage", ] |
+| `HTML_BLOCKS` | src/markdown/write.rs:1379 | private | The elements that start a paragraph of their own in HTML. | const HTML_BLOCKS: [&str; 39] = [ "address", "article", "aside", "blockquote", "br", "caption", "dd", "details", "div", "dl", "dt", "fieldset", "figcaption", "f |
+| `HEADINGS` | src/markdown/write.rs:1652 | private | _no doc comment_ | const HEADINGS: [&str; 6] = [ "Heading1", "Heading2", "Heading3", "Heading4", "Heading5", "Heading6", ] |
+| `MAX_PICTURE_WIDTH` | src/markdown/write.rs:1658 | private | Picture width cap: 6.5 inches in EMU, the text width of a Letter page with one-inch margins. | const MAX_PICTURE_WIDTH: u64 = 5_943_600 |
+| `MOST_BOOKMARK` | src/markdown/write.rs:5582 | private | The longest bookmark name Word's schema takes. | const MOST_BOOKMARK: usize = 40 |
+| `MOST_TABLE_TWIPS` | src/markdown/xml.rs:238 | private | Word keeps a column, a table's width and its indent within 22in. | const MOST_TABLE_TWIPS: f64 = 31_680.0 |
+| `MOST_TABLE_PERCENT` | src/markdown/xml.rs:241 | private | The widest preferred width in percent Word takes: 600%. | const MOST_TABLE_PERCENT: f64 = 600.0 |
+| `GLYPHS` | src/markdown/xml.rs:2568 | private | _no doc comment_ | const GLYPHS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"] |
+| `HEADINGS` | src/markdown/xml.rs:2714 | private | Heading 7-9 and Title are not written from Markdown; a `.doc` converted through it restores them (`legacy_doc`). _(from a code comment)_ | const HEADINGS: [(&str, &str); 9] = [ ("32", ""), ("28", ""), ("24", ""), ("22", "<w:i/><w:iCs/>"), ("22", ""), ("22", "<w:i/><w:iCs/>"), ("22", ""), ("22", "<w |
+| `CENTRAL_HEADER` | src/opc/archive.rs:91 | private | _no doc comment_ | const CENTRAL_HEADER: HeaderShape = HeaderShape { signature: b"PK\x01\x02", version_made_by: Some(4), flags: 8, method: 10, crc32: 16, compressed_size: 20, unco |
+| `LOCAL_HEADER` | src/opc/archive.rs:105 | private | _no doc comment_ | const LOCAL_HEADER: HeaderShape = HeaderShape { signature: b"PK\x03\x04", version_made_by: None, flags: 6, method: 8, crc32: 14, compressed_size: 18, uncompress |
+| `SIGNATURE` | src/opc/archive.rs:265 | private | _no doc comment_ | const SIGNATURE: u32 = 0x0807_4b50 |
+| `COMPARED_FLAGS` | src/opc/archive.rs:411 | private | The general-purpose flag bits the two records must agree on: bit 0 (encrypted) and bit 3 (data descriptor), always, plus bit 11 (UTF-8 names) only when a raw name byte is 0x80 or above — for an ASCII name the bit changes no decoding, so the one-sided flag real Word-opened files carry is not a mismatch. | const COMPARED_FLAGS: u16 = 0x0001 \\| 0x0008 \\| 0x0800 |
+| `UTF8_FLAG` | src/opc/archive.rs:415 | private | Bit 11, the UTF-8-name flag: compared only when either raw name holds a byte at or above 0x80 (see [`COMPARED_FLAGS`]). | const UTF8_FLAG: u16 = 0x0800 |
+| `EOCD` | src/opc/archive.rs:694 | private | _no doc comment_ | const EOCD: [u8; 4] = [0x50, 0x4b, 0x05, 0x06] |
+| `LOCATOR` | src/opc/archive.rs:695 | private | _no doc comment_ | const LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07] |
+| `EOCD64` | src/opc/archive.rs:696 | private | _no doc comment_ | const EOCD64: [u8; 4] = [0x50, 0x4b, 0x06, 0x06] |
+| `ZIP32_END` | src/opc/zip32.rs:19 | private | The `0xFFFFFFFF` value a ZIP32 field writes as the "see the ZIP64 extra field" marker: a size or offset that reaches it needs ZIP64 (zip's `ZIP64_BYTES_THR`, APPNOTE 4.5.3). | const ZIP32_END: u64 = u32::MAX as u64 |
+| `ZIP32_MAX_ENTRIES` | src/opc/zip32.rs:24 | private | `0xFFFF`, the value a ZIP32 end record's entry-count fields write as the ZIP64 marker: a package with that many entries is ambiguous to a reader checking for the marker (zip's `ZIP64_ENTRY_THR`). | const ZIP32_MAX_ENTRIES: usize = u16::MAX as usize |
 | `STAGE_COUNT` | src/perf.rs:36 | private | _no doc comment_ | const STAGE_COUNT: usize = 8 |
 | `ENABLED` | src/perf.rs:215 | pub | Whether this build has the `perf-profile` Cargo feature compiled in; `false` in the default build. | pub const ENABLED: bool = cfg!(feature = "perf-profile") |
 | `active::STAGE_NS` | src/perf.rs:222 | private | _no doc comment_ | static STAGE_NS: [AtomicU64; STAGE_COUNT] = [ AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),  |
@@ -585,7 +634,7 @@
 | `active::COUNTER_UNIT_CLONES` | src/perf.rs:236 | private | _no doc comment_ | static COUNTER_UNIT_CLONES: AtomicU64 = AtomicU64::new(0) |
 | `active::COUNTER_ATOMS` | src/perf.rs:237 | private | _no doc comment_ | static COUNTER_ATOMS: AtomicU64 = AtomicU64::new(0) |
 | `active::COUNTER_UNITS` | src/perf.rs:238 | private | _no doc comment_ | static COUNTER_UNITS: AtomicU64 = AtomicU64::new(0) |
-| `ENVELOPE_SCHEMA_VERSION` | src/result.rs:37 | pub | The wire schema version this module emits. | pub const ENVELOPE_SCHEMA_VERSION: u32 = 1 |
+| `ENVELOPE_SCHEMA_VERSION` | src/result.rs:37 | pub(crate) | The wire schema version this module emits. | pub(crate) const ENVELOPE_SCHEMA_VERSION: u32 = 1 |
 | `codes::NO_CHANGES_REQUESTED` | src/result.rs:104 | pub | `--require-change` requested but the primary effect was zero. | pub const NO_CHANGES_REQUESTED: &str = "NO_CHANGES_REQUESTED" |
 | `codes::POSTCONDITION_FAILED` | src/result.rs:106 | pub | A required postcondition did not hold after preparation. | pub const POSTCONDITION_FAILED: &str = "POSTCONDITION_FAILED" |
 | `codes::WORKING_BASE_CHANGED` | src/result.rs:108 | pub | The supplied `before_sha256` no longer matches the working baseline. | pub const WORKING_BASE_CHANGED: &str = "WORKING_BASE_CHANGED" |
@@ -599,21 +648,22 @@
 | `codes::USAGE` | src/result.rs:124 | pub | Invalid CLI usage or malformed request/schema. | pub const USAGE: &str = "USAGE" |
 | `codes::CHECK_THRESHOLD_EXCEEDED` | src/result.rs:126 | pub | Standalone check/validation findings meet the requested threshold. | pub const CHECK_THRESHOLD_EXCEEDED: &str = "CHECK_THRESHOLD_EXCEEDED" |
 | `codes::COMPARISON_DIFFERENCE` | src/result.rs:128 | pub | Comparison differences when `--exit-code` was requested. | pub const COMPARISON_DIFFERENCE: &str = "COMPARISON_DIFFERENCE" |
-| `ExitStatus::SUCCESS` | src/result.rs:1136 | pub | Command completed. | pub const SUCCESS: Self = Self(0) |
-| `ExitStatus::INPUT_FAILURE` | src/result.rs:1138 | pub | Input, operational or I/O failure. | pub const INPUT_FAILURE: Self = Self(1) |
-| `ExitStatus::CHECK_FINDINGS` | src/result.rs:1140 | pub | Standalone check/validation findings meet the requested threshold. | pub const CHECK_FINDINGS: Self = Self(2) |
-| `ExitStatus::REFUSED` | src/result.rs:1143 | pub | Refused stale, ambiguous, unsafe, unsupported request, failed operation/expectation invariant, or unmet require-change condition. | pub const REFUSED: Self = Self(3) |
-| `ExitStatus::RENDER_FAILURE` | src/result.rs:1145 | pub | Requested rendering/fidelity policy failed before publication. | pub const RENDER_FAILURE: Self = Self(4) |
-| `ExitStatus::COMPARISON_DIFFERENCE` | src/result.rs:1147 | pub | Comparison differences when `--exit-code` was requested. | pub const COMPARISON_DIFFERENCE: Self = Self(5) |
-| `ExitStatus::USAGE` | src/result.rs:1149 | pub | Invalid CLI usage or malformed request/schema. | pub const USAGE: Self = Self(64) |
-| `ExitStatus::DEADLINE_EXCEEDED` | src/result.rs:1151 | pub | Deadline exceeded before commit. | pub const DEADLINE_EXCEEDED: Self = Self(124) |
-| `TRACKED_REVISION_LOCALS` | src/revision_processor.rs:40 | private | Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace). | const TRACKED_REVISION_LOCALS: &[&str] = &[ "cellDel", "cellIns", "cellMerge", "customXmlDelRangeEnd", "customXmlDelRangeStart", "customXmlInsRangeEnd", "custom |
-| `TRACKED_REVISION_LOCAL_SET` | src/revision_processor.rs:73 | private | _no doc comment_ | static TRACKED_REVISION_LOCAL_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(\\|\\| TRACKED_REVISION_LOCALS.iter().copied().collect()) |
-| `TBL_PR_EX` | src/revision_processor.rs:2848 | private | The `tblPr` children a row can override through `w:tblPrEx` (`CT_TblPrExBase`), in schema order. | const TBL_PR_EX: [&str; 9] = [ "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook", ] |
-| `FROZEN_NS` | src/revision_processor.rs:3486 | pub(crate) | Revision elements renamed into this namespace sit a resolution out and come back unchanged ([`crate::changes`]). | pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision" |
-| `CID` | src/revision_processor/comments.rs:22 | private | _no doc comment_ | const CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid" |
-| `CEX` | src/revision_processor/comments.rs:23 | private | _no doc comment_ | const CEX: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex" |
-| `PEOPLE` | src/revision_processor/comments.rs:24 | private | _no doc comment_ | const PEOPLE: (&str, &str) = ( "word/people.xml", "http://schemas.microsoft.com/office/2011/relationships/people", ) |
+| `ExitStatus::SUCCESS` | src/result.rs:1182 | pub | Command completed. | pub const SUCCESS: Self = Self(0) |
+| `ExitStatus::INPUT_FAILURE` | src/result.rs:1184 | pub | Input, operational or I/O failure. | pub const INPUT_FAILURE: Self = Self(1) |
+| `ExitStatus::CHECK_FINDINGS` | src/result.rs:1186 | pub | Standalone check/validation findings meet the requested threshold. | pub const CHECK_FINDINGS: Self = Self(2) |
+| `ExitStatus::REFUSED` | src/result.rs:1189 | pub | Refused stale, ambiguous, unsafe, unsupported request, failed operation/expectation invariant, or unmet require-change condition. | pub const REFUSED: Self = Self(3) |
+| `ExitStatus::RENDER_FAILURE` | src/result.rs:1191 | pub | Requested rendering/fidelity policy failed before publication. | pub const RENDER_FAILURE: Self = Self(4) |
+| `ExitStatus::COMPARISON_DIFFERENCE` | src/result.rs:1193 | pub | Comparison differences when `--exit-code` was requested. | pub const COMPARISON_DIFFERENCE: Self = Self(5) |
+| `ExitStatus::USAGE` | src/result.rs:1195 | pub | Invalid CLI usage or malformed request/schema. | pub const USAGE: Self = Self(64) |
+| `ExitStatus::DEADLINE_EXCEEDED` | src/result.rs:1197 | pub | Deadline exceeded before commit. | pub const DEADLINE_EXCEEDED: Self = Self(124) |
+| `TRACKED_REVISION_LOCALS` | src/revision_processor.rs:39 | private | Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace). | const TRACKED_REVISION_LOCALS: &[&str] = &[ "cellDel", "cellIns", "cellMerge", "customXmlDelRangeEnd", "customXmlDelRangeStart", "customXmlInsRangeEnd", "custom |
+| `TRACKED_REVISION_LOCAL_SET` | src/revision_processor.rs:72 | private | _no doc comment_ | static TRACKED_REVISION_LOCAL_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(\\|\\| TRACKED_REVISION_LOCALS.iter().copied().collect()) |
+| `TBL_PR_EX` | src/revision_processor.rs:3075 | private | The `tblPr` children a row can override through `w:tblPrEx` (`CT_TblPrExBase`), in schema order. | const TBL_PR_EX: [&str; 9] = [ "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook", ] |
+| `FROZEN_NS` | src/revision_processor.rs:3767 | pub(crate) | Revision elements renamed into this namespace sit a resolution out and come back unchanged ([`crate::changes`]). | pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision" |
+| `RevisionIds::MAX` | src/revision_processor.rs:3809 | private | _no doc comment_ | const MAX: u64 = i32::MAX as u64 |
+| `CID` | src/revision_processor/comments.rs:25 | private | _no doc comment_ | const CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid" |
+| `CEX` | src/revision_processor/comments.rs:26 | private | _no doc comment_ | const CEX: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex" |
+| `PEOPLE` | src/revision_processor/comments.rs:27 | private | _no doc comment_ | const PEOPLE: (&str, &str) = ( "word/people.xml", "http://schemas.microsoft.com/office/2011/relationships/people", ) |
 | `KINDS` | src/revision_processor/notes.rs:18 | private | (relationship type suffix, note element, reference element). | const KINDS: [(&str, &str, &str); 2] = [ ("/footnotes", "footnote", "footnoteReference"), ("/endnotes", "endnote", "endnoteReference"), ] |
 | `TOGGLES` | src/revision_processor/style_records.rs:58 | private | On/off properties: bare or `1`/`true`/`on` is on, `0`/`false`/`off` off. | const TOGGLES: &[&str] = &[ "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "vanish", "keepNext", "k |
 | `XOR_TOGGLES` | src/revision_processor/style_records.rs:84 | private | The run toggles a style hierarchy flips rather than overrides (ECMA-376 §17.7.3). | const XOR_TOGGLES: &[&str] = &[ "b", "bCs", "caps", "emboss", "i", "iCs", "imprint", "outline", "shadow", "smallCaps", "strike", "vanish", ] |
@@ -625,7 +675,7 @@
 | `DC` | src/scrub.rs:45 | private | _no doc comment_ | const DC: &str = "http://purl.org/dc/elements/1.1/" |
 | `DCTERMS` | src/scrub.rs:46 | private | _no doc comment_ | const DCTERMS: &str = "http://purl.org/dc/terms/" |
 | `EXTENDED` | src/scrub.rs:47 | private | _no doc comment_ | const EXTENDED: &str = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" |
-| `NUMERIC_ATTRIBUTES` | src/scrub.rs:435 | private | Attributes that only ever hold a number or a hex id. | const NUMERIC_ATTRIBUTES: &[&str] = &[ "id", "paraId", "textId", "durableId", "w", "h", "top", "bottom", "left", "right", "start", "end", "header", "footer", "g |
+| `NUMERIC_ATTRIBUTES` | src/scrub.rs:486 | private | Attributes that only ever hold a number or a hex id. | const NUMERIC_ATTRIBUTES: &[&str] = &[ "id", "paraId", "textId", "durableId", "w", "h", "top", "bottom", "left", "right", "start", "end", "header", "footer", "g |
 | `SL` | src/settings.rs:25 | private | _no doc comment_ | const SL: &str = "http://schemas.openxmlformats.org/schemaLibrary/2006/main" |
 | `SETTINGS_REL` | src/settings.rs:26 | private | _no doc comment_ | const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" |
 | `SETTINGS_CT` | src/settings.rs:28 | private | _no doc comment_ | const SETTINGS_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml" |
@@ -650,29 +700,32 @@
 | `OFFSET_BASIS` | src/util/sha1.rs:169 | private | _no doc comment_ | const OFFSET_BASIS: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d |
 | `PRIME` | src/util/sha1.rs:170 | private | _no doc comment_ | const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b |
 | `ZERO_WIDTH_JOINER` | src/util/words.rs:20 | private | _no doc comment_ | const ZERO_WIDTH_JOINER: char = '\u{200D}' |
-| `RULE_SETS` | src/validate.rs:113 | pub | Every rule set `validate` runs, `word` (the default) first. | pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"] |
-| `RING1_CODES` | src/validate.rs:181 | private | Codes the Ring-1 checks own; the triage checks' findings under these codes are the same problems seen twice and are left out of [`validate`]. | const RING1_CODES: [&str; 23] = [ "MC_UNBOUND_PREFIX", "MISSING_CONTENT_TYPE", "MALFORMED_XML", "DANGLING_RELATIONSHIP", "DUPLICATE_RID", "MISSING_REL_TARGET",  |
-| `BLOCKS` | src/validate.rs:502 | private | Story and cell containers: a run reaching one before any paragraph is outside a paragraph, whatever wraps it on the way. _(from a code comment)_ | const BLOCKS: [&str; 9] = [ "body", "tc", "hdr", "ftr", "footnote", "endnote", "comment", "txbxContent", "docPartBody", ] |
-| `PART` | src/validate.rs:744 | private | _no doc comment_ | const PART: &str = "word/numbering.xml" |
-| `UNIQUE_REVISION_IDS` | src/validate.rs:779 | private | Revision elements whose `w:id` must be unique within a part. | const UNIQUE_REVISION_IDS: [&str; 6] = [ "ins", "del", "moveFrom", "moveTo", "moveFromRangeStart", "moveToRangeStart", ] |
-| `SINGLE_VALUE_CONTROLS` | src/validate.rs:977 | private | Content controls whose content is a single value: Word keeps no bookmark in them. | const SINGLE_VALUE_CONTROLS: [&str; 6] = [ "text", "dropDownList", "comboBox", "date", "picture", "checkbox", ] |
-| `COMMENT_FAMILY` | src/validate.rs:1059 | private | _no doc comment_ | const COMMENT_FAMILY: [(&str, &str, &str); 4] = [ ( "word/comments.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml", "http:// |
-| `COMMENTS_PART` | src/validate.rs:1082 | private | _no doc comment_ | const COMMENTS_PART: &str = "word/comments.xml" |
-| `PART` | src/validate.rs:1373 | private | _no doc comment_ | const PART: &str = "word/commentsExtended.xml" |
-| `PART` | src/validate.rs:1420 | private | _no doc comment_ | const PART: &str = "word/commentsIds.xml" |
-| `PART` | src/validate.rs:1473 | private | _no doc comment_ | const PART: &str = "word/commentsExtensible.xml" |
-| `REQUIRES_RELATIONSHIP` | src/validate.rs:1813 | private | Elements whose `r:id` the schema requires: without the relationship the element itself has to go, not just the attribute. | const REQUIRES_RELATIONSHIP: [&str; 7] = [ "headerReference", "footerReference", "altChunk", "attachedTemplate", "contentPart", "movie", "subDoc", ] |
+| `RULE_SETS` | src/validate.rs:127 | pub(crate) | Every rule set `validate` runs, `word` (the default) first. | pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"] |
+| `RING1_CODES` | src/validate.rs:202 | private | Codes the Ring-1 checks own; the triage checks' findings under these codes are the same problems seen twice and are left out of [`validate`]. | const RING1_CODES: [&str; 28] = [ "DATA_BINDING_WITHOUT_STORE", "MOVE_RANGE_COUNT_MISMATCH", "NESTED_TEXT_BOX", "MC_UNBOUND_PREFIX", "MISSING_CONTENT_TYPE", "MA |
+| `PASSES` | src/validate.rs:922 | private | How many passes [`baseline_keyed`] makes ([`tier`]). | const PASSES: usize = 6 |
+| `BLOCKS` | src/validate.rs:1374 | private | Story and cell containers: a run reaching one before any paragraph is outside a paragraph, whatever wraps it on the way. _(from a code comment)_ | const BLOCKS: [&str; 9] = [ "body", "tc", "hdr", "ftr", "footnote", "endnote", "comment", "txbxContent", "docPartBody", ] |
+| `PART` | src/validate.rs:1646 | private | _no doc comment_ | const PART: &str = "word/numbering.xml" |
+| `SINGLE_VALUE_CONTROLS` | src/validate.rs:1921 | private | Content controls whose content is a single value: Word keeps no bookmark in them. | const SINGLE_VALUE_CONTROLS: [&str; 6] = [ "text", "dropDownList", "comboBox", "date", "picture", "checkbox", ] |
+| `COMMENT_FAMILY` | src/validate.rs:2003 | private | _no doc comment_ | const COMMENT_FAMILY: [(&str, &str, &str); 4] = [ ( "word/comments.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml", "http:// |
+| `COMMENTS_PART` | src/validate.rs:2026 | private | _no doc comment_ | const COMMENTS_PART: &str = "word/comments.xml" |
+| `PART` | src/validate.rs:2347 | private | _no doc comment_ | const PART: &str = "word/commentsExtended.xml" |
+| `PART` | src/validate.rs:2394 | private | _no doc comment_ | const PART: &str = "word/commentsIds.xml" |
+| `PART` | src/validate.rs:2447 | private | _no doc comment_ | const PART: &str = "word/commentsExtensible.xml" |
+| `REQUIRES_RELATIONSHIP` | src/validate.rs:2787 | private | Elements whose `r:id` the schema requires: without the relationship the element itself has to go, not just the attribute. | const REQUIRES_RELATIONSHIP: [&str; 7] = [ "headerReference", "footerReference", "altChunk", "attachedTemplate", "contentPart", "movie", "subDoc", ] |
+| `LIMIT` | src/validate.rs:3159 | private | _no doc comment_ | const LIMIT: usize = 64 |
+| `OFFSET` | src/validate.rs:3160 | private | _no doc comment_ | const OFFSET: usize = LIMIT + 1 |
 | `WORD_DEFAULT_THEME` | src/word_default_theme.rs:15 | pub(crate) | Word's default Office theme part (`word/theme/theme1.xml`). | pub(crate) const WORD_DEFAULT_THEME: &str = r##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?> <a:theme xmlns:a="http://schemas.openxmlformats.org/draw |
 | `STR_POOL_MAX` | src/xmllinq/mod.rs:70 | private | Cap the intern pool so a pathological host (adversarial inputs) cannot grow the thread-local set without bound (gemini #3584751169, CR #3584798246). | const STR_POOL_MAX: usize = 16_384 |
-| `MAX_ELEMENT_ATTRIBUTES` | src/xmllinq/parse.rs:50 | pub(crate) | Attributes (namespace declarations included) on one element. | pub(crate) const MAX_ELEMENT_ATTRIBUTES: usize = 256 |
-| `MAX_NAME_BYTES` | src/xmllinq/parse.rs:52 | pub(crate) | Bytes in one element or attribute name. | pub(crate) const MAX_NAME_BYTES: usize = 4096 |
-| `MAX_ATTRIBUTE_VALUE_BYTES` | src/xmllinq/parse.rs:60 | pub(crate) | Bytes in one attribute value: a fixed cap, the size of the default `InputLimits::max_part_bytes` (64 MiB) and well above Word's own `o:gfxdata` (≈366 KiB in the corpus). | pub(crate) const MAX_ATTRIBUTE_VALUE_BYTES: usize = 64 * 1024 * 1024 |
-| `MAX_TAG_ATTRIBUTE_BYTES` | src/xmllinq/parse.rs:63 | pub(crate) | Total attribute bytes (names + values) on one element. | pub(crate) const MAX_TAG_ATTRIBUTE_BYTES: usize = 128 * 1024 * 1024 |
-| `MAX_NAMESPACE_URI_BYTES` | src/xmllinq/parse.rs:65 | pub(crate) | Bytes in one namespace URI. | pub(crate) const MAX_NAMESPACE_URI_BYTES: usize = 8192 |
-| `MAX_NAMESPACE_PREFIX_BYTES` | src/xmllinq/parse.rs:67 | pub(crate) | Bytes in one namespace prefix. | pub(crate) const MAX_NAMESPACE_PREFIX_BYTES: usize = 256 |
-| `MAX_LIVE_NS_BINDINGS` | src/xmllinq/parse.rs:69 | pub(crate) | Bindings live in one lexical scope (all levels, shadowed included). | pub(crate) const MAX_LIVE_NS_BINDINGS: usize = 256 |
-| `MAX_NS_DECLARED_BYTES` | src/xmllinq/parse.rs:71 | pub(crate) | Total prefix+URI bytes declared by xmlns attributes in one document. | pub(crate) const MAX_NS_DECLARED_BYTES: usize = 1024 * 1024 |
-| `MAX_DEPTH` | src/xmllinq/parse.rs:796 | private | _no doc comment_ | const MAX_DEPTH: usize = 256 |
+| `MAX_ELEMENT_ATTRIBUTES` | src/xmllinq/parse.rs:49 | pub(crate) | Attributes (namespace declarations included) on one element. | pub(crate) const MAX_ELEMENT_ATTRIBUTES: usize = 1024 |
+| `MAX_NAME_BYTES` | src/xmllinq/parse.rs:51 | pub(crate) | Bytes in an element name (the existing element-name budget). | pub(crate) const MAX_NAME_BYTES: usize = 4096 |
+| `MAX_ATTRIBUTE_NAME_BYTES` | src/xmllinq/parse.rs:53 | pub(crate) | UTF-8 bytes in a qualified attribute name. | pub(crate) const MAX_ATTRIBUTE_NAME_BYTES: usize = 1024 |
+| `MAX_ATTRIBUTE_VALUE_BYTES` | src/xmllinq/parse.rs:55 | pub(crate) | Bytes in one raw or decoded attribute value (64 MiB). | pub(crate) const MAX_ATTRIBUTE_VALUE_BYTES: usize = 64 * 1024 * 1024 |
+| `MAX_TAG_ATTRIBUTE_BYTES` | src/xmllinq/parse.rs:57 | pub(crate) | Complete start-tag bytes, including whitespace, quotes and delimiters. | pub(crate) const MAX_TAG_ATTRIBUTE_BYTES: usize = 128 * 1024 * 1024 |
+| `MAX_NAMESPACE_URI_BYTES` | src/xmllinq/parse.rs:59 | pub(crate) | Bytes in one namespace URI. | pub(crate) const MAX_NAMESPACE_URI_BYTES: usize = 8192 |
+| `MAX_NAMESPACE_PREFIX_BYTES` | src/xmllinq/parse.rs:61 | pub(crate) | Bytes in one namespace prefix. | pub(crate) const MAX_NAMESPACE_PREFIX_BYTES: usize = 256 |
+| `MAX_LIVE_NS_BINDINGS` | src/xmllinq/parse.rs:63 | pub(crate) | Bindings live in one lexical scope (all levels, shadowed included). | pub(crate) const MAX_LIVE_NS_BINDINGS: usize = 256 |
+| `MAX_NS_DECLARED_BYTES` | src/xmllinq/parse.rs:65 | pub(crate) | Total prefix+URI bytes declared by xmlns attributes in one document. | pub(crate) const MAX_NS_DECLARED_BYTES: usize = 1024 * 1024 |
+| `PERMISSIVE_MAX_DEPTH` | src/xmllinq/parse.rs:143 | pub(crate) | The deepest nesting a package part may have where nothing admitted it first: the agent view reads that deep, and [`parse_xdocument`] recurses through it safely. | pub(crate) const PERMISSIVE_MAX_DEPTH: usize = 512 |
 | `XML_NAMESPACE` | src/xmllinq/serialize.rs:33 | private | _no doc comment_ | const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace" |
 | `MC_NAMESPACE` | src/xmllinq/serialize.rs:34 | private | _no doc comment_ | const MC_NAMESPACE: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006" |
 | `WELL_KNOWN_PREFIXES` | src/xmllinq/serialize.rs:37 | private | Conventional OOXML prefixes (URI, prefix) so output matches Word's shape. | const WELL_KNOWN_PREFIXES: [(&str, &str); 37] = [ ( "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "w", ), ( "http://schemas.openxmlformats.org |

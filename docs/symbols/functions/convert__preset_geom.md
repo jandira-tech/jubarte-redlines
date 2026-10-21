@@ -7,7 +7,7 @@
 
 - **Does:** Word's shade of `base` for this path (ECMA-376 ST_PathFillMode): darken 60%, darkenLess 80%, lighten 40% / lightenLess 20% toward white.
 - **Calls (std/external/unresolved):** `.map`, `Some`, `mix`
-- **Called by:** `Layout::paint_preset_paths` (convert/mod.rs:28202) (?); `tests::fill_modes_shade_toward_black_or_white` (convert/preset_geom.rs:696) (?)
+- **Called by:** `Layout::paint_preset_paths` (convert/mod.rs:28238) (?); `tests::fill_modes_shade_toward_black_or_white` (convert/preset_geom.rs:696) (?)
 
 #### `Cmd::view`  (L87-96)
 `fn view(&self) -> CmdRef<'static>`
@@ -29,7 +29,7 @@
 - **Does:** The text rectangle `[l, t, r, b]` (points, y down) of preset `name` in a `w`×`h` box, or `None` when it is the whole box.
 - **Calls (crate):** `guides` (convert/preset_geom.rs:191) L172; `operand` (convert/preset_geom.rs:240) L173
 - **Calls (std/external/unresolved):** `.find`, `.iter`, `.map`, `Some`, `f64::from`
-- **Called by:** `Layout::emit_textbox_paras` (convert/mod.rs:29178); `tests::regression_tests::text_rectangle_uses_shape_dimensions_in_points` (convert/preset_geom.rs:707); `tests::regression_tests::pie_and_gear_text_rectangles_match_word` (convert/preset_geom.rs:721); `tests::regression_tests::adjusted_text_rectangle_clamps_to_the_shapes_limits` (convert/preset_geom.rs:741)
+- **Called by:** `Layout::emit_textbox_paras` (convert/mod.rs:29214); `tests::regression_tests::text_rectangle_uses_shape_dimensions_in_points` (convert/preset_geom.rs:707); `tests::regression_tests::pie_and_gear_text_rectangles_match_word` (convert/preset_geom.rs:721); `tests::regression_tests::adjusted_text_rectangle_clamps_to_the_shapes_limits` (convert/preset_geom.rs:741)
 
 #### `preset`  (L177-179, pub(crate))
 `pub(crate) fn preset(name: &str) -> Option<&'static Preset>`
@@ -59,7 +59,7 @@
 - **Calls (crate):** `formula` (convert/preset_geom.rs:248) L230,234
 - **Calls (std/external/unresolved):** `.find`, `.insert`, `.iter`, `.map_or_else`, `.max`, `.min`, `.to_string`, `HashMap::new`, `f64::from`
 - **Macros:** `format!`
-- **Called by:** `cust_geom` (convert/mod.rs:16963); `text_rect` (convert/preset_geom.rs:170); `evaluate_views` (convert/preset_geom.rs:357)
+- **Called by:** `cust_geom` (convert/mod.rs:16999); `text_rect` (convert/preset_geom.rs:170); `evaluate_views` (convert/preset_geom.rs:357)
 
 #### `operand`  (L240-245)
 `fn operand(tok: &str, g: &HashMap<String, f64>) -> f64`
@@ -89,7 +89,7 @@
 - **Does:** Evaluate `preset` for a `w`×`h` box (points) with `a:avLst` overrides.
 - **Calls (crate):** `evaluate_views` (convert/preset_geom.rs:357) L321
 - **Calls (std/external/unresolved):** `.collect`, `.iter`, `.map`
-- **Called by:** `Layout::paint_box_geom` (convert/mod.rs:28243); `tests::eval` (convert/preset_geom.rs:505); `tests::avlst_overrides_the_default_adjustment` (convert/preset_geom.rs:685)
+- **Called by:** `Layout::paint_box_geom` (convert/mod.rs:28279); `tests::eval` (convert/preset_geom.rs:505); `tests::avlst_overrides_the_default_adjustment` (convert/preset_geom.rs:685)
 
 #### `evaluate_custom`  (L329-353, pub(crate))
 `pub(crate) fn evaluate_custom(geom: &CustomGeom, w: f32, h: f32) -> Vec<EvalPath>`
@@ -97,7 +97,7 @@
 - **Does:** Evaluate a document's `a:custGeom` for a `w`×`h` box (points).
 - **Calls (crate):** `evaluate_views` (convert/preset_geom.rs:357) L344; `evaluate_custom::{fn pairs}` (convert/preset_geom.rs:330) L345,346
 - **Calls (std/external/unresolved):** `.collect`, `.iter`, `.map`
-- **Called by:** `Layout::paint_box_geom` (convert/mod.rs:28243); `field_group_coordinate_contract_tests::intentionally_incomplete_custom_beziers_do_not_drop_later_valid_path_commands` (convert/mod.rs:63182); `tests::custom_guides_live_in_the_shapes_emu_space` (convert/preset_geom.rs:527); `tests::a_custom_arc_sweep_is_tessellated_within_a_bound` (convert/preset_geom.rs:555); `residual_custom_path_contract_tests::guide_division_and_conditional_boundaries_keep_finite_authored_coordinates` (convert/preset_geom.rs:758); `residual_custom_path_contract_tests::cubic_and_quadratic_paths_keep_literal_midpoints_endpoints_and_independent_flags` (convert/preset_geom.rs:811); `residual_custom_path_contract_tests::clockwise_and_counterclockwise_custom_arcs_keep_authored_radii_and_bounded_turns` (convert/preset_geom.rs:861)
+- **Called by:** `Layout::paint_box_geom` (convert/mod.rs:28279); `field_group_coordinate_contract_tests::intentionally_incomplete_custom_beziers_do_not_drop_later_valid_path_commands` (convert/mod.rs:63218); `tests::custom_guides_live_in_the_shapes_emu_space` (convert/preset_geom.rs:527); `tests::a_custom_arc_sweep_is_tessellated_within_a_bound` (convert/preset_geom.rs:555); `residual_custom_path_contract_tests::guide_division_and_conditional_boundaries_keep_finite_authored_coordinates` (convert/preset_geom.rs:758); `residual_custom_path_contract_tests::cubic_and_quadratic_paths_keep_literal_midpoints_endpoints_and_independent_flags` (convert/preset_geom.rs:811); `residual_custom_path_contract_tests::clockwise_and_counterclockwise_custom_arcs_keep_authored_radii_and_bounded_turns` (convert/preset_geom.rs:861)
 
 #### `evaluate_custom::{fn pairs}`  (L330-332)
 `fn pairs(v: &[(String, String)]) -> Vec<(&str, &str)>`

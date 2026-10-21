@@ -6,15 +6,15 @@ Every function, method, struct, enum, trait, impl block, constant, static, type 
 
 | Manifest | Items |
 |---|---:|
-| [functions/](functions/) (one file per source file; functions and methods) | 4901 non-test + 3686 test |
-| [structs.md](structs.md) | 497 |
-| [enums.md](enums.md) (enums and unions) | 199 |
-| [traits.md](traits.md) | 4 |
-| [impls.md](impls.md) | 334 |
-| [consts.md](consts.md) (consts and statics) | 673 |
-| [type_aliases.md](type_aliases.md) | 70 |
+| [functions/](functions/) (one file per source file; functions and methods) | 5677 non-test + 4004 test |
+| [structs.md](structs.md) | 607 |
+| [enums.md](enums.md) (enums and unions) | 236 |
+| [traits.md](traits.md) | 5 |
+| [impls.md](impls.md) | 388 |
+| [consts.md](consts.md) (consts and statics) | 726 |
+| [type_aliases.md](type_aliases.md) | 86 |
 | [macros.md](macros.md) (`macro_rules!`) | 3 |
-| [modules.md](modules.md) | 129 |
+| [modules.md](modules.md) | 155 |
 | [symbols.json](symbols.json) | everything above, including test items and every call edge |
 
 ## How to read a function entry
@@ -35,16 +35,16 @@ tree-sitter gives syntax, not types, so a call is matched to a definition by nam
 
 ## Documentation coverage (non-test functions and methods)
 
-- with a `///` doc comment: **3347** (68%)
-- with only a plain `//` comment above: 25
-- no description in the source: **1529**. These say _no doc comment_; their name, signature and call list are the available information.
+- with a `///` doc comment: **3936** (69%)
+- with only a plain `//` comment above: 30
+- no description in the source: **1711**. These say _no doc comment_; their name, signature and call list are the available information.
 
 ## Call edges (non-test functions, counting call sites)
 
 | Confidence | Call sites |
 |---|---:|
-| exact | 23,695 |
-| by-name | 1,922 |
-| ambiguous | 1,000 |
-| external | 62,040 |
-| macro | 3,479 |
+| exact | 26,312 |
+| by-name | 2,429 |
+| ambiguous | 1,329 |
+| external | 71,973 |
+| macro | 4,213 |

@@ -28,7 +28,7 @@
 
 - **Does:** Whether `bytes` start with the OLE compound-file magic (`.doc`, or an encrypted document of any Word version).
 - **Calls (std/external/unresolved):** `.starts_with`
-- **Called by:** `run_convert_any` (bin/jubarte.rs:2477); `CompoundFile::open` (legacy_doc.rs:658)
+- **Called by:** `run_convert_any` (bin/jubarte.rs:3458); `CompoundFile::open` (legacy_doc.rs:658)
 
 #### `read`  (L180-217, pub)
 `pub fn read(bytes: &[u8]) -> Result<LegacyDocument>`
@@ -36,7 +36,7 @@
 - **Does:** Read the main story of a Word 97-2003 document.
 - **Calls (crate):** `CompoundFile::open` (legacy_doc.rs:658) L181; `CompoundFile::stream` (legacy_doc.rs:811) L182,188; `LegacyDocError::new` (legacy_doc.rs:76) L183,190; `Fib::parse` (legacy_doc.rs:895) L187; `pieces` (legacy_doc.rs:1054) L191; `main_text` (legacy_doc.rs:1148) L192; `heading_styles` (legacy_doc.rs:1233) L193; `FkpIndex::new` (legacy_doc.rs:1296) L194,200; `Lists::new` (legacy_doc.rs:1489) L206; `section_marks` (legacy_doc.rs:1694) L212; `Story::blocks` (legacy_doc.rs:1591) L215
 - **Calls (std/external/unresolved):** `.ok_or_else`, `Ok`
-- **Called by:** `read_document` (bin/jubarte.rs:2241); `run_debug` (bin/jubarte.rs:2746) (?); `run_validate` (bin/jubarte.rs:2793) (?); `cloud_folder_names_with` (convert/font.rs:2401) (?); `family_faces_in_with` (convert/font.rs:2473) (?); `scan_cjk_family_faces_with` (convert/font.rs:2881) (?); `endnote_num_format` (convert/mod.rs:8644) (?); `face_unicode_map` (convert/pdf.rs:1656) (?); `tests::symbol_font_text_reads_back_as_word_writes_it` (convert/pdf.rs:2283) (?); `Geometry::of` (edit/sections.rs:151) (?); `text_width` (edit/structural.rs:70) (?); `doc_to_markdown` (legacy_doc.rs:225); +4 more
+- **Called by:** `read_document` (bin/jubarte.rs:3038); `run_debug` (bin/jubarte.rs:3779) (?); `run_validate` (bin/jubarte.rs:3812) (?); `doc_to_markdown` (legacy_doc.rs:225); `doc_to_docx` (legacy_doc.rs:235); `tests::refuses_what_is_not_a_compound_file` (legacy_doc.rs:1748); `legacy_byte_source_boundary_tests::corrupt_compound_header_and_directory_cycles_are_bounded_without_touching_fixture_bytes` (legacy_doc.rs:2733); `legacy_regular_sector_source_owners::version_three_and_four_regular_streams_preserve_complete_legacy_source_blocks` (legacy_doc.rs:2992)
 
 #### `doc_to_markdown`  (L225-227, pub)
 `pub fn doc_to_markdown(bytes: &[u8]) -> Result<String>`
@@ -51,13 +51,13 @@
 
 - **Does:** A `.doc` as a `.docx` package (US Letter, built-in styles).
 - **Calls (crate):** `document_to_docx` (legacy_doc.rs:242) L236; `read` (legacy_doc.rs:180) L236
-- **Called by:** `run_convert_any` (bin/jubarte.rs:2477); `legacy_regular_sector_source_owners::version_three_and_four_regular_streams_preserve_complete_legacy_source_blocks` (legacy_doc.rs:2992)
+- **Called by:** `run_convert_any` (bin/jubarte.rs:3458); `legacy_regular_sector_source_owners::version_three_and_four_regular_streams_preserve_complete_legacy_source_blocks` (legacy_doc.rs:2992)
 
 #### `document_to_docx`  (L242-303)
 `fn document_to_docx(document: &LegacyDocument) -> Result<Vec<u8>>`
 
 - **Does:** The blocks written as a `.docx` through the Markdown writer, then what Markdown cannot say put back: Title and Heading 7-9, empty paragraphs, and which table rows repeat as headers.
-- **Calls (crate):** `empty_placeholder` (legacy_doc.rs:312) L243; `blocks_to_markdown` (legacy_doc.rs:436) L244; `<DocxOptions as Default>::default` (markdown/mod.rs:217) L247; `LegacyDocError::new` (legacy_doc.rs:76) L251; `.text` (ambiguous, 10 candidates) L271; `placeholder_lines` (legacy_doc.rs:328) L271; `PartFs::open` (opc/mod.rs:456) L287; `docx_error` (legacy_doc.rs:305) L287,290,302; `PartFs::part_string` (opc/mod.rs:498) (by name) L288; `restyle_headings` (legacy_doc.rs:377) L292; `empty_placeholders` (legacy_doc.rs:334) L295; `repeat_header_rows` (legacy_doc.rs:349) L297; `PartFs::set_part` (opc/mod.rs:510) (by name) L298; `define_styles` (legacy_doc.rs:404) L300; `PartFs::to_zip` (opc/mod.rs:548) (by name) L302
+- **Calls (crate):** `empty_placeholder` (legacy_doc.rs:312) L243; `blocks_to_markdown` (legacy_doc.rs:436) L244; `<DocxOptions as Default>::default` (markdown/mod.rs:221) L247; `LegacyDocError::new` (legacy_doc.rs:76) L251; `.text` (ambiguous, 10 candidates) L271; `placeholder_lines` (legacy_doc.rs:328) L271; `PartFs::open` (opc/mod.rs:585) L287; `docx_error` (legacy_doc.rs:305) L287,290,302; `PartFs::part_string` (opc/mod.rs:636) (by name) L288; `restyle_headings` (legacy_doc.rs:377) L292; `empty_placeholders` (legacy_doc.rs:334) L295; `repeat_header_rows` (legacy_doc.rs:349) L297; `PartFs::set_part` (opc/mod.rs:661) (by name) L298; `define_styles` (legacy_doc.rs:404) L300; `PartFs::to_zip` (opc/mod.rs:749) (by name) L302
 - **Calls (std/external/unresolved):** `.all`, `.any`, `.as_str`, `.collect`, `.filter_map`, `.into_bytes`, `.is_empty`, `.iter`, `.map_err`, `.map`, `.ok_or_else`, `.sum`, `.to_string`, `.trim`, `Ok`, `Some`, `crate::markdown::markdown_to_docx`
 - **Macros:** `format!`, `matches!`
 - **Called by:** `doc_to_docx` (legacy_doc.rs:235); `tests::empty_paragraphs_are_kept_in_the_docx_and_left_out_of_markdown` (legacy_doc.rs:2090); `tests::only_rows_marked_as_headers_repeat_as_headers` (legacy_doc.rs:2207); `tests::a_blank_paragraph_keeps_its_line_breaks_in_the_docx` (legacy_doc.rs:2368); `tests::a_heading_keeps_its_line_breaks_in_the_docx` (legacy_doc.rs:2399); `tests::title_and_headings_7_to_9_keep_their_word_styles` (legacy_doc.rs:2528)
@@ -83,7 +83,7 @@
 `fn placeholder_lines(paragraph: &Paragraph) -> usize`
 
 - **Does:** How many placeholders an empty paragraph is written with: one a line.
-- **Calls (crate):** `ChangeFilter::matches` (changes.rs:177) (by name) L329; `Paragraph::text` (legacy_doc.rs:131) L329
+- **Calls (crate):** `ChangeFilter::matches` (changes.rs:405) (by name) L329; `Paragraph::text` (legacy_doc.rs:131) L329
 - **Calls (std/external/unresolved):** `.count`, `.saturating_add`
 - **Called by:** `document_to_docx` (legacy_doc.rs:242); `blocks_to_markdown` (legacy_doc.rs:436)
 
@@ -116,7 +116,7 @@
 `fn define_styles(package: &mut crate::opc::PartFs, styles: &[String]) -> Result<()>`
 
 - **Does:** Define in the package's style sheet each of `styles` it lacks.
-- **Calls (crate):** `PartFs::part_string` (opc/mod.rs:498) L405; `docx_error` (legacy_doc.rs:305) L407,414,417; `style_definition` (markdown/xml.rs:2267) L413; `PartFs::set_part` (opc/mod.rs:510) L421
+- **Calls (crate):** `PartFs::part_string` (opc/mod.rs:636) L405; `docx_error` (legacy_doc.rs:305) L407,414,417; `style_definition` (markdown/xml.rs:2711) L413; `PartFs::set_part` (opc/mod.rs:661) L421
 - **Calls (std/external/unresolved):** `.as_str`, `.contains`, `.insert_str`, `.into_bytes`, `.ok_or_else`, `.push`, `.rfind`, `Ok`, `Vec::new`
 - **Macros:** `format!`
 - **Called by:** `document_to_docx` (legacy_doc.rs:242)
@@ -165,7 +165,7 @@
 
 - **Does:** --------------------------------------------------------------------------- Compound file (MS-CFB) --------------------------------------------------------------------------- _(from a code comment)_
 - **Calls (std/external/unresolved):** `.checked_add`, `.get`, `.ok`, `.try_into`, `Some`, `u16::from_le_bytes`
-- **Called by:** `subset_keep_gids` (convert/pdf.rs:1185) (?); `CompoundFile::open` (legacy_doc.rs:658); `DirEntry::parse` (legacy_doc.rs:845); `Fib::parse` (legacy_doc.rs:895); `pieces` (legacy_doc.rs:1054); `main_text` (legacy_doc.rs:1148); `heading_styles` (legacy_doc.rs:1233); `for_each_sprm` (legacy_doc.rs:1368); `papx_props` (legacy_doc.rs:1414); `Lists::new` (legacy_doc.rs:1489); `legacy_byte_source_boundary_tests::fib_classification_refuses_old_identifiers_and_both_password_flags` (legacy_doc.rs:2678); `legacy_byte_source_boundary_tests::corrupt_compound_header_and_directory_cycles_are_bounded_without_touching_fixture_bytes` (legacy_doc.rs:2733); +1 more
+- **Called by:** `subset_keep_gids` (convert/pdf.rs:1185) (?); `CompoundFile::open` (legacy_doc.rs:658); `DirEntry::parse` (legacy_doc.rs:845); `Fib::parse` (legacy_doc.rs:895); `pieces` (legacy_doc.rs:1054); `main_text` (legacy_doc.rs:1148); `heading_styles` (legacy_doc.rs:1233); `for_each_sprm` (legacy_doc.rs:1368); `papx_props` (legacy_doc.rs:1414); `Lists::new` (legacy_doc.rs:1489); `legacy_byte_source_boundary_tests::fib_classification_refuses_old_identifiers_and_both_password_flags` (legacy_doc.rs:2678); `legacy_byte_source_boundary_tests::corrupt_compound_header_and_directory_cycles_are_bounded_without_touching_fixture_bytes` (legacy_doc.rs:2733); +2 more
 
 #### `u32_at`  (L610-614)
 `fn u32_at(bytes: &[u8], offset: usize) -> Option<u32>`
@@ -179,7 +179,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.ok`, `usize::try_from`
-- **Called by:** `fib_table` (legacy_doc.rs:624); `CompoundFile::open` (legacy_doc.rs:658); `CompoundFile::chain` (legacy_doc.rs:767); `CompoundFile::mini_chain` (legacy_doc.rs:785); `CompoundFile::stream` (legacy_doc.rs:811); `sector_slice` (legacy_doc.rs:839); `pieces` (legacy_doc.rs:1054); `main_text` (legacy_doc.rs:1148); `FkpIndex::new` (legacy_doc.rs:1296); `Lists::new` (legacy_doc.rs:1489)
+- **Called by:** `offset_before` (edit/visible.rs:328) (?); `fib_table` (legacy_doc.rs:624); `CompoundFile::open` (legacy_doc.rs:658); `CompoundFile::chain` (legacy_doc.rs:767); `CompoundFile::mini_chain` (legacy_doc.rs:785); `CompoundFile::stream` (legacy_doc.rs:811); `sector_slice` (legacy_doc.rs:839); `pieces` (legacy_doc.rs:1054); `main_text` (legacy_doc.rs:1148); `FkpIndex::new` (legacy_doc.rs:1296); `Lists::new` (legacy_doc.rs:1489)
 
 #### `fib_table`  (L624-633)
 `fn fib_table<'a>(table: &'a [u8], (fc, lcb): (u32, u32), what: &str) -> Result<Option<&'a [u8]>>`
@@ -244,7 +244,7 @@
 `fn parse(word: &[u8]) -> Result<Self>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `LegacyDocError::new` (legacy_doc.rs:76) L896,898,902,908; `u16_at` (legacy_doc.rs:604) L897,900,906,912,917; `u32_at` (legacy_doc.rs:610) L919,931,932; `pair` (ambiguous: `pair` (markdown/diff.rs:621); `pair` (markdown/patch.rs:445)) L935,936,937,938,950,951...
+- **Calls (crate):** `LegacyDocError::new` (legacy_doc.rs:76) L896,898,902,908; `u16_at` (legacy_doc.rs:604) L897,900,906,912,917; `u32_at` (legacy_doc.rs:610) L919,931,932; `pair` (ambiguous, 5 candidates) L935,936,937,938,950,951...
 - **Calls (std/external/unresolved):** `.and_then`, `.checked_add`, `.checked_mul`, `.ok_or_else`, `.unwrap_or`, `Err`, `Ok`, `usize::from`
 - **Called by:** `read` (legacy_doc.rs:180); `legacy_byte_source_boundary_tests::fib_classification_refuses_old_identifiers_and_both_password_flags` (legacy_doc.rs:2678); `legacy_regular_sector_source_owners::version_three_and_four_regular_streams_preserve_complete_legacy_source_blocks` (legacy_doc.rs:2992)
 
@@ -352,7 +352,7 @@
 `fn chpx_props(page: &[u8], at: usize) -> Option<Props>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `for_each_sprm` (legacy_doc.rs:1368) L1461; `on` (ambiguous: `on` (audit.rs:299); `on` (debug/render.rs:446)) L1463,1464
+- **Calls (crate):** `for_each_sprm` (legacy_doc.rs:1368) L1461; `on` (ambiguous: `on` (audit.rs:299); `on` (debug/render.rs:445)) L1463,1464
 - **Calls (std/external/unresolved):** `.checked_add`, `.first`, `.get`, `Props::default`, `Some`, `usize::from`
 - **Macros:** `matches!`
 - **Called by:** `read_fkp` (legacy_doc.rs:1336)
@@ -371,7 +371,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.checked_sub`, `.find`, `.first`, `.get`, `.iter`, `.min`, `.or_else`, `.then_some`, `usize::from`
-- **Called by:** `Build::segments` (debug/diff.rs:931) (?); `Build::run` (debug/diff.rs:1000) (?); `boundary_coverage_tests::toggle_normalization_distinguishes_boolean_values_from_numeric_properties` (debug/diff.rs:2269) (?); `boundary_coverage_tests::relationship_attributes_resolve_targets_without_inventing_missing_targets` (debug/diff.rs:2300) (?); `Story::push_paragraph` (legacy_doc.rs:1678); `tests::list_tables_are_read_within_their_fib_ranges` (legacy_doc.rs:2454) (?); `tests::list_indent_nests_under_content` (markdown/from_docx/ooxml.rs:1347) (?); `ooxml_package_boundary_tests::literal_hyperlinks_and_mail_addresses_use_exact_autolink_forms` (markdown/from_docx/ooxml.rs:1487) (?)
+- **Called by:** `Build::segments` (debug/diff.rs:931) (?); `Build::run` (debug/diff.rs:1000) (?); `boundary_coverage_tests::toggle_normalization_distinguishes_boolean_values_from_numeric_properties` (debug/diff.rs:2269) (?); `boundary_coverage_tests::relationship_attributes_resolve_targets_without_inventing_missing_targets` (debug/diff.rs:2300) (?); `Story::push_paragraph` (legacy_doc.rs:1678); `tests::list_tables_are_read_within_their_fib_ranges` (legacy_doc.rs:2454) (?); `tests::list_indent_nests_under_content` (markdown/from_docx/ooxml.rs:1561) (?); `ooxml_package_boundary_tests::literal_hyperlinks_and_mail_addresses_use_exact_autolink_forms` (markdown/from_docx/ooxml.rs:1701) (?)
 
 #### `Story::blocks`  (L1591-1676)
 `fn blocks(&self, chars: &[StoryChar]) -> Vec<Block>`
@@ -379,7 +379,7 @@
 - **Does:** Split the story into paragraphs at each paragraph mark (`\r`), cell or row mark (`\x07`) and section or page break (`\x0C`), and group table paragraphs into rows and cells.
 - **Calls (crate):** `FkpIndex::at` (legacy_doc.rs:1325) L1626,1659; `flush_table` (legacy_doc.rs:1707) L1645,1674; `Story::push_paragraph` (legacy_doc.rs:1678) L1646,1672; `CharModifier::over` (legacy_doc.rs:1008) (by name) L1659
 - **Calls (std/external/unresolved):** `.any`, `.as_str`, `.binary_search`, `.clear`, `.collect`, `.is_control`, `.is_empty`, `.is_err`, `.iter`, `.join`, `.last_mut`, `.map`, `.pop`, `.push`, `.replace`, `.to_string`, `.trim`, `Props::default`, `Vec::new`, `std::mem::take`
-- **Called by:** `read` (legacy_doc.rs:180); `tests::a_page_break_stays_inside_its_paragraph_and_a_section_mark_ends_it` (legacy_doc.rs:1919) (?); `tests::a_field_nested_in_a_field_code_shows_only_the_outer_result` (legacy_doc.rs:1946); `tests::empty_paragraphs_are_kept_in_the_docx_and_left_out_of_markdown` (legacy_doc.rs:2090); `tests::table_story` (legacy_doc.rs:2144) (?); `tests::a_piece_property_modifier_sets_bold_and_italic_over_the_chpx` (legacy_doc.rs:2269); `legacy_byte_source_boundary_tests::unterminated_story_tail_and_whitespace_spans_keep_all_authored_characters` (legacy_doc.rs:2821) (?); `Writer::blocks_in` (markdown/from_docx/mod.rs:2401) (?)
+- **Called by:** `read` (legacy_doc.rs:180); `tests::a_page_break_stays_inside_its_paragraph_and_a_section_mark_ends_it` (legacy_doc.rs:1919) (?); `tests::a_field_nested_in_a_field_code_shows_only_the_outer_result` (legacy_doc.rs:1946); `tests::empty_paragraphs_are_kept_in_the_docx_and_left_out_of_markdown` (legacy_doc.rs:2090); `tests::table_story` (legacy_doc.rs:2144) (?); `tests::a_piece_property_modifier_sets_bold_and_italic_over_the_chpx` (legacy_doc.rs:2269); `legacy_byte_source_boundary_tests::unterminated_story_tail_and_whitespace_spans_keep_all_authored_characters` (legacy_doc.rs:2821) (?); `Writer::blocks_in` (markdown/from_docx/mod.rs:2553) (?)
 
 #### `Story::push_paragraph`  (L1678-1689)
 `fn push_paragraph(&self, out: &mut Vec<Block>, props: Props, spans: Vec<Span>)`

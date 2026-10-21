@@ -92,7 +92,7 @@
 `pub(super) fn reset()`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `.store` (ambiguous: `CommentFamily::store` (comments.rs:798); `Parsed::store` (revision_processor/comments.rs:51); `Part::store` (scrub.rs:202)) L242,244,245,246,247,248...
+- **Calls (crate):** `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L242,244,245,246,247,248...
 - **Called by:** `reset` (perf.rs:40); `tests::reset_and_record_are_safe_without_feature` (perf.rs:333)
 
 #### `active::record_stage_ns`  (L253-255, pub(super))
@@ -141,14 +141,14 @@
 `pub(super) fn set_atom_count(n: u64)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `.store` (ambiguous: `CommentFamily::store` (comments.rs:798); `Parsed::store` (revision_processor/comments.rs:51); `Part::store` (scrub.rs:202)) L278
+- **Calls (crate):** `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L278
 - **Called by:** `set_atom_count` (perf.rs:124); `tests::reset_and_record_are_safe_without_feature` (perf.rs:333)
 
 #### `active::set_unit_count`  (L281-283, pub(super))
 `pub(super) fn set_unit_count(n: u64)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `.store` (ambiguous: `CommentFamily::store` (comments.rs:798); `Parsed::store` (revision_processor/comments.rs:51); `Part::store` (scrub.rs:202)) L282
+- **Calls (crate):** `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L282
 - **Called by:** `set_unit_count` (perf.rs:136); `tests::reset_and_record_are_safe_without_feature` (perf.rs:333)
 
 #### `active::snapshot`  (L285-305, pub(super))

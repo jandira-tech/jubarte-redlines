@@ -7,7 +7,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.cloned`, `.collect`, `.iter`
-- **Called by:** `windows_font_dirs_from` (convert/font.rs:2855) (?); `merge_normal_style_spacing` (document_comparer.rs:777) (?); `tests::with` (edit/flags.rs:1341) (?); `Geometry::changed` (edit/sections.rs:183) (?)
+- **Called by:** `windows_font_dirs_from` (convert/font.rs:2855) (?); `merge_normal_style_spacing` (document_comparer.rs:777) (?); `tests::with` (edit/flags.rs:1496) (?); `Geometry::changed` (edit/sections.rs:183) (?)
 
 #### `recursion_info`  (L215-219, pub)
 `pub fn recursion_info(name: &XName) -> Option<&'static RecursionInfo>`

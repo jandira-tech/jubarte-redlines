@@ -41,29 +41,29 @@
 - **Calls (std/external/unresolved):** `.map_err`, `.to_string`, `AuditError::Layout`, `PdfOptions::default`
 - **Called by:** none found in src
 
-#### `is_rule`  (L156-158, pub)
-`pub fn is_rule(rule: &str) -> bool`
+#### `is_rule`  (L156-158, pub(crate))
+`pub(crate) fn is_rule(rule: &str) -> bool`
 
 - **Does:** True when `rule` is one of the audit's rule sets or codes.
 - **Calls (std/external/unresolved):** `.any`, `.contains`, `.iter`
-- **Called by:** `parse_rule` (cli.rs:2414); `validate_with` (validate.rs:290)
+- **Called by:** `parse_rule` (cli.rs:2839); `validate_with` (validate.rs:316)
 
 #### `audit_report_with`  (L177-235, pub)
 `pub fn audit_report_with( docx: &[u8], rules: &[&str], mut layout: Option<LayoutPass<'_>>, ) -> Result<AuditReport, AuditError>`
 
 - **Does:** [`audit_report`] with the layout pass supplied by the caller, so a build without the renderer (the slim WASM build) can audit without linking it.
-- **Calls (crate):** `select` (audit.rs:239) L182; `Opened::open` (inspect.rs:525) L183; `Package::read` (ambiguous: `Package::read` (audit.rs:354); `Package::read` (markdown/from_docx/ooxml.rs:66)) L184; `Package::heading_skip` (audit.rs:532) L189; `Package::image_no_descr` (audit.rs:558) L190; `Package::table_no_header_row` (audit.rs:586) L191; `Package::missing_lang` (audit.rs:617) L192; `Package::literal_bullet` (audit.rs:636) L193; `Package::empty_spacers` (audit.rs:661) L194; `Package::direct_formatting` (audit.rs:714) L195; `Package::fields` (audit.rs:764) L197; `.number` (ambiguous: `Field::number` (audit.rs:862); `Step::number` (ids/short.rs:96)) L200; `lay_out` (audit.rs:274) L202,211; `stale_fields` (audit.rs:869) L205; `FontReportEntry::substituted` (convert/font.rs:350) (by name) L213; `finding` (audit.rs:285) L215
+- **Calls (crate):** `select` (audit.rs:239) L182; `Opened::open` (inspect.rs:735) L183; `Package::read` (ambiguous: `Package::read` (audit.rs:354); `Package::read` (markdown/from_docx/ooxml.rs:105)) L184; `Package::heading_skip` (audit.rs:532) L189; `Package::image_no_descr` (audit.rs:558) L190; `Package::table_no_header_row` (audit.rs:586) L191; `Package::missing_lang` (audit.rs:617) L192; `Package::literal_bullet` (audit.rs:636) L193; `Package::empty_spacers` (audit.rs:661) L194; `Package::direct_formatting` (audit.rs:714) L195; `Package::fields` (audit.rs:764) L197; `.number` (ambiguous: `Field::number` (audit.rs:862); `Step::number` (ids/short.rs:96)) L200; `lay_out` (audit.rs:274) L202,211; `stale_fields` (audit.rs:869) L205; `FontReportEntry::substituted` (convert/font.rs:350) (by name) L213; `finding` (audit.rs:285) L215
 - **Calls (std/external/unresolved):** `.any`, `.as_deref_mut`, `.as_str`, `.clone`, `.collect`, `.expect`, `.filter`, `.insert`, `.is_some`, `.iter`, `.map`, `.push`, `.to_string`, `BTreeSet::new`, `Ok`, `Some`, `Vec::new`
 - **Macros:** `format!`
-- **Called by:** `audit_report` (audit.rs:136); `public_memory_spacer_ownership_tests::spacer_audit_respects_authored_sections_page_breaks_and_table_cell_ownership` (audit.rs:983); `validate_with` (validate.rs:290)
+- **Called by:** `audit_report` (audit.rs:136); `public_memory_spacer_ownership_tests::spacer_audit_respects_authored_sections_page_breaks_and_table_cell_ownership` (audit.rs:983); `validate_with` (validate.rs:316)
 
 #### `select`  (L239-271)
 `fn select( requested: &[&str], can_lay_out: bool, ) -> Result<Vec<(&'static str, &'static str, &'static str)>, AuditError>`
 
 - **Does:** The rules `requested` names, in [`RULES`] order.
-- **Calls (crate):** `names` (ambiguous: `deeper_boundary_tests::names` (edit.rs:6691); `canonical::{fn names}` (markdown/from_docx/drawing.rs:872); `move_range_bookmark_regressions::names` (revision_processor/bookmarks.rs:172)) L246,252
+- **Calls (crate):** `names` (ambiguous: `deeper_boundary_tests::names` (edit.rs:8709); `canonical::{fn names}` (markdown/from_docx/drawing.rs:1098); `move_range_bookmark_regressions::names` (revision_processor/bookmarks.rs:192)) L246,252
 - **Calls (std/external/unresolved):** `.any`, `.collect`, `.contains`, `.copied`, `.extend`, `.filter`, `.is_empty`, `.iter`, `.map`, `.remove`, `.to_string`, `.trim`, `AuditError::Layout`, `AuditError::UnknownRule`, `BTreeSet::new`, `Err`, `Ok`
-- **Called by:** `audit_report_with` (audit.rs:177); `resolve_selected` (edit.rs:1161) (?)
+- **Called by:** `audit_report_with` (audit.rs:177); `SourceModel::decisions` (edit/v2_apply.rs:1235) (?); `resolve_operation` (edit/v2_apply.rs:2084) (?)
 
 #### `lay_out`  (L274-283)
 `fn lay_out<'a>( docx: &[u8], pass: &mut dyn FnMut(&[u8]) -> Result<RenderReport, AuditError>, slot: &'a mut Option<RenderReport>, ) -> Result<&'a RenderReport, AuditError>`
@@ -85,7 +85,7 @@
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `Some`
 - **Macros:** `matches!`
-- **Called by:** `Package::table_no_header_row` (audit.rs:586); `parse_tbl_style` (convert/mod.rs:3853) (?); `table_block` (convert/mod.rs:13059) (?); `form_checkbox` (convert/mod.rs:16132) (?); `analyze` (debug.rs:1057) (?); `run_format` (inspect.rs:1245) (?); `chpx_props` (legacy_doc.rs:1450) (?)
+- **Called by:** `Package::table_no_header_row` (audit.rs:586); `parse_tbl_style` (convert/mod.rs:3854) (?); `table_block` (convert/mod.rs:13095) (?); `form_checkbox` (convert/mod.rs:16168) (?); `analyze` (debug.rs:1220) (?); `run_format` (inspect.rs:1486) (?); `chpx_props` (legacy_doc.rs:1450) (?)
 
 #### `Story::location`  (L317-322)
 `fn location(&self, node: NodeId) -> String`
@@ -100,16 +100,16 @@
 
 - **Does:** _no doc comment_
 - **Calls (crate):** `paragraph_id` (ids.rs:410) L325
-- **Called by:** `Story::location` (audit.rs:317); `Package::heading_skip` (audit.rs:532) (?); `Package::literal_bullet` (audit.rs:636) (?); `Package::empty_spacers` (audit.rs:661) (?); `Transaction::cell_control` (edit/controls.rs:298) (?); `Transaction::resolve_comment_text` (edit.rs:2242) (?); `Transaction::resolve_one` (edit.rs:2528) (?); `Transaction::resolve_list` (edit.rs:3563) (?); `Transaction::select` (edit.rs:3778) (?)
+- **Called by:** `Story::location` (audit.rs:317); `Package::heading_skip` (audit.rs:532) (?); `Package::literal_bullet` (audit.rs:636) (?); `Package::empty_spacers` (audit.rs:661) (?); `Transaction::cell_control` (edit/controls.rs:303) (?); `Transaction::resolve_comment_text` (edit.rs:3057) (?); `Transaction::resolve_one_unreported` (edit.rs:3545) (?); `Transaction::resolve_list` (edit.rs:4730) (?); `Transaction::select` (edit.rs:4980) (?)
 
 #### `Package::read`  (L354-404)
 `fn read(opened: Opened) -> Result<Self, AuditError>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Opened::story_parts` (inspect.rs:641) L355; `Opened::related` (inspect.rs:669) L356,357; `body_paragraph_nodes` (inspect.rs:747) L368; `parse_part` (ambiguous: `parse_part` (inspect.rs:693); `parse_part` (validate.rs:570)) L373,394,398; `story_paragraph_nodes` (inspect.rs:937) L376; `Dom::element` (xmllinq/mod.rs:655) (by name) L399; `has_lang` (audit.rs:911) L401
+- **Calls (crate):** `Opened::story_parts` (inspect.rs:861) L355; `Opened::related` (inspect.rs:902) L356,357; `body_paragraph_nodes` (inspect.rs:988) L368; `parse_part` (ambiguous: `parse_part` (inspect.rs:926); `parse_part` (validate.rs:1442)) L373,394,398; `story_paragraph_nodes` (inspect.rs:1178) L376; `Dom::element` (xmllinq/mod.rs:655) (by name) L399; `has_lang` (audit.rs:911) L401
 - **Calls (std/external/unresolved):** `.clone`, `.into_iter`, `.is_some_and`, `.next`, `.push`, `.read_styles`, `.to_string`, `BTreeMap::new`, `Ok`, `W::name`
 - **Macros:** `vec!`
-- **Called by:** `audit_report_with` (audit.rs:177) (?); `Deps::dep_for` (markdown/from_docx/drawing.rs:438) (?); `Package::xml` (markdown/from_docx/ooxml.rs:93) (?); `Media::load` (markdown/from_docx/ooxml.rs:1052) (?)
+- **Called by:** `audit_report_with` (audit.rs:177) (?); `Deps::dep_for` (markdown/from_docx/drawing.rs:592) (?); `Package::check_tag_policy` (markdown/from_docx/ooxml.rs:61) (?); `Package::xml` (markdown/from_docx/ooxml.rs:132) (?); `Media::load` (markdown/from_docx/ooxml.rs:1185) (?)
 
 #### `Package::read_styles`  (L406-473)
 `fn read_styles(&mut self, dom: &Dom, root: NodeId)`
@@ -141,7 +141,7 @@
 - **Does:** The heading level of a paragraph style: its `w:name` is `heading N` (how Word names them in every UI language), else its id is `HeadingN`.
 - **Calls (crate):** `level_after` (audit.rs:927) L507,508
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.get`, `.or_else`
-- **Called by:** `Package::heading_skip` (audit.rs:532); `markdown_source_owner_boundary_tests::style_title_outline_and_long_ancestry_follow_authored_nearest_properties` (markdown/from_docx/mod.rs:6469) (?)
+- **Called by:** `Package::heading_skip` (audit.rs:532); `markdown_source_owner_boundary_tests::style_title_outline_and_long_ancestry_follow_authored_nearest_properties` (markdown/from_docx/mod.rs:6831) (?)
 
 #### `Package::numbered`  (L513-526)
 `fn numbered(&self, dom: &Dom, p: NodeId) -> bool`
@@ -162,7 +162,7 @@
 `fn heading_skip(&self, findings: &mut Vec<AuditFinding>)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Package::body` (audit.rs:528) L533; `Package::paragraph_style` (audit.rs:493) L536; `Package::heading_level` (audit.rs:502) L538; `finding` (audit.rs:285) L552; `.paragraph_id` (ambiguous: `Story::paragraph_id` (audit.rs:324); `Ids::paragraph_id` (edit/origin.rs:48); `Transaction::paragraph_id` (edit.rs:3876)) L552
+- **Calls (crate):** `Package::body` (audit.rs:528) L533; `Package::paragraph_style` (audit.rs:493) L536; `Package::heading_level` (audit.rs:502) L538; `finding` (audit.rs:285) L552; `.paragraph_id` (ambiguous: `Story::paragraph_id` (audit.rs:324); `Ids::paragraph_id` (edit/origin.rs:48); `Transaction::paragraph_id` (edit.rs:5085)) L552
 - **Calls (std/external/unresolved):** `.and_then`, `.enumerate`, `.iter`, `.push`, `Some`
 - **Macros:** `format!`
 - **Called by:** `audit_report_with` (audit.rs:177)
@@ -180,7 +180,7 @@
 `fn table_no_header_row(&self, findings: &mut Vec<AuditFinding>)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L589,601; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:301); `Dom::elements` (xmllinq/mod.rs:640)) L590; `Dom::element` (xmllinq/mod.rs:655) (by name) L594,596; `on` (audit.rs:299) L597; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L597; `Story::location` (audit.rs:317) (by name) L604; `finding` (audit.rs:285) L605
+- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L589,601; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L590; `Dom::element` (xmllinq/mod.rs:655) (by name) L594,596; `on` (audit.rs:299) L597; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L597; `Story::location` (audit.rs:317) (by name) L604; `finding` (audit.rs:285) L605
 - **Calls (std/external/unresolved):** `.and_then`, `.clone`, `.first`, `.is_some_and`, `.len`, `.map_or_else`, `.push`, `Some`, `W::name`, `W::p`, `W::tbl`, `W::tr_pr`, `W::tr`, `W::val`
 - **Macros:** `format!`
 - **Called by:** `audit_report_with` (audit.rs:177)
@@ -197,7 +197,7 @@
 `fn literal_bullet(&self, findings: &mut Vec<AuditFinding>)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `project_paragraph` (inspect.rs:1024) L639; `Package::numbered` (audit.rs:513) L647; `finding` (audit.rs:285) L650; `.paragraph_id` (ambiguous: `Story::paragraph_id` (audit.rs:324); `Ids::paragraph_id` (edit/origin.rs:48); `Transaction::paragraph_id` (edit.rs:3876)) L652
+- **Calls (crate):** `project_paragraph` (inspect.rs:1265) L639; `Package::numbered` (audit.rs:513) L647; `finding` (audit.rs:285) L650; `.paragraph_id` (ambiguous: `Story::paragraph_id` (audit.rs:324); `Ids::paragraph_id` (edit/origin.rs:48); `Transaction::paragraph_id` (edit.rs:5085)) L652
 - **Calls (std/external/unresolved):** `.chars`, `.contains`, `.enumerate`, `.iter`, `.next`, `.push`, `.trim_start_matches`
 - **Macros:** `format!`, `matches!`
 - **Called by:** `audit_report_with` (audit.rs:177)
@@ -206,7 +206,7 @@
 `fn empty_spacers(&self, findings: &mut Vec<AuditFinding>)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) (by name) L665,666; `Dom::ancestors` (xmllinq/mod.rs:770) (by name) L669; `project_paragraph` (inspect.rs:1024) L672; `deep_production_path_tests::empty` (comparer/finalize.rs:20895) (by name) L680,687; `Dom::parent` (xmllinq/mod.rs:597) (by name) L686,696; `finding` (audit.rs:285) L699; `.paragraph_id` (ambiguous: `Story::paragraph_id` (audit.rs:324); `Ids::paragraph_id` (edit/origin.rs:48); `Transaction::paragraph_id` (edit.rs:3876)) L701,704,705; `short_paragraph` (ids.rs:435) L704,705
+- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) (by name) L665,666; `Dom::ancestors` (xmllinq/mod.rs:770) (by name) L669; `project_paragraph` (inspect.rs:1265) L672; `deep_production_path_tests::empty` (comparer/finalize.rs:20917) (by name) L680,687; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L686,696; `finding` (audit.rs:285) L699; `.paragraph_id` (ambiguous: `Story::paragraph_id` (audit.rs:324); `Ids::paragraph_id` (edit/origin.rs:48); `Transaction::paragraph_id` (edit.rs:5085)) L701,704,705; `short_paragraph` (ids.rs:435) L704,705
 - **Calls (std/external/unresolved):** `.get`, `.is_empty`, `.is_some_and`, `.is_some`, `.len`, `.push`, `.trim`, `Some`, `W::p_pr`, `W::sect_pr`, `W::tc`, `breaks_section`
 - **Macros:** `format!`
 - **Called by:** `audit_report_with` (audit.rs:177)
@@ -224,7 +224,7 @@
 `fn fields(&self) -> Vec<Field>`
 
 - **Does:** Every complex and simple field, story by story in document order.
-- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L769,805; `under_fallback` (audit.rs:954) L770; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L773,789,793,798; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L774,800; `Field::new` (audit.rs:836) L775,799; `Field::finish` (audit.rs:848) L783,810,815; `Dom::value_str` (xmllinq/mod.rs:1179) (by name) L791,794
+- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L769,805; `under_fallback` (audit.rs:954) L770; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L773,789,793,798; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L774,800; `Field::new` (audit.rs:836) L775,799; `Field::finish` (audit.rs:848) L783,810,815; `Dom::value_str` (xmllinq/mod.rs:1195) (by name) L791,794
 - **Calls (std/external/unresolved):** `.collect`, `.enumerate`, `.filter`, `.into_iter`, `.iter_mut`, `.iter`, `.last_mut`, `.map`, `.pop`, `.push_str`, `.push`, `.rev`, `.to_string`, `.unwrap_or_default`, `.value`, `Some`, `Vec::new`, `W::fld_char`, `W::fld_simple`, `W::name`, `W::t`
 - **Called by:** `audit_report_with` (audit.rs:177)
 
@@ -256,7 +256,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Field::cached` (audit.rs:858) L863
 - **Calls (std/external/unresolved):** `.flatten`, `.ok`, `.parse`, `.then`, `.trim`
-- **Called by:** `audit_report_with` (audit.rs:177) (?); `stale_fields` (audit.rs:869) (?); `ShortId::range` (ids/short.rs:342) (?)
+- **Called by:** `audit_report_with` (audit.rs:177) (?); `stale_fields` (audit.rs:869) (?); `ShortId::range` (ids/short.rs:344) (?)
 
 #### `stale_fields`  (L869-894)
 `fn stale_fields(fields: &[Field], pages: Option<usize>, findings: &mut Vec<AuditFinding>)`

@@ -14,7 +14,7 @@
 
 - **Does:** Re-stream every changed-paragraph region of `seqs` the way Word's Compare does.
 - **Calls (crate):** `restream` (comparer/cross_para.rs:149) L143; `resync_paragraph_unids` (comparer/cross_para.rs:220) L144
-- **Called by:** `deep_lcs_source_conservation_tests::split_changed_prose_with_deleted_table_keeps_every_space_and_mark_atom` (comparer/lcs.rs:15858); `coverage_real_source_route_matrix_tests::compound_endpoint_boundary_correlation_keeps_every_original_character_before_production` (comparer/lcs.rs:20952); `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1187); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:209)
+- **Called by:** `deep_lcs_source_conservation_tests::split_changed_prose_with_deleted_table_keeps_every_space_and_mark_atom` (comparer/lcs.rs:15858); `coverage_real_source_route_matrix_tests::compound_endpoint_boundary_correlation_keeps_every_original_character_before_production` (comparer/lcs.rs:20951); `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1186); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215)
 
 #### `restream`  (L149-213)
 `fn restream( dom: &Dom, seqs: &mut Vec<CorrelatedSequence>, settings: &WmlComparerSettings, ) -> Vec<(ComparisonUnit, Option<ComparisonUnit>)>`
@@ -29,7 +29,7 @@
 `fn resync_paragraph_unids(dom: &mut Dom, marks: &[(ComparisonUnit, Option<ComparisonUnit>)])`
 
 - **Does:** Give each re-streamed right paragraph the paragraph Unid of the left paragraph whose mark it now pairs with, and a fresh Unid when its mark is inserted.
-- **Calls (crate):** `ComparisonUnit::descendant_atoms` (comparer/atoms.rs:406) (by name) L222; `Dom::name_is` (xmllinq/mod.rs:535) L228; `paragraph` (ambiguous, 17 candidates) L232,238; `Dom::attribute` (xmllinq/mod.rs:874) L235,239; `generate_unid` (unid.rs:47) L243; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L245
+- **Calls (crate):** `ComparisonUnit::descendant_atoms` (comparer/atoms.rs:406) (by name) L222; `Dom::name_is` (xmllinq/mod.rs:535) L228; `paragraph` (ambiguous, 17 candidates) L232,238; `Dom::attribute` (xmllinq/mod.rs:874) L235,239; `generate_unid` (unid.rs:47) L243; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L245
 - **Calls (std/external/unresolved):** `.and_then`, `.as_ref`, `.copied`, `.find`, `.first`, `.is_none`, `.iter`, `.rev`, `.to_string`, `PT::unid`, `Some`, `W::p`
 - **Called by:** `restream_cross_paragraph_regions` (comparer/cross_para.rs:138)
 
@@ -121,13 +121,13 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `is_mark` (comparer/cross_para.rs:470) L502,528,539; `has_word` (comparer/cross_para.rs:475) L520
 - **Calls (std/external/unresolved):** `.enumerate`, `.is_empty`, `.iter`, `.len`, `.push`, `Block::Del`, `Block::Ins`, `Vec::new`, `new`, `std::mem::replace`
-- **Called by:** `restream` (comparer/cross_para.rs:149); `public_option_source_ownership_tests::public_reordered_bulk_paragraphs_preserve_sources_on_move_thrash_boundaries` (comparer/cross_para.rs:2938)
+- **Called by:** `restream` (comparer/cross_para.rs:149); `public_option_source_ownership_tests::public_reordered_bulk_paragraphs_preserve_sources_on_move_thrash_boundaries` (comparer/cross_para.rs:2935)
 
 #### `unit_text`  (L556-561)
 `fn unit_text(u: &ComparisonUnit, dom: &Dom) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `ComparisonUnit::descendant_atoms` (comparer/atoms.rs:406) L557; `Dom::value` (xmllinq/mod.rs:1169) L559
+- **Calls (crate):** `ComparisonUnit::descendant_atoms` (comparer/atoms.rs:406) L557; `Dom::value` (xmllinq/mod.rs:1185) L559
 - **Calls (std/external/unresolved):** `.collect`, `.iter`, `.map`
 - **Called by:** `has_word` (comparer/cross_para.rs:475); `token` (comparer/cross_para.rs:563)
 
@@ -137,7 +137,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `unit_text` (comparer/cross_para.rs:556) L564
 - **Calls (std/external/unresolved):** `.chars`, `.clone`, `.count`, `.is_alphanumeric`, `.next`, `.replace`, `.to_uppercase`
-- **Called by:** `member_tokens` (comparer/cross_para.rs:597); `pair_gaps` (comparer/cross_para.rs:1204); `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners::{fn member}` (comparer/cross_para.rs:3260)
+- **Called by:** `member_tokens` (comparer/cross_para.rs:597); `pair_gaps` (comparer/cross_para.rs:1204); `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners::{fn member}` (comparer/cross_para.rs:3257)
 
 #### `unit_on`  (L586-595)
 `fn unit_on(st: &Stream, e: usize, left: bool) -> ComparisonUnit`
@@ -175,7 +175,7 @@
 `fn render_best(st: &Stream, region: &Region) -> Option<Rendered>`
 
 - **Does:** Render `region`, or the same paragraphs without their LCS pairs when that keeps more of the text.
-- **Calls (crate):** `render` (comparer/cross_para.rs:622) L690,700; `kept` (ambiguous: `kept` (edit/rewrite.rs:14); `kept` (markdown/from_docx/revise.rs:36)) L711
+- **Calls (crate):** `render` (comparer/cross_para.rs:622) L690,700; `kept` (ambiguous: `kept` (edit/rewrite.rs:18); `kept` (markdown/from_docx/revise.rs:49)) L711
 - **Calls (std/external/unresolved):** `.clone`, `.filter`, `.flat_map`, `.flatten`, `.is_empty`, `.iter`, `.len`, `.map`, `.sum`, `Some`, `Vec::new`
 - **Called by:** `restream` (comparer/cross_para.rs:149)
 
@@ -273,7 +273,7 @@
 `fn pair_gap(lbags: &[Bag], rbags: &[Bag]) -> Vec<Option<usize>>`
 
 - **Does:** Pair a gap's deleted paragraphs `lbags` with its inserted ones `rbags`; `lm[i]` is left i's partner.
-- **Calls (crate):** `below_parity` (comparer/cross_para.rs:965) L988,997,1175; `shared_content_words` (comparer/cross_para.rs:922) L993,1002,1004,1059; `ordered_content_words` (comparer/cross_para.rs:944) L1015,1017,1019; `pairing_overlap` (comparer/cross_para.rs:905) L1061,1115,1173; `jaccard` (comparer/cross_para.rs:894) L1067; `has_pairing_evidence` (comparer/cross_para.rs:930) L1118,1176; `weight` (markdown/diff.rs:601) (by name) L1125; `residue_force_pair` (comparer/cross_para.rs:936) L1191
+- **Calls (crate):** `below_parity` (comparer/cross_para.rs:965) L988,997,1175; `shared_content_words` (comparer/cross_para.rs:922) L993,1002,1004,1059; `ordered_content_words` (comparer/cross_para.rs:944) L1015,1017,1019; `pairing_overlap` (comparer/cross_para.rs:905) L1061,1115,1173; `jaccard` (comparer/cross_para.rs:894) L1067; `has_pairing_evidence` (comparer/cross_para.rs:930) L1118,1176; `weight` (markdown/diff.rs:610) (by name) L1125; `residue_force_pair` (comparer/cross_para.rs:936) L1191
 - **Calls (std/external/unresolved):** `.abs`, `.any`, `.as_slice`, `.chain`, `.collect`, `.enumerate`, `.filter_map`, `.filter`, `.into_iter`, `.is_none_or`, `.is_none`, `.is_some_and`, `.is_some`, `.iter`, `.len`, `.map`, `.max_by_key`, `.max`, `.min`, `.pop_front`, `.position`, `.push_back`, `.then`, `.unwrap_or`, `.wrapping_sub`, `Some`, `crosses`, `greedy`, `link`, `pos`, `rel`
 - **Macros:** `vec!`
 - **Called by:** `pair_gaps` (comparer/cross_para.rs:1204); `lexical_pairing_contract_tests::paragraph_pairs_preserve_non_crossing_unique_ownership` (comparer/cross_para.rs:2208); `lexical_pairing_contract_tests::pairing_ceiling_keeps_disjoint_large_gaps_unpaired` (comparer/cross_para.rs:2417)
@@ -282,7 +282,7 @@
 `fn pair_gaps(st: &Stream, blocks: &[Block]) -> Vec<Block>`
 
 - **Does:** Re-align every run of changed paragraphs with Docxodus's in-gap pairing: the gaps lie between unchanged paragraphs, as Docxodus's spine anchors do, and the LCS's own pairing of changed paragraphs does not carry over.
-- **Calls (crate):** `one_sided` (comparer/cross_para.rs:258) L1212; `token` (comparer/cross_para.rs:563) L1261; `unit_on` (comparer/cross_para.rs:586) L1261; `bag` (comparer/cross_para.rs:849) L1263; `pair_gap` (comparer/cross_para.rs:972) L1267; `flush` (markdown/view_stories.rs:755) (by name) L1285,1299,1303
+- **Calls (crate):** `one_sided` (comparer/cross_para.rs:258) L1212; `token` (comparer/cross_para.rs:563) L1261; `unit_on` (comparer/cross_para.rs:586) L1261; `bag` (comparer/cross_para.rs:849) L1263; `pair_gap` (comparer/cross_para.rs:972) L1267; `flush` (markdown/view_stories.rs:1334) (by name) L1285,1299,1303
 - **Calls (std/external/unresolved):** `.collect`, `.enumerate`, `.extend_from_slice`, `.find`, `.get`, `.is_empty`, `.is_none`, `.is_some_and`, `.is_some`, `.iter`, `.len`, `.map`, `.position`, `.push`, `.unwrap_or`, `Block::Del`, `Block::Ins`, `Some`, `Vec::new`, `Vec::with_capacity`, `barrier_then_changed`, `changed`, `side_bag`
 - **Macros:** `matches!`, `unreachable!`, `vec!`
 - **Called by:** `restream` (comparer/cross_para.rs:149)
@@ -293,13 +293,13 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Tok::connective` (comparer/cross_para.rs:59) (by name) L1359
 - **Calls (std/external/unresolved):** `.binary_search`, `.clone`, `.is_ok`, `.push_str`, `.push`, `Vec::new`, `starts_member`
-- **Called by:** `segment_region` (comparer/cross_para.rs:1503); `lexical_pairing_contract_tests::compound_anchor_stops_at_paragraph_and_whitespace_boundaries` (comparer/cross_para.rs:2363); `lexical_pairing_contract_tests::unit_anchors_weight_characters_and_allow_only_compound_endpoint_overlap` (comparer/cross_para.rs:2430); `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners` (comparer/cross_para.rs:3259)
+- **Called by:** `segment_region` (comparer/cross_para.rs:1503); `lexical_pairing_contract_tests::compound_anchor_stops_at_paragraph_and_whitespace_boundaries` (comparer/cross_para.rs:2363); `lexical_pairing_contract_tests::unit_anchors_weight_characters_and_allow_only_compound_endpoint_overlap` (comparer/cross_para.rs:2430); `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners` (comparer/cross_para.rs:3256)
 
 #### `unit_lcs`  (L1384-1442)
 `fn unit_lcs( ul: &[Unit], ur: &[Unit], char_weighted: bool, partial: bool, suppress: &dyn Fn(&Unit, &Unit) -> bool, ) -> Vec<(usize, usize)>`
 
 - **Does:** LCS over anchor units.
-- **Calls (crate):** `weight` (markdown/diff.rs:601) (by name) L1420,1430; `at` (markdown/from_docx/drawing.rs:1134) (by name) L1421,1423,1425,1431,1435
+- **Calls (crate):** `weight` (markdown/diff.rs:610) (by name) L1420,1430; `at` (markdown/from_docx/drawing.rs:1360) (by name) L1421,1423,1425,1431,1435
 - **Calls (std/external/unresolved):** `.len`, `.max`, `.min`, `.push`, `.rev`, `Vec::new`, `suppress`, `w`
 - **Macros:** `vec!`
 - **Called by:** `segment_region` (comparer/cross_para.rs:1503); `lexical_pairing_contract_tests::unit_anchors_weight_characters_and_allow_only_compound_endpoint_overlap` (comparer/cross_para.rs:2430)
@@ -329,10 +329,10 @@
 `fn segment_region( left: &[Vec<Tok>], right: &[Vec<Tok>], pairs: &[(usize, usize)], run_ends_story: bool, ) -> Option<Vec<Cell>>`
 
 - **Does:** `IrCrossParagraphSegmenter.SegmentRegion`: `pairs` are the word-matched (left, right) member pairs, strictly ascending; other members are one-sided.
-- **Calls (crate):** `para_of` (comparer/cross_para.rs:1470) L1540,1541,1815; `build_units` (comparer/cross_para.rs:1340) L1548,1549,1581,1582; `unit_match_tokens` (comparer/cross_para.rs:1446) L1555,1566,1636; `unit_lcs` (comparer/cross_para.rs:1384) L1565,1590,1609; `is_function_word` (comparer/cross_para.rs:1486) L1628; `extend_with_flanking_separators` (comparer/cross_para.rs:1907) L1651; `emit` (ambiguous: `emit` (convert/pdf.rs:380); `emit` (edit/tracked.rs:275); `emit` (xmllinq/serialize.rs:656)) L1796,1800,1807
+- **Calls (crate):** `para_of` (comparer/cross_para.rs:1470) L1540,1541,1815; `build_units` (comparer/cross_para.rs:1340) L1548,1549,1581,1582; `unit_match_tokens` (comparer/cross_para.rs:1446) L1555,1566,1636; `unit_lcs` (comparer/cross_para.rs:1384) L1565,1590,1609; `is_function_word` (comparer/cross_para.rs:1486) L1628; `extend_with_flanking_separators` (comparer/cross_para.rs:1907) L1651; `emit` (ambiguous: `emit` (convert/pdf.rs:380); `emit` (edit/tracked.rs:452); `emit` (xmllinq/serialize.rs:668)) L1796,1800,1807
 - **Calls (std/external/unresolved):** `.all`, `.any`, `.array_windows`, `.as_deref`, `.clone`, `.collect`, `.count`, `.dedup`, `.enumerate`, `.filter`, `.find`, `.flatten`, `.is_empty`, `.is_none`, `.is_some_and`, `.is_some`, `.iter`, `.last`, `.len`, `.map`, `.min`, `.push`, `.retain`, `.saturating_sub`, `.sort_unstable`, `.take`, `Anchor::Bound`, `Anchor::Tok`, `MergedItem::BoundaryDel`, `MergedItem::BoundaryEqual`, `MergedItem::BoundaryIns`, `MergedItem::Del`, `MergedItem::Ins`, `MergedItem::Paired`, `Some`, `Vec::new`, `acc`, `count_l`, `count_r`, `cross_window`, `elig_l`, `elig_r`, `in_final`, `member_l`, `member_r`
 - **Macros:** `vec!`
-- **Called by:** `segment` (comparer/cross_para.rs:615); `render` (comparer/cross_para.rs:622); `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners` (comparer/cross_para.rs:3259)
+- **Called by:** `segment` (comparer/cross_para.rs:615); `render` (comparer/cross_para.rs:622); `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners` (comparer/cross_para.rs:3256)
 
 #### `extend_with_flanking_separators`  (L1907-1955)
 `fn extend_with_flanking_separators( all: &mut Vec<(usize, usize)>, flat_l: &[&Tok], flat_r: &[&Tok], off_l: &[usize], off_r: &[usize], )`
@@ -355,7 +355,7 @@
 `fn char_weighted_lcs( n: usize, m: usize, eq: impl Fn(usize, usize) -> bool, weight: impl Fn(usize) -> usize, ) -> Vec<(usize, usize)>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `at` (markdown/from_docx/drawing.rs:1134) (by name) L2010,2011,2013,2019,2023; `weight` (markdown/diff.rs:601) (by name) L2011,2019
+- **Calls (crate):** `at` (markdown/from_docx/drawing.rs:1360) (by name) L2010,2011,2013,2019,2023; `weight` (markdown/diff.rs:610) (by name) L2011,2019
 - **Calls (std/external/unresolved):** `.max`, `.push`, `.rev`, `Vec::new`, `eq`
 - **Macros:** `vec!`
 - **Called by:** `token_diff` (comparer/cross_para.rs:1970)
@@ -390,14 +390,14 @@
 - `lexical_pairing_contract_tests::pairing_ceiling_keeps_disjoint_large_gaps_unpaired` (L2417): _no doc comment_
 - `lexical_pairing_contract_tests::unit_anchors_weight_characters_and_allow_only_compound_endpoint_overlap` (L2430): _no doc comment_
 - `public_option_source_ownership_tests::canonical` (L2479): _no doc comment_
-- `public_option_source_ownership_tests::source_events` (L2512): _no doc comment_
-- `public_option_source_ownership_tests::source_events::{fn walk}` (L2513): _no doc comment_
-- `public_option_source_ownership_tests::assert_source_projection` (L2664): _no doc comment_
-- `public_option_source_ownership_tests::public_boundary_shifts_preserve_all_source_owners_with_lexical_options` (L2705): _no doc comment_
-- `public_option_source_ownership_tests::public_comparison_options_preserve_reordered_paragraphs_formats_and_note_owners` (L2775): _no doc comment_
-- `public_option_source_ownership_tests::public_reordered_bulk_paragraphs_preserve_sources_on_move_thrash_boundaries` (L2938): _no doc comment_
-- `public_option_source_ownership_tests::strict_and_transitional_packages_preserve_complete_authored_body_ownership` (L3034): _no doc comment_
-- `public_option_source_ownership_tests::zero_word_move_threshold_preserves_authored_nontext_and_separator_payloads` (L3181): _no doc comment_
-- `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners` (L3259): _no doc comment_
-- `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners::{fn member}` (L3260): _no doc comment_
-- `public_option_source_ownership_tests::public_compound_and_one_sided_paragraph_windows_preserve_complete_sources` (L3328): _no doc comment_
+- `public_option_source_ownership_tests::source_events` (L2511): _no doc comment_
+- `public_option_source_ownership_tests::source_events::{fn walk}` (L2512): _no doc comment_
+- `public_option_source_ownership_tests::assert_source_projection` (L2661): _no doc comment_
+- `public_option_source_ownership_tests::public_boundary_shifts_preserve_all_source_owners_with_lexical_options` (L2702): _no doc comment_
+- `public_option_source_ownership_tests::public_comparison_options_preserve_reordered_paragraphs_formats_and_note_owners` (L2772): _no doc comment_
+- `public_option_source_ownership_tests::public_reordered_bulk_paragraphs_preserve_sources_on_move_thrash_boundaries` (L2935): _no doc comment_
+- `public_option_source_ownership_tests::strict_and_transitional_packages_preserve_complete_authored_body_ownership` (L3031): _no doc comment_
+- `public_option_source_ownership_tests::zero_word_move_threshold_preserves_authored_nontext_and_separator_payloads` (L3178): _no doc comment_
+- `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners` (L3256): _no doc comment_
+- `public_option_source_ownership_tests::sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners::{fn member}` (L3257): _no doc comment_
+- `public_option_source_ownership_tests::public_compound_and_one_sided_paragraph_windows_preserve_complete_sources` (L3325): _no doc comment_

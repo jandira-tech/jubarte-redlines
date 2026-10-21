@@ -6,7 +6,7 @@
 `pub(crate) fn expand(xml: &str, load: impl Fn(&str) -> Option<Vec<u8>>) -> String`
 
 - **Does:** `xml` with every `w:altChunk` replaced by its chunk's paragraphs.
-- **Calls (crate):** `attr` (convert/altchunk.rs:47) L34; `drawing_tests::load` (convert/mod.rs:38653) L35; `chunk_html` (convert/altchunk.rs:70) L36; `html_to_wml` (convert/altchunk.rs:604) L37
+- **Calls (crate):** `attr` (convert/altchunk.rs:47) L34; `drawing_tests::load` (convert/mod.rs:38689) L35; `chunk_html` (convert/altchunk.rs:70) L36; `html_to_wml` (convert/altchunk.rs:604) L37
 - **Calls (std/external/unresolved):** `.and_then`, `.ends_with`, `.find`, `.len`, `.map_or`, `.map`, `.push_str`, `.unwrap_or_default`, `String::with_capacity`
 - **Called by:** `tests::an_alt_chunk_is_replaced_by_its_paragraphs` (convert/altchunk.rs:793); `tests::regression_tests::expansion_keeps_surrounding_content_and_chunk_order` (convert/altchunk.rs:824); `tests::regression_tests::expansion_without_chunks_does_not_load_any_parts` (convert/altchunk.rs:839); `tests::regression_tests::missing_id_does_not_load_an_unrelated_part` (convert/altchunk.rs:845); `imported_source_contract_tests::memory_story_chunk_relationships_expand_exactly_without_mutating_package_or_source` (convert/altchunk.rs:1093); `imported_source_contract_tests::valid_html_declarations_headings_and_self_closed_spans_keep_exact_source_formats` (convert/altchunk.rs:1265); `with_layout` (convert/mod.rs:769)
 
@@ -16,7 +16,7 @@
 - **Does:** A tag's attribute value, any prefix (`r:id` for `id`).
 - **Calls (std/external/unresolved):** `.as_bytes`, `.find`, `.get`, `.is_whitespace`, `.len`, `.map_or`, `.to_string`, `Some`
 - **Macros:** `format!`, `matches!`
-- **Called by:** `CommentFamily::record` (comments.rs:578) (?); `expand` (convert/altchunk.rs:15); `Builder::start` (convert/altchunk.rs:520); `imported_source_contract_tests::quoted_and_unquoted_html_attribute_boundaries_select_only_the_authored_class` (convert/altchunk.rs:1135); `page_frame_key` (convert/mod.rs:9232) (?); `body_frame_key` (convert/mod.rs:9254) (?); `tests::normal_takes_b_theme_fonts_from_its_doc_defaults` (document_comparer.rs:8330) (?); `tests::normal_takes_b_doc_default_indent_and_justification` (document_comparer.rs:8615) (?); `Transaction::opaque_structure` (edit.rs:3959) (?)
+- **Called by:** `CommentFamily::record` (comments.rs:612) (?); `expand` (convert/altchunk.rs:15); `Builder::start` (convert/altchunk.rs:520); `imported_source_contract_tests::quoted_and_unquoted_html_attribute_boundaries_select_only_the_authored_class` (convert/altchunk.rs:1135); `page_frame_key` (convert/mod.rs:9233) (?); `body_frame_key` (convert/mod.rs:9255) (?); `tests::normal_takes_b_theme_fonts_from_its_doc_defaults` (document_comparer.rs:8382) (?); `tests::normal_takes_b_doc_default_indent_and_justification` (document_comparer.rs:8667) (?); `Transaction::opaque_structure` (edit.rs:5211) (?)
 
 #### `chunk_html`  (L70-93)
 `fn chunk_html(bytes: &[u8]) -> Option<String>`
@@ -83,7 +83,7 @@
 `fn props(&self, tag: &str, class: Option<&str>, style: Option<&str>) -> Props`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `take` (markdown/diff.rs:1230) (by name) L306,310,311
+- **Calls (crate):** `take` (markdown/diff.rs:1239) (by name) L306,310,311
 - **Calls (std/external/unresolved):** `.clone`, `.extend`, `.filter_map`, `.get`, `.insert`, `.split_once`, `.split_whitespace`, `.split`, `.to_ascii_lowercase`, `.to_string`, `.trim`, `Props::new`
 - **Macros:** `format!`
 - **Called by:** `Builder::start` (convert/altchunk.rs:520)
@@ -190,7 +190,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.and_then`, `.contains`, `.filter`, `.find`, `.len`, `.map`, `.ok`, `.parse`, `.push_str`, `.push`, `.starts_with`, `.to_string`, `Some`, `String::with_capacity`, `u32::from_str_radix`
-- **Called by:** `Builder::text` (convert/altchunk.rs:405); `tests::regression_tests::entities_preserve_unknown_and_invalid_unicode_references` (convert/altchunk.rs:919); `html_attribute` (markdown/write.rs:1165); `html_block_text` (markdown/write.rs:1243)
+- **Called by:** `Builder::text` (convert/altchunk.rs:405); `tests::regression_tests::entities_preserve_unknown_and_invalid_unicode_references` (convert/altchunk.rs:919); `html_attribute` (markdown/write.rs:1346); `html_block_text` (markdown/write.rs:1424)
 
 #### `xml_escape`  (L765-770)
 `fn xml_escape(s: &str) -> String`

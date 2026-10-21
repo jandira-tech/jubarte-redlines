@@ -22,7 +22,7 @@
 `fn canonical_rpr_spec(src: &Dom, rpr: Option<NodeId>) -> Vec<CanonicalRprChild>`
 
 - **Does:** `NormalizeRunProperties` (read half) — extract `rpr`'s canonical child spec from `src` with PURE READS: drop `w:rPrChange` + pt-ns children; children sorted by local name; each child keeps name + filtered (no rsid*, no pt) attrs sorted by local name; nested sub-elements dropped.
-- **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L56; `Dom::name` (xmllinq/mod.rs:526) L60,68,69,73; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L61,77; `XName::local_name` (xmllinq/mod.rs:208) (by name) L70,79; `Dom::attributes` (xmllinq/mod.rs:885) L74; `is_rsid_attr` (comparer/formatchg.rs:40) L77
+- **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L56; `Dom::name` (xmllinq/mod.rs:526) L60,68,69,73; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L61,77; `XName::local_name` (xmllinq/mod.rs:208) (by name) L70,79; `Dom::attributes` (xmllinq/mod.rs:899) L74; `is_rsid_attr` (comparer/formatchg.rs:40) L77
 - **Calls (std/external/unresolved):** `.cmp`, `.collect`, `.filter`, `.into_iter`, `.push`, `.sort_by`, `.unwrap`, `Vec::new`, `W::name`
 - **Called by:** `normalize_run_properties` (comparer/formatchg.rs:110); `normalized_rpr_serialized` (comparer/formatchg.rs:132)
 
@@ -30,7 +30,7 @@
 `fn build_canonical_rpr(dst: &mut Dom, spec: &[CanonicalRprChild]) -> NodeId`
 
 - **Does:** `NormalizeRunProperties` (build half) — materialize a canonical `w:rPr` from a spec into `dst`, returning its NodeId.
-- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L91,93; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L95; `Dom::add` (xmllinq/mod.rs:1058) L97
+- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L91,93; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L95; `Dom::add` (xmllinq/mod.rs:1074) L97
 - **Calls (std/external/unresolved):** `.as_str`, `.clone`, `Some`, `W::r_pr`
 - **Called by:** `normalize_run_properties` (comparer/formatchg.rs:110); `normalized_rpr_serialized` (comparer/formatchg.rs:132)
 
@@ -45,14 +45,14 @@
 `pub fn are_run_properties_equal(dom: &mut Dom, a: Option<NodeId>, b: Option<NodeId>) -> bool`
 
 - **Does:** True when two `w:rPr` elements serialize to the same canonical form (after [`normalize_run_properties`]).
-- **Calls (crate):** `normalize_run_properties` (comparer/formatchg.rs:110) L119,120; `Dom::serialize_element` (xmllinq/mod.rs:1299) L121
-- **Called by:** `paragraph_mark_properties_equal` (comparer/finalize.rs:3280); `detect_format_changes_impl` (comparer/formatchg.rs:406)
+- **Calls (crate):** `normalize_run_properties` (comparer/formatchg.rs:110) L119,120; `Dom::serialize_element` (xmllinq/mod.rs:1315) L121
+- **Called by:** `paragraph_mark_properties_equal` (comparer/finalize.rs:3322); `detect_format_changes_impl` (comparer/formatchg.rs:406)
 
 #### `normalized_rpr_serialized`  (L132-157)
 `fn normalized_rpr_serialized( dom: &Dom, scratch: &mut Dom, cache: &mut std::collections::HashMap<Option<NodeId>, String>, rpr: Option<NodeId>, ) -> String`
 
 - **Does:** Cached `serialize(normalize_run_properties(rpr))` keyed by the `rPr` NodeId.
-- **Calls (crate):** `canonical_rpr_spec` (comparer/formatchg.rs:53) L150; `Dom::with_scratch` (xmllinq/mod.rs:449) L151; `build_canonical_rpr` (comparer/formatchg.rs:90) L152; `Dom::serialize_element` (xmllinq/mod.rs:1299) (by name) L153
+- **Calls (crate):** `canonical_rpr_spec` (comparer/formatchg.rs:53) L150; `Dom::with_scratch` (xmllinq/mod.rs:449) L151; `build_canonical_rpr` (comparer/formatchg.rs:90) L152; `Dom::serialize_element` (xmllinq/mod.rs:1315) (by name) L153
 - **Calls (std/external/unresolved):** `.clone`, `.get`, `.insert`
 - **Called by:** `detect_format_changes_impl` (comparer/formatchg.rs:406); `format_change_cache_tests::format_changes_cache_matches_direct` (comparer/formatchg.rs:564); `format_change_cache_tests::normalized_rpr_serialization_reclaims_scratch_nodes` (comparer/formatchg.rs:608)
 
@@ -61,13 +61,13 @@
 
 - **Does:** Map a WordprocessingML run-property local name to the friendly name the Python and WASM revisions-binding returns (`bold`, `italic`, `strikethrough`, `fontSize`, `color`, …).
 - **Calls (std/external/unresolved):** `.to_string`
-- **Called by:** `get_changed_property_names` (comparer/formatchg.rs:217); `extract_property_dictionary` (comparer/revisions.rs:299)
+- **Called by:** `get_changed_property_names` (comparer/formatchg.rs:217); `extract_property_dictionary` (comparer/revisions.rs:303)
 
 #### `prop_signature`  (L194-212)
 `fn prop_signature(dom: &mut Dom, prop: NodeId) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Dom::name` (xmllinq/mod.rs:526) L199; `Dom::new_element` (xmllinq/mod.rs:478) L200; `Dom::attributes` (xmllinq/mod.rs:885) L201; `is_rsid_attr` (comparer/formatchg.rs:40) L204; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L204; `XName::local_name` (xmllinq/mod.rs:208) (by name) L207; `Dom::set_attribute_value` (xmllinq/mod.rs:961) L209; `Dom::serialize_element` (xmllinq/mod.rs:1299) L211
+- **Calls (crate):** `Dom::name` (xmllinq/mod.rs:526) L199; `Dom::new_element` (xmllinq/mod.rs:478) L200; `Dom::attributes` (xmllinq/mod.rs:899) L201; `is_rsid_attr` (comparer/formatchg.rs:40) L204; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L204; `XName::local_name` (xmllinq/mod.rs:208) (by name) L207; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L209; `Dom::serialize_element` (xmllinq/mod.rs:1315) L211
 - **Calls (std/external/unresolved):** `.cmp`, `.collect`, `.filter`, `.into_iter`, `.sort_by`, `.unwrap`, `Some`
 - **Called by:** `get_changed_property_names` (comparer/formatchg.rs:217); `para_property_signature` (comparer/formatchg.rs:297)
 
@@ -75,7 +75,7 @@
 `pub fn get_changed_property_names( dom: &mut Dom, old: Option<NodeId>, new: Option<NodeId>, ) -> Vec<String>`
 
 - **Does:** Friendly names of the run-property children that differ between `old` and `new` (presence or value, by canonical serialization).
-- **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L225; `Dom::name` (xmllinq/mod.rs:526) L226; `XName::clark` (xmllinq/mod.rs:226) (by name) L228; `collect` (ambiguous: `tree_scope::{fn collect}` (markdown/from_docx/drawing.rs:318); `collect` (markdown/from_docx/header.rs:1273)) L234,235; `prop_signature` (comparer/formatchg.rs:194) L242; `friendly_property_name` (comparer/formatchg.rs:162) L246; `XName::local_name` (xmllinq/mod.rs:208) (by name) L246; `XName::from_clark` (xmllinq/mod.rs:195) L246
+- **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L225; `Dom::name` (xmllinq/mod.rs:526) L226; `XName::clark` (xmllinq/mod.rs:226) (by name) L228; `collect` (ambiguous: `tree_scope::{fn collect}` (markdown/from_docx/drawing.rs:472); `collect` (markdown/from_docx/header.rs:1467)) L234,235; `prop_signature` (comparer/formatchg.rs:194) L242; `friendly_property_name` (comparer/formatchg.rs:162) L246; `XName::local_name` (xmllinq/mod.rs:208) (by name) L246; `XName::from_clark` (xmllinq/mod.rs:195) L246
 - **Calls (std/external/unresolved):** `.chain`, `.cloned`, `.collect`, `.dedup`, `.get`, `.insert`, `.keys`, `.push`, `.sort`, `.unwrap`, `BTreeMap::new`, `Vec::new`, `W::name`
 - **Called by:** `detect_format_changes_impl` (comparer/formatchg.rs:406)
 
@@ -99,7 +99,7 @@
 `fn project_jc_only_from(dom: &mut Dom, ppr: NodeId) -> Option<NodeId>`
 
 - **Does:** Project only the non-default `w:jc` from old pPr (justify/center removal class).
-- **Calls (crate):** `projected_ppr_jc` (comparer/formatchg.rs:270) L287; `Dom::new_element` (xmllinq/mod.rs:478) L288; `Dom::clone_subtree` (xmllinq/mod.rs:1215) L289; `Dom::add` (xmllinq/mod.rs:1058) L290
+- **Calls (crate):** `projected_ppr_jc` (comparer/formatchg.rs:270) L287; `Dom::new_element` (xmllinq/mod.rs:478) L288; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L289; `Dom::add` (xmllinq/mod.rs:1074) L290
 - **Calls (std/external/unresolved):** `Some`, `W::p_pr`
 - **Called by:** `detect_format_changes_impl` (comparer/formatchg.rs:406)
 
@@ -124,9 +124,9 @@
 `pub(crate) fn project_para_properties_for_change(dom: &mut Dom, ppr: NodeId) -> NodeId`
 
 - **Does:** Project old-side pPr children for `w:pPrChange` (CT_PPrBase noise-stripped).
-- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L330; `Dom::elements` (xmllinq/mod.rs:640) L331; `is_para_comparison_noise` (comparer/formatchg.rs:259) L332; `Dom::name_is` (xmllinq/mod.rs:535) L336; `Dom::attribute` (xmllinq/mod.rs:874) L337; `Dom::clone_subtree` (xmllinq/mod.rs:1215) L342; `Dom::add` (xmllinq/mod.rs:1058) L343
+- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L330; `Dom::elements` (xmllinq/mod.rs:640) L331; `is_para_comparison_noise` (comparer/formatchg.rs:259) L332; `Dom::name_is` (xmllinq/mod.rs:535) L336; `Dom::attribute` (xmllinq/mod.rs:874) L337; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L342; `Dom::add` (xmllinq/mod.rs:1074) L343
 - **Calls (std/external/unresolved):** `.unwrap_or`, `W::name`, `W::p_pr`, `W::val`
-- **Called by:** `merged_closing_carrier_takes_source_properties` (comparer/finalize.rs:3080); `closing_mark_takes_revised_properties` (comparer/finalize.rs:3158); `last_pure_del_spacing_to_pprchange` (comparer/finalize.rs:5164); `fold_midstream_demo_title_into_numbered_heading_with_source_properties` (comparer/finalize.rs:12619); `detect_format_changes_impl` (comparer/formatchg.rs:406)
+- **Called by:** `merged_closing_carrier_takes_source_properties` (comparer/finalize.rs:3122); `closing_mark_takes_revised_properties` (comparer/finalize.rs:3200); `last_pure_del_spacing_to_pprchange` (comparer/finalize.rs:5205); `fold_midstream_demo_title_into_numbered_heading_with_source_properties` (comparer/finalize.rs:12624); `ParagraphPropertySources::capture` (comparer/finalize.rs:13105); `detect_format_changes_impl` (comparer/formatchg.rs:406)
 
 #### `normalize_para_properties`  (L349-365, pub(crate))
 `pub(crate) fn normalize_para_properties(dom: &mut Dom, ppr: NodeId) -> String`
@@ -134,7 +134,7 @@
 - **Does:** Canonical form of comparable pPr children for equality (local name + attrs).
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L351; `is_para_comparison_noise` (comparer/formatchg.rs:259) L352; `Dom::name_is` (xmllinq/mod.rs:535) L355; `Dom::attribute` (xmllinq/mod.rs:874) L356; `para_property_signature` (comparer/formatchg.rs:297) L361
 - **Calls (std/external/unresolved):** `.join`, `.push`, `.sort`, `.unwrap_or`, `Vec::new`, `W::name`, `W::val`
-- **Called by:** `merged_closing_carrier_takes_source_properties` (comparer/finalize.rs:3080); `closing_mark_takes_revised_properties` (comparer/finalize.rs:3158); `fold_midstream_demo_title_into_numbered_heading_with_source_properties` (comparer/finalize.rs:12619); `parked_paragraph_history_regressions::parked_layout_restores_properties_that_remain_live_when_rejected` (comparer/finalize.rs:23595); `closing_layout_history_regressions::already_revised_live_closing_layout_still_records_original_properties` (comparer/finalize.rs:23657); `split_paragraph_boundary_regressions::mixed_inserted_boundary_joins_original_text_and_closing_layout_on_reject` (comparer/finalize.rs:23730); `are_para_properties_equal` (comparer/formatchg.rs:367); `detect_format_changes_impl` (comparer/formatchg.rs:406)
+- **Called by:** `merged_closing_carrier_takes_source_properties` (comparer/finalize.rs:3122); `closing_mark_takes_revised_properties` (comparer/finalize.rs:3200); `fold_midstream_demo_title_into_numbered_heading_with_source_properties` (comparer/finalize.rs:12624); `park_jc_on_first_short_title_mix_from_body` (comparer/finalize.rs:13148); `parked_paragraph_history_regressions::parked_layout_restores_properties_that_remain_live_when_rejected` (comparer/finalize.rs:23617); `closing_layout_history_regressions::already_revised_live_closing_layout_still_records_original_properties` (comparer/finalize.rs:23679); `split_paragraph_boundary_regressions::mixed_inserted_boundary_joins_original_text_and_closing_layout_on_reject` (comparer/finalize.rs:23752); `are_para_properties_equal` (comparer/formatchg.rs:367); `detect_format_changes_impl` (comparer/formatchg.rs:406)
 
 #### `are_para_properties_equal`  (L367-369)
 `fn are_para_properties_equal(dom: &mut Dom, a: NodeId, b: NodeId) -> bool`
@@ -148,7 +148,7 @@
 
 - **Does:** M4.G.5 — `DetectFormatChangesInAtomList` (WmlComparer.ts :4824 / docxodus :7111): - `Equal` run atoms whose `w:rPr` differs → `FormatChanged` with the original's `w:rPr` serialized as `pt:OldRPr`.
 - **Calls (crate):** `detect_format_changes_impl` (comparer/formatchg.rs:406) L388
-- **Called by:** `process_footnote_endnote` (comparer/footnotes.rs:1115); `format_change_cache_tests::detect_format_changes_never_grows_production_arena_capacity` (comparer/formatchg.rs:651); `format_change_cache_tests::cached_format_changes_match_uncached` (comparer/formatchg.rs:710); `nested_paragraph_property_source_history_tests::nested_list_tab_and_border_values_record_complete_original_paragraph_properties` (comparer/formatchg.rs:795); `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1187); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:209)
+- **Called by:** `process_footnote_endnote` (comparer/footnotes.rs:1115); `format_change_cache_tests::detect_format_changes_never_grows_production_arena_capacity` (comparer/formatchg.rs:651); `format_change_cache_tests::cached_format_changes_match_uncached` (comparer/formatchg.rs:710); `nested_paragraph_property_source_history_tests::nested_list_tab_and_border_values_record_complete_original_paragraph_properties` (comparer/formatchg.rs:795); `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1186); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215)
 
 #### `detect_format_changes_impl`  (L406-535)
 `fn detect_format_changes_impl( dom: &mut Dom, atoms: &mut [ComparisonUnitAtom], settings: &WmlComparerSettings, use_cache: bool, )`

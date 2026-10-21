@@ -7,7 +7,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.max`
-- **Called by:** `one_side` (convert/diff_render.rs:164) (?); `tests::stretched_is_taller` (convert/math_font.rs:370) (?); `place_single` (convert/math_layout.rs:611) (?); `center_fence` (convert/math_layout.rs:704) (?); `fit` (convert/math_layout.rs:730) (?); `tests::span` (convert/math_layout.rs:821) (?); `washed_out` (convert/mod.rs:20033) (?); `soften_edges` (convert/mod.rs:20084) (?); `duotone_image` (convert/mod.rs:20159) (?); `decode_image` (convert/mod.rs:20211) (?); `tests::page_size_follows_dpi_and_background_is_white` (convert/raster.rs:637) (?); `tests::a_comment_anchor_paints_no_box` (convert/raster.rs:648) (?); +3 more
+- **Called by:** `one_side` (convert/diff_render.rs:164) (?); `tests::stretched_is_taller` (convert/math_font.rs:370) (?); `place_single` (convert/math_layout.rs:611) (?); `center_fence` (convert/math_layout.rs:704) (?); `fit` (convert/math_layout.rs:730) (?); `tests::span` (convert/math_layout.rs:821) (?); `washed_out` (convert/mod.rs:20069) (?); `soften_edges` (convert/mod.rs:20120) (?); `duotone_image` (convert/mod.rs:20195) (?); `decode_image` (convert/mod.rs:20247) (?); `tests::page_size_follows_dpi_and_background_is_white` (convert/raster.rs:637) (?); `tests::a_comment_anchor_paints_no_box` (convert/raster.rs:648) (?); +3 more
 
 #### `Glyph::depth`  (L50-52, pub(crate))
 `pub(crate) fn depth(self) -> f32`
@@ -44,7 +44,7 @@
 
 - **Does:** _no doc comment_
 - **Calls:** none
-- **Called by:** `Face::from_bytes` (convert/font.rs:973) (?); `residual_embedded_style_contract_tests::quartz_device_size_windows_keep_linear_glyph_advance_outside_the_window` (convert/font.rs:6586) (?); `tests::case8_odttf_parses_after_deobfuscation_when_present` (convert/font_table.rs:448) (?); `MathFont::from_collection` (convert/math_font.rs:94) (?); `tests::math_font_stix_reads_axis_rule_and_radical_gap` (convert/math_font.rs:349) (?); `stretch_glyph` (convert/math_layout.rs:575); `complete_coordinate_layout_contract_tests::header_tab_segments_keep_literal_right_center_and_left_endpoints` (convert/mod.rs:62465) (?); `complete_coordinate_layout_contract_tests::content_autofit_skips_span_and_grid_before_placeholders_without_inventing_margins` (convert/mod.rs:62555) (?); `field_group_coordinate_contract_tests::mono_em` (convert/mod.rs:62750) (?); `cell_picture_owned_room_contract_tests::raw_mono_single` (convert/mod.rs:63692) (?); `cell_picture_owned_room_contract_tests::cell_list_marker_lifts_once_while_exact_and_minimum_spacing_retain_authored_boxes` (convert/mod.rs:63705) (?); `style_hit_and_following_line_contract_tests::raw_mono_width` (convert/mod.rs:63824) (?); +6 more
+- **Called by:** `Face::from_bytes` (convert/font.rs:973) (?); `residual_embedded_style_contract_tests::quartz_device_size_windows_keep_linear_glyph_advance_outside_the_window` (convert/font.rs:6586) (?); `tests::case8_odttf_parses_after_deobfuscation_when_present` (convert/font_table.rs:448) (?); `MathFont::from_collection` (convert/math_font.rs:94) (?); `tests::math_font_stix_reads_axis_rule_and_radical_gap` (convert/math_font.rs:349) (?); `stretch_glyph` (convert/math_layout.rs:575); `complete_coordinate_layout_contract_tests::header_tab_segments_keep_literal_right_center_and_left_endpoints` (convert/mod.rs:62501) (?); `complete_coordinate_layout_contract_tests::content_autofit_skips_span_and_grid_before_placeholders_without_inventing_margins` (convert/mod.rs:62591) (?); `field_group_coordinate_contract_tests::mono_em` (convert/mod.rs:62786) (?); `cell_picture_owned_room_contract_tests::raw_mono_single` (convert/mod.rs:63728) (?); `cell_picture_owned_room_contract_tests::cell_list_marker_lifts_once_while_exact_and_minimum_spacing_retain_authored_boxes` (convert/mod.rs:63741) (?); `style_hit_and_following_line_contract_tests::raw_mono_width` (convert/mod.rs:63860) (?); +6 more
 
 #### `MathFont::constants`  (L131-133, pub(crate))
 `pub(crate) fn constants(&self) -> MathConstants`
@@ -111,7 +111,7 @@
 - **Does:** The font installed for this conversion, or the TeX fallback.
 - **Calls (crate):** `MathFont::fallback` (convert/math_font.rs:112) L212
 - **Calls (std/external/unresolved):** `.as_ref`, `.borrow`, `.with`, `drop`, `f`
-- **Called by:** `emit_math_box` (convert/mod.rs:15882)
+- **Called by:** `emit_math_box` (convert/mod.rs:15918)
 
 #### `fallback_constants`  (L220-243)
 `fn fallback_constants(upem: f32) -> MathConstants`

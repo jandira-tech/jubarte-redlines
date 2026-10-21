@@ -28,14 +28,14 @@
 `fn font_table_part(pkg: &PartFs) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `main_rel_part` (convert/mod.rs:21274) L67
+- **Calls (crate):** `main_rel_part` (convert/mod.rs:21310) L67
 - **Called by:** `load_font_table` (convert/font_table.rs:70); `load_embedded_fonts` (convert/font_table.rs:205)
 
 #### `load_font_table`  (L70-74, pub(crate))
 `pub(crate) fn load_font_table(pkg: &PartFs) -> FontTable`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `PartFs::part_string` (opc/mod.rs:498) L71; `font_table_part` (convert/font_table.rs:66) L71; `parse_font_table_xml` (convert/font_table.rs:76) L72
+- **Calls (crate):** `PartFs::part_string` (opc/mod.rs:636) L71; `font_table_part` (convert/font_table.rs:66) L71; `parse_font_table_xml` (convert/font_table.rs:76) L72
 - **Calls (std/external/unresolved):** `.map`, `.unwrap_or_default`
 - **Called by:** `tests::load_font_table_missing_part_is_empty` (convert/font_table.rs:357); `tests::load_font_table_follows_the_font_table_relationship` (convert/font_table.rs:370); `tests::case8_odttf_parses_after_deobfuscation_when_present` (convert/font_table.rs:448); `with_layout` (convert/mod.rs:769)
 
@@ -43,7 +43,7 @@
 `pub(crate) fn parse_font_table_xml(xml: &str) -> FontTable`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Dom::new` (xmllinq/mod.rs:387) L77; `Dom::parse_xdocument` (xmllinq/mod.rs:1283) L78; `Dom::root` (xmllinq/mod.rs:822) L79; `Dom::elements` (xmllinq/mod.rs:640) L83; `attr_any` (convert/mod.rs:19957) L84,88,103,106,119; `direct_named` (convert/mod.rs:4185) L88,100,117
+- **Calls (crate):** `Dom::new` (xmllinq/mod.rs:387) L77; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L78; `Dom::root` (xmllinq/mod.rs:822) L79; `Dom::elements` (xmllinq/mod.rs:640) L83; `attr_any` (convert/mod.rs:19993) L84,88,103,106,119; `direct_named` (convert/mod.rs:4186) L88,100,117
 - **Calls (std/external/unresolved):** `.and_then`, `.clone`, `.enumerate`, `.insert`, `.into_iter`, `.map_or`, `.map`, `.ok`, `.to_string`, `.unwrap_or`, `FontTable::default`, `HashMap::new`, `Some`, `W::name`, `child_val`, `u32::from_str_radix`
 - **Called by:** `tests::resolve_uses_altname_when_requested_face_missing` (convert/font.rs:4157); `tests::resolve_keeps_installed_face_over_altname` (convert/font.rs:4172); `tests::a_missing_script_family_is_calibri_not_the_unknown_cambria` (convert/font.rs:4240); `tests::a_missing_swiss_entry_is_calibri_not_arial` (convert/font.rs:4282); `tests::a_missing_roman_entry_is_cambria_not_times` (convert/font.rs:4298); `tests::a_missing_fixed_pitch_entry_is_calibri_not_courier` (convert/font.rs:4314); `tests::a_bare_missing_entry_takes_the_default_not_its_generic` (convert/font.rs:4330); `tests::a_missing_entry_with_an_absent_alt_name_keeps_its_generic` (convert/font.rs:4349); `tests::word_s_own_stand_in_for_an_absent_family_beats_its_alt_name` (convert/font.rs:4435); `tests::an_absent_face_claiming_thaana_draws_in_mv_boli` (convert/font.rs:4458); `tests::missing_east_asian_family_falls_to_word_s_cjk_face` (convert/font.rs:4685); `tests::missing_korean_family_falls_to_batang_or_malgun_gothic_by_class` (convert/font.rs:4718); +22 more
 
@@ -80,7 +80,7 @@
 `pub(crate) fn load_embedded_fonts(pkg: &PartFs, table: &FontTable) -> super::font::EmbeddedFonts`
 
 - **Does:** `(lowercase family, bold, italic) → deobfuscated TTF bytes`.
-- **Calls (crate):** `font_table_part` (convert/font_table.rs:66) L207; `PartFs::read_rels_for` (opc/mod.rs:756) L208; `FontTable::iter` (convert/font_table.rs:61) L209; `catalogue_paints_family` (convert/font.rs:3481) L210; `PartFs::resolve_rel_target` (opc/mod.rs:600) L220; `PartFs::part_bytes` (opc/mod.rs:493) L221; `deobfuscate_odttf` (convert/font_table.rs:179) L224
+- **Calls (crate):** `font_table_part` (convert/font_table.rs:66) L207; `PartFs::read_rels_for` (opc/mod.rs:991) L208; `FontTable::iter` (convert/font_table.rs:61) L209; `catalogue_paints_family` (convert/font.rs:3481) L210; `PartFs::resolve_rel_target` (opc/mod.rs:829) L220; `PartFs::part_bytes` (opc/mod.rs:628) L221; `deobfuscate_odttf` (convert/font_table.rs:179) L224
 - **Calls (std/external/unresolved):** `.and_then`, `.find`, `.insert`, `.into`, `.is_err`, `.iter`, `.to_ascii_lowercase`, `.zip`, `HashMap::new`, `ttf_parser::Face::parse`
 - **Called by:** `tests::case8_odttf_parses_after_deobfuscation_when_present` (convert/font_table.rs:448); `with_layout` (convert/mod.rs:769)
 

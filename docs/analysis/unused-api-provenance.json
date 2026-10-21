@@ -10,171 +10,15 @@
  "items": [
   {
    "section": "A",
-   "qual": "promote_mid_pure_del_spacing_from_pprchange",
-   "kind": "function",
-   "file": "src/comparer/finalize.rs",
-   "line": 5561,
-   "first_release": "v0.10.0",
-   "origin": {
-    "hash": "16de3f89",
-    "date": "2026-07-24",
-    "subject": "Initial import of jubarte-redlines"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "strip_default_left_jc",
-   "kind": "function",
-   "file": "src/comparer/finalize.rs",
-   "line": 5573,
-   "first_release": "v0.10.0",
-   "origin": {
-    "hash": "16de3f89",
-    "date": "2026-07-24",
-    "subject": "Initial import of jubarte-redlines"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "strip_redundant_equal_spacing_pprchange",
-   "kind": "function",
-   "file": "src/comparer/finalize.rs",
-   "line": 5583,
-   "first_release": "v0.10.0",
-   "origin": {
-    "hash": "16de3f89",
-    "date": "2026-07-24",
-    "subject": "Initial import of jubarte-redlines"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "TEXT_CODEC_VERSION",
-   "kind": "const",
-   "file": "src/edit/v2.rs",
-   "line": 27,
-   "first_release": null,
-   "origin": {
-    "hash": "79cf56b7",
-    "date": "2026-10-17",
-    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "NextAction::with_prerequisites",
-   "kind": "method",
-   "file": "src/result.rs",
-   "line": 295,
-   "first_release": null,
-   "origin": {
-    "hash": "a055f5bf",
-    "date": "2026-10-17",
-    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "Error::with_source_digest",
-   "kind": "method",
-   "file": "src/result.rs",
-   "line": 389,
-   "first_release": null,
-   "origin": {
-    "hash": "a055f5bf",
-    "date": "2026-10-17",
-    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "Error::with_target",
-   "kind": "method",
-   "file": "src/result.rs",
-   "line": 396,
-   "first_release": null,
-   "origin": {
-    "hash": "a055f5bf",
-    "date": "2026-10-17",
-    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "Source::from_digest",
-   "kind": "method",
-   "file": "src/result.rs",
-   "line": 461,
-   "first_release": null,
-   "origin": {
-    "hash": "a055f5bf",
-    "date": "2026-10-17",
-    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "Source::with_path",
-   "kind": "method",
-   "file": "src/result.rs",
-   "line": 471,
-   "first_release": null,
-   "origin": {
-    "hash": "a055f5bf",
-    "date": "2026-10-17",
-    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "A",
    "qual": "Counts::total_operations",
    "kind": "method",
    "file": "src/result.rs",
-   "line": 578,
+   "line": 601,
    "first_release": null,
    "origin": {
     "hash": "a055f5bf",
     "date": "2026-10-17",
     "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "exit_status_for_envelope",
-   "kind": "function",
-   "file": "src/result.rs",
-   "line": 1188,
-   "first_release": null,
-   "origin": {
-    "hash": "a055f5bf",
-    "date": "2026-10-17",
-    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "tracked_revisions_elements",
-   "kind": "function",
-   "file": "src/revision_processor.rs",
-   "line": 80,
-   "first_release": "v0.10.0",
-   "origin": {
-    "hash": "16de3f89",
-    "date": "2026-07-24",
-    "subject": "Initial import of jubarte-redlines"
-   }
-  },
-  {
-   "section": "A",
-   "qual": "sha1_fingerprint128",
-   "kind": "function",
-   "file": "src/util/sha1.rs",
-   "line": 190,
-   "first_release": "v0.10.0",
-   "origin": {
-    "hash": "31e0e90c",
-    "date": "2026-08-13",
-    "subject": "perf(lcs): kill superlinear tail \u2014 worst pair 837\u2192678ms, no output change"
    }
   },
   {
@@ -204,37 +48,11 @@
    }
   },
   {
-   "section": "A",
-   "qual": "Dom::has_attributes",
-   "kind": "method",
-   "file": "src/xmllinq/mod.rs",
-   "line": 867,
-   "first_release": "v0.11.3",
-   "origin": {
-    "hash": "16de3f89",
-    "date": "2026-07-24",
-    "subject": "Initial import of jubarte-redlines"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "AdmissionErrorKind",
-   "kind": "enum",
-   "file": "src/admission.rs",
-   "line": 136,
-   "first_release": "v0.10.0",
-   "origin": {
-    "hash": "9c79238e",
-    "date": "2026-09-28",
-    "subject": "feat(admission): bound ZIP and XML resources before inspect/edit parse"
-   }
-  },
-  {
    "section": "B",
    "qual": "AdmittedPackage",
    "kind": "struct",
    "file": "src/admission.rs",
-   "line": 279,
+   "line": 322,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "9c79238e",
@@ -273,7 +91,7 @@
    "qual": "Limits",
    "kind": "struct",
    "file": "src/capabilities.rs",
-   "line": 260,
+   "line": 272,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "e3878df4",
@@ -286,7 +104,7 @@
    "qual": "InputBudget",
    "kind": "struct",
    "file": "src/capabilities.rs",
-   "line": 295,
+   "line": 307,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "9c79238e",
@@ -296,49 +114,10 @@
   },
   {
    "section": "B",
-   "qual": "DIFF_EXTENSIONS",
-   "kind": "const",
-   "file": "src/capabilities.rs",
-   "line": 342,
-   "first_release": null,
-   "origin": {
-    "hash": "ec90cd33",
-    "date": "2026-10-12",
-    "subject": "feat(cli): capabilities prints text; --json for the manifest, with formats and ids"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "IDS_NOTE",
-   "kind": "const",
-   "file": "src/capabilities.rs",
-   "line": 346,
-   "first_release": null,
-   "origin": {
-    "hash": "ec90cd33",
-    "date": "2026-10-12",
-    "subject": "feat(cli): capabilities prints text; --json for the manifest, with formats and ids"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "ExistingArg",
-   "kind": "enum",
-   "file": "src/cli.rs",
-   "line": 236,
-   "first_release": "v0.12.0",
-   "origin": {
-    "hash": "f074de39",
-    "date": "2026-10-10",
-    "subject": "feat(cli): edit and add by -p/--anchor/--content flags; changed blocks printed back"
-   }
-  },
-  {
-   "section": "B",
    "qual": "flag_operations",
    "kind": "function",
    "file": "src/cli.rs",
-   "line": 266,
+   "line": 412,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "f074de39",
@@ -348,54 +127,54 @@
   },
   {
    "section": "B",
-   "qual": "REMOVED_TASKS",
-   "kind": "const",
+   "qual": "edit_arguments",
+   "kind": "function",
    "file": "src/cli.rs",
-   "line": 1824,
+   "line": 3359,
    "first_release": null,
    "origin": {
-    "hash": "14ec77a7",
-    "date": "2026-10-14",
-    "subject": "fix(cli): the removed revisions task names changes"
+    "hash": "140e8851",
+    "date": "2026-10-17",
+    "subject": "fix(edit): close the V2-09 review findings (V2-09, #837)"
    }
   },
   {
    "section": "B",
-   "qual": "removed_tasks",
-   "kind": "function",
-   "file": "src/cli.rs",
-   "line": 1832,
+   "qual": "TextPayload",
+   "kind": "struct",
+   "file": "src/cli/edit_actions.rs",
+   "line": 153,
    "first_release": null,
    "origin": {
-    "hash": "14ec77a7",
-    "date": "2026-10-14",
-    "subject": "fix(cli): the removed revisions task names changes"
+    "hash": "c43f4c6d",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add typed actions and immutable plan apply (V2-09, #837)"
    }
   },
   {
    "section": "B",
-   "qual": "removed_task_note",
-   "kind": "function",
-   "file": "src/cli.rs",
-   "line": 1840,
+   "qual": "InlineOptions",
+   "kind": "struct",
+   "file": "src/cli/edit_actions.rs",
+   "line": 171,
    "first_release": null,
    "origin": {
-    "hash": "14ec77a7",
-    "date": "2026-10-14",
-    "subject": "fix(cli): the removed revisions task names changes"
+    "hash": "c43f4c6d",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add typed actions and immutable plan apply (V2-09, #837)"
    }
   },
   {
    "section": "B",
-   "qual": "apply_retired",
-   "kind": "function",
-   "file": "src/cli.rs",
-   "line": 2037,
+   "qual": "DeliveryOptions",
+   "kind": "struct",
+   "file": "src/cli/edit_actions.rs",
+   "line": 202,
    "first_release": null,
    "origin": {
-    "hash": "d56d339e",
-    "date": "2026-10-12",
-    "subject": "feat(cli): text, inspect and audit are hidden aliases that print a note; debug hidden; self-update last"
+    "hash": "c43f4c6d",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add typed actions and immutable plan apply (V2-09, #837)"
    }
   },
   {
@@ -416,7 +195,7 @@
    "qual": "unwrap_content_controls",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 1358,
+   "line": 1400,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "ff56d37c",
@@ -429,7 +208,7 @@
    "qual": "fold_midstream_demo_title_into_numbered_heading_with_settings",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 12597,
+   "line": 12602,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "6adf9b18",
@@ -468,7 +247,7 @@
    "qual": "DEFAULT_AUTHOR_FOR_REVISIONS",
    "kind": "const",
    "file": "src/comparer/mod.rs",
-   "line": 1322,
+   "line": 1340,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -481,7 +260,7 @@
    "qual": "CompareContext",
    "kind": "struct",
    "file": "src/comparer/mod.rs",
-   "line": 1622,
+   "line": 1640,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -585,7 +364,7 @@
    "qual": "TRIAGE",
    "kind": "const",
    "file": "src/debug.rs",
-   "line": 112,
+   "line": 113,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "f67c84f3",
@@ -598,7 +377,7 @@
    "qual": "revision_to_json",
    "kind": "function",
    "file": "src/document_comparer.rs",
-   "line": 6346,
+   "line": 6354,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -611,7 +390,7 @@
    "qual": "ListKind",
    "kind": "enum",
    "file": "src/edit.rs",
-   "line": 631,
+   "line": 811,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "9fac13df",
@@ -624,7 +403,7 @@
    "qual": "LineSpacing",
    "kind": "struct",
    "file": "src/edit.rs",
-   "line": 663,
+   "line": 843,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "c9d20267",
@@ -637,7 +416,7 @@
    "qual": "FlagPlan",
    "kind": "struct",
    "file": "src/edit/flags.rs",
-   "line": 61,
+   "line": 70,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "f074de39",
@@ -647,106 +426,171 @@
   },
   {
    "section": "B",
-   "qual": "plan_target",
-   "kind": "function",
-   "file": "src/edit/record.rs",
-   "line": 131,
-   "first_release": null,
-   "origin": {
-    "hash": "23cd4a4b",
-    "date": "2026-10-12",
-    "subject": "fix(cli): the shared parser refuses flags that do not go with --plan"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "partial_path",
-   "kind": "function",
-   "file": "src/edit/record.rs",
-   "line": 146,
-   "first_release": null,
-   "origin": {
-    "hash": "23cd4a4b",
-    "date": "2026-10-12",
-    "subject": "fix(cli): the shared parser refuses flags that do not go with --plan"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "RecordOptions",
+   "qual": "TextValue",
    "kind": "struct",
-   "file": "src/edit/record.rs",
-   "line": 227,
+   "file": "src/edit/for_edit.rs",
+   "line": 124,
    "first_release": null,
    "origin": {
-    "hash": "0fce315b",
-    "date": "2026-10-12",
-    "subject": "feat(edit): record module shares plan recording with the bindings"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "TextView",
-   "kind": "enum",
-   "file": "src/edit/v2.rs",
-   "line": 107,
-   "first_release": null,
-   "origin": {
-    "hash": "79cf56b7",
+    "hash": "55deda21",
     "date": "2026-10-17",
-    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
    }
   },
   {
    "section": "B",
-   "qual": "RevisionDecisions",
+   "qual": "WorkingText",
    "kind": "struct",
-   "file": "src/edit/v2.rs",
-   "line": 131,
+   "file": "src/edit/for_edit.rs",
+   "line": 183,
    "first_release": null,
    "origin": {
-    "hash": "79cf56b7",
+    "hash": "55deda21",
     "date": "2026-10-17",
-    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
    }
   },
   {
    "section": "B",
-   "qual": "AttachedComment",
+   "qual": "RevisionRef",
    "kind": "struct",
-   "file": "src/edit/v2.rs",
-   "line": 155,
+   "file": "src/edit/for_edit.rs",
+   "line": 236,
    "first_release": null,
    "origin": {
-    "hash": "79cf56b7",
+    "hash": "55deda21",
     "date": "2026-10-17",
-    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
    }
   },
   {
    "section": "B",
-   "qual": "ContextKind",
-   "kind": "enum",
-   "file": "src/edit/v2.rs",
-   "line": 347,
-   "first_release": null,
-   "origin": {
-    "hash": "79cf56b7",
-    "date": "2026-10-17",
-    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "SourceContext",
+   "qual": "CommentRef",
    "kind": "struct",
-   "file": "src/edit/v2.rs",
-   "line": 360,
+   "file": "src/edit/for_edit.rs",
+   "line": 254,
    "first_release": null,
    "origin": {
-    "hash": "79cf56b7",
+    "hash": "55deda21",
     "date": "2026-10-17",
-    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "SourceContextRow",
+   "kind": "struct",
+   "file": "src/edit/for_edit.rs",
+   "line": 325,
+   "first_release": null,
+   "origin": {
+    "hash": "55deda21",
+    "date": "2026-10-17",
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "ForEditCoverage",
+   "kind": "struct",
+   "file": "src/edit/for_edit.rs",
+   "line": 357,
+   "first_release": null,
+   "origin": {
+    "hash": "55deda21",
+    "date": "2026-10-17",
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "ForEditBasis",
+   "kind": "struct",
+   "file": "src/edit/for_edit.rs",
+   "line": 375,
+   "first_release": null,
+   "origin": {
+    "hash": "55deda21",
+    "date": "2026-10-17",
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "ForEditSettled",
+   "kind": "struct",
+   "file": "src/edit/for_edit.rs",
+   "line": 397,
+   "first_release": null,
+   "origin": {
+    "hash": "55deda21",
+    "date": "2026-10-17",
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "GeneratedTemplate",
+   "kind": "struct",
+   "file": "src/edit/template.rs",
+   "line": 30,
+   "first_release": null,
+   "origin": {
+    "hash": "b7395edc",
+    "date": "2026-10-17",
+    "subject": "feat(edit): generate guarded edit templates (V2-12, #843)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "GenerationSummary",
+   "kind": "struct",
+   "file": "src/edit/template.rs",
+   "line": 39,
+   "first_release": null,
+   "origin": {
+    "hash": "b7395edc",
+    "date": "2026-10-17",
+    "subject": "feat(edit): generate guarded edit templates (V2-12, #843)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "WorkingReadiness",
+   "kind": "struct",
+   "file": "src/edit/template.rs",
+   "line": 58,
+   "first_release": null,
+   "origin": {
+    "hash": "b7395edc",
+    "date": "2026-10-17",
+    "subject": "feat(edit): generate guarded edit templates (V2-12, #843)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "EXPECTATIONS_SCHEMA_VERSION",
+   "kind": "const",
+   "file": "src/expect.rs",
+   "line": 43,
+   "first_release": null,
+   "origin": {
+    "hash": "c57795cd",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add --expect checker core (V2-13, #845)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "ExpectationReceipt",
+   "kind": "struct",
+   "file": "src/expect.rs",
+   "line": 216,
+   "first_release": null,
+   "origin": {
+    "hash": "c57795cd",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add --expect checker core (V2-13, #845)"
    }
   },
   {
@@ -764,80 +608,15 @@
   },
   {
    "section": "B",
-   "qual": "CHANGE_EXPECTED",
+   "qual": "SNAPSHOT_SCHEMA_VERSION",
    "kind": "const",
-   "file": "src/ids.rs",
-   "line": 43,
+   "file": "src/inspect.rs",
+   "line": 39,
    "first_release": null,
    "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "COMMENT_EXPECTED",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 45,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "LOCATION_EXPECTED",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 47,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "TABLE_NEEDS_CELL",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 51,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "CELL_NEEDS_TABLE",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 54,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "B",
-   "qual": "ChangeId::from_long",
-   "kind": "method",
-   "file": "src/ids.rs",
-   "line": 178,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
+    "hash": "ce3ce906",
+    "date": "2026-10-18",
+    "subject": "fix(inspect): align table inventories with top-level view indices"
    }
   },
   {
@@ -845,7 +624,7 @@
    "qual": "render_markdown",
    "kind": "function",
    "file": "src/inspect.rs",
-   "line": 451,
+   "line": 637,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "4defd5cf",
@@ -897,7 +676,7 @@
    "qual": "ReadDocx",
    "kind": "struct",
    "file": "src/markdown/mod.rs",
-   "line": 604,
+   "line": 612,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "e489e91e",
@@ -907,23 +686,10 @@
   },
   {
    "section": "B",
-   "qual": "ENVELOPE_SCHEMA_VERSION",
-   "kind": "const",
-   "file": "src/result.rs",
-   "line": 37,
-   "first_release": null,
-   "origin": {
-    "hash": "a055f5bf",
-    "date": "2026-10-17",
-    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
-   }
-  },
-  {
-   "section": "B",
    "qual": "ParsedStream",
    "kind": "struct",
    "file": "src/result.rs",
-   "line": 988,
+   "line": 1034,
    "first_release": null,
    "origin": {
     "hash": "a055f5bf",
@@ -936,7 +702,7 @@
    "qual": "BlockContentInfo",
    "kind": "struct",
    "file": "src/revision_processor.rs",
-   "line": 834,
+   "line": 843,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1014,7 +780,7 @@
    "qual": "signature_required",
    "kind": "function",
    "file": "src/update.rs",
-   "line": 273,
+   "line": 274,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "2baf351c",
@@ -1027,12 +793,51 @@
    "qual": "ValidateError",
    "kind": "enum",
    "file": "src/validate.rs",
-   "line": 210,
+   "line": 236,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "d3ef3db4",
     "date": "2026-10-02",
     "subject": "feat(validate): public Word-validity findings, repair, and the tracked-edit audit"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "FindingKey",
+   "kind": "struct",
+   "file": "src/validate.rs",
+   "line": 461,
+   "first_release": null,
+   "origin": {
+    "hash": "4c1578ce",
+    "date": "2026-10-19",
+    "subject": "feat(validate): --baseline names only the edit's findings, and reads name the input's once (#1256)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "Baselined",
+   "kind": "struct",
+   "file": "src/validate.rs",
+   "line": 849,
+   "first_release": null,
+   "origin": {
+    "hash": "4c1578ce",
+    "date": "2026-10-19",
+    "subject": "feat(validate): --baseline names only the edit's findings, and reads name the input's once (#1256)"
+   }
+  },
+  {
+   "section": "B",
+   "qual": "baseline_keyed",
+   "kind": "function",
+   "file": "src/validate.rs",
+   "line": 878,
+   "first_release": null,
+   "origin": {
+    "hash": "4c1578ce",
+    "date": "2026-10-19",
+    "subject": "feat(validate): --baseline names only the edit's findings, and reads name the input's once (#1256)"
    }
   },
   {
@@ -1066,25 +871,12 @@
    "qual": "sniff_package",
    "kind": "function",
    "file": "src/admission.rs",
-   "line": 240,
+   "line": 283,
    "first_release": null,
    "origin": {
     "hash": "a31d4635",
     "date": "2026-10-14",
     "subject": "fix(cli): one message for a Word input that is no ZIP; one error for a task the host lacks"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "is_rule",
-   "kind": "function",
-   "file": "src/audit.rs",
-   "line": 156,
-   "first_release": null,
-   "origin": {
-    "hash": "80fa7bea",
-    "date": "2026-10-12",
-    "subject": "feat(validate)!: findings share one shape (set, severity, location); validate_with runs rule sets"
    }
   },
   {
@@ -1102,10 +894,49 @@
   },
   {
    "section": "C",
+   "qual": "Change::element_ids",
+   "kind": "method",
+   "file": "src/changes.rs",
+   "line": 118,
+   "first_release": null,
+   "origin": {
+    "hash": "b94fdc44",
+    "date": "2026-10-20",
+    "subject": "feat(changes): one logical change for the marks Word writes for one edit (#1261)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "ResolvedChanges",
+   "kind": "struct",
+   "file": "src/changes.rs",
+   "line": 705,
+   "first_release": null,
+   "origin": {
+    "hash": "bb63d2ef",
+    "date": "2026-10-18",
+    "subject": "fix: remove comments whose ranges disappear when resolving revisions"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "accept_changes_with_report",
+   "kind": "function",
+   "file": "src/changes.rs",
+   "line": 804,
+   "first_release": null,
+   "origin": {
+    "hash": "bb63d2ef",
+    "date": "2026-10-18",
+    "subject": "fix: remove comments whose ranges disappear when resolving revisions"
+   }
+  },
+  {
+   "section": "C",
    "qual": "ReadArgs",
    "kind": "struct",
    "file": "src/cli.rs",
-   "line": 56,
+   "line": 63,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "6f6fa1d1",
@@ -1118,7 +949,7 @@
    "qual": "CommentsArg",
    "kind": "enum",
    "file": "src/cli.rs",
-   "line": 147,
+   "line": 282,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "6f6fa1d1",
@@ -1128,10 +959,23 @@
   },
   {
    "section": "C",
+   "qual": "TrackArg",
+   "kind": "enum",
+   "file": "src/cli.rs",
+   "line": 293,
+   "first_release": null,
+   "origin": {
+    "hash": "55deda21",
+    "date": "2026-10-17",
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
+   }
+  },
+  {
+   "section": "C",
    "qual": "EditOptions",
    "kind": "struct",
    "file": "src/cli.rs",
-   "line": 157,
+   "line": 303,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "f074de39",
@@ -1144,7 +988,7 @@
    "qual": "EditTarget",
    "kind": "enum",
    "file": "src/cli.rs",
-   "line": 201,
+   "line": 347,
    "first_release": null,
    "origin": {
     "hash": "95f1b05b",
@@ -1154,10 +998,10 @@
   },
   {
    "section": "C",
-   "qual": "ExistingArg::plan_value",
-   "kind": "method",
+   "qual": "ExistingArg",
+   "kind": "enum",
    "file": "src/cli.rs",
-   "line": 252,
+   "line": 382,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "f074de39",
@@ -1167,23 +1011,10 @@
   },
   {
    "section": "C",
-   "qual": "slash_path",
-   "kind": "function",
-   "file": "src/cli.rs",
-   "line": 396,
-   "first_release": null,
-   "origin": {
-    "hash": "dac46ad3",
-    "date": "2026-10-17",
-    "subject": "fix(cli): print agent-facing paths with '/' and the usage line as jubarte on every OS"
-   }
-  },
-  {
-   "section": "C",
    "qual": "CompareArgs",
    "kind": "struct",
    "file": "src/cli.rs",
-   "line": 525,
+   "line": 759,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1196,7 +1027,7 @@
    "qual": "ScrubSelection",
    "kind": "struct",
    "file": "src/cli.rs",
-   "line": 1294,
+   "line": 1633,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1209,7 +1040,7 @@
    "qual": "DebugCommand",
    "kind": "enum",
    "file": "src/cli.rs",
-   "line": 1313,
+   "line": 1652,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1222,7 +1053,7 @@
    "qual": "DebugCheck",
    "kind": "enum",
    "file": "src/cli.rs",
-   "line": 1356,
+   "line": 1695,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1235,7 +1066,7 @@
    "qual": "PatchFormat::is_text_view",
    "kind": "method",
    "file": "src/cli.rs",
-   "line": 1462,
+   "line": 1801,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "49b604a1",
@@ -1248,7 +1079,7 @@
    "qual": "Format::of_input",
    "kind": "method",
    "file": "src/cli.rs",
-   "line": 1543,
+   "line": 1882,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1258,10 +1089,23 @@
   },
   {
    "section": "C",
+   "qual": "success_block",
+   "kind": "function",
+   "file": "src/cli.rs",
+   "line": 2070,
+   "first_release": null,
+   "origin": {
+    "hash": "3c219159",
+    "date": "2026-10-18",
+    "subject": "feat(cli): confirm DOCX writes with agent-view diffs (#1140)"
+   }
+  },
+  {
+   "section": "C",
    "qual": "removed_error",
    "kind": "function",
    "file": "src/cli.rs",
-   "line": 1986,
+   "line": 2398,
    "first_release": null,
    "origin": {
     "hash": "66fceda8",
@@ -1274,7 +1118,7 @@
    "qual": "MarkdownArgs",
    "kind": "struct",
    "file": "src/cli.rs",
-   "line": 2171,
+   "line": 2587,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1284,23 +1128,10 @@
   },
   {
    "section": "C",
-   "qual": "Tracking",
-   "kind": "enum",
-   "file": "src/cli.rs",
-   "line": 2256,
-   "first_release": null,
-   "origin": {
-    "hash": "6213c62f",
-    "date": "2026-10-13",
-    "subject": "feat(cli): convert --tracking on|off overrides the Markdown's track_changes key"
-   }
-  },
-  {
-   "section": "C",
    "qual": "Selection",
    "kind": "struct",
    "file": "src/cli.rs",
-   "line": 2296,
+   "line": 2714,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1313,7 +1144,7 @@
    "qual": "KindArg",
    "kind": "enum",
    "file": "src/cli.rs",
-   "line": 2312,
+   "line": 2731,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1326,7 +1157,7 @@
    "qual": "SectionBreakArg",
    "kind": "enum",
    "file": "src/cli.rs",
-   "line": 2338,
+   "line": 2763,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "0603c7db",
@@ -1336,10 +1167,140 @@
   },
   {
    "section": "C",
+   "qual": "typed_edit_protocol",
+   "kind": "function",
+   "file": "src/cli.rs",
+   "line": 3370,
+   "first_release": null,
+   "origin": {
+    "hash": "140e8851",
+    "date": "2026-10-17",
+    "subject": "fix(edit): close the V2-09 review findings (V2-09, #837)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "first_positional",
+   "kind": "function",
+   "file": "src/cli.rs",
+   "line": 3484,
+   "first_release": null,
+   "origin": {
+    "hash": "14c92f6b",
+    "date": "2026-10-17",
+    "subject": "fix(expect): close the #1084 review findings (V2-13, #845)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "json_error",
+   "kind": "function",
+   "file": "src/cli.rs",
+   "line": 3644,
+   "first_release": null,
+   "origin": {
+    "hash": "5943f2a6",
+    "date": "2026-10-19",
+    "subject": "fix(read): --json and --tables take the view's options; errors under --json are JSON (#1255)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "usage_json_error",
+   "kind": "function",
+   "file": "src/cli.rs",
+   "line": 3679,
+   "first_release": null,
+   "origin": {
+    "hash": "5943f2a6",
+    "date": "2026-10-19",
+    "subject": "fix(read): --json and --tables take the view's options; errors under --json are JSON (#1255)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "removed_json_error",
+   "kind": "function",
+   "file": "src/cli.rs",
+   "line": 3687,
+   "first_release": null,
+   "origin": {
+    "hash": "5943f2a6",
+    "date": "2026-10-19",
+    "subject": "fix(read): --json and --tables take the view's options; errors under --json are JSON (#1255)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "TypedEdit",
+   "kind": "struct",
+   "file": "src/cli/edit_actions.rs",
+   "line": 14,
+   "first_release": null,
+   "origin": {
+    "hash": "c43f4c6d",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add typed actions and immutable plan apply (V2-09, #837)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "EditAction",
+   "kind": "enum",
+   "file": "src/cli/edit_actions.rs",
+   "line": 24,
+   "first_release": null,
+   "origin": {
+    "hash": "c43f4c6d",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add typed actions and immutable plan apply (V2-09, #837)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "TemplateDispatch",
+   "kind": "struct",
+   "file": "src/cli/edit_template.rs",
+   "line": 12,
+   "first_release": null,
+   "origin": {
+    "hash": "b7395edc",
+    "date": "2026-10-17",
+    "subject": "feat(edit): generate guarded edit templates (V2-12, #843)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "TemplateAction",
+   "kind": "enum",
+   "file": "src/cli/edit_template.rs",
+   "line": 22,
+   "first_release": null,
+   "origin": {
+    "hash": "b7395edc",
+    "date": "2026-10-17",
+    "subject": "feat(edit): generate guarded edit templates (V2-12, #843)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "TemplateOptions",
+   "kind": "struct",
+   "file": "src/cli/edit_template.rs",
+   "line": 33,
+   "first_release": null,
+   "origin": {
+    "hash": "b7395edc",
+    "date": "2026-10-17",
+    "subject": "feat(edit): generate guarded edit templates (V2-12, #843)"
+   }
+  },
+  {
+   "section": "C",
    "qual": "CommentError",
    "kind": "enum",
    "file": "src/comments.rs",
-   "line": 83,
+   "line": 85,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "17be9214",
@@ -1417,7 +1378,7 @@
    "qual": "carry_bookmarks",
    "kind": "function",
    "file": "src/comparer/bookmarks.rs",
-   "line": 395,
+   "line": 460,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "c6307acf",
@@ -1430,7 +1391,7 @@
    "qual": "carry_matching_bookmarks",
    "kind": "function",
    "file": "src/comparer/bookmarks.rs",
-   "line": 418,
+   "line": 483,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "9b9b10de",
@@ -1495,7 +1456,7 @@
    "qual": "sanitize_sdt_properties",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 1312,
+   "line": 1354,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1508,7 +1469,7 @@
    "qual": "unwrap_content_controls_in_pure_revisions",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 1412,
+   "line": 1454,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "bc2ee405",
@@ -1521,7 +1482,7 @@
    "qual": "unwrap_hyperlinks_to_styled_runs",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 1555,
+   "line": 1597,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1534,7 +1495,7 @@
    "qual": "fold_short_list_label_into_empty_pure_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 1702,
+   "line": 1744,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "7d39077e",
@@ -1547,7 +1508,7 @@
    "qual": "strip_trailing_bare_empty_after_pure_i_dominant",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 1787,
+   "line": 1829,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "ddc10f2c",
@@ -1560,7 +1521,7 @@
    "qual": "promote_live_numpr_on_pure_d_from_pprchange",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 1866,
+   "line": 1908,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "3e188388",
@@ -1573,7 +1534,7 @@
    "qual": "ensure_pure_i_list_snug_spacing",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2071,
+   "line": 2113,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "a0281fce",
@@ -1586,7 +1547,7 @@
    "qual": "normalize_incomplete_spacing",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2176,
+   "line": 2218,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1599,7 +1560,7 @@
    "qual": "strip_redundant_demo_default_spacing",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2266,
+   "line": 2308,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1612,7 +1573,7 @@
    "qual": "strip_redundant_normal_pstyle_and_bidi",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2362,
+   "line": 2404,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "defabfe6",
@@ -1625,7 +1586,7 @@
    "qual": "strip_list_layout_from_mid_pure_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2421,
+   "line": 2463,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "ed48f6ad",
@@ -1638,7 +1599,7 @@
    "qual": "free_mesh_shared_title_token_in_mix",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2531,
+   "line": 2573,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "4ca2d470",
@@ -1651,7 +1612,7 @@
    "qual": "strip_trailing_empty_pure_del_mark",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2909,
+   "line": 2951,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1664,7 +1625,7 @@
    "qual": "trailing_empty_spacing_to_pprchange",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 2967,
+   "line": 3009,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1677,7 +1638,7 @@
    "qual": "closing_paragraph_properties",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3051,
+   "line": 3093,
    "first_release": "v0.10.1",
    "origin": {
     "hash": "09b85a64",
@@ -1690,7 +1651,7 @@
    "qual": "merged_closing_carrier_takes_source_properties",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3080,
+   "line": 3122,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "cfbc1269",
@@ -1703,7 +1664,7 @@
    "qual": "closing_mark_takes_revised_properties",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3158,
+   "line": 3200,
    "first_release": "v0.10.1",
    "origin": {
     "hash": "09b85a64",
@@ -1716,7 +1677,7 @@
    "qual": "last_body_para_spacing",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3422,
+   "line": 3463,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "0730c7bb",
@@ -1729,7 +1690,7 @@
    "qual": "strip_trailing_empty_pure_ins",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3579,
+   "line": 3620,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1742,7 +1703,7 @@
    "qual": "relocate_title_page_last_empty_after_pure_dels",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3612,
+   "line": 3653,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "963b8e29",
@@ -1755,7 +1716,7 @@
    "qual": "revised_two_blank_table_titles",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3848,
+   "line": 3889,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "cfbc1269",
@@ -1768,7 +1729,7 @@
    "qual": "ensure_empty_pure_i_before_short_title_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 3910,
+   "line": 3951,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "5a04e812",
@@ -1781,7 +1742,7 @@
    "qual": "strip_empty_pure_ins_before_trailing_pure_dels",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 4062,
+   "line": 4103,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1794,7 +1755,7 @@
    "qual": "rotate_ins_mark_del_only_paragraph",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 4576,
+   "line": 4617,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "80086840",
@@ -1807,7 +1768,7 @@
    "qual": "restamp_stranded_del_mark_onto_del_only_paragraph",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 4734,
+   "line": 4775,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "49930269",
@@ -1820,7 +1781,7 @@
    "qual": "split_head_short_title_long_del_mix",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 4829,
+   "line": 4870,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "2fddd387",
@@ -1833,7 +1794,7 @@
    "qual": "fold_leading_ins_from_mix_into_preceding_pure_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 4950,
+   "line": 4991,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1846,7 +1807,7 @@
    "qual": "strip_last_pure_del_mark_only_ppr",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 5081,
+   "line": 5122,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1859,7 +1820,7 @@
    "qual": "last_pure_del_spacing_to_pprchange",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 5164,
+   "line": 5205,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1872,7 +1833,7 @@
    "qual": "mixed_spacing_to_following_empty",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 5267,
+   "line": 5308,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1885,7 +1846,7 @@
    "qual": "park_mixed_spacing_onto_trailing_pure_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 5602,
+   "line": 5607,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1898,7 +1859,7 @@
    "qual": "park_mixed_numpr_onto_trailing_empty_pure_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 5742,
+   "line": 5747,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1911,7 +1872,7 @@
    "qual": "last_pure_del_inherit_prev_jc",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 5842,
+   "line": 5847,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -1924,7 +1885,7 @@
    "qual": "strip_empty_pprchange_on_mix_with_live_jc",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 5932,
+   "line": 5937,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "8852ca42",
@@ -1937,7 +1898,7 @@
    "qual": "strip_propertyless_ppr",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 6003,
+   "line": 6008,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "935437cf",
@@ -1950,7 +1911,7 @@
    "qual": "rewrite_inserted_external_hyperlinks",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 6331,
+   "line": 6336,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "673aff74",
@@ -1963,7 +1924,7 @@
    "qual": "promote_heading_spacing_from_pprchange_on_last_mix",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 6426,
+   "line": 6431,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "c86a1b47",
@@ -1976,7 +1937,7 @@
    "qual": "promote_live_jc_from_pprchange_on_body_mix",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 6511,
+   "line": 6516,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "efdc86a8",
@@ -1989,7 +1950,7 @@
    "qual": "strip_last_pure_del_mark_when_pprchange",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 6593,
+   "line": 6598,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2002,7 +1963,7 @@
    "qual": "merge_replaced_paragraphs_in",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 6890,
+   "line": 6895,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "36d046ac",
@@ -2015,7 +1976,7 @@
    "qual": "residual_short_label_zip_with_settings",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 6925,
+   "line": 6930,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "6adf9b18",
@@ -2028,7 +1989,7 @@
    "qual": "interleave_list_cluster_after_coalesce",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 9876,
+   "line": 9881,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "410eda5e",
@@ -2041,7 +2002,7 @@
    "qual": "drop_sectpr_from_deleted_marks",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 10179,
+   "line": 10184,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2054,7 +2015,7 @@
    "qual": "flatten_tracked_insertions_stamped",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 10215,
+   "line": 10220,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2067,7 +2028,7 @@
    "qual": "convert_stamped_preins",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 10282,
+   "line": 10287,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2080,7 +2041,7 @@
    "qual": "ensure_default_page_size",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 10388,
+   "line": 10393,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2093,7 +2054,7 @@
    "qual": "wrap_bare_del_text_runs",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 10771,
+   "line": 10776,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2106,7 +2067,7 @@
    "qual": "FlattenSide",
    "kind": "enum",
    "file": "src/comparer/finalize.rs",
-   "line": 10960,
+   "line": 10965,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2119,7 +2080,7 @@
    "qual": "pending_deletion_texts",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 10976,
+   "line": 10981,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2132,7 +2093,7 @@
    "qual": "flatten_tracked_deletions",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 11030,
+   "line": 11035,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2145,7 +2106,7 @@
    "qual": "convert_stamped_predeletes",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 11136,
+   "line": 11141,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2158,7 +2119,7 @@
    "qual": "synthesize_table_cell_margins",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 11249,
+   "line": 11254,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2171,7 +2132,7 @@
    "qual": "drop_hoisted_sectpr_artifacts",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 11637,
+   "line": 11642,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2184,7 +2145,7 @@
    "qual": "splice_trailing_short_pure_dels_midstream",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 11798,
+   "line": 11803,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2197,7 +2158,7 @@
    "qual": "split_digits_ins_from_mixed_title",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 11954,
+   "line": 11959,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2210,7 +2171,7 @@
    "qual": "peel_trailing_ins_from_mix_into_following_pure_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 12041,
+   "line": 12046,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2223,7 +2184,7 @@
    "qual": "restore_short_del_before_long_ins",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 12180,
+   "line": 12185,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2236,7 +2197,7 @@
    "qual": "peel_trailing_del_from_mix_into_following_pure_ins",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 12261,
+   "line": 12266,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2249,7 +2210,7 @@
    "qual": "fold_midstream_demo_title_into_numbered_heading_with_source_properties",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 12619,
+   "line": 12624,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "6adf9b18",
@@ -2262,7 +2223,7 @@
    "qual": "repair_borrowed_sentence_period",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 12834,
+   "line": 12839,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "935437cf",
@@ -2275,7 +2236,7 @@
    "qual": "restore_echoed_heading_deletions_before_table",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 12979,
+   "line": 12984,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "935437cf",
@@ -2285,10 +2246,23 @@
   },
   {
    "section": "C",
+   "qual": "ParagraphPropertySources",
+   "kind": "struct",
+   "file": "src/comparer/finalize.rs",
+   "line": 13097,
+   "first_release": null,
+   "origin": {
+    "hash": "f391b5ab",
+    "date": "2026-10-18",
+    "subject": "fix(compare): keep text edits out of inferred paragraph formatting history"
+   }
+  },
+  {
+   "section": "C",
    "qual": "park_jc_on_first_short_title_mix_from_body",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 13103,
+   "line": 13148,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "232f8588",
@@ -2301,7 +2275,7 @@
    "qual": "ensure_empty_pprchange_on_live_heading_spacing",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 13215,
+   "line": 13237,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "b8a2c356",
@@ -2314,7 +2288,7 @@
    "qual": "unaligned_paragraph_texts",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 13314,
+   "line": 13336,
    "first_release": "v0.10.1",
    "origin": {
     "hash": "19ce4605",
@@ -2327,7 +2301,7 @@
    "qual": "paragraph_alignments",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 13369,
+   "line": 13391,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "6d36464b",
@@ -2340,7 +2314,7 @@
    "qual": "ensure_empty_pprchange_on_eq_with_live_jc",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 13403,
+   "line": 13425,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "59e027cb",
@@ -2353,7 +2327,7 @@
    "qual": "strip_leading_del_echoing_prev_pure_i",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 13481,
+   "line": 13503,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "04296f12",
@@ -2366,7 +2340,7 @@
    "qual": "free_mesh_wholesale_body_mix",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 13611,
+   "line": 13633,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "8ec7eeb7",
@@ -2379,7 +2353,7 @@
    "qual": "free_mesh_bookended_ins_del",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 14051,
+   "line": 14073,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "3581b55a",
@@ -2392,7 +2366,7 @@
    "qual": "peel_trailing_for_word_onto_next_mix",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 14359,
+   "line": 14381,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "2a4ba6b4",
@@ -2405,7 +2379,7 @@
    "qual": "enforce_deleted_text_kinds",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 14834,
+   "line": 14856,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "b32054f9",
@@ -2418,7 +2392,7 @@
    "qual": "LadderSources",
    "kind": "struct",
    "file": "src/comparer/finalize.rs",
-   "line": 14864,
+   "line": 14886,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "673aff74",
@@ -2431,7 +2405,7 @@
    "qual": "align_remaining_ladder_rungs",
    "kind": "function",
    "file": "src/comparer/finalize.rs",
-   "line": 14886,
+   "line": 14908,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "673aff74",
@@ -2483,7 +2457,7 @@
    "qual": "PREDELETE_STAMP_ORIG",
    "kind": "const",
    "file": "src/comparer/mod.rs",
-   "line": 60,
+   "line": 66,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2496,7 +2470,7 @@
    "qual": "PREDELETE_STAMP_REV",
    "kind": "const",
    "file": "src/comparer/mod.rs",
-   "line": 65,
+   "line": 71,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2509,7 +2483,7 @@
    "qual": "DEFAULT_DETAIL_THRESHOLD",
    "kind": "const",
    "file": "src/comparer/mod.rs",
-   "line": 1412,
+   "line": 1430,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2587,7 +2561,7 @@
    "qual": "produce_new_wml_markup_from_correlated_sequence",
    "kind": "function",
    "file": "src/comparer/produce.rs",
-   "line": 1769,
+   "line": 1768,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -2665,7 +2639,7 @@
    "qual": "ResolveRevisions",
    "kind": "struct",
    "file": "src/edit.rs",
-   "line": 110,
+   "line": 174,
    "first_release": "v0.10.1",
    "origin": {
     "hash": "7cf9f339",
@@ -2678,7 +2652,7 @@
    "qual": "Points",
    "kind": "struct",
    "file": "src/edit.rs",
-   "line": 686,
+   "line": 866,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "c9d20267",
@@ -2691,7 +2665,7 @@
    "qual": "RunFormat",
    "kind": "struct",
    "file": "src/edit.rs",
-   "line": 744,
+   "line": 924,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "c9d20267",
@@ -2704,7 +2678,7 @@
    "qual": "HalfPoints",
    "kind": "struct",
    "file": "src/edit.rs",
-   "line": 777,
+   "line": 957,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "e5589a97",
@@ -2717,7 +2691,7 @@
    "qual": "RunSpec",
    "kind": "struct",
    "file": "src/edit.rs",
-   "line": 872,
+   "line": 1054,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "4defd5cf",
@@ -2727,80 +2701,54 @@
   },
   {
    "section": "C",
-   "qual": "RevisionCounts::from_changes",
-   "kind": "method",
+   "qual": "replies_on_deleted_paragraphs",
+   "kind": "function",
    "file": "src/edit.rs",
-   "line": 959,
+   "line": 1588,
    "first_release": null,
    "origin": {
-    "hash": "3364a0d3",
-    "date": "2026-10-11",
-    "subject": "feat(changes): inspect and edit reports count what changes lists"
+    "hash": "6e97945c",
+    "date": "2026-10-20",
+    "subject": "fix(edit): refuse an editing-mode reply on a deleted paragraph, and name the change a pass settled (#1159, plan 10)"
    }
   },
   {
    "section": "C",
-   "qual": "revisions_left",
-   "kind": "function",
-   "file": "src/edit.rs",
-   "line": 1238,
+   "qual": "TargetPair",
+   "kind": "struct",
+   "file": "src/edit/for_edit.rs",
+   "line": 112,
    "first_release": null,
    "origin": {
-    "hash": "9706bf0d",
-    "date": "2026-10-14",
-    "subject": "fix(edit): editing mode counts the changes a plan leaves; one count per long id"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "operation_schemas",
-   "kind": "function",
-   "file": "src/edit.rs",
-   "line": 1446,
-   "first_release": null,
-   "origin": {
-    "hash": "0c2a6dc1",
+    "hash": "55deda21",
     "date": "2026-10-17",
-    "subject": "feat(capabilities): add focused runtime discovery (V2-14, #847)"
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
    }
   },
   {
    "section": "C",
-   "qual": "dispatched_operation_kinds",
-   "kind": "function",
-   "file": "src/edit.rs",
-   "line": 1477,
+   "qual": "Blocker",
+   "kind": "struct",
+   "file": "src/edit/for_edit.rs",
+   "line": 198,
    "first_release": null,
    "origin": {
-    "hash": "0c2a6dc1",
+    "hash": "55deda21",
     "date": "2026-10-17",
-    "subject": "feat(capabilities): add focused runtime discovery (V2-14, #847)"
+    "subject": "feat(edit): read --for-edit with exact hashes and operation readiness (V2-10, #839)"
    }
   },
   {
    "section": "C",
-   "qual": "record_into",
-   "kind": "function",
-   "file": "src/edit/flags.rs",
-   "line": 574,
+   "qual": "CandidateChecks",
+   "kind": "struct",
+   "file": "src/edit/prepared.rs",
+   "line": 77,
    "first_release": null,
    "origin": {
-    "hash": "e79be63b",
-    "date": "2026-10-12",
-    "subject": "feat(edit): record_into merges a recording into a plan"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "renumber_notes",
-   "kind": "function",
-   "file": "src/edit/flags.rs",
-   "line": 696,
-   "first_release": null,
-   "origin": {
-    "hash": "e79be63b",
-    "date": "2026-10-12",
-    "subject": "feat(edit): record_into merges a recording into a plan"
+    "hash": "42cabd10",
+    "date": "2026-10-17",
+    "subject": "feat(edit): one PreparedEdit path for dry run and apply (V2-08, #835)"
    }
   },
   {
@@ -2818,106 +2766,132 @@
   },
   {
    "section": "C",
-   "qual": "Recorded",
+   "qual": "RevisionSyntax",
+   "kind": "enum",
+   "file": "src/edit/refusal.rs",
+   "line": 21,
+   "first_release": null,
+   "origin": {
+    "hash": "d0173ef8",
+    "date": "2026-10-18",
+    "subject": "fix: explain both revision decisions in the caller's syntax"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "RevisionRefusal",
    "kind": "struct",
-   "file": "src/edit/record.rs",
-   "line": 70,
+   "file": "src/edit/refusal.rs",
+   "line": 44,
    "first_release": null,
    "origin": {
-    "hash": "0fce315b",
-    "date": "2026-10-12",
-    "subject": "feat(edit): record module shares plan recording with the bindings"
+    "hash": "d0173ef8",
+    "date": "2026-10-18",
+    "subject": "fix: explain both revision decisions in the caller's syntax"
    }
   },
   {
    "section": "C",
-   "qual": "LOCATION_NOT_YET",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 49,
+   "qual": "EditError::with_revision_syntax",
+   "kind": "method",
+   "file": "src/edit/refusal.rs",
+   "line": 147,
    "first_release": null,
    "origin": {
-    "hash": "e7a4a776",
-    "date": "2026-10-13",
-    "subject": "feat(ids): every parser goes through ShortId; expired spellings refused with the settled one"
+    "hash": "d0173ef8",
+    "date": "2026-10-18",
+    "subject": "fix: explain both revision decisions in the caller's syntax"
    }
   },
   {
    "section": "C",
-   "qual": "CHANGE_SPELLINGS",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 58,
+   "qual": "EditError::revision_next_actions",
+   "kind": "method",
+   "file": "src/edit/refusal.rs",
+   "line": 159,
    "first_release": null,
    "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
+    "hash": "d0173ef8",
+    "date": "2026-10-18",
+    "subject": "fix: explain both revision decisions in the caller's syntax"
    }
   },
   {
    "section": "C",
-   "qual": "COMMENT_SPELLINGS",
+   "qual": "TEXT_CODEC_VERSION",
    "kind": "const",
-   "file": "src/ids.rs",
-   "line": 60,
+   "file": "src/edit/v2.rs",
+   "line": 27,
    "first_release": null,
    "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
+    "hash": "79cf56b7",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
    }
   },
   {
    "section": "C",
-   "qual": "COMMENT_TEXT_SPELLINGS",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 62,
+   "qual": "RevisionDecisions",
+   "kind": "struct",
+   "file": "src/edit/v2.rs",
+   "line": 146,
    "first_release": null,
    "origin": {
-    "hash": "b4a1384e",
-    "date": "2026-10-12",
-    "subject": "feat(ids): cN.text names the text a comment covers"
+    "hash": "79cf56b7",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
    }
   },
   {
    "section": "C",
-   "qual": "PARAGRAPH_SPELLINGS",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 66,
+   "qual": "AttachedComment",
+   "kind": "struct",
+   "file": "src/edit/v2.rs",
+   "line": 170,
    "first_release": null,
    "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
+    "hash": "79cf56b7",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
    }
   },
   {
    "section": "C",
-   "qual": "TABLE_SPELLINGS",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 78,
+   "qual": "ContextKind",
+   "kind": "enum",
+   "file": "src/edit/v2.rs",
+   "line": 362,
    "first_release": null,
    "origin": {
-    "hash": "1f250d4e",
-    "date": "2026-10-11",
-    "subject": "fix(ids): long ids keep one spelling per number; -p refusals name the right row"
+    "hash": "79cf56b7",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
    }
   },
   {
    "section": "C",
-   "qual": "CONTROL_SPELLINGS",
-   "kind": "const",
-   "file": "src/ids.rs",
-   "line": 82,
+   "qual": "SourceContext",
+   "kind": "struct",
+   "file": "src/edit/v2.rs",
+   "line": 375,
    "first_release": null,
    "origin": {
-    "hash": "ae80814c",
-    "date": "2026-10-15",
-    "subject": "feat(capabilities): list the content control ids"
+    "hash": "79cf56b7",
+    "date": "2026-10-17",
+    "subject": "feat(edit): add PlanV2 core contract and exact text codec (V2-01, #821)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "ExpectationReport::blocking_failure",
+   "kind": "method",
+   "file": "src/expect.rs",
+   "line": 277,
+   "first_release": null,
+   "origin": {
+    "hash": "755ec416",
+    "date": "2026-10-17",
+    "subject": "feat(expect): wire --expect into edit apply and check (V2-13, #845)"
    }
   },
   {
@@ -2935,106 +2909,41 @@
   },
   {
    "section": "C",
-   "qual": "short_number",
-   "kind": "function",
-   "file": "src/ids.rs",
-   "line": 220,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "hint_where",
-   "kind": "function",
-   "file": "src/ids.rs",
-   "line": 276,
-   "first_release": null,
-   "origin": {
-    "hash": "cd3b174f",
-    "date": "2026-10-13",
-    "subject": "fix(ids): a refusal suggests only what its option takes; -p refuses not-yet ids"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "comment_text_id",
-   "kind": "function",
-   "file": "src/ids.rs",
-   "line": 301,
-   "first_release": null,
-   "origin": {
-    "hash": "b4a1384e",
-    "date": "2026-10-12",
-    "subject": "feat(ids): cN.text names the text a comment covers"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "comment_id_de",
-   "kind": "function",
-   "file": "src/ids.rs",
-   "line": 318,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "parse_location",
-   "kind": "function",
-   "file": "src/ids.rs",
-   "line": 326,
-   "first_release": null,
-   "origin": {
-    "hash": "5c784ee8",
-    "date": "2026-10-11",
-    "subject": "feat(ids): one grammar for change, comment and paragraph ids"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "part_story",
-   "kind": "function",
-   "file": "src/ids.rs",
-   "line": 392,
-   "first_release": null,
-   "origin": {
-    "hash": "a8c87ea3",
-    "date": "2026-10-14",
-    "subject": "fix(ids,read): shell-safe story ids; one open per snapshot; read --json keeps what the view keeps"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "SCHEMA_VERSION",
-   "kind": "const",
+   "qual": "Settle",
+   "kind": "enum",
    "file": "src/inspect.rs",
-   "line": 32,
-   "first_release": "v0.10.0",
+   "line": 169,
+   "first_release": null,
    "origin": {
-    "hash": "4defd5cf",
-    "date": "2026-09-26",
-    "subject": "feat(inspect,edit,convert): agent-addressable read model, guarded edit plans, PNG page raster"
+    "hash": "5943f2a6",
+    "date": "2026-10-19",
+    "subject": "fix(read): --json and --tables take the view's options; errors under --json are JSON (#1255)"
    }
   },
   {
    "section": "C",
-   "qual": "Snapshot::retain_with",
-   "kind": "method",
+   "qual": "settled_snapshot",
+   "kind": "function",
    "file": "src/inspect.rs",
-   "line": 161,
+   "line": 442,
    "first_release": null,
    "origin": {
-    "hash": "a8c87ea3",
-    "date": "2026-10-14",
-    "subject": "fix(ids,read): shell-safe story ids; one open per snapshot; read --json keeps what the view keeps"
+    "hash": "5943f2a6",
+    "date": "2026-10-19",
+    "subject": "fix(read): --json and --tables take the view's options; errors under --json are JSON (#1255)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "view_tables",
+   "kind": "function",
+   "file": "src/inspect.rs",
+   "line": 465,
+   "first_release": null,
+   "origin": {
+    "hash": "5943f2a6",
+    "date": "2026-10-19",
+    "subject": "fix(read): --json and --tables take the view's options; errors under --json are JSON (#1255)"
    }
   },
   {
@@ -3068,7 +2977,7 @@
    "qual": "ImageLoader",
    "kind": "type alias",
    "file": "src/markdown/mod.rs",
-   "line": 163,
+   "line": 167,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "5eb56418",
@@ -3081,7 +2990,7 @@
    "qual": "docx_stamp",
    "kind": "function",
    "file": "src/markdown/mod.rs",
-   "line": 572,
+   "line": 580,
    "first_release": null,
    "origin": {
     "hash": "eb48fab9",
@@ -3094,7 +3003,7 @@
    "qual": "ReadView",
    "kind": "struct",
    "file": "src/markdown/mod.rs",
-   "line": 710,
+   "line": 728,
    "first_release": "v0.12.0",
    "origin": {
     "hash": "5b63ee1c",
@@ -3104,36 +3013,10 @@
   },
   {
    "section": "C",
-   "qual": "WrittenDocx",
-   "kind": "struct",
-   "file": "src/markdown/mod.rs",
-   "line": 968,
-   "first_release": "v0.11.0",
-   "origin": {
-    "hash": "5eb56418",
-    "date": "2026-09-30",
-    "subject": "feat(markdown): Markdown to DOCX with CriticMarkup as tracked changes; Markdown diffs"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "MarkdownError",
-   "kind": "enum",
-   "file": "src/markdown/mod.rs",
-   "line": 980,
-   "first_release": "v0.11.0",
-   "origin": {
-    "hash": "5eb56418",
-    "date": "2026-09-30",
-    "subject": "feat(markdown): Markdown to DOCX with CriticMarkup as tracked changes; Markdown diffs"
-   }
-  },
-  {
-   "section": "C",
    "qual": "PartFs::repaired_duplicate_ids",
    "kind": "method",
    "file": "src/opc/mod.rs",
-   "line": 488,
+   "line": 621,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "dd560ccc",
@@ -3146,7 +3029,7 @@
    "qual": "PartFs::adopt_missing_content_types",
    "kind": "method",
    "file": "src/opc/mod.rs",
-   "line": 631,
+   "line": 860,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "904e9893",
@@ -3159,7 +3042,7 @@
    "qual": "PartFs::remove_content_type_override",
    "kind": "method",
    "file": "src/opc/mod.rs",
-   "line": 668,
+   "line": 897,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "16de3f89",
@@ -3172,7 +3055,7 @@
    "qual": "PartFs::remove_package_relationships_by_type",
    "kind": "method",
    "file": "src/opc/mod.rs",
-   "line": 685,
+   "line": 914,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "2694e033",
@@ -3185,7 +3068,7 @@
    "qual": "PartFs::remove_related_part",
    "kind": "method",
    "file": "src/opc/mod.rs",
-   "line": 694,
+   "line": 923,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "ac59546c",
@@ -3198,7 +3081,7 @@
    "qual": "PartFs::package_relationships",
    "kind": "method",
    "file": "src/opc/mod.rs",
-   "line": 782,
+   "line": 1013,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "60d0544b",
@@ -3208,15 +3091,106 @@
   },
   {
    "section": "C",
-   "qual": "accept_revisions_package_keeping_ids",
+   "qual": "StagedFile",
+   "kind": "struct",
+   "file": "src/publication.rs",
+   "line": 286,
+   "first_release": null,
+   "origin": {
+    "hash": "44c91f95",
+    "date": "2026-10-17",
+    "subject": "fix(audit): harden publication and export confinement (D13, D35)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "sync_directory",
+   "kind": "function",
+   "file": "src/publication.rs",
+   "line": 409,
+   "first_release": null,
+   "origin": {
+    "hash": "44c91f95",
+    "date": "2026-10-17",
+    "subject": "fix(audit): harden publication and export confinement (D13, D35)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "NextAction::with_prerequisites",
+   "kind": "method",
+   "file": "src/result.rs",
+   "line": 295,
+   "first_release": null,
+   "origin": {
+    "hash": "a055f5bf",
+    "date": "2026-10-17",
+    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "Error::with_source_digest",
+   "kind": "method",
+   "file": "src/result.rs",
+   "line": 400,
+   "first_release": null,
+   "origin": {
+    "hash": "a055f5bf",
+    "date": "2026-10-17",
+    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "Error::with_target",
+   "kind": "method",
+   "file": "src/result.rs",
+   "line": 407,
+   "first_release": null,
+   "origin": {
+    "hash": "a055f5bf",
+    "date": "2026-10-17",
+    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "Source::from_digest",
+   "kind": "method",
+   "file": "src/result.rs",
+   "line": 472,
+   "first_release": null,
+   "origin": {
+    "hash": "a055f5bf",
+    "date": "2026-10-17",
+    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "exit_status_for_envelope",
+   "kind": "function",
+   "file": "src/result.rs",
+   "line": 1234,
+   "first_release": null,
+   "origin": {
+    "hash": "a055f5bf",
+    "date": "2026-10-17",
+    "subject": "feat(result): machine result envelope for the v2 routes (V2-03, #825)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "tracked_revisions_elements",
    "kind": "function",
    "file": "src/revision_processor.rs",
-   "line": 3471,
-   "first_release": "v0.11.0",
+   "line": 79,
+   "first_release": "v0.10.0",
    "origin": {
-    "hash": "9cdd2367",
-    "date": "2026-10-01",
-    "subject": "fix(compare): a redline keeps its comments' ids when a source is revised"
+    "hash": "16de3f89",
+    "date": "2026-07-24",
+    "subject": "Initial import of jubarte-redlines"
    }
   },
   {
@@ -3224,7 +3198,7 @@
    "qual": "reject_revisions_package",
    "kind": "function",
    "file": "src/revision_processor.rs",
-   "line": 3480,
+   "line": 3761,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -3282,6 +3256,19 @@
     "hash": "16229fea",
     "date": "2026-10-02",
     "subject": "feat(edit): settings operation: trackRevisions, updateFields, documentProtection"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "shell_word",
+   "kind": "function",
+   "file": "src/util/mod.rs",
+   "line": 35,
+   "first_release": null,
+   "origin": {
+    "hash": "737bb6af",
+    "date": "2026-10-20",
+    "subject": "fix(build): compile and lint without the cli feature again (#1349)"
    }
   },
   {
@@ -3351,15 +3338,28 @@
   },
   {
    "section": "C",
-   "qual": "RULE_SETS",
-   "kind": "const",
+   "qual": "input_notice_of",
+   "kind": "function",
    "file": "src/validate.rs",
-   "line": 113,
+   "line": 1038,
    "first_release": null,
    "origin": {
-    "hash": "80fa7bea",
-    "date": "2026-10-12",
-    "subject": "feat(validate)!: findings share one shape (set, severity, location); validate_with runs rule sets"
+    "hash": "5899c438",
+    "date": "2026-10-19",
+    "subject": "feat(read): the JSON reads carry the input's validity, never on stderr (#1309)"
+   }
+  },
+  {
+   "section": "C",
+   "qual": "InputValidity",
+   "kind": "struct",
+   "file": "src/validate.rs",
+   "line": 1062,
+   "first_release": null,
+   "origin": {
+    "hash": "5899c438",
+    "date": "2026-10-19",
+    "subject": "feat(read): the JSON reads carry the input's validity, never on stderr (#1309)"
    }
   },
   {
@@ -3394,19 +3394,6 @@
    "kind": "method",
    "file": "src/xmllinq/mod.rs",
    "line": 449,
-   "first_release": "v0.11.3",
-   "origin": {
-    "hash": "16de3f89",
-    "date": "2026-07-24",
-    "subject": "Initial import of jubarte-redlines"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "Dom::new_text",
-   "kind": "method",
-   "file": "src/xmllinq/mod.rs",
-   "line": 483,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "16de3f89",
@@ -3520,10 +3507,10 @@
   },
   {
    "section": "C",
-   "qual": "Dom::next_element",
+   "qual": "Dom::has_attributes",
    "kind": "method",
    "file": "src/xmllinq/mod.rs",
-   "line": 855,
+   "line": 867,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "16de3f89",
@@ -3533,10 +3520,23 @@
   },
   {
    "section": "C",
+   "qual": "Dom::attributes_iter",
+   "kind": "method",
+   "file": "src/xmllinq/mod.rs",
+   "line": 886,
+   "first_release": null,
+   "origin": {
+    "hash": "33eaf7ec",
+    "date": "2026-10-18",
+    "subject": "perf(xmllinq): Dom::attributes_iter; read-only callers stop cloning attributes"
+   }
+  },
+  {
+   "section": "C",
    "qual": "Dom::add_first",
    "kind": "method",
    "file": "src/xmllinq/mod.rs",
-   "line": 1085,
+   "line": 1101,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "16de3f89",
@@ -3549,20 +3549,7 @@
    "qual": "Dom::remove_nodes",
    "kind": "method",
    "file": "src/xmllinq/mod.rs",
-   "line": 1094,
-   "first_release": "v0.11.3",
-   "origin": {
-    "hash": "16de3f89",
-    "date": "2026-07-24",
-    "subject": "Initial import of jubarte-redlines"
-   }
-  },
-  {
-   "section": "C",
-   "qual": "Dom::replace_with",
-   "kind": "method",
-   "file": "src/xmllinq/mod.rs",
-   "line": 1149,
+   "line": 1110,
    "first_release": "v0.11.3",
    "origin": {
     "hash": "16de3f89",
@@ -3575,7 +3562,7 @@
    "qual": "unescape_xml_text",
    "kind": "function",
    "file": "src/xmllinq/parse.rs",
-   "line": 704,
+   "line": 897,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",

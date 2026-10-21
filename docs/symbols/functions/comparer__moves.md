@@ -23,13 +23,13 @@
 - **Does:** Non-empty word count from `text` (no dedup).
 - **Calls (crate):** `split_by_chars` (comparer/moves.rs:41) L76
 - **Calls (std/external/unresolved):** `.count`, `.filter`, `.into_iter`, `.is_empty`
-- **Called by:** `detect_moves_reference` (comparer/moves.rs:695); `detect_moves` (comparer/revisions.rs:410)
+- **Called by:** `detect_moves_reference` (comparer/moves.rs:695); `detect_moves` (comparer/revisions.rs:414)
 
 #### `count_words_and_tokenize`  (L87-114, pub)
 `pub fn count_words_and_tokenize( text: &str, settings: &WmlComparerSettings, ) -> (usize, HashSet<String>)`
 
 - **Does:** [`count_words`] and [`tokenize`] in one walk, without `split_by_chars`'s `Vec<String>` allocation.
-- **Calls (crate):** `flush` (markdown/view_stories.rs:755) (by name) L107,112
+- **Calls (crate):** `flush` (markdown/view_stories.rs:1334) (by name) L107,112
 - **Calls (std/external/unresolved):** `.chars`, `.contains`, `.insert`, `.is_empty`, `.push`, `.to_uppercase`, `HashSet::new`, `String::new`, `std::mem::take`
 - **Called by:** `precompute_block` (comparer/moves.rs:493)
 
@@ -46,7 +46,7 @@
 - **Does:** Jaccard similarity over unique word sets: `|intersection| / |union|`, with whitespace collapsed first so a pure re-spacing does not match as a move.
 - **Calls (crate):** `collapse_ws` (comparer/moves.rs:118) L126,127; `tokenize` (comparer/moves.rs:58) L131,132
 - **Calls (std/external/unresolved):** `.count`, `.intersection`, `.is_empty`, `.union`
-- **Called by:** `detect_moves_reference` (comparer/moves.rs:695); `public_lexical_empty_move_boundary_tests::public_jaccard_handles_empty_and_separator_only_sources_without_nonfinite_scores` (comparer/moves.rs:1546); `detect_moves` (comparer/revisions.rs:410)
+- **Called by:** `detect_moves_reference` (comparer/moves.rs:695); `public_lexical_empty_move_boundary_tests::public_jaccard_handles_empty_and_separator_only_sources_without_nonfinite_scores` (comparer/moves.rs:1546); `detect_moves` (comparer/revisions.rs:414)
 
 #### `group_consecutive_atoms_by_status`  (L149-174, pub)
 `pub fn group_consecutive_atoms_by_status( atoms: &[ComparisonUnitAtom], status: CorrelationStatus, ) -> Vec<AtomBlock>`
@@ -60,7 +60,7 @@
 `pub fn extract_text_from_atom_block( dom: &Dom, atoms: &[ComparisonUnitAtom], block: &AtomBlock, ) -> String`
 
 - **Does:** Concatenate a block's atom text in document order; `w:pPr` atoms become a single `'\n'` so paragraph breaks remain visible to the word tokeniser without contributing a token.
-- **Calls (crate):** `Dom::name` (xmllinq/mod.rs:526) L188; `Dom::value_str` (xmllinq/mod.rs:1179) L192
+- **Calls (crate):** `Dom::name` (xmllinq/mod.rs:526) L188; `Dom::value_str` (xmllinq/mod.rs:1195) L192
 - **Calls (std/external/unresolved):** `.push_str`, `.push`, `Some`, `String::new`, `W::p_pr`
 - **Called by:** `precompute_block` (comparer/moves.rs:493); `detect_moves_reference` (comparer/moves.rs:695)
 
@@ -77,7 +77,7 @@
 
 - **Does:** Promote a `Equal → Deleted(gap) → Equal+(matched)` LCS run so the matched continuation can be retagged as a Word move: `moveTo` before the gap, `moveFrom` after.
 - **Calls (crate):** `promote_skip_ahead_equals_inner` (comparer/moves.rs:278) L261
-- **Called by:** `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1187); `repeated_source_anchor_promotion_tests::table_skip_ahead_requires_an_unambiguous_original_paragraph_anchor` (comparer/moves.rs:1136)
+- **Called by:** `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1186); `repeated_source_anchor_promotion_tests::table_skip_ahead_requires_an_unambiguous_original_paragraph_anchor` (comparer/moves.rs:1136)
 
 #### `promote_skip_ahead_equals_with_source`  (L270-276, pub(crate))
 `pub(crate) fn promote_skip_ahead_equals_with_source( dom: &Dom, seqs: &mut Vec<super::atoms::CorrelatedSequence>, settings: &WmlComparerSettings, )`
@@ -85,7 +85,7 @@
 - **Does:** Same as [`promote_skip_ahead_equals`], but for the Word producer path: token-level Equal/Deleted sequences still carry complete original paragraph ownership in their atom ancestry.
 - **Calls (crate):** `promote_skip_ahead_equals_inner` (comparer/moves.rs:278) L275
 - **Calls (std/external/unresolved):** `Some`
-- **Called by:** `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:209); `source_paragraph_promotion_boundary_tests::check` (comparer/moves.rs:1307)
+- **Called by:** `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `source_paragraph_promotion_boundary_tests::check` (comparer/moves.rs:1307)
 
 #### `promote_skip_ahead_equals_inner`  (L278-454)
 `fn promote_skip_ahead_equals_inner( dom: Option<&Dom>, seqs: &mut Vec<super::atoms::CorrelatedSequence>, settings: &WmlComparerSettings, )`
@@ -101,7 +101,7 @@
 
 - **Does:** M4.G.3 — `DetectMovesInAtomList` (WmlComparer.ts :4711): greedy match deleted↔inserted blocks by Jaccard ≥ threshold (and the same minimum word count), retag matched atoms as `MovedSource` / `MovedDestination` with a fresh `move_group_id`.
 - **Calls (crate):** `detect_moves_memoized` (comparer/moves.rs:543) L475
-- **Called by:** `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1187); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:209)
+- **Called by:** `horizontal_partition_tests::actual_atomized_split_with_deleted_table_conserves_source_through_production` (comparer/lcs_table.rs:1186); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215)
 
 #### `precompute_block`  (L493-510)
 `fn precompute_block( dom: &Dom, atoms: &[ComparisonUnitAtom], block: &AtomBlock, settings: &WmlComparerSettings, ) -> BlockText`

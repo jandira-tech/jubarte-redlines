@@ -22,7 +22,7 @@
 - **Does:** Split `text` into a `Vec<&str>` of tokens and return them.
 - **Calls (crate):** `is_continuation` (util/words.rs:25) L73,90,104; `is_symbol` (util/words.rs:32) L76,80
 - **Calls (std/external/unresolved):** `.char_indices`, `.is_alphanumeric`, `.is_whitespace`, `.len`, `.push`, `Kind::Other`, `Some`, `Vec::new`
-- **Called by:** `units` (edit/rewrite.rs:28); `tests::words_spaces_and_marks` (util/words.rs:128); `tests::composed_and_decomposed_text_tokenize_alike` (util/words.rs:141); `tests::a_decomposed_word_is_one_token` (util/words.rs:166); `tests::a_mark_without_a_base_is_a_token_of_its_own` (util/words.rs:189); `tests::a_zero_width_joiner_stays_inside_its_token` (util/words.rs:204); `tests::a_skin_tone_modifier_stays_in_its_emoji_sequence` (util/words.rs:223); `tests::an_alphabetic_mark_with_no_base_does_not_start_a_word` (util/words.rs:234); `tests::ascii_and_cjk_tokens_do_not_change` (util/words.rs:241); `tests::tokens_always_concatenate_to_the_text` (util/words.rs:258)
+- **Called by:** `units` (edit/rewrite.rs:34); `tests::words_spaces_and_marks` (util/words.rs:128); `tests::composed_and_decomposed_text_tokenize_alike` (util/words.rs:141); `tests::a_decomposed_word_is_one_token` (util/words.rs:166); `tests::a_mark_without_a_base_is_a_token_of_its_own` (util/words.rs:189); `tests::a_zero_width_joiner_stays_inside_its_token` (util/words.rs:204); `tests::a_skin_tone_modifier_stays_in_its_emoji_sequence` (util/words.rs:223); `tests::an_alphabetic_mark_with_no_base_does_not_start_a_word` (util/words.rs:234); `tests::ascii_and_cjk_tokens_do_not_change` (util/words.rs:241); `tests::tokens_always_concatenate_to_the_text` (util/words.rs:258)
 
 ## Test functions (9)
 
