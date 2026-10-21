@@ -230,6 +230,26 @@ fn a_comments_part_with_no_revision_reaches_the_redline_byte_identical() {
     );
 }
 
+/// Comment ids out of Word's save order (5 before 2) are the documents'
+/// own: the compare accepts its sources keeping their ids, so it renumbers
+/// nothing, and B's comments part still reaches the redline byte for byte.
+#[test]
+fn a_comments_part_with_unordered_ids_reaches_the_redline_byte_identical() {
+    let a = commented_docx(&[(5, "the first note")], "");
+    let b = commented_docx(
+        &[(5, "the first note"), (2, "the second note")],
+        r#"<w:p><w:ins w:id="9" w:author="R" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Added.</w:t></w:r></w:ins></w:p>"#,
+    );
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = open_valid_output(&out);
+    let pkg_b = PartFs::open(&b).unwrap();
+    assert_eq!(
+        pkg.part_string("word/comments.xml"),
+        pkg_b.part_string("word/comments.xml"),
+        "B's comments part must reach the redline byte-identical"
+    );
+}
+
 #[test]
 fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
     if !orig_fixtures_present() {

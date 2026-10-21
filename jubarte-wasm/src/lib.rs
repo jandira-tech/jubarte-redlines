@@ -1094,8 +1094,9 @@ pub fn validate_document(docx: &[u8]) -> Result<String, JsValue> {
 }
 
 /// Check that every text change from `original` to `edited` is a revision
-/// by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`)
-/// as a JSON array.
+/// by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
+/// and `PERMISSION_RANGE_DROPPED` for a permission endpoint of `original`
+/// that `edited` lost) as a JSON array.
 ///
 /// Mirrors `jubarte::validate::audit_tracked`.
 #[wasm_bindgen(js_name = auditTracked)]
