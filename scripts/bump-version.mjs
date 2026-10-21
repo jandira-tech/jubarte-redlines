@@ -79,17 +79,21 @@ const cargoNext = cargo.replace(
 );
 writeFileSync(cargoPath, cargoNext);
 
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Optional: README badge / install line if present
 const readmePath = join(root, "README.md");
 try {
   const readme = readFileSync(readmePath, "utf8");
   const readmeNext = readme
     .replace(
-      new RegExp(`jubarte\\s*=\\s*"${prev.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`, "g"),
+      new RegExp(`jubarte\\s*=\\s*"${escapeRegExp(prev)}"`, "g"),
       `jubarte = "${next}"`,
     )
     .replace(
-      new RegExp(`jubarte@${prev.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g"),
+      new RegExp(`jubarte@${escapeRegExp(prev)}`, "g"),
       `jubarte@${next}`,
     )
     // Socket badge: image and link both pin the version; a stale pin
