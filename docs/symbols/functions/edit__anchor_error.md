@@ -118,7 +118,7 @@
 
 - **Does:** The shared refusal skeleton: code, operation pointer, source digest, requested target, no-retry and no-commit.
 - **Calls (crate):** `Error::with_commit_state` (result.rs:347) (by name) L447; `Error::with_retryable` (result.rs:439) (by name) L447; `Error::with_target` (result.rs:407) (by name) L447; `Error::with_source_digest` (result.rs:400) (by name) L447; `Error::new` (result.rs:360) L447; `.with_operation` (ambiguous: `AnchorRefusal::with_operation` (edit/anchor_error.rs:93); `Error::with_operation` (result.rs:386)) L453
-- **Called by:** `open` (edit/anchor_error.rs:229); `missing_target` (edit/anchor_error.rs:364); `several_changes` (edit/anchor_error.rs:422); `refused` (edit/anchor_error.rs:462); `tests::recording_refuses_what_the_plan_names_differently` (edit/flags.rs:964) (?); `tests::decoded_part_name_aliases_are_refused_not_overwritten` (opc/mod.rs:1746) (?)
+- **Called by:** `open` (edit/anchor_error.rs:229); `missing_target` (edit/anchor_error.rs:364); `several_changes` (edit/anchor_error.rs:422); `refused` (edit/anchor_error.rs:462); `tests::recording_refuses_what_the_plan_names_differently` (edit/flags.rs:964) (?); `tests::decoded_part_name_aliases_are_refused_not_overwritten` (opc/mod.rs:1783) (?)
 
 #### `refused`  (L462-546)
 `fn refused( snap: &Snapshot, working: &str, skip: &str, refusal: &AnchorRefusal<'_>, edit: &EditError, occurrence: Option<usize>, expected: Option<usize>, ) -> Error`

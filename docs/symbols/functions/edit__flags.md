@@ -17,7 +17,7 @@
 - **Does:** `--style` tokens: run formatting, and at most one paragraph style.
 - **Calls (std/external/unresolved):** `.as_str`, `.filter`, `.into`, `.is_finite`, `.is_some`, `.map_or`, `.ok_or_else`, `.ok`, `.parse`, `.replace`, `.round`, `.split_once`, `.then_some`, `.to_string`, `Err`, `HalfPoints`, `Ok`, `RunFormat::default`, `Some`
 - **Macros:** `format!`
-- **Called by:** `word_style_line_owned_boundary_tests::word_single_line_style_propagation_keeps_authored_history_and_unrelated_properties` (document_comparer.rs:12808) (?); `flag_operation` (edit/flags.rs:367)
+- **Called by:** `word_style_line_owned_boundary_tests::word_single_line_style_propagation_keeps_authored_history_and_unrelated_properties` (document_comparer.rs:12809) (?); `flag_operation` (edit/flags.rs:367)
 
 #### `content_text`  (L217-226)
 `fn content_text(content: &str) -> (String, Option<&'static str>)`

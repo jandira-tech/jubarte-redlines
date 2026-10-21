@@ -154,7 +154,7 @@
 - **Calls (crate):** `child` (debug/render.rs:361) L446; `attr` (debug.rs:641) L447
 - **Calls (std/external/unresolved):** `.as_str`, `.is_some_and`
 - **Macros:** `matches!`
-- **Called by:** `parse_tbl_style` (convert/mod.rs:3854) (?); `table_block` (convert/mod.rs:13095) (?); `form_checkbox` (convert/mod.rs:16168) (?); `StyleBook::new` (debug/render.rs:156); `run` (debug/render.rs:717); `section` (debug/render.rs:1028); `analyze` (debug.rs:1220) (?); `run_format` (inspect.rs:1486) (?); `chpx_props` (legacy_doc.rs:1450) (?)
+- **Called by:** `parse_tbl_style` (convert/mod.rs:3854) (?); `table_block` (convert/mod.rs:13095) (?); `form_checkbox` (convert/mod.rs:16168) (?); `StyleBook::new` (debug/render.rs:156); `run` (debug/render.rs:717); `section` (debug/render.rs:1028); `analyze` (debug.rs:1220) (?); `run_format` (inspect.rs:1486) (?); `chpx_props` (legacy_doc.rs:1488) (?)
 
 #### `own_text`  (L452-462)
 `fn own_text(dom: &Dom, n: NodeId, para: NodeId) -> String`

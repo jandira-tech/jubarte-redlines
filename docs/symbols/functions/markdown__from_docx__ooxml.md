@@ -215,7 +215,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.filter_map`, `.iter`, `Some`
-- **Called by:** `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (append.rs:1599) (?); `Package::table_no_header_row` (audit.rs:586) (?); `CommentFamily::read_meta` (comments.rs:485) (?); `CommentFamily::adopt` (comments.rs:743) (?); `final_section_table_ownership_tests::a_table_only_story_keeps_its_final_section_outside_all_cell_paragraphs` (comparer/atomize.rs:747) (?); `final_section_table_ownership_tests::block_control_paragraph_still_owns_the_closing_section_instead_of_later_table_cells` (comparer/atomize.rs:771) (?); `final_section_table_ownership_tests::existing_cell_section_properties_and_history_are_never_replaced_by_body_geometry` (comparer/atomize.rs:794) (?); `coverage_atomizer_owned_boundaries::note_definition_owns_every_character_and_mark_but_the_part_is_a_path_stop` (comparer/atomize.rs:827) (?); `coverage_atomizer_field_chain_boundaries::header_and_footer_roots_stop_paths_and_preserve_each_whitespace_boundary` (comparer/atomize.rs:1123) (?); `deeper_boundary_tests::namespace_conflicts_reuse_aliases_or_skip_occupied_generated_prefixes` (comparer/comments.rs:2317) (?); `public_option_source_ownership_tests::source_events::{fn walk}` (comparer/cross_para.rs:2512) (?); `coverage_tests::content_controls_unwrap_deepest_first_and_keep_text_order` (comparer/finalize.rs:15897) (?); +217 more
+- **Called by:** `public_memory_append_owner_boundary_tests::verify_styles_xml` (append.rs:1598) (?); `Package::table_no_header_row` (audit.rs:586) (?); `CommentFamily::read_meta` (comments.rs:485) (?); `CommentFamily::adopt` (comments.rs:743) (?); `final_section_table_ownership_tests::a_table_only_story_keeps_its_final_section_outside_all_cell_paragraphs` (comparer/atomize.rs:747) (?); `final_section_table_ownership_tests::block_control_paragraph_still_owns_the_closing_section_instead_of_later_table_cells` (comparer/atomize.rs:771) (?); `final_section_table_ownership_tests::existing_cell_section_properties_and_history_are_never_replaced_by_body_geometry` (comparer/atomize.rs:794) (?); `coverage_atomizer_owned_boundaries::note_definition_owns_every_character_and_mark_but_the_part_is_a_path_stop` (comparer/atomize.rs:827) (?); `coverage_atomizer_field_chain_boundaries::header_and_footer_roots_stop_paths_and_preserve_each_whitespace_boundary` (comparer/atomize.rs:1123) (?); `deeper_boundary_tests::namespace_conflicts_reuse_aliases_or_skip_occupied_generated_prefixes` (comparer/comments.rs:2317) (?); `public_option_source_ownership_tests::source_events::{fn walk}` (comparer/cross_para.rs:2512) (?); `coverage_tests::content_controls_unwrap_deepest_first_and_keep_text_order` (comparer/finalize.rs:15897) (?); +217 more
 
 #### `Element::children_named`  (L379-384, pub(crate))
 `pub(crate) fn children_named<'s>( &'s self, name: &'s str, ) -> impl Iterator<Item = &'s Element> + 's`
@@ -330,7 +330,7 @@
 `pub(crate) fn collapse_ws(s: &str) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (std/external/unresolved):** `.collect`, `.join`, `.split_whitespace`
+- **Calls (crate):** `collapse_whitespace` (util/mod.rs:46) L601
 - **Called by:** `image_markdown` (markdown/from_docx/ooxml.rs:1148)
 
 #### `Inline::keep_spaces`  (L643-645, pub(crate))
@@ -442,13 +442,13 @@
 - **Calls (std/external/unresolved):** `.chars`, `.is_alphanumeric`, `.is_ascii_punctuation`, `.is_none_or`, `.is_some_and`, `.is_whitespace`, `.last`, `.next`, `open_side`, `punctuation`
 - **Called by:** `render_emphasis` (markdown/from_docx/ooxml.rs:806)
 
-#### `code_fence`  (L1016-1028)
-`fn code_fence(text: &str) -> (String, String)`
+#### `code_fence`  (L1016-1028, pub(crate))
+`pub(crate) fn code_fence(text: &str) -> (String, String)`
 
 - **Does:** The backticks around a code span's text: one more than its longest run of backticks, padded when an edge backtick or space needs protecting.
 - **Calls (std/external/unresolved):** `.all`, `.chars`, `.ends_with`, `.map`, `.max`, `.repeat`, `.split`, `.starts_with`, `.unwrap_or`
 - **Macros:** `format!`
-- **Called by:** `render_emphasis` (markdown/from_docx/ooxml.rs:806)
+- **Called by:** `flush_seam_spans` (markdown/critic.rs:2279); `render_emphasis` (markdown/from_docx/ooxml.rs:806)
 
 #### `split_ws`  (L1030-1034)
 `fn split_ws(s: &str) -> (&str, &str, &str)`
@@ -561,7 +561,7 @@
 `pub(crate) fn empty_paragraph(&mut self)`
 
 - **Does:** Keeps an untracked empty paragraph after an explicitly inserted paragraph mark.
-- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1330) L1338
+- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1335) L1338
 - **Calls (std/external/unresolved):** `.is_some_and`, `.len`, `.push_str`, `.rsplit_once`, `.trim_end`
 - **Called by:** `Writer::paragraph` (markdown/from_docx/mod.rs:2706)
 
@@ -599,7 +599,7 @@
 - **Does:** Format an item at `level` with `marker` (e.g.
 - **Calls (std/external/unresolved):** `.chars`, `.count`, `.iter`, `.len`, `.map`, `.min`, `.push`, `.repeat`, `.replace`, `.sum`, `.truncate`
 - **Macros:** `format!`
-- **Called by:** `Build::segments` (debug/diff.rs:931) (?); `Build::run` (debug/diff.rs:1000) (?); `boundary_coverage_tests::toggle_normalization_distinguishes_boolean_values_from_numeric_properties` (debug/diff.rs:2269) (?); `boundary_coverage_tests::relationship_attributes_resolve_targets_without_inventing_missing_targets` (debug/diff.rs:2300) (?); `tests::list_tables_are_read_within_their_fib_ranges` (legacy_doc.rs:2454) (?); `Writer::paragraph` (markdown/from_docx/mod.rs:2706); `tests::list_indent_nests_under_content` (markdown/from_docx/ooxml.rs:1561) (?); `ooxml_package_boundary_tests::literal_hyperlinks_and_mail_addresses_use_exact_autolink_forms` (markdown/from_docx/ooxml.rs:1701) (?)
+- **Called by:** `Build::segments` (debug/diff.rs:931) (?); `Build::run` (debug/diff.rs:1000) (?); `boundary_coverage_tests::toggle_normalization_distinguishes_boolean_values_from_numeric_properties` (debug/diff.rs:2269) (?); `boundary_coverage_tests::relationship_attributes_resolve_targets_without_inventing_missing_targets` (debug/diff.rs:2300) (?); `tests::list_tables_are_read_within_their_fib_ranges` (legacy_doc.rs:2533) (?); `Writer::paragraph` (markdown/from_docx/mod.rs:2706); `tests::list_indent_nests_under_content` (markdown/from_docx/ooxml.rs:1561) (?); `ooxml_package_boundary_tests::literal_hyperlinks_and_mail_addresses_use_exact_autolink_forms` (markdown/from_docx/ooxml.rs:1701) (?)
 
 ## Test functions (19)
 

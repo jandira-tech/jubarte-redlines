@@ -6,7 +6,7 @@
 `pub(super) fn spec( text: &str, color: Option<&str>, diagonal: Option<bool>, font: Option<&str>, ) -> Result<Spec, String>`
 
 - **Does:** Check the operation's parameters; `None` takes Word's defaults (`C0C0C0`, diagonal, Calibri).
-- **Calls (crate):** `check_text` (edit.rs:7047) L49,63
+- **Calls (crate):** `check_text` (edit.rs:7094) L49,63
 - **Calls (std/external/unresolved):** `.all`, `.chars`, `.contains`, `.count`, `.is_ascii_hexdigit`, `.is_empty`, `.len`, `.to_ascii_uppercase`, `.to_string`, `.trim`, `.unwrap_or`, `Err`, `Ok`
 - **Macros:** `format!`
 - **Called by:** `Transaction::resolve_watermark` (edit/watermark.rs:174); `tests::defaults_follow_word` (edit/watermark.rs:339); `tests::horizontal_markup_has_no_rotation` (edit/watermark.rs:355)
@@ -96,7 +96,7 @@
 - **Does:** Write the resolved watermark into every default header; returns the header stories it changed (a new header part is written here).
 - **Calls (crate):** `Transaction::section_properties` (edit/watermark.rs:221) L261; `shape_size` (edit/watermark.rs:139) L262; `Transaction::default_header` (edit/watermark.rs:234) L263; `Transaction::mark_header` (edit/watermark.rs:285) L267; `markup` (edit/watermark.rs:91) L267,277; `Transaction::new_header` (edit/watermark.rs:307) L277
 - **Calls (std/external/unresolved):** `.clone`, `.enumerate`, `.insert`, `.into_iter`, `BTreeSet::new`, `Ok`
-- **Called by:** `Transaction::finish` (edit.rs:6598)
+- **Called by:** `Transaction::finish` (edit.rs:6645)
 
 #### `Transaction::mark_header`  (L285-302)
 `fn mark_header(&mut self, story: usize, markup: &str) -> Result<(), EditError>`

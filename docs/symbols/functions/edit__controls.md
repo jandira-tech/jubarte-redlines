@@ -6,7 +6,7 @@
 `pub(super) fn resolve_fill_control( &self, id: &str, request: &FillRequest<'_>, ) -> Resolution<Vec<Resolved>>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `err` (edit.rs:1770) L93; `Transaction::select_control` (edit/controls.rs:207) L95; `Dom::element` (xmllinq/mod.rs:655) (by name) L131; `Dom::ancestors` (xmllinq/mod.rs:770) (by name) L132; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L134; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L137; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L149,160; `Transaction::fill_value` (edit/controls.rs:318) L167; `excerpt` (edit.rs:7114) L178,179; `paragraph_id` (ids.rs:410) L191
+- **Calls (crate):** `err` (edit.rs:1770) L93; `Transaction::select_control` (edit/controls.rs:207) L95; `Dom::element` (xmllinq/mod.rs:655) (by name) L131; `Dom::ancestors` (xmllinq/mod.rs:770) (by name) L132; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L134; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L137; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L149,160; `Transaction::fill_value` (edit/controls.rs:318) L167; `excerpt` (edit.rs:7161) L178,179; `paragraph_id` (ids.rs:410) L191
 - **Calls (std/external/unresolved):** `.any`, `.as_str`, `.clone`, `.cloned`, `.collect`, `.contains`, `.enumerate`, `.filter`, `.first`, `.into_iter`, `.into`, `.is_empty`, `.is_some_and`, `.iter`, `.map`, `.to_string`, `Box::new`, `Err`, `Ok`, `Some`, `String::new`, `W::name`, `W::p`, `W::sdt_content`, `W::sect_pr`, `W::tbl`, `fail`
 - **Macros:** `format!`, `vec!`
 - **Called by:** `Transaction::resolve` (edit.rs:3267)
@@ -33,7 +33,7 @@
 `fn fill_value( &self, record: &crate::inspect::ContentControl, sdt: NodeId, request: &FillRequest<'_>, ) -> Result<FillValue, String>`
 
 - **Does:** Check the value form against the control and compute what to write.
-- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) (by name) L353,366,367,388,390,414...; `check_text` (edit.rs:7047) L358; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L369; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L371,372,396,402,416; `parse_date` (edit/controls.rs:666) L411; `format_date` (edit/controls.rs:726) L420
+- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) (by name) L353,366,367,388,390,414...; `check_text` (edit.rs:7094) L358; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L369; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L371,372,396,402,416; `parse_date` (edit/controls.rs:666) L411; `format_date` (edit/controls.rs:726) L420
 - **Calls (std/external/unresolved):** `.and_then`, `.as_str`, `.count`, `.filter`, `.is_control`, `.is_some`, `.iter`, `.join`, `.map_or_else`, `.ok_or_else`, `.ok`, `.or_else`, `.or`, `.to_string`, `.unwrap_or_default`, `.unwrap_or`, `Err`, `FillValue::Text`, `Ok`, `Some`, `W14::name`, `W::name`, `W::sdt_pr`, `W::val`, `form_for`, `u32::from_str_radix`, `wrong`
 - **Macros:** `format!`, `matches!`
 - **Called by:** `Transaction::resolve_fill_control` (edit/controls.rs:73)
@@ -53,7 +53,7 @@
 - **Does:** Apply step 1b: write every fill.
 - **Calls (crate):** `fill` (edit/controls.rs:509) L503
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.filter_map`, `.iter`, `Some`
-- **Called by:** `Transaction::apply` (edit.rs:5882)
+- **Called by:** `Transaction::apply` (edit.rs:6430)
 
 #### `fill`  (L509-560)
 `fn fill(dom: &mut Dom, sdt: NodeId, block: bool, value: &FillValue)`
@@ -91,7 +91,7 @@
 `fn set_glyph_font(dom: &mut Dom, rpr: NodeId, font: &str)`
 
 - **Does:** Point every script's font at `font`, as Word does for a checkbox glyph.
-- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L651; `Dom::new_element` (xmllinq/mod.rs:478) L654; `insert_rpr_child` (edit.rs:8497) L655; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L660,662
+- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L651; `Dom::new_element` (xmllinq/mod.rs:478) L654; `insert_rpr_child` (edit.rs:8544) L655; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L660,662
 - **Calls (std/external/unresolved):** `Some`, `W::name`
 - **Called by:** `fill` (edit/controls.rs:509)
 

@@ -39,7 +39,7 @@
 `fn normalized_text(text: &str) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (std/external/unresolved):** `.collect`, `.join`, `.split_whitespace`
+- **Calls (crate):** `collapse_whitespace` (util/mod.rs:46) L128
 - **Called by:** `comment_definition_fingerprint` (comparer/comments.rs:79); `comment_anchor_identities` (comparer/comments.rs:135)
 
 #### `comment_anchor_identities`  (L135-196)
@@ -338,7 +338,7 @@
 - **Does:** Entry point — run after the diff produced `result_root` but BEFORE it is serialized into `out` (anchors are injected into the result DOM).
 - **Calls (crate):** `comment_ids_of` (comparer/comments.rs:64) L1591,1592; `inject_side` (comparer/comments.rs:787) L1600,1619,1625,1628,1653; `b_carries_same_comments_as_a` (comparer/comments.rs:117) L1610; `b_covers_comment_identities_of_a` (comparer/comments.rs:202) L1611; `install_parts_from` (comparer/comments.rs:937) L1618,1622; `union_comments_xml` (comparer/comments.rs:1190) L1623; `comment_id_fingerprint_of` (comparer/comments.rs:96) L1643,1644; `select_anchor_aware_comments` (comparer/comments.rs:1509) L1664; `strip_unanchored_comment_markers` (comparer/comments.rs:1672) L1667; `drop_orphans` (comparer/comments.rs:1416) L1668
 - **Calls (std/external/unresolved):** `.cloned`, `.collect`, `.contains_key`, `.extend`, `.filter`, `.get`, `.into_iter`, `.is_empty`, `.iter`, `.keys`, `.map`, `.values`, `HashMap::new`, `HashSet::new`, `Some`
-- **Called by:** `deeper_boundary_tests::carry_comments_remaps_colliding_anchor_ids_and_preserves_definition_metadata` (comparer/comments.rs:2623); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `deeper_boundary_tests::carry_comments_remaps_colliding_anchor_ids_and_preserves_definition_metadata` (comparer/comments.rs:2623); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `strip_unanchored_comment_markers`  (L1672-1692)
 `fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &HashSet<String>)`

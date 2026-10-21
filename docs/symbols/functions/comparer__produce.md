@@ -169,7 +169,7 @@
 - **Does:** M463 — final-serialization pass: every `w:ins` / `w:del` whose element content is exactly OMML math (`m:oMath` / `m:oMathPara`) is unwrapped, and the revision state is rewritten INSIDE the math the way Word Compare writes it.
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L789,798; `Dom::attribute` (xmllinq/mod.rs:874) L790; `Dom::elements` (xmllinq/mod.rs:640) L802,810; `Dom::name` (xmllinq/mod.rs:526) L806; `mark_math_revisions_internally` (comparer/produce.rs:832) L812; `Dom::remove` (xmllinq/mod.rs:1118) L815,818; `Dom::add_before_self` (xmllinq/mod.rs:1130) L816
 - **Calls (std/external/unresolved):** `.all`, `.collect`, `.contains`, `.filter`, `.into_iter`, `.is_empty`, `.is_some_and`, `.iter`, `.max`, `.parse`, `Some`, `W::del`, `W::id`, `W::ins`, `crate::namespaces::M::name`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `mark_math_revisions_internally`  (L832-906)
 `fn mark_math_revisions_internally( dom: &mut Dom, math_root: NodeId, rev_name: &crate::xmllinq::XName, settings: &WmlComparerSettings, id_gen: &mut u32, )`

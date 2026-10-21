@@ -54,7 +54,7 @@
 `fn twips(e: &Element, attr: &str) -> Option<f64>`
 
 - **Does:** A twips-valued attribute; Strict files write the universal measure (`72pt`, `1in`) where Transitional writes the integer.
-- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) L619; `universal_measure_twips` (util/mod.rs:47) L622
+- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) L619; `universal_measure_twips` (util/mod.rs:61) L622
 - **Calls (std/external/unresolved):** `.and_then`, `.ok`, `.or_else`, `.parse`
 - **Called by:** `paragraph_block` (convert/mod.rs:11574) (?); `text_width` (fields.rs:1135) (?); `spacing_clauses` (markdown/from_docx/agent.rs:1606) (?); `geometry_clauses` (markdown/from_docx/agent.rs:2286) (?); `text_width` (markdown/from_docx/header.rs:629); `page_setup` (markdown/from_docx/header.rs:640); `apply` (markdown/from_docx/header.rs:816); `IdLine::clause` (markdown/view_notes.rs:1415) (?); `TableGeometry::clause` (markdown/xml.rs:247) (?)
 
@@ -95,9 +95,9 @@
 `fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: Option<&Element>)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `font_of` (markdown/from_docx/header.rs:791) L819; `Element::attr` (markdown/from_docx/ooxml.rs:327) (by name) L825,846,869; `universal_measure_half_points` (util/mod.rs:52) L828; `twips` (markdown/from_docx/header.rs:618) L838,841,844,854,857,860...
+- **Calls (crate):** `font_of` (markdown/from_docx/header.rs:791) L819; `Element::attr` (markdown/from_docx/ooxml.rs:327) (by name) L825,846,869; `universal_measure_half_points` (util/mod.rs:66) L828; `twips` (markdown/from_docx/header.rs:618) L838,841,844,854,857,860...
 - **Calls (std/external/unresolved):** `.and_then`, `.child`, `.is_none`, `.is_some`, `.map`, `.ok`, `.or_else`, `.parse`, `.to_string`, `.toggle`, `.unwrap_or`, `Some`
-- **Called by:** `run_resolution` (bin/jubarte.rs:458) (?); `reresolve_theme_color_hexes` (document_comparer.rs:6012) (?); `resolve` (markdown/from_docx/header.rs:875)
+- **Called by:** `run_resolution` (bin/jubarte.rs:458) (?); `reresolve_theme_color_hexes` (document_comparer.rs:6013) (?); `resolve` (markdown/from_docx/header.rs:875)
 
 #### `resolve`  (L875-908)
 `fn resolve(styles: Option<&Element>, theme: Option<&Element>, id: &str) -> Resolved`
@@ -360,7 +360,7 @@
 `fn escape_field_codes(text: &str) -> std::borrow::Cow<'_, str>`
 
 - **Does:** `text` with a backslash before each `{` the writer would read as a field: one that opens what reads like a field code (`{PAGE \* roman}`), a bare name (`{SELLER}`, `{1999}`) or a result's end (`{/}`), so text typed in a header stays text.
-- **Calls (crate):** `field_code_close` (markdown/critic.rs:1636) L2065; `is_field_code` (markdown/critic.rs:1620) L2066
+- **Calls (crate):** `field_code_close` (markdown/critic.rs:1641) L2065; `is_field_code` (markdown/critic.rs:1625) L2066
 - **Calls (std/external/unresolved):** `.all`, `.any`, `.bytes`, `.char_indices`, `.find`, `.is_ascii_digit`, `.is_ascii_uppercase`, `.is_some_and`, `.len`, `.push`, `.starts_with`, `String::with_capacity`, `opens`, `std::borrow::Cow::Borrowed`, `std::borrow::Cow::Owned`
 - **Called by:** `State::push_text` (markdown/from_docx/header.rs:2012)
 

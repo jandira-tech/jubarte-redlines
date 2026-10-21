@@ -64,7 +64,7 @@
 - **Does:** Apply resolved page setups; a missing final `w:sectPr` is appended to the body.
 - **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L398; `Dom::new_element` (xmllinq/mod.rs:478) L401; `Dom::add` (xmllinq/mod.rs:1074) L402; `write_geometry` (edit/sections.rs:319) L407
 - **Calls (std/external/unresolved):** `W::sect_pr`
-- **Called by:** `Transaction::apply` (edit.rs:5882)
+- **Called by:** `Transaction::apply_page_setups` (edit.rs:6414)
 
 #### `mid_sections`  (L414-426)
 `fn mid_sections(dom: &Dom, body: NodeId) -> Vec<NodeId>`

@@ -311,7 +311,7 @@
 - **Does:** The Ring-1 invariants alone, on an opened package: no admission, no triage checks.
 - **Calls (crate):** `check_content_types_and_xml` (validate.rs:1468) L1167; `check_relationship_integrity` (validate.rs:1548) L1168; `check_picture_bullets` (validate.rs:1645) L1169; `check_revision_and_drawing_ids` (validate.rs:1669) L1170; `check_para_text_id_bounds` (validate.rs:1807) L1171; `check_del_text_under_del` (validate.rs:1831) L1172; `check_deleted_text_has_deletion` (validate.rs:1897) L1173; `check_bookmarks_outside_single_value_controls` (validate.rs:1961) L1174; `check_comment_graph` (validate.rs:2067) L1175; `check_namespace_qname_contexts` (validate.rs:1462) L1176; `check_runs_inside_paragraphs` (validate.rs:1371) L1177; `check_style_names` (validate.rs:1338) L1178; `check_nested_text_boxes` (validate.rs:1269) L1179; `check_move_range_counts` (validate.rs:1229) L1180; `check_data_bindings_have_stores` (validate.rs:1189) L1181
 - **Calls (std/external/unresolved):** `Vec::new`
-- **Called by:** `warn_nested_text_boxes` (bin/jubarte.rs:1121); `row_nontext_ownership_regressions::public_compare_keeps_unchanged_tab_and_break_cells_when_text_moves_into_their_row` (comparer/finalize.rs:23895); `coverage_real_revision_merge_matrix_tests::public_compare_multi_original_blank_tail_recovers_complete_clean_sources` (comparer/finalize.rs:26112); `tests::empty_paragraphs_are_kept_in_the_docx_and_left_out_of_markdown` (legacy_doc.rs:2090); `tests::only_rows_marked_as_headers_repeat_as_headers` (legacy_doc.rs:2207); `tests::a_blank_paragraph_keeps_its_line_breaks_in_the_docx` (legacy_doc.rs:2368); `tests::a_heading_keeps_its_line_breaks_in_the_docx` (legacy_doc.rs:2399); `tests::title_and_headings_7_to_9_keep_their_word_styles` (legacy_doc.rs:2528); `validate` (validate.rs:1140); `public_memory_validator_owner_boundary_tests::missing_opaque_part_type_has_exact_public_diagnostics_and_no_speculative_repair` (validate.rs:4028); `authored_comment_family_validation_contract_tests::auxiliary_comment_parts_without_their_source_definition_are_reported_individually` (validate.rs:4330)
+- **Called by:** `warn_nested_text_boxes` (bin/jubarte.rs:1121); `row_nontext_ownership_regressions::public_compare_keeps_unchanged_tab_and_break_cells_when_text_moves_into_their_row` (comparer/finalize.rs:23895); `coverage_real_revision_merge_matrix_tests::public_compare_multi_original_blank_tail_recovers_complete_clean_sources` (comparer/finalize.rs:26112); `tests::empty_paragraphs_are_kept_in_the_docx_and_left_out_of_markdown` (legacy_doc.rs:2169); `tests::only_rows_marked_as_headers_repeat_as_headers` (legacy_doc.rs:2286); `tests::a_blank_paragraph_keeps_its_line_breaks_in_the_docx` (legacy_doc.rs:2447); `tests::a_heading_keeps_its_line_breaks_in_the_docx` (legacy_doc.rs:2478); `tests::title_and_headings_7_to_9_keep_their_word_styles` (legacy_doc.rs:2607); `validate` (validate.rs:1140); `public_memory_validator_owner_boundary_tests::missing_opaque_part_type_has_exact_public_diagnostics_and_no_speculative_repair` (validate.rs:4028); `authored_comment_family_validation_contract_tests::auxiliary_comment_parts_without_their_source_definition_are_reported_individually` (validate.rs:4330)
 
 #### `check_data_bindings_have_stores`  (L1189-1225)
 `fn check_data_bindings_have_stores(pkg: &PartFs, out: &mut Vec<Finding>)`
@@ -440,7 +440,7 @@
 - **Calls (crate):** `XName::namespace_name` (xmllinq/mod.rs:219) L1685; `XName::local_name` (xmllinq/mod.rs:208) L1686; `XName::local_name` (xmllinq/mod.rs:208) (by name) L1688
 - **Calls (std/external/unresolved):** `.ends_with`
 - **Macros:** `matches!`
-- **Called by:** `RevisionIds::new` (revision_processor.rs:3777); `collect_ids` (validate.rs:1718); `renumber_duplicate_revision_ids` (validate.rs:2831)
+- **Called by:** `RevisionIds::new` (revision_processor.rs:3806); `collect_ids` (validate.rs:1718); `renumber_duplicate_revision_ids` (validate.rs:2831)
 
 #### `revision_id_key`  (L1708-1716)
 `fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String`
@@ -458,7 +458,7 @@
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L1726; `Dom::name` (xmllinq/mod.rs:526) L1727; `XName::local_name` (xmllinq/mod.rs:208) (by name) L1730,1752; `has_unique_revision_id` (validate.rs:1684) L1733; `Dom::attribute` (xmllinq/mod.rs:874) L1734,1749; `revision_id_key` (validate.rs:1708) L1735; `Finding::new` (validate.rs:133) L1737,1758; `element_path` (validate.rs:1418) L1740,1761; `XName::get` (xmllinq/mod.rs:180) L1745; `Dom::attributes` (xmllinq/mod.rs:899) L1750
 - **Calls (std/external/unresolved):** `.clone`, `.find`, `.insert`, `.into_iter`, `.map`, `.or_else`, `.push`, `W::name`
 - **Macros:** `format!`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520) (?); `check_revision_and_drawing_ids` (validate.rs:1669)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521) (?); `check_revision_and_drawing_ids` (validate.rs:1669)
 
 #### `para_id_values`  (L1772-1786)
 `fn para_id_values(xml: &str) -> Vec<u32>`

@@ -54,7 +54,7 @@
 - **Does:** D.2 — the main-part portion of `GetRevisions` (WmlComparer.cs:3952–4048): group the redline's atoms by their correlation status and tracking element, drop `Equal` groups, and map each remaining group to a [`WmlComparerRevision`].
 - **Calls (crate):** `keyed_groups` (comparer/revisions.rs:88) L157; `group_text` (comparer/revisions.rs:121) L184; `Dom::attribute` (xmllinq/mod.rs:874) L185,187,207; `revision_date` (changes.rs:1082) L186; `XName::get` (xmllinq/mod.rs:180) L187; `elements_before_self` (comparer/revisions.rs:69) L202; `Dom::name` (xmllinq/mod.rs:526) L205; `move_group_id_from_name` (comparer/revisions.rs:58) L210
 - **Calls (std/external/unresolved):** `.expect`, `.find`, `.into_iter`, `.is_empty`, `.is_some_and`, `.map`, `.push`, `.rev`, `.starts_with`, `.to_string`, `Some`, `Vec::new`, `W::author`, `W::name`
-- **Called by:** `get_revisions` (document_comparer.rs:6293)
+- **Called by:** `get_revisions` (document_comparer.rs:6294)
 
 #### `get_revisions_from_note_definitions`  (L226-270, pub)
 `pub fn get_revisions_from_note_definitions( dom: &mut Dom, notes_root: NodeId, def_name: &crate::xmllinq::XName, part_name: &str, settings: &WmlComparerSettings, ) -> Vec<WmlComparerRevision>`
@@ -62,7 +62,7 @@
 - **Does:** D.3 — `GetFootnoteEndnoteRevisionList` (WmlComparer.cs:4072): the same grouping run per note definition under the notes-part root.
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L233; `keyed_groups` (comparer/revisions.rs:88) L236; `group_text` (comparer/revisions.rs:121) L255; `Dom::attribute` (xmllinq/mod.rs:874) L256,258; `revision_date` (changes.rs:1082) L257; `XName::get` (xmllinq/mod.rs:180) L258
 - **Calls (std/external/unresolved):** `.expect`, `.map`, `.push`, `.starts_with`, `.to_string`, `Some`, `Vec::new`, `W::author`
-- **Called by:** `get_revisions` (document_comparer.rs:6293)
+- **Called by:** `get_revisions` (document_comparer.rs:6294)
 
 #### `get_text_from_ancestor_run`  (L274-287)
 `fn get_text_from_ancestor_run(dom: &Dom, rpr_change: NodeId) -> String`
@@ -102,7 +102,7 @@
 - **Does:** D.4 — `GetFormatChangeRevisions` (WmlComparer.cs:4152): every `w:rPrChange` under each given `(root, part_name)` becomes a `FormatChanged` revision.
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L372; `Dom::attribute` (xmllinq/mod.rs:874) L374,379; `revision_date` (changes.rs:1082) L378; `XName::get` (xmllinq/mod.rs:180) L379; `get_text_from_ancestor_run` (comparer/revisions.rs:274) L382; `extract_format_change_details` (comparer/revisions.rs:327) L383
 - **Calls (std/external/unresolved):** `.push`, `.to_string`, `.unwrap_or_default`, `Some`, `Vec::new`, `W::author`, `W::name`
-- **Called by:** `get_revisions` (document_comparer.rs:6293)
+- **Called by:** `get_revisions` (document_comparer.rs:6294)
 
 #### `detect_moves`  (L414-471, pub)
 `pub fn detect_moves(revisions: &mut [WmlComparerRevision], settings: &WmlComparerSettings)`
@@ -110,4 +110,4 @@
 - **Does:** D.5 — `DetectMoves` (WmlComparer.cs:4313): post-process the revision list, pairing each qualifying deletion with its best-matching unmatched insertion (word-level Jaccard ≥ [`super::WmlComparerSettings::move_similarity_threshold`], both ≥ [`super::WmlComparerSettings::move_minimum_word_count`]) into a `Moved` pair sha...
 - **Calls (crate):** `count_words` (comparer/moves.rs:75) L422; `jaccard` (comparer/moves.rs:125) L450
 - **Calls (std/external/unresolved):** `.as_deref`, `.collect`, `.contains`, `.enumerate`, `.filter`, `.insert`, `.is_empty`, `.is_some_and`, `.iter`, `.map`, `.trim`, `.unwrap_or`, `Some`, `qualifies`, `std::collections::HashSet::new`
-- **Called by:** `get_revisions` (document_comparer.rs:6293)
+- **Called by:** `get_revisions` (document_comparer.rs:6294)

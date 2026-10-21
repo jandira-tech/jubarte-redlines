@@ -55,7 +55,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `PartFs::set_part` (opc/mod.rs:661) L204; `Dom::serialize_document` (xmllinq/mod.rs:1338) L206
 - **Calls (std/external/unresolved):** `.into_bytes`
-- **Called by:** `append_documents` (append.rs:152) (?); `cli_main` (bin/jubarte.rs:3935) (?); `Transaction::write_comments_part` (edit.rs:6714) (?); `threads` (markdown/package.rs:74) (?); `active::reset` (perf.rs:240) (?); `active::set_atom_count` (perf.rs:277) (?); `active::set_unit_count` (perf.rs:281) (?); `prune_orphan_comments` (revision_processor/comments.rs:274) (?); `prune_by_para` (revision_processor/comments.rs:411) (?); `prune_people` (revision_processor/comments.rs:467) (?); `prune_orphan_notes` (revision_processor/notes.rs:24) (?); `tidy` (revision_processor/word_save.rs:25) (?); +4 more
+- **Called by:** `append_documents` (append.rs:152) (?); `cli_main` (bin/jubarte.rs:3935) (?); `Transaction::write_comments_part` (edit.rs:6761) (?); `threads` (markdown/package.rs:74) (?); `active::reset` (perf.rs:240) (?); `active::set_atom_count` (perf.rs:277) (?); `active::set_unit_count` (perf.rs:281) (?); `prune_orphan_comments` (revision_processor/comments.rs:274) (?); `prune_by_para` (revision_processor/comments.rs:411) (?); `prune_people` (revision_processor/comments.rs:467) (?); `prune_orphan_notes` (revision_processor/notes.rs:24) (?); `tidy` (revision_processor/word_save.rs:25) (?); +4 more
 
 #### `word_parts`  (L212-217)
 `fn word_parts(pkg: &PartFs) -> Vec<String>`
@@ -69,7 +69,7 @@
 `fn remove_comments(pkg: &mut PartFs)`
 
 - **Does:** Drop every comment reference and range, then the comment parts and `people.xml` that no comment needs any more.
-- **Calls (crate):** `revision_bearing_parts` (revision_processor.rs:3687) L222; `Part::load` (scrub.rs:190) L228; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L231; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L238; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L241,249; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L245; `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L254
+- **Calls (crate):** `revision_bearing_parts` (revision_processor.rs:3716) L222; `Part::load` (scrub.rs:190) L228; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L231; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L238; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L241,249; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L245; `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L254
 - **Calls (std/external/unresolved):** `.all`, `.collect`, `.filter`, `.into_iter`, `.is_empty`, `.iter`, `.map`, `.remove`, `Some`, `W::name`, `W::r_pr`, `W::r`, `crate::revision_processor::prune_orphan_comments`
 - **Called by:** `scrub` (scrub.rs:109)
 

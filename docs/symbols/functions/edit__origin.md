@@ -51,7 +51,7 @@
 - **Calls (crate):** `Opened::open` (inspect.rs:735) L266; `open` (ambiguous: `open` (append.rs:316); `open` (changes.rs:1031); `open` (edit/anchor_error.rs:229)) L267,273,293; `load_stories` (edit.rs:1680) L272,278,298; `tag_paragraphs` (edit/origin.rs:535) L279; `body_control_nodes` (inspect.rs:997) L282,328; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L284; `tag_control` (edit/origin.rs:885) L289; `package_of` (edit/origin.rs:550) L292; `settle` (edit.rs:1617) L293; `err` (edit.rs:1770) L305; `paragraph_tags` (edit/origin.rs:564) L311; `paragraph_holds_no_content` (edit/origin.rs:684) L314; `exact_correspondence` (edit/origin.rs:723) L316; `collect_controls` (inspect.rs:1005) L323; `Dom::element` (xmllinq/mod.rs:655) (by name) L332,335; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L336; `fates` (edit/origin.rs:788) L346; `project_paragraph` (inspect.rs:1265) L350,351; `settles_all` (edit/origin.rs:513) L360
 - **Calls (std/external/unresolved):** `.and_then`, `.as_str`, `.checked_sub`, `.clone`, `.collect`, `.enumerate`, `.eq`, `.get_mut`, `.into_iter`, `.iter`, `.len`, `.map_err`, `.map_or`, `.map`, `.ok`, `.parse`, `.position`, `Err`, `Ok`, `Some`, `W::name`, `W::sdt_pr`, `W::sdt`, `W::val`
 - **Macros:** `vec!`
-- **Called by:** `task_usage` (cli.rs:3755) (?); `for_edit` (edit/for_edit.rs:1581); `apply_bound` (edit/v2_apply.rs:121); `Transaction::start` (edit.rs:2680); `run` (update.rs:186) (?)
+- **Called by:** `task_usage` (cli.rs:3755) (?); `for_edit` (edit/for_edit.rs:1581); `apply_bound` (edit/v2_apply.rs:121); `Transaction::start` (edit.rs:2680); `run` (update.rs:225) (?)
 
 #### `Origin::control_ids`  (L368-370, pub(super))
 `pub(super) fn control_ids(&self) -> &[String]`

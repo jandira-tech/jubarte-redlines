@@ -70,7 +70,7 @@
 - **Does:** Ensure every rId the redline's main document references resolves in the destination package.
 - **Calls (crate):** `PartFs::main_document_part` (opc/mod.rs:1070) L279; `Dom::descendants_and_self` (xmllinq/mod.rs:746) L285; `Dom::attributes` (xmllinq/mod.rs:899) L286; `ref_from_inserted_content` (comparer/parts.rs:234) L288; `PartFs::read_rels_for` (opc/mod.rs:991) L305; `PartFs::main_document_part` (opc/mod.rs:1070) (by name) L319; `PartFs::read_rels_for` (opc/mod.rs:991) (by name) L322; `is_external_relationship` (comparer/parts.rs:142) L333; `Dom::name` (xmllinq/mod.rs:526) L350; `required_rel_type_suffix` (comparer/parts.rs:127) L352; `XName::local_name` (xmllinq/mod.rs:208) (by name) L352; `PartFs::resolve_rel_target` (opc/mod.rs:829) (by name) L373,409; `PartFs::part_bytes` (opc/mod.rs:628) (by name) L374,410; `dest_rid_part_bytes` (comparer/parts.rs:249) L376; `dest_uri_for_reconciled_part` (comparer/parts.rs:176) L377,418; `PartFs::content_type_for` (opc/mod.rs:837) (by name) L378,419; `PartFs::add_content_type_override` (opc/mod.rs:845) L379,420; `PartFs::set_part` (opc/mod.rs:661) L381,422; `relative_rel_target` (opc/mod.rs:180) L382,424; `PartFs::add_document_relationship` (opc/mod.rs:1003) L384,425; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L385,394,406,430,433; `PartFs::add_document_relationship_external` (opc/mod.rs:1047) L401
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.clone`, `.collect`, `.contains`, `.ends_with`, `.enumerate`, `.find`, `.get`, `.is_empty`, `.is_none_or`, `.is_some_and`, `.iter`, `.map`, `.push`, `.rev`, `.to_string`, `.to_vec`, `.unwrap_or_default`, `.unwrap_or_else`, `Some`, `Vec::new`, `find_source`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `part_sources`  (L450-455)
 `fn part_sources<'a>(part: &str, a: &'a PartFs, b: &'a PartFs) -> Vec<PartSource<'a>>`
@@ -95,7 +95,7 @@
 - **Does:** Reconcile the `r:*` references every non-main `word/*.xml` part of the destination package makes in its own `.rels`.
 - **Calls (crate):** `PartFs::parts` (opc/mod.rs:733) L480; `reconcile_one_part` (comparer/parts.rs:670) L487
 - **Calls (std/external/unresolved):** `.collect`, `.ends_with`, `.filter`, `.into_iter`, `.sort`, `.starts_with`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `has_relationship_attribute`  (L493-508)
 `fn has_relationship_attribute(xml: &str) -> bool`
@@ -111,7 +111,7 @@
 - **Does:** Carry `src_part`'s relationship `rid` (when its type passes `fits`) onto `part` of `dest` under a fresh id: external targets verbatim, internal targets copied under a collision-proof name.
 - **Calls (crate):** `PartFs::read_rels_for` (opc/mod.rs:991) L525,541; `is_external_relationship` (comparer/parts.rs:142) L532,545; `PartFs::add_document_relationship_external` (opc/mod.rs:1047) L534; `PartFs::resolve_rel_target` (opc/mod.rs:829) L536,549; `PartFs::part_bytes` (opc/mod.rs:628) L537,550; `PartFs::content_type_for` (opc/mod.rs:837) L551,558; `dest_uri_for_reconciled_part` (comparer/parts.rs:176) L557; `PartFs::add_content_type_override` (opc/mod.rs:845) L559; `PartFs::set_part` (opc/mod.rs:661) L561; `PartFs::add_document_relationship` (opc/mod.rs:1003) L562; `relative_rel_target` (opc/mod.rs:180) L565
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.as_slice`, `.clone`, `.ends_with`, `.find`, `.iter`, `.to_vec`, `Some`, `fits`
-- **Called by:** `carry_with_own_relationships` (comparer/parts.rs:627); `reconcile_one_part` (comparer/parts.rs:670); `tests::carried_images_reuse_only_matching_bytes_content_type_and_internal_type` (comparer/parts.rs:870); `tests::carried_external_links_and_missing_internal_targets_do_not_create_media` (comparer/parts.rs:949); `carry_revised_part_relationships` (document_comparer.rs:25); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `carry_with_own_relationships` (comparer/parts.rs:627); `reconcile_one_part` (comparer/parts.rs:670); `tests::carried_images_reuse_only_matching_bytes_content_type_and_internal_type` (comparer/parts.rs:870); `tests::carried_external_links_and_missing_internal_targets_do_not_create_media` (comparer/parts.rs:949); `carry_revised_part_relationships` (document_comparer.rs:25); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `carry_part_relationships`  (L576-585, pub)
 `pub fn carry_part_relationships( dest: &mut PartFs, dest_part: &str, src: &PartFs, src_part: &str, dom: &mut Dom, root: NodeId, )`

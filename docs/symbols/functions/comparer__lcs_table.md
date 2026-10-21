@@ -114,7 +114,7 @@
 `fn row_pair_uses_word_table_mesh_context( dom: &Dom, original: &ComparisonUnit, revised: &ComparisonUnit, ) -> bool`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `row_container` (comparer/lcs_table.rs:337) L537; `Dom::ancestors` (xmllinq/mod.rs:770) L538; `Dom::attribute` (xmllinq/mod.rs:874) L540; `context` (edit.rs:7100) (by name) L542
+- **Calls (crate):** `row_container` (comparer/lcs_table.rs:337) L537; `Dom::ancestors` (xmllinq/mod.rs:770) L538; `Dom::attribute` (xmllinq/mod.rs:874) L540; `context` (edit.rs:7147) (by name) L542
 - **Calls (std/external/unresolved):** `.find_map`, `.into_iter`, `.is_some_and`, `PT::name`, `Some`, `W::tbl`
 - **Called by:** `rows_preserving_horizontal_partitions_inner` (comparer/lcs_table.rs:573)
 
@@ -158,7 +158,7 @@
 - **Does:** The row's `w:trPr`, created when absent after a `w:tblPrEx` (CT_Row order), else as the row's first child.
 - **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L764,768; `Dom::new_element` (xmllinq/mod.rs:478) L767; `Dom::add_after_self` (xmllinq/mod.rs:1147) L769; `Dom::add_first` (xmllinq/mod.rs:1101) L770
 - **Calls (std/external/unresolved):** `W::name`
-- **Called by:** `mark_rows_as_deleted_or_inserted` (comparer/lcs_table.rs:705); `mark_story_rows` (document_comparer.rs:5755)
+- **Called by:** `mark_rows_as_deleted_or_inserted` (comparer/lcs_table.rs:705); `mark_story_rows` (document_comparer.rs:5756)
 
 #### `add_row_mark`  (L778-783, pub(crate))
 `pub(crate) fn add_row_mark(dom: &mut Dom, trpr: NodeId, rev: NodeId)`
@@ -166,7 +166,7 @@
 - **Does:** Add a row's `w:ins` / `w:del` to its `w:trPr`: CT_TrPr keeps them ahead of a `w:trPrChange` (acce1b593c's header rows wrote the mark after it: the schema rejects that, and Word timed out saving the redline as PDF).
 - **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L779; `Dom::add_before_self` (xmllinq/mod.rs:1130) L780; `Dom::add` (xmllinq/mod.rs:1074) L781
 - **Calls (std/external/unresolved):** `W::name`
-- **Called by:** `mark_fully_revised_rows` (comparer/finalize.rs:11671); `mark_rows_as_deleted_or_inserted` (comparer/lcs_table.rs:705); `row_mark_tests::a_row_mark_goes_before_the_row_property_change` (comparer/lcs_table.rs:798); `mark_story_rows` (document_comparer.rs:5755)
+- **Called by:** `mark_fully_revised_rows` (comparer/finalize.rs:11671); `mark_rows_as_deleted_or_inserted` (comparer/lcs_table.rs:705); `row_mark_tests::a_row_mark_goes_before_the_row_property_change` (comparer/lcs_table.rs:798); `mark_story_rows` (document_comparer.rs:5756)
 
 ## Test functions (38)
 

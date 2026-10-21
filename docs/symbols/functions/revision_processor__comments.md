@@ -16,7 +16,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `PartFs::set_part` (opc/mod.rs:661) L55; `Dom::serialize_document` (xmllinq/mod.rs:1338) L57
 - **Calls (std/external/unresolved):** `.into_bytes`
-- **Called by:** `append_documents` (append.rs:152) (?); `cli_main` (bin/jubarte.rs:3935) (?); `Transaction::write_comments_part` (edit.rs:6714) (?); `threads` (markdown/package.rs:74) (?); `active::reset` (perf.rs:240) (?); `active::set_atom_count` (perf.rs:277) (?); `active::set_unit_count` (perf.rs:281) (?); `prune_orphan_comments` (revision_processor/comments.rs:274) (?); `prune_by_para` (revision_processor/comments.rs:411) (?); `prune_people` (revision_processor/comments.rs:467) (?); `prune_orphan_notes` (revision_processor/notes.rs:24) (?); `tidy` (revision_processor/word_save.rs:25) (?); +4 more
+- **Called by:** `append_documents` (append.rs:152) (?); `cli_main` (bin/jubarte.rs:3935) (?); `Transaction::write_comments_part` (edit.rs:6761) (?); `threads` (markdown/package.rs:74) (?); `active::reset` (perf.rs:240) (?); `active::set_atom_count` (perf.rs:277) (?); `active::set_unit_count` (perf.rs:281) (?); `prune_orphan_comments` (revision_processor/comments.rs:274) (?); `prune_by_para` (revision_processor/comments.rs:411) (?); `prune_people` (revision_processor/comments.rs:467) (?); `prune_orphan_notes` (revision_processor/notes.rs:24) (?); `tidy` (revision_processor/word_save.rs:25) (?); +4 more
 
 #### `Parsed::w`  (L62-64, pub(super))
 `pub(super) fn w(&self, local: &str) -> Vec<NodeId>`
@@ -32,7 +32,7 @@
 - **Does:** Remove every comment range whose entire content is deleted, including its reference run.
 - **Calls (crate):** `wholly_deleted_ranges` (revision_processor/bookmarks.rs:32) L72; `Dom::descendants` (xmllinq/mod.rs:668) L82; `Dom::attribute` (xmllinq/mod.rs:874) L83; `remove_marker` (revision_processor/comments.rs:258) L87
 - **Calls (std/external/unresolved):** `.contains`, `.is_empty`, `.is_some_and`, `Some`, `W::id`, `W::name`
-- **Called by:** `accept_content` (revision_processor.rs:3481)
+- **Called by:** `accept_content` (revision_processor.rs:3510)
 
 #### `keep_wholly_deleted_comments`  (L96-236, pub(super))
 `pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<String>`
@@ -41,13 +41,13 @@
 - **Calls (crate):** `wholly_deleted_ranges` (revision_processor/bookmarks.rs:32) L97; `Dom::descendants` (xmllinq/mod.rs:668) L103,106,202; `Dom::attribute` (xmllinq/mod.rs:874) L107,125,203; `Dom::name` (xmllinq/mod.rs:526) L124,128,133,147,179; `is_character` (revision_processor/bookmarks.rs:112) L129; `Dom::parent` (xmllinq/mod.rs:597) L132,138,213; `removed_container` (revision_processor/comments.rs:240) L144,147,162; `Dom::new_element` (xmllinq/mod.rs:478) L174,199,212; `Dom::elements` (xmllinq/mod.rs:640) L176; `Dom::add_before_self` (xmllinq/mod.rs:1130) L181,200,222,225; `Dom::add` (xmllinq/mod.rs:1074) L183,217,220; `Dom::element` (xmllinq/mod.rs:655) L214; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L216,219; `remove_marker` (revision_processor/comments.rs:258) L221; `Dom::remove` (xmllinq/mod.rs:1118) L224,229,233
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.as_str`, `.contains`, `.copied`, `.expect`, `.extend`, `.filter`, `.find`, `.into_iter`, `.is_none`, `.is_some_and`, `.is_some`, `.iter_mut`, `.iter`, `.map`, `.or_else`, `.position`, `.push`, `.rev`, `.take_while`, `.unwrap_or`, `Some`, `Vec::new`, `W::id`, `W::name`, `W::p_pr`, `W::p`, `W::r_pr`, `W::r`, `survives`
 - **Macros:** `vec!`
-- **Called by:** `accept_content` (revision_processor.rs:3481)
+- **Called by:** `accept_content` (revision_processor.rs:3510)
 
 #### `removed_container`  (L240-254)
 `fn removed_container(dom: &Dom, node: NodeId) -> Option<NodeId>`
 
 - **Does:** The outermost container removed by the trailing accept pass.
-- **Calls (crate):** `Dom::name` (xmllinq/mod.rs:526) L244; `has_path` (revision_processor.rs:113) L245,246; `table_rows_all_deleted` (revision_processor.rs:1941) L247; `Dom::parent` (xmllinq/mod.rs:597) L251
+- **Calls (crate):** `Dom::name` (xmllinq/mod.rs:526) L244; `has_path` (revision_processor.rs:113) L245,246; `table_rows_all_deleted` (revision_processor.rs:1970) L247; `Dom::parent` (xmllinq/mod.rs:597) L251
 - **Calls (std/external/unresolved):** `Some`, `W::cell_del`, `W::del`, `W::tbl`, `W::tc_pr`, `W::tc`, `W::tr_pr`, `W::tr`
 - **Called by:** `keep_wholly_deleted_comments` (revision_processor/comments.rs:96)
 
@@ -65,7 +65,7 @@
 - **Does:** Drop the comments Accept / Reject All left without a reference, prune the comment family and `people.xml` (module docs).
 - **Calls (crate):** `Parsed::load` (revision_processor/comments.rs:41) L275,285; `Parsed::w` (revision_processor/comments.rs:62) (by name) L291,304,327; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L293,305,308,314,328; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L313; `remove_marker` (revision_processor/comments.rs:258) L329; `collapse_cut_ranges` (revision_processor/comments.rs:361) L334; `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L336,349; `PartFs::main_document_part` (opc/mod.rs:1070) L340; `remove_part` (revision_processor/comments.rs:495) L345; `prune_by_para` (revision_processor/comments.rs:411) L350; `prune_people` (revision_processor/comments.rs:467) L352
 - **Calls (std/external/unresolved):** `.as_str`, `.collect`, `.contains`, `.filter_map`, `.filter`, `.flat_map`, `.insert`, `.into_iter`, `.is_empty`, `.is_some_and`, `.iter`, `.map`, `.push`, `.remove`, `.to_string`, `.unwrap_or_else`, `.unwrap_or`, `HashSet::new`, `Some`, `Vec::new`, `W14::name`, `W::id`, `W::name`, `W::p`
-- **Called by:** `resolve_with_comments` (revision_processor.rs:3871)
+- **Called by:** `resolve_with_comments` (revision_processor.rs:3900)
 
 #### `collapse_cut_ranges`  (L361-401)
 `fn collapse_cut_ranges(s: &mut Parsed) -> bool`
@@ -81,7 +81,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L404; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L405
 - **Calls (std/external/unresolved):** `Some`, `W::id`, `W::name`
-- **Called by:** `step_out_of_deletion_end` (comparer/comments.rs:898) (?); `mark_comment_anchors` (convert/mod.rs:7877) (?); `lift_out_of_deletion` (edit.rs:6776); `closing_comment_references` (edit.rs:7548); `collapse_cut_ranges` (revision_processor/comments.rs:361)
+- **Called by:** `step_out_of_deletion_end` (comparer/comments.rs:898) (?); `mark_comment_anchors` (convert/mod.rs:7877) (?); `lift_out_of_deletion` (edit.rs:6823); `closing_comment_references` (edit.rs:7595); `collapse_cut_ranges` (revision_processor/comments.rs:361)
 
 #### `prune_by_para`  (L411-464)
 `fn prune_by_para(pkg: &mut PartFs, dropped_paras: &HashSet<String>)`

@@ -64,7 +64,7 @@
 `fn visible_text(line: &str) -> String`
 
 - **Does:** A Markdown line without what is never painted: images (alt text and all), link targets, HTML tags and comments, footnote labels and CriticMarkup comments.
-- **Calls (crate):** `without_attributions` (markdown/critic.rs:1402) L237; `autolink` (markdown/pages.rs:420) L248; `html_tag_len` (markdown/pages.rs:331) L256
+- **Calls (crate):** `without_attributions` (markdown/critic.rs:1407) L237; `autolink` (markdown/pages.rs:420) L248; `html_tag_len` (markdown/pages.rs:331) L256
 - **Calls (std/external/unresolved):** `.as_str`, `.chars`, `.find`, `.get`, `.len_utf8`, `.len`, `.map`, `.next`, `.push_str`, `.push`, `.saturating_add`, `.starts_with`, `.unwrap_or_else`, `.unwrap_or`, `Some`, `String::with_capacity`
 - **Called by:** `paginate` (markdown/pages.rs:59); `line_text` (markdown/pages.rs:412); `tests::ignores_link_targets_and_critic_comments` (markdown/pages.rs:602)
 
@@ -104,7 +104,7 @@
 
 - **Does:** Where `key` starts in `stream` at or after `from`, within the window.
 - **Calls (std/external/unresolved):** `.checked_sub`, `.copied`, `.eq`, `.find`, `.get`, `.is_empty`, `.is_some_and`, `.iter`, `.len`, `.map`, `.min`, `.saturating_add`
-- **Called by:** `Build::sdt` (debug/diff.rs:1136) (?); `part_rels_agree` (document_comparer.rs:70) (?); `place_reply_markers` (edit.rs:7866) (?); `first_section_stories` (markdown/from_docx/header.rs:1317) (?); `paginate` (markdown/pages.rs:59); `zip32_tests::version_needed_distinguishes_stored_deflate_and_zip64` (opc/mod.rs:2283) (?)
+- **Called by:** `Build::sdt` (debug/diff.rs:1136) (?); `part_rels_agree` (document_comparer.rs:70) (?); `place_reply_markers` (edit.rs:7913) (?); `first_section_stories` (markdown/from_docx/header.rs:1317) (?); `paginate` (markdown/pages.rs:59); `zip32_tests::version_needed_distinguishes_stored_deflate_and_zip64` (opc/mod.rs:2320) (?)
 
 ## Test functions (26)
 

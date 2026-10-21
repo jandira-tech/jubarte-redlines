@@ -66,9 +66,9 @@
 | `ShortId::Err` | src/ids/short.rs:387 | private | _no doc comment_ | type Err = IdError |
 | `Result` | src/legacy_doc.rs:91 | private | _no doc comment_ | type Result<T> = std::result::Result<T, LegacyDocError> |
 | `Sides` | src/markdown/borders.rs:185 | pub(crate) | A table's or a cell's borders, side by side, in schema order. | pub(crate) type Sides = Vec<(&'static str, Border)> |
-| `Allowed` | src/markdown/critic.rs:417 | private | Which spans a text may open: bits of [`INSERT`], [`DELETE`]... | type Allowed = u8 |
-| `Cover` | src/markdown/critic.rs:451 | private | A nested span's cover of one delimiter position: the innermost span covering it, the earliest start and the latest end of every span covering it. | type Cover = ((usize, usize), usize, usize) |
-| `Run` | src/markdown/critic.rs:455 | private | A delimiter's run of consecutive covered positions: the first index after it, its earliest covering start, its latest covering end. | type Run = (usize, usize, usize) |
+| `Allowed` | src/markdown/critic.rs:422 | private | Which spans a text may open: bits of [`INSERT`], [`DELETE`]... | type Allowed = u8 |
+| `Cover` | src/markdown/critic.rs:456 | private | A nested span's cover of one delimiter position: the innermost span covering it, the earliest start and the latest end of every span covering it. | type Cover = ((usize, usize), usize, usize) |
+| `Run` | src/markdown/critic.rs:460 | private | A delimiter's run of consecutive covered positions: the first index after it, its earliest covering start, its latest covering end. | type Run = (usize, usize, usize) |
 | `Wholes` | src/markdown/from_docx/agent.rs:479 | pub(crate) | The marks of each logical change of several marks: by a mark's short id (`r8`, `header1.r2`), the `w:id`s of all its change's marks in reading order (`7 8 9 10`). | pub(crate) type Wholes = HashMap<String, Vec<String>> |
 | `StoryRev` | src/markdown/from_docx/agent.rs:1445 | pub(crate) | A whole story part's changes (a header, a footer, one note) whose id `shown` prints no tag for, as printed tags: insertions, deletions and moves, each `true` for an insertion (`rev`/`rev-del`), then formatting (`fmt`), each with its paragraph when one holds it (`in footer1.p1`). | pub(crate) type StoryRev = (bool, String) |
 | `StoryFmt` | src/markdown/from_docx/agent.rs:1448 | pub(crate) | A formatting change `story_unshown` names: its paragraph when one holds it, and its tag. | pub(crate) type StoryFmt = (Option<usize>, String) |
@@ -86,7 +86,7 @@
 | `Change` | src/markdown/xml.rs:22 | pub(super) | A change's kind and its serial number, so two changes side by side stay two revisions. | pub(super) type Change = (Kind, u32) |
 | `Relationships::Target` | src/opc/mod.rs:56 | private | _no doc comment_ | type Target = oxml_opc::Relationships |
 | `FsBackend::Staged` | src/publication.rs:420 | private | _no doc comment_ | type Staged = StagedFile |
-| `Freeze` | src/revision_processor.rs:3845 | pub(crate) | Called with each revision-bearing part's name and parsed root before it is resolved; renames the revisions to keep into [`FROZEN_NS`]. | pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId) |
+| `Freeze` | src/revision_processor.rs:3874 | pub(crate) | Called with each revision-bearing part's name and parsed root before it is resolved; renames the revisions to keep into [`FROZEN_NS`]. | pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId) |
 | `Declaration` | src/revision_processor/style_records.rs:480 | private | Each slot's nearest declaration: its style, the property and its attributes. _(from a code comment)_ | type Declaration = (Option<NodeId>, NodeId, Vec<(String, String)>) |
 | `ForeignSpans` | src/validate.rs:3449 | private | _no doc comment_ | type ForeignSpans = HashMap<String, Vec<(usize, usize)>> |
 | `ForeignFindings` | src/validate.rs:3450 | private | _no doc comment_ | type ForeignFindings = Vec<(bool, usize, Finding)> |

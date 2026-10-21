@@ -7,7 +7,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.to_vec`
-- **Called by:** `tests::debug_opens_a_dual_header_package_instead_of_refusing` (bin/jubarte.rs:4638); `findings` (debug.rs:2575); `tests::a_clean_package_has_no_findings` (debug.rs:2935); `tests::a_dual_header_package_reports_a_finding_instead_of_refusing` (debug.rs:2961); `tests::a_header_field_mismatch_reports_a_finding_instead_of_refusing` (debug.rs:2992); `tests::an_overlapping_entry_reports_a_finding_instead_of_refusing` (debug.rs:3012); `tests::a_descriptor_disagreement_reports_a_finding_instead_of_refusing` (debug.rs:3038); `tests::a_corrupt_directory_payload_reports_a_finding_instead_of_refusing` (debug.rs:3068); `tests::debug_output` (debug.rs:3084); `tests::a_special_entry_reports_a_finding_instead_of_refusing` (debug.rs:3217); `tests::a_deleted_text_box_field_left_bare_is_reported` (debug.rs:3244); `tests::two_files_print_only_what_differs` (debug.rs:3256); +17 more
+- **Called by:** `tests::debug_opens_a_dual_header_package_instead_of_refusing` (bin/jubarte.rs:4638); `findings` (debug.rs:2575); `tests::a_clean_package_has_no_findings` (debug.rs:2935); `tests::a_dual_header_package_reports_a_finding_instead_of_refusing` (debug.rs:2961); `tests::a_header_field_mismatch_reports_a_finding_instead_of_refusing` (debug.rs:2992); `tests::an_overlapping_entry_reports_a_finding_instead_of_refusing` (debug.rs:3012); `tests::a_descriptor_disagreement_reports_a_finding_instead_of_refusing` (debug.rs:3038); `tests::a_corrupt_directory_payload_reports_a_finding_instead_of_refusing` (debug.rs:3068); `tests::debug_output` (debug.rs:3084); `tests::a_special_entry_reports_a_finding_instead_of_refusing` (debug.rs:3217); `tests::a_deleted_text_box_field_left_bare_is_reported` (debug.rs:3244); `tests::two_files_print_only_what_differs` (debug.rs:3256); +18 more
 
 #### `Package::open`  (L180-182)
 `fn open(bytes: &[u8]) -> Result<Self, String>`
@@ -91,7 +91,8 @@
 `fn clip(s: &str, max: usize) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (std/external/unresolved):** `.chars`, `.collect`, `.count`, `.join`, `.split_whitespace`, `.take`
+- **Calls (crate):** `collapse_whitespace` (util/mod.rs:46) L441
+- **Calls (std/external/unresolved):** `.chars`, `.count`, `.take`
 - **Macros:** `format!`
 - **Called by:** `Build::paragraph` (debug/diff.rs:890); `Build::table` (debug/diff.rs:1076); `Build::row` (debug/diff.rs:1107); `Build::note` (debug/diff.rs:1165); `Tally::add` (debug/render.rs:490); `paragraph` (debug/render.rs:590); `table` (debug/render.rs:869); `check_orphans` (debug.rs:482); `check_fields` (debug.rs:558)
 
@@ -183,7 +184,7 @@
 - **Does:** The rels file that holds `part`'s relationships.
 - **Calls (std/external/unresolved):** `.rsplit_once`
 - **Macros:** `format!`
-- **Called by:** `main_rels` (debug/render.rs:76); `check_package` (debug.rs:866); `adopt_revised_header_footer` (document_comparer.rs:5174) (?)
+- **Called by:** `main_rels` (debug/render.rs:76); `check_package` (debug.rs:866); `adopt_revised_header_footer` (document_comparer.rs:5175) (?)
 
 #### `elements_named`  (L852-860)
 `fn elements_named<'a>( dom: &'a Dom, root: NodeId, name: &'a str, ) -> impl Iterator<Item = NodeId> + 'a`
@@ -226,7 +227,7 @@
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L1134; `local` (debug.rs:381) L1135; `attr` (debug.rs:641) L1137,1139
 - **Calls (std/external/unresolved):** `.as_str`, `.contains`, `.entry`, `.is_empty`, `.or_default`, `.push`
 - **Macros:** `format!`
-- **Called by:** `analyze` (debug.rs:1220); `compare_documents_impl` (document_comparer.rs:6520) (?)
+- **Called by:** `analyze` (debug.rs:1220); `compare_documents_impl` (document_comparer.rs:6521) (?)
 
 #### `check_styles`  (L1157-1210)
 `fn check_styles(parts: &[(String, Dom, NodeId)], f: &mut Findings)`
@@ -420,7 +421,7 @@
 `fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>>`
 
 - **Does:** Header and footer part name → every "section N TYPE header|footer" that shows it, in section order.
-- **Calls (crate):** `decode_xml` (debug.rs:330) L2040; `Dom::new` (xmllinq/mod.rs:387) L2041; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L2042; `Dom::root` (xmllinq/mod.rs:822) L2043; `parse` (ambiguous: `revision_boundary_coverage_tests::parse` (revision_processor.rs:3970); `body_equation_paragraph_mark_ownership_tests::parse` (revision_processor.rs:5052); `deleted_title_equation_barrier_tests::parse` (revision_processor.rs:5271)) L2047,2077; `Dom::elements` (xmllinq/mod.rs:640) L2050,2085; `attr` (debug.rs:641) L2054,2055,2056,2092,2098; `rel_targets` (debug/diff.rs:407) (by name) L2062,2070; `resolve_rel_target` (opc/mod.rs:549) L2065,2073; `Dom::descendants` (xmllinq/mod.rs:668) L2080; `local` (debug.rs:381) L2083,2086
+- **Calls (crate):** `decode_xml` (debug.rs:330) L2040; `Dom::new` (xmllinq/mod.rs:387) L2041; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L2042; `Dom::root` (xmllinq/mod.rs:822) L2043; `parse` (ambiguous: `revision_boundary_coverage_tests::parse` (revision_processor.rs:3999); `body_equation_paragraph_mark_ownership_tests::parse` (revision_processor.rs:5081); `deleted_title_equation_barrier_tests::parse` (revision_processor.rs:5300)) L2047,2077; `Dom::elements` (xmllinq/mod.rs:640) L2050,2085; `attr` (debug.rs:641) L2054,2055,2056,2092,2098; `rel_targets` (debug/diff.rs:407) (by name) L2062,2070; `resolve_rel_target` (opc/mod.rs:549) L2065,2073; `Dom::descendants` (xmllinq/mod.rs:668) L2080; `local` (debug.rs:381) L2083,2086
 - **Calls (std/external/unresolved):** `.as_str`, `.clone`, `.collect`, `.ends_with`, `.entry`, `.enumerate`, `.filter`, `.find`, `.get`, `.into_iter`, `.is_empty`, `.iter`, `.map`, `.or_insert_with`, `.push`, `.rsplit_once`, `.to_string`, `.unwrap_or`, `HashMap::new`, `Some`, `Vec::new`
 - **Macros:** `format!`
 - **Called by:** `package_tree` (debug/diff.rs:303); `render_parts` (debug/render.rs:28); `story_roles` (debug.rs:2028)
@@ -451,7 +452,7 @@
 `pub(crate) fn document_text_view( bytes: &[u8], critic: bool, accept: bool, ) -> Result<String, String>`
 
 - **Does:** Validated document snapshot with an explicit revision policy.
-- **Calls (crate):** `admit` (admission.rs:439) L2186; `<InputLimits as Default>::default` (admission.rs:64) L2186; `Package::open` (ambiguous: `Package::open` (debug.rs:180); `Package::open` (markdown/from_docx/ooxml.rs:43)) L2188; `decode_xml` (debug.rs:330) L2190; `validate_xml` (xmllinq/parse.rs:1043) L2192; `Dom::new` (xmllinq/mod.rs:387) L2193; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L2194; `Dom::root` (xmllinq/mod.rs:822) L2195; `parse` (ambiguous: `revision_boundary_coverage_tests::parse` (revision_processor.rs:3970); `body_equation_paragraph_mark_ownership_tests::parse` (revision_processor.rs:5052); `deleted_title_equation_barrier_tests::parse` (revision_processor.rs:5271)) L2205,2253; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L2208; `attr` (debug.rs:641) L2209,2212,2218; `local` (debug.rs:381) L2210,2217,2282; `Dom::name` (xmllinq/mod.rs:526) L2222,2303; `XName::local_name` (xmllinq/mod.rs:208) (by name) L2223,2304,2311; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L2225,2303,2307; `story_roles` (debug.rs:2028) L2231; `word_name` (markdown/package.rs:697) (by name) L2255,2259,2276,2283; `Dom::elements` (xmllinq/mod.rs:640) L2256; `Dom::descendants` (xmllinq/mod.rs:668) L2300; `Dom::set_name` (xmllinq/mod.rs:539) L2304; `XName::get` (xmllinq/mod.rs:180) L2304,2311; `Dom::attributes` (xmllinq/mod.rs:899) L2306; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L2308,2309; `accept_revisions_for_part_content` (revision_processor.rs:3477) L2317; `text_lines` (debug.rs:1662) L2319
+- **Calls (crate):** `admit` (admission.rs:439) L2186; `<InputLimits as Default>::default` (admission.rs:64) L2186; `Package::open` (ambiguous: `Package::open` (debug.rs:180); `Package::open` (markdown/from_docx/ooxml.rs:43)) L2188; `decode_xml` (debug.rs:330) L2190; `validate_xml` (xmllinq/parse.rs:1052) L2192; `Dom::new` (xmllinq/mod.rs:387) L2193; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L2194; `Dom::root` (xmllinq/mod.rs:822) L2195; `parse` (ambiguous: `revision_boundary_coverage_tests::parse` (revision_processor.rs:3999); `body_equation_paragraph_mark_ownership_tests::parse` (revision_processor.rs:5081); `deleted_title_equation_barrier_tests::parse` (revision_processor.rs:5300)) L2205,2253; `.elements` (ambiguous: `Build::elements` (debug/diff.rs:495); `Element::elements` (markdown/from_docx/ooxml.rs:372); `Dom::elements` (xmllinq/mod.rs:640)) L2208; `attr` (debug.rs:641) L2209,2212,2218; `local` (debug.rs:381) L2210,2217,2282; `Dom::name` (xmllinq/mod.rs:526) L2222,2303; `XName::local_name` (xmllinq/mod.rs:208) (by name) L2223,2304,2311; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L2225,2303,2307; `story_roles` (debug.rs:2028) L2231; `word_name` (markdown/package.rs:697) (by name) L2255,2259,2276,2283; `Dom::elements` (xmllinq/mod.rs:640) L2256; `Dom::descendants` (xmllinq/mod.rs:668) L2300; `Dom::set_name` (xmllinq/mod.rs:539) L2304; `XName::get` (xmllinq/mod.rs:180) L2304,2311; `Dom::attributes` (xmllinq/mod.rs:899) L2306; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L2308,2309; `accept_revisions_for_part_content` (revision_processor.rs:3506) L2317; `text_lines` (debug.rs:1662) L2319
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.clone`, `.cloned`, `.ends_with`, `.filter`, `.find`, `.get`, `.insert`, `.into_iter`, `.is_some_and`, `.iter`, `.map_err`, `.map`, `.ok_or_else`, `.ok_or`, `.or_else`, `.push`, `.rsplit_once`, `.strip_prefix`, `.to_ascii_lowercase`, `.to_string`, `.trim_start_matches`, `.unwrap_or_else`, `.unwrap_or`, `BTreeMap::new`, `Err`, `HashMap::new`, `Ok`, `Some`, `String::new`
 - **Macros:** `format!`, `matches!`, `writeln!`
 - **Called by:** `document_text_with_critic` (debug.rs:2176); `view_snapshot` (text_diff.rs:145)

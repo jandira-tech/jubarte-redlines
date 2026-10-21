@@ -52,7 +52,7 @@
 - **Does:** Whitespace, or a `&#32;` [`plain_anchor`] hid.
 - **Calls (crate):** `hide` (markdown/anchor.rs:26) L139
 - **Calls (std/external/unresolved):** `.is_whitespace`
-- **Called by:** `peel_story_final_groups` (comparer/lcs.rs:3533) (?); `collapse_ws` (convert/mod.rs:16256) (?); `without_emphasis` (markdown/anchor.rs:147); `mark_close` (markdown/critic.rs:1750) (?); `mark_closes` (markdown/critic.rs:1774) (?)
+- **Called by:** `peel_story_final_groups` (comparer/lcs.rs:3533) (?); `collapse_ws` (convert/mod.rs:16256) (?); `without_emphasis` (markdown/anchor.rs:147); `mark_close` (markdown/critic.rs:1755) (?); `mark_closes` (markdown/critic.rs:1779) (?)
 
 #### `without_emphasis`  (L147-241)
 `fn without_emphasis(text: &str) -> String`
@@ -81,7 +81,7 @@
 `fn read_anchor(text: &str, deleted: Keep, substituted: Keep) -> String`
 
 - **Does:** [`plain_anchor`]'s reading, a deletion read as `deleted` says and a substitution as `substituted` says.
-- **Calls (crate):** `parser_options` (markdown/write.rs:1626) L279; `hide` (markdown/anchor.rs:26) L284,317,331,337; `Parser::peek` (markdown/math.rs:804) (by name) L316,322,328; `space_reference` (markdown/anchor.rs:39) L336; `strip_between` (markdown/anchor.rs:84) L349,355,356,357,358; `without_attributions` (markdown/critic.rs:1402) L350; `without_emphasis` (markdown/anchor.rs:147) L361
+- **Calls (crate):** `parser_options` (markdown/write.rs:1626) L279; `hide` (markdown/anchor.rs:26) L284,317,331,337; `Parser::peek` (markdown/math.rs:804) (by name) L316,322,328; `space_reference` (markdown/anchor.rs:39) L336; `strip_between` (markdown/anchor.rs:84) L349,355,356,357,358; `without_attributions` (markdown/critic.rs:1407) L350; `without_emphasis` (markdown/anchor.rs:147) L361
 - **Calls (std/external/unresolved):** `.as_str`, `.chars`, `.collect`, `.contains`, `.extend`, `.into_offset_iter`, `.is_ascii`, `.join`, `.len`, `.map`, `.next`, `.peekable`, `.push_str`, `.push`, `.split`, `.trim_matches`, `Some`, `String::with_capacity`, `pulldown_cmark::Parser::new_ext`
 - **Called by:** `plain_anchor` (markdown/anchor.rs:259); `plain_anchor_with_removed` (markdown/anchor.rs:267)
 

@@ -28,7 +28,7 @@
 `pub fn verification(&self) -> crate::result::Verification`
 
 - **Does:** Report only completed checks and their computed findings.
-- **Calls (crate):** `outcome` (ambiguous: `outcome` (edit/v2_apply.rs:1634); `deeper_boundary_tests::outcome` (edit.rs:8716)) L97,98
+- **Calls (crate):** `outcome` (ambiguous: `outcome` (edit/v2_apply.rs:1634); `deeper_boundary_tests::outcome` (edit.rs:8796)) L97,98
 - **Calls (std/external/unresolved):** `.clone`, `.to_string`, `Default::default`, `Some`
 - **Called by:** `prepare_and_publish` (bin/jubarte/edit_typed.rs:398) (?); `tests::verification_reports_only_completed_candidate_checks` (edit/prepared.rs:1172) (?)
 
@@ -43,7 +43,7 @@
 `pub fn prepare( source: &[u8], plan: &EditPlan, options: &PrepareOptions, ) -> Result<PreparedEdit, EditError>`
 
 - **Does:** Run the shared preparation: resolve, apply, choose the primary bytes, verify the serialized candidate, then apply `options` last.
-- **Calls (crate):** `prepare_skipping` (edit/skip.rs:43) L219; `check_update_fields` (edit.rs:2329) (by name) L221; `lower` (edit/visible.rs:95) L222; `Transaction::start` (edit.rs:2680) L224; `Transaction::resolve` (edit.rs:3267) L226; `check` (edit/tracked.rs:107) L227; `Transaction::emits_directly` (edit.rs:2828) L228; `Transaction::edits_beside_a_range_marker` (edit.rs:2872) L231; `Transaction::apply` (edit.rs:5882) L232; `check_dom_realized` (edit/prepared.rs:712) L233; `produce` (edit/prepared.rs:928) L234; `primary_effect` (edit/prepared.rs:284) L235; `check_candidates` (edit/prepared.rs:397) L243; `check_rejected_ranges` (edit/prepared.rs:330) L246; `err` (edit/prepared.rs:1047) L261; `source_sha256` (inspect.rs:299) (by name) L269,270,271; `EditPlan::to_json` (edit.rs:1846) L270
+- **Calls (crate):** `prepare_skipping` (edit/skip.rs:43) L219; `check_update_fields` (edit.rs:2329) (by name) L221; `lower` (edit/visible.rs:95) L222; `Transaction::start` (edit.rs:2680) L224; `Transaction::resolve` (edit.rs:3267) L226; `check` (edit/tracked.rs:107) L227; `Transaction::emits_directly` (edit.rs:2828) L228; `Transaction::edits_beside_a_range_marker` (edit.rs:2872) L231; `Transaction::apply` (edit.rs:6430) L232; `check_dom_realized` (edit/prepared.rs:712) L233; `produce` (edit/prepared.rs:928) L234; `primary_effect` (edit/prepared.rs:284) L235; `check_candidates` (edit/prepared.rs:397) L243; `check_rejected_ranges` (edit/prepared.rs:330) L246; `err` (edit/prepared.rs:1047) L261; `source_sha256` (inspect.rs:299) (by name) L269,270,271; `EditPlan::to_json` (edit.rs:1846) L270
 - **Calls (std/external/unresolved):** `.and_then`, `.as_bytes`, `.as_ref`, `.clone`, `.map_err`, `.to_vec`, `.unwrap_or`, `Err`, `Ok`, `Vec::new`
 - **Macros:** `format!`
 - **Called by:** `tests::verification_reports_only_completed_candidate_checks` (edit/prepared.rs:1172); `tests::review_11_prepare_v2_checks_serialized_text_like_v1` (edit/prepared.rs:1292); `prepare_skipping` (edit/skip.rs:43) (?); `rename_positions` (edit/skip.rs:394) (?); `apply_plan_json_with` (edit.rs:2284); `apply_plan` (edit.rs:2322); `preview_plan_with` (edit.rs:2380)
@@ -61,7 +61,7 @@
 `fn check_rejected_ranges(source: &[u8], redline: &[u8]) -> Result<(), EditError>`
 
 - **Does:** Reject All of `redline` gives the source back, so it keeps each of the source's bookmarks (by name; Word's own `_GoBack` aside), comment ranges and permission ranges.
-- **Calls (crate):** `reject_revisions` (document_comparer.rs:4984) L331; `err` (edit/prepared.rs:1047) L332,349; `range_markers` (edit/prepared.rs:368) L338
+- **Calls (crate):** `reject_revisions` (document_comparer.rs:4985) L331; `err` (edit/prepared.rs:1047) L332,349; `range_markers` (edit/prepared.rs:368) L338
 - **Calls (std/external/unresolved):** `.chain`, `.collect`, `.difference`, `.is_empty`, `.join`, `.map_err`, `.map`, `.then`, `.to_string`, `Err`, `Ok`
 - **Macros:** `format!`
 - **Called by:** `prepare` (edit/prepared.rs:211)
@@ -88,7 +88,7 @@
 `fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText)>`
 
 - **Does:** The exact text each paragraph must read as in the candidate: resolution composed over the base projection, or, under `exact`, the `rewrite`'s requested text itself — so a requested change the algorithm normalizes away is detected instead of passing as a no-op.
-- **Calls (crate):** `rewrite_text` (edit/prepared.rs:675) L549; `comment_text_of` (edit.rs:6977) (by name) L619; `outcome_paragraph` (edit/prepared.rs:692) L622
+- **Calls (crate):** `rewrite_text` (edit/prepared.rs:675) L549; `comment_text_of` (edit.rs:7024) (by name) L619; `outcome_paragraph` (edit/prepared.rs:692) L622
 - **Calls (std/external/unresolved):** `.as_ref`, `.clone`, `.collect`, `.copied`, `.entry`, `.enumerate`, `.extend`, `.get`, `.insert`, `.into_iter`, `.is_empty`, `.is_some`, `.iter`, `.len`, `.map`, `.or_insert_with`, `.push_str`, `.push`, `.remove`, `.sort_by_key`, `.to_string`, `.unwrap_or_else`, `BTreeMap::new`, `ExpectedScope::Control`, `HashSet::new`, `Some`, `String::with_capacity`, `Vec::new`
 - **Macros:** `format!`
 - **Called by:** `primary_effect` (edit/prepared.rs:284); `check_dom_realized` (edit/prepared.rs:712)
@@ -97,7 +97,7 @@
 `fn rewrite_text(tx: &Transaction<'_>, para: usize) -> Option<(usize, String)>`
 
 - **Does:** The first `rewrite` op on `para` and the text it asks for, or `None` when no rewrite op resolved onto it (`cN.text` rewrites excluded: their target is the covered span, not the paragraph).
-- **Calls (crate):** `comment_text_of` (edit.rs:6977) (by name) L683; `outcome_paragraph` (edit/prepared.rs:692) L686
+- **Calls (crate):** `comment_text_of` (edit.rs:7024) (by name) L683; `outcome_paragraph` (edit/prepared.rs:692) L686
 - **Calls (std/external/unresolved):** `.clone`, `.enumerate`, `.find_map`, `.is_some`, `.iter`, `.then`, `Some`
 - **Called by:** `expected_texts` (edit/prepared.rs:482)
 
@@ -147,7 +147,7 @@
 `fn check_redline_stories( tx: &Transaction<'_>, clean: &[u8], redline: &[u8], ) -> Result<(), EditError>`
 
 - **Does:** Compare the published redline's accepted text with the final clean copy.
-- **Calls (crate):** `accept_revisions` (document_comparer.rs:4961) L884; `err` (edit/prepared.rs:1047) L885,891,903,915; `move_range_bookmark_regressions::accept` (revision_processor/bookmarks.rs:181) (by name) L887,888; `paragraphs` (inspect.rs:312) L890; `check_redline_stories::{fn compare}` (edit/prepared.rs:849) L893,921; `paragraphs` (ambiguous, 11 candidates) L895,896; `stories` (inspect.rs:353) L902; `stories` (inspect.rs:353) (by name) L905,906
+- **Calls (crate):** `accept_revisions` (document_comparer.rs:4962) L884; `err` (edit/prepared.rs:1047) L885,891,903,915; `move_range_bookmark_regressions::accept` (revision_processor/bookmarks.rs:181) (by name) L887,888; `paragraphs` (inspect.rs:312) L890; `check_redline_stories::{fn compare}` (edit/prepared.rs:849) L893,921; `paragraphs` (ambiguous, 11 candidates) L895,896; `stories` (inspect.rs:353) L902; `stories` (inspect.rs:353) (by name) L905,906
 - **Calls (std/external/unresolved):** `.all`, `.find`, `.iter`, `.map_err`, `.to_string`, `Err`, `Ok`
 - **Macros:** `format!`
 - **Called by:** `produce` (edit/prepared.rs:928); `tests::redline_only_defects_name_the_story_and_paragraph` (edit/prepared.rs:1190)
@@ -165,7 +165,7 @@
 `fn produce( tx: &mut Transaction<'_>, emit: bool, role: PrimaryRole, ) -> Result<EditResult, EditError>`
 
 - **Does:** Serialize and check the prepared DOM before field updates, then check the published redline against the final clean candidate.
-- **Calls (crate):** `Transaction::finish` (edit.rs:6598) L934; `check_serialized_stories` (edit/prepared.rs:763) L935; `Transaction::commented_base` (edit.rs:6471) (by name) L937; `result` (edit/tracked.rs:199) L939; `Transaction::check_redactions` (edit.rs:5846) L940,1029; `check_redline_stories` (edit/prepared.rs:844) L942,1037; `update_fields` (fields.rs:115) L949; `err` (edit/prepared.rs:1047) L950,968,1026; `<WmlComparerSettings as Default>::default` (comparer/mod.rs:1493) L962; `Transaction::commented_base` (edit.rs:6471) L965; `compare_documents_for_edit` (document_comparer.rs:6431) L967; `record_mid_changes` (edit/sections.rs:453) L974; `restore` (edit/ranges.rs:432) L976; `rewrite` (edit/whole.rs:130) L978; `comment_holds_kept_text` (edit.rs:6885) (by name) L993; `Transaction::conflict` (edit.rs:5870) L1010; `lift_deletion_comments` (edit.rs:6867) (by name) L1022; `apply_settings_to_docx` (settings.rs:424) L1025; `typing_order` (edit/replacement_order.rs:82) L1028; `Transaction::report` (edit.rs:3161) L1030; `paragraphs` (inspect.rs:312) L1031; `revision_counts` (ambiguous: `revision_counts` (edit/tracked.rs:404); `revision_counts` (edit.rs:2396)) L1034
+- **Calls (crate):** `Transaction::finish` (edit.rs:6645) L934; `check_serialized_stories` (edit/prepared.rs:763) L935; `Transaction::commented_base` (edit.rs:6518) (by name) L937; `result` (edit/tracked.rs:199) L939; `Transaction::check_redactions` (edit.rs:5846) L940,1029; `check_redline_stories` (edit/prepared.rs:844) L942,1037; `update_fields` (fields.rs:115) L949; `err` (edit/prepared.rs:1047) L950,968,1026; `<WmlComparerSettings as Default>::default` (comparer/mod.rs:1493) L962; `Transaction::commented_base` (edit.rs:6518) L965; `compare_documents_for_edit` (document_comparer.rs:6432) L967; `record_mid_changes` (edit/sections.rs:453) L974; `restore` (edit/ranges.rs:432) L976; `rewrite` (edit/whole.rs:130) L978; `comment_holds_kept_text` (edit.rs:6932) (by name) L993; `Transaction::conflict` (edit.rs:5870) L1010; `lift_deletion_comments` (edit.rs:6914) (by name) L1022; `apply_settings_to_docx` (settings.rs:424) L1025; `typing_order` (edit/replacement_order.rs:82) L1028; `Transaction::report` (edit.rs:3161) L1030; `paragraphs` (inspect.rs:312) L1031; `revision_counts` (ambiguous: `revision_counts` (edit/tracked.rs:404); `revision_counts` (edit.rs:2396)) L1034
 - **Calls (std/external/unresolved):** `.any`, `.as_deref`, `.clone`, `.collect`, `.filter`, `.find`, `.into`, `.is_some`, `.iter`, `.len`, `.map_err`, `.map`, `.to_string`, `.unwrap_or`, `Err`, `Ok`, `Some`, `Vec::new`, `refresh`, `std::borrow::Cow::Borrowed`
 - **Macros:** `format!`, `matches!`
 - **Called by:** `prepare` (edit/prepared.rs:211)

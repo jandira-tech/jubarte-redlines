@@ -103,7 +103,7 @@
 `fn text_width(section: &str) -> u32`
 
 - **Does:** The page width less the side margins, in twentieths of a point.
-- **Calls (crate):** `universal_measure_twips` (util/mod.rs:47) L582; `attribute` (markdown/unified.rs:756) (by name) L585,586,587
+- **Calls (crate):** `universal_measure_twips` (util/mod.rs:61) L582; `attribute` (markdown/unified.rs:756) (by name) L585,586,587
 - **Calls (std/external/unresolved):** `.filter`, `.find`, `.is_finite`, `.len`, `.max`, `.ok`, `.or_else`, `.parse`, `.round`, `.unwrap_or`
 - **Macros:** `format!`
 - **Called by:** `assemble` (markdown/package.rs:103); `tests::the_text_width_reads_universal_measures_as_the_view_does` (markdown/package.rs:1867); `tests::the_text_width_is_the_page_less_its_margins` (markdown/package.rs:1949)

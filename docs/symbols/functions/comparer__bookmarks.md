@@ -85,7 +85,7 @@
 
 - **Does:** Carry both source documents' bookmarks into the redline body, then renumber ids above every `w:id` already present so they do not collide with revisions or comments (Word keeps bookmark and revision ids disjoint).
 - **Calls (crate):** `carry_matching_bookmarks` (comparer/bookmarks.rs:483) L467
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `carry_matching_bookmarks`  (L483-534, pub)
 `pub fn carry_matching_bookmarks( dom: &mut Dom, result_root: NodeId, (pkg1, main1): (&PartFs, &str), (pkg2, main2): (&PartFs, &str), author: &str, keep: impl Fn(&str) -> bool, )`
@@ -116,7 +116,7 @@
 - **Does:** Word Compare unions permissions by editor and column scope, independently of source ids.
 - **Calls (crate):** `PartFs::part_bytes` (opc/mod.rs:628) (by name) L602; `extract` (comparer/bookmarks.rs:92) L610,611; `Dom::descendants` (xmllinq/mod.rs:668) L623,664; `Dom::attribute` (xmllinq/mod.rs:874) L624,690; `Dom::name_is` (xmllinq/mod.rs:535) L631,670,676,678,694; `Dom::remove` (xmllinq/mod.rs:1118) L633,710,712,716; `inject_side` (comparer/bookmarks.rs:309) L639; `leave_permission_revision_boundary` (comparer/bookmarks.rs:551) L650,651; `Dom::parent` (xmllinq/mod.rs:597) L667; `Dom::value` (xmllinq/mod.rs:1185) L677; `Dom::ancestors` (xmllinq/mod.rs:770) L691; `fresh_permission_id` (comparer/bookmarks.rs:581) L733; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L737
 - **Calls (std/external/unresolved):** `.any`, `.chain`, `.chars`, `.clone`, `.cmp`, `.collect`, `.contains`, `.count`, `.enumerate`, `.expect`, `.find`, `.insert`, `.into_iter`, `.is_some_and`, `.iter`, `.last_mut`, `.last`, `.map`, `.pop`, `.push`, `.retain`, `.sort_by_key`, `.sort_by`, `.to_string`, `HashMap::new`, `HashSet::new`, `Some`, `String::from_utf8_lossy`, `Vec::new`, `W::del_text`, `W::drawing`, `W::endnote`, `W::footnote`, `W::id`, `W::name`, `W::object`, `W::p`, `W::pict`, `W::t`, `W::tc`, `W::tr`, `has_permissions`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `carry_permissions`  (L745-812, pub(crate))
 `pub(crate) fn carry_permissions( dom: &mut Dom, root: NodeId, original: (&PartFs, &str), revised: (&PartFs, &str), author: &str, )`

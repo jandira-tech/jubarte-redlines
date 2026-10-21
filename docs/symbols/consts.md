@@ -376,21 +376,21 @@
 | `FONTS` | src/document_comparer.rs:3453 | private | _no doc comment_ | const FONTS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?> <w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">  |
 | `THEME_PART` | src/document_comparer.rs:3479 | private | _no doc comment_ | const THEME_PART: &str = "word/theme/theme1.xml" |
 | `THEME_REL` | src/document_comparer.rs:3508 | private | _no doc comment_ | const THEME_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" |
-| `IMPLICIT_LANG` | src/document_comparer.rs:4549 | private | Language: only the attributes B's effective value changes against A's docDefaults, a missing one read as Word's en-US / en-US / ar-SA (159 of 161 corpus Word redlines). _(from a code comment)_ | const IMPLICIT_LANG: [(&str, &str); 3] = [("val", "en-US"), ("eastAsia", "en-US"), ("bidi", "ar-SA")] |
-| `NOTES_ROOT_NAMESPACE_ATTRS` | src/document_comparer.rs:4933 | private | The namespace declarations C# attaches to a freshly-created `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/ `FreshNamespaceAttributes` :1580–:1602), verbatim. | const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!( "xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" ", "xmlns:mc=\"http://schema |
-| `CUSTOM_PROPS_REL` | src/document_comparer.rs:6177 | private | M481 — Word-repair: wire core parts the package carries but the main document never references. | const CUSTOM_PROPS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties" |
-| `CORE` | src/document_comparer.rs:6259 | private | _no doc comment_ | const CORE: [(&str, &str); 5] = [ ("word/styles.xml", "styles"), ("word/settings.xml", "settings"), ("word/webSettings.xml", "webSettings"), ("word/fontTable.xm |
+| `IMPLICIT_LANG` | src/document_comparer.rs:4550 | private | Language: only the attributes B's effective value changes against A's docDefaults, a missing one read as Word's en-US / en-US / ar-SA (159 of 161 corpus Word redlines). _(from a code comment)_ | const IMPLICIT_LANG: [(&str, &str); 3] = [("val", "en-US"), ("eastAsia", "en-US"), ("bidi", "ar-SA")] |
+| `NOTES_ROOT_NAMESPACE_ATTRS` | src/document_comparer.rs:4934 | private | The namespace declarations C# attaches to a freshly-created `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/ `FreshNamespaceAttributes` :1580–:1602), verbatim. | const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!( "xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" ", "xmlns:mc=\"http://schema |
+| `CUSTOM_PROPS_REL` | src/document_comparer.rs:6178 | private | M481 — Word-repair: wire core parts the package carries but the main document never references. | const CUSTOM_PROPS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties" |
+| `CORE` | src/document_comparer.rs:6260 | private | _no doc comment_ | const CORE: [(&str, &str); 5] = [ ("word/styles.xml", "styles"), ("word/settings.xml", "settings"), ("word/webSettings.xml", "webSettings"), ("word/fontTable.xm |
 | `COMMENT_ANCHOR_CONFLICT` | src/edit.rs:1376 | private | Stable engine code for comment mapping conflicts, independent of prose. | const COMMENT_ANCHOR_CONFLICT: &str = "COMMENT_ANCHOR_CONFLICT" |
 | `SCHEMAS` | src/edit.rs:1855 | private | _no doc comment_ | static SCHEMAS: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(\\|\\| { let settings = schemars::generate::SchemaSettings::draft2020_12()  |
 | `PLAN_FIELDS` | src/edit.rs:1943 | private | The top-level fields of a plan, as [`EditPlan`] reads them. | const PLAN_FIELDS: &[&str] = &[ "author", "date", "existing_revisions", "initials", "operations", "removed_anchor_comments", "resolve_revisions", "rewrite_other |
 | `ALIASES` | src/edit.rs:1959 | private | A field one kind's operations take under another name, read as meant with a note: (written, read as, kinds). | const ALIASES: &[(&str, &str, &[&str])] = &[ ("comment", "text", &["comment", "reply_comment"]), ("anchor", "find", &["replace", "delete", "comment"]), ] |
 | `COMMON` | src/edit.rs:2073 | private | _no doc comment_ | const COMMON: &[&str] = &["id", "kind", "group", "why"] |
-| `RANGES` | src/edit.rs:6930 | private | _no doc comment_ | const RANGES: &[&str] = &[ "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "permStart", "permEnd", "proofErr", ] |
-| `WINDOW` | src/edit.rs:7101 | private | _no doc comment_ | const WINDOW: usize = 20 |
-| `SELECTOR_CHARS` | src/edit.rs:7322 | private | How many characters of a paragraph's text a suggested `contains` selector quotes at most. | const SELECTOR_CHARS: usize = 60 |
-| `PPR_ORDER` | src/edit.rs:8095 | private | Schema order of `w:pPr` children (CT_PPrBase, then rPr/sectPr/pPrChange). | const PPR_ORDER: &[&str] = &[ "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd", "t |
-| `HIGHLIGHTS` | src/edit.rs:8385 | pub(crate) | `ST_HighlightColor`. | pub(crate) const HIGHLIGHTS: &[&str] = &[ "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "darkBlue", "darkCyan", "darkGreen", "darkMagen |
-| `RPR_ORDER` | src/edit.rs:8447 | private | Schema order of the `w:rPr` children this module writes. | const RPR_ORDER: &[&str] = &[ "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "n |
+| `RANGES` | src/edit.rs:6977 | private | _no doc comment_ | const RANGES: &[&str] = &[ "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "permStart", "permEnd", "proofErr", ] |
+| `WINDOW` | src/edit.rs:7148 | private | _no doc comment_ | const WINDOW: usize = 20 |
+| `SELECTOR_CHARS` | src/edit.rs:7369 | private | How many characters of a paragraph's text a suggested `contains` selector quotes at most. | const SELECTOR_CHARS: usize = 60 |
+| `PPR_ORDER` | src/edit.rs:8142 | private | Schema order of `w:pPr` children (CT_PPrBase, then rPr/sectPr/pPrChange). | const PPR_ORDER: &[&str] = &[ "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd", "t |
+| `HIGHLIGHTS` | src/edit.rs:8432 | pub(crate) | `ST_HighlightColor`. | pub(crate) const HIGHLIGHTS: &[&str] = &[ "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "darkBlue", "darkCyan", "darkGreen", "darkMagen |
+| `RPR_ORDER` | src/edit.rs:8494 | private | Schema order of the `w:rPr` children this module writes. | const RPR_ORDER: &[&str] = &[ "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline", "shadow", "emboss", "imprint", "n |
 | `WINDOW` | src/edit/anchor_error.rs:57 | private | Characters of context on either side of a match, of the actual target text shown on a miss, and of the anchor the message quotes. | const WINDOW: usize = 20 |
 | `MAX_SUGGESTED_TARGETS` | src/edit/anchor_error.rs:59 | private | Other paragraphs a refusal may suggest at most. | const MAX_SUGGESTED_TARGETS: usize = 5 |
 | `READ_SUGGESTION_HEAD` | src/edit/anchor_error.rs:61 | private | Blocks the read continuation of a missing target suggests. | const READ_SUGGESTION_HEAD: usize = 20 |
@@ -418,12 +418,12 @@
 | `MAX_COLUMNS` | src/edit/structural.rs:19 | private | Word's column limit. | const MAX_COLUMNS: usize = 63 |
 | `MAX_WIDTH_DXA` | src/edit/structural.rs:21 | pub(super) | The widest cell Word accepts: 22 inches, in twentieths of a point. | pub(super) const MAX_WIDTH_DXA: u32 = 31_680 |
 | `BUILTIN_TABLE_STYLES` | src/edit/structural.rs:23 | private | Table styles a document may lack that the engine can add: `(id, name)`. | const BUILTIN_TABLE_STYLES: &[(&str, &str)] = &[("TableGrid", "Table Grid")] |
-| `RANGE_STARTS` | src/edit/tracked.rs:1297 | pub(super) | The range openers an insertion can hold: they travel with the words to their right. | pub(super) const RANGE_STARTS: [&str; 5] = [ "bookmarkStart", "commentRangeStart", "permStart", "moveFromRangeStart", "moveToRangeStart", ] |
-| `RANGE_ENDS` | src/edit/tracked.rs:1306 | pub(super) | The range closers that travel with the words to their left; a comment's end also takes its reference, so it is read on its own. | pub(super) const RANGE_ENDS: [&str; 4] = [ "bookmarkEnd", "permEnd", "moveFromRangeEnd", "moveToRangeEnd", ] |
-| `COMMENT_RANGE_END` | src/edit/tracked.rs:1315 | pub(super) | A comment range's closer: it travels with the words to its left, and takes its reference along. | pub(super) const COMMENT_RANGE_END: &str = "commentRangeEnd" |
-| `TYPED` | src/edit/tracked.rs:1568 | private | What a run may hold and still go outright: text Word types, nothing a field or a note needs. | const TYPED: [&str; 9] = [ "rPr", "t", "tab", "br", "cr", "sym", "noBreakHyphen", "softHyphen", "lastRenderedPageBreak", ] |
-| `DELETED` | src/edit/tracked.rs:1623 | private | Revision elements of a paragraph mark that delete it. | const DELETED: [&str; 2] = ["del", "moveFrom"] |
-| `TRACKED` | src/edit/tracked.rs:1625 | pub(super) | Every revision element a paragraph mark can carry. | pub(super) const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"] |
+| `RANGE_STARTS` | src/edit/tracked.rs:1317 | pub(super) | The range openers an insertion can hold: they travel with the words to their right. | pub(super) const RANGE_STARTS: [&str; 5] = [ "bookmarkStart", "commentRangeStart", "permStart", "moveFromRangeStart", "moveToRangeStart", ] |
+| `RANGE_ENDS` | src/edit/tracked.rs:1326 | pub(super) | The range closers that travel with the words to their left; a comment's end also takes its reference, so it is read on its own. | pub(super) const RANGE_ENDS: [&str; 4] = [ "bookmarkEnd", "permEnd", "moveFromRangeEnd", "moveToRangeEnd", ] |
+| `COMMENT_RANGE_END` | src/edit/tracked.rs:1335 | pub(super) | A comment range's closer: it travels with the words to its left, and takes its reference along. | pub(super) const COMMENT_RANGE_END: &str = "commentRangeEnd" |
+| `TYPED` | src/edit/tracked.rs:1652 | private | What a run may hold and still go outright: text Word types, nothing a field or a note needs. | const TYPED: [&str; 9] = [ "rPr", "t", "tab", "br", "cr", "sym", "noBreakHyphen", "softHyphen", "lastRenderedPageBreak", ] |
+| `DELETED` | src/edit/tracked.rs:1707 | private | Revision elements of a paragraph mark that delete it. | const DELETED: [&str; 2] = ["del", "moveFrom"] |
+| `TRACKED` | src/edit/tracked.rs:1709 | pub(super) | Every revision element a paragraph mark can carry. | pub(super) const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"] |
 | `SCHEMA_JSON` | src/edit/v2.rs:25 | pub | Production Draft 2020-12 schema for this library's text-and-review profile. | pub const SCHEMA_JSON: &str = include_str!("../../schemas/edit-plan-v2.schema.json") |
 | `TEXT_CODEC_VERSION` | src/edit/v2.rs:27 | pub | Exact logical text codec version, fixed by PlanV2. | pub const TEXT_CODEC_VERSION: u32 = 1 |
 | `PLAIN` | src/edit/visible.rs:157 | private | The run content a struck or restored run may hold: text and the characters typed beside it. | const PLAIN: [&str; 10] = [ "rPr", "t", "delText", "tab", "br", "cr", "sym", "noBreakHyphen", "softHyphen", "lastRenderedPageBreak", ] |
@@ -471,31 +471,31 @@
 | `NO_STREAM` | src/legacy_doc.rs:67 | private | No sector, or no directory entry. | const NO_STREAM: u32 = 0xFFFF_FFFF |
 | `HEADER` | src/legacy_doc.rs:350 | private | _no doc comment_ | const HEADER: &str = "<w:trPr><w:tblHeader/></w:trPr>" |
 | `OPEN` | src/legacy_doc.rs:378 | private | _no doc comment_ | const OPEN: &str = "<w:pStyle w:val=\"Heading" |
-| `MAX_PRC_GRPPRL` | src/legacy_doc.rs:1052 | private | Most bytes a Prc's grpprl may hold ([MS-DOC] 2.9.210 PrcData). | const MAX_PRC_GRPPRL: usize = 0x3FA2 |
-| `HIGH` | src/legacy_doc.rs:1118 | private | _no doc comment_ | const HIGH: [u16; 32] = [ 0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F, 0x0090 |
-| `NFC_BULLET` | src/legacy_doc.rs:1485 | private | `nfc` of a bullet, and of a level that shows no number. | const NFC_BULLET: u8 = 23 |
-| `NFC_NONE` | src/legacy_doc.rs:1486 | private | _no doc comment_ | const NFC_NONE: u8 = 0xFF |
+| `MAX_PRC_GRPPRL` | src/legacy_doc.rs:1090 | private | Most bytes a Prc's grpprl may hold ([MS-DOC] 2.9.210 PrcData). | const MAX_PRC_GRPPRL: usize = 0x3FA2 |
+| `HIGH` | src/legacy_doc.rs:1156 | private | _no doc comment_ | const HIGH: [u16; 32] = [ 0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F, 0x0090 |
+| `NFC_BULLET` | src/legacy_doc.rs:1523 | private | `nfc` of a bullet, and of a level that shows no number. | const NFC_BULLET: u8 = 23 |
+| `NFC_NONE` | src/legacy_doc.rs:1524 | private | _no doc comment_ | const NFC_NONE: u8 = 0xFF |
 | `ESCAPABLE` | src/markdown/anchor.rs:22 | private | The ASCII punctuation a backslash escapes in CommonMark. | const ESCAPABLE: &str = r"\`*_{}[]()#+-.!\\|<>~=&" |
 | `TABLE_SIDES` | src/markdown/borders.rs:20 | pub(crate) | A table's sides (`w:tblBorders`), in schema order. | pub(crate) const TABLE_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "insideH", "insideV"] |
 | `CELL_SIDES` | src/markdown/borders.rs:23 | pub(crate) | A cell's sides (`w:tcBorders`), in schema order. | pub(crate) const CELL_SIDES: [&str; 8] = [ "top", "left", "bottom", "right", "insideH", "insideV", "tl2br", "tr2bl", ] |
 | `PARAGRAPH_SIDES` | src/markdown/borders.rs:28 | pub(crate) | A paragraph's sides (`w:pBdr`), in schema order. | pub(crate) const PARAGRAPH_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"] |
-| `STAND_INS` | src/markdown/critic.rs:67 | private | Every delimiter with its stand-in (Supplemental Punctuation, all Po). | const STAND_INS: [(Token, char); 20] = [ (Token::InsertStart, '\u{2E0E}'), (Token::InsertEnd, '\u{2E0F}'), (Token::DeleteStart, '\u{2E10}'), (Token::DeleteEnd,  |
-| `ESCAPE` | src/markdown/critic.rs:91 | private | Put before a stand-in character (or itself) that was in the source. | const ESCAPE: char = '\u{F0000}' |
-| `SPANS` | src/markdown/critic.rs:95 | private | A span's opening delimiter, its closing one, and the separator a substitution needs between them. | const SPANS: [(&str, &str, Option<&str>, Token, Token); 5] = [ ("{++", "++}", None, Token::InsertStart, Token::InsertEnd), ("{--", "--}", None, Token::DeleteSta |
-| `INSERT` | src/markdown/critic.rs:418 | private | _no doc comment_ | const INSERT: Allowed = 1 |
-| `DELETE` | src/markdown/critic.rs:419 | private | _no doc comment_ | const DELETE: Allowed = 2 |
-| `SUBSTITUTE` | src/markdown/critic.rs:420 | private | _no doc comment_ | const SUBSTITUTE: Allowed = 4 |
-| `HIGHLIGHT` | src/markdown/critic.rs:421 | private | _no doc comment_ | const HIGHLIGHT: Allowed = 8 |
-| `COMMENT` | src/markdown/critic.rs:422 | private | _no doc comment_ | const COMMENT: Allowed = 16 |
-| `FIELD` | src/markdown/critic.rs:423 | private | _no doc comment_ | const FIELD: Allowed = 32 |
-| `MARK` | src/markdown/critic.rs:425 | private | A `==highlight==` run. | const MARK: Allowed = 64 |
-| `CHANGES` | src/markdown/critic.rs:426 | private | _no doc comment_ | const CHANGES: Allowed = INSERT \\| DELETE \\| SUBSTITUTE |
-| `ALL` | src/markdown/critic.rs:427 | private | _no doc comment_ | const ALL: Allowed = CHANGES \\| HIGHLIGHT \\| COMMENT \\| FIELD \\| MARK |
-| `OPENER` | src/markdown/critic.rs:1473 | private | What can follow the backslash run an opener holds (`{` + run). | const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="] |
-| `CLOSER` | src/markdown/critic.rs:1475 | private | What can hold the run a closer escapes (`++` + run + `}`). | const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="] |
-| `FIELD_END` | src/markdown/critic.rs:1534 | private | What closes a body field. | const FIELD_END: &str = "{/}" |
-| `FIELD_NAMES` | src/markdown/critic.rs:1538 | private | The field names ECMA-376 Part 1 §17.16.5 lists. | const FIELD_NAMES: [&str; 76] = [ "ADDRESSBLOCK", "ADVANCE", "ASK", "AUTHOR", "AUTONUM", "AUTONUMLGL", "AUTONUMOUT", "AUTOTEXT", "AUTOTEXTLIST", "BARCODE", "BIB |
-| `LONGEST_FIELD_CODE` | src/markdown/critic.rs:1630 | private | The longest field code read, in characters: no field code comes near it, and it keeps a paragraph of `{` from being scanned once per brace. | const LONGEST_FIELD_CODE: usize = 1024 |
+| `STAND_INS` | src/markdown/critic.rs:72 | private | Every delimiter with its stand-in (Supplemental Punctuation, all Po). | const STAND_INS: [(Token, char); 20] = [ (Token::InsertStart, '\u{2E0E}'), (Token::InsertEnd, '\u{2E0F}'), (Token::DeleteStart, '\u{2E10}'), (Token::DeleteEnd,  |
+| `ESCAPE` | src/markdown/critic.rs:96 | private | Put before a stand-in character (or itself) that was in the source. | const ESCAPE: char = '\u{F0000}' |
+| `SPANS` | src/markdown/critic.rs:100 | private | A span's opening delimiter, its closing one, and the separator a substitution needs between them. | const SPANS: [(&str, &str, Option<&str>, Token, Token); 5] = [ ("{++", "++}", None, Token::InsertStart, Token::InsertEnd), ("{--", "--}", None, Token::DeleteSta |
+| `INSERT` | src/markdown/critic.rs:423 | private | _no doc comment_ | const INSERT: Allowed = 1 |
+| `DELETE` | src/markdown/critic.rs:424 | private | _no doc comment_ | const DELETE: Allowed = 2 |
+| `SUBSTITUTE` | src/markdown/critic.rs:425 | private | _no doc comment_ | const SUBSTITUTE: Allowed = 4 |
+| `HIGHLIGHT` | src/markdown/critic.rs:426 | private | _no doc comment_ | const HIGHLIGHT: Allowed = 8 |
+| `COMMENT` | src/markdown/critic.rs:427 | private | _no doc comment_ | const COMMENT: Allowed = 16 |
+| `FIELD` | src/markdown/critic.rs:428 | private | _no doc comment_ | const FIELD: Allowed = 32 |
+| `MARK` | src/markdown/critic.rs:430 | private | A `==highlight==` run. | const MARK: Allowed = 64 |
+| `CHANGES` | src/markdown/critic.rs:431 | private | _no doc comment_ | const CHANGES: Allowed = INSERT \\| DELETE \\| SUBSTITUTE |
+| `ALL` | src/markdown/critic.rs:432 | private | _no doc comment_ | const ALL: Allowed = CHANGES \\| HIGHLIGHT \\| COMMENT \\| FIELD \\| MARK |
+| `OPENER` | src/markdown/critic.rs:1478 | private | What can follow the backslash run an opener holds (`{` + run). | const OPENER: [&str; 5] = ["++", "--", "~~", ">>", "=="] |
+| `CLOSER` | src/markdown/critic.rs:1480 | private | What can hold the run a closer escapes (`++` + run + `}`). | const CLOSER: [&str; 5] = ["++", "--", "~~", "<<", "=="] |
+| `FIELD_END` | src/markdown/critic.rs:1539 | private | What closes a body field. | const FIELD_END: &str = "{/}" |
+| `FIELD_NAMES` | src/markdown/critic.rs:1543 | private | The field names ECMA-376 Part 1 §17.16.5 lists. | const FIELD_NAMES: [&str; 76] = [ "ADDRESSBLOCK", "ADVANCE", "ASK", "AUTHOR", "AUTONUM", "AUTONUMLGL", "AUTONUMOUT", "AUTOTEXT", "AUTOTEXTLIST", "BARCODE", "BIB |
+| `LONGEST_FIELD_CODE` | src/markdown/critic.rs:1635 | private | The longest field code read, in characters: no field code comes near it, and it keeps a paragraph of `{` from being scanned once per brace. | const LONGEST_FIELD_CODE: usize = 1024 |
 | `RELS` | src/markdown/data_stores.rs:32 | private | _no doc comment_ | const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships" |
 | `DS_NS` | src/markdown/data_stores.rs:33 | private | _no doc comment_ | const DS_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/customXml" |
 | `PROPS_CT` | src/markdown/data_stores.rs:34 | private | _no doc comment_ | const PROPS_CT: &str = "application/vnd.openxmlformats-officedocument.customXmlProperties+xml" |
@@ -658,9 +658,9 @@
 | `ExitStatus::DEADLINE_EXCEEDED` | src/result.rs:1197 | pub | Deadline exceeded before commit. | pub const DEADLINE_EXCEEDED: Self = Self(124) |
 | `TRACKED_REVISION_LOCALS` | src/revision_processor.rs:39 | private | Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace). | const TRACKED_REVISION_LOCALS: &[&str] = &[ "cellDel", "cellIns", "cellMerge", "customXmlDelRangeEnd", "customXmlDelRangeStart", "customXmlInsRangeEnd", "custom |
 | `TRACKED_REVISION_LOCAL_SET` | src/revision_processor.rs:72 | private | _no doc comment_ | static TRACKED_REVISION_LOCAL_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(\\|\\| TRACKED_REVISION_LOCALS.iter().copied().collect()) |
-| `TBL_PR_EX` | src/revision_processor.rs:3075 | private | The `tblPr` children a row can override through `w:tblPrEx` (`CT_TblPrExBase`), in schema order. | const TBL_PR_EX: [&str; 9] = [ "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook", ] |
-| `FROZEN_NS` | src/revision_processor.rs:3767 | pub(crate) | Revision elements renamed into this namespace sit a resolution out and come back unchanged ([`crate::changes`]). | pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision" |
-| `RevisionIds::MAX` | src/revision_processor.rs:3809 | private | _no doc comment_ | const MAX: u64 = i32::MAX as u64 |
+| `TBL_PR_EX` | src/revision_processor.rs:3104 | private | The `tblPr` children a row can override through `w:tblPrEx` (`CT_TblPrExBase`), in schema order. | const TBL_PR_EX: [&str; 9] = [ "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook", ] |
+| `FROZEN_NS` | src/revision_processor.rs:3796 | pub(crate) | Revision elements renamed into this namespace sit a resolution out and come back unchanged ([`crate::changes`]). | pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision" |
+| `RevisionIds::MAX` | src/revision_processor.rs:3838 | private | _no doc comment_ | const MAX: u64 = i32::MAX as u64 |
 | `CID` | src/revision_processor/comments.rs:25 | private | _no doc comment_ | const CID: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid" |
 | `CEX` | src/revision_processor/comments.rs:26 | private | _no doc comment_ | const CEX: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex" |
 | `PEOPLE` | src/revision_processor/comments.rs:27 | private | _no doc comment_ | const PEOPLE: (&str, &str) = ( "word/people.xml", "http://schemas.microsoft.com/office/2011/relationships/people", ) |

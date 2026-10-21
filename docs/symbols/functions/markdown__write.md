@@ -6,16 +6,16 @@
 `pub fn markdown_to_docx( markdown: &str, options: &DocxOptions<'_>, ) -> Result<WrittenDocx, MarkdownError>`
 
 - **Does:** Writes Markdown as a `.docx`: CommonMark with GitHub's tables, strikethrough, task lists and footnotes, and CriticMarkup as tracked changes and comments (see the [module docs](super)).
-- **Calls (crate):** `legacy_attribution_error` (markdown/critic.rs:282) L64; `file_defaults` (markdown/view_notes.rs:152) L70; `is_date` (markdown/write.rs:6320) L80; `read` (markdown/write.rs:137) L86; `assemble` (markdown/package.rs:103) L108; `accept_revisions` (document_comparer.rs:4961) L112; `reject_revisions` (document_comparer.rs:4984) L114; `apply_settings_to_docx` (settings.rs:424) L118; `no_stretched_line_breaks` (settings.rs:405) L129
+- **Calls (crate):** `legacy_attribution_error` (markdown/critic.rs:287) L64; `file_defaults` (markdown/view_notes.rs:152) L70; `is_date` (markdown/write.rs:6320) L80; `read` (markdown/write.rs:137) L86; `assemble` (markdown/package.rs:103) L108; `accept_revisions` (document_comparer.rs:4962) L112; `reject_revisions` (document_comparer.rs:4985) L114; `apply_settings_to_docx` (settings.rs:424) L118; `no_stretched_line_breaks` (settings.rs:405) L129
 - **Calls (std/external/unresolved):** `.as_ref`, `.as_str`, `.clone`, `.filter`, `.is_none`, `.is_some`, `.map_err`, `.or`, `.push`, `.to_string`, `Default::default`, `Err`, `MarkdownError::Package`, `Ok`, `PageSize::default`, `Some`
 - **Macros:** `format!`
-- **Called by:** `tests::source` (edit/inline.rs:378) (?); `redline` (markdown/redline.rs:108); `tests::word` (text_diff.rs:763)
+- **Called by:** `tests::source` (edit/inline.rs:378) (?); `redline` (markdown/redline.rs:109); `tests::word` (text_diff.rs:763)
 
 #### `read`  (L137-219, pub(super))
 `pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document`
 
 - **Does:** The Markdown read into Word items.
-- **Calls (crate):** `scholar` (markdown/write.rs:502) L141; `encode_checked` (markdown/critic.rs:339) L147; `block_changes` (markdown/write.rs:352) L147; `page_commands` (markdown/write.rs:591) L151; `inline_math` (markdown/write.rs:222) L152; `table_pipes` (markdown/write.rs:648) L152; `Writer::new` (markdown/write.rs:1933) L153; `text_box_sources` (markdown/write.rs:311) L154; `table_plans` (markdown/write.rs:1102) L155; `note_breaks` (markdown/write.rs:933) L156; `item_levels` (markdown/write.rs:974) L157; `label_definitions` (markdown/write.rs:1071) L158; `parser_options` (markdown/write.rs:1626) L159; `backing_comments` (markdown/from_docx/drawing.rs:1440) L165; `Writer::begin_paragraph` (markdown/write.rs:2763) L187; `Writer::end_paragraph` (markdown/write.rs:3102) L188; `Writer::event` (markdown/write.rs:2048) L193; `Writer::finish` (markdown/write.rs:5162) L215; `Document::index_wrapping_parents` (markdown/xml.rs:547) (by name) L217
+- **Calls (crate):** `scholar` (markdown/write.rs:502) L141; `encode_checked` (markdown/critic.rs:344) L147; `block_changes` (markdown/write.rs:352) L147; `page_commands` (markdown/write.rs:591) L151; `inline_math` (markdown/write.rs:222) L152; `table_pipes` (markdown/write.rs:648) L152; `Writer::new` (markdown/write.rs:1933) L153; `text_box_sources` (markdown/write.rs:311) L154; `table_plans` (markdown/write.rs:1102) L155; `note_breaks` (markdown/write.rs:933) L156; `item_levels` (markdown/write.rs:974) L157; `label_definitions` (markdown/write.rs:1071) L158; `parser_options` (markdown/write.rs:1626) L159; `backing_comments` (markdown/from_docx/drawing.rs:1440) L165; `Writer::begin_paragraph` (markdown/write.rs:2763) L187; `Writer::end_paragraph` (markdown/write.rs:3102) L188; `Writer::event` (markdown/write.rs:2048) L193; `Writer::finish` (markdown/write.rs:5162) L215; `Document::index_wrapping_parents` (markdown/xml.rs:547) (by name) L217
 - **Calls (std/external/unresolved):** `.all`, `.as_str`, `.bytes`, `.chars`, `.collect`, `.count`, `.ends_with`, `.filter`, `.find_map`, `.into_offset_iter`, `.is_empty`, `.is_none`, `.is_some_and`, `.iter`, `.map`, `.match_indices`, `.partition_point`, `.reference_definitions`, `.rev`, `.saturating_sub`, `.splice`, `.to_string`, `Event::End`, `Parser::new_ext`, `Some`, `TagEnd::Heading`, `Vec::new`
 - **Macros:** `matches!`
 - **Called by:** `run_debug` (bin/jubarte.rs:3779) (?); `run_validate` (bin/jubarte.rs:3812) (?); `markdown_to_docx` (markdown/write.rs:59); `markdown_authored_boundary_tests::front_matter_quote_variants_preserve_decoded_authored_metadata` (markdown/write.rs:6836); `markdown_authored_boundary_tests::comment_links_and_non_attribution_suffixes_keep_the_complete_comment` (markdown/write.rs:6867); `memory_picture_import_contract_tests::rejected_memory_images_preserve_alt_text_and_report_only_requested_load_failures` (markdown/write.rs:6972)
@@ -31,7 +31,7 @@
 `fn inline_math_passes(mut source: String) -> (String, usize)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `parser_options` (markdown/write.rs:1626) L237; `opens_amount` (markdown/diff.rs:1127) L256,263,275; `math_crosses_boundary` (markdown/critic.rs:1940) L257
+- **Calls (crate):** `parser_options` (markdown/write.rs:1626) L237; `opens_amount` (markdown/diff.rs:1127) L256,263,275; `math_crosses_boundary` (markdown/critic.rs:1945) L257
 - **Calls (std/external/unresolved):** `.collect`, `.contains`, `.dedup`, `.insert`, `.into_iter`, `.into_offset_iter`, `.is_ascii_digit`, `.is_empty`, `.is_some_and`, `.is_some`, `.len`, `.map`, `.next_back`, `.next`, `.partition_point`, `.push_str`, `.push`, `.range`, `.sort_unstable`, `.trim_start_matches`, `BTreeMap::new`, `Parser::new_ext`, `String::with_capacity`, `Vec::new`
 - **Macros:** `matches!`
 - **Called by:** `inline_math` (markdown/write.rs:222); `tests::tight_amount_lists_need_a_constant_number_of_math_passes` (markdown/write.rs:6518)
@@ -49,7 +49,7 @@
 `fn block_changes(source: &str) -> String`
 
 - **Does:** CriticMarkup changes that hold whole blocks, rewritten so the Markdown reader still sees the blocks: a change that opens a line hands its marks to the blocks inside it — a deleted heading `# {--B--}` reads as a heading whose text, and paragraph mark, are deleted, where `{--# B`, the marks in front of the marker, reads...
-- **Calls (crate):** `change_regions` (markdown/critic.rs:226) L353; `substitution_blocks` (markdown/write.rs:399) L366; `blocky` (markdown/write.rs:409) L383; `distribute` (markdown/write.rs:425) L384
+- **Calls (crate):** `change_regions` (markdown/critic.rs:231) L353; `substitution_blocks` (markdown/write.rs:399) L366; `blocky` (markdown/write.rs:409) L383; `distribute` (markdown/write.rs:425) L384
 - **Calls (std/external/unresolved):** `.clone`, `.ends_with`, `.flatten`, `.is_empty`, `.len`, `.push_str`, `.starts_with`, `.then`, `String::with_capacity`
 - **Called by:** `read` (markdown/write.rs:137)
 
@@ -169,7 +169,7 @@
 `fn note_label(label: &str) -> String`
 
 - **Does:** A footnote label as the parser matches it: decoded, and the same whatever its case (`[^Note]` names `[^note]:`).
-- **Calls (crate):** `decode` (markdown/critic.rs:1841) L1084
+- **Calls (crate):** `decode` (markdown/critic.rs:1846) L1084
 - **Calls (std/external/unresolved):** `.to_lowercase`
 - **Called by:** `label_definitions` (markdown/write.rs:1071); `Writer::start` (markdown/write.rs:2108); `Writer::note_reference` (markdown/write.rs:4045)
 
@@ -262,7 +262,7 @@
 `pub fn image_targets(markdown: &str) -> Vec<String>`
 
 - **Does:** The destinations `markdown`'s `![…](dest)` images name, as the writer's image loader sees them: `drawing:` and `data:` payloads included, `%XX` escapes still encoded, in document order.
-- **Calls (crate):** `parser_options` (markdown/write.rs:1626) L1616; `decode` (markdown/critic.rs:1841) L1618
+- **Calls (crate):** `parser_options` (markdown/write.rs:1626) L1616; `decode` (markdown/critic.rs:1846) L1618
 - **Calls (std/external/unresolved):** `.collect`, `.filter_map`, `Parser::new_ext`, `Some`
 - **Called by:** none found in src
 
@@ -271,7 +271,7 @@
 
 - **Does:** The Markdown extensions jubarte reads, for the writer and for [`super::pages`].
 - **Calls:** none
-- **Called by:** `read_anchor` (markdown/anchor.rs:273); `tests::reader_text` (markdown/anchor.rs:460); `indented_code` (markdown/critic.rs:929); `tidy_inline` (markdown/from_docx/ooxml.rs:1042); `unpainted` (markdown/pages.rs:352); `definitions` (markdown/pages.rs:398); `read` (markdown/write.rs:137); `inline_math_passes` (markdown/write.rs:226); `text_box_sources` (markdown/write.rs:311); `note_breaks` (markdown/write.rs:933); `item_levels` (markdown/write.rs:974); `label_definitions` (markdown/write.rs:1071); +3 more
+- **Called by:** `read_anchor` (markdown/anchor.rs:273); `tests::reader_text` (markdown/anchor.rs:460); `indented_code` (markdown/critic.rs:934); `collect_inline_spans` (markdown/critic.rs:2020); `tidy_inline` (markdown/from_docx/ooxml.rs:1042); `unpainted` (markdown/pages.rs:352); `definitions` (markdown/pages.rs:398); `read` (markdown/write.rs:137); `inline_math_passes` (markdown/write.rs:226); `text_box_sources` (markdown/write.rs:311); `note_breaks` (markdown/write.rs:933); `item_levels` (markdown/write.rs:974); +4 more
 
 #### `hl_color_class`  (L1641-1650)
 `fn hl_color_class(class: &str) -> Option<&'static str>`
@@ -313,7 +313,7 @@
 `fn start(&mut self, tag: Tag<'_>)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Writer::end_paragraph` (markdown/write.rs:3102) L2111,2115,2120,2124,2142,2174...; `Writer::begin_paragraph` (markdown/write.rs:2763) L2112,2117,2126; `heading_level` (markdown/write.rs:6457) L2116; `Writer::textless_paragraph` (markdown/write.rs:2755) L2184; `note_label` (markdown/write.rs:1083) L2197; `nth_label` (markdown/write.rs:1089) L2219; `alignment` (markdown/write.rs:6468) L2227; `Writer::table_formats` (markdown/write.rs:2982) L2285; `Writer::story` (markdown/write.rs:2041) L2305,2354; `Writer::begin_row` (markdown/write.rs:2600) L2316,2317; `decode` (markdown/critic.rs:1841) L2371,2372,2385,2386; `Writer::link_start` (markdown/write.rs:4248) L2380
+- **Calls (crate):** `Writer::end_paragraph` (markdown/write.rs:3102) L2111,2115,2120,2124,2142,2174...; `Writer::begin_paragraph` (markdown/write.rs:2763) L2112,2117,2126; `heading_level` (markdown/write.rs:6457) L2116; `Writer::textless_paragraph` (markdown/write.rs:2755) L2184; `note_label` (markdown/write.rs:1083) L2197; `nth_label` (markdown/write.rs:1089) L2219; `alignment` (markdown/write.rs:6468) L2227; `Writer::table_formats` (markdown/write.rs:2982) L2285; `Writer::story` (markdown/write.rs:2041) L2305,2354; `Writer::begin_row` (markdown/write.rs:2600) L2316,2317; `decode` (markdown/critic.rs:1846) L2371,2372,2385,2386; `Writer::link_start` (markdown/write.rs:4248) L2380
 - **Calls (std/external/unresolved):** `.and_then`, `.as_ref`, `.clone`, `.cloned`, `.collect`, `.copied`, `.entry`, `.filter`, `.flatten`, `.get_or_insert_with`, `.get`, `.insert`, `.is_empty`, `.is_none`, `.iter`, `.join`, `.last_mut`, `.len`, `.map`, `.max`, `.min`, `.next`, `.or_else`, `.or_insert`, `.push`, `.resize`, `.split_first`, `.split_whitespace`, `.starts_with`, `.sum`, `.take`, `.then`, `.to_string`, `.unwrap_or_default`, `.unwrap_or_else`, `.unwrap_or`, `Some`, `String::new`, `Vec::new`, `std::mem::take`, `u32::try_from`, `view_styles::TableBorders::All`
 - **Macros:** `format!`, `matches!`
 - **Called by:** `Writer::event` (markdown/write.rs:2048)
@@ -448,7 +448,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.copied`, `.last`
-- **Called by:** `emit` (edit/tracked.rs:452) (?); `Transaction::resolve_one_unreported` (edit.rs:3545) (?); `Transaction::apply` (edit.rs:5882) (?); `build_paragraph` (edit.rs:8252) (?); `raster_extension` (markdown/from_docx/media.rs:77) (?); `Writer::push` (markdown/write.rs:3269); `read_picture` (markdown/write.rs:6479) (?)
+- **Called by:** `emit` (edit/tracked.rs:452) (?); `Transaction::resolve_one_unreported` (edit.rs:3545) (?); `Transaction::apply_lists` (edit.rs:6303) (?); `build_paragraph` (edit.rs:8299) (?); `raster_extension` (markdown/from_docx/media.rs:77) (?); `Writer::push` (markdown/write.rs:3269); `read_picture` (markdown/write.rs:6479) (?)
 
 #### `Writer::push`  (L3269-3328)
 `fn push(&mut self, content: Content)`
@@ -463,7 +463,7 @@
 `fn text(&mut self, text: &str)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Writer::soft_break_resolved` (markdown/write.rs:3384) L3332,3366; `Pieces::feed` (markdown/critic.rs:1908) L3345,3357; `loose_tokens` (markdown/write.rs:1538) L3349; `Writer::plain` (markdown/write.rs:3433) L3353,3367; `Writer::token` (markdown/write.rs:3527) L3373
+- **Calls (crate):** `Writer::soft_break_resolved` (markdown/write.rs:3384) L3332,3366; `Pieces::feed` (markdown/critic.rs:1913) L3345,3357; `loose_tokens` (markdown/write.rs:1538) L3349; `Writer::plain` (markdown/write.rs:3433) L3353,3367; `Writer::token` (markdown/write.rs:3527) L3373
 - **Calls (std/external/unresolved):** `.extend`, `.is_some`, `.push_str`, `.push`, `.to_string`, `Err`, `Ok`, `Vec::new`
 - **Called by:** `Writer::event` (markdown/write.rs:2048); `Writer::html_text` (markdown/write.rs:2727)
 
@@ -479,7 +479,7 @@
 `fn math(&mut self, latex: &str, display: bool)`
 
 - **Does:** `$latex$` (or `$$latex$$` when `display`): an equation, or its LaTeX as text where an equation cannot go (a comment, alt text).
-- **Calls (crate):** `Writer::soft_break_resolved` (markdown/write.rs:3384) L3396; `restore` (markdown/critic.rs:1856) L3399; `Pieces::feed` (markdown/critic.rs:1908) L3404; `loose_tokens` (markdown/write.rs:1538) L3408; `Writer::plain` (markdown/write.rs:3433) L3410; `Pieces::feed` (markdown/critic.rs:1908) (by name) L3417; `delimiter` (markdown/critic.rs:1867) L3423; `Writer::push` (markdown/write.rs:3269) L3425
+- **Calls (crate):** `Writer::soft_break_resolved` (markdown/write.rs:3384) L3396; `restore` (markdown/critic.rs:1861) L3399; `Pieces::feed` (markdown/critic.rs:1913) L3404; `loose_tokens` (markdown/write.rs:1538) L3408; `Writer::plain` (markdown/write.rs:3433) L3410; `Pieces::feed` (markdown/critic.rs:1913) (by name) L3417; `delimiter` (markdown/critic.rs:1872) L3423; `Writer::push` (markdown/write.rs:3269) L3425
 - **Calls (std/external/unresolved):** `.extend`, `.is_some`, `.len`, `.push_str`, `.push`, `Pieces::default`, `String::with_capacity`, `Vec::new`
 - **Macros:** `format!`
 - **Called by:** `Writer::event` (markdown/write.rs:2048)
@@ -560,7 +560,7 @@
 `fn note_reference(&mut self, label: &str)`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `decode` (markdown/critic.rs:1841) L4048,4056; `Writer::push` (markdown/write.rs:3269) L4060,4085; `note_label` (markdown/write.rs:1083) L4063; `nth_label` (markdown/write.rs:1089) L4072
+- **Calls (crate):** `decode` (markdown/critic.rs:1846) L4048,4056; `Writer::push` (markdown/write.rs:3269) L4060,4085; `note_label` (markdown/write.rs:1083) L4063; `nth_label` (markdown/write.rs:1089) L4072
 - **Calls (std/external/unresolved):** `.clone`, `.copied`, `.entry`, `.get`, `.iter`, `.last_mut`, `.len`, `.next`, `.or_insert`, `.position`, `.push_str`, `.push`, `.split`, `.unwrap_or_default`, `.unwrap_or`, `Content::NoteReference`, `Content::Text`, `u32::try_from`
 - **Macros:** `format!`
 - **Called by:** `Writer::event` (markdown/write.rs:2048)
@@ -569,7 +569,7 @@
 `fn dropped_tokens(&mut self, text: &str) -> Vec<Token>`
 
 - **Does:** The tokens of text the writer drops or captures that still mark changes around it: CriticMarkup is read before Markdown, so a closer in dropped text still closes the span it belongs to.
-- **Calls (crate):** `Pieces::feed` (markdown/critic.rs:1908) L4093; `loose_tokens` (markdown/write.rs:1538) L4098
+- **Calls (crate):** `Pieces::feed` (markdown/critic.rs:1913) L4093; `loose_tokens` (markdown/write.rs:1538) L4098
 - **Calls (std/external/unresolved):** `.push`, `Vec::new`
 - **Called by:** `Writer::html_comment_tokens` (markdown/write.rs:4103); `Writer::inline_html` (markdown/write.rs:4122)
 
@@ -661,7 +661,7 @@
 `fn metadata(&mut self, text: &str)`
 
 - **Does:** `title:`, `author:` and `track_changes:` from a YAML front matter block.
-- **Calls (crate):** `authors` (markdown/view_notes.rs:30) L4454; `reversed_ranges` (markdown/view_notes.rs:112) L4455; `document_owner` (markdown/view_notes.rs:248) L4460; `empty_owner` (markdown/view_notes.rs:276) L4461; `table_style` (markdown/view_styles.rs:441) L4468; `table_legend` (markdown/view_styles.rs:451) L4469; `is_built_in_table_style` (markdown/package.rs:848) L4495; `without_comment` (markdown/view_styles.rs:335) L4497,4511; `Writer::stories` (markdown/write.rs:4442) L4506,4521; `first_section` (markdown/view_stories.rs:839) L4506; `legend` (markdown/view_styles.rs:545) L4507; `section_page` (markdown/view_notes.rs:2338) L4515; `section` (markdown/view_stories.rs:892) L4521; `section_format` (markdown/view_notes.rs:88) L4522,4627; `Writer::format_mark` (markdown/write.rs:3031) L4523,4611,4628; `decode` (markdown/critic.rs:1841) L4549; `scalar_and_comment` (markdown/view_notes.rs:324) L4549,4584; `empty_notes` (markdown/view_notes.rs:704) L4565; `note_formats` (markdown/view_notes.rs:760) L4571; `comment_styles` (markdown/view_notes.rs:1292) L4585; `unplaced` (markdown/view_notes.rs:676) L4590; `revision_tags` (markdown/view_notes.rs:371) L4608; `page_setup` (markdown/view_notes.rs:2235) L4624; `Writer::view_author` (markdown/write.rs:4800) L4637; `has_comment` (markdown/write.rs:1332) L4651
+- **Calls (crate):** `authors` (markdown/view_notes.rs:30) L4454; `reversed_ranges` (markdown/view_notes.rs:112) L4455; `document_owner` (markdown/view_notes.rs:248) L4460; `empty_owner` (markdown/view_notes.rs:276) L4461; `table_style` (markdown/view_styles.rs:441) L4468; `table_legend` (markdown/view_styles.rs:451) L4469; `is_built_in_table_style` (markdown/package.rs:848) L4495; `without_comment` (markdown/view_styles.rs:335) L4497,4511; `Writer::stories` (markdown/write.rs:4442) L4506,4521; `first_section` (markdown/view_stories.rs:839) L4506; `legend` (markdown/view_styles.rs:545) L4507; `section_page` (markdown/view_notes.rs:2338) L4515; `section` (markdown/view_stories.rs:892) L4521; `section_format` (markdown/view_notes.rs:88) L4522,4627; `Writer::format_mark` (markdown/write.rs:3031) L4523,4611,4628; `decode` (markdown/critic.rs:1846) L4549; `scalar_and_comment` (markdown/view_notes.rs:324) L4549,4584; `empty_notes` (markdown/view_notes.rs:704) L4565; `note_formats` (markdown/view_notes.rs:760) L4571; `comment_styles` (markdown/view_notes.rs:1292) L4585; `unplaced` (markdown/view_notes.rs:676) L4590; `revision_tags` (markdown/view_notes.rs:371) L4608; `page_setup` (markdown/view_notes.rs:2235) L4624; `Writer::view_author` (markdown/write.rs:4800) L4637; `has_comment` (markdown/write.rs:1332) L4651
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.as_ref`, `.chain`, `.clone`, `.cloned`, `.collect`, `.contains`, `.count`, `.dedup`, `.entry`, `.filter_map`, `.filter`, `.flat_map`, `.insert`, `.into`, `.is_empty`, `.iter`, `.keys`, `.lines`, `.map`, `.next`, `.or_default`, `.push`, `.replace`, `.sort_unstable`, `.split_once`, `.split`, `.starts_with`, `.strip_prefix`, `.strip_suffix`, `.to_string`, `.trim_matches`, `.trim`, `.unwrap_or`, `.values`, `Some`, `std::iter::once`
 - **Macros:** `format!`
 - **Called by:** `Writer::end` (markdown/write.rs:2398); `<FsBackend as Backend>::step` (publication.rs:519) (?)

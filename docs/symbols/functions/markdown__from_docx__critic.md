@@ -417,7 +417,7 @@
 `pub(crate) fn escape(text: &str) -> String`
 
 - **Does:** Breaks every CriticMarkup delimiter in document text with a Markdown backslash escape, so it renders unchanged but cannot open or close a span.
-- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1330) L1157
+- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1335) L1157
 - **Calls (std/external/unresolved):** `.char_indices`, `.contains`, `.fold`, `.is_some`, `.iter`, `.push`, `.replace`, `.to_string`, `String::new`
 - **Called by:** `Escaping::text` (markdown/from_docx/critic.rs:905); `tests::delimiters_in_document_text_are_escaped` (markdown/from_docx/critic.rs:1974); `State::push_text` (markdown/from_docx/header.rs:2012); `comment_note` (markdown/from_docx/mod.rs:2384)
 
@@ -425,7 +425,7 @@
 `pub(crate) fn escape_code(text: &str) -> String`
 
 - **Does:** The text of a code block, as its fence holds it: a delimiter of [`escape`] with a run of backslashes at its break point (`{` + the run + `++`, `++` + the run + `}`, `~` + the run + `>`) gains enough of them that the run is odd, and every other backslash is left alone.
-- **Calls (crate):** `tests::shape` (markdown/math.rs:1956) L1193,1195,1197,1218; `attribution_tag` (markdown/critic.rs:1330) L1211
+- **Calls (crate):** `tests::shape` (markdown/math.rs:1956) L1193,1195,1197,1218; `attribution_tag` (markdown/critic.rs:1335) L1211
 - **Calls (std/external/unresolved):** `.any`, `.as_bytes`, `.chars`, `.find`, `.get`, `.iter`, `.len_utf8`, `.len`, `.next`, `.push_str`, `.push`, `.repeat`, `.starts_with`, `.unwrap_or_default`, `Some`, `String::with_capacity`
 - **Called by:** `Escaping::text` (markdown/from_docx/critic.rs:905); `render` (markdown/from_docx/critic.rs:916); `tests::the_writer_unwinds_the_code_escape_inside_a_fence` (markdown/from_docx/critic.rs:2608); `tests::the_fence_escape_pair_is_exact` (markdown/from_docx/critic.rs:2640)
 
@@ -471,7 +471,7 @@
 `pub(crate) fn whole_change(part: &str) -> Option<Change>`
 
 - **Does:** `{--gone--}{r1 @A}` is `(Deletion, Some("r1 @A"))`.
-- **Calls (crate):** `.delimiters` (ambiguous: `Side::delimiters` (markdown/diff.rs:463); `Mark::delimiters` (markdown/from_docx/critic.rs:44)) L1401; `attribution_tag` (markdown/critic.rs:1330) L1407
+- **Calls (crate):** `.delimiters` (ambiguous: `Side::delimiters` (markdown/diff.rs:463); `Mark::delimiters` (markdown/from_docx/critic.rs:44)) L1401; `attribution_tag` (markdown/critic.rs:1335) L1407
 - **Calls (std/external/unresolved):** `.find_map`, `.find`, `.into_iter`, `.len`, `.strip_prefix`, `.then`, `.to_string`, `Some`
 - **Called by:** `join_changed` (markdown/from_docx/critic.rs:1418); `join_paragraphs` (markdown/from_docx/critic.rs:1441); `tests::review_5_literal_braces_are_not_whole_change_attributions` (markdown/from_docx/critic.rs:2400); `fold_tracked_breaks` (markdown/from_docx/mod.rs:1620)
 

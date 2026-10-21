@@ -70,7 +70,7 @@
 - **Calls (crate):** `super::err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L562; `id_selection` (edit/for_edit.rs:658) L578; `text_selection` (edit/for_edit.rs:663) L618; `changed_selection` (edit/for_edit.rs:703) L622
 - **Calls (std/external/unresolved):** `.as_deref`, `.clone`, `.collect`, `.contains`, `.count`, `.dedup`, `.entry`, `.enumerate`, `.filter`, `.is_empty`, `.is_some`, `.iter`, `.len`, `.map_or_else`, `.map`, `.next`, `.ok_or_else`, `.or_default`, `.position`, `.push`, `.retain`, `.saturating_sub`, `.to_string`, `.values_mut`, `HashMap::new`, `Ok`, `Vec::new`
 - **Macros:** `format!`
-- **Called by:** `task_usage` (cli.rs:3755) (?); `for_edit` (edit/for_edit.rs:1581); `run` (update.rs:186) (?)
+- **Called by:** `task_usage` (cli.rs:3755) (?); `for_edit` (edit/for_edit.rs:1581); `run` (update.rs:225) (?)
 
 #### `id_selection`  (L658-660)
 `fn id_selection(spec: &str, source: &[u8], closed_only: bool) -> Result<HashSet<usize>, EditError>`

@@ -129,7 +129,7 @@
 
 - **Does:** Original source reference shared by every operation kind.
 - **Calls:** none
-- **Called by:** `parse_json` (cli.rs:3791) (?); `Operation::validate` (edit/v2.rs:600); `with_operation_targets` (edit/v2_apply.rs:97) (?); `compose_threads` (edit/v2_apply.rs:1821) (?); `Transaction::resolve_thread` (edit.rs:4379) (?); `Transaction::check_thread_ops` (edit.rs:5715) (?); `run` (update.rs:186) (?)
+- **Called by:** `parse_subcommand_json` (cli.rs:3779) (?); `Operation::validate` (edit/v2.rs:600); `with_operation_targets` (edit/v2_apply.rs:97) (?); `compose_threads` (edit/v2_apply.rs:1821) (?); `Transaction::resolve_thread` (edit.rs:4379) (?); `Transaction::check_thread_ops` (edit.rs:5715) (?); `run` (update.rs:225) (?)
 
 #### `Operation::validate`  (L600-708)
 `fn validate(&self) -> Result<(), EditError>`

@@ -1,6 +1,6 @@
 # Functions and methods in `src/xmllinq/parse.rs`
 
-41 non-test, 35 test. Part of the [symbol manifest](../README.md).
+41 non-test, 37 test. Part of the [symbol manifest](../README.md).
 
 #### `parse_xdocument`  (L100-111, pub)
 `pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId`
@@ -8,20 +8,20 @@
 - **Does:** Parse an XML string into a Document node allocated into `dom`.
 - **Calls (crate):** `Parser::parse_document` (xmllinq/parse.rs:654) L110
 - **Calls (std/external/unresolved):** `.chars`, `.collect`, `.strip_prefix`, `.unwrap_or`
-- **Called by:** `Dom::parse_xdocument` (xmllinq/mod.rs:1299); `try_parse_xdocument_with_limits` (xmllinq/parse.rs:131); `depth_scan_tests::built_depth` (xmllinq/parse.rs:1116); `checked_xml_tests::truncated_attribute_input_terminates_in_legacy_parser` (xmllinq/parse.rs:1189); `checked_xml_tests::checked_xml_keeps_refusing_attributes_that_are_not_xml` (xmllinq/parse.rs:1209); `xml_lexical_boundary_contract_tests::literal_attribute_whitespace_reads_as_spaces_references_survive` (xmllinq/parse.rs:1279); `xml_lexical_boundary_contract_tests::literal_text_end_of_line_reads_as_lf_references_survive` (xmllinq/parse.rs:1303); `xml_lexical_boundary_contract_tests::literal_whitespace_sources_round_trip_to_the_same_dom_values` (xmllinq/parse.rs:1324); `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1351); `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (xmllinq/parse.rs:1575); `tag_policy_tests::parsed_attributes_insert_in_bulk_not_quadratic_scans` (xmllinq/parse.rs:1589); `tag_policy_tests::duplicate_expanded_names_refuse_only_in_the_checked_parser` (xmllinq/parse.rs:1623); +5 more
+- **Called by:** `Dom::parse_xdocument` (xmllinq/mod.rs:1299); `try_parse_xdocument_with_limits` (xmllinq/parse.rs:131); `depth_scan_tests::built_depth` (xmllinq/parse.rs:1125); `checked_xml_tests::truncated_attribute_input_terminates_in_legacy_parser` (xmllinq/parse.rs:1198); `checked_xml_tests::checked_xml_keeps_refusing_attributes_that_are_not_xml` (xmllinq/parse.rs:1218); `xml_lexical_boundary_contract_tests::literal_attribute_whitespace_reads_as_spaces_references_survive` (xmllinq/parse.rs:1288); `xml_lexical_boundary_contract_tests::literal_text_end_of_line_reads_as_lf_references_survive` (xmllinq/parse.rs:1312); `xml_lexical_boundary_contract_tests::literal_whitespace_sources_round_trip_to_the_same_dom_values` (xmllinq/parse.rs:1333); `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1360); `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (xmllinq/parse.rs:1584); `tag_policy_tests::parsed_attributes_insert_in_bulk_not_quadratic_scans` (xmllinq/parse.rs:1598); `tag_policy_tests::duplicate_expanded_names_refuse_only_in_the_checked_parser` (xmllinq/parse.rs:1632); +5 more
 
 #### `try_parse_xdocument`  (L121-123, pub)
 `pub fn try_parse_xdocument(dom: &mut Dom, xml: &str) -> Result<NodeId, String>`
 
 - **Does:** Checked parse: enforce [`validate_xml`] (well-formedness plus the tag and namespace budgets) before the permissive parser builds the DOM.
 - **Calls (crate):** `try_parse_xdocument_with_limits` (xmllinq/parse.rs:131) L122; `<InputLimits as Default>::default` (admission.rs:64) L122
-- **Called by:** `Dom::try_parse_xdocument` (xmllinq/mod.rs:1310); `tag_policy_tests::element_attribute_count_is_capped_at_the_boundary` (xmllinq/parse.rs:1409); `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (xmllinq/parse.rs:1451); `tag_policy_tests::a_value_at_the_attribute_byte_cap_is_admitted_one_more_refused` (xmllinq/parse.rs:1488); `tag_policy_tests::duplicate_expanded_names_refuse_only_in_the_checked_parser` (xmllinq/parse.rs:1623); `tag_policy_tests::issue650_wide_tag_preserves_names_values_and_order` (xmllinq/parse.rs:1687); `tag_policy_tests::issue650_attribute_name_byte_boundary` (xmllinq/parse.rs:1704); `tag_policy_tests::issue650_checked_dom_parser_enforces_width_limits` (xmllinq/parse.rs:1713); `tag_policy_tests::issue650_unprefixed_attribute_has_no_default_namespace` (xmllinq/parse.rs:1726); `tag_policy_tests::issue650_attribute_probes_scale_linearly` (xmllinq/parse.rs:1736); `tag_policy_tests::normal_documents_parse_unchanged_through_try_parse` (xmllinq/parse.rs:1812)
+- **Called by:** `Dom::try_parse_xdocument` (xmllinq/mod.rs:1310); `tag_policy_tests::element_attribute_count_is_capped_at_the_boundary` (xmllinq/parse.rs:1418); `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (xmllinq/parse.rs:1460); `tag_policy_tests::a_value_at_the_attribute_byte_cap_is_admitted_one_more_refused` (xmllinq/parse.rs:1497); `tag_policy_tests::duplicate_expanded_names_refuse_only_in_the_checked_parser` (xmllinq/parse.rs:1632); `tag_policy_tests::issue650_wide_tag_preserves_names_values_and_order` (xmllinq/parse.rs:1696); `tag_policy_tests::issue650_attribute_name_byte_boundary` (xmllinq/parse.rs:1713); `tag_policy_tests::issue650_checked_dom_parser_enforces_width_limits` (xmllinq/parse.rs:1722); `tag_policy_tests::issue650_unprefixed_attribute_has_no_default_namespace` (xmllinq/parse.rs:1735); `tag_policy_tests::issue650_attribute_probes_scale_linearly` (xmllinq/parse.rs:1745); `tag_policy_tests::normal_documents_parse_unchanged_through_try_parse` (xmllinq/parse.rs:1821)
 
 #### `try_parse_xdocument_with_limits`  (L131-138, pub)
 `pub fn try_parse_xdocument_with_limits( dom: &mut Dom, xml: &str, limits: InputLimits, ) -> Result<NodeId, String>`
 
 - **Does:** Checked parse under explicit input budgets.
-- **Calls (crate):** `validate_xml_with_limits` (xmllinq/parse.rs:1052) L136; `parse_xdocument` (xmllinq/parse.rs:100) L137
+- **Calls (crate):** `validate_xml_with_limits` (xmllinq/parse.rs:1061) L136; `parse_xdocument` (xmllinq/parse.rs:100) L137
 - **Calls (std/external/unresolved):** `Ok`
 - **Called by:** `try_parse_xdocument` (xmllinq/parse.rs:121)
 
@@ -31,7 +31,7 @@
 - **Does:** Whether `xml` nests deeper than `limit` elements, read the way [`parse_xdocument`] reads it.
 - **Calls (crate):** `Dom::new` (xmllinq/mod.rs:387) L153; `Parser::nests_deeper` (xmllinq/parse.rs:579) L159
 - **Calls (std/external/unresolved):** `.chars`, `.collect`, `.strip_prefix`, `.unwrap_or`
-- **Called by:** `tolerant` (changes.rs:620) (?); `depth_scan_tests::scanned_depth` (xmllinq/parse.rs:1130); `depth_scan_tests::the_scan_counts_markup_the_permissive_parser_nests` (xmllinq/parse.rs:1171)
+- **Called by:** `tolerant` (changes.rs:620) (?); `depth_scan_tests::scanned_depth` (xmllinq/parse.rs:1139); `depth_scan_tests::the_scan_counts_markup_the_permissive_parser_nests` (xmllinq/parse.rs:1180)
 
 #### `NsScope::get`  (L189-191)
 `fn get(&self, prefix: &str) -> Option<&String>`
@@ -67,7 +67,7 @@
 
 - **Does:** The strict gate's policy: every attribute must be well-formed XML, quoted and with a value.
 - **Calls (std/external/unresolved):** `NsScope::default`, `Vec::new`
-- **Called by:** `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `TagPolicy::tolerant` (xmllinq/parse.rs:261); `validate_xml_with_limits` (xmllinq/parse.rs:1052)
+- **Called by:** `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `TagPolicy::tolerant` (xmllinq/parse.rs:261); `validate_xml_with_limits` (xmllinq/parse.rs:1061)
 
 #### `TagPolicy::tolerant`  (L261-266, pub(crate))
 `pub(crate) fn tolerant(limits: InputLimits) -> Self`
@@ -81,7 +81,7 @@
 
 - **Does:** Check one open tag and push its declarations until [`Self::close`].
 - **Calls (crate):** `TagPolicy::enter` (xmllinq/parse.rs:277) L274
-- **Called by:** `check_xml_depth` (admission.rs:858); `Package::check_tag_policy` (markdown/from_docx/ooxml.rs:61); `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `validate_xml_with_limits` (xmllinq/parse.rs:1052)
+- **Called by:** `check_xml_depth` (admission.rs:858); `Package::check_tag_policy` (markdown/from_docx/ooxml.rs:61); `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `validate_xml_with_limits` (xmllinq/parse.rs:1061)
 
 #### `TagPolicy::enter`  (L277-288)
 `fn enter( &mut self, tag: &quick_xml::events::BytesStart<'_>, delimiters: usize, ) -> Result<(), String>`
@@ -99,7 +99,7 @@
 - **Calls (crate):** `NsScope::mark` (xmllinq/parse.rs:193) L296; `TagPolicy::check_tag` (xmllinq/parse.rs:312) L297; `NsScope::pop` (xmllinq/parse.rs:209) L300
 - **Calls (std/external/unresolved):** `.as_ref`, `.map_err`, `.name`
 - **Macros:** `format!`
-- **Called by:** `check_xml_depth` (admission.rs:858); `Package::check_tag_policy` (markdown/from_docx/ooxml.rs:61); `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `validate_xml_with_limits` (xmllinq/parse.rs:1052)
+- **Called by:** `check_xml_depth` (admission.rs:858); `Package::check_tag_policy` (markdown/from_docx/ooxml.rs:61); `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `validate_xml_with_limits` (xmllinq/parse.rs:1061)
 
 #### `TagPolicy::close`  (L306-310, pub(crate))
 `pub(crate) fn close(&mut self)`
@@ -107,7 +107,7 @@
 - **Does:** Pop the declarations of the innermost open element.
 - **Calls (crate):** `NsScope::pop` (xmllinq/parse.rs:209) L308
 - **Calls (std/external/unresolved):** `.pop`
-- **Called by:** `check_xml_depth` (admission.rs:858); `Package::check_tag_policy` (markdown/from_docx/ooxml.rs:61); `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `validate_xml_with_limits` (xmllinq/parse.rs:1052)
+- **Called by:** `check_xml_depth` (admission.rs:858); `Package::check_tag_policy` (markdown/from_docx/ooxml.rs:61); `parse_xml_with_limits` (markdown/from_docx/ooxml.rs:444); `validate_xml_with_limits` (xmllinq/parse.rs:1061)
 
 #### `TagPolicy::check_tag`  (L312-369)
 `fn check_tag( &mut self, tag: &quick_xml::events::BytesStart<'_>, delimiters: usize, ) -> Result<(), String>`
@@ -231,7 +231,7 @@
 `fn parse_element(&mut self, scope: &mut NsScope) -> NodeId`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Parser::start_tag` (xmllinq/parse.rs:534) L712; `Parser::slice` (xmllinq/parse.rs:497) (by name) L717,718; `unescape_xml_text` (xmllinq/parse.rs:897) L718,798; `normalize_raw_attribute_whitespace` (xmllinq/parse.rs:961) L718; `Parser::slice` (xmllinq/parse.rs:497) L721,764,772,796; `NsScope::mark` (xmllinq/parse.rs:193) L727; `NsScope::push` (xmllinq/parse.rs:198) L730,732; `resolve` (xmllinq/parse.rs:837) L736,742; `Dom::new_element` (xmllinq/mod.rs:478) L737; `Dom::set_attributes` (xmllinq/mod.rs:935) L744; `NsScope::pop` (xmllinq/parse.rs:209) L747,802; `Parser::len` (xmllinq/parse.rs:445) L751; `Parser::starts_with` (xmllinq/parse.rs:460) L753,762,770,780; `Parser::read_name` (xmllinq/parse.rs:512) L755; `Parser::skip_ws` (xmllinq/parse.rs:505) L756; `Parser::cur` (xmllinq/parse.rs:449) L757,785,791; `Parser::index_of` (xmllinq/parse.rs:472) L763,771; `Dom::new_comment` (xmllinq/mod.rs:487) L765; `Dom::add` (xmllinq/mod.rs:1074) L766,776,782,787,799; `Dom::new_text` (xmllinq/mod.rs:483) L775,798; `normalize_raw_text_end_of_line` (xmllinq/parse.rs:991) L775,796; `Parser::parse_pi_node` (xmllinq/parse.rs:808) L781; `Parser::parse_element` (xmllinq/parse.rs:709) L786
+- **Calls (crate):** `Parser::start_tag` (xmllinq/parse.rs:534) L712; `Parser::slice` (xmllinq/parse.rs:497) (by name) L717,718; `unescape_xml_text` (xmllinq/parse.rs:899) L718,798; `normalize_raw_attribute_whitespace` (xmllinq/parse.rs:970) L718; `Parser::slice` (xmllinq/parse.rs:497) L721,764,772,796; `NsScope::mark` (xmllinq/parse.rs:193) L727; `NsScope::push` (xmllinq/parse.rs:198) L730,732; `resolve` (xmllinq/parse.rs:837) L736,742; `Dom::new_element` (xmllinq/mod.rs:478) L737; `Dom::set_attributes` (xmllinq/mod.rs:935) L744; `NsScope::pop` (xmllinq/parse.rs:209) L747,802; `Parser::len` (xmllinq/parse.rs:445) L751; `Parser::starts_with` (xmllinq/parse.rs:460) L753,762,770,780; `Parser::read_name` (xmllinq/parse.rs:512) L755; `Parser::skip_ws` (xmllinq/parse.rs:505) L756; `Parser::cur` (xmllinq/parse.rs:449) L757,785,791; `Parser::index_of` (xmllinq/parse.rs:472) L763,771; `Dom::new_comment` (xmllinq/mod.rs:487) L765; `Dom::add` (xmllinq/mod.rs:1074) L766,776,782,787,799; `Dom::new_text` (xmllinq/mod.rs:483) L775,798; `normalize_raw_text_end_of_line` (xmllinq/parse.rs:1000) L775,796; `Parser::parse_pi_node` (xmllinq/parse.rs:808) L781; `Parser::parse_element` (xmllinq/parse.rs:709) L786
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.is_empty`, `.iter`, `.map`, `.push`, `.strip_prefix`, `.unwrap_or`, `Vec::new`
 - **Called by:** `Parser::parse_document` (xmllinq/parse.rs:654); `Parser::parse_element` (xmllinq/parse.rs:709)
 
@@ -273,85 +273,88 @@
 - **Calls (std/external/unresolved):** `.chars`, `.find`, `.len`, `.next`, `.to_string`, `.trim_start`, `Some`
 - **Called by:** `parse_declaration` (xmllinq/parse.rs:864)
 
-#### `unescape_xml_text`  (L897-923, pub)
+#### `unescape_xml_text`  (L899-925, pub)
 `pub fn unescape_xml_text(s: &str) -> String`
 
 - **Does:** Decode XML entity and character references in attribute and text payloads (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&#nnn;`, `&#xhh;`).
-- **Calls (crate):** `decode_entity` (xmllinq/parse.rs:925) L909
+- **Calls (crate):** `decode_entity` (xmllinq/parse.rs:927) L911
 - **Calls (std/external/unresolved):** `.chars`, `.collect`, `.contains`, `.iter`, `.len`, `.position`, `.push_str`, `.push`, `.to_string`, `String::with_capacity`
-- **Called by:** `PartFs::resolve_rel_target` (opc/mod.rs:829); `Parser::parse_element` (xmllinq/parse.rs:709); `xml_lexical_boundary_contract_tests::undecodable_character_references_remain_literal_and_uppercase_hex_decodes` (xmllinq/parse.rs:1260)
+- **Called by:** `PartFs::resolve_rel_target` (opc/mod.rs:829); `Parser::parse_element` (xmllinq/parse.rs:709); `xml_lexical_boundary_contract_tests::undecodable_character_references_remain_literal_and_uppercase_hex_decodes` (xmllinq/parse.rs:1269); `unescape_tests::test_unescape_xml_text` (xmllinq/parse.rs:1902); `unescape_tests::a_reference_to_a_character_xml_forbids_stays_literal` (xmllinq/parse.rs:1953)
 
-#### `decode_entity`  (L925-950)
+#### `decode_entity`  (L927-959)
 `fn decode_entity(body: &str) -> Option<String>`
 
 - **Does:** _no doc comment_
-- **Calls (std/external/unresolved):** `.all`, `.chars`, `.collect`, `.is_ascii_alphabetic`, `.is_empty`, `.iter`, `.len`, `.map`, `.ok`, `.parse`, `.to_string`, `Some`, `char::from_u32`, `u32::from_str_radix`
-- **Called by:** `unescape_xml_text` (xmllinq/parse.rs:897); `validate_xml_with_limits` (xmllinq/parse.rs:1052)
+- **Calls (std/external/unresolved):** `.all`, `.chars`, `.collect`, `.filter`, `.is_ascii_alphabetic`, `.is_empty`, `.iter`, `.len`, `.map`, `.ok`, `.parse`, `.to_string`, `Some`, `char::from_u32`, `u32::from_str_radix`
+- **Macros:** `matches!`
+- **Called by:** `unescape_xml_text` (xmllinq/parse.rs:899); `validate_xml_with_limits` (xmllinq/parse.rs:1061)
 
-#### `normalize_raw_attribute_whitespace`  (L961-981)
+#### `normalize_raw_attribute_whitespace`  (L970-990)
 `fn normalize_raw_attribute_whitespace(value: String) -> String`
 
 - **Does:** XML 1.0 §3.3.3 attribute-value normalization, applied to the RAW value slice *before* [`unescape_xml_text`]: §2.11 end-of-line handling folds a literal CRLF (and a lone CR) to one LF first, and every literal whitespace character then reads as one space — the value a conforming reader (Word) sees.
 - **Calls (std/external/unresolved):** `.as_str`, `.chars`, `.contains`, `.len`, `.next`, `.push`, `.starts_with`, `String::with_capacity`
 - **Called by:** `Parser::parse_element` (xmllinq/parse.rs:709)
 
-#### `normalize_raw_text_end_of_line`  (L991-1008)
+#### `normalize_raw_text_end_of_line`  (L1000-1017)
 `fn normalize_raw_text_end_of_line(text: String) -> String`
 
 - **Does:** XML 1.0 §2.11 end-of-line handling, applied to the RAW text slice (CDATA bodies included — the processor normalizes line breaks before parsing) *before* [`unescape_xml_text`]: a literal CRLF and a lone CR both read as one LF.
 - **Calls (std/external/unresolved):** `.as_str`, `.chars`, `.contains`, `.len`, `.next`, `.push`, `.starts_with`, `String::with_capacity`
 - **Called by:** `Parser::parse_element` (xmllinq/parse.rs:709)
 
-#### `validate_xml`  (L1043-1045, pub)
+#### `validate_xml`  (L1052-1054, pub)
 `pub fn validate_xml(xml: &str) -> Result<(), String>`
 
 - **Does:** Structural admission for a part before the permissive DOM parser reads it: well-formed nesting, a single root, no DTD, only the five predefined or numeric entities, and nesting no deeper than 256.
-- **Calls (crate):** `validate_xml_with_limits` (xmllinq/parse.rs:1052) L1044; `<InputLimits as Default>::default` (admission.rs:64) L1044
-- **Called by:** `parse` (append.rs:336); `CommentFamily::load` (comments.rs:457); `package_tree` (debug/diff.rs:303); `document_text_view` (debug.rs:2181); `load_stories` (edit.rs:1680); `checked_xml_tests::truncated_attribute_input_terminates_in_legacy_parser` (xmllinq/parse.rs:1189); `checked_xml_tests::checked_xml_keeps_refusing_attributes_that_are_not_xml` (xmllinq/parse.rs:1209); `checked_xml_tests::checked_xml_rejects_invalid_or_unbounded_structure` (xmllinq/parse.rs:1219); `checked_xml_tests::checked_xml_accepts_normal_documents_and_entities` (xmllinq/parse.rs:1243); `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1351); `tag_policy_tests::element_attribute_count_is_capped_at_the_boundary` (xmllinq/parse.rs:1409); `tag_policy_tests::tag_whole_width_is_bounded` (xmllinq/parse.rs:1430); +7 more
+- **Calls (crate):** `validate_xml_with_limits` (xmllinq/parse.rs:1061) L1053; `<InputLimits as Default>::default` (admission.rs:64) L1053
+- **Called by:** `parse` (append.rs:336); `CommentFamily::load` (comments.rs:457); `package_tree` (debug/diff.rs:303); `document_text_view` (debug.rs:2181); `load_stories` (edit.rs:1680); `checked_xml_tests::truncated_attribute_input_terminates_in_legacy_parser` (xmllinq/parse.rs:1198); `checked_xml_tests::checked_xml_keeps_refusing_attributes_that_are_not_xml` (xmllinq/parse.rs:1218); `checked_xml_tests::checked_xml_rejects_invalid_or_unbounded_structure` (xmllinq/parse.rs:1228); `checked_xml_tests::checked_xml_accepts_normal_documents_and_entities` (xmllinq/parse.rs:1252); `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1360); `tag_policy_tests::element_attribute_count_is_capped_at_the_boundary` (xmllinq/parse.rs:1418); `tag_policy_tests::tag_whole_width_is_bounded` (xmllinq/parse.rs:1439); +7 more
 
-#### `validate_xml_with_limits`  (L1052-1108, pub)
+#### `validate_xml_with_limits`  (L1061-1117, pub)
 `pub fn validate_xml_with_limits(xml: &str, limits: InputLimits) -> Result<(), String>`
 
 - **Does:** Validate XML under explicit XML-related [`InputLimits`].
-- **Calls (crate):** `TagPolicy::new` (xmllinq/parse.rs:247) L1059; `TagPolicy::open` (xmllinq/parse.rs:273) L1068; `TagPolicy::empty` (xmllinq/parse.rs:295) L1078; `TagPolicy::close` (xmllinq/parse.rs:306) L1085; `decode_entity` (xmllinq/parse.rs:925) L1090
+- **Calls (crate):** `TagPolicy::new` (xmllinq/parse.rs:247) L1068; `TagPolicy::open` (xmllinq/parse.rs:273) L1077; `TagPolicy::empty` (xmllinq/parse.rs:295) L1087; `TagPolicy::close` (xmllinq/parse.rs:306) L1094; `decode_entity` (xmllinq/parse.rs:927) L1099
 - **Calls (std/external/unresolved):** `.any`, `.bytes`, `.checked_sub`, `.config_mut`, `.is_ascii_whitespace`, `.is_none`, `.map_err`, `.ok_or`, `.read_event`, `.to_string`, `Err`, `Ok`, `Reader::from_str`
 - **Macros:** `format!`
-- **Called by:** `parse_part_within` (inspect.rs:930); `try_parse_xdocument_with_limits` (xmllinq/parse.rs:131); `validate_xml` (xmllinq/parse.rs:1043)
+- **Called by:** `parse_part_within` (inspect.rs:930); `try_parse_xdocument_with_limits` (xmllinq/parse.rs:131); `validate_xml` (xmllinq/parse.rs:1052)
 
-## Test functions (35)
+## Test functions (37)
 
 - `bump_ns_scope_declared_bytes` (L80): Add to this thread's [`NS_SCOPE_DECLARED_BYTES`].
-- `depth_scan_tests::built_depth` (L1116): The deepest element of the tree `parse_xdocument` builds.
-- `depth_scan_tests::scanned_depth` (L1130): The deepest nesting the scan reports: the least limit it keeps within.
-- `depth_scan_tests::the_scan_measures_the_tree_the_parser_builds` (L1141): The scan measures the tree the parser builds, malformed input included: the two cannot drift apart unnoticed.
-- `depth_scan_tests::the_scan_counts_markup_the_permissive_parser_nests` (L1171): Inside an element the permissive parser reads `<!x>` as a child element, so the scan that guards its recursion must count it too (#1353 review): a strict reader stops at it.
-- `checked_xml_tests::truncated_attribute_input_terminates_in_legacy_parser` (L1189): _no doc comment_
-- `checked_xml_tests::checked_xml_keeps_refusing_attributes_that_are_not_xml` (L1209): Package admission tolerates unquoted and valueless attributes so the permissive parser can read them; the strict gate never did, and the edit, comments, append and inspect paths still refuse such a part.
-- `checked_xml_tests::checked_xml_rejects_invalid_or_unbounded_structure` (L1219): _no doc comment_
-- `checked_xml_tests::checked_xml_accepts_normal_documents_and_entities` (L1243): _no doc comment_
-- `xml_lexical_boundary_contract_tests::undecodable_character_references_remain_literal_and_uppercase_hex_decodes` (L1260): _no doc comment_
-- `xml_lexical_boundary_contract_tests::literal_attribute_whitespace_reads_as_spaces_references_survive` (L1279): _no doc comment_
-- `xml_lexical_boundary_contract_tests::literal_text_end_of_line_reads_as_lf_references_survive` (L1303): _no doc comment_
-- `xml_lexical_boundary_contract_tests::literal_whitespace_sources_round_trip_to_the_same_dom_values` (L1324): _no doc comment_
-- `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (L1351): _no doc comment_
-- `tag_policy_tests::xml_with_attrs` (L1401): _no doc comment_
-- `tag_policy_tests::element_attribute_count_is_capped_at_the_boundary` (L1409): _no doc comment_
-- `tag_policy_tests::tag_whole_width_is_bounded` (L1430): _no doc comment_
-- `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (L1451): Word writes a VML `o:gfxdata` attribute of up to ~366 KiB inside `word/header*.xml` parts of its own documents; the checked gate (N01) must admit the real attribute size Word uses, not a value the engine happens to like.
-- `tag_policy_tests::a_value_at_the_attribute_byte_cap_is_admitted_one_more_refused` (L1488): The exact-boundary contract for the new value cap: a value byte at `MAX_ATTRIBUTE_VALUE_BYTES` is admitted (it is the inclusive cap); one byte more is refused with the gate's structured error.
-- `tag_policy_tests::a_tag_at_the_attribute_byte_cap_is_admitted_one_more_refused` (L1512): The complete start tag, including spaces, quotes and delimiters, has an inclusive byte cap independent of each value's cap.
-- `tag_policy_tests::namespace_declaration_budgets_reject_before_dom_insertion` (L1537): _no doc comment_
-- `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (L1575): _no doc comment_
-- `tag_policy_tests::parsed_attributes_insert_in_bulk_not_quadratic_scans` (L1589): _no doc comment_
-- `tag_policy_tests::duplicate_expanded_names_refuse_only_in_the_checked_parser` (L1623): _no doc comment_
-- `tag_policy_tests::issue650_infallible_parser_preserves_over_default_count` (L1648): _no doc comment_
-- `tag_policy_tests::issue650_infallible_parser_preserves_over_default_name` (L1669): _no doc comment_
-- `tag_policy_tests::issue650_wide_tag_preserves_names_values_and_order` (L1687): _no doc comment_
-- `tag_policy_tests::issue650_attribute_name_byte_boundary` (L1704): _no doc comment_
-- `tag_policy_tests::issue650_checked_dom_parser_enforces_width_limits` (L1713): _no doc comment_
-- `tag_policy_tests::issue650_unprefixed_attribute_has_no_default_namespace` (L1726): _no doc comment_
-- `tag_policy_tests::issue650_attribute_probes_scale_linearly` (L1736): _no doc comment_
-- `tag_policy_tests::nested_rebinding_shadows_and_restores` (L1753): _no doc comment_
-- `tag_policy_tests::deep_rebinding_scope_grows_only_with_declared_bytes` (L1777): _no doc comment_
-- `tag_policy_tests::normal_documents_parse_unchanged_through_try_parse` (L1812): _no doc comment_
-- `tag_policy_tests::mechanism_counters_are_isolated_to_the_calling_thread` (L1838): `cargo test` runs tests as threads of one process, so a shared counter would see every other test's parsing.
+- `depth_scan_tests::built_depth` (L1125): The deepest element of the tree `parse_xdocument` builds.
+- `depth_scan_tests::scanned_depth` (L1139): The deepest nesting the scan reports: the least limit it keeps within.
+- `depth_scan_tests::the_scan_measures_the_tree_the_parser_builds` (L1150): The scan measures the tree the parser builds, malformed input included: the two cannot drift apart unnoticed.
+- `depth_scan_tests::the_scan_counts_markup_the_permissive_parser_nests` (L1180): Inside an element the permissive parser reads `<!x>` as a child element, so the scan that guards its recursion must count it too (#1353 review): a strict reader stops at it.
+- `checked_xml_tests::truncated_attribute_input_terminates_in_legacy_parser` (L1198): _no doc comment_
+- `checked_xml_tests::checked_xml_keeps_refusing_attributes_that_are_not_xml` (L1218): Package admission tolerates unquoted and valueless attributes so the permissive parser can read them; the strict gate never did, and the edit, comments, append and inspect paths still refuse such a part.
+- `checked_xml_tests::checked_xml_rejects_invalid_or_unbounded_structure` (L1228): _no doc comment_
+- `checked_xml_tests::checked_xml_accepts_normal_documents_and_entities` (L1252): _no doc comment_
+- `xml_lexical_boundary_contract_tests::undecodable_character_references_remain_literal_and_uppercase_hex_decodes` (L1269): _no doc comment_
+- `xml_lexical_boundary_contract_tests::literal_attribute_whitespace_reads_as_spaces_references_survive` (L1288): _no doc comment_
+- `xml_lexical_boundary_contract_tests::literal_text_end_of_line_reads_as_lf_references_survive` (L1312): _no doc comment_
+- `xml_lexical_boundary_contract_tests::literal_whitespace_sources_round_trip_to_the_same_dom_values` (L1333): _no doc comment_
+- `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (L1360): _no doc comment_
+- `tag_policy_tests::xml_with_attrs` (L1410): _no doc comment_
+- `tag_policy_tests::element_attribute_count_is_capped_at_the_boundary` (L1418): _no doc comment_
+- `tag_policy_tests::tag_whole_width_is_bounded` (L1439): _no doc comment_
+- `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (L1460): Word writes a VML `o:gfxdata` attribute of up to ~366 KiB inside `word/header*.xml` parts of its own documents; the checked gate (N01) must admit the real attribute size Word uses, not a value the engine happens to like.
+- `tag_policy_tests::a_value_at_the_attribute_byte_cap_is_admitted_one_more_refused` (L1497): The exact-boundary contract for the new value cap: a value byte at `MAX_ATTRIBUTE_VALUE_BYTES` is admitted (it is the inclusive cap); one byte more is refused with the gate's structured error.
+- `tag_policy_tests::a_tag_at_the_attribute_byte_cap_is_admitted_one_more_refused` (L1521): The complete start tag, including spaces, quotes and delimiters, has an inclusive byte cap independent of each value's cap.
+- `tag_policy_tests::namespace_declaration_budgets_reject_before_dom_insertion` (L1546): _no doc comment_
+- `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (L1584): _no doc comment_
+- `tag_policy_tests::parsed_attributes_insert_in_bulk_not_quadratic_scans` (L1598): _no doc comment_
+- `tag_policy_tests::duplicate_expanded_names_refuse_only_in_the_checked_parser` (L1632): _no doc comment_
+- `tag_policy_tests::issue650_infallible_parser_preserves_over_default_count` (L1657): _no doc comment_
+- `tag_policy_tests::issue650_infallible_parser_preserves_over_default_name` (L1678): _no doc comment_
+- `tag_policy_tests::issue650_wide_tag_preserves_names_values_and_order` (L1696): _no doc comment_
+- `tag_policy_tests::issue650_attribute_name_byte_boundary` (L1713): _no doc comment_
+- `tag_policy_tests::issue650_checked_dom_parser_enforces_width_limits` (L1722): _no doc comment_
+- `tag_policy_tests::issue650_unprefixed_attribute_has_no_default_namespace` (L1735): _no doc comment_
+- `tag_policy_tests::issue650_attribute_probes_scale_linearly` (L1745): _no doc comment_
+- `tag_policy_tests::nested_rebinding_shadows_and_restores` (L1762): _no doc comment_
+- `tag_policy_tests::deep_rebinding_scope_grows_only_with_declared_bytes` (L1786): _no doc comment_
+- `tag_policy_tests::normal_documents_parse_unchanged_through_try_parse` (L1821): _no doc comment_
+- `tag_policy_tests::mechanism_counters_are_isolated_to_the_calling_thread` (L1847): `cargo test` runs tests as threads of one process, so a shared counter would see every other test's parsing.
+- `unescape_tests::test_unescape_xml_text` (L1902): _no doc comment_
+- `unescape_tests::a_reference_to_a_character_xml_forbids_stays_literal` (L1953): XML 1.0 §2.2 `Char`: a reference to a character the production leaves out (NUL, the C0 controls but tab, LF and CR, U+FFFE and U+FFFF) is kept verbatim, so it never becomes text the writer then serializes into a part no XML reader accepts.

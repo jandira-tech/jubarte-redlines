@@ -14,7 +14,7 @@
 
 - **Does:** Construct a namespace, interning `namespace_name` for sharing across the thread (a no-op once the pool is saturated).
 - **Calls (crate):** `intern_str` (xmllinq/mod.rs:75) L110
-- **Called by:** `fix_strict_validity_artifacts` (comparer/finalize.rs:11326); `coverage_final_batch_finalize_tests::inherited_invalidity_repairs_only_wml_schema_defects` (comparer/finalize.rs:24583); `deep_lcs_source_conservation_tests::opaque_object_and_foreign_namespace_payloads_are_contentful_without_text` (comparer/lcs.rs:17317); `package_tree` (debug/diff.rs:303); `holds_watermark` (edit/watermark.rs:156); `XNamespace::none` (xmllinq/mod.rs:116); `XNamespace::xmlns` (xmllinq/mod.rs:122); `XNamespace::xml` (xmllinq/mod.rs:128); `XName::get` (xmllinq/mod.rs:180); `resolve` (xmllinq/parse.rs:837); `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (xmllinq/parse.rs:1451); `tests::word_2016_plus_namespaces_serialize_with_word_prefixes` (xmllinq/serialize.rs:859); +2 more
+- **Called by:** `fix_strict_validity_artifacts` (comparer/finalize.rs:11326); `coverage_final_batch_finalize_tests::inherited_invalidity_repairs_only_wml_schema_defects` (comparer/finalize.rs:24583); `deep_lcs_source_conservation_tests::opaque_object_and_foreign_namespace_payloads_are_contentful_without_text` (comparer/lcs.rs:17317); `package_tree` (debug/diff.rs:303); `holds_watermark` (edit/watermark.rs:156); `XNamespace::none` (xmllinq/mod.rs:116); `XNamespace::xmlns` (xmllinq/mod.rs:122); `XNamespace::xml` (xmllinq/mod.rs:128); `XName::get` (xmllinq/mod.rs:180); `resolve` (xmllinq/parse.rs:837); `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (xmllinq/parse.rs:1460); `tests::word_2016_plus_namespaces_serialize_with_word_prefixes` (xmllinq/serialize.rs:859); +2 more
 
 #### `XNamespace::none`  (L116-118, pub)
 `pub fn none() -> XNamespace`
@@ -28,7 +28,7 @@
 
 - **Does:** The reserved `xmlns:` declarations namespace (`http://www.w3.org/2000/xmlns/`).
 - **Calls (crate):** `XNamespace::get` (xmllinq/mod.rs:108) L123
-- **Called by:** `declare_ignorable` (comments.rs:1199); `coalesce` (comparer/atomize.rs:557); `preserve_cloned_namespace_context` (comparer/comments.rs:1052); `ignore_pt14_namespace` (comparer/finalize.rs:862); `declare_extension_namespaces_ignorable` (comparer/finalize.rs:942); `bind_compatibility_prefixes` (comparer/finalize.rs:1026); `coverage_final_batch_finalize_tests::compatibility_bindings_keep_conflicts_and_recognize_attribute_only_extensions` (comparer/finalize.rs:24643); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `produce_document` (comparer/produce.rs:65); `keyed_groups` (comparer/revisions.rs:88); `compare_documents_impl` (document_comparer.rs:6520); `Transaction::mark_header` (edit/watermark.rs:285); +2 more
+- **Called by:** `declare_ignorable` (comments.rs:1199); `coalesce` (comparer/atomize.rs:557); `preserve_cloned_namespace_context` (comparer/comments.rs:1052); `ignore_pt14_namespace` (comparer/finalize.rs:862); `declare_extension_namespaces_ignorable` (comparer/finalize.rs:942); `bind_compatibility_prefixes` (comparer/finalize.rs:1026); `coverage_final_batch_finalize_tests::compatibility_bindings_keep_conflicts_and_recognize_attribute_only_extensions` (comparer/finalize.rs:24643); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `produce_document` (comparer/produce.rs:65); `keyed_groups` (comparer/revisions.rs:88); `compare_documents_impl` (document_comparer.rs:6521); `Transaction::mark_header` (edit/watermark.rs:285); +2 more
 
 #### `XNamespace::xml`  (L128-130, pub)
 `pub fn xml() -> XNamespace`
@@ -42,14 +42,14 @@
 
 - **Does:** Build the [`XName`] `{ns}local` — i.e.
 - **Calls (crate):** `XName::get` (xmllinq/mod.rs:180) L135
-- **Called by:** `declare_ignorable` (comments.rs:1199); `declare_extension_namespaces_ignorable` (comparer/finalize.rs:942); `bind_compatibility_prefixes` (comparer/finalize.rs:1026); `fix_strict_validity_artifacts::{fn remap}` (comparer/finalize.rs:11395); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `Transaction::mark_header` (edit/watermark.rs:285); `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (xmllinq/parse.rs:1451)
+- **Called by:** `declare_ignorable` (comments.rs:1199); `declare_extension_namespaces_ignorable` (comparer/finalize.rs:942); `bind_compatibility_prefixes` (comparer/finalize.rs:1026); `fix_strict_validity_artifacts::{fn remap}` (comparer/finalize.rs:11395); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `Transaction::mark_header` (edit/watermark.rs:285); `tag_policy_tests::a_word_gfxdata_attribute_is_admitted` (xmllinq/parse.rs:1460)
 
 #### `XNamespace::namespace_name`  (L140-142, pub)
 `pub fn namespace_name(&self) -> &str`
 
 - **Does:** The namespace URI as a borrowed string.
 - **Calls:** none
-- **Called by:** `w_vals` (append.rs:818) (?); `set_section_type` (append.rs:1331) (?); `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `walk` (changes/logical.rs:399) (?); `audit_stories` (changes.rs:168) (?); `carriers` (changes.rs:1124) (?); `in_recorded_properties` (changes.rs:1406) (?); `recorded_marks` (changes.rs:1419) (?); `comment_text` (comments.rs:1101) (?); `preserve_cloned_namespace_context` (comparer/comments.rs:1052) (?); `deeper_boundary_tests::namespace_conflicts_reuse_aliases_or_skip_occupied_generated_prefixes` (comparer/comments.rs:2317) (?); `public_option_source_ownership_tests::canonical` (comparer/cross_para.rs:2479) (?); +141 more
+- **Called by:** `w_vals` (append.rs:818) (?); `set_section_type` (append.rs:1331) (?); `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `walk` (changes/logical.rs:399) (?); `audit_stories` (changes.rs:168) (?); `carriers` (changes.rs:1124) (?); `in_recorded_properties` (changes.rs:1406) (?); `recorded_marks` (changes.rs:1419) (?); `comment_text` (comments.rs:1101) (?); `preserve_cloned_namespace_context` (comparer/comments.rs:1052) (?); `deeper_boundary_tests::namespace_conflicts_reuse_aliases_or_skip_occupied_generated_prefixes` (comparer/comments.rs:2317) (?); `public_option_source_ownership_tests::canonical` (comparer/cross_para.rs:2479) (?); +142 more
 
 #### `<XNamespace as PartialEq>::eq`  (L146-152, impl PartialEq)
 `fn eq(&self, other: &Self) -> bool`
@@ -94,7 +94,7 @@
 
 - **Does:** The local part of the name, as a borrowed string.
 - **Calls:** none
-- **Called by:** `elements` (admission.rs:967) (?); `is_comment_anchor` (append.rs:423) (?); `is_annotation` (append.rs:494); `w_vals` (append.rs:818) (?); `set_section_type` (append.rs:1331) (?); `tests::section_type_sits_after_header_references` (append.rs:1404) (?); `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `decorative` (audit.rs:942) (?); `walk` (changes/logical.rs:399) (?); `audit_stories` (changes.rs:168) (?); `audit_owner` (changes.rs:283) (?); `resolve_for_edit_or_cli` (changes.rs:922) (?); +262 more
+- **Called by:** `elements` (admission.rs:967) (?); `is_comment_anchor` (append.rs:423) (?); `is_annotation` (append.rs:494); `w_vals` (append.rs:818) (?); `set_section_type` (append.rs:1331) (?); `tests::section_type_sits_after_header_references` (append.rs:1404) (?); `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `decorative` (audit.rs:942) (?); `walk` (changes/logical.rs:399) (?); `audit_stories` (changes.rs:168) (?); `audit_owner` (changes.rs:283) (?); `resolve_for_edit_or_cli` (changes.rs:922) (?); +263 more
 
 #### `XName::namespace`  (L213-215, pub)
 `pub fn namespace(&self) -> &XNamespace`
@@ -108,7 +108,7 @@
 
 - **Does:** The namespace URI as a borrowed string.
 - **Calls (crate):** `XNamespace::namespace_name` (xmllinq/mod.rs:140) L220
-- **Called by:** `is_comment_anchor` (append.rs:423); `is_annotation` (append.rs:494); `w_vals` (append.rs:818) (?); `set_section_type` (append.rs:1331) (?); `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `walk` (changes/logical.rs:399) (?); `audit_stories` (changes.rs:168) (?); `carriers` (changes.rs:1124) (?); `in_recorded_properties` (changes.rs:1406) (?); `recorded_marks` (changes.rs:1419) (?); `comment_text` (comments.rs:1101) (?); `preserve_cloned_namespace_context` (comparer/comments.rs:1052) (?); +156 more
+- **Called by:** `is_comment_anchor` (append.rs:423); `is_annotation` (append.rs:494); `w_vals` (append.rs:818) (?); `set_section_type` (append.rs:1331) (?); `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `walk` (changes/logical.rs:399) (?); `audit_stories` (changes.rs:168) (?); `carriers` (changes.rs:1124) (?); `in_recorded_properties` (changes.rs:1406) (?); `recorded_marks` (changes.rs:1419) (?); `comment_text` (comments.rs:1101) (?); `preserve_cloned_namespace_context` (comparer/comments.rs:1052) (?); +157 more
 
 #### `XName::clark`  (L226-232, pub)
 `pub fn clark(&self) -> String`
@@ -116,7 +116,7 @@
 - **Does:** The clark-notation form: `"{ns}local"` for a non-empty namespace, or just `"local"` for the empty one.
 - **Calls (std/external/unresolved):** `.is_empty`, `.to_string`
 - **Macros:** `format!`
-- **Called by:** `get_changed_property_names` (comparer/formatchg.rs:217) (?); `assert_tree` (document_comparer/based_style_record_tests.rs:34) (?); `style_prop_signature` (document_comparer.rs:1485) (?); `effective_chain_props` (document_comparer.rs:1696) (?); `tests::restored_deleted_spacing_leaves_scratch_unids_behind` (document_comparer.rs:8100) (?); `coverage_boundary_tests::effective_run_properties_merge_independent_slots_and_clear_alternatives` (document_comparer.rs:9022) (?); `coverage_boundary_tests::style_cycles_stop_and_self_based_style_does_not_hide_own_properties` (document_comparer.rs:9059) (?); `authored_style_chain_boundary_tests::leaf` (document_comparer.rs:12161) (?); `authored_style_chain_boundary_tests::attrs` (document_comparer.rs:12168) (?); `authored_style_chain_boundary_tests::inherited_style_font_alternatives_and_missing_blocks_keep_exact_declarations` (document_comparer.rs:12177) (?); `authored_style_chain_boundary_tests::based_on_cycles_stop_after_unique_authored_owners_with_nearest_properties_winning` (document_comparer.rs:12222) (?); `authored_style_chain_boundary_tests::bounded_style_walk_reads_exactly_the_nearest_thirty_two_owners` (document_comparer.rs:12244) (?); +5 more
+- **Called by:** `get_changed_property_names` (comparer/formatchg.rs:217) (?); `assert_tree` (document_comparer/based_style_record_tests.rs:34) (?); `style_prop_signature` (document_comparer.rs:1485) (?); `effective_chain_props` (document_comparer.rs:1696) (?); `tests::restored_deleted_spacing_leaves_scratch_unids_behind` (document_comparer.rs:8101) (?); `coverage_boundary_tests::effective_run_properties_merge_independent_slots_and_clear_alternatives` (document_comparer.rs:9023) (?); `coverage_boundary_tests::style_cycles_stop_and_self_based_style_does_not_hide_own_properties` (document_comparer.rs:9060) (?); `authored_style_chain_boundary_tests::leaf` (document_comparer.rs:12162) (?); `authored_style_chain_boundary_tests::attrs` (document_comparer.rs:12169) (?); `authored_style_chain_boundary_tests::inherited_style_font_alternatives_and_missing_blocks_keep_exact_declarations` (document_comparer.rs:12178) (?); `authored_style_chain_boundary_tests::based_on_cycles_stop_after_unique_authored_owners_with_nearest_properties_winning` (document_comparer.rs:12223) (?); `authored_style_chain_boundary_tests::bounded_style_walk_reads_exactly_the_nearest_thirty_two_owners` (document_comparer.rs:12245) (?); +5 more
 
 #### `<XName as PartialEq>::eq`  (L236-241, impl PartialEq)
 `fn eq(&self, other: &Self) -> bool`
@@ -153,7 +153,7 @@
 
 - **Does:** Construct an empty arena.
 - **Calls (std/external/unresolved):** `HashMap::new`, `Vec::new`
-- **Called by:** `append_documents` (append.rs:152); `drop_comments_in_new_parts` (append.rs:456); `insert_lists` (append.rs:1165); `nsids` (append.rs:1232); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404); `tests::ignorable_prefixes_merge_only_with_the_same_namespace` (append.rs:1423); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (append.rs:1599); `audit_stories` (changes.rs:168); `for_each_story` (changes.rs:657); `comment_changes_in` (changes.rs:1003); +754 more
+- **Called by:** `append_documents` (append.rs:152); `drop_comments_in_new_parts` (append.rs:456); `insert_lists` (append.rs:1165); `nsids` (append.rs:1232); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404); `tests::ignorable_prefixes_merge_only_with_the_same_namespace` (append.rs:1423); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::verify_styles_xml` (append.rs:1598); `public_memory_append_owner_boundary_tests::verify_numbering_xml` (append.rs:1658); `audit_stories` (changes.rs:168); `for_each_story` (changes.rs:657); +755 more
 
 #### `Dom::alloc`  (L394-398)
 `fn alloc(&mut self, kind: NodeKind) -> NodeId`
@@ -210,7 +210,7 @@
 
 - **Does:** Allocate an element node with the given expanded name.
 - **Calls (crate):** `Dom::alloc` (xmllinq/mod.rs:394) L479
-- **Called by:** `append_documents` (append.rs:152); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `Anchors::scan` (comments.rs:251); `CommentFamily::add` (comments.rs:648) (?); `CommentFamily::set_date_utc` (comments.rs:726); `CommentFamily::adopt` (comments.rs:743) (?); `CommentFamily::set_text` (comments.rs:793) (?); `CommentFamily::store` (comments.rs:854); `CommentFamily::store_people` (comments.rs:1033); +285 more
+- **Called by:** `append_documents` (append.rs:152); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `Anchors::scan` (comments.rs:251); `CommentFamily::add` (comments.rs:648) (?); `CommentFamily::set_date_utc` (comments.rs:726); `CommentFamily::adopt` (comments.rs:743) (?); `CommentFamily::set_text` (comments.rs:793) (?); `CommentFamily::store` (comments.rs:854); `CommentFamily::store_people` (comments.rs:1033); +287 more
 
 #### `Dom::new_text`  (L483-485, pub)
 `pub fn new_text(&mut self, value: &str) -> NodeId`
@@ -218,7 +218,7 @@
 - **Does:** Allocate a text node carrying `value`.
 - **Calls (crate):** `Dom::alloc` (xmllinq/mod.rs:394) L484
 - **Calls (std/external/unresolved):** `.to_string`, `NodeKind::Text`
-- **Called by:** `split_seg` (comparer/comments.rs:568); `deeper_boundary_tests::projection_rejects_document_text_and_a_detached_leaf_without_a_run` (comparer/comments.rs:2540); `coverage_tests::revision_wrapper_requires_consistent_hyperlink_stamps` (comparer/finalize.rs:15859); `clone_internal_unsalted` (comparer/preprocess.rs:245) (?); `coverage_boundary_tests::style_cycles_stop_and_self_based_style_does_not_hide_own_properties` (document_comparer.rs:9059); `tests::settled_paragraph_unprojected_content_is_not_content_free` (edit/origin.rs:1101); `Dom::add_text` (xmllinq/mod.rs:1087); `Parser::parse_element` (xmllinq/parse.rs:709)
+- **Called by:** `split_seg` (comparer/comments.rs:568); `deeper_boundary_tests::projection_rejects_document_text_and_a_detached_leaf_without_a_run` (comparer/comments.rs:2540); `coverage_tests::revision_wrapper_requires_consistent_hyperlink_stamps` (comparer/finalize.rs:15859); `clone_internal_unsalted` (comparer/preprocess.rs:245) (?); `coverage_boundary_tests::style_cycles_stop_and_self_based_style_does_not_hide_own_properties` (document_comparer.rs:9060); `tests::settled_paragraph_unprojected_content_is_not_content_free` (edit/origin.rs:1101); `Dom::add_text` (xmllinq/mod.rs:1087); `Parser::parse_element` (xmllinq/parse.rs:709)
 
 #### `Dom::new_comment`  (L487-489, pub)
 `pub fn new_comment(&mut self, value: &str) -> NodeId`
@@ -242,7 +242,7 @@
 - **Does:** True if `id` is an element node.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) (by name) L503
 - **Macros:** `matches!`
-- **Called by:** `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454); `extract_events` (comparer/comments.rs:260); `descendants_trimmed::{fn walk}` (comparer/finalize.rs:65); `convert_run_text_to_del_text::{fn walk}` (comparer/finalize.rs:103); `mark_content_transform` (comparer/finalize.rs:192); `conjoin_transform` (comparer/finalize.rs:628); `move_paragraph_properties_first` (comparer/finalize.rs:1566); `paragraph_mark_properties_equal::{fn signature}` (comparer/finalize.rs:3342); `reorder_replacements_ins_before_del` (comparer/finalize.rs:6657); `revision_wrapper` (comparer/finalize.rs:6712); `coalesce_adjacent_revisions` (comparer/finalize.rs:6764); `simplify_move_transform` (comparer/finalize.rs:6818); +94 more
+- **Called by:** `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454); `extract_events` (comparer/comments.rs:260); `descendants_trimmed::{fn walk}` (comparer/finalize.rs:65); `convert_run_text_to_del_text::{fn walk}` (comparer/finalize.rs:103); `mark_content_transform` (comparer/finalize.rs:192); `conjoin_transform` (comparer/finalize.rs:628); `move_paragraph_properties_first` (comparer/finalize.rs:1566); `paragraph_mark_properties_equal::{fn signature}` (comparer/finalize.rs:3342); `reorder_replacements_ins_before_del` (comparer/finalize.rs:6657); `revision_wrapper` (comparer/finalize.rs:6712); `coalesce_adjacent_revisions` (comparer/finalize.rs:6764); `simplify_move_transform` (comparer/finalize.rs:6818); +95 more
 
 #### `Dom::is_text`  (L506-508, pub)
 `pub fn is_text(&self, id: NodeId) -> bool`
@@ -251,7 +251,7 @@
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) (by name) L507
 - **Calls (std/external/unresolved):** `NodeKind::Text`
 - **Macros:** `matches!`
-- **Called by:** `extract` (comparer/bookmarks.rs:92); `extract_events` (comparer/comments.rs:260); `collect_segments` (comparer/comments.rs:477); `strip_whitespace_in_clone_text` (comparer/preprocess.rs:96); `clone_internal_unsalted` (comparer/preprocess.rs:245); `text_lines::{fn runs}` (debug.rs:1688); `alternate_content_paragraph_owner_tests::semantic` (revision_processor.rs:5470); `xml_holds` (scrub.rs:528); `emit` (xmllinq/serialize.rs:668); `serialize_document` (xmllinq/serialize.rs:805)
+- **Called by:** `extract` (comparer/bookmarks.rs:92); `extract_events` (comparer/comments.rs:260); `collect_segments` (comparer/comments.rs:477); `strip_whitespace_in_clone_text` (comparer/preprocess.rs:96); `clone_internal_unsalted` (comparer/preprocess.rs:245); `text_lines::{fn runs}` (debug.rs:1688); `alternate_content_paragraph_owner_tests::semantic` (revision_processor.rs:5499); `xml_holds` (scrub.rs:528); `emit` (xmllinq/serialize.rs:668); `serialize_document` (xmllinq/serialize.rs:805)
 
 #### `Dom::is_document`  (L511-513, pub)
 `pub fn is_document(&self, id: NodeId) -> bool`
@@ -277,7 +277,7 @@
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) (by name) L520
 - **Calls (std/external/unresolved):** `NodeKind::Pi`
 - **Macros:** `matches!`
-- **Called by:** `xml_holds` (scrub.rs:528); `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1351) (?); `emit` (xmllinq/serialize.rs:668); `serialize_document` (xmllinq/serialize.rs:805); `tests::document_serialization_preserves_declarations_comments_and_processing_instructions` (xmllinq/serialize.rs:885)
+- **Called by:** `xml_holds` (scrub.rs:528); `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1360) (?); `emit` (xmllinq/serialize.rs:668); `serialize_document` (xmllinq/serialize.rs:805); `tests::document_serialization_preserves_declarations_comments_and_processing_instructions` (xmllinq/serialize.rs:885)
 
 #### `Dom::name`  (L526-531, pub)
 `pub fn name(&self, id: NodeId) -> Option<XName>`
@@ -285,7 +285,7 @@
 - **Does:** The element's expanded name, or `None` for non-element nodes.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L527
 - **Calls (std/external/unresolved):** `.clone`, `Some`
-- **Called by:** `comment_anchors` (append.rs:416); `offset_annotation_ids` (append.rs:501); `w_vals` (append.rs:818); `add_in_numbering_order` (append.rs:1208); `set_section_type` (append.rs:1331); `tests::section_type_sits_after_header_references` (append.rs:1404); `decorative` (audit.rs:942); `walk` (changes/logical.rs:399); `audit_stories` (changes.rs:168); `audit_owner` (changes.rs:283); `carriers` (changes.rs:1124); `fold_style_pairs` (changes.rs:1342); +333 more
+- **Called by:** `comment_anchors` (append.rs:416); `offset_annotation_ids` (append.rs:501); `w_vals` (append.rs:818); `add_in_numbering_order` (append.rs:1208); `set_section_type` (append.rs:1331); `tests::section_type_sits_after_header_references` (append.rs:1404); `decorative` (audit.rs:942); `walk` (changes/logical.rs:399); `audit_stories` (changes.rs:168); `audit_owner` (changes.rs:283); `carriers` (changes.rs:1124); `fold_style_pairs` (changes.rs:1342); +335 more
 
 #### `Dom::name_is`  (L535-537, pub)
 `pub fn name_is(&self, id: NodeId, name: &XName) -> bool`
@@ -293,14 +293,14 @@
 - **Does:** True if `id` is an element whose name equals `name`.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) (by name) L536
 - **Macros:** `matches!`
-- **Called by:** `final_sect_pr` (append.rs:360); `drop_comments_where` (append.rs:432); `Package::fields` (audit.rs:764) (?); `fold_twins` (changes.rs:1280); `fold_style_pairs` (changes.rs:1342); `CommentFamily::set_text` (comments.rs:793) (?); `revision_tracking_element_from_ancestors` (comparer/atomize.rs:112); `atom_hash` (comparer/atomize.rs:163); `coverage_atomizer_owned_boundaries::note_definition_owns_every_character_and_mark_but_the_part_is_a_path_stop` (comparer/atomize.rs:827) (?); `coverage_atomizer_field_chain_boundaries::header_and_footer_roots_stop_paths_and_preserve_each_whitespace_boundary` (comparer/atomize.rs:1123) (?); `paragraph_of` (comparer/bookmarks.rs:76); `extract` (comparer/bookmarks.rs:92); +364 more
+- **Called by:** `final_sect_pr` (append.rs:360); `drop_comments_where` (append.rs:432); `Package::fields` (audit.rs:764) (?); `fold_twins` (changes.rs:1280); `fold_style_pairs` (changes.rs:1342); `CommentFamily::set_text` (comments.rs:793) (?); `revision_tracking_element_from_ancestors` (comparer/atomize.rs:112); `atom_hash` (comparer/atomize.rs:163); `coverage_atomizer_owned_boundaries::note_definition_owns_every_character_and_mark_but_the_part_is_a_path_stop` (comparer/atomize.rs:827) (?); `coverage_atomizer_field_chain_boundaries::header_and_footer_roots_stop_paths_and_preserve_each_whitespace_boundary` (comparer/atomize.rs:1123) (?); `paragraph_of` (comparer/bookmarks.rs:76); `extract` (comparer/bookmarks.rs:92); +365 more
 
 #### `Dom::set_name`  (L539-543, pub)
 `pub fn set_name(&mut self, id: NodeId, new_name: XName)`
 
 - **Does:** Set the element's expanded name.
 - **Calls (crate):** `Dom::data_mut` (xmllinq/mod.rs:464) L540
-- **Called by:** `resolve_for_edit_or_cli` (changes.rs:922) (?); `convert_run_text_to_del_text::{fn walk}` (comparer/finalize.rs:103); `convert_stamped_preins` (comparer/finalize.rs:10287); `flatten_tracked_deletions` (comparer/finalize.rs:11035); `convert_stamped_predeletes` (comparer/finalize.rs:11141); `fix_strict_validity_artifacts` (comparer/finalize.rs:11326); `fix_strict_validity_artifacts::{fn remap}` (comparer/finalize.rs:11395); `enforce_deleted_text_kinds::{fn walk}` (comparer/finalize.rs:14857); `delete_text_in_opaque` (comparer/produce.rs:41); `document_text_view` (debug.rs:2181); `mark_hf_part_content_as_deleted` (document_comparer.rs:5666); `rename_deleted_text` (edit/tracked.rs:1521); +5 more
+- **Called by:** `resolve_for_edit_or_cli` (changes.rs:922) (?); `convert_run_text_to_del_text::{fn walk}` (comparer/finalize.rs:103); `convert_stamped_preins` (comparer/finalize.rs:10287); `flatten_tracked_deletions` (comparer/finalize.rs:11035); `convert_stamped_predeletes` (comparer/finalize.rs:11141); `fix_strict_validity_artifacts` (comparer/finalize.rs:11326); `fix_strict_validity_artifacts::{fn remap}` (comparer/finalize.rs:11395); `enforce_deleted_text_kinds::{fn walk}` (comparer/finalize.rs:14857); `delete_text_in_opaque` (comparer/produce.rs:41); `document_text_view` (debug.rs:2181); `mark_hf_part_content_as_deleted` (document_comparer.rs:5667); `rename_deleted_text` (edit/tracked.rs:1605); +5 more
 
 #### `Dom::text_value`  (L547-552, pub)
 `pub fn text_value(&self, id: NodeId) -> Option<&str>`
@@ -340,7 +340,7 @@
 - **Does:** The XML declaration attached to a Document node, or `None` for any other node kind.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L582
 - **Calls (std/external/unresolved):** `.as_deref`
-- **Called by:** `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1351); `serialize_document` (xmllinq/serialize.rs:805)
+- **Called by:** `xml_lexical_boundary_contract_tests::legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata` (xmllinq/parse.rs:1360); `serialize_document` (xmllinq/serialize.rs:805)
 
 #### `Dom::set_declaration`  (L589-593, pub)
 `pub fn set_declaration(&mut self, id: NodeId, decl: Option<XDeclaration>)`
@@ -355,7 +355,7 @@
 
 - **Does:** The parent of `id`, or `None` for the document root.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L598
-- **Called by:** `drop_comments_where` (append.rs:432); `Package::empty_spacers` (audit.rs:661) (?); `absolute` (bin/jubarte.rs:168) (?); `run_convert` (bin/jubarte.rs:646) (?); `publish_edit` (bin/jubarte.rs:1402) (?); `run_debug_diff` (bin/jubarte.rs:3871) (?); `fold_twins` (changes.rs:1280); `fold_style_pairs` (changes.rs:1342); `target` (changes.rs:1480); `owner_text` (changes.rs:1528); `resolve_plan` (cli.rs:613) (?); `paragraph_of` (comparer/bookmarks.rs:76); +179 more
+- **Called by:** `drop_comments_where` (append.rs:432); `Package::empty_spacers` (audit.rs:661) (?); `absolute` (bin/jubarte.rs:168) (?); `run_convert` (bin/jubarte.rs:646) (?); `publish_edit` (bin/jubarte.rs:1402) (?); `run_debug_diff` (bin/jubarte.rs:3871) (?); `fold_twins` (changes.rs:1280); `fold_style_pairs` (changes.rs:1342); `target` (changes.rs:1480); `owner_text` (changes.rs:1528); `resolve_plan` (cli.rs:613) (?); `paragraph_of` (comparer/bookmarks.rs:76); +180 more
 
 #### `Dom::nodes`  (L604-606, pub)
 `pub fn nodes(&self, id: NodeId) -> Vec<NodeId>`
@@ -363,7 +363,7 @@
 - **Does:** Direct children in document order, all node kinds (a clone of the internal content vec).
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L605
 - **Calls (std/external/unresolved):** `.clone`
-- **Called by:** `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `empty_text` (changes/logical.rs:487); `CommentFamily::set_text` (comments.rs:793) (?); `split_seg` (comparer/comments.rs:568); `split_run_before_leaf` (comparer/comments.rs:633); `public_option_source_ownership_tests::canonical` (comparer/cross_para.rs:2479); `descendants_trimmed::{fn walk}` (comparer/finalize.rs:65); `convert_run_text_to_del_text::{fn walk}` (comparer/finalize.rs:103); `rebuild_run` (comparer/finalize.rs:162); `mark_content_transform` (comparer/finalize.rs:192); `conjoin_transform` (comparer/finalize.rs:628); `resolve_alternate_content` (comparer/finalize.rs:1301); +116 more
+- **Called by:** `public_memory_append_owner_boundary_tests::semantic` (append.rs:1454) (?); `empty_text` (changes/logical.rs:487); `CommentFamily::set_text` (comments.rs:793) (?); `split_seg` (comparer/comments.rs:568); `split_run_before_leaf` (comparer/comments.rs:633); `public_option_source_ownership_tests::canonical` (comparer/cross_para.rs:2479); `descendants_trimmed::{fn walk}` (comparer/finalize.rs:65); `convert_run_text_to_del_text::{fn walk}` (comparer/finalize.rs:103); `rebuild_run` (comparer/finalize.rs:162); `mark_content_transform` (comparer/finalize.rs:192); `conjoin_transform` (comparer/finalize.rs:628); `resolve_alternate_content` (comparer/finalize.rs:1301); +118 more
 
 #### `Dom::first_node`  (L609-611, pub)
 `pub fn first_node(&self, id: NodeId) -> Option<NodeId>`
@@ -402,7 +402,7 @@
 - **Does:** Direct child elements, optionally filtered by expanded name.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L641,645
 - **Calls (std/external/unresolved):** `.collect`, `.copied`, `.filter`, `.iter`
-- **Called by:** `append_documents` (append.rs:152); `final_sect_pr` (append.rs:360); `drop_comments_where` (append.rs:432); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `index_by_attribute` (append.rs:848); `ListCopy::build` (append.rs:1117); `insert_lists` (append.rs:1165); `add_in_numbering_order` (append.rs:1208); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `tests::section_type_sits_after_header_references` (append.rs:1404); +610 more
+- **Called by:** `append_documents` (append.rs:152); `final_sect_pr` (append.rs:360); `drop_comments_where` (append.rs:432); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `index_by_attribute` (append.rs:848); `ListCopy::build` (append.rs:1117); `insert_lists` (append.rs:1165); `add_in_numbering_order` (append.rs:1208); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `tests::section_type_sits_after_header_references` (append.rs:1404); +612 more
 
 #### `Dom::element`  (L655-661, pub)
 `pub fn element(&self, id: NodeId, filter: &XName) -> Option<NodeId>`
@@ -411,7 +411,7 @@
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L656; `Dom::data` (xmllinq/mod.rs:461) (by name) L660
 - **Calls (std/external/unresolved):** `.copied`, `.find`, `.iter`
 - **Macros:** `matches!`
-- **Called by:** `body` (append.rs:355); `style_key` (append.rs:831); `abstract_of` (append.rs:1226); `unique_nsid` (append.rs:1247); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404) (?); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (append.rs:1599) (?); `Package::read` (audit.rs:354) (?); `Package::read_styles` (audit.rs:406); `Package::paragraph_style` (audit.rs:493); `Package::numbered` (audit.rs:513); +620 more
+- **Called by:** `body` (append.rs:355); `style_key` (append.rs:831); `abstract_of` (append.rs:1226); `unique_nsid` (append.rs:1247); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404) (?); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::verify_styles_xml` (append.rs:1598) (?); `Package::read` (audit.rs:354) (?); `Package::read_styles` (audit.rs:406); `Package::paragraph_style` (audit.rs:493); `Package::numbered` (audit.rs:513); +620 more
 
 #### `Dom::descendants`  (L668-672, pub)
 `pub fn descendants(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId>`
@@ -483,7 +483,7 @@
 - **Does:** `Self` then its ancestor elements, optionally filtered by name.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L791,796; `Dom::is_element` (xmllinq/mod.rs:502) L797
 - **Calls (std/external/unresolved):** `.is_none_or`, `.push`, `Some`, `Vec::new`
-- **Called by:** `resolve_alternate_content` (comparer/finalize.rs:1301); `prefix_in_scope` (comparer/finalize.rs:1490); `wrap_revised_hyperlink_as_field` (comparer/finalize.rs:1641); `para_is_pure_deleted_uncached` (comparer/finalize.rs:2915); `align_word_table_and_comment_chrome` (comparer/finalize.rs:6220); `hyperlink_is_wholly_inserted` (comparer/finalize.rs:6398); `fold_midstream_demo_title_into_numbered_heading_with_source_properties` (comparer/finalize.rs:12624); `text_side` (comparer/finalize.rs:12910); `deep_production_path_tests::body_revisions` (comparer/finalize.rs:20954); `paragraph_id` (fields.rs:932) (?); `add_content_controls_with_owners` (revision_processor.rs:2393)
+- **Called by:** `resolve_alternate_content` (comparer/finalize.rs:1301); `prefix_in_scope` (comparer/finalize.rs:1490); `wrap_revised_hyperlink_as_field` (comparer/finalize.rs:1641); `para_is_pure_deleted_uncached` (comparer/finalize.rs:2915); `align_word_table_and_comment_chrome` (comparer/finalize.rs:6220); `hyperlink_is_wholly_inserted` (comparer/finalize.rs:6398); `fold_midstream_demo_title_into_numbered_heading_with_source_properties` (comparer/finalize.rs:12624); `text_side` (comparer/finalize.rs:12910); `deep_production_path_tests::body_revisions` (comparer/finalize.rs:20954); `paragraph_id` (fields.rs:932) (?); `add_content_controls_with_owners` (revision_processor.rs:2422)
 
 #### `Dom::document`  (L809-818, pub)
 `pub fn document(&self, id: NodeId) -> Option<NodeId>`
@@ -499,7 +499,7 @@
 - **Does:** The first child of `doc` that is an element, or `None` if the document is empty.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L823; `Dom::is_element` (xmllinq/mod.rs:502) L827
 - **Calls (std/external/unresolved):** `.copied`, `.find`, `.iter`
-- **Called by:** `parse` (append.rs:336); `drop_comments_in_new_parts` (append.rs:456); `insert_lists` (append.rs:1165); `nsids` (append.rs:1232); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404); `tests::ignorable_prefixes_merge_only_with_the_same_namespace` (append.rs:1423); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (append.rs:1599); `audit_stories` (changes.rs:168); `for_each_story` (changes.rs:657); `comment_changes_in` (changes.rs:1003); +492 more
+- **Called by:** `parse` (append.rs:336); `drop_comments_in_new_parts` (append.rs:456); `insert_lists` (append.rs:1165); `nsids` (append.rs:1232); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404); `tests::ignorable_prefixes_merge_only_with_the_same_namespace` (append.rs:1423); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::verify_styles_xml` (append.rs:1598); `public_memory_append_owner_boundary_tests::verify_numbering_xml` (append.rs:1658); `audit_stories` (changes.rs:168); `for_each_story` (changes.rs:657); +493 more
 
 #### `Dom::index_in_parent`  (L830-834)
 `fn index_in_parent(&self, id: NodeId) -> Option<(NodeId, usize)>`
@@ -515,7 +515,7 @@
 - **Does:** Following siblings of `id` (all node kinds), in document order.
 - **Calls (crate):** `Dom::index_in_parent` (xmllinq/mod.rs:830) L839; `Dom::data` (xmllinq/mod.rs:461) L840
 - **Calls (std/external/unresolved):** `.to_vec`, `Vec::new`
-- **Called by:** `lift_out_of_deletion` (edit.rs:6776); `split_deletion_before` (edit.rs:6821); `write_result` (fields.rs:824); `write_toc` (fields.rs:1154); `elements_after_self` (revision_processor.rs:889); `accept_deleted_cells_transform` (revision_processor.rs:2838); `Dom::next_element` (xmllinq/mod.rs:855)
+- **Called by:** `lift_out_of_deletion` (edit.rs:6823); `split_deletion_before` (edit.rs:6868); `write_result` (fields.rs:824); `write_toc` (fields.rs:1154); `elements_after_self` (revision_processor.rs:918); `accept_deleted_cells_transform` (revision_processor.rs:2867); `Dom::next_element` (xmllinq/mod.rs:855)
 
 #### `Dom::nodes_before_self`  (L846-851, pub)
 `pub fn nodes_before_self(&self, id: NodeId) -> Vec<NodeId>`
@@ -523,7 +523,7 @@
 - **Does:** Preceding siblings of `id` (all node kinds), in document order.
 - **Calls (crate):** `Dom::index_in_parent` (xmllinq/mod.rs:830) L847; `Dom::data` (xmllinq/mod.rs:461) L848
 - **Calls (std/external/unresolved):** `.to_vec`, `Vec::new`
-- **Called by:** `audit_owner` (changes.rs:283); `delete_stories_of_deleted_text_boxes` (comparer/finalize.rs:10817); `separate` (edit/structural.rs:242); `previous_paragraph` (edit/tracked.rs:1659); `Transaction::body_level_marker_beside` (edit.rs:2897) (?); `write_result` (fields.rs:824); `write_toc` (fields.rs:1154); `get_paragraph_info` (revision_processor.rs:966); `content_elements_before_self` (revision_processor.rs:1002)
+- **Called by:** `audit_owner` (changes.rs:283); `delete_stories_of_deleted_text_boxes` (comparer/finalize.rs:10817); `separate` (edit/structural.rs:242); `previous_paragraph` (edit/tracked.rs:1743); `Transaction::body_level_marker_beside` (edit.rs:2897) (?); `write_result` (fields.rs:824); `write_toc` (fields.rs:1154); `get_paragraph_info` (revision_processor.rs:995); `content_elements_before_self` (revision_processor.rs:1031)
 
 #### `Dom::next_element`  (L855-859, pub)
 `pub fn next_element(&self, id: NodeId) -> Option<NodeId>`
@@ -531,7 +531,7 @@
 - **Does:** First following sibling element, or `None` if there is no element sibling after `id`.
 - **Calls (crate):** `Dom::nodes_after_self` (xmllinq/mod.rs:838) L856; `Dom::is_element` (xmllinq/mod.rs:502) L858
 - **Calls (std/external/unresolved):** `.find`, `.into_iter`
-- **Called by:** `fix_up_footnotes_endnotes_with_custom_markers` (comparer/footnotes.rs:887); `coverage_custom_note_owner_boundaries::custom_marker_fixup_moves_only_matching_leaf_and_keeps_all_other_owners` (comparer/footnotes.rs:1708); `separate` (edit/structural.rs:242); `check` (edit/tracked.rs:107) (?); `emit` (edit/tracked.rs:452) (?); `emit_text` (edit/tracked.rs:1035); `Transaction::resolve_visible` (edit/visible.rs:348) (?); `Transaction::body_level_marker_beside` (edit.rs:2897) (?); `Transaction::resolve_comment_text` (edit.rs:3057) (?); `Transaction::merge_partner` (edit.rs:4859) (?); `lift_out_of_deletion` (edit.rs:6776); `merge_into` (edit.rs:8156); +2 more
+- **Called by:** `fix_up_footnotes_endnotes_with_custom_markers` (comparer/footnotes.rs:887); `coverage_custom_note_owner_boundaries::custom_marker_fixup_moves_only_matching_leaf_and_keeps_all_other_owners` (comparer/footnotes.rs:1708); `separate` (edit/structural.rs:242); `check` (edit/tracked.rs:107) (?); `emit` (edit/tracked.rs:452) (?); `emit_text` (edit/tracked.rs:1035); `Transaction::resolve_visible` (edit/visible.rs:348) (?); `Transaction::body_level_marker_beside` (edit.rs:2897) (?); `Transaction::resolve_comment_text` (edit.rs:3057) (?); `Transaction::merge_partner` (edit.rs:4859) (?); `lift_out_of_deletion` (edit.rs:6823); `merge_into` (edit.rs:8203); +2 more
 
 #### `Dom::has_elements`  (L862-864, pub)
 `pub fn has_elements(&self, id: NodeId) -> bool`
@@ -539,7 +539,7 @@
 - **Does:** True if `id` has at least one direct child element.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L863; `Dom::is_element` (xmllinq/mod.rs:502) L863
 - **Calls (std/external/unresolved):** `.any`, `.iter`
-- **Called by:** `paragraph_mark_properties_equal` (comparer/finalize.rs:3322); `fill_in_empty_footnotes_endnotes` (comparer/footnotes.rs:133); `deterministic_note_boundary_tests::properties` (comparer/footnotes.rs:1291) (?); `build_paragraph` (comparer/produce.rs:104); `get_property_value` (comparer/revisions.rs:291); `check_text_content` (edit/v2.rs:847); `mark_run` (edit.rs:7632); `accept_revisions_for_element` (revision_processor.rs:452); `accept_content` (revision_processor.rs:3481)
+- **Called by:** `paragraph_mark_properties_equal` (comparer/finalize.rs:3322); `fill_in_empty_footnotes_endnotes` (comparer/footnotes.rs:133); `deterministic_note_boundary_tests::properties` (comparer/footnotes.rs:1291) (?); `build_paragraph` (comparer/produce.rs:104); `get_property_value` (comparer/revisions.rs:291); `check_text_content` (edit/v2.rs:847); `mark_run` (edit.rs:7679); `accept_revisions_for_element` (revision_processor.rs:481); `accept_content` (revision_processor.rs:3510)
 
 #### `Dom::has_attributes`  (L867-869, pub)
 `pub fn has_attributes(&self, id: NodeId) -> bool`
@@ -547,7 +547,7 @@
 - **Does:** True if `id` carries at least one attribute.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L868
 - **Calls (std/external/unresolved):** `.is_empty`
-- **Called by:** `coverage_real_revision_merge_matrix_tests::projected` (comparer/finalize.rs:24813); `coverage_real_revision_merge_matrix_tests::guarded_multi_original_complete_projection::{fn semantic}` (comparer/finalize.rs:25626); `demo_title_pilcrow_history_tests::projection` (comparer/finalize.rs:28528); `get_property_value` (comparer/revisions.rs:291); `prune_normal_rpr_context_equal_attrs` (document_comparer.rs:3822); `resolve_redefined_style_metrics` (document_comparer.rs:4063); `coverage_package_source_matrix_tests::view` (document_comparer.rs:11533); `drop_slot` (revision_processor/style_records.rs:758); `complete_field_instruction_metadata_boundary_tests::repaired_complete_field_codes_preserve_source_comments_processing_instructions_and_formats` (revision_processor.rs:5384) (?)
+- **Called by:** `coverage_real_revision_merge_matrix_tests::projected` (comparer/finalize.rs:24813); `coverage_real_revision_merge_matrix_tests::guarded_multi_original_complete_projection::{fn semantic}` (comparer/finalize.rs:25626); `demo_title_pilcrow_history_tests::projection` (comparer/finalize.rs:28528); `get_property_value` (comparer/revisions.rs:291); `prune_normal_rpr_context_equal_attrs` (document_comparer.rs:3823); `resolve_redefined_style_metrics` (document_comparer.rs:4064); `coverage_package_source_matrix_tests::view` (document_comparer.rs:11534); `drop_slot` (revision_processor/style_records.rs:758); `complete_field_instruction_metadata_boundary_tests::repaired_complete_field_codes_preserve_source_comments_processing_instructions_and_formats` (revision_processor.rs:5413) (?)
 
 #### `Dom::attribute`  (L874-880, pub)
 `pub fn attribute(&self, id: NodeId, name: &XName) -> Option<&str>`
@@ -555,7 +555,7 @@
 - **Does:** The value of attribute `name` on `id`, or `None` if `id` is not an element or has no such attribute.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L875
 - **Calls (std/external/unresolved):** `.as_str`, `.find`, `.iter`, `.map`
-- **Called by:** `append_documents` (append.rs:152); `merge_namespace_declarations` (append.rs:371); `drop_comments_where` (append.rs:432); `offset_annotation_ids` (append.rs:501); `drop_colliding_paragraph_ids` (append.rs:529); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `w_vals` (append.rs:818); `style_key` (append.rs:831); `index_by_attribute` (append.rs:848); `ListCopy::build` (append.rs:1117); `insert_lists` (append.rs:1165); +584 more
+- **Called by:** `append_documents` (append.rs:152); `merge_namespace_declarations` (append.rs:371); `drop_comments_where` (append.rs:432); `offset_annotation_ids` (append.rs:501); `drop_colliding_paragraph_ids` (append.rs:529); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `w_vals` (append.rs:818); `style_key` (append.rs:831); `index_by_attribute` (append.rs:848); `ListCopy::build` (append.rs:1117); `insert_lists` (append.rs:1165); +585 more
 
 #### `Dom::attributes_iter`  (L886-894, pub)
 `pub fn attributes_iter( &self, id: NodeId, ) -> impl ExactSizeIterator<Item = (&XName, &str)> + '_`
@@ -571,7 +571,7 @@
 - **Does:** All attributes on `id`, in declaration order, as `(name, value)` owned pairs.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L900
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.iter`, `.map`
-- **Called by:** `elements` (admission.rs:967) (?); `merge_namespace_declarations` (append.rs:371); `merge_part_namespaces` (append.rs:1087); `coalesce_recurse` (comparer/atomize.rs:575); `extract` (comparer/bookmarks.rs:92); `rewrite_para_id_references` (comparer/comments.rs:988); `rewrite_durable_id_references` (comparer/comments.rs:1003); `namespace_declarations` (comparer/comments.rs:1018); `preserve_cloned_namespace_context` (comparer/comments.rs:1052); `union_comments_xml` (comparer/comments.rs:1190); `drop_orphans` (comparer/comments.rs:1416); `public_option_source_ownership_tests::canonical` (comparer/cross_para.rs:2479); +100 more
+- **Called by:** `elements` (admission.rs:967) (?); `merge_namespace_declarations` (append.rs:371); `merge_part_namespaces` (append.rs:1087); `coalesce_recurse` (comparer/atomize.rs:575); `extract` (comparer/bookmarks.rs:92); `rewrite_para_id_references` (comparer/comments.rs:988); `rewrite_durable_id_references` (comparer/comments.rs:1003); `namespace_declarations` (comparer/comments.rs:1018); `preserve_cloned_namespace_context` (comparer/comments.rs:1052); `union_comments_xml` (comparer/comments.rs:1190); `drop_orphans` (comparer/comments.rs:1416); `public_option_source_ownership_tests::canonical` (comparer/cross_para.rs:2479); +101 more
 
 #### `Dom::attr_count`  (L909-911, pub)
 `pub fn attr_count(&self, id: NodeId) -> usize`
@@ -579,7 +579,7 @@
 - **Does:** Number of attributes on `id`.
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L910
 - **Calls (std/external/unresolved):** `.len`
-- **Called by:** `drop_pt_bookkeeping` (comparer/finalize.rs:481); `clone_block_level_content_for_hashing::{fn strip_nsdecls}` (comparer/preprocess.rs:134); `new_with_filtered_attrs` (comparer/preprocess.rs:162); `clone_internal_unsalted` (comparer/preprocess.rs:245); `remove_existing_powertools_markup` (comparer/preprocess.rs:572); `filtered_p_attr_xml` (comparer/preprocess.rs:742); `filtered_leaf_attr_xml` (comparer/preprocess.rs:846); `clone_for_structure_hash` (comparer/preprocess.rs:1221); `xml_holds` (scrub.rs:528); `attribute_by_local` (validate.rs:2490); `namespace_in_scope` (validate.rs:2595); `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (xmllinq/parse.rs:1575); +8 more
+- **Called by:** `drop_pt_bookkeeping` (comparer/finalize.rs:481); `clone_block_level_content_for_hashing::{fn strip_nsdecls}` (comparer/preprocess.rs:134); `new_with_filtered_attrs` (comparer/preprocess.rs:162); `clone_internal_unsalted` (comparer/preprocess.rs:245); `remove_existing_powertools_markup` (comparer/preprocess.rs:572); `filtered_p_attr_xml` (comparer/preprocess.rs:742); `filtered_leaf_attr_xml` (comparer/preprocess.rs:846); `clone_for_structure_hash` (comparer/preprocess.rs:1221); `xml_holds` (scrub.rs:528); `attribute_by_local` (validate.rs:2490); `namespace_in_scope` (validate.rs:2595); `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (xmllinq/parse.rs:1584); +8 more
 
 #### `Dom::attr_at`  (L920-923, pub)
 `pub fn attr_at(&self, id: NodeId, i: usize) -> (&XName, &str)`
@@ -587,7 +587,7 @@
 - **Does:** The `i`-th attribute on `id`, as borrowed `(name, value)` (no allocations; DOM-ITER-01 backs the serializer hot path).
 - **Calls (crate):** `Dom::data` (xmllinq/mod.rs:461) L921
 - **Calls (std/external/unresolved):** `.as_str`
-- **Called by:** `drop_pt_bookkeeping` (comparer/finalize.rs:481); `clone_block_level_content_for_hashing::{fn strip_nsdecls}` (comparer/preprocess.rs:134); `new_with_filtered_attrs` (comparer/preprocess.rs:162); `clone_internal_unsalted` (comparer/preprocess.rs:245); `remove_existing_powertools_markup` (comparer/preprocess.rs:572); `filtered_p_attr_xml` (comparer/preprocess.rs:742); `filtered_leaf_attr_xml` (comparer/preprocess.rs:846); `clone_for_structure_hash` (comparer/preprocess.rs:1221); `xml_holds` (scrub.rs:528); `attribute_by_local` (validate.rs:2490); `namespace_in_scope` (validate.rs:2595); `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (xmllinq/parse.rs:1575); +7 more
+- **Called by:** `drop_pt_bookkeeping` (comparer/finalize.rs:481); `clone_block_level_content_for_hashing::{fn strip_nsdecls}` (comparer/preprocess.rs:134); `new_with_filtered_attrs` (comparer/preprocess.rs:162); `clone_internal_unsalted` (comparer/preprocess.rs:245); `remove_existing_powertools_markup` (comparer/preprocess.rs:572); `filtered_p_attr_xml` (comparer/preprocess.rs:742); `filtered_leaf_attr_xml` (comparer/preprocess.rs:846); `clone_for_structure_hash` (comparer/preprocess.rs:1221); `xml_holds` (scrub.rs:528); `attribute_by_local` (validate.rs:2490); `namespace_in_scope` (validate.rs:2595); `tag_policy_tests::the_dom_parser_keeps_every_attribute_and_its_order` (xmllinq/parse.rs:1584); +7 more
 
 #### `Dom::set_attributes`  (L935-971, pub(crate))
 `pub(crate) fn set_attributes(&mut self, id: NodeId, attrs: Vec<(XName, String)>)`
@@ -603,7 +603,7 @@
 - **Does:** Add or update an attribute.
 - **Calls (crate):** `Dom::data_mut` (xmllinq/mod.rs:464) L978; `bump_attr_name_probes` (xmllinq/mod.rs:283) L986
 - **Calls (std/external/unresolved):** `.clone`, `.enumerate`, `.iter`, `.position`, `.push`, `.retain`, `.to_string`, `Some`
-- **Called by:** `merge_namespace_declarations` (append.rs:371); `offset_annotation_ids` (append.rs:501); `drop_colliding_paragraph_ids` (append.rs:529); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `carry_styles_and_numbering` (append.rs:867); `ListCopy::build` (append.rs:1117); `unique_nsid` (append.rs:1247); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `CommentFamily::add` (comments.rs:648) (?); `CommentFamily::set_date_utc` (comments.rs:726); +272 more
+- **Called by:** `merge_namespace_declarations` (append.rs:371); `offset_annotation_ids` (append.rs:501); `drop_colliding_paragraph_ids` (append.rs:529); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `carry_styles_and_numbering` (append.rs:867); `ListCopy::build` (append.rs:1117); `unique_nsid` (append.rs:1247); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `CommentFamily::add` (comments.rs:648) (?); `CommentFamily::set_date_utc` (comments.rs:726); +274 more
 
 #### `Dom::is_namespace_declaration`  (L1012-1015, pub)
 `pub fn is_namespace_declaration(&self, name: &XName) -> bool`
@@ -651,7 +651,7 @@
 - **Does:** Append `node` as the last child of `parent`.
 - **Calls (crate):** `Dom::materialize` (xmllinq/mod.rs:1029) L1075; `Dom::validate_attachment` (xmllinq/mod.rs:1041) L1076; `Dom::data_mut` (xmllinq/mod.rs:464) L1077,1078
 - **Calls (std/external/unresolved):** `.push`, `Some`
-- **Called by:** `append_documents` (append.rs:152); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `carry_styles_and_numbering` (append.rs:867); `add_in_numbering_order` (append.rs:1208); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `Anchors::scan` (comments.rs:251); `CommentFamily::add` (comments.rs:648); `CommentFamily::store` (comments.rs:854); `CommentFamily::store_people` (comments.rs:1033); `fill_comment_paragraph` (comments.rs:1129); +239 more
+- **Called by:** `append_documents` (append.rs:152); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `carry_styles_and_numbering` (append.rs:867); `add_in_numbering_order` (append.rs:1208); `join` (append.rs:1270); `set_section_type` (append.rs:1331); `Anchors::scan` (comments.rs:251); `CommentFamily::add` (comments.rs:648); `CommentFamily::store` (comments.rs:854); `CommentFamily::store_people` (comments.rs:1033); `fill_comment_paragraph` (comments.rs:1129); +240 more
 
 #### `Dom::add_text`  (L1087-1093, pub)
 `pub fn add_text(&mut self, parent: NodeId, value: &str) -> NodeId`
@@ -706,7 +706,7 @@
 - **Does:** Replace `reference` with the sequence of `nodes` (in order) at the same position.
 - **Calls (crate):** `Dom::index_in_parent` (xmllinq/mod.rs:830) L1166; `Dom::materialize` (xmllinq/mod.rs:1029) L1171; `Dom::validate_attachment` (xmllinq/mod.rs:1041) L1172; `Dom::data_mut` (xmllinq/mod.rs:464) L1173,1176,1177
 - **Calls (std/external/unresolved):** `.expect`, `.len`, `.push`, `.splice`, `Some`, `Vec::with_capacity`
-- **Called by:** `join` (append.rs:1270); `resolve_alternate_content` (comparer/finalize.rs:1301); `closing_mark_takes_revised_mark_formatting` (comparer/finalize.rs:3399); `merge_replaced_in_container` (comparer/finalize.rs:8626); `flatten_tracked_insertions_stamped` (comparer/finalize.rs:10220); `flatten_tracked_deletions` (comparer/finalize.rs:11035); `restore_styles` (document_comparer.rs:1814); `merge_normal_style_rpr` (document_comparer.rs:4343); `reject_text` (inspect.rs:485); `resync_linked_character_styles` (revision_processor/style_records.rs:543); `tidy` (revision_processor/word_save.rs:25) (?); `merge_adjacent_tables` (revision_processor.rs:3198); +1 more
+- **Called by:** `join` (append.rs:1270); `resolve_alternate_content` (comparer/finalize.rs:1301); `closing_mark_takes_revised_mark_formatting` (comparer/finalize.rs:3399); `merge_replaced_in_container` (comparer/finalize.rs:8626); `flatten_tracked_insertions_stamped` (comparer/finalize.rs:10220); `flatten_tracked_deletions` (comparer/finalize.rs:11035); `restore_styles` (document_comparer.rs:1814); `merge_normal_style_rpr` (document_comparer.rs:4344); `reject_text` (inspect.rs:485); `resync_linked_character_styles` (revision_processor/style_records.rs:543); `tidy` (revision_processor/word_save.rs:25) (?); `merge_adjacent_tables` (revision_processor.rs:3227); +1 more
 
 #### `Dom::value`  (L1185-1190, pub)
 `pub fn value(&self, id: NodeId) -> String`
@@ -737,7 +737,7 @@
 
 - **Does:** Replace `id`'s children with a single text child carrying `value` (LINQ-to-XML `element.Value = value`).
 - **Calls (crate):** `Dom::remove_nodes` (xmllinq/mod.rs:1110) L1220; `Dom::add_text` (xmllinq/mod.rs:1087) L1221
-- **Called by:** `mesh_short_label_shared_eq_with_settings` (comparer/finalize.rs:7204); `fix_strict_validity_artifacts` (comparer/finalize.rs:11326); `append_period` (comparer/finalize.rs:12958); `split_insertion_at` (comparer/finalize.rs:15050); `format_change_cache_tests::run_atom` (comparer/formatchg.rs:693); `memoized_moves_tests::make_pool` (comparer/moves.rs:858); `set_text` (edit.rs:7623)
+- **Called by:** `mesh_short_label_shared_eq_with_settings` (comparer/finalize.rs:7204); `fix_strict_validity_artifacts` (comparer/finalize.rs:11326); `append_period` (comparer/finalize.rs:12958); `split_insertion_at` (comparer/finalize.rs:15050); `format_change_cache_tests::run_atom` (comparer/formatchg.rs:693); `memoized_moves_tests::make_pool` (comparer/moves.rs:858); `set_text` (edit.rs:7670)
 
 #### `Dom::clone_subtree`  (L1231-1258, pub)
 `pub fn clone_subtree(&mut self, id: NodeId) -> NodeId`
@@ -774,7 +774,7 @@
 
 - **Does:** Parse a full XML string (with optional prolog) into a Document node allocated into this arena.
 - **Calls (crate):** `parse_xdocument` (xmllinq/parse.rs:100) L1300
-- **Called by:** `parse` (append.rs:336); `drop_comments_in_new_parts` (append.rs:456); `insert_lists` (append.rs:1165); `nsids` (append.rs:1232); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404); `tests::ignorable_prefixes_merge_only_with_the_same_namespace` (append.rs:1423); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (append.rs:1599); `audit_stories` (changes.rs:168); `for_each_story` (changes.rs:657); `comment_changes_in` (changes.rs:1003); +474 more
+- **Called by:** `parse` (append.rs:336); `drop_comments_in_new_parts` (append.rs:456); `insert_lists` (append.rs:1165); `nsids` (append.rs:1232); `tests::nsid_collisions_take_the_next_free_value` (append.rs:1357); `tests::section_type_sits_after_header_references` (append.rs:1404); `tests::ignorable_prefixes_merge_only_with_the_same_namespace` (append.rs:1423); `public_memory_append_owner_boundary_tests::view` (append.rs:1509); `public_memory_append_owner_boundary_tests::verify_styles_xml` (append.rs:1598); `public_memory_append_owner_boundary_tests::verify_numbering_xml` (append.rs:1658); `audit_stories` (changes.rs:168); `for_each_story` (changes.rs:657); +475 more
 
 #### `Dom::try_parse_xdocument`  (L1310-1312, pub)
 `pub fn try_parse_xdocument(&mut self, xml: &str) -> Result<NodeId, String>`

@@ -1,6 +1,6 @@
 # Impl blocks
 
-388 items (non-test). Part of the [symbol manifest](README.md).
+389 items (non-test). Part of the [symbol manifest](README.md).
 
 | Name | Defined at | Vis | Does | Detail |
 |---|---|---|---|---|
@@ -167,7 +167,7 @@
 | `EditPlan` | src/edit.rs:1781 | private | _no doc comment_ | impl EditPlan |
 | `ThreadOp` | src/edit.rs:2565 | private | _no doc comment_ | impl ThreadOp |
 | `Transaction` | src/edit.rs:2679 | private | _no doc comment_ | impl<'p> Transaction<'p> |
-| `EmptyPlacement` | src/edit.rs:7666 | private | _no doc comment_ | impl EmptyPlacement |
+| `EmptyPlacement` | src/edit.rs:7713 | private | _no doc comment_ | impl EmptyPlacement |
 | `NearMatches` | src/edit/anchor.rs:136 | private | _no doc comment_ | impl NearMatches |
 | `AnchorRefusal` | src/edit/anchor_error.rs:80 | private | _no doc comment_ | impl<'a> AnchorRefusal<'a> |
 | `AnchorChanges` | src/edit/comment_settlement.rs:55 | private | _no doc comment_ | impl AnchorChanges |
@@ -232,16 +232,17 @@
 | `<LegacyDocError as std::error::Error>` | src/legacy_doc.rs:89 | private | _no doc comment_ | impl std::error::Error for LegacyDocError |
 | `Paragraph` | src/legacy_doc.rs:127 | private | _no doc comment_ | impl Paragraph |
 | `CompoundFile` | src/legacy_doc.rs:657 | private | _no doc comment_ | impl<'a> CompoundFile<'a> |
-| `DirEntry` | src/legacy_doc.rs:844 | private | _no doc comment_ | impl DirEntry |
-| `Fib` | src/legacy_doc.rs:894 | private | _no doc comment_ | impl Fib |
-| `CharModifier` | src/legacy_doc.rs:980 | private | _no doc comment_ | impl CharModifier |
-| `FkpIndex` | src/legacy_doc.rs:1295 | private | _no doc comment_ | impl FkpIndex |
-| `Lists` | src/legacy_doc.rs:1488 | private | _no doc comment_ | impl Lists |
-| `Story` | src/legacy_doc.rs:1587 | private | _no doc comment_ | impl Story<'_> |
+| `DirEntry` | src/legacy_doc.rs:882 | private | _no doc comment_ | impl DirEntry |
+| `Fib` | src/legacy_doc.rs:932 | private | _no doc comment_ | impl Fib |
+| `CharModifier` | src/legacy_doc.rs:1018 | private | _no doc comment_ | impl CharModifier |
+| `FkpIndex` | src/legacy_doc.rs:1333 | private | _no doc comment_ | impl FkpIndex |
+| `Lists` | src/legacy_doc.rs:1526 | private | _no doc comment_ | impl Lists |
+| `Story` | src/legacy_doc.rs:1625 | private | _no doc comment_ | impl Story<'_> |
 | `Border` | src/markdown/borders.rs:49 | private | _no doc comment_ | impl Border |
-| `Closers` | src/markdown/critic.rs:516 | private | _no doc comment_ | impl<'a> Closers<'a> |
-| `Literal` | src/markdown/critic.rs:792 | private | _no doc comment_ | impl Literal |
-| `Pieces` | src/markdown/critic.rs:1905 | private | _no doc comment_ | impl Pieces |
+| `Closers` | src/markdown/critic.rs:521 | private | _no doc comment_ | impl<'a> Closers<'a> |
+| `Literal` | src/markdown/critic.rs:797 | private | _no doc comment_ | impl Literal |
+| `Pieces` | src/markdown/critic.rs:1910 | private | _no doc comment_ | impl Pieces |
+| `SeamSpan` | src/markdown/critic.rs:2214 | private | _no doc comment_ | impl SeamSpan |
 | `Output` | src/markdown/diff.rs:388 | private | _no doc comment_ | impl Output |
 | `Side` | src/markdown/diff.rs:462 | private | _no doc comment_ | impl Side |
 | `Handles` | src/markdown/from_docx/agent.rs:50 | private | _no doc comment_ | impl Handles |
@@ -285,7 +286,7 @@
 | `<MarkdownError as std::error::Error>` | src/markdown/mod.rs:1149 | private | _no doc comment_ | impl std::error::Error for MarkdownError |
 | `<PartRelate as Relate>` | src/markdown/package.rs:1694 | private | _no doc comment_ | impl Relate for PartRelate<'_, '_, '_> |
 | `Block` | src/markdown/patch.rs:77 | private | _no doc comment_ | impl Block |
-| `<RedlineOptions as std::fmt::Debug>` | src/markdown/redline.rs:65 | private | _no doc comment_ | impl std::fmt::Debug for RedlineOptions<'_> |
+| `<RedlineOptions as std::fmt::Debug>` | src/markdown/redline.rs:66 | private | _no doc comment_ | impl std::fmt::Debug for RedlineOptions<'_> |
 | `<Locator as fmt::Display>` | src/markdown/unified.rs:83 | private | _no doc comment_ | impl fmt::Display for Locator |
 | `Patch` | src/markdown/unified.rs:161 | private | _no doc comment_ | impl Patch |
 | `<Patch as fmt::Display>` | src/markdown/unified.rs:188 | private | _no doc comment_ | impl fmt::Display for Patch |
@@ -346,7 +347,7 @@
 | `<StreamError as std::error::Error>` | src/result.rs:1094 | private | _no doc comment_ | impl std::error::Error for StreamError |
 | `ExitStatus` | src/result.rs:1180 | private | _no doc comment_ | impl ExitStatus |
 | `<u8 as From>` | src/result.rs:1200 | private | _no doc comment_ | impl From<ExitStatus> for u8 |
-| `RevisionIds` | src/revision_processor.rs:3776 | private | _no doc comment_ | impl RevisionIds |
+| `RevisionIds` | src/revision_processor.rs:3805 | private | _no doc comment_ | impl RevisionIds |
 | `Parsed` | src/revision_processor/comments.rs:40 | private | _no doc comment_ | impl Parsed |
 | `Slot` | src/revision_processor/style_records.rs:109 | private | _no doc comment_ | impl Slot |
 | `Levels` | src/revision_processor/style_records.rs:279 | private | _no doc comment_ | impl Levels |

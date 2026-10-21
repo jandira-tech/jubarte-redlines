@@ -13,10 +13,10 @@
 `pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownError>`
 
 - **Does:** Edits `docx` so its body reads as `markdown`, keeping the paragraphs' own runs, formatting, fields and properties, and reporting what the document could not take in [`Patched::warnings`].
-- **Calls (crate):** `summary` (inspect.rs:339) L123; `invalid` (ambiguous: `invalid` (append.rs:309); `invalid` (edit/v2.rs:458); `invalid` (markdown/from_docx/ooxml.rs:31)) L123,126,131; `accept_revisions` (document_comparer.rs:4961) L126; `paragraphs` (inspect.rs:312) L130; `blocks` (markdown/patch.rs:662) L145; `align` (markdown/patch.rs:399) L150; `paragraph_styles` (markdown/patch.rs:239) L151; `.text` (ambiguous, 10 candidates) L158; `operations` (markdown/patch.rs:502) L168; `apply_plan` (edit.rs:2322) L188; `describe` (markdown/patch.rs:290) L226
+- **Calls (crate):** `summary` (inspect.rs:339) L123; `invalid` (ambiguous: `invalid` (append.rs:309); `invalid` (edit/v2.rs:458); `invalid` (markdown/from_docx/ooxml.rs:31)) L123,126,131; `accept_revisions` (document_comparer.rs:4962) L126; `paragraphs` (inspect.rs:312) L130; `blocks` (markdown/patch.rs:662) L145; `align` (markdown/patch.rs:399) L150; `paragraph_styles` (markdown/patch.rs:239) L151; `.text` (ambiguous, 10 candidates) L158; `operations` (markdown/patch.rs:502) L168; `apply_plan` (edit.rs:2322) L188; `describe` (markdown/patch.rs:290) L226
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.chain`, `.clone`, `.collect`, `.filter_map`, `.filter`, `.find`, `.insert`, `.into_iter`, `.is_empty`, `.iter`, `.map_err`, `.map`, `.nth`, `.ok`, `.parse`, `.push`, `.rev`, `.split`, `.to_string`, `.to_vec`, `.trim`, `.unwrap_or_else`, `Default::default`, `Edit::Pair`, `Err`, `HashSet::new`, `Kind::Heading`, `MarkdownError::Package`, `Ok`, `Some`, `Vec::new`
 - **Macros:** `format!`, `matches!`
-- **Called by:** `redline` (markdown/redline.rs:108)
+- **Called by:** `redline` (markdown/redline.rs:109)
 
 #### `paragraph_styles`  (L239-275)
 `fn paragraph_styles(docx: &[u8]) -> HashSet<String>`
@@ -30,7 +30,7 @@
 `fn describe(edit: &Edit, paragraphs: &[Paragraph], blocks: &[Block]) -> String`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `excerpt` (edit.rs:7114) L303,305,309; `.text` (ambiguous, 10 candidates) L303,305
+- **Calls (crate):** `excerpt` (edit.rs:7161) L303,305,309; `.text` (ambiguous, 10 candidates) L303,305
 - **Calls (std/external/unresolved):** `.chars`, `.collect`, `.len`, `.take`
 - **Macros:** `format!`
 - **Called by:** `apply_markdown` (markdown/patch.rs:121)
@@ -39,8 +39,8 @@
 `fn key(text: &str) -> String`
 
 - **Does:** Text compared for alignment: whitespace collapsed, symbols and leading typed numbering left out.
-- **Calls (crate):** `enumerator_len` (markdown/patch.rs:324) L319
-- **Calls (std/external/unresolved):** `.collect`, `.join`, `.replace`, `.split_whitespace`, `.to_string`
+- **Calls (crate):** `collapse_whitespace` (util/mod.rs:46) L318; `enumerator_len` (markdown/patch.rs:324) L319
+- **Calls (std/external/unresolved):** `.replace`, `.to_string`
 - **Called by:** `earliest` (changes/logical.rs:383) (?); `fold_twins` (changes.rs:1280) (?); `step_h` (comparer/lcs.rs:3621) (?); `has_common_run_ge` (comparer/lcs.rs:5736) (?); `group_by_key_stable` (comparer/produce.rs:692) (?); `align` (markdown/patch.rs:399); `operations` (markdown/patch.rs:502); `tests::keys_ignore_numbering_spacing_and_symbols` (markdown/patch.rs:857)
 
 #### `enumerator_len`  (L324-384)

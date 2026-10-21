@@ -6,11 +6,11 @@ Every function, method, struct, enum, trait, impl block, constant, static, type 
 
 | Manifest | Items |
 |---|---:|
-| [functions/](functions/) (one file per source file; functions and methods) | 5677 non-test + 4004 test |
-| [structs.md](structs.md) | 607 |
-| [enums.md](enums.md) (enums and unions) | 236 |
+| [functions/](functions/) (one file per source file; functions and methods) | 5717 non-test + 4052 test |
+| [structs.md](structs.md) | 609 |
+| [enums.md](enums.md) (enums and unions) | 238 |
 | [traits.md](traits.md) | 5 |
-| [impls.md](impls.md) | 388 |
+| [impls.md](impls.md) | 389 |
 | [consts.md](consts.md) (consts and statics) | 726 |
 | [type_aliases.md](type_aliases.md) | 86 |
 | [macros.md](macros.md) (`macro_rules!`) | 3 |
@@ -35,16 +35,16 @@ tree-sitter gives syntax, not types, so a call is matched to a definition by nam
 
 ## Documentation coverage (non-test functions and methods)
 
-- with a `///` doc comment: **3936** (69%)
-- with only a plain `//` comment above: 30
-- no description in the source: **1711**. These say _no doc comment_; their name, signature and call list are the available information.
+- with a `///` doc comment: **3953** (69%)
+- with only a plain `//` comment above: 31
+- no description in the source: **1733**. These say _no doc comment_; their name, signature and call list are the available information.
 
 ## Call edges (non-test functions, counting call sites)
 
 | Confidence | Call sites |
 |---|---:|
-| exact | 26,312 |
-| by-name | 2,429 |
+| exact | 26,389 |
+| by-name | 2,430 |
 | ambiguous | 1,329 |
-| external | 71,973 |
-| macro | 4,213 |
+| external | 72,178 |
+| macro | 4,220 |

@@ -6,9 +6,9 @@
 `pub(super) fn tidy(pkg: &mut PartFs, story_parts: &[String])`
 
 - **Does:** Tidy `story_parts` as Word saves them (module docs).
-- **Calls (crate):** `drop_unreferenced_headers_footers` (revision_processor/word_save.rs:59) L26; `non_paragraph_styles` (revision_processor/word_save.rs:88) L27; `Parsed::load` (revision_processor/comments.rs:41) L29; `Parsed::w` (revision_processor/comments.rs:62) (by name) L34; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L35; `merge_adjacent_tables_like_word` (revision_processor.rs:3194) L44; `Dom::replace_with` (xmllinq/mod.rs:1165) (by name) L46; `drop_empty` (revision_processor/word_save.rs:120) L50; `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L52
+- **Calls (crate):** `drop_unreferenced_headers_footers` (revision_processor/word_save.rs:59) L26; `non_paragraph_styles` (revision_processor/word_save.rs:88) L27; `Parsed::load` (revision_processor/comments.rs:41) L29; `Parsed::w` (revision_processor/comments.rs:62) (by name) L34; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L35; `merge_adjacent_tables_like_word` (revision_processor.rs:3223) L44; `Dom::replace_with` (xmllinq/mod.rs:1165) (by name) L46; `drop_empty` (revision_processor/word_save.rs:120) L50; `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L52
 - **Calls (std/external/unresolved):** `.contains`, `.is_empty`, `.is_some_and`, `.remove`, `W::val`
-- **Called by:** `resolve_with_comments` (revision_processor.rs:3871)
+- **Called by:** `resolve_with_comments` (revision_processor.rs:3900)
 
 #### `drop_unreferenced_headers_footers`  (L59-85, pub(crate))
 `pub(crate) fn drop_unreferenced_headers_footers(pkg: &mut PartFs)`

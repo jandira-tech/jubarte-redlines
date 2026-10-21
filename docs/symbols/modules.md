@@ -123,7 +123,7 @@
 | `header` | src/markdown/from_docx/mod.rs:19 | private | _no doc comment_ |  |
 | `media` | src/markdown/from_docx/mod.rs:20 | private | _no doc comment_ |  |
 | `mermaid` | src/markdown/from_docx/mod.rs:21 | private | _no doc comment_ |  |
-| `ooxml` | src/markdown/from_docx/mod.rs:22 | private | _no doc comment_ |  |
+| `ooxml` | src/markdown/from_docx/mod.rs:22 | pub(crate) | _no doc comment_ |  |
 | `revise` | src/markdown/from_docx/mod.rs:23 | private | _no doc comment_ |  |
 | `anchor` | src/markdown/mod.rs:38 | private | _no doc comment_ |  |
 | `borders` | src/markdown/mod.rs:39 | pub(crate) | _no doc comment_ |  |

@@ -1,6 +1,6 @@
 # Structs
 
-607 items (non-test). Part of the [symbol manifest](README.md).
+609 items (non-test). Part of the [symbol manifest](README.md).
 
 | Name | Defined at | Vis | Does | Detail |
 |---|---|---|---|---|
@@ -288,7 +288,7 @@
 | `Covered` | src/edit.rs:2591 | private | The text a comment covers: from `start` in paragraph `first` to `end` in paragraph `last` (projection offsets; global paragraph indexes). | fields: first,start,last,end |
 | `Transaction` | src/edit.rs:2598 | private | _no doc comment_ | fields: plan,revision_refusal,source_sha256,base,base_sha256,resolved_revisions,removed_comments,kept_comments,date,initials,opened,stories,paragraph_nodes,paragraph_story,projections,origin,outcomes,resolved,claims,anchor_window,syntax,comments,deletion_comments,preset_comment_ids,next_comment_id,c |
 | `StoryPart` | src/edit.rs:2670 | private | The body, or a header, footer or notes part, parsed into the plan's DOM. | fields: id,part,document,root |
-| `EmptyPlacement` | src/edit.rs:7661 | pub(super) | Text typed into an empty paragraph, placed edit by edit in reverse [`sort_edits`] order, so that each edge keeps plan order and what the paragraph holds (a field, a bookmark's markers) stays between them: the text joins no range it was not typed in (#1303). | fields: next_end |
+| `EmptyPlacement` | src/edit.rs:7708 | pub(super) | Text typed into an empty paragraph, placed edit by edit in reverse [`sort_edits`] order, so that each edge keeps plan order and what the paragraph holds (a field, a bookmark's markers) stays between them: the text joins no range it was not typed in (#1303). | fields: next_end |
 | `NearOccurrence` | src/edit/anchor.rs:115 | pub | A diagnostic occurrence, never a selected range. | fields: text,shown,offset,target |
 | `NearMatches` | src/edit/anchor.rs:129 | pub | Report-only whitespace matches accompanying `ANCHOR_NOT_FOUND`. | fields: total,occurrences |
 | `AnchorRefusal` | src/edit/anchor_error.rs:67 | pub | The refused request's own facts: which operation asked, which target it named, the anchor it sent, and where the source lives for read continuations. | fields: operation,target,anchor,path |
@@ -406,20 +406,22 @@
 | `LegacyDocument` | src/legacy_doc.rs:158 | pub | The main story of a `.doc`, the only place this module reads from. | fields: blocks |
 | `DirEntry` | src/legacy_doc.rs:636 | private | A directory entry: name, type, first sector and size. | fields: name,kind,left,right,child,start,size |
 | `CompoundFile` | src/legacy_doc.rs:646 | private | _no doc comment_ | fields: bytes,sector_size,mini_sector_size,mini_cutoff,fat,mini_fat,entries,mini_stream |
-| `Fib` | src/legacy_doc.rs:876 | private | --------------------------------------------------------------------------- File Information Block (MS-DOC 2.5.1) --------------------------------------------------------------------------- _(from a code comment)_ | fields: table_one,ccp_text,fc_stshf,lcb_stshf,fc_plcf_bte_papx,lcb_plcf_bte_papx,fc_plcf_bte_chpx,lcb_plcf_bte_chpx,fc_clx,lcb_clx,plf_lst,plf_lfo,plcf_sed |
-| `Piece` | src/legacy_doc.rs:962 | private | --------------------------------------------------------------------------- Piece table (MS-DOC 2.9.38 Clx, 2.9.177 Pcd) --------------------------------------------------------------------------- _(from a code comment)_ | fields: cp_start,cp_end,fc,compressed,modifier |
-| `CharModifier` | src/legacy_doc.rs:975 | private | Bold and italic a piece's property modifier sets (`None`: left as the CHPX has it). | fields: bold,italic |
-| `StoryChar` | src/legacy_doc.rs:1134 | private | A character of the main story and the stream offset it was read from. | fields: ch,cp,fc,modifier |
-| `Props` | src/legacy_doc.rs:1270 | private | The properties read from a PAPX or a CHPX; each kind fills its own. | fields: istd,in_table,row_end,ilfo,table_header,ilvl,bold,italic |
-| `FkpIndex` | src/legacy_doc.rs:1290 | private | Formatted disk pages of one kind, read once. | fields: runs |
-| `Lists` | src/legacy_doc.rs:1477 | private | Number format of each list level, by list id, and the list id of each list override. | fields: overrides,formats |
-| `Story` | src/legacy_doc.rs:1577 | private | What the main story's characters are read against. | fields: papx,chpx,styles,lists,section_marks |
+| `Fib` | src/legacy_doc.rs:914 | private | --------------------------------------------------------------------------- File Information Block (MS-DOC 2.5.1) --------------------------------------------------------------------------- _(from a code comment)_ | fields: table_one,ccp_text,fc_stshf,lcb_stshf,fc_plcf_bte_papx,lcb_plcf_bte_papx,fc_plcf_bte_chpx,lcb_plcf_bte_chpx,fc_clx,lcb_clx,plf_lst,plf_lfo,plcf_sed |
+| `Piece` | src/legacy_doc.rs:1000 | private | --------------------------------------------------------------------------- Piece table (MS-DOC 2.9.38 Clx, 2.9.177 Pcd) --------------------------------------------------------------------------- _(from a code comment)_ | fields: cp_start,cp_end,fc,compressed,modifier |
+| `CharModifier` | src/legacy_doc.rs:1013 | private | Bold and italic a piece's property modifier sets (`None`: left as the CHPX has it). | fields: bold,italic |
+| `StoryChar` | src/legacy_doc.rs:1172 | private | A character of the main story and the stream offset it was read from. | fields: ch,cp,fc,modifier |
+| `Props` | src/legacy_doc.rs:1308 | private | The properties read from a PAPX or a CHPX; each kind fills its own. | fields: istd,in_table,row_end,ilfo,table_header,ilvl,bold,italic |
+| `FkpIndex` | src/legacy_doc.rs:1328 | private | Formatted disk pages of one kind, read once. | fields: runs |
+| `Lists` | src/legacy_doc.rs:1515 | private | Number format of each list level, by list id, and the list id of each list override. | fields: overrides,formats |
+| `Story` | src/legacy_doc.rs:1615 | private | What the main story's characters are read against. | fields: papx,chpx,styles,lists,section_marks |
 | `Border` | src/markdown/borders.rs:32 | pub(crate) | One side's border. | fields: val,size,color,space,theme,tint,shade |
-| `ChangeRegion` | src/markdown/critic.rs:207 | pub(crate) | A top-level change span of a source: an insertion, a deletion or a substitution that no other span holds. | fields: open,body,split,close,inserted |
-| `Closers` | src/markdown/critic.rs:487 | private | Where every unescaped closer and separator sits in the source, found once so that an opener without its closer does not scan the rest of the text, and the parts Markdown reads literally. | fields: patterns,positions,comments,highlights,cover,runs,literal,marks,blanks,fields,unwind |
-| `Literal` | src/markdown/critic.rs:783 | private | The parts of a Markdown source that Markdown reads literally: code spans, link destinations and autolinks (`verbatim`), where nothing opens, and fenced code blocks and the YAML front matter (`fences`), where CriticMarkup still marks tracked changes (the reader prints them there) but `==` and `{CODE}` open nothing: a h... | fields: verbatim,fences,front_matter |
-| `Check` | src/markdown/critic.rs:1076 | private | What a whole-`encode` pass found amiss, for a caller that warns: positions, line numbers resolved at the end so the scan stays cheap. | fields: unclosed,consumed |
-| `Pieces` | src/markdown/critic.rs:1901 | pub(crate) | Splits parsed text into [`Piece`]s. | fields: escape_pending |
+| `ChangeRegion` | src/markdown/critic.rs:212 | pub(crate) | A top-level change span of a source: an insertion, a deletion or a substitution that no other span holds. | fields: open,body,split,close,inserted |
+| `Closers` | src/markdown/critic.rs:492 | private | Where every unescaped closer and separator sits in the source, found once so that an opener without its closer does not scan the rest of the text, and the parts Markdown reads literally. | fields: patterns,positions,comments,highlights,cover,runs,literal,marks,blanks,fields,unwind |
+| `Literal` | src/markdown/critic.rs:788 | private | The parts of a Markdown source that Markdown reads literally: code spans, link destinations and autolinks (`verbatim`), where nothing opens, and fenced code blocks and the YAML front matter (`fences`), where CriticMarkup still marks tracked changes (the reader prints them there) but `==` and `{CODE}` open nothing: a h... | fields: verbatim,fences,front_matter |
+| `Check` | src/markdown/critic.rs:1081 | private | What a whole-`encode` pass found amiss, for a caller that warns: positions, line numbers resolved at the end so the scan stays cheap. | fields: unclosed,consumed |
+| `Pieces` | src/markdown/critic.rs:1906 | pub(crate) | Splits parsed text into [`Piece`]s. | fields: escape_pending |
+| `InlineSpan` | src/markdown/critic.rs:2010 | private | One inline span the source markdown shows at byte range `range`, with the byte range of its inner content (`inner_start..inner_end`, between the opening and closing fences) and, for a code span, the content `pulldown_cmark` reports — the CommonMark content, after the one-space strip of a padded span and with newlines... | fields: kind,range,inner_start,inner_end,content |
+| `SeamSpan` | src/markdown/critic.rs:2206 | private | A span the resolved output may show at a seam: a parsed inline span, or the kept body of a change that parses as exactly one. | fields: kind,cover,content,marker,flipped |
 | `Binding` | src/markdown/data_stores.rs:46 | private | One control's binding: its store, the path's steps (namespace URI and local name; `None` when the path is not a simple one), and the value its store holds (`None` when no value of the control's own is one). | fields: store,xpath,steps,value |
 | `Node` | src/markdown/data_stores.rs:54 | private | A node of a store being built. | fields: namespace,local,value,children |
 | `Output` | src/markdown/diff.rs:378 | private | The marked-up document being written, line by line. | fields: text,started,carry,last |
@@ -488,7 +490,7 @@
 | `Patched` | src/markdown/patch.rs:49 | pub | A Word document the Markdown edits landed on. | fields: docx,warnings |
 | `Block` | src/markdown/patch.rs:72 | private | A Markdown block: its kind, its plain text and its runs. | fields: kind,runs |
 | `Paragraph` | src/markdown/patch.rs:85 | private | A body paragraph: its index in the body, text and kind. | fields: index,text,kind |
-| `RedlineOptions` | src/markdown/redline.rs:46 | pub | How [`redline`] reads and compares two [`Source`] documents. | fields: settings,reference,critic,images |
+| `RedlineOptions` | src/markdown/redline.rs:47 | pub | How [`redline`] reads and compares two [`Source`] documents. | fields: settings,reference,critic,images |
 | `Attribution` | src/markdown/unified.rs:46 | pub | The author and date of a change or comment, in the form Word writes and jubarte's Markdown edit path encodes (`YYYY-MM-DDTHH:MM:SSZ`). | fields: author,date |
 | `PatchOptions` | src/markdown/unified.rs:58 | pub | The names written on the patch's `---` and `+++` header lines, and the document owner (the author and date of every change and comment that names none). | fields: old_name,new_name,owner |
 | `Comment` | src/markdown/unified.rs:96 | pub | A comment, on a change, on highlighted text, or at a point. | fields: author,date,text,on |
@@ -571,9 +573,9 @@
 | `ProgressEvent` | src/result.rs:983 | pub | Progress event for JSONL streams: a free-form JSON value so callers can attach any `ev`/`load`/`op`/`save` line they want. | fields: value |
 | `ParsedStream` | src/result.rs:1034 | pub | A parsed JSONL stream: the progress events and the terminal record. | fields: header,events,terminal |
 | `ExitStatus` | src/result.rs:1178 | pub | Exit status values per the proposal §12 table. |  |
-| `Tag` | src/revision_processor.rs:766 | pub | `Tag` (RevisionProcessor.cs :2393): one open/empty/close event. | fields: element,tag_type |
-| `BlockContentInfo` | src/revision_processor.rs:843 | pub | `BlockContentInfo` (RevisionProcessor.cs :52): prev / this / next links for block-level content. | fields: previous_block_content_element,this_block_content_element,next_block_content_element |
-| `RevisionIds` | src/revision_processor.rs:3771 | pub(crate) | Package-wide ids reserved before any revision is frozen or removed. | fields: next,used |
+| `Tag` | src/revision_processor.rs:795 | pub | `Tag` (RevisionProcessor.cs :2393): one open/empty/close event. | fields: element,tag_type |
+| `BlockContentInfo` | src/revision_processor.rs:872 | pub | `BlockContentInfo` (RevisionProcessor.cs :52): prev / this / next links for block-level content. | fields: previous_block_content_element,this_block_content_element,next_block_content_element |
+| `RevisionIds` | src/revision_processor.rs:3800 | pub(crate) | Package-wide ids reserved before any revision is frozen or removed. | fields: next,used |
 | `Parsed` | src/revision_processor/comments.rs:33 | pub(super) | One parsed part, written back by [`Parsed::store`]. | fields: name,dom,doc,root |
 | `Slot` | src/revision_processor/style_records.rs:103 | private | One property slot: the element's expanded name and, for the attribute-wise properties, the first attribute of its group (empty for a whole element). | fields: ns,local,group |
 | `Levels` | src/revision_processor/style_records.rs:277 | pub(super) | The pPr slots of each numbering level, by numId and ilvl: the abstract's levels (through a `w:numStyleLink`, the linked abstract's, as rendering reads them), a full `lvlOverride` level taking over the abstract one. |  |

@@ -1,13 +1,13 @@
 # Functions and methods in `src/comparer/moves.rs`
 
-16 non-test, 23 test. Part of the [symbol manifest](../README.md).
+16 non-test, 31 test. Part of the [symbol manifest](../README.md).
 
 #### `split_by_chars`  (L41-53, pub)
 `pub fn split_by_chars(text: &str, seps: &[char]) -> Vec<String>`
 
 - **Does:** Split `text` at any character in `seps`; the resulting `Vec` keeps leading, trailing and adjacent empty segments (so the count of splits is the count of separators) and always pushes a trailing segment.
 - **Calls (std/external/unresolved):** `.chars`, `.contains`, `.push`, `String::new`, `Vec::new`, `std::mem::take`
-- **Called by:** `tokenize` (comparer/moves.rs:58); `count_words` (comparer/moves.rs:75)
+- **Called by:** `tokenize` (comparer/moves.rs:58); `count_words` (comparer/moves.rs:75); `split_by_chars_tests::empty_input` (comparer/moves.rs:1610); `split_by_chars_tests::empty_separators` (comparer/moves.rs:1615); `split_by_chars_tests::empty_input_and_empty_separators` (comparer/moves.rs:1620); `split_by_chars_tests::text_containing_only_separators` (comparer/moves.rs:1625); `split_by_chars_tests::text_with_separators_at_edges_and_middle` (comparer/moves.rs:1630); `split_by_chars_tests::text_with_consecutive_separators` (comparer/moves.rs:1638); `split_by_chars_tests::unicode_characters` (comparer/moves.rs:1646)
 
 #### `tokenize`  (L58-70, pub)
 `pub fn tokenize(text: &str, settings: &WmlComparerSettings) -> HashSet<String>`
@@ -37,7 +37,7 @@
 `fn collapse_ws(text: &str) -> String`
 
 - **Does:** Collapse runs of whitespace so reformatted charter paragraphs (dense vs spaced) compare as the same text for move detection.
-- **Calls (std/external/unresolved):** `.collect`, `.join`, `.split_whitespace`
+- **Calls (crate):** `collapse_whitespace` (util/mod.rs:46) L119
 - **Called by:** `jaccard` (comparer/moves.rs:125); `precompute_block` (comparer/moves.rs:493); `detect_moves_reference` (comparer/moves.rs:695)
 
 #### `jaccard`  (L125-143, pub)
@@ -46,7 +46,7 @@
 - **Does:** Jaccard similarity over unique word sets: `|intersection| / |union|`, with whitespace collapsed first so a pure re-spacing does not match as a move.
 - **Calls (crate):** `collapse_ws` (comparer/moves.rs:118) L126,127; `tokenize` (comparer/moves.rs:58) L131,132
 - **Calls (std/external/unresolved):** `.count`, `.intersection`, `.is_empty`, `.union`
-- **Called by:** `detect_moves_reference` (comparer/moves.rs:695); `public_lexical_empty_move_boundary_tests::public_jaccard_handles_empty_and_separator_only_sources_without_nonfinite_scores` (comparer/moves.rs:1546); `detect_moves` (comparer/revisions.rs:414)
+- **Called by:** `detect_moves_reference` (comparer/moves.rs:695); `public_lexical_empty_move_boundary_tests::public_jaccard_handles_empty_and_separator_only_sources_without_nonfinite_scores` (comparer/moves.rs:1546); `public_lexical_empty_move_boundary_tests::public_jaccard_similarity_edge_cases` (comparer/moves.rs:1575); `detect_moves` (comparer/revisions.rs:414)
 
 #### `group_consecutive_atoms_by_status`  (L149-174, pub)
 `pub fn group_consecutive_atoms_by_status( atoms: &[ComparisonUnitAtom], status: CorrelationStatus, ) -> Vec<AtomBlock>`
@@ -127,7 +127,7 @@
 - **Macros:** `eprintln!`, `format!`
 - **Called by:** `detect_moves_in_atom_list` (comparer/moves.rs:470); `memoized_moves_tests::memoized_matches_reference_obvious_move` (comparer/moves.rs:905); `memoized_moves_tests::memoized_matches_reference_random` (comparer/moves.rs:948); `memoized_moves_tests::memoized_speedup_report` (comparer/moves.rs:1020)
 
-## Test functions (23)
+## Test functions (31)
 
 - `detect_moves_reference` (L695): Historical reference: O(del × ins) with per-pair text re-extraction and re-tokenization.
 - `memoized_moves_tests::make_pool` (L858): A `Dom` with a fixed vocabulary of text-bearing `w:t` elements plus a `w:pPr` mark.
@@ -152,3 +152,11 @@
 - `source_paragraph_promotion_boundary_tests::equal_cell_paragraph_does_not_disambiguate_an_independent_story_gap` (L1480): _no doc comment_
 - `source_paragraph_promotion_boundary_tests::repeated_deleted_prefix_matches_following_distinct_source_owners` (L1510): _no doc comment_
 - `public_lexical_empty_move_boundary_tests::public_jaccard_handles_empty_and_separator_only_sources_without_nonfinite_scores` (L1546): _no doc comment_
+- `public_lexical_empty_move_boundary_tests::public_jaccard_similarity_edge_cases` (L1575): _no doc comment_
+- `split_by_chars_tests::empty_input` (L1610): _no doc comment_
+- `split_by_chars_tests::empty_separators` (L1615): _no doc comment_
+- `split_by_chars_tests::empty_input_and_empty_separators` (L1620): _no doc comment_
+- `split_by_chars_tests::text_containing_only_separators` (L1625): _no doc comment_
+- `split_by_chars_tests::text_with_separators_at_edges_and_middle` (L1630): _no doc comment_
+- `split_by_chars_tests::text_with_consecutive_separators` (L1638): _no doc comment_
+- `split_by_chars_tests::unicode_characters` (L1646): _no doc comment_

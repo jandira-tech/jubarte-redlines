@@ -377,7 +377,7 @@
    "qual": "revision_to_json",
    "kind": "function",
    "file": "src/document_comparer.rs",
-   "line": 6354,
+   "line": 6355,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -702,7 +702,7 @@
    "qual": "BlockContentInfo",
    "kind": "struct",
    "file": "src/revision_processor.rs",
-   "line": 843,
+   "line": 872,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -780,7 +780,7 @@
    "qual": "signature_required",
    "kind": "function",
    "file": "src/update.rs",
-   "line": 274,
+   "line": 304,
    "first_release": "v0.11.0",
    "origin": {
     "hash": "2baf351c",
@@ -3198,7 +3198,7 @@
    "qual": "reject_revisions_package",
    "kind": "function",
    "file": "src/revision_processor.rs",
-   "line": 3761,
+   "line": 3790,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",
@@ -3562,7 +3562,7 @@
    "qual": "unescape_xml_text",
    "kind": "function",
    "file": "src/xmllinq/parse.rs",
-   "line": 897,
+   "line": 899,
    "first_release": "v0.10.0",
    "origin": {
     "hash": "16de3f89",

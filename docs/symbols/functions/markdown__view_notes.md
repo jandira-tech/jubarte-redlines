@@ -32,7 +32,7 @@
 `pub(super) fn file_defaults(markdown: &str) -> FileDefaults`
 
 - **Does:** The front matter's [`FileDefaults`]; none without front matter.
-- **Calls (crate):** `names_no_owner` (markdown/view_notes.rs:280) L178; `scalar_and_comment` (markdown/view_notes.rs:324) L181; `decode` (markdown/critic.rs:1841) L182; `is_date` (markdown/write.rs:6320) L195,198
+- **Calls (crate):** `names_no_owner` (markdown/view_notes.rs:280) L178; `scalar_and_comment` (markdown/view_notes.rs:324) L181; `decode` (markdown/critic.rs:1846) L182; `is_date` (markdown/write.rs:6320) L195,198
 - **Calls (std/external/unresolved):** `.collect`, `.get_or_insert`, `.is_empty`, `.is_none`, `.iter`, `.lines`, `.map`, `.or_else`, `.position`, `.push`, `.sort_by_key`, `.split_once`, `.starts_with`, `.strip_prefix`, `.to_string`, `.trim_end_matches`, `.trim_start`, `.trim`, `.unwrap_or`, `FileDefaults::default`, `Some`, `Vec::new`
 - **Macros:** `format!`
 - **Called by:** `markdown_stamp` (markdown/mod.rs:598); `markdown_to_docx` (markdown/write.rs:59)
@@ -106,7 +106,7 @@
 - **Does:** The tags of a revision note, `r1+2 @AC` or `r1 @AC; r2 @JD 2026-…`; `None` for any other comment text.
 - **Calls (crate):** `is_handle` (markdown/view_notes.rs:315) L379; `parse_change_ids` (ids.rs:232) L386,391
 - **Calls (std/external/unresolved):** `.collect`, `.filter_map`, `.filter`, `.is_ascii_digit`, `.is_none_or`, `.is_ok`, `.is_some`, `.iter`, `.map`, `.next`, `.ok`, `.parse`, `.split`, `.starts_with`, `.strip_prefix`, `.strip_suffix`, `.then`, `.to_string`, `.trim`, `.unwrap_or_default`
-- **Called by:** `legacy_attribution_error` (markdown/critic.rs:282); `attribution_tag` (markdown/critic.rs:1330); `collect_revisions` (markdown/from_docx/agent.rs:2757); `one_tag` (markdown/view_notes.rs:424); `note_formats` (markdown/view_notes.rs:760); `IdLine::clause` (markdown/view_notes.rs:1415); `first_tag` (markdown/view_notes.rs:1556); `tests::revision_notes_are_tags_and_nothing_else_is` (markdown/view_notes.rs:1961); `tags_after` (markdown/view_stories.rs:1281); `story_part` (markdown/view_stories.rs:1710); `Writer::end_comment` (markdown/write.rs:3681); `Writer::metadata` (markdown/write.rs:4453)
+- **Called by:** `legacy_attribution_error` (markdown/critic.rs:287); `attribution_tag` (markdown/critic.rs:1335); `collect_revisions` (markdown/from_docx/agent.rs:2757); `one_tag` (markdown/view_notes.rs:424); `note_formats` (markdown/view_notes.rs:760); `IdLine::clause` (markdown/view_notes.rs:1415); `first_tag` (markdown/view_notes.rs:1556); `tests::revision_notes_are_tags_and_nothing_else_is` (markdown/view_notes.rs:1961); `tags_after` (markdown/view_stories.rs:1281); `story_part` (markdown/view_stories.rs:1710); `Writer::end_comment` (markdown/write.rs:3681); `Writer::metadata` (markdown/write.rs:4453)
 
 #### `nested_revision_tags`  (L418-421, pub(super))
 `pub(super) fn nested_revision_tags(text: &str) -> Option<Vec<Tag>>`
@@ -114,7 +114,7 @@
 - **Does:** The tags of a nested revision note, its own change first: `r3 @BO re r1 @AL` is Ben's deletion inside Ana's insertion, each tag with its own date as [`revision_tags`] reads it.
 - **Calls (crate):** `nested_parts` (markdown/view_notes.rs:496) L419
 - **Calls (std/external/unresolved):** `.len`, `.then_some`
-- **Called by:** `attribution_tag` (markdown/critic.rs:1330); `names_outer` (markdown/critic.rs:1969); `tests::nested_revision_notes_name_the_change_it_sits_inside` (markdown/view_notes.rs:1897); `tags_after` (markdown/view_stories.rs:1281); `Writer::end_comment` (markdown/write.rs:3681)
+- **Called by:** `attribution_tag` (markdown/critic.rs:1335); `names_outer` (markdown/critic.rs:1981); `tests::nested_revision_notes_name_the_change_it_sits_inside` (markdown/view_notes.rs:1897); `tags_after` (markdown/view_stories.rs:1281); `Writer::end_comment` (markdown/write.rs:3681)
 
 #### `one_tag`  (L424-429)
 `fn one_tag(part: &str) -> Option<Tag>`
@@ -130,7 +130,7 @@
 - **Does:** The parts of a plain nested revision note, its own change first: `r3 Ben Ode (2026-…) re r1 Ana Lima (2026-…)`.
 - **Calls (crate):** `nested_parts` (markdown/view_notes.rs:496) L435
 - **Calls (std/external/unresolved):** `.len`, `.then_some`
-- **Called by:** `attribution_tag` (markdown/critic.rs:1330); `names_outer` (markdown/critic.rs:1969); `tests::nested_revision_notes_name_the_change_it_sits_inside` (markdown/view_notes.rs:1897); `Writer::end_comment` (markdown/write.rs:3681)
+- **Called by:** `attribution_tag` (markdown/critic.rs:1335); `names_outer` (markdown/critic.rs:1981); `tests::nested_revision_notes_name_the_change_it_sits_inside` (markdown/view_notes.rs:1897); `Writer::end_comment` (markdown/write.rs:3681)
 
 #### `plain_part`  (L443-456)
 `fn plain_part(part: &str) -> Option<PlainRevision>`
@@ -172,7 +172,7 @@
 - **Calls (crate):** `plain_revision` (markdown/view_notes.rs:514) L548
 - **Calls (std/external/unresolved):** `.collect`, `.map`, `.or_else`, `.split`
 - **Macros:** `vec!`
-- **Called by:** `attribution_tag` (markdown/critic.rs:1330); `attribute` (markdown/unified.rs:756); `Writer::end_comment` (markdown/write.rs:3681)
+- **Called by:** `attribution_tag` (markdown/critic.rs:1335); `attribute` (markdown/unified.rs:756); `Writer::end_comment` (markdown/write.rs:3681)
 
 #### `CellsAt::holds`  (L582-588, pub(super))
 `pub(super) fn holds(self, row: usize, cell: usize) -> bool`

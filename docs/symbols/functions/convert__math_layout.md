@@ -23,7 +23,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Dom::name_is` (xmllinq/mod.rs:535) L123
 - **Calls (std/external/unresolved):** `M::name`
-- **Called by:** `layout` (convert/math_layout.rs:86); `nary` (convert/math_layout.rs:472); `mark_close` (markdown/critic.rs:1750) (?); `mark_closes` (markdown/critic.rs:1774) (?)
+- **Called by:** `layout` (convert/math_layout.rs:86); `nary` (convert/math_layout.rs:472); `mark_close` (markdown/critic.rs:1755) (?); `mark_closes` (markdown/critic.rs:1779) (?)
 
 #### `is_property`  (L126-129)
 `fn is_property(dom: &Dom, node: NodeId) -> bool`

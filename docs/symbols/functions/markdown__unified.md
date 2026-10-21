@@ -54,7 +54,7 @@
 `pub fn patch_redline(docx: &[u8], options: &PatchOptions) -> Result<Patch, MarkdownError>`
 
 - **Does:** A Word redline's tracked changes and comments as a patch, each hunk at the id ([`pN`](Locator::Paragraph)) [`jubarte::inspect`](crate::inspect) gives its paragraph once every change is accepted (or rejected, for a removed paragraph): the id an edit plan names it by.
-- **Calls (crate):** `reject_revisions` (document_comparer.rs:4984) L289; `accept_revisions` (document_comparer.rs:4961) L290; `patch_word` (markdown/unified.rs:375) L291; `<MarkdownOptions as Default>::default` (markdown/mod.rs:347) L291
+- **Calls (crate):** `reject_revisions` (document_comparer.rs:4985) L289; `accept_revisions` (document_comparer.rs:4962) L290; `patch_word` (markdown/unified.rs:375) L291; `<MarkdownOptions as Default>::default` (markdown/mod.rs:347) L291
 - **Calls (std/external/unresolved):** `.map_err`, `.to_string`, `MarkdownError::Package`
 - **Called by:** `patch_own_changes` (markdown/unified.rs:308)
 
@@ -70,7 +70,7 @@
 `pub fn patch_documents( old: Source<'_>, new: Source<'_>, redline_options: &RedlineOptions<'_>, options: &PatchOptions, ) -> Result<Patch, MarkdownError>`
 
 - **Does:** The changes from `old` to `new` as a patch.
-- **Calls (crate):** `patch_markdown` (markdown/unified.rs:222) L344; `redline` (markdown/redline.rs:108) L349; `reject_revisions` (document_comparer.rs:4984) L353; `accept_revisions` (document_comparer.rs:4961) L357; `<MarkdownOptions as Default>::default` (markdown/mod.rs:347) L361; `segments` (markdown/unified.rs:630) L363; `docx_to_markdown` (markdown/mod.rs:651) L363; `patch_word` (markdown/unified.rs:375) L370
+- **Calls (crate):** `patch_markdown` (markdown/unified.rs:222) L344; `redline` (markdown/redline.rs:109) L349; `reject_revisions` (document_comparer.rs:4985) L353; `accept_revisions` (document_comparer.rs:4962) L357; `<MarkdownOptions as Default>::default` (markdown/mod.rs:347) L361; `segments` (markdown/unified.rs:630) L363; `docx_to_markdown` (markdown/mod.rs:651) L363; `patch_word` (markdown/unified.rs:375) L370
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.filter_map`, `.into_iter`, `.map_err`, `.to_string`, `.to_vec`, `MarkdownError::Package`, `Ok`, `Some`
 - **Called by:** none found in src
 
@@ -111,7 +111,7 @@
 - **Does:** The first paragraph from `from` on whose text is the block's, else one the block holds (a table row's cell, a paragraph and the one joined to it, a list item's text after its number).
 - **Calls (crate):** `at` (markdown/from_docx/drawing.rs:1360) (by name) L481
 - **Calls (std/external/unresolved):** `.contains`, `.get`, `.is_empty`, `.iter`, `.map`, `.or_else`, `.position`, `test`
-- **Called by:** `Build::sdt` (debug/diff.rs:1136) (?); `part_rels_agree` (document_comparer.rs:70) (?); `place_reply_markers` (edit.rs:7866) (?); `first_section_stories` (markdown/from_docx/header.rs:1317) (?); `Search::next` (markdown/unified.rs:435); `zip32_tests::version_needed_distinguishes_stored_deflate_and_zip64` (opc/mod.rs:2283) (?)
+- **Called by:** `Build::sdt` (debug/diff.rs:1136) (?); `part_rels_agree` (document_comparer.rs:70) (?); `place_reply_markers` (edit.rs:7913) (?); `first_section_stories` (markdown/from_docx/header.rs:1317) (?); `Search::next` (markdown/unified.rs:435); `zip32_tests::version_needed_distinguishes_stored_deflate_and_zip64` (opc/mod.rs:2320) (?)
 
 #### `letters`  (L485-487)
 `fn letters(text: &str) -> String`
@@ -161,7 +161,7 @@
 `fn segments(critic: &str) -> Vec<Segment>`
 
 - **Does:** The document as text, changes, highlight delimiters and comments.
-- **Calls (crate):** `Pieces::feed` (markdown/critic.rs:1908) (by name) L641; `encode_spans_only` (markdown/critic.rs:1803) L641; `Edit::push` (markdown/unified.rs:607) L657; `push_same` (markdown/unified.rs:1138) L663,692,745; `delimiter` (markdown/critic.rs:1867) L686
+- **Calls (crate):** `Pieces::feed` (markdown/critic.rs:1913) (by name) L641; `encode_spans_only` (markdown/critic.rs:1808) L641; `Edit::push` (markdown/unified.rs:607) L657; `push_same` (markdown/unified.rs:1138) L663,692,745; `delimiter` (markdown/critic.rs:1872) L686
 - **Calls (std/external/unresolved):** `.bytes`, `.count`, `.drain`, `.extend`, `.filter`, `.is_empty`, `.is_some`, `.last_mut`, `.map`, `.push_str`, `.push`, `.starts_with`, `.take`, `.to_string`, `.unwrap_or_default`, `Edit::default`, `Segment::Edit`, `Segment::Note`, `Segment::Same`, `Some`, `String::new`, `Vec::new`, `critic::Pieces::default`, `std::mem::take`
 - **Called by:** `patch_documents` (markdown/unified.rs:337); `build_with` (markdown/unified.rs:532); `tests::a_numbered_note_after_a_change_names_its_author_never_a_comment` (markdown/unified.rs:1502); `review_tests::review_paragraph_tag_keeps_an_incomplete_trailing_separator` (markdown/unified.rs:1651)
 
@@ -204,7 +204,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.last_mut`, `.push_str`, `.push`, `.to_string`, `Segment::Same`
-- **Called by:** `apply_tab_stops` (convert/mod.rs:3213) (?); `Layout::hf_line_fill` (convert/mod.rs:25507) (?); `unique_part_name_where` (document_comparer.rs:5005) (?); `detach_breaks` (markdown/unified.rs:875); `repair` (validate.rs:2623) (?)
+- **Called by:** `apply_tab_stops` (convert/mod.rs:3213) (?); `Layout::hf_line_fill` (convert/mod.rs:25507) (?); `unique_part_name_where` (document_comparer.rs:5006) (?); `detach_breaks` (markdown/unified.rs:875); `repair` (validate.rs:2623) (?)
 
 #### `detach_breaks::{fn starts_paragraph}`  (L884-897)
 `fn starts_paragraph(out: &[Segment]) -> bool`

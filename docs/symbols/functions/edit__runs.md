@@ -6,7 +6,7 @@
 `pub(super) fn resolve_format_run( &self, projection: &Projection, find: &str, occurrence: Option<usize>, format: &RunFormat, outcome: &mut EditOutcome, ) -> Result<(usize, usize), (String, String)>`
 
 - **Does:** Resolve a `format_run`: the range to format, or the error code and message.
-- **Calls (crate):** `check_format` (edit.rs:8406) L31; `Transaction::find_range` (edit.rs:5130) L32
+- **Calls (crate):** `check_format` (edit.rs:8453) L31; `Transaction::find_range` (edit.rs:5130) L32
 - **Calls (std/external/unresolved):** `.into`, `.map_err`, `.to_string`, `Err`, `RunFormat::default`
 - **Called by:** `Transaction::resolve_one_unreported` (edit.rs:3545)
 

@@ -30,7 +30,7 @@
 - **Does:** Byte ranges of `text` that read as `find`, in order (overlapping ones too); none when `find` reads as nothing.
 - **Calls (crate):** `reading` (edit/anchor.rs:65) L80,84
 - **Calls (std/external/unresolved):** `.char_indices`, `.collect`, `.filter`, `.is_empty`, `.len`, `.map`, `.starts_with`, `Vec::new`
-- **Called by:** `tests::text_is_found_by_what_it_reads_as` (edit/anchor.rs:387); `removed_holder` (edit/hint.rs:144); `locate` (edit.rs:7156)
+- **Called by:** `tests::text_is_found_by_what_it_reads_as` (edit/anchor.rs:387); `removed_holder` (edit/hint.rs:144); `locate` (edit.rs:7203)
 
 #### `shown`  (L95-111, pub(super))
 `pub(super) fn shown(text: &str) -> String`
@@ -39,7 +39,7 @@
 - **Calls (crate):** `reads_as` (edit/anchor.rs:46) L103
 - **Calls (std/external/unresolved):** `.chars`, `.is_alphanumeric`, `.is_control`, `.push_str`, `.push`, `Some`, `String::from`, `from`
 - **Macros:** `format!`
-- **Called by:** `near_matches` (edit/anchor.rs:187); `missing` (edit/anchor.rs:217); `v2_select` (edit/anchor.rs:296); `v2_select_all` (edit/anchor.rs:345); `tests::lookalikes_and_invisible_characters_are_shown_escaped` (edit/anchor.rs:445); `refused` (edit/anchor_error.rs:462) (?); `quoted_anchor` (edit/anchor_error.rs:591) (?); `tests::a_pasted_clause_anchor_is_quoted_bounded` (edit/anchor_error.rs:715) (?); `locate` (edit.rs:7156)
+- **Called by:** `near_matches` (edit/anchor.rs:187); `missing` (edit/anchor.rs:217); `v2_select` (edit/anchor.rs:296); `v2_select_all` (edit/anchor.rs:345); `tests::lookalikes_and_invisible_characters_are_shown_escaped` (edit/anchor.rs:445); `refused` (edit/anchor_error.rs:462) (?); `quoted_anchor` (edit/anchor_error.rs:591) (?); `tests::a_pasted_clause_anchor_is_quoted_bounded` (edit/anchor_error.rs:715) (?); `locate` (edit.rs:7203)
 
 #### `NearMatches::copy_hint`  (L139-149, pub)
 `pub fn copy_hint(&self) -> String`
@@ -63,7 +63,7 @@
 - **Does:** Explain a literal miss without selecting or editing anything.
 - **Calls (crate):** `whitespace_reading` (edit/anchor.rs:155) L188,192; `v2_candidates` (edit/anchor.rs:232) L193; `shown` (edit/anchor.rs:95) L205
 - **Calls (std/external/unresolved):** `.collect`, `.is_empty`, `.iter`, `.len`, `.map`, `.take`, `.to_string`, `Some`
-- **Called by:** `missing` (edit/anchor.rs:217); `compile` (edit/inline.rs:38); `locate` (edit.rs:7156)
+- **Called by:** `missing` (edit/anchor.rs:217); `compile` (edit/inline.rs:38); `locate` (edit.rs:7203)
 
 #### `missing`  (L217-225)
 `fn missing(haystack: &str, anchor: &str) -> EditError`

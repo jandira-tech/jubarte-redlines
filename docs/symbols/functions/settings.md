@@ -72,7 +72,7 @@
 - **Calls (crate):** `settings_part` (settings.rs:312) L352; `PartFs::part_string` (opc/mod.rs:636) L353; `Dom::new` (xmllinq/mod.rs:387) L354; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L355; `Dom::root` (xmllinq/mod.rs:822) L356; `Dom::name_is` (xmllinq/mod.rs:535) L358; `apply_to_root` (settings.rs:279) L360; `PartFs::set_part` (opc/mod.rs:661) L361; `Dom::serialize_document` (xmllinq/mod.rs:1338) L361
 - **Calls (std/external/unresolved):** `.filter`, `.into_bytes`, `.ok_or_else`, `.unwrap_or_default`, `Ok`, `W::name`
 - **Macros:** `format!`
-- **Called by:** `Transaction::finish` (edit.rs:6598); `apply_settings_to_docx` (settings.rs:424); `tests::a_part_that_is_not_settings_is_refused` (settings.rs:526)
+- **Called by:** `Transaction::finish` (edit.rs:6645); `apply_settings_to_docx` (settings.rs:424); `tests::a_part_that_is_not_settings_is_refused` (settings.rs:526)
 
 #### `do_not_expand_shift_return`  (L383-401)
 `fn do_not_expand_shift_return(dom: &mut Dom, root: NodeId)`

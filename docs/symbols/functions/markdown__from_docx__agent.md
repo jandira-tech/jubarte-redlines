@@ -453,7 +453,7 @@
 `fn half_points(value: &str) -> Option<u32>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `universal_measure_half_points` (util/mod.rs:52) L1111
+- **Calls (crate):** `universal_measure_half_points` (util/mod.rs:66) L1111
 - **Calls (std/external/unresolved):** `.contains`, `.is_finite`, `.ok`, `.or_else`, `.parse`, `.round`, `.then_some`
 - **Called by:** `own_size::{fn size}` (markdown/from_docx/agent.rs:1116)
 
@@ -518,7 +518,7 @@
 `fn printed_wids(shown: &str, story: &str) -> HashSet<String>`
 
 - **Does:** The `w:id`s of `story`'s changes the tag notes in `shown` print (`{r12 @AC}`, `{header1.r1+2 @AC}`); a comment's note holds the author's words and no tag.
-- **Calls (crate):** `attributed_notes` (markdown/critic.rs:1351) L1249; `parse_change_ids` (ids.rs:232) L1252
+- **Calls (crate):** `attributed_notes` (markdown/critic.rs:1356) L1249; `parse_change_ids` (ids.rs:232) L1252
 - **Calls (std/external/unresolved):** `.extend`, `.filter`, `.flat_map`, `.into_iter`, `.map`, `.next`, `.split`, `.unwrap_or`, `HashSet::new`
 - **Called by:** `unshown_tags` (markdown/from_docx/agent.rs:1171); `story_unshown` (markdown/from_docx/agent.rs:1450)
 
@@ -542,7 +542,7 @@
 `fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>)`
 
 - **Does:** The attribution braces (`{r5 @AC}`, comments skipped) in `text`, and with `lines` its `<!-- … -->` lines' contents.
-- **Calls (crate):** `attributed_notes` (markdown/critic.rs:1351) L1343
+- **Calls (crate):** `attributed_notes` (markdown/critic.rs:1356) L1343
 - **Calls (std/external/unresolved):** `.extend`, `.find`, `.into_iter`, `.len`, `.map`, `.push`, `.to_string`, `.unwrap_or`
 - **Called by:** `printed_change_ids` (markdown/from_docx/agent.rs:1270)
 
@@ -617,7 +617,7 @@
 `pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)>`
 
 - **Does:** A paragraph's own indent (`w:ind`), one clause per side in the id lines' order: `first-line`, `hanging`, `left`, `right`, each in inches.
-- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) L1590; `universal_measure_twips` (util/mod.rs:47) L1594; `inches` (markdown/from_docx/agent.rs:1667) L1595
+- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) L1590; `universal_measure_twips` (util/mod.rs:61) L1594; `inches` (markdown/from_docx/agent.rs:1667) L1595
 - **Calls (std/external/unresolved):** `.collect`, `.filter_map`, `.find_map`, `.into_iter`, `.iter`, `.ok`, `.or_else`, `.parse`, `Some`
 - **Called by:** `id_line` (markdown/from_docx/agent.rs:1994)
 
@@ -625,7 +625,7 @@
 `pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String>`
 
 - **Does:** A paragraph's own spacing (`w:spacing`, #1473) in the styles legend's words, each value exact: `before 6pt`, `after 10.05pt`, `line 1.5` (a multiple of a single line) or `line 8.65pt exact` / `atLeast`.
-- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) L1608,1616,1626; `universal_measure_twips` (util/mod.rs:47) L1611; `twips` (ambiguous: `twips` (edit/watermark.rs:132); `twips` (markdown/from_docx/header.rs:618)) L1621,1625; `exact_points` (markdown/from_docx/agent.rs:1639) L1622,1628; `line_ratio` (markdown/from_docx/agent.rs:1648) L1630
+- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) L1608,1616,1626; `universal_measure_twips` (util/mod.rs:61) L1611; `twips` (ambiguous: `twips` (edit/watermark.rs:132); `twips` (markdown/from_docx/header.rs:618)) L1621,1625; `exact_points` (markdown/from_docx/agent.rs:1639) L1622,1628; `line_ratio` (markdown/from_docx/agent.rs:1648) L1630
 - **Calls (std/external/unresolved):** `.filter`, `.is_finite`, `.is_some_and`, `.ok`, `.or_else`, `.parse`, `.push`, `.unwrap_or`, `Vec::new`
 - **Macros:** `format!`, `matches!`
 - **Called by:** `id_line` (markdown/from_docx/agent.rs:1994); `Writer::paragraph` (markdown/from_docx/mod.rs:2706)
@@ -734,7 +734,7 @@
 `fn field_follows(rest: &[char]) -> bool`
 
 - **Does:** Whether `rest` (the text after a `{`) is `/}` or a field code then `}`, which the writer reads as a body field.
-- **Calls (crate):** `field_code_close` (markdown/critic.rs:1636) L1798; `is_field_code` (markdown/critic.rs:1620) L1800
+- **Calls (crate):** `field_code_close` (markdown/critic.rs:1641) L1798; `is_field_code` (markdown/critic.rs:1625) L1800
 - **Calls (std/external/unresolved):** `.collect`, `.copied`, `.enumerate`, `.is_some_and`, `.iter`
 - **Called by:** `escape_markdown` (markdown/from_docx/agent.rs:1751)
 
@@ -911,7 +911,7 @@
 `pub(crate) fn geometry_clauses(tbl: &Element, text_width: u32) -> Vec<String>`
 
 - **Does:** `widths 2.1424in 0.985in`, `width auto`, `indent 0.25in`, `layout fixed`: the table's geometry where it is not what the writer writes by itself (#1472), columns that split `text_width` evenly over 100% of it, no indent and an autofit layout.
-- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) (by name) L2291,2314,2322,2331,2344,2357...; `universal_measure_twips` (util/mod.rs:47) L2294; `Element::child` (markdown/from_docx/ooxml.rs:386) L2298,2311; `Element::children_named` (markdown/from_docx/ooxml.rs:379) (by name) L2299; `twips` (ambiguous: `twips` (edit/watermark.rs:132); `twips` (markdown/from_docx/header.rs:618)) L2300,2343,2358; `inches` (markdown/from_docx/agent.rs:1667) L2307,2349,2361; `.child` (ambiguous: `Element::child` (markdown/from_docx/ooxml.rs:386); `Scope::child` (xmllinq/serialize.rs:225)) L2313,2356,2364
+- **Calls (crate):** `Element::attr` (markdown/from_docx/ooxml.rs:327) (by name) L2291,2314,2322,2331,2344,2357...; `universal_measure_twips` (util/mod.rs:61) L2294; `Element::child` (markdown/from_docx/ooxml.rs:386) L2298,2311; `Element::children_named` (markdown/from_docx/ooxml.rs:379) (by name) L2299; `twips` (ambiguous: `twips` (edit/watermark.rs:132); `twips` (markdown/from_docx/header.rs:618)) L2300,2343,2358; `inches` (markdown/from_docx/agent.rs:1667) L2307,2349,2361; `.child` (ambiguous: `Element::child` (markdown/from_docx/ooxml.rs:386); `Scope::child` (xmllinq/serialize.rs:225)) L2313,2356,2364
 - **Calls (std/external/unresolved):** `.abs`, `.and_then`, `.any`, `.collect`, `.contains`, `.filter`, `.is_empty`, `.is_finite`, `.is_none_or`, `.is_none`, `.iter`, `.join`, `.len`, `.map`, `.max`, `.ok`, `.or_else`, `.parse`, `.push`, `.round`, `.strip_suffix`, `.to_string`, `.trim_end_matches`, `.unwrap_or`, `Some`, `Vec::new`, `f64::from`, `u32::try_from`
 - **Macros:** `format!`
 - **Called by:** `Writer::blocks_in` (markdown/from_docx/mod.rs:2553)
@@ -946,7 +946,7 @@
 `pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str>`
 
 - **Does:** The changes the body actually prints, after nesting, neighbouring marks, substitutions and selection have been rendered.
-- **Calls (crate):** `joined_kind` (markdown/from_docx/agent.rs:2890) L2770; `touching_notes` (markdown/critic.rs:1360) L2779; `revision_tags` (markdown/view_notes.rs:371) L2781,2810; `parse_change_ids` (ids.rs:232) L2788; `id_line` (markdown/view_notes.rs:1383) L2834; `table_line` (markdown/view_notes.rs:781) L2854
+- **Calls (crate):** `joined_kind` (markdown/from_docx/agent.rs:2890) L2770; `touching_notes` (markdown/critic.rs:1365) L2779; `revision_tags` (markdown/view_notes.rs:371) L2781,2810; `parse_change_ids` (ids.rs:232) L2788; `id_line` (markdown/view_notes.rs:1383) L2834; `table_line` (markdown/view_notes.rs:781) L2854
 - **Calls (std/external/unresolved):** `.all`, `.any`, `.as_ref`, `.as_slice`, `.as_str`, `.clone`, `.collect`, `.contains`, `.find`, `.into_iter`, `.is_empty`, `.is_none_or`, `.is_some_and`, `.iter_mut`, `.iter`, `.len`, `.lines`, `.map_or`, `.map`, `.next`, `.push`, `.split_once`, `.split_whitespace`, `.split`, `.unwrap_or`, `.values`, `Some`, `Vec::new`, `add`, `nested_in`
 - **Called by:** `shown_changes` (markdown/from_docx/agent.rs:417)
 
@@ -1005,7 +1005,7 @@
 `fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, String>) -> bool`
 
 - **Does:** Whether a block holds a mark of `handle`: on its id or table line, in the attribution brace (`{r4 @AC}`) or comment (`{>>c6 @AS re c5: …<<}`; the comment text after the colon is the author's words, not a tag), or as the author of a hidden comment its line names.
-- **Calls (crate):** `id_line_of` (markdown/from_docx/agent.rs:3017) L3038; `names_handle` (markdown/from_docx/agent.rs:3004) L3039,3049,3054; `attributed_notes` (markdown/critic.rs:1351) L3047
+- **Calls (crate):** `id_line_of` (markdown/from_docx/agent.rs:3017) L3038; `names_handle` (markdown/from_docx/agent.rs:3004) L3039,3049,3054; `attributed_notes` (markdown/critic.rs:1356) L3047
 - **Calls (std/external/unresolved):** `.any`, `.filter_map`, `.find`, `.get`, `.is_some_and`, `.is_whitespace`, `.iter`, `.len`, `.match_indices`, `.next`, `.split`, `.unwrap_or`
 - **Called by:** `select_blocks` (markdown/from_docx/agent.rs:3092); `tests::an_indented_id_line_still_marks_its_block` (markdown/from_docx/agent.rs:3313)
 
@@ -1013,7 +1013,7 @@
 `fn is_marked(block: &str) -> bool`
 
 - **Does:** Whether a block of the agent view carries a tracked change or a comment: an attribution brace or comment in its text, or a mark clause on its id or table line (`in c5` for a block inside a comment range whose note is elsewhere).
-- **Calls (crate):** `attributed_notes` (markdown/critic.rs:1351) L3063; `has_mark_clause` (markdown/from_docx/agent.rs:3072) L3065; `id_line_of` (markdown/from_docx/agent.rs:3017) L3065
+- **Calls (crate):** `attributed_notes` (markdown/critic.rs:1356) L3063; `has_mark_clause` (markdown/from_docx/agent.rs:3072) L3065; `id_line_of` (markdown/from_docx/agent.rs:3017) L3065
 - **Calls (std/external/unresolved):** `.contains`, `.is_empty`
 - **Called by:** `select_blocks` (markdown/from_docx/agent.rs:3092); `tests::an_indented_id_line_still_marks_its_block` (markdown/from_docx/agent.rs:3313)
 

@@ -17,7 +17,7 @@ So the part of knip that matters for Rust (unused dependencies, dead private cod
 
 ## Summary
 
-Public items checked (`pub` item in a chain of `pub mod`s, tests excluded): **1031**
+Public items checked (`pub` item in a chain of `pub mod`s, tests excluded): **1034**
 
 - never mentioned anywhere else in the repo: **3** (section A)
 - mentioned only inside their own file (typically their own unit tests or doc examples): **63** (section B)
@@ -65,7 +65,7 @@ The only other mentions are in the defining file itself (its tests, doc examples
 | `ConvertedPdf` | struct | src/convert/mod.rs:408 | 2 / 0 / 0 | in the signature of `docx_to_pdf_report` | Rendered PDF plus the distinct font resolutions for this document. |
 | `MAX_PNG_DPI` | const | src/convert/mod.rs:570 | 6 / 0 / 0 |  | Highest PNG resolution [`render`] accepts (`1.0..=1200.0`). |
 | `TRIAGE` | const | src/debug.rs:113 | 2 / 0 / 0 |  | The checks a bare `jubarte debug FILE` runs. |
-| `revision_to_json` | function | src/document_comparer.rs:6354 | 6 / 0 / 0 |  | Serialize one revision to the stable JSON object shape of the wasm `getRevisions` and Python `get_revisions` b |
+| `revision_to_json` | function | src/document_comparer.rs:6355 | 6 / 0 / 0 |  | Serialize one revision to the stable JSON object shape of the wasm `getRevisions` and Python `get_revisions` b |
 | `ListKind` | enum | src/edit.rs:811 | 4 / 0 / 0 |  | The numbering of a [`OperationKind::List`]. |
 | `LineSpacing` | struct | src/edit.rs:843 | 7 / 0 / 0 |  | Line spacing, stored as `w:line` (240 = single); JSON is the multiple. |
 | `FlagPlan` | struct | src/edit/flags.rs:70 | 2 / 0 / 0 | in the signature of `plan_from_flags` | A plan built from flags, and the notes to print before the view. |
@@ -85,18 +85,18 @@ The only other mentions are in the defining file itself (its tests, doc examples
 | `FieldError` | enum | src/fields.rs:75 | 10 / 0 / 0 | in the signature of `update_fields` | Why [`update_fields`] failed. |
 | `SNAPSHOT_SCHEMA_VERSION` | const | src/inspect.rs:39 | 1 / 0 / 0 |  | Snapshot wire schema. |
 | `render_markdown` | function | src/inspect.rs:637 | 3 / 0 / 0 |  | Markdown rendering of already inspected paragraphs. |
-| `LegacyDocError` | struct | src/legacy_doc.rs:71 | 28 / 0 / 0 |  | Why a `.doc` could not be read, formatted as `LEGACY_DOC: …` on the wire. |
+| `LegacyDocError` | struct | src/legacy_doc.rs:71 | 32 / 0 / 0 |  | Why a `.doc` could not be read, formatted as `LEGACY_DOC: …` on the wire. |
 | `ListItem` | struct | src/legacy_doc.rs:149 | 8 / 0 / 0 |  | A paragraph's place in a list. |
 | `to_markdown` | function | src/legacy_doc.rs:430 | 9 / 0 / 0 |  | The document's blocks as Markdown. |
 | `ReadDocx` | struct | src/markdown/mod.rs:612 | 2 / 0 / 0 | in the signature of `docx_to_markdown` | A document read as Markdown. |
 | `ParsedStream` | struct | src/result.rs:1034 | 2 / 0 / 0 | in the signature of `read_jsonl_stream` | A parsed JSONL stream: the progress events and the terminal record. |
-| `BlockContentInfo` | struct | src/revision_processor.rs:843 | 6 / 0 / 0 | in the signature of `get_paragraph_info`, `iterate_block_content_elements` | `BlockContentInfo` (RevisionProcessor.cs :52): prev / this / next links for block-level content. |
+| `BlockContentInfo` | struct | src/revision_processor.rs:872 | 6 / 0 / 0 | in the signature of `get_paragraph_info`, `iterate_block_content_elements` | `BlockContentInfo` (RevisionProcessor.cs :52): prev / this / next links for block-level content. |
 | `ScrubError` | enum | src/scrub.rs:81 | 13 / 0 / 0 | in the signature of `scrub` | Why [`scrub`] refused its input. |
 | `set_child` | function | src/settings.rs:248 | 7 / 0 / 0 |  | Insert or replace `<w:local attrs/>` under `root`, ordered against the children already there by the `CT_Setti |
 | `remove_child` | function | src/settings.rs:271 | 3 / 0 / 0 |  | Remove every `<w:local>` child of `root` (none or many). |
 | `main_part_is_strict` | function | src/strict_translation.rs:670 | 2 / 0 / 0 |  | Whether the package's main document part (`word/document.xml`) is ISO Strict : decided by the namespace its ro |
 | `asset_target` | function | src/update.rs:87 | 5 / 0 / 0 |  | The release archive suffix this binary will look up (`macos-aarch64`, `linux-x86_64`, …), matching the names ` |
-| `signature_required` | function | src/update.rs:274 | 19 / 0 / 0 |  | Whether installing `target_version` must pass a zipsign signature check. |
+| `signature_required` | function | src/update.rs:304 | 19 / 0 / 0 |  | Whether installing `target_version` must pass a zipsign signature check. |
 | `ValidateError` | enum | src/validate.rs:236 | 22 / 0 / 0 | in the signature of `audit_tracked`, `repair` | Why a package could not be validated at all (a finding is never an error). |
 | `FindingKey` | struct | src/validate.rs:461 | 10 / 0 / 0 | in the signature of `Finding::identity`, `baseline_keyed` | What makes a finding in one version of a document the same finding in another ([`Finding::identity`]): its cod |
 | `Baselined` | struct | src/validate.rs:849 | 8 / 0 / 0 | in the signature of `baseline`, `baseline_keyed` | A document's findings against those of the document it was made from ([`baseline`]). |
@@ -271,7 +271,7 @@ Candidates for `pub(crate)`: callers exist, but nothing outside the library can 
 | `settled_snapshot` | function | src/inspect.rs:442 | 2 / 3 / 0 |  | [`snapshot`] with every tracked change settled by `settle`, and `track_changes` saying how. |
 | `view_tables` | function | src/inspect.rs:465 | 0 / 1 / 0 |  | [`tables`], with every change rejected when `settle` says so, each beside the number of its table in `read`'s  |
 | `LegacyDocument` | struct | src/legacy_doc.rs:158 | 18 / 7 / 0 | in the signature of `read`, `to_markdown` | The main story of a `.doc`, the only place this module reads from. |
-| `is_compound_file` | function | src/legacy_doc.rs:166 | 2 / 1 / 0 |  | Whether `bytes` start with the OLE compound-file magic (`.doc`, or an encrypted document of any Word version). |
+| `is_compound_file` | function | src/legacy_doc.rs:166 | 5 / 1 / 0 |  | Whether `bytes` start with the OLE compound-file magic (`.doc`, or an encrypted document of any Word version). |
 | `ImageLoader` | type alias | src/markdown/mod.rs:167 | 1 / 2 / 0 |  | Callback that, given the path an image in a Markdown document names, returns the image bytes. |
 | `docx_stamp` | function | src/markdown/mod.rs:580 | 3 / 1 / 0 |  | The author and timestamp a `.docx` gives the changes and comments that name none, when no parameter does: its  |
 | `ReadView` | struct | src/markdown/mod.rs:728 | 5 / 1 / 0 | in the signature of `read`, `read_tables` | A document's agent view and what [`read`] could not show (always populated, even empty). |
@@ -289,17 +289,17 @@ Candidates for `pub(crate)`: callers exist, but nothing outside the library can 
 | `Source::from_digest` | method | src/result.rs:472 | 0 / 7 / 0 |  | Build a `Source` from a precomputed digest. |
 | `exit_status_for_envelope` | function | src/result.rs:1234 | 0 / 2 / 0 |  | Map an [`Envelope`] to the proposal §12 exit code. |
 | `tracked_revisions_elements` | function | src/revision_processor.rs:79 | 0 / 3 / 0 |  | The element names whose presence indicates the document carries tracked revisions (one per local name in the ` |
-| `reject_revisions_package` | function | src/revision_processor.rs:3761 | 1 / 1 / 0 |  | A.11 : `RejectRevisions` (:31) at package scope: per content part, the revert → reverse → rsid-strip → full-ac |
+| `reject_revisions_package` | function | src/revision_processor.rs:3790 | 1 / 1 / 0 |  | A.11 : `RejectRevisions` (:31) at package scope: per content part, the revert → reverse → rsid-strip → full-ac |
 | `Protection` | struct | src/settings.rs:185 | 3 / 1 / 0 |  | An editing restriction. |
 | `SettingsRequest` | struct | src/settings.rs:202 | 7 / 5 / 0 | in the signature of `apply_settings`, `apply_settings_to_docx` | The settings one plan operation writes. |
 | `apply_settings` | function | src/settings.rs:347 | 4 / 1 / 0 |  | Apply `request` into the package's settings part, creating it with its relationship and content type when the  |
 | `apply_settings_to_docx` | function | src/settings.rs:424 | 1 / 2 / 0 |  | [`apply_settings`] on a whole package. |
 | `shell_word` | function | src/util/mod.rs:35 | 0 / 5 / 0 |  | `arg` as a POSIX shell reads it back: bare when it holds only safe characters, else single-quoted. |
-| `sha1_digest` | function | src/util/sha1.rs:43 | 1 / 2 / 0 |  | Raw 20-byte SHA-1 digest of `bytes`. |
-| `hex_encode_20` | function | src/util/sha1.rs:53 | 2 / 2 / 0 |  | Lowercase-hex-encode 20 digest bytes into a fixed 40-byte ASCII buffer (no heap allocation). |
-| `hex_decode_20` | function | src/util/sha1.rs:77 | 2 / 2 / 0 |  | Decode exactly 40 hex characters into the 20-byte digest they encode; `None` for any other length or any non-h |
-| `sha1_hex_of_digest_hexes` | function | src/util/sha1.rs:97 | 1 / 2 / 0 |  | SHA-1 of the concatenation of the 40-char lowercase hex encodings of each digest. |
-| `sha1_hex_bytes` | function | src/util/sha1.rs:110 | 2 / 1 / 0 |  | Lowercase-hex SHA-1 of `bytes`. |
+| `sha1_digest` | function | src/util/sha1.rs:43 | 9 / 2 / 0 |  | Raw 20-byte SHA-1 digest of `bytes`. |
+| `hex_encode_20` | function | src/util/sha1.rs:53 | 8 / 2 / 0 |  | Lowercase-hex-encode 20 digest bytes into a fixed 40-byte ASCII buffer (no heap allocation). |
+| `hex_decode_20` | function | src/util/sha1.rs:77 | 8 / 2 / 0 |  | Decode exactly 40 hex characters into the 20-byte digest they encode; `None` for any other length or any non-h |
+| `sha1_hex_of_digest_hexes` | function | src/util/sha1.rs:97 | 3 / 2 / 0 |  | SHA-1 of the concatenation of the 40-char lowercase hex encodings of each digest. |
+| `sha1_hex_bytes` | function | src/util/sha1.rs:110 | 4 / 1 / 0 |  | Lowercase-hex SHA-1 of `bytes`. |
 | `input_notice_of` | function | src/validate.rs:1038 | 1 / 2 / 0 |  | [`input_notice`] from counts already taken, for a read that also reports them in its JSON (`read -o FILE.json` |
 | `InputValidity` | struct | src/validate.rs:1062 | 7 / 5 / 0 | in the signature of `input_notice_of`, `input_validity` | The input's own validity findings as the JSON reads report them (#1309): `read --json` in its snapshot's `summ |
 | `XDeclaration` | struct | src/xmllinq/mod.rs:297 | 5 / 5 / 0 | in the signature of `Dom::declaration`, `Dom::set_declaration` | An XML declaration (`<?xml version encoding standalone?>`). |
@@ -317,7 +317,7 @@ Candidates for `pub(crate)`: callers exist, but nothing outside the library can 
 | `Dom::attributes_iter` | method | src/xmllinq/mod.rs:886 | 6 / 56 / 0 |  | All attributes on `id`, in declaration order, as borrowed `(name, value)` pairs. |
 | `Dom::add_first` | method | src/xmllinq/mod.rs:1101 | 0 / 91 / 0 |  | Prepend `node` as the first child of `parent`. |
 | `Dom::remove_nodes` | method | src/xmllinq/mod.rs:1110 | 1 / 7 / 0 |  | Detach every child of `id` (front matching LINQ-to-XML `RemoveNodes()`); their parent links are cleared. |
-| `unescape_xml_text` | function | src/xmllinq/parse.rs:897 | 6 / 1 / 0 |  | Decode XML entity and character references in attribute and text payloads (`&amp;`, `&lt;`, `&gt;`, `&quot;`,  |
+| `unescape_xml_text` | function | src/xmllinq/parse.rs:899 | 32 / 1 / 0 |  | Decode XML entity and character references in attribute and text payloads (`&amp;`, `&lt;`, `&gt;`, `&quot;`,  |
 
 ## D. Never mentioned, but the name is ambiguous
 

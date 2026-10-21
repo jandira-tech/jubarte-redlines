@@ -1,6 +1,6 @@
 # Enums
 
-236 items (non-test). Part of the [symbol manifest](README.md).
+238 items (non-test). Part of the [symbol manifest](README.md).
 
 | Name | Defined at | Vis | Does | Detail |
 |---|---|---|---|---|
@@ -162,11 +162,12 @@
 | `InspectError` | src/inspect.rs:272 | pub | An invalid package or XML part. | variants: Package,MissingDocument,Invalid,Admission |
 | `Piece` | src/inspect.rs:1226 | pub(crate) | What one visible piece of paragraph text maps back to. | variants: Text,Glyph |
 | `Block` | src/legacy_doc.rs:95 | pub | One block of the main story, in document order. | variants: Paragraph,Table |
-| `Fkp` | src/legacy_doc.rs:1284 | private | _no doc comment_ | variants: Paragraph,Character |
+| `Fkp` | src/legacy_doc.rs:1322 | private | _no doc comment_ | variants: Paragraph,Character |
 | `Keep` | src/markdown/anchor.rs:73 | private | _no doc comment_ | variants: Inner,Nothing,NewSide,BothSides |
-| `Token` | src/markdown/critic.rs:23 | pub(crate) | A CriticMarkup delimiter. | variants: InsertStart,InsertEnd,DeleteStart,DeleteEnd,SubstituteStart,SubstituteSeparator,SubstituteEnd,HighlightStart,HighlightEnd,CommentStart,CommentEnd,AttributionStart,ParagraphInsertion,AttributionEnd,CommentBreak,MarkStart,MarkEnd,FieldStart,FieldSeparator,FieldEnd |
-| `Piece` | src/markdown/critic.rs:1893 | pub(crate) | Text or a delimiter, in source order. | variants: Text,Token |
-| `In` | src/markdown/critic.rs:1981 | private | _no doc comment_ | variants: Text,Inserted,Deleted,Old,New,Comment |
+| `Token` | src/markdown/critic.rs:28 | pub(crate) | A CriticMarkup delimiter. | variants: InsertStart,InsertEnd,DeleteStart,DeleteEnd,SubstituteStart,SubstituteSeparator,SubstituteEnd,HighlightStart,HighlightEnd,CommentStart,CommentEnd,AttributionStart,ParagraphInsertion,AttributionEnd,CommentBreak,MarkStart,MarkEnd,FieldStart,FieldSeparator,FieldEnd |
+| `Piece` | src/markdown/critic.rs:1898 | pub(crate) | Text or a delimiter, in source order. | variants: Text,Token |
+| `InlineKind` | src/markdown/critic.rs:1997 | private | The kinds of inline spans [`merge_across_marks`] can join. | variants: Code,Emphasis,Strong,Strike |
+| `In` | src/markdown/critic.rs:2491 | private | _no doc comment_ | variants: Text,Inserted,Deleted,Old,New,Comment |
 | `Placed` | src/markdown/data_stores.rs:355 | private | Where [`insert`] put a value. | variants: Yes,Conflict,Elsewhere |
 | `Side` | src/markdown/diff.rs:457 | private | _no doc comment_ | variants: Delete,Insert |
 | `Entry` | src/markdown/diff.rs:472 | private | One line of a changed hunk: paired, or only in one version. | variants: Pair,Only |
@@ -226,9 +227,9 @@
 | `MediaRole` | src/result.rs:146 | pub | The role of an artifact: which contract slot it fills. | variants: Document,Plan,Patch,Report,Render,Other |
 | `ResultDataError` | src/result.rs:644 | pub | Invalid combinations of (phase, effect, predicted_effect). | variants: MissingPhase,FailureRequired,NotAppliedRequired,EffectRequired,PredictedWithoutValidation |
 | `StreamError` | src/result.rs:1045 | pub | Why a JSONL stream is malformed. | variants: MissingHeader,HeaderParse,InvalidLine,MissingTerminal,MultipleTerminals,TerminalParse |
-| `TagType` | src/revision_processor.rs:754 | pub | `TagTypeEnum` (RevisionProcessor.cs :2389): how an element appears in the doc-order tag stream. | variants: Element,EmptyElement,EndElement |
-| `OrphanMovePass` | src/revision_processor.rs:1141 | private | Which orphan-move cleanup a resolution path runs (#1243). | variants: AcceptElements,RejectMoveToMarkers |
-| `TableMerge` | src/revision_processor.rs:3065 | private | Which runs of adjacent tables A.8 merges. | variants: Revised,WordSave |
+| `TagType` | src/revision_processor.rs:783 | pub | `TagTypeEnum` (RevisionProcessor.cs :2389): how an element appears in the doc-order tag stream. | variants: Element,EmptyElement,EndElement |
+| `OrphanMovePass` | src/revision_processor.rs:1170 | private | Which orphan-move cleanup a resolution path runs (#1243). | variants: AcceptElements,RejectMoveToMarkers |
+| `TableMerge` | src/revision_processor.rs:3094 | private | Which runs of adjacent tables A.8 merges. | variants: Revised,WordSave |
 | `Resolution` | src/revision_processor/sections.rs:23 | pub(crate) | Accept All or Reject All. | variants: Accept,Reject |
 | `ScrubError` | src/scrub.rs:81 | pub | Why [`scrub`] refused its input. | variants: Package,Invalid |
 | `ProtectionEdit` | src/settings.rs:147 | pub | What `w:documentProtection` allows (`ST_DocProtect`). | variants: None,ReadOnly,Comments,TrackedChanges,Forms |
@@ -237,6 +238,7 @@
 | `Row` | src/text_diff.rs:235 | private | _no doc comment_ | variants: Pair,Delete,Insert |
 | `Piece` | src/text_diff.rs:464 | private | One stretch of a word-level change line. | variants: Same,Delete,Insert,Replace |
 | `Plan` | src/update.rs:67 | pub | The decision [`plan`] returns, once the target release is known. | variants: UpToDate,Install |
+| `Step` | src/update.rs:168 | pub | What `run` does once the release is resolved: report and stop, or ask (unless `--yes`) and install. | variants: Report,Install |
 | `Kind` | src/util/words.rs:38 | private | What the token being built is made of. | variants: Word,Space,Orphan,Other |
 | `ValidateError` | src/validate.rs:236 | pub | Why a package could not be validated at all (a finding is never an error). | variants: Refused,Package,Changes,Inspect,Usage,Layout |
 | `NodeKind` | src/xmllinq/mod.rs:328 | private | Node kind discriminant + kind-specific data. | variants: Element,Text,Comment,Pi,Document |

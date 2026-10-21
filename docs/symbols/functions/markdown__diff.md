@@ -79,7 +79,7 @@
 `fn text_has_delimiter(text: &str) -> bool`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1330) L334
+- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1335) L334
 - **Calls (std/external/unresolved):** `.any`, `.contains`, `.is_some`, `.iter`, `.match_indices`
 - **Called by:** `escape` (markdown/diff.rs:294)
 
@@ -87,7 +87,7 @@
 `fn escape_points(text: &str) -> Vec<usize>`
 
 - **Does:** Byte positions where a backslash must be inserted.
-- **Calls (crate):** `verbatim_ranges` (markdown/critic.rs:1815) L339; `escaped_at` (markdown/diff.rs:372) L354,360; `attribution_tag` (markdown/critic.rs:1330) L355
+- **Calls (crate):** `verbatim_ranges` (markdown/critic.rs:1820) L339; `escaped_at` (markdown/diff.rs:372) L354,360; `attribution_tag` (markdown/critic.rs:1335) L355
 - **Calls (std/external/unresolved):** `.as_bytes`, `.dedup`, `.get`, `.is_some_and`, `.is_some`, `.len`, `.push`, `.sort_unstable`, `.starts_with`, `Vec::new`
 - **Called by:** `escape` (markdown/diff.rs:294)
 

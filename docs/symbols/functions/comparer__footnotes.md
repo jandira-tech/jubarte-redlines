@@ -17,7 +17,7 @@
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L48; `Dom::name` (xmllinq/mod.rs:526) L51,59; `Dom::attribute` (xmllinq/mod.rs:874) L57,68; `Dom::elements` (xmllinq/mod.rs:640) L66; `set_id` (comparer/footnotes.rs:28) L72,73; `XName::local_name` (xmllinq/mod.rs:208) (by name) L79,85; `Dom::remove` (xmllinq/mod.rs:1118) L92
 - **Calls (std/external/unresolved):** `.and_then`, `.as_str`, `.collect`, `.filter`, `.find`, `.into_iter`, `.is_some_and`, `.push`, `.to_string`, `.unwrap_or`, `.unwrap`, `.zip`, `Err`, `Ok`, `Some`, `Vec::new`, `W::endnote`, `W::footnote`, `W::id`, `W::name`
 - **Macros:** `format!`
-- **Called by:** `pre_process_markup` (document_comparer.rs:4713)
+- **Called by:** `pre_process_markup` (document_comparer.rs:4714)
 
 #### `mandatory_separator_notes`  (L99-129, pub)
 `pub fn mandatory_separator_notes(dom: &mut Dom, is_footnote: bool) -> Vec<NodeId>`
@@ -34,7 +34,7 @@
 - **Does:** M4.H.4 — `FillInEmptyFootnotesEndnotes` (:1053): give every element-less `w:footnote`/`w:endnote` a stock reference paragraph.
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L149; `Dom::has_elements` (xmllinq/mod.rs:862) L151; `Dom::new_element` (xmllinq/mod.rs:478) L154,155,156,160,161,162...; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L157,163; `Dom::add` (xmllinq/mod.rs:1074) L158,159,164,165,167,168...
 - **Calls (std/external/unresolved):** `Some`, `W::endnote`, `W::footnote`, `W::name`, `W::p_pr`, `W::p`, `W::r_pr`, `W::r`, `W::val`
-- **Called by:** `pre_process_markup` (document_comparer.rs:4713)
+- **Called by:** `pre_process_markup` (document_comparer.rs:4714)
 
 #### `content_contains_footnote_endnote_references_that_have_revisions`  (L176-212, pub)
 `pub fn content_contains_footnote_endnote_references_that_have_revisions( dom: &Dom, element: NodeId, fn_root: Option<NodeId>, en_root: Option<NodeId>, ) -> bool`
@@ -50,7 +50,7 @@
 - **Does:** Collect every non-empty `w:styleId` defined under a `w:styles` root.
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L220; `Dom::attribute` (xmllinq/mod.rs:874) L222
 - **Calls (std/external/unresolved):** `.collect`, `.filter_map`, `.filter`, `.into_iter`, `.is_empty`, `.map`, `.to_string`, `Some`, `W::name`
-- **Called by:** `defined_style_ids` (document_comparer.rs:4685); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `defined_style_ids` (document_comparer.rs:4686); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `strip_unresolved_style_refs`  (L233-255, pub)
 `pub fn strip_unresolved_style_refs( dom: &mut Dom, root: NodeId, defined: &std::collections::HashSet<String>, ) -> usize`
@@ -59,7 +59,7 @@
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L241; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L245; `Dom::remove` (xmllinq/mod.rs:1118) L250
 - **Calls (std/external/unresolved):** `.collect`, `.contains`, `.filter`, `.into_iter`, `.is_empty`, `Some`, `W::name`, `W::val`
 - **Macros:** `matches!`
-- **Called by:** `pre_process_markup` (document_comparer.rs:4713); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `pre_process_markup` (document_comparer.rs:4714); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `copy_missing_styles`  (L267-287, pub)
 `pub fn copy_missing_styles(dom: &mut Dom, to_root: NodeId, from_root: NodeId)`
@@ -67,7 +67,7 @@
 - **Does:** M4.H.8 — `CopyMissingStylesFromOneDocToAnother` (WmlComparer.ts :2547): copy each `w:style` from `from_root` whose `styleId` `to_root` lacks, dropping its `w:default` attribute (so a copy doesn't add a second default style of the same kind).
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L270,275; `Dom::attribute` (xmllinq/mod.rs:874) L273,277; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L283; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L284; `Dom::add` (xmllinq/mod.rs:1074) L285
 - **Calls (std/external/unresolved):** `.collect`, `.insert`, `.into_iter`, `.map`, `.to_string`, `.unwrap_or`, `Some`, `W::name`
-- **Called by:** `copy_missing_styles_by_name` (document_comparer.rs:3623); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `copy_missing_styles_by_name` (document_comparer.rs:3623); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `add_numbering_child_in_schema_order`  (L292-315)
 `fn add_numbering_child_in_schema_order(dom: &mut Dom, numbering: NodeId, child: NodeId)`
@@ -107,7 +107,7 @@
 - **Does:** E.1 — `CopyMissingNumberingFromOneDocToAnother` (WmlComparer.ts :2143): content-dedup (an `abstractNum` whose normalized content already exists is REUSED), id-remapped (colliding `abstractNumId` / `numId` get fresh ids past the destination maximum, with `num` references rewired), and inserted in schema order.
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L375,381,391,404,410,424...; `get_int_attribute` (comparer/footnotes.rs:319) L378,384,394,405,419,427...; `normalized_abstract_num_signature` (comparer/footnotes.rs:326) L408,413; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L437,466,501,512; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L438,467,474,502,504,516; `add_numbering_child_in_schema_order` (comparer/footnotes.rs:292) L440,468,507,518; `Dom::descendants` (xmllinq/mod.rs:668) L441; `Dom::element` (xmllinq/mod.rs:655) L482,494,503,514
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.find`, `.get`, `.insert`, `.into_iter`, `.map`, `.max`, `.push`, `.saturating_add`, `.to_string`, `.unwrap_or`, `Some`, `Vec::new`, `W::name`, `W::val`, `std::collections::HashMap::new`
-- **Called by:** `deterministic_note_boundary_tests::picture_bullet_copies_reuse_source_identity_and_advance_collision_watermark` (comparer/footnotes.rs:1609); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `deterministic_note_boundary_tests::picture_bullet_copies_reuse_source_identity_and_advance_collision_watermark` (comparer/footnotes.rs:1609); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `synthesize_dangling_numbering`  (L533-574, pub)
 `pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dangling: &[String])`
@@ -116,7 +116,7 @@
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L537; `get_int_attribute` (comparer/footnotes.rs:319) L540; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L559,569; `Dom::root` (xmllinq/mod.rs:822) L560,570; `add_numbering_child_in_schema_order` (comparer/footnotes.rs:292) L561,571
 - **Calls (std/external/unresolved):** `.filter_map`, `.into_iter`, `.is_empty`, `.map_or`, `.max`, `.push_str`, `.saturating_add`, `Some`, `String::new`, `W::name`
 - **Macros:** `format!`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `<RectifyError as std::fmt::Display>::fmt`  (L611-638, impl std::fmt::Display)
 `fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result`
@@ -163,7 +163,7 @@
 - **Calls (crate):** `Dom::attribute` (xmllinq/mod.rs:874) L788; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L793
 - **Calls (std/external/unresolved):** `Some`, `W::id`, `W::name`
 - **Macros:** `matches!`
-- **Called by:** `public_option_source_ownership_tests::public_comparison_options_preserve_reordered_paragraphs_formats_and_note_owners` (comparer/cross_para.rs:2772); `apply_rectify` (comparer/footnotes.rs:798); `deterministic_note_boundary_tests::both_separator_kinds_keep_exact_ids_spacing_and_marker_payload` (comparer/footnotes.rs:1322); `adopt_b_notes_when_a_lacks_separators` (document_comparer.rs:5871)
+- **Called by:** `public_option_source_ownership_tests::public_comparison_options_preserve_reordered_paragraphs_formats_and_note_owners` (comparer/cross_para.rs:2772); `apply_rectify` (comparer/footnotes.rs:798); `deterministic_note_boundary_tests::both_separator_kinds_keep_exact_ids_spacing_and_marker_payload` (comparer/footnotes.rs:1322); `adopt_b_notes_when_a_lacks_separators` (document_comparer.rs:5872)
 
 #### `apply_rectify`  (L798-846)
 `fn apply_rectify(dom: &mut Dom, def_name: &XName, notes: &NotesSet, plan: &RectifyPlan)`
@@ -179,7 +179,7 @@
 - **Does:** Drop `w:footnote`/`w:endnote` children of `w:footnotePr`/`w:endnotePr` whose `@w:id` is not present in the corresponding notes part.
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L864; `Dom::elements` (xmllinq/mod.rs:640) L865; `Dom::attribute` (xmllinq/mod.rs:874) L869; `Dom::remove` (xmllinq/mod.rs:1118) L874
 - **Calls (std/external/unresolved):** `.collect`, `.contains`, `.filter`, `.into_iter`, `.is_empty`, `.unwrap_or`, `Some`, `W::id`, `W::name`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `fix_up_footnotes_endnotes_with_custom_markers`  (L887-937, pub)
 `pub fn fix_up_footnotes_endnotes_with_custom_markers(dom: &mut Dom, root: NodeId)`

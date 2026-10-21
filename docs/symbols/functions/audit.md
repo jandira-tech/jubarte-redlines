@@ -61,7 +61,7 @@
 `fn select( requested: &[&str], can_lay_out: bool, ) -> Result<Vec<(&'static str, &'static str, &'static str)>, AuditError>`
 
 - **Does:** The rules `requested` names, in [`RULES`] order.
-- **Calls (crate):** `names` (ambiguous: `deeper_boundary_tests::names` (edit.rs:8709); `canonical::{fn names}` (markdown/from_docx/drawing.rs:1098); `move_range_bookmark_regressions::names` (revision_processor/bookmarks.rs:192)) L246,252
+- **Calls (crate):** `names` (ambiguous: `deeper_boundary_tests::names` (edit.rs:8789); `canonical::{fn names}` (markdown/from_docx/drawing.rs:1098); `move_range_bookmark_regressions::names` (revision_processor/bookmarks.rs:192)) L246,252
 - **Calls (std/external/unresolved):** `.any`, `.collect`, `.contains`, `.copied`, `.extend`, `.filter`, `.is_empty`, `.iter`, `.map`, `.remove`, `.to_string`, `.trim`, `AuditError::Layout`, `AuditError::UnknownRule`, `BTreeSet::new`, `Err`, `Ok`
 - **Called by:** `audit_report_with` (audit.rs:177); `SourceModel::decisions` (edit/v2_apply.rs:1235) (?); `resolve_operation` (edit/v2_apply.rs:2084) (?)
 
@@ -85,7 +85,7 @@
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `Some`
 - **Macros:** `matches!`
-- **Called by:** `Package::table_no_header_row` (audit.rs:586); `parse_tbl_style` (convert/mod.rs:3854) (?); `table_block` (convert/mod.rs:13095) (?); `form_checkbox` (convert/mod.rs:16168) (?); `analyze` (debug.rs:1220) (?); `run_format` (inspect.rs:1486) (?); `chpx_props` (legacy_doc.rs:1450) (?)
+- **Called by:** `Package::table_no_header_row` (audit.rs:586); `parse_tbl_style` (convert/mod.rs:3854) (?); `table_block` (convert/mod.rs:13095) (?); `form_checkbox` (convert/mod.rs:16168) (?); `analyze` (debug.rs:1220) (?); `run_format` (inspect.rs:1486) (?); `chpx_props` (legacy_doc.rs:1488) (?)
 
 #### `Story::location`  (L317-322)
 `fn location(&self, node: NodeId) -> String`

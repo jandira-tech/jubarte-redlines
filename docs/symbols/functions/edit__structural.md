@@ -6,7 +6,7 @@
 `pub(super) fn check_rows(rows: &[Vec<String>], widths: Option<&[u32]>) -> Result<usize, String>`
 
 - **Does:** The column count of `rows`, checked: at least one row, every row the same nonzero length, plain cell text, and `widths` (when given) one positive width per column.
-- **Calls (crate):** `check_text` (edit.rs:7047) L49
+- **Calls (crate):** `check_text` (edit.rs:7094) L49
 - **Calls (std/external/unresolved):** `.any`, `.enumerate`, `.first`, `.into`, `.iter`, `.len`, `.map_err`, `Err`, `Ok`
 - **Macros:** `format!`
 - **Called by:** `tests::rows_are_checked_for_shape_and_widths` (edit/structural.rs:495); `Transaction::resolve_one_unreported` (edit.rs:3545)
@@ -41,13 +41,13 @@
 - **Does:** A `w:tbl` of `rows`: `style`, a DXA width that is the sum of `widths`, a grid column and a DXA `w:tcW` per column, `w:tblHeader` on the first row when `header_row`, and one paragraph per cell that takes the anchor's paragraph style and run formatting.
 - **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L162,169; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L164; `Dom::add` (xmllinq/mod.rs:1074) L166,213; `edit_core::{fn element}` (markdown/package.rs:1553) L170,171,173,179,193,195...; `cell_paragraph` (edit/structural.rs:220) L212
 - **Calls (std/external/unresolved):** `.enumerate`, `.iter`, `.sum`, `.to_string`, `.zip`, `Some`, `W::name`, `W::tbl`
-- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply` (edit.rs:5882)
+- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply_insertions` (edit.rs:6186)
 
 #### `cell_paragraph`  (L220-237)
 `fn cell_paragraph(dom: &mut Dom, anchor: NodeId, text: &str) -> NodeId`
 
 - **Does:** A cell paragraph modeled on `anchor`, keeping only its paragraph style.
-- **Calls (crate):** `build_paragraph` (edit.rs:8252) L225; `Dom::element` (xmllinq/mod.rs:655) L226; `Dom::elements` (xmllinq/mod.rs:640) L227,232; `Dom::name_is` (xmllinq/mod.rs:535) L228; `Dom::remove` (xmllinq/mod.rs:1118) L229,233
+- **Calls (crate):** `build_paragraph` (edit.rs:8299) L225; `Dom::element` (xmllinq/mod.rs:655) L226; `Dom::elements` (xmllinq/mod.rs:640) L227,232; `Dom::name_is` (xmllinq/mod.rs:535) L228; `Dom::remove` (xmllinq/mod.rs:1118) L229,233
 - **Calls (std/external/unresolved):** `.is_empty`, `.to_string`, `RunSpec::default`, `W::p_pr`, `W::p_style`
 - **Called by:** `build_table` (edit/structural.rs:153)
 
@@ -55,9 +55,9 @@
 `pub(super) fn separate(dom: &mut Dom, table: NodeId)`
 
 - **Does:** Give `table` a paragraph after it unless one follows, and one before it when a table precedes it: a story must not end in a table, and Word joins two tables that touch.
-- **Calls (crate):** `Dom::next_element` (xmllinq/mod.rs:855) L243,245; `is_range_markup` (edit.rs:6929) L244,256; `Dom::name_is` (xmllinq/mod.rs:535) L247,257; `Dom::new_element` (xmllinq/mod.rs:478) L248,258; `Dom::add_after_self` (xmllinq/mod.rs:1147) L249; `Dom::nodes_before_self` (xmllinq/mod.rs:846) L251; `Dom::is_element` (xmllinq/mod.rs:502) L255; `Dom::add_before_self` (xmllinq/mod.rs:1130) L259
+- **Calls (crate):** `Dom::next_element` (xmllinq/mod.rs:855) L243,245; `is_range_markup` (edit.rs:6976) L244,256; `Dom::name_is` (xmllinq/mod.rs:535) L247,257; `Dom::new_element` (xmllinq/mod.rs:478) L248,258; `Dom::add_after_self` (xmllinq/mod.rs:1147) L249; `Dom::nodes_before_self` (xmllinq/mod.rs:846) L251; `Dom::is_element` (xmllinq/mod.rs:502) L255; `Dom::add_before_self` (xmllinq/mod.rs:1130) L259
 - **Calls (std/external/unresolved):** `.filter`, `.find`, `.into_iter`, `.is_some_and`, `.rev`, `W::p`, `W::tbl`
-- **Called by:** `separate_tracked` (edit/tracked.rs:870); `Transaction::apply` (edit.rs:5882)
+- **Called by:** `separate_tracked` (edit/tracked.rs:870); `Transaction::apply_table_separations` (edit.rs:6406)
 
 #### `add_styles`  (L267-275, pub(super))
 `pub(super) fn add_styles(pkg: &mut PartFs, main: &str, wanted: &BTreeSet<String>)`
@@ -65,7 +65,7 @@
 - **Does:** Add the definitions of `wanted` styles the styles part lacks (making the part when there is none).
 - **Calls (crate):** `styles_part` (markdown/package.rs:467) L268; `PartFs::part_string` (opc/mod.rs:636) L269; `with_definitions` (edit/structural.rs:279) L271; `PartFs::set_part` (opc/mod.rs:661) L273
 - **Calls (std/external/unresolved):** `.and_then`, `.into_bytes`
-- **Called by:** `Transaction::finish` (edit.rs:6598)
+- **Called by:** `Transaction::finish` (edit.rs:6645)
 
 #### `with_definitions`  (L279-340)
 `fn with_definitions(source: &str, wanted: &BTreeSet<String>) -> Option<String>`
@@ -90,7 +90,7 @@
 - **Does:** One past the largest `w:abstractNumId` and `w:numId` in the document's numbering part (`(0, 1)` without one: `numId` 0 means "no list").
 - **Calls (crate):** `Opened::related` (inspect.rs:902) L351; `PartFs::part_string` (opc/mod.rs:636) L355; `Dom::new` (xmllinq/mod.rs:387) L356; `numbering_tree` (edit/structural.rs:343) L357; `Dom::elements` (xmllinq/mod.rs:640) L361; `Dom::attribute` (xmllinq/mod.rs:874) L363
 - **Calls (std/external/unresolved):** `.and_then`, `.filter_map`, `.into_iter`, `.map_or`, `.max`, `.next`, `.ok`, `.parse`, `.saturating_add`, `Some`, `W::name`, `next`
-- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply` (edit.rs:5882)
+- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply_lists` (edit.rs:6303)
 
 #### `splice_numbering`  (L377-419, pub(super))
 `pub(super) fn splice_numbering( pkg: &mut PartFs, main: &str, abstracts: &[String], nums: &[String], )`
@@ -99,7 +99,7 @@
 - **Calls (crate):** `numbering_part` (markdown/package.rs:1123) L383; `PartFs::part_string` (opc/mod.rs:636) L384; `Dom::new` (xmllinq/mod.rs:387) L387; `numbering_tree` (edit/structural.rs:343) L388,397; `Dom::elements` (xmllinq/mod.rs:640) L401,406; `Dom::name` (xmllinq/mod.rs:526) L402; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L403; `XName::local_name` (xmllinq/mod.rs:208) (by name) L403; `Dom::remove` (xmllinq/mod.rs:1118) L407; `Dom::name_is` (xmllinq/mod.rs:535) L408; `holds::{fn first}` (markdown/from_docx/critic.rs:99) (by name) L413; `Dom::add_before_self` (xmllinq/mod.rs:1130) L414; `Dom::add` (xmllinq/mod.rs:1074) L415; `PartFs::set_part` (opc/mod.rs:661) L418; `Dom::serialize_document` (xmllinq/mod.rs:1338) L418
 - **Calls (std/external/unresolved):** `.concat`, `.contains`, `.find`, `.into_bytes`, `.into_iter`, `.is_some_and`, `W::name`
 - **Macros:** `format!`
-- **Called by:** `Transaction::finish` (edit.rs:6598)
+- **Called by:** `Transaction::finish` (edit.rs:6645)
 
 #### `direct_num_id`  (L422-430, pub(super))
 `pub(super) fn direct_num_id(dom: &Dom, paragraph: NodeId) -> Option<String>`
@@ -113,9 +113,9 @@
 `pub(super) fn number_paragraph( dom: &mut Dom, paragraph: NodeId, level: u32, num_id: &str, list_style: &str, ) -> bool`
 
 - **Does:** Number `paragraph` at `level` of list `num_id`, replacing any direct numbering; a paragraph without a style takes `list_style`.
-- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L442,450,460; `Dom::new_element` (xmllinq/mod.rs:478) L445,453,455,463; `Dom::add_first` (xmllinq/mod.rs:1101) L446; `Dom::remove` (xmllinq/mod.rs:1118) L451; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L456,464; `Dom::add` (xmllinq/mod.rs:1074) L457; `insert_ppr_child` (edit.rs:8135) L459,465
+- **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L442,450,460; `Dom::new_element` (xmllinq/mod.rs:478) L445,453,455,463; `Dom::add_first` (xmllinq/mod.rs:1101) L446; `Dom::remove` (xmllinq/mod.rs:1118) L451; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L456,464; `Dom::add` (xmllinq/mod.rs:1074) L457; `insert_ppr_child` (edit.rs:8182) L459,465
 - **Calls (std/external/unresolved):** `.is_some`, `.to_string`, `Some`, `W::name`, `W::num_pr`, `W::p_pr`, `W::p_style`, `W::val`
-- **Called by:** `numbering_source_property_boundary_tests::new_numbering_adds_a_style_only_when_the_authored_paragraph_has_none` (edit/structural.rs:608); `emit` (edit/tracked.rs:452); `Transaction::apply` (edit.rs:5882)
+- **Called by:** `numbering_source_property_boundary_tests::new_numbering_adds_a_style_only_when_the_authored_paragraph_has_none` (edit/structural.rs:608); `emit` (edit/tracked.rs:452); `Transaction::apply_lists` (edit.rs:6303)
 
 #### `definition`  (L470-480)
 `fn definition(dom: &mut Dom, id: &str) -> Option<NodeId>`

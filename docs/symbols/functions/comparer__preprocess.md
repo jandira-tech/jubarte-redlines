@@ -141,7 +141,7 @@
 - **Does:** M4.B.1 — `RemoveExistingPowerToolsMarkup` (WmlComparer.ts :5049): drop every `pt:*` attribute EXCEPT `pt:Unid`, across `root` and all descendants.
 - **Calls (crate):** `Dom::for_each_descendant_and_self` (xmllinq/mod.rs:753) L576; `Dom::attr_count` (xmllinq/mod.rs:909) L580; `Dom::attr_at` (xmllinq/mod.rs:920) L582; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L583; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L588
 - **Calls (std/external/unresolved):** `.clone`, `.push`, `PT::unid`, `Vec::new`
-- **Called by:** `get_revisions` (document_comparer.rs:6293)
+- **Called by:** `get_revisions` (document_comparer.rs:6294)
 
 #### `test_for_invalid_content`  (L602-624, pub)
 `pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String>`
@@ -150,7 +150,7 @@
 - **Calls (crate):** `Dom::for_each_descendant_element` (xmllinq/mod.rs:677) L610; `Dom::name` (xmllinq/mod.rs:526) L614; `XName::local_name` (xmllinq/mod.rs:208) (by name) L617
 - **Calls (std/external/unresolved):** `.contains`, `.is_some`, `Err`, `Ok`, `Some`, `W::name`
 - **Macros:** `format!`
-- **Called by:** `get_revisions` (document_comparer.rs:6293)
+- **Called by:** `get_revisions` (document_comparer.rs:6294)
 
 #### `block_hash_string`  (L630-637, pub)
 `pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String`

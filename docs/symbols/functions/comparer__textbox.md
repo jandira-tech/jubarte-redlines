@@ -55,7 +55,7 @@
 `fn story(dom: &mut Dom, text_box: NodeId, accept: bool) -> NodeId`
 
 - **Does:** One text box's paragraphs as a story of their own, with its revisions accepted (the new box) or rejected (the old box).
-- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L190; `Dom::elements` (xmllinq/mod.rs:640) L191; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L192; `Dom::add` (xmllinq/mod.rs:1074) L193; `accept_revisions_document` (revision_processor.rs:495) L196; `reject_revisions_document` (revision_processor.rs:722) L198
+- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L190; `Dom::elements` (xmllinq/mod.rs:640) L191; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L192; `Dom::add` (xmllinq/mod.rs:1074) L193; `accept_revisions_document` (revision_processor.rs:524) L196; `reject_revisions_document` (revision_processor.rs:751) L198
 - **Calls (std/external/unresolved):** `W::name`
 - **Called by:** `redline_boxes` (comparer/textbox.rs:204)
 

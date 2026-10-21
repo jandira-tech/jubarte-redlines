@@ -1,6 +1,6 @@
 # Functions and methods in `src/cli.rs`
 
-91 non-test, 10 test. Part of the [symbol manifest](../README.md).
+93 non-test, 10 test. Part of the [symbol manifest](../README.md).
 
 #### `EditOptions::target`  (L358-376, pub)
 `pub fn target(&self, file: &Path) -> EditTarget`
@@ -8,7 +8,7 @@
 - **Does:** Where `edit FILE` (or `add FILE`) writes: `--out-dir [DIR]`'s bundle, else `-o`, else `<FILE's dir>/<stem>_modified.docx`.
 - **Calls (std/external/unresolved):** `.as_os_str`, `.clone`, `.ends_with`, `.file_stem`, `.filter`, `.into_owned`, `.is_empty`, `.join`, `.map_or_else`, `.parent`, `.to_string_lossy`, `.to_string`, `EditTarget::Bundle`, `EditTarget::Single`, `PathBuf::from`, `beside`
 - **Macros:** `format!`
-- **Called by:** `run_flags` (bin/jubarte.rs:2511); `parse_json` (cli.rs:3791) (?); `with_operation_targets` (edit/v2_apply.rs:97) (?); `compose_threads` (edit/v2_apply.rs:1821) (?); `Transaction::resolve_thread` (edit.rs:4379) (?); `Transaction::check_thread_ops` (edit.rs:5715) (?); `run` (update.rs:186) (?)
+- **Called by:** `run_flags` (bin/jubarte.rs:2511); `parse_subcommand_json` (cli.rs:3779) (?); `with_operation_targets` (edit/v2_apply.rs:97) (?); `compose_threads` (edit/v2_apply.rs:1821) (?); `Transaction::resolve_thread` (edit.rs:4379) (?); `Transaction::check_thread_ops` (edit.rs:5715) (?); `run` (update.rs:225) (?)
 
 #### `ExistingArg::plan_value`  (L398-407, pub)
 `pub fn plan_value(self) -> Option<crate::edit::ExistingRevisions>`
@@ -39,7 +39,7 @@
 - **Does:** `-q`/`--quiet` before the task moves after it, so `jubarte -q validate F` reads as `jubarte validate -q F` (D6 follow-up).
 - **Calls (std/external/unresolved):** `.all`, `.and_then`, `.as_ref`, `.bytes`, `.clone`, `.count`, `.extend_from_slice`, `.find_subcommand`, `.get`, `.is_none_or`, `.is_none`, `.iter`, `.len`, `.push`, `.skip`, `.starts_with`, `.take_while`, `.to_str`, `.to_vec`, `Some`, `Vec::with_capacity`, `is_quiet`
 - **Macros:** `vec!`
-- **Called by:** `edit_arguments` (cli.rs:3359); `parse_json` (cli.rs:3791)
+- **Called by:** `edit_arguments` (cli.rs:3359); `parse_json` (cli.rs:3954)
 
 #### `fill_date`  (L526-530)
 `fn fill_date(date: &mut Option<String>)`
@@ -47,14 +47,14 @@
 - **Does:** `compare`'s and `diff`'s missing `-d` is now, in UTC, to the second (D17): filled once here, so the binary and every host share it.
 - **Calls (crate):** `utc_now_iso8601` (convert/mod.rs:12307) L528
 - **Calls (std/external/unresolved):** `.is_none`, `Some`
-- **Called by:** `fill_task_date` (cli.rs:533); `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `fill_task_date` (cli.rs:533); `Cli::try_parse_from` (cli.rs:3491); `parse_implicit_compare_json` (cli.rs:3890)
 
 #### `fill_task_date`  (L533-539)
 `fn fill_task_date(task: &mut Command)`
 
 - **Does:** [`fill_date`] for the task that dates its revisions.
 - **Calls (crate):** `fill_date` (cli.rs:526) L535,536
-- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_subcommand_json` (cli.rs:3779)
 
 #### `slash_path`  (L553-556, pub)
 `pub fn slash_path(path: &Path) -> String`
@@ -71,7 +71,7 @@
 - **Calls (crate):** `verbatim_head` (cli.rs:585) L567
 - **Calls (std/external/unresolved):** `.as_os_str`, `.components`, `.next`, `.push`, `Some`
 - **Macros:** `matches!`
-- **Called by:** `slash_path` (cli.rs:553); `slash_path_tests::unverbatimed_keeps_every_nonverbatim_path` (cli.rs:4084); `slash_path_tests::a_verbatim_literal_is_an_ordinary_name_off_windows` (cli.rs:4094); `slash_path_tests::unverbatimed_returns_the_stripped_components` (cli.rs:4117)
+- **Called by:** `slash_path` (cli.rs:553); `slash_path_tests::unverbatimed_keeps_every_nonverbatim_path` (cli.rs:4097); `slash_path_tests::a_verbatim_literal_is_an_ordinary_name_off_windows` (cli.rs:4107); `slash_path_tests::unverbatimed_returns_the_stripped_components` (cli.rs:4130)
 
 #### `verbatim_head`  (L585-604)
 `fn verbatim_head(component: Option<std::path::Component>) -> Option<(PathBuf, bool)>`
@@ -95,7 +95,7 @@
 - **Calls (crate):** `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L637
 - **Calls (std/external/unresolved):** `.as_os_str`, `.file_stem`, `.filter`, `.into_owned`, `.is_empty`, `.join`, `.map_or_else`, `.to_string_lossy`, `.to_string`, `PathBuf::from`
 - **Macros:** `format!`
-- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_subcommand_json` (cli.rs:3779)
 
 #### `names_word_document`  (L646-654)
 `fn names_word_document(path: &Path) -> bool`
@@ -116,10 +116,10 @@
 `fn usage_error(command: &clap::Command, tokens: &[String], mut error: clap::Error) -> clap::Error`
 
 - **Does:** Rewrite known usage traps through clap's own error formatter.
-- **Calls (crate):** `deeper_boundary_tests::names` (edit.rs:8709) L684,687; `read_usage_error` (cli.rs:2967) L685; `read_view_conflict` (cli.rs:2957) L685; `names_word_document` (cli.rs:646) L721; `swallowed_file` (cli.rs:658) L723; `ComparisonLog::error` (comparison_log.rs:64) (by name) L733
+- **Calls (crate):** `deeper_boundary_tests::names` (edit.rs:8789) L684,687; `read_usage_error` (cli.rs:2967) L685; `read_view_conflict` (cli.rs:2957) L685; `names_word_document` (cli.rs:646) L721; `swallowed_file` (cli.rs:658) L723; `ComparisonLog::error` (comparison_log.rs:64) (by name) L733
 - **Calls (std/external/unresolved):** `.any`, `.as_str`, `.clone`, `.collect`, `.filter_map`, `.filter`, `.find_subcommand`, `.get_name`, `.get`, `.insert`, `.into_iter`, `.into`, `.iter`, `.join`, `.kind`, `.map`, `.position`, `.set_bin_name`, `.skip`, `.split_once`, `.split_whitespace`, `.starts_with`, `.take_while`, `Path::new`, `Some`, `clap::error::ContextValue::StyledStr`
 - **Macros:** `format!`, `matches!`
-- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3954)
 
 #### `fill_flag_operations`  (L738-754)
 `fn fill_flag_operations( task: &mut Command, matches: &clap::ArgMatches, model: &mut clap::Command, ) -> Result<(), clap::Error>`
@@ -127,14 +127,14 @@
 - **Does:** Groups the flag operations of `edit` and `add` into their `operations` field; a grouping error is a usage error.
 - **Calls (crate):** `flag_operations` (cli.rs:412) L751
 - **Calls (std/external/unresolved):** `.error`, `.map_err`, `.subcommand_matches`, `Ok`
-- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_subcommand_json` (cli.rs:3779)
 
 #### `top_level_command`  (L856-869, pub)
 `pub fn top_level_command() -> clap::Command`
 
 - **Does:** The derive model with the shorthands' options hidden: `jubarte --help` lists the tasks; `jubarte compare --help` and `jubarte read --help` show every option.
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.contains`, `.get_arguments`, `.get_id`, `.hide`, `.map`, `.mut_args`, `::augment_args`, `Cli::command`, `clap::Command::new`
-- **Called by:** `usage` (bin/jubarte/edit_template.rs:292); `typed_edit_protocol` (cli.rs:3370); `next_command` (cli.rs:3413); `Cli::try_parse_from` (cli.rs:3491); `wants_json` (cli.rs:3611); `parse_json` (cli.rs:3791)
+- **Called by:** `usage` (bin/jubarte/edit_template.rs:292); `typed_edit_protocol` (cli.rs:3370); `next_command` (cli.rs:3413); `Cli::try_parse_from` (cli.rs:3491); `wants_json` (cli.rs:3611); `parse_json` (cli.rs:3954)
 
 #### `<Cli as std::ops::Deref>::deref`  (L873-875, impl std::ops::Deref)
 `fn deref(&self) -> &Self::Target`
@@ -169,7 +169,7 @@
 
 - **Does:** The format a file name says, by extension (`.json`, a name that is only an extension, says json too).
 - **Calls (crate):** `Format::of_name` (cli.rs:1858) L1854; `extension` (cli.rs:1840) L1854
-- **Called by:** `Format::of_input` (cli.rs:1882); `Task::known` (cli.rs:1960); `validate_matches` (cli.rs:3007); `compare_json` (cli.rs:3542); `parse_json` (cli.rs:3791)
+- **Called by:** `Format::of_input` (cli.rs:1882); `Task::known` (cli.rs:1960); `validate_matches` (cli.rs:3007); `compare_json` (cli.rs:3542); `parse_subcommand_json` (cli.rs:3779)
 
 #### `Format::of_name`  (L1858-1867, pub)
 `pub fn of_name(extension: &str) -> Option<Self>`
@@ -240,7 +240,7 @@
 - **Calls (crate):** `Task::known` (cli.rs:1960) L2001; `Task::allowed` (cli.rs:1945) L2026; `Task::cannot_write` (cli.rs:1971) L2033
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.contains`, `.display`, `.file_name`, `.filter`, `.into_owned`, `.map_or_else`, `.map`, `.name`, `.or`, `.to_string_lossy`, `.to_string`, `Err`, `Ok`, `Some`
 - **Macros:** `format!`
-- **Called by:** `task_output` (bin/jubarte.rs:324); `run_text` (bin/jubarte.rs:1036); `run` (bin/jubarte.rs:2862); `compare_output` (cli.rs:2927); `read_output` (cli.rs:2980); `validate_matches` (cli.rs:3007); `compare_json` (cli.rs:3542); `parse_json` (cli.rs:3791)
+- **Called by:** `task_output` (bin/jubarte.rs:324); `run_text` (bin/jubarte.rs:1036); `run` (bin/jubarte.rs:2862); `compare_output` (cli.rs:2927); `read_output` (cli.rs:2980); `validate_matches` (cli.rs:3007); `compare_json` (cli.rs:3542); `parse_subcommand_json` (cli.rs:3779); `parse_implicit_compare_json` (cli.rs:3890)
 
 #### `refused_input`  (L2042-2056, pub)
 `pub fn refused_input(path: &Path, bytes: &[u8], word: bool) -> Option<String>`
@@ -333,21 +333,21 @@
 
 - **Does:** The retired spellings in `argv` (the arguments after the program name), each once, in the order they first appear.
 - **Calls (crate):** `spellings_in` (cli.rs:2402) L2385
-- **Called by:** `notes` (cli.rs:2462); `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `notes` (cli.rs:2462); `Cli::try_parse_from` (cli.rs:3491); `parse_subcommand_json` (cli.rs:3779)
 
 #### `removed_spellings`  (L2390-2394, pub)
 `pub fn removed_spellings<'a>( argv: impl IntoIterator<Item = &'a str>, ) -> Vec<(&'static str, &'static str)>`
 
 - **Does:** Each [`REMOVED`] spelling `argv` uses, as [`retired_spellings`] finds them.
 - **Calls (crate):** `spellings_in` (cli.rs:2402) L2393
-- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3791)
+- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3954)
 
 #### `removed_error`  (L2398-2400, pub)
 `pub fn removed_error(old: &str, now: &str) -> String`
 
 - **Does:** The error a removed spelling ends the run with, naming what to say instead.
 - **Macros:** `format!`
-- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3791)
+- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3954)
 
 #### `spellings_in`  (L2402-2444)
 `fn spellings_in<'a>( table: &[Retired], argv: impl IntoIterator<Item = &'a str>, ) -> Vec<(&'static str, &'static str)>`
@@ -362,7 +362,7 @@
 
 - **Does:** What a retired spelling still means once parsed: `audit` with no `--rules` checks `a11y,style,structure`, as the retired task did, not `validate`'s default `word`.
 - **Calls (std/external/unresolved):** `.any`, `.is_empty`, `.iter`, `.map`, `.to_vec`
-- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_subcommand_json` (cli.rs:3779)
 
 #### `notes`  (L2462-2480, pub)
 `pub fn notes(argv: &[String]) -> Vec<String>`
@@ -370,7 +370,7 @@
 - **Does:** The stderr lines `argv` earns before its run or its usage error: each retired spelling's note, then each removed task's.
 - **Calls (crate):** `retired_spellings` (cli.rs:2382) L2468; `retired_note` (cli.rs:2483) L2471,2472; `removed_tasks` (cli.rs:2240) L2475; `removed_task_note` (cli.rs:2248) L2477
 - **Calls (std/external/unresolved):** `.any`, `.chain`, `.collect`, `.into_iter`, `.iter`, `.map`, `.starts_with`, `.take_while`, `argv`
-- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3791); `tests::a_plain_span_across_paragraphs_names_every_piece_s_id` (markdown/from_docx/critic.rs:2070) (?)
+- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3954); `tests::a_plain_span_across_paragraphs_names_every_piece_s_id` (markdown/from_docx/critic.rs:2070) (?)
 
 #### `retired_note`  (L2483-2485, pub)
 `pub fn retired_note(old: &str, now: &str) -> String`
@@ -427,7 +427,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.header`, `.literal`, `.on_default`, `.placeholder`, `.usage`, `clap::builder::Styles::styled`
-- **Called by:** `parse_json` (cli.rs:3791); `word_style_line_owned_boundary_tests::word_single_line_style_propagation_keeps_authored_history_and_unrelated_properties` (document_comparer.rs:12808) (?)
+- **Called by:** `parse_json` (cli.rs:3954); `word_style_line_owned_boundary_tests::word_single_line_style_propagation_keeps_authored_history_and_unrelated_properties` (document_comparer.rs:12809) (?)
 
 #### `parse_author`  (L2793-2795)
 `fn parse_author(value: &str) -> Result<String, String>`
@@ -555,7 +555,7 @@
 - **Calls (crate):** `compare_output` (cli.rs:2927) L3020,3150; `palette_without_custom` (cli.rs:2999) L3022,3230; `read_output` (cli.rs:2980) L3031,3147; `read_usage_error` (cli.rs:2967) L3032,3147; `Task::of_name` (cli.rs:1930) L3097,3156; `json_not_yet` (cli.rs:2912) L3099; `ComparisonLog::error` (comparison_log.rs:64) (by name) L3103,3113,3125,3139; `validate` (cli/edit_template.rs:101) L3131; `validate` (cli/edit_actions.rs:289) L3134; `output_format` (cli.rs:1996) L3164,3238,3302; `.ids` (ambiguous, 6 candidates) L3182; `plan_flag_conflict` (edit/record.rs:39) L3190; `names_word_document` (cli.rs:646) L3199,3206; `swallowed_file` (cli.rs:658) L3201,3208; `Format::of_path` (cli.rs:1853) L3214; `PatchFormat::is_text_view` (cli.rs:1801) (by name) L3247
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.as_str`, `.chain`, `.clone`, `.collect`, `.contains_id`, `.contains`, `.copied`, `.display`, `.error`, `.expect`, `.extension`, `.filter`, `.find_subcommand`, `.find`, `.flatten`, `.get_flag`, `.get_many`, `.get_name`, `.get_one`, `.into_iter`, `.is_none`, `.is_some_and`, `.iter`, `.map_err`, `.map_or_else`, `.map`, `.name`, `.ok`, `.or`, `.replace`, `.set_bin_name`, `.subcommand`, `.to_lowercase`, `.to_str`, `.to_string_lossy`, `.to_string`, `.try_contains_id`, `.try_get_one`, `.unwrap_or`, `.value_source`, `Err`, `Ok`, `Some`, `error`, `given`, `lone`
 - **Macros:** `format!`, `matches!`
-- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3954)
 
 #### `edit_arguments`  (L3359-3364, pub)
 `pub fn edit_arguments( command: &clap::Command, arguments: &[std::ffi::OsString], ) -> Vec<std::ffi::OsString>`
@@ -601,7 +601,7 @@
 
 - **Does:** Whether `matches` spells out any of `read`'s options.
 - **Calls (std/external/unresolved):** `.any`, `.into_iter`, `.try_contains_id`, `.unwrap_or`, `.value_source`, `Some`
-- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_json` (cli.rs:3791)
+- **Called by:** `Cli::try_parse_from` (cli.rs:3491); `parse_subcommand_json` (cli.rs:3779); `parse_implicit_compare_json` (cli.rs:3890)
 
 #### `compare_json`  (L3542-3577)
 `fn compare_json(compare: &CompareArgs) -> serde_json::Value`
@@ -610,7 +610,7 @@
 - **Calls (crate):** `Format::of_path` (cli.rs:1853) L3553; `output_format` (cli.rs:1996) L3565
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.as_ref`, `.expect`, `.filter`, `.flatten`, `.ok`, `.or`, `Some`, `input_format`, `serde_json::to_value`
 - **Macros:** `matches!`
-- **Called by:** `parse_json` (cli.rs:3791)
+- **Called by:** `parse_subcommand_json` (cli.rs:3779); `parse_implicit_compare_json` (cli.rs:3890)
 
 #### `view_is_output`  (L3582-3587)
 `fn view_is_output(args: &serde_json::Value) -> bool`
@@ -618,14 +618,14 @@
 - **Does:** Whether compare's result is surely the agent view: printed, or a .md of documents whose names do not both say Markdown.
 - **Calls (crate):** `markdown` (inspect.rs:372) (by name) L3586
 - **Calls (std/external/unresolved):** `.is_null`
-- **Called by:** `parse_json` (cli.rs:3791)
+- **Called by:** `parse_subcommand_json` (cli.rs:3779); `parse_implicit_compare_json` (cli.rs:3890)
 
 #### `view_not_supported`  (L3591-3596)
 `fn view_not_supported(command: &mut clap::Command) -> clap::Error`
 
 - **Does:** A comparison whose result is the agent view, in an adapter without `read`: only `-o` with a file that is not the view works there.
 - **Calls (std/external/unresolved):** `.error`
-- **Called by:** `parse_json` (cli.rs:3791)
+- **Called by:** `parse_subcommand_json` (cli.rs:3779); `parse_implicit_compare_json` (cli.rs:3890)
 
 #### `error_json`  (L3598-3605)
 `fn error_json(error: &clap::Error) -> String`
@@ -633,7 +633,7 @@
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.exit_code`, `.to_string`, `.use_stderr`
 - **Macros:** `serde_json::json!`
-- **Called by:** `parse_json` (cli.rs:3791)
+- **Called by:** `parse_json` (cli.rs:3954)
 
 #### `wants_json`  (L3611-3640, pub)
 `pub fn wants_json(argv: &[String]) -> bool`
@@ -641,7 +641,7 @@
 - **Does:** Whether a command line (without the program name) asks for JSON: a `--json` flag before any `--`.
 - **Calls (crate):** `top_level_command` (cli.rs:856) L3614; `edit_arguments` (cli.rs:3359) L3618; `spelled_options` (cli.rs:2325) L3628
 - **Calls (std/external/unresolved):** `.any`, `.chain`, `.collect`, `.filter_map`, `.find_subcommand`, `.get`, `.into`, `.iter`, `.map`, `.skip`, `.take_while`, `.to_str`, `std::iter::once`
-- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3791)
+- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3954)
 
 #### `json_error`  (L3644-3650, pub)
 `pub fn json_error(code: &str, message: &str, usage: Option<&str>) -> String`
@@ -665,7 +665,7 @@
 - **Does:** The [`json_error`] line of a usage error clap reports for `argv` (no program name) run as `program`: its message without `error: `, on one line (a list clap names under it joined on, each tip after it), and the task's usage (`jubarte read [OPTIONS] <FILE>`; clap's own usage, which names the flags given, when no task i...
 - **Calls (crate):** `usage_parts` (cli.rs:3698) L3680; `json_error` (cli.rs:3644) L3681
 - **Calls (std/external/unresolved):** `.as_deref`, `Some`
-- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3791)
+- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3954)
 
 #### `removed_json_error`  (L3687-3695, pub)
 `pub fn removed_json_error( error: &clap::Error, argv: &[String], program: &str, message: &str, ) -> String`
@@ -673,7 +673,7 @@
 - **Does:** The [`json_error`] line of a removed spelling's error, `message` being what follows `error: ` ([`removed_error`]), with the usage [`usage_json_error`] gives clap's `error` for the same `argv`.
 - **Calls (crate):** `usage_parts` (cli.rs:3698) L3693; `json_error` (cli.rs:3644) L3694
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`
-- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3791)
+- **Called by:** `cli_main` (bin/jubarte.rs:3935); `parse_json` (cli.rs:3954)
 
 #### `usage_parts`  (L3698-3751)
 `fn usage_parts( error: &clap::Error, argv: &[String], program: &str, ) -> Option<(String, Option<String>)>`
@@ -698,15 +698,33 @@
 - **Does:** The usage error for a task the host (`program`) does not have.
 - **Calls (std/external/unresolved):** `.error`
 - **Macros:** `format!`
-- **Called by:** `parse_json` (cli.rs:3791)
+- **Called by:** `parse_implicit_compare_json` (cli.rs:3890); `parse_json` (cli.rs:3954)
 
-#### `parse_json`  (L3791-4061, pub)
+#### `parse_subcommand_json`  (L3779-3888)
+`fn parse_subcommand_json( command: &mut clap::Command, matches: &clap::ArgMatches, arguments: &[String], accepts: &dyn Fn(&str) -> bool, ) -> Result<serde_json::Value, clap::Error>`
+
+- **Does:** The `{exit_code, command, args}` value for a subcommand clap matched: the task with its flag operations, plan, retired spellings and date resolved, and compare's view or read routing.
+- **Calls (crate):** `fill_flag_operations` (cli.rs:738) L3786; `resolve_plan` (cli.rs:613) L3787; `apply_retired` (cli.rs:2451) L3788; `retired_spellings` (cli.rs:2382) L3790; `fill_task_date` (cli.rs:533) L3792; `view_given` (cli.rs:3535) L3796; `compare_json` (cli.rs:3542) L3798; `view_is_output` (cli.rs:3582) L3799; `view_not_supported` (cli.rs:3591) L3800; `Format::of_path` (cli.rs:1853) L3814; `output_format` (cli.rs:1996) L3820,3838,3883; `.target` (ambiguous: `EditOptions::target` (cli.rs:358); `Operation::target` (edit/v2.rs:585); `ThreadOp::target` (edit.rs:2567)) L3860; `slash_path` (cli.rs:553) L3866
+- **Calls (std/external/unresolved):** `.as_deref`, `.as_path`, `.as_ref`, `.expect`, `.filter`, `.flatten`, `.into`, `.is_empty`, `.is_some`, `.iter`, `.map`, `.ok`, `.or_else`, `.or`, `.subcommand`, `.then_some`, `.unwrap_or`, `Command::from_arg_matches`, `Err`, `Ok`, `Some`, `accepts`, `input_format`, `serde_json::Value::String`, `serde_json::to_value`, `slashed`
+- **Macros:** `matches!`
+- **Called by:** `parse_json` (cli.rs:3954)
+
+#### `parse_implicit_compare_json`  (L3890-3936)
+`fn parse_implicit_compare_json( command: &mut clap::Command, matches: &clap::ArgMatches, model: &clap::Command, program: &str, accepts: &dyn Fn(&str) -> bool, ) -> Result<serde_json::Value, clap::Error>`
+
+- **Does:** _no doc comment_
+- **Calls (crate):** `fill_date` (cli.rs:526) L3898; `missing_task` (cli.rs:3768) L3907; `output_format` (cli.rs:1996) L3923; `view_given` (cli.rs:3535) L3930; `compare_json` (cli.rs:3542) L3931; `view_is_output` (cli.rs:3582) L3932; `view_not_supported` (cli.rs:3591) L3933
+- **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.as_ref`, `.error`, `.expect`, `.filter`, `.find_subcommand`, `.flatten`, `.get_name`, `.into`, `.is_none`, `.map`, `.ok`, `.or`, `.to_str`, `.to_string`, `CompareArgs::from_arg_matches`, `Err`, `Ok`, `accepts`, `serde_json::to_value`
+- **Macros:** `serde_json::json!`
+- **Called by:** `parse_json` (cli.rs:3954)
+
+#### `parse_json`  (L3954-4074, pub)
 `pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> String`
 
 - **Does:** Parse arguments (excluding argv0) for native-compatible adapters.
-- **Calls (crate):** `top_level_command` (cli.rs:856) L3792; `AuthorColors::color` (convert/mod.rs:15095) (by name) L3796; `styles` (cli.rs:2783) L3800; `missing_task` (cli.rs:3768) L3850,3991; `hoist_quiet` (cli.rs:494) L3852; `route` (cli/edit_actions.rs:260) L3853; `usage_error` (cli.rs:670) L3865; `validate_matches` (cli.rs:3007) L3866; `fill_flag_operations` (cli.rs:738) L3870; `resolve_plan` (cli.rs:613) L3871; `apply_retired` (cli.rs:2451) L3872; `retired_spellings` (cli.rs:2382) L3874; `fill_task_date` (cli.rs:533) L3876; `view_given` (cli.rs:3535) L3880,4016; `compare_json` (cli.rs:3542) L3882,4017; `view_is_output` (cli.rs:3582) L3883,4018; `view_not_supported` (cli.rs:3591) L3884,4019; `Format::of_path` (cli.rs:1853) L3898; `output_format` (cli.rs:1996) L3906,3925,3975,4009; `.target` (ambiguous: `EditOptions::target` (cli.rs:358); `Operation::target` (edit/v2.rs:585); `ThreadOp::target` (edit.rs:2567)) L3950; `slash_path` (cli.rs:553) L3957; `fill_date` (cli.rs:526) L3982; `ComparisonLog::error` (comparison_log.rs:64) (by name) L3995; `notes` (cli.rs:2462) L4027,4051; `removed_spellings` (cli.rs:2390) L4030; `removed_error` (cli.rs:2398) L4032; `wants_json` (cli.rs:3611) L4039,4052; `removed_json_error` (cli.rs:3687) L4041; `error_json` (cli.rs:3598) L4047; `usage_json_error` (cli.rs:3679) L4053
-- **Calls (std/external/unresolved):** `.about`, `.after_help`, `.and_then`, `.any`, `.arg_required_else_help`, `.args_conflicts_with_subcommands`, `.args`, `.as_deref`, `.as_path`, `.as_ref`, `.chain`, `.clone`, `.cloned`, `.collect`, `.expect`, `.filter`, `.find_subcommand`, `.find`, `.first`, `.flatten`, `.get_arguments`, `.get_flag`, `.get_groups`, `.get_name`, `.get_subcommands`, `.groups`, `.into_iter`, `.into_owned`, `.into`, `.is_empty`, `.is_global_set`, `.is_none`, `.is_some`, `.iter`, `.join`, `.map_err`, `.map`, `.ok`, `.or_else`, `.or`, `.starts_with`, `.strip_prefix`, `.styles`, `.subcommand_help_heading`, `.subcommand_negates_reqs`, `.subcommand_required`, `.subcommand`, `.subcommands`, `.take_while`, `.term_width`, `.then_some`, `.to_str`, `.to_string_lossy`, `.to_string`, `.try_get_matches_from_mut`, `.unwrap_or_default`, `.unwrap_or`, `.version`, `Command::from_arg_matches`, `CompareArgs::from_arg_matches`, `Err`, `Ok`, `Some`, `accepts`, `clap::Command::new`, `input_format`, `serde_json::Value::String`, `serde_json::from_str`, `serde_json::to_value`, `slashed`, `std::iter::once`
-- **Macros:** `env!`, `format!`, `matches!`, `serde_json::json!`
+- **Calls (crate):** `top_level_command` (cli.rs:856) L3955; `AuthorColors::color` (convert/mod.rs:15095) (by name) L3959; `styles` (cli.rs:2783) L3963; `missing_task` (cli.rs:3768) L4013; `hoist_quiet` (cli.rs:494) L4015; `route` (cli/edit_actions.rs:260) L4016; `usage_error` (cli.rs:670) L4028; `validate_matches` (cli.rs:3007) L4029; `parse_subcommand_json` (cli.rs:3779) L4032; `parse_implicit_compare_json` (cli.rs:3890) L4034; `notes` (cli.rs:2462) L4040,4064; `removed_spellings` (cli.rs:2390) L4043; `removed_error` (cli.rs:2398) L4045; `wants_json` (cli.rs:3611) L4052,4065; `removed_json_error` (cli.rs:3687) L4054; `error_json` (cli.rs:3598) L4060; `usage_json_error` (cli.rs:3679) L4066
+- **Calls (std/external/unresolved):** `.about`, `.after_help`, `.and_then`, `.any`, `.arg_required_else_help`, `.args_conflicts_with_subcommands`, `.args`, `.chain`, `.clone`, `.cloned`, `.collect`, `.filter`, `.find_subcommand`, `.find`, `.first`, `.get_arguments`, `.get_flag`, `.get_groups`, `.get_name`, `.get_subcommands`, `.groups`, `.into_iter`, `.into_owned`, `.into`, `.is_empty`, `.is_global_set`, `.is_some`, `.iter`, `.join`, `.map_err`, `.map`, `.starts_with`, `.strip_prefix`, `.styles`, `.subcommand_help_heading`, `.subcommand_negates_reqs`, `.subcommand_required`, `.subcommand`, `.subcommands`, `.take_while`, `.term_width`, `.to_string_lossy`, `.to_string`, `.try_get_matches_from_mut`, `.unwrap_or_default`, `.unwrap_or`, `.version`, `Err`, `accepts`, `clap::Command::new`, `serde_json::from_str`, `std::iter::once`
+- **Macros:** `env!`, `format!`, `serde_json::json!`
 - **Called by:** none found in src
 
 ## Test functions (10)
@@ -715,9 +733,9 @@
 - `success_tests::labels_and_known_hunk` (L2105): _no doc comment_
 - `success_tests::fence_exceeds_leading_tildes_in_diff_body` (L2118): _no doc comment_
 - `success_tests::three_context_lines_and_missing_newline` (L2127): _no doc comment_
-- `slash_path_tests::slash_path_uses_forward_slashes` (L4069): _no doc comment_
-- `slash_path_tests::slash_path_canonical_drive_letter_spells_agent_facing` (L4077): The agent-facing contract: a canonical drive-letter path spelled `C:/…` regardless of the OS the test runs on (#1244).
-- `slash_path_tests::unverbatimed_keeps_every_nonverbatim_path` (L4084): _no doc comment_
-- `slash_path_tests::a_verbatim_literal_is_an_ordinary_name_off_windows` (L4094): _no doc comment_
-- `slash_path_tests::unverbatimed_strips_every_verbatim_prefix_kind` (L4102): _no doc comment_
-- `slash_path_tests::unverbatimed_returns_the_stripped_components` (L4117): _no doc comment_
+- `slash_path_tests::slash_path_uses_forward_slashes` (L4082): _no doc comment_
+- `slash_path_tests::slash_path_canonical_drive_letter_spells_agent_facing` (L4090): The agent-facing contract: a canonical drive-letter path spelled `C:/…` regardless of the OS the test runs on (#1244).
+- `slash_path_tests::unverbatimed_keeps_every_nonverbatim_path` (L4097): _no doc comment_
+- `slash_path_tests::a_verbatim_literal_is_an_ordinary_name_off_windows` (L4107): _no doc comment_
+- `slash_path_tests::unverbatimed_strips_every_verbatim_prefix_kind` (L4115): _no doc comment_
+- `slash_path_tests::unverbatimed_returns_the_stripped_components` (L4130): _no doc comment_

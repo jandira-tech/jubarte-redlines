@@ -1,6 +1,6 @@
 # Functions and methods in `src/append.rs`
 
-37 non-test, 13 test. Part of the [symbol manifest](../README.md).
+37 non-test, 16 test. Part of the [symbol manifest](../README.md).
 
 #### `AppendError::code`  (L115-121, pub)
 `pub fn code(&self) -> &'static str`
@@ -24,14 +24,14 @@
 - **Calls (crate):** `open` (append.rs:316) L157,158; `PartFs::parts` (opc/mod.rs:733) (by name) L160; `main_part` (append.rs:329) L161,162; `Dom::new` (xmllinq/mod.rs:387) L163; `parse` (append.rs:336) L164,165; `body` (append.rs:355) L166,167; `final_sect_pr` (append.rs:360) L168,169; `merge_namespace_declarations` (append.rs:371) L170; `Dom::new_element` (xmllinq/mod.rs:478) L174; `Dom::elements` (xmllinq/mod.rs:640) L175,242,265; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L177,184; `Dom::add` (xmllinq/mod.rs:1074) L178,243; `drop_comments` (append.rs:411) L190,193,207; `offset_annotation_ids` (append.rs:501) L195,198; `drop_colliding_paragraph_ids` (append.rs:529) L200; `carry_notes` (append.rs:673) L205; `CommentFamily::load` (comments.rs:457) L217; `invalid` (append.rs:309) L217; `stage_comments` (append.rs:563) L219; `carry_styles_and_numbering` (append.rs:867) L227; `carry_part_relationships` (comparer/parts.rs:576) L229,231,234,251; `PartFs::set_part` (opc/mod.rs:661) (by name) L245,263; `Dom::serialize_document` (xmllinq/mod.rs:1338) L247,263; `CommentFamily::part_name` (comments.rs:708) (by name) L253; `drop_comments_in_new_parts` (append.rs:456) L260; `join` (append.rs:1270) L262; `Dom::attribute` (xmllinq/mod.rs:874) L266; `CommentFamily::adopt` (comments.rs:743) (by name) L273; `Dom::serialize_element` (xmllinq/mod.rs:1315) L274; `.store` (ambiguous: `CommentFamily::store` (comments.rs:854); `Parsed::store` (revision_processor/comments.rs:54); `Part::store` (scrub.rs:203)) L281; `related` (append.rs:766) L282; `merge_part_namespaces` (append.rs:1087) L283; `PartFs::to_zip` (opc/mod.rs:749) (by name) L296; `package` (append.rs:302) L296,298; `fix_up_drawing_ids_in_package` (comparer/fixups.rs:121) L297
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.cloned`, `.collect`, `.extend`, `.flatten`, `.get`, `.into_bytes`, `.into_iter`, `.iter`, `.map_err`, `.map`, `.ok`, `.parse`, `.push`, `.then_some`, `.unwrap_or_default`, `Ok`, `Some`, `Vec::new`, `W::body`, `W::id`, `W::name`
 - **Macros:** `format!`, `vec!`
-- **Called by:** `public_memory_append_owner_boundary_tests::public_append_keeps_source_property_history_and_fresh_annotation_owners_at_every_join_boundary` (append.rs:1516); `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (append.rs:1599); `run_append` (bin/jubarte.rs:4433)
+- **Called by:** `public_memory_append_owner_boundary_tests::public_append_keeps_source_property_history_and_fresh_annotation_owners_at_every_join_boundary` (append.rs:1516); `public_memory_append_owner_boundary_tests::check_style_collisions_for_permutation` (append.rs:1710); `run_append` (bin/jubarte.rs:4433)
 
 #### `package`  (L302-307)
 `fn package(document: &'static str, error: &OpcError) -> AppendError`
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.to_string`
-- **Called by:** `append_documents` (append.rs:152); `open` (append.rs:316); `public_memory_append_owner_boundary_tests::public_append_keeps_source_property_history_and_fresh_annotation_owners_at_every_join_boundary` (append.rs:1516); `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (append.rs:1599)
+- **Called by:** `append_documents` (append.rs:152); `open` (append.rs:316); `public_memory_append_owner_boundary_tests::public_append_keeps_source_property_history_and_fresh_annotation_owners_at_every_join_boundary` (append.rs:1516); `public_memory_append_owner_boundary_tests::check_style_collisions_for_permutation` (append.rs:1710)
 
 #### `invalid`  (L309-314)
 `fn invalid(document: &'static str, message: impl Into<String>) -> AppendError`
@@ -60,7 +60,7 @@
 `fn parse( document: &'static str, dom: &mut Dom, pkg: &PartFs, part: &str, ) -> Result<(NodeId, NodeId), AppendError>`
 
 - **Does:** Parse `part` of `pkg` into `dom`: `(document node, root element)`.
-- **Calls (crate):** `PartFs::part_bytes` (opc/mod.rs:628) L342; `invalid` (append.rs:309) L344,345,347,351; `validate_xml` (xmllinq/parse.rs:1043) L346; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L348; `Dom::root` (xmllinq/mod.rs:822) L349
+- **Calls (crate):** `PartFs::part_bytes` (opc/mod.rs:628) L342; `invalid` (append.rs:309) L344,345,347,351; `validate_xml` (xmllinq/parse.rs:1052) L346; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L348; `Dom::root` (xmllinq/mod.rs:822) L349
 - **Calls (std/external/unresolved):** `.map_err`, `.ok_or_else`, `Ok`, `std::str::from_utf8`
 - **Macros:** `format!`
 - **Called by:** `append_documents` (append.rs:152); `stage_comments` (append.rs:563); `carry_notes` (append.rs:673); `carry_styles_and_numbering` (append.rs:867); `merge_part_namespaces` (append.rs:1087)
@@ -242,7 +242,7 @@
 - **Does:** The copies' markup numbered from `first_abstract` and `first_num`: `(abstracts, nums, B num id -> new num id)`.
 - **Calls (crate):** `Dom::clone_subtree` (xmllinq/mod.rs:1231) L1129,1148; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L1130,1138,1149,1155; `unique_nsid` (append.rs:1247) L1131; `Dom::descendants` (xmllinq/mod.rs:668) L1133; `Dom::remove` (xmllinq/mod.rs:1118) L1134; `w_vals` (append.rs:818) L1136; `Dom::serialize_element` (xmllinq/mod.rs:1315) L1141,1157; `Dom::elements` (xmllinq/mod.rs:640) L1150; `Dom::attribute` (xmllinq/mod.rs:874) L1151
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.clone`, `.cloned`, `.enumerate`, `.get`, `.insert`, `.iter`, `.push_str`, `.to_string`, `.unwrap_or`, `HashMap::new`, `Some`, `String::new`, `W::name`, `W::val`, `u32::try_from`
-- **Called by:** `carry_styles_and_numbering` (append.rs:867); `insert_lists` (append.rs:1165); `task_usage` (cli.rs:3755) (?); `run` (update.rs:186) (?)
+- **Called by:** `carry_styles_and_numbering` (append.rs:867); `insert_lists` (append.rs:1165); `task_usage` (cli.rs:3755) (?); `run` (update.rs:225) (?)
 
 #### `insert_lists`  (L1165-1205)
 `fn insert_lists( dest: &mut PartFs, part: &str, dom: &mut Dom, lists: &ListCopy<'_>, ) -> Option<HashMap<String, String>>`
@@ -302,7 +302,7 @@
 - **Calls (std/external/unresolved):** `.contains`, `.find`, `.into_iter`, `.is_some_and`, `Some`, `W::name`, `W::val`
 - **Called by:** `join` (append.rs:1270); `tests::section_type_sits_after_header_references` (append.rs:1404)
 
-## Test functions (13)
+## Test functions (16)
 
 - `tests::nsid_collisions_take_the_next_free_value` (L1357): _no doc comment_
 - `tests::free_sibling_numbers_a_taken_name` (L1372): _no doc comment_
@@ -316,4 +316,7 @@
 - `public_memory_append_owner_boundary_tests::snapshot` (L1498): _no doc comment_
 - `public_memory_append_owner_boundary_tests::view` (L1509): _no doc comment_
 - `public_memory_append_owner_boundary_tests::public_append_keeps_source_property_history_and_fresh_annotation_owners_at_every_join_boundary` (L1516): _no doc comment_
-- `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (L1599): _no doc comment_
+- `public_memory_append_owner_boundary_tests::verify_styles_xml` (L1598): _no doc comment_
+- `public_memory_append_owner_boundary_tests::verify_numbering_xml` (L1658): _no doc comment_
+- `public_memory_append_owner_boundary_tests::check_style_collisions_for_permutation` (L1710): _no doc comment_
+- `public_memory_append_owner_boundary_tests::append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations` (L1835): _no doc comment_

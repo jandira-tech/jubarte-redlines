@@ -30,7 +30,7 @@
 `fn apply_bound( source: &[u8], plan: &PlanV2, syntax: super::PlanSyntax, ) -> Result<V2EditResult, EditError>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `PlanV2::validate` (edit/v2.rs:523) L126; `source_sha256` (inspect.rs:299) (by name) L127; `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L128,188,211,214,321; `SourceModel::new` (edit/v2_apply.rs:814) L134; `SourceModel::decisions` (edit/v2_apply.rs:1235) L139; `SourceModel::scope` (edit/v2_apply.rs:1328) L140; `SourceModel::check_context` (edit/v2_apply.rs:1356) L141; `SourceModel::operation` (edit/v2_apply.rs:1388) L147; `pointer` (edit/v2_apply.rs:650) L148; `legacy` (edit/v2_apply.rs:629) L153,223; `resolve_selected` (edit.rs:1485) L156; `changes` (edit/v2_apply.rs:644) L162; `comments` (edit/v2_apply.rs:647) L175; `has_history` (edit/v2_apply.rs:659) L187,213; `resolve_for_edit` (changes.rs:909) L204; `Transaction::start` (edit.rs:2680) L226; `Transaction::skip_comment_ids_of` (edit.rs:3213) L227; `ResolvedRevisions::is_empty` (edit.rs:271) L229,247,248; `Origin::build` (edit/origin.rs:260) L234; `AnchorChanges::records` (edit/comment_settlement.rs:78) (by name) L243; `resolve` (edit/v2_apply.rs:1656) L244; `check` (edit/tracked.rs:107) L245; `edited_revisions` (edit/v2_apply.rs:2344) L249; `Transaction::apply` (edit.rs:5882) L250; `check_dom_realized` (edit/prepared.rs:712) L251; `Transaction::finish` (edit.rs:6598) L252; `check_serialized_stories` (edit/prepared.rs:763) L253; `result_v2_with_paragraphs` (edit/tracked.rs:231) L261; `Transaction::report` (edit.rs:3161) L270; `Transaction::paragraph_walk` (edit.rs:5097) L272; `reset_reopened_packages` (inspect.rs:721) L290; `paragraph_final_state` (edit/v2_apply.rs:547) L303; `capture_correspondence_states` (edit/v2_apply.rs:37) L307; `expectation_correspondence` (edit/v2_apply.rs:371) L308; `identity_correspondence` (expect.rs:536) L320; `preserve_direct_history` (edit/v2_apply.rs:2412) L329
+- **Calls (crate):** `PlanV2::validate` (edit/v2.rs:523) L126; `source_sha256` (inspect.rs:299) (by name) L127; `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L128,188,211,214,321; `SourceModel::new` (edit/v2_apply.rs:814) L134; `SourceModel::decisions` (edit/v2_apply.rs:1235) L139; `SourceModel::scope` (edit/v2_apply.rs:1328) L140; `SourceModel::check_context` (edit/v2_apply.rs:1356) L141; `SourceModel::operation` (edit/v2_apply.rs:1388) L147; `pointer` (edit/v2_apply.rs:650) L148; `legacy` (edit/v2_apply.rs:629) L153,223; `resolve_selected` (edit.rs:1485) L156; `changes` (edit/v2_apply.rs:644) L162; `comments` (edit/v2_apply.rs:647) L175; `has_history` (edit/v2_apply.rs:659) L187,213; `resolve_for_edit` (changes.rs:909) L204; `Transaction::start` (edit.rs:2680) L226; `Transaction::skip_comment_ids_of` (edit.rs:3213) L227; `ResolvedRevisions::is_empty` (edit.rs:271) L229,247,248; `Origin::build` (edit/origin.rs:260) L234; `AnchorChanges::records` (edit/comment_settlement.rs:78) (by name) L243; `resolve` (edit/v2_apply.rs:1656) L244; `check` (edit/tracked.rs:107) L245; `edited_revisions` (edit/v2_apply.rs:2344) L249; `Transaction::apply` (edit.rs:6430) L250; `check_dom_realized` (edit/prepared.rs:712) L251; `Transaction::finish` (edit.rs:6645) L252; `check_serialized_stories` (edit/prepared.rs:763) L253; `result_v2_with_paragraphs` (edit/tracked.rs:231) L261; `Transaction::report` (edit.rs:3161) L270; `Transaction::paragraph_walk` (edit.rs:5097) L272; `reset_reopened_packages` (inspect.rs:721) L290; `paragraph_final_state` (edit/v2_apply.rs:547) L303; `capture_correspondence_states` (edit/v2_apply.rs:37) L307; `expectation_correspondence` (edit/v2_apply.rs:371) L308; `identity_correspondence` (expect.rs:536) L320; `preserve_direct_history` (edit/v2_apply.rs:2412) L329
 - **Calls (std/external/unresolved):** `.as_deref`, `.as_ref`, `.as_str`, `.clone`, `.collect`, `.contains`, `.enumerate`, `.extend`, `.filter`, `.is_empty`, `.iter`, `.map_err`, `.map`, `.retain`, `.to_string`, `.to_vec`, `.unwrap_or_default`, `.unwrap_or_else`, `.unwrap_or`, `BTreeMap::new`, `ChangeFilter::default`, `Err`, `Ok`, `ResolvedRevisions::default`, `Some`, `guard`
 - **Macros:** `format!`
 - **Called by:** `apply_quoting` (edit/v2_apply.rs:86)
@@ -90,7 +90,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (std/external/unresolved):** `.clone`, `.unwrap_or_default`, `.unwrap_or`, `Some`, `Vec::new`
-- **Called by:** `apply_bound` (edit/v2_apply.rs:121); `tests::list_tables_are_read_within_their_fib_ranges` (legacy_doc.rs:2454) (?)
+- **Called by:** `apply_bound` (edit/v2_apply.rs:121); `tests::list_tables_are_read_within_their_fib_ranges` (legacy_doc.rs:2533) (?)
 
 #### `changes`  (L644-646)
 `fn changes(bytes: &[u8]) -> Result<Vec<Change>, EditError>`
@@ -134,7 +134,7 @@
 `fn new(opened: &Opened, loaded: &Loaded, changes: &[Change]) -> Self`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L720; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L721; `revision_bearing_parts` (revision_processor.rs:3687) L734; `Dom::root` (xmllinq/mod.rs:822) L739,745; `SourceIndex::add_revision_part` (edit/v2_apply.rs:753) L740,746; `PartFs::part_string` (opc/mod.rs:636) L742; `Dom::new` (xmllinq/mod.rs:387) L743; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L744
+- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L720; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L721; `revision_bearing_parts` (revision_processor.rs:3716) L734; `Dom::root` (xmllinq/mod.rs:822) L739,745; `SourceIndex::add_revision_part` (edit/v2_apply.rs:753) L740,746; `PartFs::part_string` (opc/mod.rs:636) L742; `Dom::new` (xmllinq/mod.rs:387) L743; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L744
 - **Calls (std/external/unresolved):** `.and_then`, `.clone`, `.entry`, `.find`, `.iter`, `.or_default`, `.push`, `BTreeMap::::new`, `BTreeMap::new`, `Self::default`, `Some`, `W14::name`, `W::p`
 - **Called by:** `SourceModel::new` (edit/v2_apply.rs:814)
 
@@ -320,7 +320,7 @@
 `fn outcome(i: usize, kind: &OperationKind) -> EditOutcome`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `pointer` (edit/v2_apply.rs:650) L1636; `super::kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6943)) L1637
+- **Calls (crate):** `pointer` (edit/v2_apply.rs:650) L1636; `super::kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6990)) L1637
 - **Calls (std/external/unresolved):** `.into`
 - **Called by:** `CandidateChecks::verification` (edit/prepared.rs:94) (?); `resolve` (edit/v2_apply.rs:1656)
 
@@ -404,7 +404,7 @@
 `fn comment_component( tx: &Transaction<'_>, p: usize, start: usize, end: usize, note: Option<String>, ) -> Result<Vec<Resolved>, EditError>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L2255,2261; `check_comment` (edit.rs:7087) L2261
+- **Calls (crate):** `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L2255,2261; `check_comment` (edit.rs:7134) L2261
 - **Calls (std/external/unresolved):** `.map_err`, `Err`, `Ok`, `Vec::new`
 - **Macros:** `vec!`
 - **Called by:** `resolve_operation` (edit/v2_apply.rs:2084)
@@ -413,7 +413,7 @@
 `fn text_component( tx: &Transaction<'_>, p: usize, start: usize, end: usize, text: &str, note: Option<String>, attach: bool, ) -> Result<Resolved, EditError>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `check_run_text` (edit.rs:7060) L2278; `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L2278,2281,2287,2293,2301; `check_comment` (edit.rs:7087) L2287; `Transaction::check_insert_position` (edit.rs:5381) L2291; `Transaction::check_range` (edit.rs:5160) L2300
+- **Calls (crate):** `check_run_text` (edit.rs:7107) L2278; `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L2278,2281,2287,2293,2301; `check_comment` (edit.rs:7134) L2287; `Transaction::check_insert_position` (edit.rs:5381) L2291; `Transaction::check_range` (edit.rs:5160) L2300
 - **Calls (std/external/unresolved):** `.into`, `.map_err`, `Err`, `Ok`
 - **Macros:** `format!`
 - **Called by:** `resolve_operation` (edit/v2_apply.rs:2084)
@@ -429,7 +429,7 @@
 `fn edited_revisions(tx: &Transaction<'_>) -> BTreeSet<String>`
 
 - **Does:** The revisions the resolved operations reach: only insertion content a text operation touches may change, and a deleted paragraph reaches every revision it holds.
-- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L2354; `Held::of` (edit/hint.rs:58) L2355; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L2356; `ChangeId::short` (ids.rs:155) (by name) L2358,2390; `ChangeId::new` (ids.rs:142) L2358,2390; `attach_segment` (edit.rs:7301) L2375; `editable_insertion` (edit.rs:7269) L2386; `Dom::attribute` (xmllinq/mod.rs:874) L2387
+- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L2354; `Held::of` (edit/hint.rs:58) L2355; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L2356; `ChangeId::short` (ids.rs:155) (by name) L2358,2390; `ChangeId::new` (ids.rs:142) L2358,2390; `attach_segment` (edit.rs:7348) L2375; `editable_insertion` (edit.rs:7316) L2386; `Dom::attribute` (xmllinq/mod.rs:874) L2387
 - **Calls (std/external/unresolved):** `.collect`, `.filter`, `.insert`, `.into_iter`, `.is_some`, `.iter`, `BTreeSet::new`, `W::id`
 - **Called by:** `apply_bound` (edit/v2_apply.rs:121)
 

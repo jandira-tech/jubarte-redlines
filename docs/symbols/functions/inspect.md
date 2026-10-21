@@ -47,7 +47,7 @@
 - **Does:** Body paragraphs in body order.
 - **Calls (crate):** `Opened::open` (inspect.rs:735) L313; `body_paragraphs` (inspect.rs:1193) L314
 - **Calls (std/external/unresolved):** `Ok`
-- **Called by:** `tests::refresh_fields_writes_the_report_and_says_when_it_cannot` (bin/jubarte.rs:5748); `tests::final_text` (edit/inline.rs:403); `check_serialized_stories` (edit/prepared.rs:763); `check_redline_stories` (edit/prepared.rs:844); `produce` (edit/prepared.rs:928); `result_v2_with_paragraphs` (edit/tracked.rs:231); `result_with_order` (edit/tracked.rs:252); `deeper_boundary_tests::revision_selection_empty_and_reject_only_preserve_unselected_change` (edit.rs:8834); `projected_paragraphs` (expect.rs:554); `apply_markdown` (markdown/patch.rs:121); `all_paragraphs` (validate.rs:2986)
+- **Called by:** `tests::refresh_fields_writes_the_report_and_says_when_it_cannot` (bin/jubarte.rs:5748); `tests::final_text` (edit/inline.rs:403); `check_serialized_stories` (edit/prepared.rs:763); `check_redline_stories` (edit/prepared.rs:844); `produce` (edit/prepared.rs:928); `result_v2_with_paragraphs` (edit/tracked.rs:231); `result_with_order` (edit/tracked.rs:252); `deeper_boundary_tests::revision_selection_empty_and_reject_only_preserve_unselected_change` (edit.rs:8914); `projected_paragraphs` (expect.rs:554); `apply_markdown` (markdown/patch.rs:121); `all_paragraphs` (validate.rs:2986)
 
 #### `paragraphs_and_stories_within`  (L319-328, pub(crate))
 `pub(crate) fn paragraphs_and_stories_within( docx: &[u8], limits: crate::admission::InputLimits, ) -> Result<(Vec<Paragraph>, Vec<Story>), InspectError>`
@@ -207,7 +207,7 @@
 - **Does:** Internal targets of the main part's relationships of one kind.
 - **Calls (crate):** `Opened::related` (inspect.rs:902) L864; `part_story` (ids.rs:392) L867
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.copied`, `.into_iter`, `.iter`, `.len`, `.push`, `.sort_by_key`, `Vec::new`
-- **Called by:** `Package::read` (audit.rs:354); `comments_in` (comments.rs:138); `range_markers` (edit/prepared.rs:368) (?); `typing_order` (edit/replacement_order.rs:82) (?); `reparsed_final_views` (edit/v2_apply.rs:563) (?); `load_stories` (edit.rs:1680); `next_annotation_id` (edit.rs:6846); `comment_holds_kept_text` (edit.rs:6885) (?); `native_key_inventory` (expect.rs:919) (?); `update_fields` (fields.rs:115); `Opened::stories_within` (inspect.rs:879)
+- **Called by:** `Package::read` (audit.rs:354); `comments_in` (comments.rs:138); `range_markers` (edit/prepared.rs:368) (?); `typing_order` (edit/replacement_order.rs:82) (?); `reparsed_final_views` (edit/v2_apply.rs:563) (?); `load_stories` (edit.rs:1680); `next_annotation_id` (edit.rs:6893); `comment_holds_kept_text` (edit.rs:6932) (?); `native_key_inventory` (expect.rs:919) (?); `update_fields` (fields.rs:115); `Opened::stories_within` (inspect.rs:879)
 
 #### `Opened::stories`  (L873-875)
 `fn stories(&self) -> Result<Vec<Story>, InspectError>`
@@ -230,7 +230,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `PartFs::read_rels_for` (opc/mod.rs:991) L903; `PartFs::resolve_rel_target` (opc/mod.rs:829) L911
 - **Calls (std/external/unresolved):** `.as_deref`, `.collect`, `.filter`, `.flat_map`, `.into_iter`, `.map`, `.next`, `.rsplit`, `Some`
-- **Called by:** `Package::read` (audit.rs:354); `Transaction::footnotes_story` (edit/notes.rs:51); `Transaction::style_defined` (edit/notes.rs:83); `table_styles` (edit/structural.rs:89); `next_numbering_ids` (edit/structural.rs:350); `Transaction::paragraph_styles` (edit.rs:4903); `existing_comment_ids` (edit.rs:6913); `update_fields` (fields.rs:115); `Opened::summary` (inspect.rs:765); `Opened::story_parts` (inspect.rs:861)
+- **Called by:** `Package::read` (audit.rs:354); `Transaction::footnotes_story` (edit/notes.rs:51); `Transaction::style_defined` (edit/notes.rs:83); `table_styles` (edit/structural.rs:89); `next_numbering_ids` (edit/structural.rs:350); `Transaction::paragraph_styles` (edit.rs:4903); `existing_comment_ids` (edit.rs:6960); `update_fields` (fields.rs:115); `Opened::summary` (inspect.rs:765); `Opened::story_parts` (inspect.rs:861)
 
 #### `main_part`  (L916-923)
 `fn main_part(pkg: &PartFs) -> Result<String, InspectError>`
@@ -245,13 +245,13 @@
 
 - **Does:** Parse one XML part through the checked reader: `(dom, document, root)`.
 - **Calls (crate):** `parse_part_within` (inspect.rs:930) L927; `<InputLimits as Default>::default` (admission.rs:64) L927
-- **Called by:** `Package::read` (audit.rs:354) (?); `comments_in` (comments.rs:138); `range_markers` (edit/prepared.rs:368); `reparsed_final_views` (edit/v2_apply.rs:563); `next_annotation_id` (edit.rs:6846); `comment_holds_kept_text` (edit.rs:6885); `native_key_inventory` (expect.rs:919); `update_fields` (fields.rs:115); `Opened::summary` (inspect.rs:765)
+- **Called by:** `Package::read` (audit.rs:354) (?); `comments_in` (comments.rs:138); `range_markers` (edit/prepared.rs:368); `reparsed_final_views` (edit/v2_apply.rs:563); `next_annotation_id` (edit.rs:6893); `comment_holds_kept_text` (edit.rs:6932); `native_key_inventory` (expect.rs:919); `update_fields` (fields.rs:115); `Opened::summary` (inspect.rs:765)
 
 #### `parse_part_within`  (L930-948)
 `fn parse_part_within( pkg: &PartFs, name: &str, limits: crate::admission::InputLimits, ) -> Result<(Dom, NodeId, NodeId), InspectError>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `PartFs::part_bytes` (opc/mod.rs:628) L935; `validate_xml_with_limits` (xmllinq/parse.rs:1052) L940; `Dom::new` (xmllinq/mod.rs:387) L942; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L943; `Dom::root` (xmllinq/mod.rs:822) L944
+- **Calls (crate):** `PartFs::part_bytes` (opc/mod.rs:628) L935; `validate_xml_with_limits` (xmllinq/parse.rs:1061) L940; `Dom::new` (xmllinq/mod.rs:387) L942; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L943; `Dom::root` (xmllinq/mod.rs:822) L944
 - **Calls (std/external/unresolved):** `.map_err`, `.ok_or_else`, `InspectError::Invalid`, `Ok`, `std::str::from_utf8`
 - **Macros:** `format!`
 - **Called by:** `Opened::open_within` (inspect.rs:739); `Opened::stories_within` (inspect.rs:879); `parse_part` (inspect.rs:926)
@@ -375,7 +375,7 @@
 - **Does:** Project one `w:p` (see module docs for the rules).
 - **Calls (crate):** `walk_container` (inspect.rs:1302) L1269; `merge_spans` (inspect.rs:1510) L1277
 - **Calls (std/external/unresolved):** `Projection::default`, `Vec::new`
-- **Called by:** `Package::literal_bullet` (audit.rs:636); `Package::empty_spacers` (audit.rs:661); `Anchors::scan` (comments.rs:251); `text_selection` (edit/for_edit.rs:663) (?); `obstacles` (edit/for_edit.rs:1041) (?); `make_row` (edit/for_edit.rs:1293) (?); `context_of` (edit/for_edit.rs:1505) (?); `insert_reference` (edit/notes.rs:168); `Origin::build` (edit/origin.rs:260); `check_dom_realized` (edit/prepared.rs:712) (?); `control_text` (edit/prepared.rs:753) (?); `check_serialized_stories` (edit/prepared.rs:763) (?); +25 more
+- **Called by:** `Package::literal_bullet` (audit.rs:636); `Package::empty_spacers` (audit.rs:661); `Anchors::scan` (comments.rs:251); `text_selection` (edit/for_edit.rs:663) (?); `obstacles` (edit/for_edit.rs:1041) (?); `make_row` (edit/for_edit.rs:1293) (?); `context_of` (edit/for_edit.rs:1505) (?); `insert_reference` (edit/notes.rs:168); `Origin::build` (edit/origin.rs:260); `check_dom_realized` (edit/prepared.rs:712) (?); `control_text` (edit/prepared.rs:753) (?); `check_serialized_stories` (edit/prepared.rs:763) (?); +26 more
 
 #### `project_container`  (L1283-1297, pub(crate))
 `pub(crate) fn project_container(dom: &Dom, container: NodeId) -> Projection`

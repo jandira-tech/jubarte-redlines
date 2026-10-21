@@ -95,7 +95,7 @@
 - **Does:** _no doc comment_
 - **Calls (crate):** `Dom::new` (xmllinq/mod.rs:387) L281; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L282; `Dom::root` (xmllinq/mod.rs:822) L283; `Dom::element` (xmllinq/mod.rs:655) L287,299; `Dom::attribute` (xmllinq/mod.rs:874) L288,295,309,322; `Dom::elements` (xmllinq/mod.rs:640) L292,308,321,340; `slot_values` (revision_processor/style_records.rs:223) L345
 - **Calls (std/external/unresolved):** `.and_then`, `.cloned`, `.collect`, `.copied`, `.extend`, `.get`, `.insert`, `.into_iter`, `.iter`, `.map`, `.ok`, `.or_else`, `.parse`, `.to_string`, `.unwrap_or_default`, `.unwrap_or`, `HashMap::new`, `Self::default`, `Self`, `Some`, `W::name`, `W::val`, `level_pprs`, `val`
-- **Called by:** `resolve_with_comments` (revision_processor.rs:3871)
+- **Called by:** `resolve_with_comments` (revision_processor.rs:3900)
 
 #### `Levels::of`  (L355-363)
 `fn of(&self, dom: &Dom, num_pr: NodeId, num_id: &str) -> Option<&HashMap<Slot, String>>`
@@ -112,7 +112,7 @@
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L370; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L372; `Dom::attribute` (xmllinq/mod.rs:874) L378; `Dom::element` (xmllinq/mod.rs:655) L380,382
 - **Calls (std/external/unresolved):** `.and_then`, `.is_some`, `.push`, `.to_string`, `.unwrap_or`, `Some`, `Vec::new`, `W::name`
 - **Macros:** `matches!`
-- **Called by:** `resolve_with_comments` (revision_processor.rs:3871)
+- **Called by:** `resolve_with_comments` (revision_processor.rs:3900)
 
 #### `restore_against_built_ins`  (L398-434, pub(super))
 `pub(super) fn restore_against_built_ins( dom: &mut Dom, styles_root: NodeId, restored: &[(String, &'static str)], levels: &Levels, next_id: &mut super::RevisionIds, )`
@@ -120,7 +120,7 @@
 - **Does:** Read the restored toggles against their restored ancestors (R30), resolve each restored paragraph style block of `restored` (the records already rejected) against Word's built-ins, parents before children, then give each linked character style its paragraph style's old rPr.
 - **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L405; `Dom::attribute` (xmllinq/mod.rs:874) L408,424; `ancestors` (revision_processor/style_records.rs:666) L414; `read_toggles_against_restored_ancestors` (revision_processor/style_records.rs:637) L423; `resolve` (revision_processor/style_records.rs:687) L431; `resync_linked_character_styles` (revision_processor/style_records.rs:543) L433
 - **Calls (std/external/unresolved):** `.collect`, `.filter_map`, `.filter`, `.get`, `.into_iter`, `.iter`, `.len`, `.map`, `.retain`, `.sort_by_key`, `.to_string`, `Some`, `W::name`
-- **Called by:** `resolve_with_comments` (revision_processor.rs:3871)
+- **Called by:** `resolve_with_comments` (revision_processor.rs:3900)
 
 #### `complete_from_original_chain`  (L448-527, pub(crate))
 `pub(crate) fn complete_from_original_chain( dom: &mut Dom, old: NodeId, a_root: NodeId, a_style: NodeId, block_local: &str, recorded: &dyn Fn(NodeId) -> bool, ) -> bool`
@@ -151,7 +151,7 @@
 `fn effective_rpr( dom: &mut Dom, styles_root: NodeId, by_id: &HashMap<String, NodeId>, style: NodeId, next_id: &mut super::RevisionIds, ) -> NodeId`
 
 - **Does:** A new, detached rPr: `style`'s own run properties over its basedOn chain, slot by slot, less the slots the docDefaults say alike.
-- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L592; `ancestors` (revision_processor/style_records.rs:666) L593; `Dom::element` (xmllinq/mod.rs:655) L597,616,618,619; `Dom::elements` (xmllinq/mod.rs:640) L600; `prop_slots` (revision_processor/style_records.rs:186) L601; `drop_slot` (revision_processor/style_records.rs:758) L602,624; `clone_with_fresh_property_ids` (revision_processor.rs:3826) L604; `insert_in_order` (revision_processor/style_records.rs:810) L605; `write_slot` (revision_processor/style_records.rs:783) L611; `slot_values` (revision_processor/style_records.rs:223) L621,622
+- **Calls (crate):** `Dom::new_element` (xmllinq/mod.rs:478) L592; `ancestors` (revision_processor/style_records.rs:666) L593; `Dom::element` (xmllinq/mod.rs:655) L597,616,618,619; `Dom::elements` (xmllinq/mod.rs:640) L600; `prop_slots` (revision_processor/style_records.rs:186) L601; `drop_slot` (revision_processor/style_records.rs:758) L602,624; `clone_with_fresh_property_ids` (revision_processor.rs:3855) L604; `insert_in_order` (revision_processor/style_records.rs:810) L605; `write_slot` (revision_processor/style_records.rs:783) L611; `slot_values` (revision_processor/style_records.rs:223) L621,622
 - **Calls (std/external/unresolved):** `.and_then`, `.as_str`, `.collect`, `.get`, `.is_empty`, `.iter`, `.map`, `.push`, `.reverse`, `Some`, `W::name`
 - **Called by:** `resync_linked_character_styles` (revision_processor/style_records.rs:543)
 

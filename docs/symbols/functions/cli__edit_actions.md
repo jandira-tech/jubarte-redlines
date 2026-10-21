@@ -22,7 +22,7 @@
 - **Does:** Route typed actions only when the tokens are not a valid legacy invocation.
 - **Calls (std/external/unresolved):** `.all`, `.bytes`, `.clone`, `.find`, `.get`, `.into`, `.is_none_or`, `.is_ok`, `.is_some_and`, `.iter`, `.len`, `.skip`, `.starts_with`, `.to_str`, `.to_vec`, `.try_get_matches_from`, `Some`
 - **Macros:** `matches!`
-- **Called by:** `usage` (bin/jubarte/edit_template.rs:292); `edit_arguments` (cli.rs:3359); `parse_json` (cli.rs:3791)
+- **Called by:** `usage` (bin/jubarte/edit_template.rs:292); `edit_arguments` (cli.rs:3359); `parse_json` (cli.rs:3954)
 
 #### `validate`  (L289-327, pub(super))
 `pub(super) fn validate( args: &clap::ArgMatches, model: &mut clap::Command, ) -> Result<(), clap::Error>`

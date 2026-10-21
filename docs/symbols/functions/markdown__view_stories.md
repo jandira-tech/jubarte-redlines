@@ -140,7 +140,7 @@
 `fn story(kind: &'static str, ty: &str, entries: &[(String, Value)]) -> Option<Story>`
 
 - **Does:** The story a `first: {…}` entry names; `None` for `none` or what does not read.
-- **Calls (crate):** `story_id` (markdown/view_stories.rs:694) L727; `text_of` (changes.rs:1518) (by name) L727,769,777,792; `restore` (markdown/critic.rs:1856) L754,767,769; `ParaFormat::read` (markdown/view_stories.rs:94) L755; `align_of` (markdown/view_stories.rs:170) L798
+- **Calls (crate):** `story_id` (markdown/view_stories.rs:694) L727; `text_of` (changes.rs:1518) (by name) L727,769,777,792; `restore` (markdown/critic.rs:1861) L754,767,769; `ParaFormat::read` (markdown/view_stories.rs:94) L755; `align_of` (markdown/view_stories.rs:170) L798
 - **Calls (std/external/unresolved):** `.any`, `.as_str`, `.clone`, `.collect`, `.filter_map`, `.find_map`, `.find`, `.first`, `.is_empty`, `.iter`, `.last`, `.map`, `.ok`, `.parse`, `.pop`, `.push`, `.sort_by_key`, `.split_off`, `.split`, `.strip_prefix`, `.to_string`, `.unwrap_or_default`, `.unwrap_or`, `ParaFormat::default`, `Some`, `String::new`, `Vec::new`, `flag`, `tags`
 - **Macros:** `vec!`
 - **Called by:** `Stories::entry` (markdown/view_stories.rs:816); `section` (markdown/view_stories.rs:892)
@@ -216,7 +216,7 @@
 `fn tags_after( mut text: &str, ) -> ( Vec<super::view_notes::Tag>, Vec<super::view_notes::Tag>, &str, )`
 
 - **Does:** Revision tags after a change, all named parents innermost first, and the rest.
-- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1330) L1290; `nested_revision_tags` (markdown/view_notes.rs:418) L1291; `revision_tags` (markdown/view_notes.rs:371) L1294
+- **Calls (crate):** `attribution_tag` (markdown/critic.rs:1335) L1290; `nested_revision_tags` (markdown/view_notes.rs:418) L1291; `revision_tags` (markdown/view_notes.rs:371) L1294
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.extend`, `.into_iter`, `.push`, `.skip`, `Vec::new`
 - **Called by:** `reads` (markdown/view_stories.rs:259); `runs` (markdown/view_stories.rs:941); `names_noid_parent` (markdown/view_stories.rs:1193)
 
@@ -224,7 +224,7 @@
 `fn field(text: &str) -> Option<(Field<'_>, &str)>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `field_code_close` (markdown/critic.rs:1636) L1314; `is_field_code` (markdown/critic.rs:1620) L1315; `result_end` (markdown/view_stories.rs:1499) L1316
+- **Calls (crate):** `field_code_close` (markdown/critic.rs:1641) L1314; `is_field_code` (markdown/critic.rs:1625) L1315; `result_end` (markdown/view_stories.rs:1499) L1316
 - **Calls (std/external/unresolved):** `.all`, `.bytes`, `.char_indices`, `.find`, `.is_ascii_digit`, `.is_ascii_uppercase`, `.len`, `.strip_prefix`, `.then`, `Field::Bare`, `Field::Coded`, `Some`
 - **Called by:** `reads` (markdown/view_stories.rs:259); `runs` (markdown/view_stories.rs:941); `tracked` (markdown/view_stories.rs:1393); `tracked_piece` (markdown/view_stories.rs:1437)
 
@@ -273,7 +273,7 @@
 `fn result_end(text: &str) -> Option<usize>`
 
 - **Does:** Where the `{/}` that closes a field's result sits in `text`, the text after its `{CODE}`: past any field nested in the result.
-- **Calls (crate):** `field_code_close` (markdown/critic.rs:1636) L1514; `is_field_code` (markdown/critic.rs:1620) L1515
+- **Calls (crate):** `field_code_close` (markdown/critic.rs:1641) L1514; `is_field_code` (markdown/critic.rs:1625) L1515
 - **Calls (std/external/unresolved):** `.char_indices`, `.chars`, `.len`, `.map_or`, `.next`, `.starts_with`, `.strip_prefix`, `Some`
 - **Called by:** `field` (markdown/view_stories.rs:1312)
 
@@ -313,7 +313,7 @@
 `fn story_part( package: &mut PartFs, main: &str, story: &Story, default_style: &str, marks: &mut Marks<'_>, next_doc_pr: &mut u32, ) -> String`
 
 - **Does:** Writes `story`'s part and relates it to `main`: its relationship id.
-- **Calls (crate):** `story_id` (markdown/view_stories.rs:694) L1734,1828; `revision_tags` (markdown/view_notes.rs:371) L1735,1757,1764,1832,1838,1855; `sibling` (markdown/package.rs:504) L1775; `PartFs::parts` (opc/mod.rs:733) L1778; `at` (markdown/from_docx/drawing.rs:1360) L1793; `lookup` (markdown/from_docx/drawing.rs:1460) L1800; `materialize` (markdown/from_docx/drawing.rs:1881) L1807; `Drawing::wraps_run` (markdown/from_docx/drawing.rs:1818) (by name) L1811; `attribution_tag` (markdown/critic.rs:1330) L1848; `reads` (markdown/view_stories.rs:259) L1876; `pools` (markdown/view_stories.rs:349) L1886; `escape` (markdown/xml.rs:601) L1899; `xml` (markdown/frames.rs:116) L1908; `xml` (markdown/borders.rs:254) L1911; `runs` (markdown/view_stories.rs:941) L1944; `Marks::piece` (markdown/view_stories.rs:440) (by name) L1950,1977; `.mark` (ambiguous: `Marks::mark` (markdown/view_stories.rs:463); `NsScope::mark` (xmllinq/parse.rs:193)) L1963; `PartFs::set_part` (opc/mod.rs:661) L1982; `PartFs::add_content_type_override` (opc/mod.rs:845) L1990; `PartFs::add_document_relationship` (opc/mod.rs:1003) L1997; `relative_rel_target` (opc/mod.rs:180) L2000
+- **Calls (crate):** `story_id` (markdown/view_stories.rs:694) L1734,1828; `revision_tags` (markdown/view_notes.rs:371) L1735,1757,1764,1832,1838,1855; `sibling` (markdown/package.rs:504) L1775; `PartFs::parts` (opc/mod.rs:733) L1778; `at` (markdown/from_docx/drawing.rs:1360) L1793; `lookup` (markdown/from_docx/drawing.rs:1460) L1800; `materialize` (markdown/from_docx/drawing.rs:1881) L1807; `Drawing::wraps_run` (markdown/from_docx/drawing.rs:1818) (by name) L1811; `attribution_tag` (markdown/critic.rs:1335) L1848; `reads` (markdown/view_stories.rs:259) L1876; `pools` (markdown/view_stories.rs:349) L1886; `escape` (markdown/xml.rs:601) L1899; `xml` (markdown/frames.rs:116) L1908; `xml` (markdown/borders.rs:254) L1911; `runs` (markdown/view_stories.rs:941) L1944; `Marks::piece` (markdown/view_stories.rs:440) (by name) L1950,1977; `.mark` (ambiguous: `Marks::mark` (markdown/view_stories.rs:463); `NsScope::mark` (xmllinq/parse.rs:193)) L1963; `PartFs::set_part` (opc/mod.rs:661) L1982; `PartFs::add_content_type_override` (opc/mod.rs:845) L1990; `PartFs::add_document_relationship` (opc/mod.rs:1003) L1997; `relative_rel_target` (opc/mod.rs:180) L2000
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.as_deref`, `.as_ref`, `.as_slice`, `.as_str`, `.chain`, `.chars`, `.checked_sub`, `.clear`, `.clone`, `.cloned`, `.collect`, `.contains_key`, `.entry`, `.enumerate`, `.extend`, `.filter`, `.find_map`, `.find`, `.flatten`, `.get_mut`, `.get`, `.insert`, `.into_bytes`, `.into_iter`, `.is_empty`, `.is_some`, `.iter_mut`, `.iter`, `.keys`, `.len_utf8`, `.len`, `.map_or`, `.map`, `.max`, `.next`, `.or_default`, `.push_str`, `.push`, `.remove`, `.replace`, `.resize`, `.rev`, `.rsplit_once`, `.sort_by_key`, `.split_once`, `.strip_prefix`, `.then_some`, `.to_string`, `.unwrap_or_default`, `HashMap::new`, `HashSet::from`, `Read::Mark`, `Some`, `String::new`, `Vec::new`
 - **Macros:** `format!`, `vec!`, `write!`
 - **Called by:** `write` (markdown/view_stories.rs:1599)

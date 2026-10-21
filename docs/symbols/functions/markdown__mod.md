@@ -27,7 +27,7 @@
 `pub fn resolve_critic(markdown: &str, track_changes: TrackChanges) -> String`
 
 - **Does:** Resolves the CriticMarkup in `markdown` as `track_changes` says: `Accept` keeps insertions and drops deletions, `Reject` the other way round; both keep highlighted text (`{==…==}`) and drop comments (`{>>…<<}`).
-- **Calls (crate):** `resolve` (markdown/critic.rs:1961) L153,154
+- **Calls (crate):** `resolve` (markdown/critic.rs:1972) L153,154
 - **Calls (std/external/unresolved):** `.to_string`
 - **Called by:** `run_convert_any` (bin/jubarte.rs:3458); `tests::round_trip` (markdown/diff.rs:1580); `tests::resolve_critic_all_is_the_markdown_as_it_is` (markdown/mod.rs:1207)
 
@@ -35,7 +35,7 @@
 `pub(crate) fn accepted_clauses(markdown: &str) -> String`
 
 - **Does:** Accepted text snapshots remove wholly deleted clause lines.
-- **Calls (crate):** `accept_clauses` (markdown/critic.rs:1975) L160
+- **Calls (crate):** `accept_clauses` (markdown/critic.rs:1987) L160
 - **Called by:** `accepted_text` (text_diff.rs:137)
 
 #### `<DocxOptions as Default>::default`  (L221-235, impl Default)
@@ -176,7 +176,7 @@
 `pub fn page_texts( docx: &[u8], track_changes: TrackChanges, revisions: crate::convert::RevisionStyle, ) -> Result<Vec<String>, String>`
 
 - **Does:** The text the layout pass paints on each page, with the document's changes kept (`TrackChanges::All`), accepted (`TrackChanges::Accept`) or rejected (`TrackChanges::Reject`).
-- **Calls (crate):** `accept_revisions` (document_comparer.rs:4961) L1074; `reject_revisions` (document_comparer.rs:4984) L1077; `render` (convert/mod.rs:592) L1082
+- **Calls (crate):** `accept_revisions` (document_comparer.rs:4962) L1074; `reject_revisions` (document_comparer.rs:4985) L1077; `render` (convert/mod.rs:592) L1082
 - **Calls (std/external/unresolved):** `.and_then`, `.collect`, `.into_iter`, `.map_err`, `.map`, `Ok`, `crate::convert::PdfOptions::default`, `crate::convert::RenderRequest::default`, `std::borrow::Cow::Borrowed`
 - **Macros:** `format!`
 - **Called by:** `convert_marks` (markdown/from_docx/mod.rs:108); `read` (markdown/mod.rs:767); `with_page_markers` (markdown/mod.rs:1101)

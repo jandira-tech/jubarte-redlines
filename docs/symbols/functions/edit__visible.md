@@ -116,7 +116,7 @@
 `pub(super) fn copy_runs(dom: &mut Dom, del: NodeId) -> Vec<NodeId>`
 
 - **Does:** Detached copies of `del`'s runs as inserted text: `w:delText` read as `w:t`, the run formatting without another revision's marks.
-- **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L269,271; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L270; `Dom::name_is` (xmllinq/mod.rs:535) L272,274; `Dom::set_name` (xmllinq/mod.rs:539) L273; `clean_rpr` (edit/tracked.rs:1705) L275; `Dom::add_before_self` (xmllinq/mod.rs:1130) L276; `Dom::remove` (xmllinq/mod.rs:1118) L277
+- **Calls (crate):** `Dom::elements` (xmllinq/mod.rs:640) L269,271; `Dom::clone_subtree` (xmllinq/mod.rs:1231) L270; `Dom::name_is` (xmllinq/mod.rs:535) L272,274; `Dom::set_name` (xmllinq/mod.rs:539) L273; `clean_rpr` (edit/tracked.rs:1789) L275; `Dom::add_before_self` (xmllinq/mod.rs:1130) L276; `Dom::remove` (xmllinq/mod.rs:1118) L277
 - **Calls (std/external/unresolved):** `.push`, `Some`, `Vec::new`, `W::del_text`, `W::r_pr`, `W::r`, `W::t`
 - **Called by:** `emit` (edit/tracked.rs:452); `restore_plain` (edit/visible.rs:311); `Transaction::resolve_visible` (edit/visible.rs:348)
 
@@ -132,9 +132,9 @@
 `pub(super) fn comment_around(dom: &mut Dom, first: NodeId, last: NodeId, id: u32)`
 
 - **Does:** Comment `id` from `first` to `last`, siblings in that order: the start marker before `first`, the end marker and the reference run after `last`.
-- **Calls (crate):** `comment_marker` (edit.rs:7821) (by name) L301,302; `comment_reference_run` (edit.rs:7827) (by name) L303; `Dom::add_before_self` (xmllinq/mod.rs:1130) L304; `Dom::add_after_self` (xmllinq/mod.rs:1147) L305,306
+- **Calls (crate):** `comment_marker` (edit.rs:7868) (by name) L301,302; `comment_reference_run` (edit.rs:7874) (by name) L303; `Dom::add_before_self` (xmllinq/mod.rs:1130) L304; `Dom::add_after_self` (xmllinq/mod.rs:1147) L305,306
 - **Calls (std/external/unresolved):** `.to_string`
-- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply` (edit.rs:5882)
+- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply_text_edits` (edit.rs:5940)
 
 #### `restore_plain`  (L311-324, pub(super))
 `pub(super) fn restore_plain( dom: &mut Dom, paragraph: NodeId, wid: &str, ) -> Option<(NodeId, NodeId)>`
@@ -142,13 +142,13 @@
 - **Does:** The clean copy's restore: plain copies of their deletion `wid`'s runs right after it, which stays.
 - **Calls (crate):** `revision_in` (edit/visible.rs:287) L316; `copy_runs` (edit/visible.rs:267) L317; `Dom::add_after_self` (xmllinq/mod.rs:1147) L320
 - **Calls (std/external/unresolved):** `.first`, `Some`
-- **Called by:** `Transaction::apply` (edit.rs:5882)
+- **Called by:** `Transaction::apply_text_edits` (edit.rs:5940)
 
 #### `offset_before`  (L328-340)
 `fn offset_before(tx: &Transaction<'_>, para: usize, node: NodeId) -> usize`
 
 - **Does:** The projection offset at `node` in paragraph `para`: the end of the last projected piece before it.
-- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L330; `index` (ambiguous: `coverage_boundary_tests::index` (document_comparer.rs:8844); `index` (legacy_doc.rs:616)) L332,336; `run_of` (edit.rs:7980) (by name) L336
+- **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L330; `index` (ambiguous: `coverage_boundary_tests::index` (document_comparer.rs:8845); `index` (legacy_doc.rs:616)) L332,336; `run_of` (edit.rs:8027) (by name) L336
 - **Calls (std/external/unresolved):** `.filter`, `.iter`, `.map`, `.max`, `.position`, `.unwrap_or`
 - **Called by:** `Transaction::resolve_visible` (edit/visible.rs:348)
 
@@ -156,7 +156,7 @@
 `pub(super) fn resolve_visible( &mut self, id: &str, visible: Visible, revision: &str, comment: Option<&str>, ) -> Result<(Vec<Resolved>, EditOutcome), Failure>`
 
 - **Does:** Resolve a `strike` or a `restore` of `revision`: the text deletions that strike their insertion, or the copy that restores their deletion.
-- **Calls (crate):** `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L370; `Visible::verb` (edit/visible.rs:33) L372; `parse_change_ids` (ids.rs:232) L373; `ChangeId::short` (ids.rs:155) (by name) L388; `Visible::past` (edit/visible.rs:40) (by name) L395; `check_comment` (edit.rs:7087) (by name) L401; `list_changes` (changes.rs:564) L404; `unknown` (ambiguous: `coverage_round_three_tests::unknown` (comparer/lcs.rs:11929); `coverage_round_four_tests::unknown` (comparer/lcs.rs:12930); `coverage_round_next_tests::unknown` (comparer/lcs.rs:14299)) L407,499; `Visible::takes` (edit/visible.rs:48) (by name) L465,494; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L506,626; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L510,629; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L511,557,614; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L511; `Dom::ancestors` (xmllinq/mod.rs:770) (by name) L515; `paragraph_of` (ambiguous: `paragraph_of` (changes.rs:1388); `paragraph_of` (comparer/bookmarks.rs:76)) L519,546; `Transaction::paragraph_id` (edit.rs:5085) L526; `unsupported_child` (edit/visible.rs:210) L541,644; `run_of` (edit.rs:7980) (by name) L556; `editable_insertion` (edit.rs:7269) (by name) L560; `Dom::next_element` (xmllinq/mod.rs:855) (by name) L568; `excerpt` (edit.rs:7114) (by name) L604,659; `in_paragraph` (edit/visible.rs:226) L615; `local` (edit/visible.rs:185) L616; `container` (edit/visible.rs:232) L616; `holds_words` (edit/visible.rs:242) L631; `offset_before` (edit/visible.rs:328) L649; `Dom::new_element` (xmllinq/mod.rs:478) (by name) L653; `copy_runs` (edit/visible.rs:267) L654; `.add` (ambiguous, 5 candidates) L655; `project_paragraph` (inspect.rs:1265) (by name) L657
+- **Calls (crate):** `err` (ambiguous: `err` (edit/prepared.rs:1047); `err` (edit.rs:1770); `err` (markdown/package.rs:98)) L370; `Visible::verb` (edit/visible.rs:33) L372; `parse_change_ids` (ids.rs:232) L373; `ChangeId::short` (ids.rs:155) (by name) L388; `Visible::past` (edit/visible.rs:40) (by name) L395; `check_comment` (edit.rs:7134) (by name) L401; `list_changes` (changes.rs:564) L404; `unknown` (ambiguous: `coverage_round_three_tests::unknown` (comparer/lcs.rs:11929); `coverage_round_four_tests::unknown` (comparer/lcs.rs:12930); `coverage_round_next_tests::unknown` (comparer/lcs.rs:14299)) L407,499; `Visible::takes` (edit/visible.rs:48) (by name) L465,494; `Dom::descendants` (xmllinq/mod.rs:668) (by name) L506,626; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L510,629; `.parent` (ambiguous: `Marks::parent` (markdown/view_stories.rs:450); `Dom::parent` (xmllinq/mod.rs:597)) L511,557,614; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L511; `Dom::ancestors` (xmllinq/mod.rs:770) (by name) L515; `paragraph_of` (ambiguous: `paragraph_of` (changes.rs:1388); `paragraph_of` (comparer/bookmarks.rs:76)) L519,546; `Transaction::paragraph_id` (edit.rs:5085) L526; `unsupported_child` (edit/visible.rs:210) L541,644; `run_of` (edit.rs:8027) (by name) L556; `editable_insertion` (edit.rs:7316) (by name) L560; `Dom::next_element` (xmllinq/mod.rs:855) (by name) L568; `excerpt` (edit.rs:7161) (by name) L604,659; `in_paragraph` (edit/visible.rs:226) L615; `local` (edit/visible.rs:185) L616; `container` (edit/visible.rs:232) L616; `holds_words` (edit/visible.rs:242) L631; `offset_before` (edit/visible.rs:328) L649; `Dom::new_element` (xmllinq/mod.rs:478) (by name) L653; `copy_runs` (edit/visible.rs:267) L654; `.add` (ambiguous, 5 candidates) L655; `project_paragraph` (inspect.rs:1265) (by name) L657
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.as_slice`, `.as_str`, `.clone`, `.collect`, `.contains`, `.expect`, `.extend`, `.filter_map`, `.filter`, `.find_map`, `.find`, `.first`, `.into_iter`, `.into`, `.is_empty`, `.is_none`, `.is_some_and`, `.is_some`, `.iter`, `.join`, `.last_mut`, `.last`, `.len`, `.map_err`, `.map`, `.position`, `.push_str`, `.push`, `.replace`, `.to_string`, `.trim`, `.unwrap_or`, `Box::new`, `Err`, `Ok`, `Some`, `String::new`, `Vec::new`, `W::id`, `W::name`, `W::p`, `W::r_pr`, `fail`, `unsupported`
 - **Macros:** `format!`, `vec!`
 - **Called by:** `Transaction::resolve` (edit.rs:3267)

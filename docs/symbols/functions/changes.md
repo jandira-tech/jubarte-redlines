@@ -13,7 +13,7 @@
 `pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>`
 
 - **Does:** Read paragraph text including deletions, and document positions for the same carriers as `list_changes`.
-- **Calls (crate):** `open` (changes.rs:1031) L169; `main_part` (changes.rs:1039) L170; `revision_bearing_parts` (revision_processor.rs:3687) L172; `PartFs::part_string` (opc/mod.rs:636) (by name) L173; `Dom::new` (xmllinq/mod.rs:387) L176; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L177; `Dom::root` (xmllinq/mod.rs:822) L178; `story_id` (changes.rs:1046) L181; `carriers` (changes.rs:1124) L182; `Dom::name` (xmllinq/mod.rs:526) L196,216,242; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L197; `XName::local_name` (xmllinq/mod.rs:208) (by name) L199,218,242; `Dom::value` (xmllinq/mod.rs:1185) L221; `Dom::child_count` (xmllinq/mod.rs:622) L226; `Dom::child_at` (xmllinq/mod.rs:632) L227; `story_paragraph_nodes` (inspect.rs:1178) L230; `paragraph_id` (ids.rs:410) L233; `text_of` (changes.rs:1518) L233; `paragraph_index` (changes.rs:1377) L235; `paragraph_of` (changes.rs:1388) L240; `audit_owner` (changes.rs:283) L245,258
+- **Calls (crate):** `open` (changes.rs:1031) L169; `main_part` (changes.rs:1039) L170; `revision_bearing_parts` (revision_processor.rs:3716) L172; `PartFs::part_string` (opc/mod.rs:636) (by name) L173; `Dom::new` (xmllinq/mod.rs:387) L176; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L177; `Dom::root` (xmllinq/mod.rs:822) L178; `story_id` (changes.rs:1046) L181; `carriers` (changes.rs:1124) L182; `Dom::name` (xmllinq/mod.rs:526) L196,216,242; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L197; `XName::local_name` (xmllinq/mod.rs:208) (by name) L199,218,242; `Dom::value` (xmllinq/mod.rs:1185) L221; `Dom::child_count` (xmllinq/mod.rs:622) L226; `Dom::child_at` (xmllinq/mod.rs:632) L227; `story_paragraph_nodes` (inspect.rs:1178) L230; `paragraph_id` (ids.rs:410) L233; `text_of` (changes.rs:1518) L233; `paragraph_index` (changes.rs:1377) L235; `paragraph_of` (changes.rs:1388) L240; `audit_owner` (changes.rs:283) L245,258
 - **Calls (std/external/unresolved):** `.collect`, `.contains`, `.enumerate`, `.filter_map`, `.filter`, `.get_mut`, `.insert`, `.into_iter`, `.is_empty`, `.is_none`, `.is_some_and`, `.iter`, `.map`, `.pop`, `.push`, `.rev`, `.to_string`, `.unwrap`, `HashMap::new`, `Ok`, `Some`, `String::new`, `Vec::new`
 - **Macros:** `matches!`, `vec!`
 - **Called by:** `check_foreign_revisions` (validate.rs:3541)
@@ -32,7 +32,7 @@
 
 - **Does:** Build a filter that selects the changes `ids` names (`r12`, `header1.r1`, `r1+2`).
 - **Calls (std/external/unresolved):** `.collect`, `.into_iter`, `.map`, `Self::default`, `Some`
-- **Called by:** `plan_from_flags` (edit/flags.rs:85); `tests::a_silent_reject_is_not_recorded_into_a_visible_one` (edit/flags.rs:1042); `tests::recording_reads_ids_and_names_as_the_plan_spells_them` (edit/flags.rs:1064); `tests::revisions_go_to_resolve_revisions` (edit/flags.rs:1506); `for_edit` (edit/for_edit.rs:1581); `SourceModel::decisions` (edit/v2_apply.rs:1235); `resolve_selected` (edit.rs:1485); `deeper_boundary_tests::revision_selection_empty_and_reject_only_preserve_unselected_change` (edit.rs:8834)
+- **Called by:** `plan_from_flags` (edit/flags.rs:85); `tests::a_silent_reject_is_not_recorded_into_a_visible_one` (edit/flags.rs:1042); `tests::recording_reads_ids_and_names_as_the_plan_spells_them` (edit/flags.rs:1064); `tests::revisions_go_to_resolve_revisions` (edit/flags.rs:1506); `for_edit` (edit/for_edit.rs:1581); `SourceModel::decisions` (edit/v2_apply.rs:1235); `resolve_selected` (edit.rs:1485); `deeper_boundary_tests::revision_selection_empty_and_reject_only_preserve_unselected_change` (edit.rs:8914)
 
 #### `ChangeFilter::normalized`  (L349-377, pub)
 `pub fn normalized(&self) -> Result<Self, ChangeError>`
@@ -87,7 +87,7 @@
 - **Does:** Every tracked change, story by story (body, headers, footers, endnotes, footnotes, styles), in document order.
 - **Calls (crate):** `changes_in` (changes.rs:643) L565; `open` (changes.rs:1031) L565
 - **Calls (std/external/unresolved):** `Ok`
-- **Called by:** `plan_from_flags` (edit/flags.rs:85); `changed_selection` (edit/for_edit.rs:703); `tests::inline_decisions_freeze_original_ids_and_working_rewrite_hash` (edit/inline.rs:612); `resolution_lines` (edit/resolution.rs:238); `revision_counts` (edit/tracked.rs:404); `public_adjacent_run_replacement_owner_tests::public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner` (edit/tracked.rs:2090); `changes` (edit/v2_apply.rs:644); `lower` (edit/visible.rs:95); `Transaction::resolve_visible` (edit/visible.rs:348); `resolve_selected` (edit.rs:1485); `revisions_left` (edit.rs:1571); `deeper_boundary_tests::revision_selection_empty_and_reject_only_preserve_unselected_change` (edit.rs:8834); +2 more
+- **Called by:** `plan_from_flags` (edit/flags.rs:85); `changed_selection` (edit/for_edit.rs:703); `tests::inline_decisions_freeze_original_ids_and_working_rewrite_hash` (edit/inline.rs:612); `resolution_lines` (edit/resolution.rs:238); `revision_counts` (edit/tracked.rs:404); `public_adjacent_run_replacement_owner_tests::public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner` (edit/tracked.rs:2174); `changes` (edit/v2_apply.rs:644); `lower` (edit/visible.rs:95); `Transaction::resolve_visible` (edit/visible.rs:348); `resolve_selected` (edit.rs:1485); `revisions_left` (edit.rs:1571); `deeper_boundary_tests::revision_selection_empty_and_reject_only_preserve_unselected_change` (edit.rs:8914); +2 more
 
 #### `list_logical_changes`  (L579-581, pub)
 `pub fn list_logical_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError>`
@@ -133,7 +133,7 @@
 `fn tolerant(docx: &[u8]) -> Result<PartFs, ChangeError>`
 
 - **Does:** The package a view reads, opened without admission.
-- **Calls (crate):** `strict_to_transitional_docx` (strict_translation.rs:749) L623; `PartFs::open` (opc/mod.rs:585) L625; `revision_bearing_parts` (revision_processor.rs:3687) L626; `PartFs::part_string` (opc/mod.rs:636) (by name) L627; `nests_deeper` (xmllinq/parse.rs:151) (by name) L629
+- **Calls (crate):** `strict_to_transitional_docx` (strict_translation.rs:749) L623; `PartFs::open` (opc/mod.rs:585) L625; `revision_bearing_parts` (revision_processor.rs:3716) L626; `PartFs::part_string` (opc/mod.rs:636) (by name) L627; `nests_deeper` (xmllinq/parse.rs:151) (by name) L629
 - **Calls (std/external/unresolved):** `.is_some_and`, `.map_err`, `.to_string`, `ChangeError::Package`, `Err`, `Ok`
 - **Macros:** `format!`
 - **Called by:** `list_changes_tolerant` (changes.rs:607); `list_logical_changes_tolerant` (changes.rs:613)
@@ -150,7 +150,7 @@
 `fn for_each_story(pkg: &PartFs, mut each: impl FnMut(&Dom, NodeId, &str))`
 
 - **Does:** Each listed story's parsed part, in [`list_changes`] order: every revision-bearing part but the comments part.
-- **Calls (crate):** `main_part` (changes.rs:1039) L658; `comments_part` (revision_processor.rs:3679) L659; `revision_bearing_parts` (revision_processor.rs:3687) L660; `PartFs::part_string` (opc/mod.rs:636) L664; `Dom::new` (xmllinq/mod.rs:387) L667; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L668; `Dom::root` (xmllinq/mod.rs:822) L669; `story_id` (changes.rs:1046) L672
+- **Calls (crate):** `main_part` (changes.rs:1039) L658; `comments_part` (revision_processor.rs:3708) L659; `revision_bearing_parts` (revision_processor.rs:3716) L660; `PartFs::part_string` (opc/mod.rs:636) L664; `Dom::new` (xmllinq/mod.rs:387) L667; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L668; `Dom::root` (xmllinq/mod.rs:822) L669; `story_id` (changes.rs:1046) L672
 - **Calls (std/external/unresolved):** `.as_ref`, `Some`, `each`
 - **Called by:** `logical_changes_in` (changes.rs:584); `changes_in` (changes.rs:643)
 
@@ -160,7 +160,7 @@
 - **Does:** Accept the changes `filter` selects; the others stay tracked.
 - **Calls (crate):** `resolve` (changes.rs:872) L690
 - **Calls (std/external/unresolved):** `.map`
-- **Called by:** `public_adjacent_run_replacement_owner_tests::public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner` (edit/tracked.rs:2090)
+- **Called by:** `public_adjacent_run_replacement_owner_tests::public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner` (edit/tracked.rs:2174)
 
 #### `reject_changes`  (L699-701, pub)
 `pub fn reject_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError>`
@@ -168,7 +168,7 @@
 - **Does:** Reject the changes `filter` selects; the others stay tracked.
 - **Calls (crate):** `resolve` (changes.rs:872) L700
 - **Calls (std/external/unresolved):** `.map`
-- **Called by:** `public_adjacent_run_replacement_owner_tests::public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner` (edit/tracked.rs:2090); `audit_tracked` (validate.rs:3027)
+- **Called by:** `public_adjacent_run_replacement_owner_tests::public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner` (edit/tracked.rs:2174); `audit_tracked` (validate.rs:3027)
 
 #### `why_removed`  (L731-783, pub(crate))
 `pub(crate) fn why_removed( changes: &[Change], thread: &[String], resolution: Resolution, settled: Option<&[String]>, wholes: &HashMap<String, String>, ) -> String`
@@ -246,7 +246,7 @@
 `fn resolve_for_edit_or_cli( docx: &[u8], filter: &ChangeFilter, resolution: Resolution, edit: Option<bool>, whole: bool, ) -> Result<ResolutionOutcome, ChangeError>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `ChangeFilter::normalized` (changes.rs:349) L929; `open` (changes.rs:1031) L930; `changes_in` (changes.rs:643) L931; `ChangeFilter::check` (changes.rs:387) L932; `check_whole` (changes/logical.rs:517) L934; `logical_changes_in` (changes.rs:584) L934; `comment_changes_in` (changes.rs:1003) L938,989; `ChangeFilter::matches` (changes.rs:405) L943,957; `main_part` (changes.rs:1039) L952; `carriers` (changes.rs:1124) L954; `story_id` (changes.rs:1046) L954; `deleted_text` (changes.rs:1504) L965; `recorded_marks` (changes.rs:1419) L966; `Dom::set_name` (xmllinq/mod.rs:539) (by name) L971; `XName::get` (xmllinq/mod.rs:180) L971; `XName::local_name` (xmllinq/mod.rs:208) (by name) L971; `resolve_package_for_edit` (revision_processor.rs:3860) L976; `resolve_package` (revision_processor.rs:3850) L983; `PartFs::to_zip` (opc/mod.rs:749) (by name) L990
+- **Calls (crate):** `ChangeFilter::normalized` (changes.rs:349) L929; `open` (changes.rs:1031) L930; `changes_in` (changes.rs:643) L931; `ChangeFilter::check` (changes.rs:387) L932; `check_whole` (changes/logical.rs:517) L934; `logical_changes_in` (changes.rs:584) L934; `comment_changes_in` (changes.rs:1003) L938,989; `ChangeFilter::matches` (changes.rs:405) L943,957; `main_part` (changes.rs:1039) L952; `carriers` (changes.rs:1124) L954; `story_id` (changes.rs:1046) L954; `deleted_text` (changes.rs:1504) L965; `recorded_marks` (changes.rs:1419) L966; `Dom::set_name` (xmllinq/mod.rs:539) (by name) L971; `XName::get` (xmllinq/mod.rs:180) L971; `XName::local_name` (xmllinq/mod.rs:208) (by name) L971; `resolve_package_for_edit` (revision_processor.rs:3889) L976; `resolve_package` (revision_processor.rs:3879) L983; `PartFs::to_zip` (opc/mod.rs:749) (by name) L990
 - **Calls (std/external/unresolved):** `.any`, `.as_ref`, `.chain`, `.collect`, `.contains`, `.filter`, `.flat_map`, `.is_some_and`, `.is_some`, `.iter`, `.len`, `.map_err`, `.map`, `.name`, `.to_string`, `.to_vec`, `ChangeError::Package`, `Ok`, `Some`, `Vec::new`, `std::iter::once`
 - **Called by:** `resolve` (changes.rs:872); `accept_elements` (changes.rs:890); `reject_elements` (changes.rs:900); `resolve_for_edit` (changes.rs:909)
 
@@ -254,7 +254,7 @@
 `fn comment_changes_in(pkg: &PartFs) -> Vec<Change>`
 
 - **Does:** The listed changes of the comments part only (empty when the package has none): [`changes_in`] skips it because the view has no ids there.
-- **Calls (crate):** `comments_part` (revision_processor.rs:3679) L1004; `PartFs::part_string` (opc/mod.rs:636) L1007; `Dom::new` (xmllinq/mod.rs:387) L1010; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L1011; `Dom::root` (xmllinq/mod.rs:822) L1012; `carriers` (changes.rs:1124) L1015
+- **Calls (crate):** `comments_part` (revision_processor.rs:3708) L1004; `PartFs::part_string` (opc/mod.rs:636) L1007; `Dom::new` (xmllinq/mod.rs:387) L1010; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L1011; `Dom::root` (xmllinq/mod.rs:822) L1012; `carriers` (changes.rs:1124) L1015
 - **Calls (std/external/unresolved):** `.collect`, `.filter_map`, `.into_iter`, `Vec::new`
 - **Called by:** `resolve_for_edit_or_cli` (changes.rs:922)
 
@@ -262,7 +262,7 @@
 `fn open(docx: &[u8]) -> Result<PartFs, ChangeError>`
 
 - **Does:** The package, Strict normalized to transitional as `inspect` reads it.
-- **Calls (crate):** `admit_package` (document_comparer.rs:4926) L1032; `strict_to_transitional_docx` (strict_translation.rs:749) L1034; `PartFs::open` (opc/mod.rs:585) L1036
+- **Calls (crate):** `admit_package` (document_comparer.rs:4927) L1032; `strict_to_transitional_docx` (strict_translation.rs:749) L1034; `PartFs::open` (opc/mod.rs:585) L1036
 - **Calls (std/external/unresolved):** `.map_err`, `.to_string`, `ChangeError::Package`
 - **Called by:** `audit_stories` (changes.rs:168); `list_changes` (changes.rs:564); `list_logical_changes` (changes.rs:579); `check_whole_changes` (changes.rs:596); `resolve_for_edit_or_cli` (changes.rs:922); `Origin::build` (edit/origin.rs:260) (?); `restore` (edit/ranges.rs:432) (?); `record_mid_changes` (edit/sections.rs:453) (?); `rewrite` (edit/whole.rs:130) (?); `collect_fields` (fields.rs:281) (?)
 
@@ -402,7 +402,7 @@
 - **Does:** Inserted, deleted or moved text under `e`.
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L1520; `Dom::name` (xmllinq/mod.rs:526) L1522; `Dom::value` (xmllinq/mod.rs:1185) L1523
 - **Calls (std/external/unresolved):** `.collect`, `.filter`, `.into_iter`, `.is_some_and`, `.map`, `W::name`, `W::t`
-- **Called by:** `folded` (changes/logical.rs:316) (?); `audit_stories` (changes.rs:168); `carriers` (changes.rs:1124); `owner_text` (changes.rs:1528); `split_head_short_title_long_del_mix` (comparer/finalize.rs:4870) (?); `change_lines` (debug.rs:1480) (?); `compare_documents_impl` (document_comparer.rs:6520) (?); `ParaFormat::read` (markdown/view_stories.rs:94) (?); `story` (markdown/view_stories.rs:713) (?)
+- **Called by:** `folded` (changes/logical.rs:316) (?); `audit_stories` (changes.rs:168); `carriers` (changes.rs:1124); `owner_text` (changes.rs:1528); `split_head_short_title_long_del_mix` (comparer/finalize.rs:4870) (?); `change_lines` (debug.rs:1480) (?); `compare_documents_impl` (document_comparer.rs:6521) (?); `ParaFormat::read` (markdown/view_stories.rs:94) (?); `story` (markdown/view_stories.rs:713) (?)
 
 #### `owner_text`  (L1528-1534)
 `fn owner_text(dom: &Dom, change: NodeId) -> String`

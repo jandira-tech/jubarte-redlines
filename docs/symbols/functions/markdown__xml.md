@@ -133,7 +133,7 @@
 - **Calls (crate):** `split_for_ids` (markdown/xml.rs:1948) L792; `natural_marks` (markdown/xml.rs:1876) L818; `starts_inserted_side` (markdown/xml.rs:1788) L836; `close_mark` (markdown/xml.rs:1830) L839,887,900,903,1077,1102...; `spend` (markdown/xml.rs:2033) L841,908,951,986,1143,1148...; `Context::revision` (markdown/xml.rs:756) L842,909,956,1019,1037,1144...; `field_link` (markdown/xml.rs:1575) L852; `note_change` (markdown/xml.rs:1614) L856; `runs_ahead` (markdown/xml.rs:1761) L864; `ends_inserted_side` (markdown/xml.rs:1812) L869; `continues` (markdown/xml.rs:1629) L879,1121; `close_marks` (markdown/xml.rs:1860) L885,907,1031,1169,1565; `continues_change` (markdown/xml.rs:1701) L894,1087,1097,1131,1138,1157...; `escape` (markdown/xml.rs:601) L921,944,1288,1299,1310,1337; `paragraph_properties` (markdown/xml.rs:2039) L926; `Context::format_mark` (markdown/xml.rs:737) L932,1005,1015,1371,1469,1473...; `text_box_xml` (markdown/xml.rs:2373) L933; `omml` (markdown/math.rs:1923) L1040; `named` (ambiguous, 5 candidates) L1058; `Context::ids_left` (markdown/xml.rs:751) L1059,1193; `wrapping_chain` (markdown/xml.rs:1672) L1092,1177; `write_run` (markdown/xml.rs:2227) L1108,1212,1220; `resumes_later` (markdown/xml.rs:1768) L1120; `resumes_after` (markdown/xml.rs:1725) L1133; `field_argument` (markdown/xml.rs:1807) L1269,1271,1275; `Relate::hyperlink` (markdown/xml.rs:631) L1303; `xml` (markdown/borders.rs:254) L1359,1416,1515; `Context::revision_id` (markdown/xml.rs:698) L1390; `CellsAt::holds` (markdown/view_notes.rs:582) (by name) L1514
 - **Calls (std/external/unresolved):** `.all`, `.and_then`, `.any`, `.as_deref`, `.as_ref`, `.as_slice`, `.clone_from`, `.clone`, `.cloned`, `.contains`, `.copied`, `.enumerate`, `.filter`, `.find_map`, `.find`, `.flatten`, `.get`, `.insert_str`, `.insert`, `.into_iter`, `.is_empty`, `.is_none_or`, `.is_none`, `.is_some_and`, `.is_some`, `.iter`, `.last_mut`, `.last`, `.len`, `.map_or`, `.map`, `.max`, `.pop`, `.position`, `.push_str`, `.push`, `.rev`, `.rfind`, `.rposition`, `.saturating_sub`, `.sum`, `.take`, `.to_string`, `.to_vec`, `.unwrap_or_default`, `.unwrap_or_else`, `.unwrap_or`, `.zip`, `Item::Bookmark`, `Item::CommentReference`, `Item::RangeEnd`, `Item::RangeStart`, `Some`, `String::new`, `Vec::new`, `std::mem::take`, `u32::try_from`
 - **Macros:** `format!`, `matches!`, `vec!`, `write!`
-- **Called by:** `tests::a_page_break_stays_inside_its_paragraph_and_a_section_mark_ends_it` (legacy_doc.rs:1919); `assemble` (markdown/package.rs:103); `footnotes` (markdown/package.rs:1348); `write_run` (markdown/xml.rs:2227)
+- **Called by:** `tests::a_page_break_stays_inside_its_paragraph_and_a_section_mark_ends_it` (legacy_doc.rs:1998); `assemble` (markdown/package.rs:103); `footnotes` (markdown/package.rs:1348); `write_run` (markdown/xml.rs:2227)
 
 #### `field_link`  (L1575-1610)
 `fn field_link(rest: &[Item], document: &Document) -> Option<Change>`
@@ -362,7 +362,7 @@
 - **Calls (crate):** `write_list_level` (markdown/xml.rs:2567) L2558
 - **Calls (std/external/unresolved):** `.push_str`
 - **Macros:** `format!`
-- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply` (edit.rs:5882); `numbering` (markdown/xml.rs:2612); `tests::label_levels_match_abstract_num_for_the_same_kind` (markdown/xml.rs:3021)
+- **Called by:** `emit` (edit/tracked.rs:452); `Transaction::apply_lists` (edit.rs:6303); `numbering` (markdown/xml.rs:2612); `tests::label_levels_match_abstract_num_for_the_same_kind` (markdown/xml.rs:3021)
 
 #### `write_list_level`  (L2567-2581)
 `fn write_list_level(out: &mut String, level: u32, format: ListFormat)`
@@ -385,7 +385,7 @@
 - **Does:** A `w:num` instance of `abstract_id`, optionally starting `level` at `start`.
 - **Calls (std/external/unresolved):** `.push_str`
 - **Macros:** `format!`, `write!`
-- **Called by:** `drawing_group` (convert/mod.rs:16726) (?); `xfrm_box` (convert/mod.rs:16814) (?); `collect_group` (convert/mod.rs:16840) (?); `cust_geom` (convert/mod.rs:16999) (?); `vml_group_box` (convert/mod.rs:19299) (?); `emit` (edit/tracked.rs:452); `Transaction::apply` (edit.rs:5882); `numbering` (markdown/xml.rs:2612); `label_numbering` (markdown/xml.rs:2643)
+- **Called by:** `drawing_group` (convert/mod.rs:16726) (?); `xfrm_box` (convert/mod.rs:16814) (?); `collect_group` (convert/mod.rs:16840) (?); `cust_geom` (convert/mod.rs:16999) (?); `vml_group_box` (convert/mod.rs:19299) (?); `emit` (edit/tracked.rs:452); `Transaction::apply_lists` (edit.rs:6303); `numbering` (markdown/xml.rs:2612); `label_numbering` (markdown/xml.rs:2643)
 
 #### `numbering`  (L2612-2637, pub(super))
 `pub(super) fn numbering( lists: &[List], bullets: u32, decimal: u32, first_num: u32, ) -> (String, String)`

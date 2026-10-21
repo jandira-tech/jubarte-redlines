@@ -80,7 +80,7 @@
 `pub(crate) fn load(pkg: &PartFs, main: &str) -> Result<Self, String>`
 
 - **Does:** Load the family the main part `main` relates to.
-- **Calls (crate):** `Dom::new` (xmllinq/mod.rs:387) L458; `related_part` (comments.rs:1083) L461; `PartFs::part_string` (opc/mod.rs:636) L464; `validate_xml` (xmllinq/parse.rs:1043) L467; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L468; `Dom::root` (xmllinq/mod.rs:822) L469
+- **Calls (crate):** `Dom::new` (xmllinq/mod.rs:387) L458; `related_part` (comments.rs:1083) L461; `PartFs::part_string` (opc/mod.rs:636) L464; `validate_xml` (xmllinq/parse.rs:1052) L467; `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L468; `Dom::root` (xmllinq/mod.rs:822) L469
 - **Calls (std/external/unresolved):** `.enumerate`, `.iter`, `.map_err`, `.ok_or_else`, `.read_meta`, `BTreeMap::new`, `HashSet::new`, `Ok`, `Some`, `Vec::new`
 - **Macros:** `format!`
 - **Called by:** `append_documents` (append.rs:152); `stage_comments` (append.rs:563); `comments_in` (comments.rs:138); `people_and_text_boundary_tests::people_updates_preserve_existing_presence_and_add_each_remaining_author_once` (comments.rs:1273); `people_and_text_boundary_tests::removing_the_last_person_removes_its_part_type_and_relationship` (comments.rs:1309); `people_and_text_boundary_tests::unchanged_people_are_byte_identical_and_new_authors_do_not_create_a_people_part` (comments.rs:1332); `people_and_text_boundary_tests::adopted_comments_preserve_text_and_drop_old_paragraph_ids` (comments.rs:1372); `authored_thread_reference_contract_tests::family` (comments.rs:1585); `Origin::had_comment` (edit/origin.rs:252); `SourceModel::entity` (edit/v2_apply.rs:836); `SourceModel::operation` (edit/v2_apply.rs:1388); `Transaction::start` (edit.rs:2680); +3 more
@@ -136,7 +136,7 @@
 - **Does:** `id` and every comment that replies to it, directly or not.
 - **Calls (std/external/unresolved):** `.contains`, `.len`, `.push`, `Some`
 - **Macros:** `vec!`
-- **Called by:** `CommentFamily::set_done` (comments.rs:830); `CommentFamily::remove` (comments.rs:839); `authored_thread_reference_contract_tests::cyclic_and_missing_parent_metadata_terminate_without_discarding_comment_owners` (comments.rs:1629) (?); `thread_markers` (edit/tracked.rs:956) (?); `SourceModel::operation` (edit/v2_apply.rs:1388) (?); `check_comment_anchors` (edit/v2_apply.rs:1913) (?); `Transaction::resolve_thread` (edit.rs:4379) (?); `Transaction::check_thread_ops` (edit.rs:5715) (?); `Transaction::apply` (edit.rs:5882) (?)
+- **Called by:** `CommentFamily::set_done` (comments.rs:830); `CommentFamily::remove` (comments.rs:839); `authored_thread_reference_contract_tests::cyclic_and_missing_parent_metadata_terminate_without_discarding_comment_owners` (comments.rs:1629) (?); `thread_markers` (edit/tracked.rs:956) (?); `SourceModel::operation` (edit/v2_apply.rs:1388) (?); `check_comment_anchors` (edit/v2_apply.rs:1913) (?); `Transaction::resolve_thread` (edit.rs:4379) (?); `Transaction::check_thread_ops` (edit.rs:5715) (?); `Transaction::apply_reply_markers` (edit.rs:6381) (?)
 
 #### `CommentFamily::record`  (L612-634)
 `fn record(&self, id: u32) -> CommentRecord`
@@ -210,7 +210,7 @@
 - **Does:** Replace a comment's text.
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) (by name) L799; `Dom::new_element` (xmllinq/mod.rs:478) (by name) L803; `.nodes` (ambiguous: `Writer::nodes` (markdown/math.rs:1728); `Dom::nodes` (xmllinq/mod.rs:604)) L804,807; `Dom::name_is` (xmllinq/mod.rs:535) (by name) L808; `fill_comment_paragraph` (comments.rs:1129) L812; `.add` (ambiguous, 5 candidates) L813
 - **Calls (std/external/unresolved):** `.copied`, `.get`, `.last`, `.remove`, `.unwrap_or_else`, `Some`, `W::p_pr`, `W::p`
-- **Called by:** `Transaction::write_comments_part` (edit.rs:6714) (?)
+- **Called by:** `Transaction::write_comments_part` (edit.rs:6761) (?)
 
 #### `CommentFamily::set_thread`  (L819-827, pub(crate))
 `pub(crate) fn set_thread(&mut self, id: u32, parent: Option<u32>, done: bool)`
@@ -226,7 +226,7 @@
 - **Does:** Mark `id` and its replies resolved (or open again).
 - **Calls (crate):** `CommentFamily::with_replies` (comments.rs:597) L831
 - **Calls (std/external/unresolved):** `.get_mut`
-- **Called by:** `Transaction::write_comments_part` (edit.rs:6714) (?); `threads` (markdown/package.rs:74) (?)
+- **Called by:** `Transaction::write_comments_part` (edit.rs:6761) (?); `threads` (markdown/package.rs:74) (?)
 
 #### `CommentFamily::remove`  (L839-850, pub(crate))
 `pub(crate) fn remove(&mut self, id: u32) -> Vec<u32>`
@@ -243,7 +243,7 @@
 - **Calls (crate):** `Dom::attribute` (xmllinq/mod.rs:874) L858,929,955; `PartFs::remove_part` (opc/mod.rs:710) L865; `PartFs::remove_content_type_override` (opc/mod.rs:897) L866; `PartFs::remove_relationships_by_type` (opc/mod.rs:904) L867; `CommentFamily::store_people` (comments.rs:1033) L869,975; `CommentFamily::stamp_para_ids` (comments.rs:998) L872; `CommentFamily::order` (comments.rs:568) L873; `last_para_id` (comments.rs:1093) L876; `CommentFamily::ensure_part` (comments.rs:979) L879,905,910; `clear_rows` (comments.rs:1148) L885,915,916; `Dom::new_element` (xmllinq/mod.rs:478) L890,943,951; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L893,898,900,944,946,952...; `Dom::add` (xmllinq/mod.rs:1074) L902,948,963; `XName::get` (xmllinq/mod.rs:180) L915,919,921,943,945,951...; `is_hex8` (comments.rs:1154) L931; `allocate_hex8` (comments.rs:1159) L939; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L956; `Dom::serialize_document` (xmllinq/mod.rs:1338) L967; `PartFs::set_part` (opc/mod.rs:661) L968; `related_part` (comments.rs:1083) L969; `relative_rel_target` (opc/mod.rs:180) L970; `PartFs::add_document_relationship` (opc/mod.rs:1003) L971; `PartFs::add_content_type_override` (opc/mod.rs:845) L972
 - **Calls (std/external/unresolved):** `.and_then`, `.as_deref`, `.as_ref`, `.clone`, `.cloned`, `.collect`, `.enumerate`, `.filter_map`, `.get`, `.insert`, `.into_bytes`, `.is_empty`, `.is_none`, `.iter`, `.map_or_else`, `.map`, `.then_some`, `.to_ascii_uppercase`, `.to_string`, `.unwrap_or_default`, `.unwrap_or_else`, `.unwrap_or`, `.values`, `HashSet::new`, `Some`, `W15::name`, `W::author`, `W::date`, `u32::from_str_radix`
 - **Macros:** `format!`
-- **Called by:** `append_documents` (append.rs:152) (?); `cli_main` (bin/jubarte.rs:3935) (?); `Transaction::write_comments_part` (edit.rs:6714) (?); `threads` (markdown/package.rs:74) (?); `active::reset` (perf.rs:240) (?); `active::set_atom_count` (perf.rs:277) (?); `active::set_unit_count` (perf.rs:281) (?); `prune_orphan_comments` (revision_processor/comments.rs:274) (?); `prune_by_para` (revision_processor/comments.rs:411) (?); `prune_people` (revision_processor/comments.rs:467) (?); `prune_orphan_notes` (revision_processor/notes.rs:24) (?); `tidy` (revision_processor/word_save.rs:25) (?); +4 more
+- **Called by:** `append_documents` (append.rs:152) (?); `cli_main` (bin/jubarte.rs:3935) (?); `Transaction::write_comments_part` (edit.rs:6761) (?); `threads` (markdown/package.rs:74) (?); `active::reset` (perf.rs:240) (?); `active::set_atom_count` (perf.rs:277) (?); `active::set_unit_count` (perf.rs:281) (?); `prune_orphan_comments` (revision_processor/comments.rs:274) (?); `prune_by_para` (revision_processor/comments.rs:411) (?); `prune_people` (revision_processor/comments.rs:467) (?); `prune_orphan_notes` (revision_processor/notes.rs:24) (?); `tidy` (revision_processor/word_save.rs:25) (?); +4 more
 
 #### `CommentFamily::ensure_part`  (L979-994)
 `fn ensure_part(&mut self, k: usize, xml: impl Fn(&str) -> String) -> NodeId`

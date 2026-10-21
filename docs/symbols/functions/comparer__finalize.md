@@ -175,7 +175,7 @@
 - **Does:** M4.F.5 — `FixUpRevisionIds` (WmlComparer.cs:2769): renumber every `w:id` of every revision element under each `root` from `1`.
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L803; `Dom::name` (xmllinq/mod.rs:526) L804,841; `Dom::attribute` (xmllinq/mod.rs:874) L808,838; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L852
 - **Calls (std/external/unresolved):** `.and_then`, `.contains`, `.get`, `.insert`, `.map`, `.ok`, `.parse`, `.push`, `.to_string`, `.unwrap`, `Some`, `Vec::new`, `W::cell_del`, `W::cell_ins`, `W::del`, `W::id`, `W::ins`, `W::move_from_range_end`, `W::move_to_range_end`, `W::name`, `W::p_pr_change`, `alloc`, `std::collections::HashMap::new`, `std::collections::HashSet::new`
-- **Called by:** `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520); `typing_order` (edit/replacement_order.rs:82) (?)
+- **Called by:** `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521); `typing_order` (edit/replacement_order.rs:82) (?)
 
 #### `ignore_pt14_namespace`  (L862-874, pub)
 `pub fn ignore_pt14_namespace(dom: &mut Dom, root: NodeId)`
@@ -183,7 +183,7 @@
 - **Does:** M4.F.7 — `IgnorePt14Namespace` (WmlComparer.cs:2912): declare `xmlns:pt14` on `root` and add `pt14` to `mc:Ignorable` (idempotent).
 - **Calls (crate):** `XNamespace::xmlns` (xmllinq/mod.rs:122) L863; `Dom::attribute` (xmllinq/mod.rs:874) L864,868; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L865,872
 - **Calls (std/external/unresolved):** `.collect`, `.contains`, `.is_none`, `.join`, `.name`, `.push`, `.split_whitespace`, `.to_string`, `.unwrap_or`, `MC::name`, `Some`
-- **Called by:** `finalize_notes_part` (comparer/footnotes.rs:716); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `pre_process_markup` (document_comparer.rs:4713)
+- **Called by:** `finalize_notes_part` (comparer/footnotes.rs:716); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `pre_process_markup` (document_comparer.rs:4714)
 
 #### `declare_extension_namespaces_ignorable`  (L942-1001, pub)
 `pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId)`
@@ -191,7 +191,7 @@
 - **Does:** Elements merged in from the other document (B's numbering definitions, styles, notes) keep their Word 2010+ extension attributes but not the source root's `mc:Ignorable` contract, so the part claims markup it never declared ignorable (`w15:restartNumberingAfterBreak`, `w16cid:durableId` under a Mac-era numbering root).
 - **Calls (crate):** `XNamespace::xmlns` (xmllinq/mod.rs:122) L943; `Dom::descendants_and_self` (xmllinq/mod.rs:746) L945; `Dom::name` (xmllinq/mod.rs:526) L954; `existing_mark_layout_ownership_tests::mark` (comparer/finalize.rs:33009) L955,959; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L955,959; `Dom::attributes_iter` (xmllinq/mod.rs:886) L957; `Dom::is_namespace_declaration` (xmllinq/mod.rs:1012) L958,995; `Dom::attribute` (xmllinq/mod.rs:874) L967,978,991; `XNamespace::name` (xmllinq/mod.rs:134) L978,983,990; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L983,997,999; `Dom::attributes` (xmllinq/mod.rs:899) L992
 - **Calls (std/external/unresolved):** `.any`, `.as_deref`, `.collect`, `.contains`, `.enumerate`, `.is_none`, `.iter`, `.join`, `.len`, `.map`, `.position`, `.push`, `.split_whitespace`, `.to_string`, `.unwrap_or`, `MC::name`, `Some`
-- **Called by:** `coverage_final_batch_finalize_tests::compatibility_bindings_keep_conflicts_and_recognize_attribute_only_extensions` (comparer/finalize.rs:24643); `compare_documents_impl` (document_comparer.rs:6520); `assemble` (markdown/package.rs:103)
+- **Called by:** `coverage_final_batch_finalize_tests::compatibility_bindings_keep_conflicts_and_recognize_attribute_only_extensions` (comparer/finalize.rs:24643); `compare_documents_impl` (document_comparer.rs:6521); `assemble` (markdown/package.rs:103)
 
 #### `bind_compatibility_prefixes`  (L1026-1051, pub)
 `pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId)`
@@ -199,7 +199,7 @@
 - **Does:** Binds every prefix an MC prefix list names (`mc:Choice/@Requires`, `mc:Ignorable`, `mc:ProcessContent`, …) where the list names it.
 - **Calls (crate):** `XNamespace::xmlns` (xmllinq/mod.rs:122) L1028; `Dom::descendants_and_self` (xmllinq/mod.rs:746) L1029; `Dom::name` (xmllinq/mod.rs:526) L1030; `Dom::attributes_iter` (xmllinq/mod.rs:886) L1033; `is_namespace_prefix_list` (xmllinq/serialize.rs:365) L1035; `prefix_in_scope` (comparer/finalize.rs:1490) L1041; `well_known_namespace` (xmllinq/serialize.rs:190) L1044; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L1047; `XNamespace::name` (xmllinq/mod.rs:134) L1047
 - **Calls (std/external/unresolved):** `.collect`, `.filter`, `.is_empty`, `.map_or`, `.map`, `.split_once`, `.split_whitespace`, `.to_string`, `Some`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520); `repair` (validate.rs:2623)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521); `repair` (validate.rs:2623)
 
 #### `remove_powertools_scratch_markup`  (L1060-1072, pub)
 `pub fn remove_powertools_scratch_markup(dom: &mut Dom, root: NodeId)`
@@ -837,7 +837,7 @@
 - **Does:** Drop a `w:pPr` that records nothing Word keeps.
 - **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L6009,6014,6023; `Dom::descendants` (xmllinq/mod.rs:668) L6012; `Dom::elements` (xmllinq/mod.rs:640) L6017,6024,6043; `Dom::name_is` (xmllinq/mod.rs:535) L6022,6033; `Dom::name` (xmllinq/mod.rs:526) L6026; `Dom::remove` (xmllinq/mod.rs:1118) L6041,6044
 - **Calls (std/external/unresolved):** `.any`, `.is_empty`, `.is_some_and`, `.iter`, `.push`, `Some`, `Vec::new`, `W::body`, `W::p_pr_change`, `W::p_pr`, `W::p`, `W::r_pr`
-- **Called by:** `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `pg_num_type_is_implicit_decimal`  (L6053-6061, pub(crate))
 `pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool`
@@ -853,7 +853,7 @@
 - **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L6084,6114,6124,6127,6128,6129; `Dom::elements` (xmllinq/mod.rs:640) L6087; `Dom::name_is` (xmllinq/mod.rs:535) L6091; `Dom::descendants` (xmllinq/mod.rs:668) L6093,6098,6103,6108,6113,6121; `Dom::attribute` (xmllinq/mod.rs:874) L6094,6115; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L6099,6104; `pg_num_type_is_implicit_decimal` (comparer/finalize.rs:6053) L6109; `spacing_is_only_line_276` (comparer/finalize.rs:6154) L6131; `content_revision_marks` (comparer/finalize.rs:6189) L6132,6141; `pilcrow_ins_only` (comparer/finalize.rs:6174) L6140; `Dom::remove` (xmllinq/mod.rs:1118) L6147,6150
 - **Calls (std/external/unresolved):** `.find`, `.into_iter`, `.is_none_or`, `.is_some`, `.push`, `.rev`, `.unwrap_or`, `Some`, `Vec::new`, `W::body`, `W::del`, `W::jc_el`, `W::name`, `W::p_pr`, `W::p`, `W::r_pr`, `W::sect_pr`, `W::spacing_el`, `W::val`
 - **Macros:** `matches!`
-- **Called by:** `coverage_round_next_tests::unrecorded_spacing_guards_preserve_all_explicit_vertical_metrics` (comparer/finalize.rs:20299); `split_paragraph_boundary_regressions::mixed_inserted_boundary_joins_original_text_and_closing_layout_on_reject` (comparer/finalize.rs:23752); `public_body_heuristic_story_scope_tests::configured_heuristics` (comparer/finalize.rs:32397); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `coverage_round_next_tests::unrecorded_spacing_guards_preserve_all_explicit_vertical_metrics` (comparer/finalize.rs:20299); `split_paragraph_boundary_regressions::mixed_inserted_boundary_joins_original_text_and_closing_layout_on_reject` (comparer/finalize.rs:23752); `public_body_heuristic_story_scope_tests::configured_heuristics` (comparer/finalize.rs:32397); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `spacing_is_only_line_276`  (L6154-6171)
 `fn spacing_is_only_line_276(dom: &Dom, sp: NodeId) -> bool`
@@ -885,7 +885,7 @@
 - **Does:** Table and comment-reference chrome Word writes on every matching redline in this corpus.
 - **Calls (crate):** `Dom::element` (xmllinq/mod.rs:655) L6221,6235,6254,6257,6264,6273...; `Dom::descendants` (xmllinq/mod.rs:668) L6224,6252,6294; `Dom::ancestors` (xmllinq/mod.rs:770) L6229; `Dom::new_element` (xmllinq/mod.rs:478) L6238,6276,6277,6279,6306,6312...; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L6239,6248,6280,6281,6313,6318...; `insert_tblpr_child_in_order` (comparer/finalize.rs:10454) L6250; `Dom::attribute` (xmllinq/mod.rs:874) L6265; `Dom::elements` (xmllinq/mod.rs:640) L6271,6287; `Dom::add` (xmllinq/mod.rs:1074) L6282,6284,6290,6314,6319,6324; `Dom::add_before_self` (xmllinq/mod.rs:1130) L6286,6288; `Dom::ancestors_and_self` (xmllinq/mod.rs:787) L6296; `Dom::name_is` (xmllinq/mod.rs:535) L6299; `Dom::add_first` (xmllinq/mod.rs:1101) L6307
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.copied`, `.find`, `.first`, `.into_iter`, `.is_empty`, `.is_none`, `.is_some_and`, `.is_some`, `.iter`, `Some`, `W::body`, `W::name`, `W::r_pr`, `W::r`, `W::tbl_pr`, `W::tbl`, `W::tr_pr`, `W::tr`, `W::val`
-- **Called by:** `coverage_round_next_tests::table_chrome_adds_look_before_history_and_handles_all_row_positions` (comparer/finalize.rs:19966); `coverage_round_next_tests::comment_chrome_fills_each_missing_property_independently_and_ignores_orphans` (comparer/finalize.rs:19988); `coverage_round_next_tests::compatibility_defaults_keep_nonzero_vertical_margins_and_existing_look` (comparer/finalize.rs:20582); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `coverage_round_next_tests::table_chrome_adds_look_before_history_and_handles_all_row_positions` (comparer/finalize.rs:19966); `coverage_round_next_tests::comment_chrome_fills_each_missing_property_independently_and_ignores_orphans` (comparer/finalize.rs:19988); `coverage_round_next_tests::compatibility_defaults_keep_nonzero_vertical_margins_and_existing_look` (comparer/finalize.rs:20582); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `rewrite_inserted_external_hyperlinks`  (L6336-6396, pub)
 `pub fn rewrite_inserted_external_hyperlinks( dom: &mut Dom, root: NodeId, id_to_target: &HashMap<String, String>, base_targets: &HashSet<String>, )`
@@ -894,7 +894,7 @@
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L6342; `Dom::attribute` (xmllinq/mod.rs:874) L6344,6347; `hyperlink_is_wholly_inserted` (comparer/finalize.rs:6398) L6356; `field_char_run` (comparer/finalize.rs:6414) L6360,6365,6366; `Dom::new_element` (xmllinq/mod.rs:478) L6361,6362; `Dom::add_text` (xmllinq/mod.rs:1087) L6363; `Dom::add` (xmllinq/mod.rs:1074) L6364,6380; `Dom::parent` (xmllinq/mod.rs:597) L6367; `Dom::name_is` (xmllinq/mod.rs:535) L6367; `Dom::add_before_self` (xmllinq/mod.rs:1130) L6369,6370,6371,6392; `Dom::add_after_self` (xmllinq/mod.rs:1147) L6372; `Dom::elements` (xmllinq/mod.rs:640) L6375; `Dom::add_first` (xmllinq/mod.rs:1101) L6377,6378,6379; `Dom::nodes` (xmllinq/mod.rs:604) L6389; `Dom::remove` (xmllinq/mod.rs:1118) L6391,6394
 - **Calls (std/external/unresolved):** `.cloned`, `.contains`, `.first`, `.get`, `.is_some_and`, `.is_some`, `.last`, `.map`, `R::name`, `Some`, `W::hyperlink`, `W::ins`, `W::name`, `W::r`
 - **Macros:** `format!`
-- **Called by:** `coverage_final_batch_finalize_tests::external_link_rewrite_matrix_requires_new_target_and_wholly_inserted_content` (comparer/finalize.rs:24402); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `coverage_final_batch_finalize_tests::external_link_rewrite_matrix_requires_new_target_and_wholly_inserted_content` (comparer/finalize.rs:24402); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `hyperlink_is_wholly_inserted`  (L6398-6412)
 `fn hyperlink_is_wholly_inserted(dom: &Dom, hl: NodeId) -> bool`
@@ -943,7 +943,7 @@
 - **Calls (crate):** `Dom::nodes` (xmllinq/mod.rs:604) L6661,6680; `revision_wrapper` (comparer/finalize.rs:6712) L6667; `fields_complete` (comparer/finalize.rs:6689) L6670,6671; `Dom::remove` (xmllinq/mod.rs:1118) L6673; `Dom::add_before_self` (xmllinq/mod.rs:1130) L6674; `Dom::is_element` (xmllinq/mod.rs:502) L6681; `reorder_replacements_ins_before_del` (comparer/finalize.rs:6657) L6682
 - **Calls (std/external/unresolved):** `.len`, `Some`, `W::name`
 - **Macros:** `matches!`
-- **Called by:** `reorder_replacements_ins_before_del` (comparer/finalize.rs:6657); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `reorder_replacements_ins_before_del` (comparer/finalize.rs:6657); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `fields_complete`  (L6689-6704, pub(crate))
 `pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool`
@@ -1408,7 +1408,7 @@
 - **Does:** Schema order for a whole package part, run by the package validity sweep after every other pass has had its say — so a property appended late (a style merged from B, a `w:jc` added after the body's ordering pass) still lands where the schema wants it.
 - **Calls (crate):** `wml_order_elements_per_standard` (comparer/finalize.rs:10488) L10742; `Dom::descendants` (xmllinq/mod.rs:668) L10744; `Dom::elements` (xmllinq/mod.rs:640) L10745,10746; `Dom::name` (xmllinq/mod.rs:526) L10747; `Dom::remove` (xmllinq/mod.rs:1118) L10748
 - **Calls (std/external/unresolved):** `.contains`, `.is_some_and`, `Some`, `W::p_pr_change`, `W::p_pr`, `W::r_pr`, `W::sect_pr`
-- **Called by:** `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `wrap_bare_del_text_runs`  (L10776-10806, pub)
 `pub fn wrap_bare_del_text_runs( dom: &mut Dom, root: NodeId, settings: &WmlComparerSettings, id_gen: &mut u32, )`
@@ -1489,7 +1489,7 @@
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L11341,11358,11410,11428,11436; `Dom::attribute` (xmllinq/mod.rs:874) L11342,11374,11412,11437; `Dom::attribute` (xmllinq/mod.rs:874) (by name) L11350; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L11355,11378,11438,11439,11472; `Dom::value` (xmllinq/mod.rs:1185) L11359; `Dom::set_value` (xmllinq/mod.rs:1219) L11364; `Dom::descendants_and_self` (xmllinq/mod.rs:746) L11368,11456; `XNamespace::none` (xmllinq/mod.rs:116) L11393; `XNamespace::get` (xmllinq/mod.rs:108) L11418; `fix_strict_validity_artifacts::{fn remap}` (comparer/finalize.rs:11395) L11419; `Dom::set_name` (xmllinq/mod.rs:539) L11429; `Dom::name` (xmllinq/mod.rs:526) L11457; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L11458; `Dom::attributes` (xmllinq/mod.rs:899) L11461
 - **Calls (std/external/unresolved):** `.collect`, `.contains`, `.filter_map`, `.into_iter`, `.is_some_and`, `.is_some`, `.map_or`, `.map`, `.name`, `.ok`, `.parse`, `.push`, `.round`, `.starts_with`, `.strip_suffix`, `.to_string`, `.trim`, `Some`, `String::with_capacity`, `W14::name`, `W::drawing`, `W::name`, `W::val`, `WP14::name`, `crate::namespaces::A::name`, `crate::namespaces::WNE::name`, `u32::from_str_radix`
 - **Macros:** `matches!`
-- **Called by:** `coverage_round_next_tests::strict_shape_repair_stops_at_nested_drawing_and_keeps_bad_percent_text` (comparer/finalize.rs:20667); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `coverage_round_next_tests::strict_shape_repair_stops_at_nested_drawing_and_keeps_bad_percent_text` (comparer/finalize.rs:20667); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `fix_strict_validity_artifacts::{fn remap}`  (L11395-11409)
 `fn remap(dom: &mut Dom, node: NodeId, wp_uri: &str, target: &XNamespace, drawing: &XName)`
@@ -1503,7 +1503,7 @@
 
 - **Does:** Canonicalize ST_UniversalMeasure values (`612pt`, `1in`, `2.54cm`, …) to plain twips on the twips-typed layout attributes.
 - **Calls (crate):** `normalize_measures` (comparer/finalize.rs:11502) L11491
-- **Called by:** `closing_mark_takes_revised_properties` (comparer/finalize.rs:3200); `sectpr_identity` (comparer/finalize.rs:11609); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `closing_mark_takes_revised_properties` (comparer/finalize.rs:3200); `sectpr_identity` (comparer/finalize.rs:11609); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `normalize_unit_measures`  (L11498-11500, pub)
 `pub fn normalize_unit_measures(dom: &mut Dom, root: NodeId)`
@@ -1524,7 +1524,7 @@
 `fn to_twips(v: &str, round_plain_fractional: bool) -> Option<i64>`
 
 - **Does:** _no doc comment_
-- **Calls (crate):** `universal_measure_twips` (util/mod.rs:47) L11549
+- **Calls (crate):** `universal_measure_twips` (util/mod.rs:61) L11549
 - **Calls (std/external/unresolved):** `.contains`, `.map`, `.ok`, `.parse`, `.round`, `.trim`, `Some`
 - **Called by:** `normalize_measures` (comparer/finalize.rs:11502)
 
@@ -1937,7 +1937,7 @@
 - **Does:** `w:hyperlink` is not in CT_RunTrackChange's content model: a `w:ins`/`w:del` holds runs, not a hyperlink wrapper.
 - **Calls (crate):** `Dom::descendants_and_self` (xmllinq/mod.rs:746) L14619; `Dom::attribute` (xmllinq/mod.rs:874) L14623; `Dom::descendants` (xmllinq/mod.rs:668) L14634; `Dom::elements` (xmllinq/mod.rs:640) L14636; `Dom::name` (xmllinq/mod.rs:526) L14638; `split_revision_around_hyperlinks` (comparer/finalize.rs:14652) L14645
 - **Calls (std/external/unresolved):** `.and_then`, `.any`, `.collect`, `.contains`, `.filter_map`, `.filter`, `.flat_map`, `.into_iter`, `.is_empty`, `.is_some_and`, `.iter`, `.max`, `.ok`, `.parse`, `.unwrap_or`, `Some`, `W::hyperlink`, `W::id`, `W::name`
-- **Called by:** `coverage_final_batch_finalize_tests::hyperlink_hoisting_preserves_empty_wrappers_and_run_order_across_revisions` (comparer/finalize.rs:24482); `coverage_final_batch_finalize_tests::empty_field_in_a_revision_keeps_its_flags_and_padded_code` (comparer/finalize.rs:24566); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520); `coverage_boundary_tests::one_sided_story_fields_join_the_story_revision` (document_comparer.rs:9531)
+- **Called by:** `coverage_final_batch_finalize_tests::hyperlink_hoisting_preserves_empty_wrappers_and_run_order_across_revisions` (comparer/finalize.rs:24482); `coverage_final_batch_finalize_tests::empty_field_in_a_revision_keeps_its_flags_and_padded_code` (comparer/finalize.rs:24566); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521); `coverage_boundary_tests::one_sided_story_fields_join_the_story_revision` (document_comparer.rs:9532)
 
 #### `split_revision_around_hyperlinks`  (L14652-14723)
 `fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u32)`
@@ -1962,7 +1962,7 @@
 - **Does:** Repair invalidity we did not create but would otherwise ship.
 - **Calls (crate):** `Dom::descendants_and_self` (xmllinq/mod.rs:746) L14790,14804,14811; `Dom::name` (xmllinq/mod.rs:526) L14791,14821,14823; `.namespace_name` (ambiguous: `XNamespace::namespace_name` (xmllinq/mod.rs:140); `XName::namespace_name` (xmllinq/mod.rs:219)) L14792,14796; `Dom::attributes` (xmllinq/mod.rs:899) L14795; `Dom::is_namespace_declaration` (xmllinq/mod.rs:1012) L14797; `XName::local_name` (xmllinq/mod.rs:208) (by name) L14798; `Dom::set_attribute_value` (xmllinq/mod.rs:977) L14800,14806,14813; `Dom::attribute` (xmllinq/mod.rs:874) L14805,14812; `Dom::descendants` (xmllinq/mod.rs:668) L14818; `Dom::parent` (xmllinq/mod.rs:597) L14819,14822; `Dom::remove` (xmllinq/mod.rs:1118) L14825
 - **Calls (std/external/unresolved):** `.and_then`, `.as_ref`, `.filter`, `.is_empty`, `.is_none`, `.is_some_and`, `Some`, `W::name`, `W::r_pr`, `W::val`
-- **Called by:** `coverage_final_batch_finalize_tests::inherited_invalidity_repairs_only_wml_schema_defects` (comparer/finalize.rs:24583); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `coverage_final_batch_finalize_tests::inherited_invalidity_repairs_only_wml_schema_defects` (comparer/finalize.rs:24583); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `enforce_deleted_text_kinds`  (L14856-14879, pub)
 `pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId)`
@@ -1970,7 +1970,7 @@
 - **Does:** Enforce the deleted-text invariant everywhere, not just on runs that happened to go through `convert_run_text_to_del_text`.
 - **Calls (crate):** `Dom::descendants` (xmllinq/mod.rs:668) L14876; `descendants_trimmed::{fn walk}` (comparer/finalize.rs:65) L14877
 - **Calls (std/external/unresolved):** `Some`, `W::del`
-- **Called by:** `nested_deleted_text_source_ownership_tests::outer_deletion_preserves_independently_owned_nested_revision_text_and_fields` (comparer/finalize.rs:34181); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `nested_deleted_text_source_ownership_tests::outer_deletion_preserves_independently_owned_nested_revision_text_and_fields` (comparer/finalize.rs:34181); `try_compare_bodies_faithful_with_notes` (comparer/mod.rs:215); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `enforce_deleted_text_kinds::{fn walk}`  (L14857-14875)
 `fn walk(dom: &mut Dom, node: NodeId)`
@@ -1986,7 +1986,7 @@
 - **Does:** Match the six output shapes the parity ladder still counted after the operation sequence already matched — a trailing revised insertion split out of the comparison insertion, a deleted pilcrow on a tab-joined swallowed title, a commented list item unmerged from the deletion, a duplicated Normal-styled deletion, spacin...
 - **Calls (crate):** `Dom::parse_xdocument` (xmllinq/mod.rs:1299) L14909,14910; `Dom::root` (xmllinq/mod.rs:822) L14911; `max_numeric_id` (comparer/finalize.rs:14923) L14914; `split_trailing_insertions` (comparer/finalize.rs:15033) L14915; `mark_tabbed_deleted_titles` (comparer/finalize.rs:15172) L14916; `unmerge_comment_list_item` (comparer/finalize.rs:15255) L14917; `drop_duplicate_normal_style` (comparer/finalize.rs:15321) L14918; `move_spacing_onto_bare_deletion` (comparer/finalize.rs:15386) L14919; `stamp_trailing_numbering` (comparer/finalize.rs:15468) L14920
 - **Calls (std/external/unresolved):** `.saturating_add`
-- **Called by:** `ladder_suffix_source_boundary_tests::public_ladder_restores_suffix_author_at_unicode_and_run_boundaries` (comparer/finalize.rs:34292); `compare_documents_impl` (document_comparer.rs:6520)
+- **Called by:** `ladder_suffix_source_boundary_tests::public_ladder_restores_suffix_author_at_unicode_and_run_boundaries` (comparer/finalize.rs:34292); `compare_documents_impl` (document_comparer.rs:6521)
 
 #### `max_numeric_id`  (L14923-14933)
 `fn max_numeric_id(dom: &Dom, root: NodeId) -> u32`
@@ -2017,7 +2017,7 @@
 
 - **Does:** _no doc comment_
 - **Calls (crate):** `Dom::parent` (xmllinq/mod.rs:597) L14957
-- **Called by:** `content_revisions` (comparer/finalize.rs:15211); `locate` (edit.rs:7156) (?)
+- **Called by:** `content_revisions` (comparer/finalize.rs:15211); `locate` (edit.rs:7203) (?)
 
 #### `inside_table`  (L14966-14975)
 `fn inside_table(dom: &Dom, node: NodeId) -> bool`

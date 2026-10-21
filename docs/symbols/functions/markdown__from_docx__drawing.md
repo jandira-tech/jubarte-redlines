@@ -108,7 +108,7 @@
 - **Does:** `![label][name]` with the label made a Markdown alt text: one line, brackets escaped.
 - **Calls (std/external/unresolved):** `.is_empty`
 - **Macros:** `format!`
-- **Called by:** `tests::drawings_compare_their_placement_and_target` (debug/diff.rs:2039) (?); `coverage_boundary_tests::a_reused_header_keeps_its_own_relationships` (document_comparer.rs:10668) (?); `Pending::push` (markdown/from_docx/drawing.rs:226); `Pending::reserve` (markdown/from_docx/drawing.rs:242)
+- **Called by:** `tests::drawings_compare_their_placement_and_target` (debug/diff.rs:2039) (?); `coverage_boundary_tests::a_reused_header_keeps_its_own_relationships` (document_comparer.rs:10669) (?); `Pending::push` (markdown/from_docx/drawing.rs:226); `Pending::reserve` (markdown/from_docx/drawing.rs:242)
 
 #### `label`  (L399-409)
 `fn label(element: &Element) -> String`
@@ -390,7 +390,7 @@
 - **Does:** The Markdown drawing token at `text`'s start, if any — `![label][dN]`, or a `![label](drawing:PAYLOAD)` of a view an older build wrote.
 - **Calls (std/external/unresolved):** `.all`, `.and_then`, `.bytes`, `.find`, `.is_ascii_alphanumeric`, `.is_ascii_digit`, `.is_empty`, `.len`, `.map`, `.or_else`, `.split_once`, `.strip_prefix`, `.then`
 - **Macros:** `matches!`
-- **Called by:** `run_convert_any` (bin/jubarte.rs:3458) (?); `unit_lcs` (comparer/cross_para.rs:1384) (?); `char_weighted_lcs` (comparer/cross_para.rs:1996) (?); `wmf_object_tests::a_polypolygon_fills_with_the_brush_selected_by_zero_based_index` (convert/metafile.rs:1576) (?); `wmf_object_tests::a_rectangle_fills_with_the_brush_and_is_outlined_with_the_pen` (convert/metafile.rs:1641) (?); `wmf_object_tests::a_null_brush_rectangle_only_outlines` (convert/metafile.rs:1667) (?); `chrome_part_xml` (convert/mod.rs:20786) (?); `coverage_round_three_tests::coverage_deep_layout_tests::chrome_tables_before_and_after_text_keep_their_vertical_order_and_body_flags` (convert/mod.rs:53494) (?); `inner_comment_references` (edit.rs:7509) (?); `closing_comment_references` (edit.rs:7548) (?); `escape_markdown` (markdown/from_docx/agent.rs:1751) (?); `relabel` (markdown/from_docx/drawing.rs:1073); +10 more
+- **Called by:** `run_convert_any` (bin/jubarte.rs:3458) (?); `unit_lcs` (comparer/cross_para.rs:1384) (?); `char_weighted_lcs` (comparer/cross_para.rs:1996) (?); `wmf_object_tests::a_polypolygon_fills_with_the_brush_selected_by_zero_based_index` (convert/metafile.rs:1576) (?); `wmf_object_tests::a_rectangle_fills_with_the_brush_and_is_outlined_with_the_pen` (convert/metafile.rs:1641) (?); `wmf_object_tests::a_null_brush_rectangle_only_outlines` (convert/metafile.rs:1667) (?); `chrome_part_xml` (convert/mod.rs:20786) (?); `coverage_round_three_tests::coverage_deep_layout_tests::chrome_tables_before_and_after_text_keep_their_vertical_order_and_body_flags` (convert/mod.rs:53494) (?); `inner_comment_references` (edit.rs:7556) (?); `closing_comment_references` (edit.rs:7595) (?); `escape_markdown` (markdown/from_docx/agent.rs:1751) (?); `relabel` (markdown/from_docx/drawing.rs:1073); +10 more
 
 #### `cuts_token`  (L1388-1393, pub(crate))
 `pub(crate) fn cuts_token(text: &str, cut: usize) -> bool`

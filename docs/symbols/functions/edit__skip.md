@@ -30,7 +30,7 @@
 `fn outcome_of(e: &EditError, plan: &EditPlan, i: usize) -> EditOutcome`
 
 - **Does:** Operation `i`'s outcome in `e`, or a bare one when `e` reports none.
-- **Calls (crate):** `op_id` (edit/skip.rs:173) L225; `kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6943)) L232
+- **Calls (crate):** `op_id` (edit/skip.rs:173) L225; `kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6990)) L232
 - **Calls (std/external/unresolved):** `.cloned`, `.find`, `.iter`, `.to_string`, `.unwrap_or_else`, `String::new`
 - **Called by:** `prepare_skipping` (edit/skip.rs:43)
 
@@ -46,7 +46,7 @@
 `pub fn failed_plan_json( source: &[u8], plan: &EditPlan, skipped: &[SkippedOperation], date: &str, output_sha256: &str, existing_revisions: ExistingRevisions, redline: bool, ) -> String`
 
 - **Does:** The plan of `skipped`, to fix and run on the document written (the redline when `redline`, else the clean copy): the plan's author, the date the run used, `existing_revisions` as given (`keep` when the output is a redline, whose tracked changes are the plan's own), `source_sha256` of that document, no `resolve_revisio...
-- **Calls (crate):** `rename_positions` (edit/skip.rs:394) L289; `keep_note` (edit/skip.rs:335) L303; `kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6943)) L303
+- **Calls (crate):** `rename_positions` (edit/skip.rs:394) L289; `keep_note` (edit/skip.rs:335) L303; `kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6990)) L303
 - **Calls (std/external/unresolved):** `.as_array_mut`, `.as_ref`, `.chain`, `.clone`, `.collect`, `.expect`, `.into`, `.iter_mut`, `.iter`, `.map`, `.push_str`, `.push`, `.to_string`, `.zip`, `Some`, `serde_json::to_string_pretty`, `serde_json::to_value`
 - **Macros:** `format!`
 - **Called by:** none found in src
@@ -55,7 +55,7 @@
 `pub fn keep_notes( skipped: &[SkippedOperation], existing_revisions: ExistingRevisions, ) -> Vec<String>`
 
 - **Does:** What the plan of the fixes cannot do once per kind, in plan order: under `existing_revisions` keep (the redline's tracked changes kept), a skipped operation of a kind keep refuses (`x-jubarte-keep` false).
-- **Calls (crate):** `keep_note` (edit/skip.rs:335) L326; `kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6943)) L326
+- **Calls (crate):** `keep_note` (edit/skip.rs:335) L326; `kind_name` (ambiguous: `kind_name` (changes.rs:510); `kind_name` (edit.rs:6990)) L326
 - **Calls (std/external/unresolved):** `.contains`, `.push`, `Vec::new`
 - **Called by:** none found in src
 
@@ -72,7 +72,7 @@
 `fn source_only(operation: &mut Operation, what: &Named, shown: &str)`
 
 - **Does:** Name what `what` points at in `operation` as `source:SHOWN`, which no document resolves: the plan of the fixes cannot run it on whatever paragraph or control now has its id until it is given again.
-- **Calls (crate):** `selectors_mut` (edit.rs:7008) L360
+- **Calls (crate):** `selectors_mut` (edit.rs:7055) L360
 - **Calls (std/external/unresolved):** `.swap_remove`, `ControlSelector::Name`, `Selector::Name`
 - **Macros:** `format!`
 - **Called by:** `rename_positions` (edit/skip.rs:394)
@@ -88,7 +88,7 @@
 `fn rename_positions( source: &[u8], plan: &EditPlan, skipped: &[SkippedOperation], redline: bool, operations: &mut [Operation], ) -> Vec<Vec<String>>`
 
 - **Does:** Rename each positional paragraph of `operations` (the skipped ones'), and each control named through one, to its id in the document the plan's other operations write, read off a run of them on `source` with its paragraphs tagged; the notes, per operation, of what moved and what has no one-to-one paragraph there, each...
-- **Calls (crate):** `Paragraphs::open` (edit/origin.rs:585) L402; `.ids` (ambiguous, 6 candidates) L405,478; `control_paragraph` (edit/skip.rs:379) L411; `selectors_mut` (edit.rs:7008) L416,484; `Ids::id` (edit/origin.rs:212) (by name) L420,478,479; `written_places` (edit/origin.rs:649) (by name) L441; `prepare` (edit/prepared.rs:211) (by name) L442; `<PrepareOptions as Default>::default` (edit/prepared.rs:158) L442; `source_only` (edit/skip.rs:356) L455,462,472; `.place` (ambiguous, 4 candidates) L461,487; `Paragraphs::control_count` (edit/origin.rs:612) (by name) L470
+- **Calls (crate):** `Paragraphs::open` (edit/origin.rs:585) L402; `.ids` (ambiguous, 6 candidates) L405,478; `control_paragraph` (edit/skip.rs:379) L411; `selectors_mut` (edit.rs:7055) L416,484; `Ids::id` (edit/origin.rs:212) (by name) L420,478,479; `written_places` (edit/origin.rs:649) (by name) L441; `prepare` (edit/prepared.rs:211) (by name) L442; `<PrepareOptions as Default>::default` (edit/prepared.rs:158) L442; `source_only` (edit/skip.rs:356) L455,462,472; `.place` (ambiguous, 4 candidates) L461,487; `Paragraphs::control_count` (edit/origin.rs:612) (by name) L470
 - **Calls (std/external/unresolved):** `.clone`, `.collect`, `.contains`, `.enumerate`, `.filter`, `.into_iter`, `.is_empty`, `.iter_mut`, `.iter`, `.len`, `.map`, `.position`, `.push`, `.swap_remove`, `.to_string`, `ControlSelector::Name`, `Named::Control`, `Named::Paragraph`, `Ok`, `Selector::Name`, `Vec::new`
 - **Macros:** `format!`, `matches!`, `vec!`
 - **Called by:** `failed_plan_json` (edit/skip.rs:279)

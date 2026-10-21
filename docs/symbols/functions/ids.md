@@ -110,7 +110,7 @@
 
 - **Does:** `c5.text` → 5: the comment whose covered text a `-p` or a plan's `paragraph` names.
 - **Calls (std/external/unresolved):** `.parse`, `Some`
-- **Called by:** `comment_text_of` (edit.rs:6977)
+- **Called by:** `comment_text_of` (edit.rs:7024)
 
 #### `comment_id_de`  (L318-323, pub(crate))
 `pub(crate) fn comment_id_de<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error>`

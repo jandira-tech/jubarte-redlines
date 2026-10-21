@@ -16,7 +16,7 @@
 - **Does:** A tag's attribute value, any prefix (`r:id` for `id`).
 - **Calls (std/external/unresolved):** `.as_bytes`, `.find`, `.get`, `.is_whitespace`, `.len`, `.map_or`, `.to_string`, `Some`
 - **Macros:** `format!`, `matches!`
-- **Called by:** `CommentFamily::record` (comments.rs:612) (?); `expand` (convert/altchunk.rs:15); `Builder::start` (convert/altchunk.rs:520); `imported_source_contract_tests::quoted_and_unquoted_html_attribute_boundaries_select_only_the_authored_class` (convert/altchunk.rs:1135); `page_frame_key` (convert/mod.rs:9233) (?); `body_frame_key` (convert/mod.rs:9255) (?); `tests::normal_takes_b_theme_fonts_from_its_doc_defaults` (document_comparer.rs:8382) (?); `tests::normal_takes_b_doc_default_indent_and_justification` (document_comparer.rs:8667) (?); `Transaction::opaque_structure` (edit.rs:5211) (?)
+- **Called by:** `CommentFamily::record` (comments.rs:612) (?); `expand` (convert/altchunk.rs:15); `Builder::start` (convert/altchunk.rs:520); `imported_source_contract_tests::quoted_and_unquoted_html_attribute_boundaries_select_only_the_authored_class` (convert/altchunk.rs:1135); `page_frame_key` (convert/mod.rs:9233) (?); `body_frame_key` (convert/mod.rs:9255) (?); `tests::normal_takes_b_theme_fonts_from_its_doc_defaults` (document_comparer.rs:8383) (?); `tests::normal_takes_b_doc_default_indent_and_justification` (document_comparer.rs:8668) (?); `Transaction::opaque_structure` (edit.rs:5211) (?)
 
 #### `chunk_html`  (L70-93)
 `fn chunk_html(bytes: &[u8]) -> Option<String>`
