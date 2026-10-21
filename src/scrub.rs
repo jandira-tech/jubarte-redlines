@@ -440,7 +440,9 @@ pub(crate) fn leaks_within(
                 break;
             }
         };
-        let name = name.into_owned();
+        // Findings echo the name: escape control characters so a
+        // crafted name cannot write terminal sequences.
+        let name = name.escape_debug().to_string();
         if entry.size() > limits.max_part_bytes {
             let error = crate::admission::part_declared_over(&name, entry.size(), &limits);
             found.insert(format!("{name} ({error})"));

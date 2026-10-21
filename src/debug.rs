@@ -228,7 +228,10 @@ impl Package {
             let shown = zip
                 .name_for_index(i)
                 .and_then(Result::ok)
-                .map_or_else(|| "unnamed".to_string(), |name| format!("'{name}'"));
+                .map_or_else(
+                    || "unnamed".to_string(),
+                    |name| format!("'{}'", name.escape_debug()),
+                );
             let mut f = match zip.by_index(i) {
                 Ok(f) => f,
                 Err(error) => {
@@ -239,8 +242,11 @@ impl Package {
                     continue;
                 }
             };
+            // Names reach every finding and the report: decode escapes
+            // control characters so a crafted name cannot write terminal
+            // sequences when the report is displayed.
             let name = match f.name() {
-                Ok(name) => name.into_owned(),
+                Ok(name) => name.escape_debug().to_string(),
                 Err(error) => {
                     defects.push(crate::opc::ZipDefect {
                         kind: crate::opc::ZipDefectKind::EntryRead,

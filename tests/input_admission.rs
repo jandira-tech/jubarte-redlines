@@ -986,6 +986,23 @@ fn directory_override_probe(version_made_by: u16, external: u32) -> Vec<u8> {
     bytes
 }
 
+/// A valid package whose `evil` entry's raw name carries a terminal
+/// control byte and whose central record marks it a Unix symlink, so the
+/// defect's detail quotes the name.
+fn control_name_probe() -> Vec<u8> {
+    let mut bytes = package(|writer, options| {
+        writer
+            .start_file(
+                "w\u{1b}[2Jevil.bin",
+                options.compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"x").unwrap();
+    });
+    set_central_attributes(&mut bytes, "w\u{1b}[2Jevil.bin", 0x0314, 0o120777 << 16);
+    bytes
+}
+
 /// ZIP-17 (#644): every public route applies the structural refusals the
 /// bounded constructor owns — direct admission, the package
 /// constructor, scrub/leaks, the Markdown reader — while `debug`
@@ -1285,6 +1302,30 @@ fn a_unicode_path_override_cannot_hide_a_directory_type() {
             "{what}: {findings:?}"
         );
     }
+}
+
+/// A defect detail quotes an entry name verbatim only after escaping:
+/// terminal control bytes in a name must never reach a refusal or a
+/// `debug` finding raw.
+#[test]
+fn entry_names_reach_refusals_and_findings_escaped() {
+    let bytes = control_name_probe();
+    let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
+        .expect_err("a symlink entry must be refused");
+    let text = err.to_string();
+    assert!(!text.contains('\u{1b}'), "{text}");
+    assert!(text.contains("\\u{1b}"), "{text}");
+    let findings = jubarte::debug::findings(&bytes)
+        .expect("debug opens a package every route refuses");
+    for finding in &findings {
+        assert!(!finding.message.contains('\u{1b}'), "{finding:?}");
+    }
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == "ZIP_SPECIAL_ENTRY" && f.message.contains("\\u{1b}")),
+        "{findings:?}"
+    );
 }
 
 /// ZIP-15 (#600): a rooted or dot-segment spelling resolves to the same

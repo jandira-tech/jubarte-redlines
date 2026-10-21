@@ -428,6 +428,8 @@ const UTF8_FLAG: u16 = 0x0800;
 /// The raw fields are read rather than zip's `is_symlink`, which is a
 /// bit-mask test that reads a mode only for the Unix host.
 fn special_entry(index: usize, name: &str, central: &HeaderFields) -> Option<ZipDefect> {
+    // `name` is decoded and `escape_debug`ed by the caller, so control
+    // bytes cannot reach a terminal through the defect's detail.
     let shown = name;
     let slash = name.ends_with('/');
     let defect = |detail: String| ZipDefect {
@@ -514,7 +516,9 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             });
             continue;
         };
-        let shown = String::from_utf8_lossy(&central.name).into_owned();
+        let shown = String::from_utf8_lossy(&central.name)
+            .escape_debug()
+            .to_string();
         // The entry type is judged on the name the readers surface: a
         // 0x7075 Unicode Path field can override the header name, so a
         // slash-terminated raw name may read as a file name. Decode it as
@@ -525,7 +529,7 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             &central.extra,
         )
         .unwrap_or_else(|_| String::from_utf8_lossy(&central.name).into_owned());
-        if let Some(defect) = special_entry(i, &decoded, &central) {
+        if let Some(defect) = special_entry(i, &decoded.escape_debug().to_string(), &central) {
             defects.push(defect);
         }
         let mismatch = |detail: String| ZipDefect {
@@ -541,7 +545,7 @@ pub(crate) fn zip_defects<R: Read + Seek>(
         if local.name != central.name {
             defects.push(mismatch(format!(
                 "entry {i} is '{shown}' in the central directory but '{}' in its local header",
-                String::from_utf8_lossy(&local.name)
+                String::from_utf8_lossy(&local.name).escape_debug()
             )));
         }
         if local.method != central.method {
@@ -799,7 +803,8 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
                     ZipDefect {
                         kind: ZipDefectKind::DuplicatePart,
                         detail: format!(
-                            "two ZIP entries have the same name '{name}' (entry {index})"
+                            "two ZIP entries have the same name '{}' (entry {index})",
+                            name.escape_debug()
                         ),
                     },
                 ));
@@ -810,7 +815,9 @@ pub(crate) fn duplicate_parts<R: Read + Seek>(
                     ZipDefect {
                         kind: ZipDefectKind::DuplicatePart,
                         detail: format!(
-                            "'{first}' and '{name}' name the same part (entry {index}; part names resolve `.` and `..` and ignore case)"
+                            "'{}' and '{}' name the same part (entry {index}; part names resolve `.` and `..` and ignore case)",
+                            first.escape_debug(),
+                            name.escape_debug()
                         ),
                     },
                 ));

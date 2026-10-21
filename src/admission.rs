@@ -374,7 +374,8 @@ pub(crate) fn part_declared_over(
     AdmissionError::new(
         AdmissionErrorKind::InputLimit,
         format!(
-            "{name} declares {declared} inflated bytes; the part limit is {}",
+            "{} declares {declared} inflated bytes; the part limit is {}",
+            name.escape_debug(),
             limits.max_part_bytes
         ),
     )
@@ -390,7 +391,7 @@ pub(crate) fn part_inflated_over(name: &str, cap: u64, limits: &InputLimits) -> 
     };
     AdmissionError::new(
         AdmissionErrorKind::InputLimit,
-        format!("{name} inflates past {cap} bytes; {which}"),
+        format!("{} inflates past {cap} bytes; {which}", name.escape_debug()),
     )
 }
 
@@ -484,7 +485,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         if entry.encrypted() {
             return Err(AdmissionError::new(
                 K::UnsupportedPackage,
-                format!("{name} is encrypted"),
+                format!("{} is encrypted", name.escape_debug()),
             ));
         }
         if !matches!(
@@ -494,7 +495,8 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             return Err(AdmissionError::new(
                 K::UnsupportedPackage,
                 format!(
-                    "{name} uses unsupported compression {}",
+                    "{} uses unsupported compression {}",
+                    name.escape_debug(),
                     entry.compression()
                 ),
             ));
@@ -528,7 +530,12 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             let mut buf = Vec::new();
             limited
                 .read_to_end(&mut buf)
-                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{name}: {e}")))?;
+                .map_err(|e| {
+                    AdmissionError::new(
+                        K::InvalidPackage,
+                        format!("{}: {e}", name.escape_debug()),
+                    )
+                })?;
             let n = buf.len() as u64;
             if n <= cap {
                 check_xml_depth(&name, &buf, limits)?;
@@ -539,7 +546,12 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             n
         } else {
             std::io::copy(&mut limited, &mut std::io::sink())
-                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{name}: {e}")))?
+                .map_err(|e| {
+                    AdmissionError::new(
+                        K::InvalidPackage,
+                        format!("{}: {e}", name.escape_debug()),
+                    )
+                })?
         };
         tally_inflated(&mut total, read, &name, cap, &limits)?;
     }
@@ -549,14 +561,19 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
     // called, so one named otherwise is read once more for its depth.
     let lower = main_part.to_ascii_lowercase();
     if !(lower.ends_with(".xml") || lower.ends_with(".rels")) {
-        let mut entry = archive
-            .by_name(&main_part)
-            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{main_part}: {e}")))?;
+        let mut entry = archive.by_name(&main_part).map_err(|e| {
+            AdmissionError::new(K::InvalidPackage, format!("{}: {e}", main_part.escape_debug()))
+        })?;
         let mut buf = Vec::new();
         (&mut entry)
             .take(limits.max_part_bytes.saturating_add(1))
             .read_to_end(&mut buf)
-            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{main_part}: {e}")))?;
+            .map_err(|e| {
+                AdmissionError::new(
+                    K::InvalidPackage,
+                    format!("{}: {e}", main_part.escape_debug()),
+                )
+            })?;
         check_xml_depth(&main_part, &buf, limits)?;
     }
     Ok(AdmittedPackage {
@@ -857,7 +874,12 @@ fn part_text(xml: &[u8]) -> Cow<'_, str> {
 /// namespace-declaration widths.
 fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError> {
     let invalid =
-        |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
+        |why: String| {
+            AdmissionError::new(
+                AdmissionErrorKind::InvalidXml,
+                format!("{}: {why}", name.escape_debug()),
+            )
+        };
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().check_end_names = true;
