@@ -5,7 +5,10 @@
 //! 2026-10-13-ids-and-markdown-roundtrip.md §0: nothing with a short id is
 //! lost). Every `.md` in `tests/fixtures/md-roundtrip` must come back
 //! exactly after md → docx → md, and every docx listed in its `docx.txt`
-//! must print the same Markdown after docx → md → docx → md. Only the
+//! must print the same Markdown after docx → md → docx → md. A manuscript,
+//! Markdown as its author wrote it with no id lines ([`MANUSCRIPTS`]), is
+//! gated as the docx it imports to, since its view adds the header and id
+//! lines it never had. Only the
 //! `source:`/`sha256:` lines, which name the file, and `latest` becoming
 //! a shared timestamp after reconstruction are normalized. Arthur,
 //! 2026-10-13: "Start strict! Fail fail fail until we fix": there is no list
@@ -32,10 +35,19 @@ const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 /// The page count and its source at the end of the `body:` line.
 static PAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r", \d+ pages?\s+#.*$").unwrap());
 
-/// The Markdown fixtures written by hand, in the view's dialect; every other
-/// one is a view of a docx listed in `views.txt`.
-const HAND_WRITTEN: &[&str] = &[
-    "kitchen-sink.md",
+/// The Markdown fixtures written by hand in the view's dialect: they must
+/// come back as written. Every other fixture is a manuscript
+/// ([`MANUSCRIPTS`]) or a view of a docx listed in `views.txt`.
+const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
+
+/// Markdown as its authors wrote it, outside the view's dialect: no id
+/// lines, no YAML header, so the view of the docx it imports to can never
+/// be it. Each is gated as the idless plan's item 6 says
+/// (docs/superpowers/plans/2026-10-14-idless-fixed-point.md): it converts
+/// to B, B reads as C, C converts to D; C must equal read(D) (G1) and D
+/// must render as B (G2: `debug B D --check render`, page count included),
+/// as every docx case is gated (#532).
+const MANUSCRIPTS: &[&str] = &[
     // Pandoc manuscripts, as their authors wrote them (2026-10-14).
     "dolphins.md",
     "eLife.00047.md",
@@ -374,8 +386,21 @@ struct Case {
 /// `jubarte debug A B --check render` lists it (highlights, colours, fonts,
 /// styles, tables, sections, parts). The Markdown fixed point cannot see a
 /// loss in the first docx → md step: both views lose it alike. This can.
+/// Lines come whole (`--full-lines`): a clipped line keeps a window around
+/// its first difference, so one that differs only in what `in_dialect`
+/// drops would still differ in its window.
 fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
-    let out = match jubarte(dir, &["debug", source, written, "--check", "render"]) {
+    let out = match jubarte(
+        dir,
+        &[
+            "debug",
+            source,
+            written,
+            "--check",
+            "render",
+            "--full-lines",
+        ],
+    ) {
         Ok(out) => out,
         Err(e) => return vec![format!("  ✗ docx not compared: {e}")],
     };
@@ -534,14 +559,35 @@ fn in_dialect(part: &str, rest: &str) -> Option<String> {
     Some(CELLS_SHD.replace_all(rest, "").into_owned())
 }
 
-/// The docx a committed view was read from (`views.txt`), by file name.
-fn view_sources() -> HashMap<String, PathBuf> {
+/// A `views.txt` entry's last word when the committed view is the second
+/// read: the view of the docx `convert` writes from the docx's first view.
+const SECOND_READ: &str = " second-read";
+
+/// The `views.txt` entries: each view's file name, the docx it was read
+/// from, and whether it is that docx's second read.
+fn view_entries() -> Vec<(String, PathBuf, bool)> {
     std::fs::read_to_string(Path::new(FIXTURES).join("views.txt"))
         .unwrap()
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
         .filter_map(|l| l.split_once(' '))
-        .map(|(md, docx)| (md.to_string(), PathBuf::from(docx.trim())))
+        .map(|(md, rest)| {
+            let rest = rest.trim();
+            let docx = rest.strip_suffix(SECOND_READ);
+            (
+                md.to_string(),
+                PathBuf::from(docx.unwrap_or(rest).trim()),
+                docx.is_some(),
+            )
+        })
+        .collect()
+}
+
+/// The docx a committed view was read from (`views.txt`), by file name.
+fn view_sources() -> HashMap<String, PathBuf> {
+    view_entries()
+        .into_iter()
+        .map(|(md, docx, _)| (md, docx))
         .collect()
 }
 
@@ -585,6 +631,32 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
         want: round_trip_comparable(&source, &bytes),
         got,
         docx,
+    }
+}
+
+/// A manuscript (A) imports to a docx (B), which is then gated as a docx
+/// case: B's view (C) must come back from the docx it writes (D), and D
+/// must render as B.
+fn manuscript_case(dir: &Path, path: &Path) -> Case {
+    let name = format!("md -> docx -> md -> docx -> md   {}", path.display());
+    // B is written apart from the docx case's own files.
+    let imported = std::fs::read_to_string(path)
+        .map_err(|e| format!("{}: {e}", path.display()))
+        .and_then(|source| {
+            std::fs::create_dir_all(dir.join("import")).map_err(|e| e.to_string())?;
+            to_docx(&dir.join("import"), &source, "imported")
+        });
+    match imported {
+        Ok(docx) => Case {
+            name,
+            ..docx_case(dir, &dir.join("import").join(docx))
+        },
+        Err(e) => Case {
+            name,
+            want: String::new(),
+            got: Err(e),
+            docx: Vec::new(),
+        },
     }
 }
 
@@ -850,11 +922,15 @@ fn markdown_and_docx_round_trip_exactly() {
     let unlisted: Vec<String> = markdown
         .iter()
         .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
-        .filter(|f| !sources.contains_key(f) && !HAND_WRITTEN.contains(&f.as_str()))
+        .filter(|f| {
+            !sources.contains_key(f)
+                && !HAND_WRITTEN.contains(&f.as_str())
+                && !MANUSCRIPTS.contains(&f.as_str())
+        })
         .collect();
     assert!(
         unlisted.is_empty(),
-        "every Markdown fixture is a view listed in views.txt or hand-written (HAND_WRITTEN): {unlisted:?}"
+        "every Markdown fixture is a view listed in views.txt, hand-written (HAND_WRITTEN) or a manuscript (MANUSCRIPTS): {unlisted:?}"
     );
     // `MD_FIXED_POINT_ONLY=ids-tables` replays only the fixtures whose path
     // holds that text, for a quick loop on one document; the gate itself
@@ -867,11 +943,11 @@ fn markdown_and_docx_round_trip_exactly() {
     for path in markdown.iter().filter(|p| picked(p)) {
         let dir = tempfile::tempdir().unwrap();
         let file = path.file_name().unwrap().to_string_lossy().to_string();
-        cases.push(markdown_case(
-            dir.path(),
-            path,
-            sources.get(&file).map(PathBuf::as_path),
-        ));
+        cases.push(if MANUSCRIPTS.contains(&file.as_str()) {
+            manuscript_case(dir.path(), path)
+        } else {
+            markdown_case(dir.path(), path, sources.get(&file).map(PathBuf::as_path))
+        });
     }
     let docx = docx_list();
     assert!(!docx.is_empty(), "no docx fixtures in {FIXTURES}/docx.txt");
@@ -961,12 +1037,20 @@ fn offset_namespace_declaration_preserves_opaque_drawing_bytes() {
 fn committed_views_match_the_view() {
     let bless = std::env::var_os("JUBARTE_BLESS").is_some();
     let mut stale = Vec::new();
-    let mut sources: Vec<(String, PathBuf)> = view_sources().into_iter().collect();
+    let mut sources = view_entries();
     sources.sort();
-    for (md, docx) in &sources {
+    for (md, docx, second_read) in &sources {
         let dir = tempfile::tempdir().unwrap();
         std::fs::copy(docx, dir.path().join("source.docx")).unwrap();
-        let raw = jubarte(dir.path(), &["read", "source.docx", "--no-page-markers"]).unwrap();
+        let mut raw = jubarte(dir.path(), &["read", "source.docx", "--no-page-markers"]).unwrap();
+        if *second_read {
+            // The source gives one revision id to marks that `convert`
+            // must number apart (#1137), so its first view is no fixed
+            // point: the committed view is the docx `convert` writes from
+            // it, read back (#1414).
+            let back = to_docx(dir.path(), &comparable(&raw), "first").unwrap();
+            raw = jubarte(dir.path(), &["read", &back, "--no-page-markers"]).unwrap();
+        }
         let got = comparable(&raw);
         if bless {
             // Keep measured page facts; only source identity is fixture-local.
@@ -1029,4 +1113,26 @@ fn ids_name_blocks_notes_and_yaml_entries() {
         "{:#?}",
         r.lines
     );
+}
+
+/// A manuscript is gated on what it imports to, not on its own bytes: the
+/// view of its docx comes back (G1) and the docx written from that view
+/// renders as the imported one (G2). `list_of_figures.md` imports with its
+/// text unchanged, so it passes both.
+#[test]
+fn a_manuscript_is_gated_on_what_it_imports_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = manuscript_case(
+        dir.path(),
+        Path::new(FIXTURES).join("list_of_figures.md").as_path(),
+    );
+    assert!(case.name.contains("list_of_figures.md"), "{}", case.name);
+    let got = case.got.expect("a view back");
+    assert_eq!(got, case.want);
+    assert!(
+        case.want.starts_with("---\n"),
+        "the view, not the manuscript: {}",
+        case.want
+    );
+    assert!(case.docx.is_empty(), "{:?}", case.docx);
 }

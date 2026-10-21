@@ -815,7 +815,10 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
 /// with the paragraph break (or, for the last paragraph, starts with the
 /// one before it). That break moves out of the change, after its comments,
 /// so the paragraph is a block of its own. A change that is only a break
-/// joins or splits paragraphs and stays as it is.
+/// joins or splits paragraphs and stays as it is, unless it leads a
+/// paragraph the same side changes whole: the view writes a story's last
+/// paragraph and the mark before it as two changes (`{--\n\n--}{r1
+/// @C}{--Last.--}{r2 @C}`), and the paragraph is still a hunk of its own.
 fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     fn same(out: &mut Vec<Segment>, text: &str) {
         match out.last_mut() {
@@ -823,9 +826,10 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
             _ => out.push(Segment::Same(text.to_string())),
         }
     }
+    let leads = leading_breaks(&segments);
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
     let mut after: Option<String> = None;
-    for segment in segments {
+    for (at, segment) in segments.into_iter().enumerate() {
         if !matches!(segment, Segment::Note(..))
             && let Some(text) = after.take()
         {
@@ -852,7 +856,9 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
         };
         let trailing = plain.len() - plain.trim_end_matches('\n').len();
         let leading = plain.len() - plain.trim_start_matches('\n').len();
-        if plain.trim().is_empty() {
+        if leads.contains(&at) {
+            same(&mut out, plain);
+        } else if plain.trim().is_empty() {
             out.push(Segment::Edit(edit));
         } else if trailing >= 2 && marked.ends_with(&plain[plain.len() - trailing..]) {
             let text = plain.split_off(plain.len() - trailing);
@@ -870,6 +876,71 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     }
     if let Some(text) = after {
         same(&mut out, &text);
+    }
+    out
+}
+
+/// The changes [`detach_breaks`] moves out as a paragraph's leading
+/// break, by position: a change that is only a break, followed (comments
+/// between) by the same side's changes of a paragraph's whole text, which
+/// ends the story or a break follows. Word often splits that text into
+/// several changes, and a line break in it is the view's hard break (`\`
+/// before the newline). Text after the paragraph's changes, a paragraph
+/// break in them, or another author's mark means the break joins
+/// paragraphs (accepting it alone joins them), and it stays a change.
+fn leading_breaks(segments: &[Segment]) -> HashSet<usize> {
+    // The side a one-sided change makes, its text, and who made it.
+    fn one_side(segment: &Segment) -> Option<(Side, &str, Option<&str>)> {
+        let Segment::Edit(edit) = segment else {
+            return None;
+        };
+        let author = edit.by.as_ref().map(|(author, _)| author.as_str());
+        match (edit.old.is_empty(), edit.new.is_empty()) {
+            (false, true) => Some((Side::Old, edit.old.as_str(), author)),
+            (true, false) => Some((Side::New, edit.new.as_str(), author)),
+            _ => None,
+        }
+    }
+    // Text within one paragraph: every newline is a hard break.
+    fn in_paragraph(text: &str) -> bool {
+        text.match_indices('\n')
+            .all(|(at, _)| text[..at].ends_with('\\'))
+    }
+    // The first segment from `from` on that is no comment.
+    let next =
+        |from: usize| (from..segments.len()).find(|&i| !matches!(segments[i], Segment::Note(..)));
+    let mut out = HashSet::new();
+    for (at, segment) in segments.iter().enumerate() {
+        let Some((side, plain, author)) = one_side(segment) else {
+            continue;
+        };
+        if !plain.trim().is_empty() || !plain.contains("\n\n") {
+            continue;
+        }
+        let mut cursor = next(at + 1);
+        let mut text = false;
+        while let Some(piece) = cursor
+            && let Some((piece_side, piece_text, piece_author)) = one_side(&segments[piece])
+            && piece_side == side
+            && piece_author == author
+            && in_paragraph(piece_text)
+        {
+            text |= !piece_text.trim().is_empty();
+            cursor = next(piece + 1);
+        }
+        if !text {
+            continue;
+        }
+        let ends = match cursor.map(|i| &segments[i]) {
+            None => true,
+            Some(Segment::Same(after)) => after.starts_with('\n'),
+            Some(after) => {
+                one_side(after).is_some_and(|(s, t, _)| s == side && t.starts_with("\n\n"))
+            }
+        };
+        if ends {
+            out.insert(at);
+        }
     }
     out
 }
