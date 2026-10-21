@@ -1513,17 +1513,20 @@ fn html_tag(html: &str) -> Option<HtmlTag> {
     })
 }
 
-/// The start token an end token closes, if it is one.
-fn closes(token: Token) -> Option<Token> {
+/// The start tokens an end token closes, if it is one. The `}` of an
+/// attribution is also the closer of a paragraph mark's `¶{`: both are
+/// written as one span ending in that `}`, so the pair is taken with
+/// whichever of the two openers opened last.
+fn closes(token: Token) -> &'static [Token] {
     match token {
-        Token::InsertEnd => Some(Token::InsertStart),
-        Token::DeleteEnd => Some(Token::DeleteStart),
-        Token::SubstituteEnd => Some(Token::SubstituteStart),
-        Token::HighlightEnd => Some(Token::HighlightStart),
-        Token::CommentEnd => Some(Token::CommentStart),
-        Token::AttributionEnd => Some(Token::AttributionStart),
-        Token::MarkEnd => Some(Token::MarkStart),
-        _ => None,
+        Token::InsertEnd => &[Token::InsertStart],
+        Token::DeleteEnd => &[Token::DeleteStart],
+        Token::SubstituteEnd => &[Token::SubstituteStart],
+        Token::HighlightEnd => &[Token::HighlightStart],
+        Token::CommentEnd => &[Token::CommentStart],
+        Token::AttributionEnd => &[Token::AttributionStart, Token::ParagraphInsertion],
+        Token::MarkEnd => &[Token::MarkStart],
+        _ => &[],
     }
 }
 
@@ -1541,8 +1544,9 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
     let mut closed = vec![false; tokens.len()];
     let mut open: Vec<(Token, usize)> = Vec::new();
     for (at, token) in tokens.iter().enumerate() {
-        if let Some(opener) = closes(*token) {
-            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+        let closers = closes(*token);
+        if !closers.is_empty() {
+            if let Some(index) = open.iter().rposition(|(start, _)| closers.contains(start)) {
                 let (_, start) = open.remove(index);
                 closed[start] = true;
             }
@@ -1563,8 +1567,9 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
     let mut loose = Vec::new();
     let mut open: Vec<(Token, usize)> = Vec::new();
     for (at, token) in tokens.into_iter().enumerate() {
-        if let Some(opener) = closes(token) {
-            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+        let closers = closes(token);
+        if !closers.is_empty() {
+            if let Some(index) = open.iter().rposition(|(start, _)| closers.contains(start)) {
                 open.remove(index);
             } else {
                 // Its opener is outside: the closer crosses the edge.
@@ -6777,6 +6782,44 @@ mod tests {
                 Token::SubstituteEnd,
             ]),
             vec![Token::InsertEnd]
+        );
+    }
+    /// A `¶{…}` paragraph mark is one span: `¶{` opens it and the same
+    /// `}` an attribution closes. The table of closers knew only
+    /// `AttributionStart`, so the pair never closed and both tokens
+    /// crossed a drop: a paragraph mark whole inside an image's alt
+    /// text or an HTML comment was replayed onto the paragraph around
+    /// it.
+    #[test]
+    fn a_paragraph_mark_whole_inside_dropped_text_drops_with_it() {
+        assert_eq!(
+            loose_tokens(vec![Token::ParagraphInsertion, Token::AttributionEnd]),
+            vec![]
+        );
+        // A paragraph mark half inside drops the half that crossed the
+        // edge, as any other split span does.
+        assert_eq!(
+            loose_tokens(vec![Token::ParagraphInsertion]),
+            vec![Token::ParagraphInsertion]
+        );
+        // An attribution still closes its own `}`, and a paragraph mark
+        // inside one closes first: the `}` pairs with the nearest
+        // opener that takes one.
+        assert_eq!(
+            loose_tokens(vec![
+                Token::AttributionStart,
+                Token::ParagraphInsertion,
+                Token::AttributionEnd
+            ]),
+            vec![Token::AttributionStart]
+        );
+        assert_eq!(
+            loose_tokens(vec![
+                Token::ParagraphInsertion,
+                Token::AttributionStart,
+                Token::AttributionEnd
+            ]),
+            vec![Token::ParagraphInsertion]
         );
     }
 }

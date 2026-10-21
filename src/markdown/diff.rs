@@ -439,11 +439,12 @@ impl Output {
             let at = self.text.len() - close.len();
             self.text.insert(at, '\n');
         } else if self.text.ends_with("~~}") {
-            // A substitution: the break goes into the side it belongs to.
+            // A substitution: the break goes into the side it belongs
+            // to — the old side ends at `~>`, the new one at `~~}`.
             let at = if inserted {
                 self.text.len() - 3
             } else {
-                self.text.rfind("~>").map_or(self.text.len(), |at| at + 2)
+                self.text.rfind("~>").unwrap_or(self.text.len())
             };
             self.text.insert(at, '\n');
         } else {
@@ -701,7 +702,7 @@ fn pair_by_similarity(olds: &[&str], news: &[&str]) -> Vec<(usize, usize)> {
     // The candidate old lines of each new line: the lines its rarer words
     // occur in (at least its rarest word, however common that is).
     let mut candidates: Vec<Vec<usize>> = Vec::with_capacity(news.len());
-    for words in &new_distinct {
+    for (j, words) in new_distinct.iter().enumerate() {
         let mut by_rarity: Vec<(usize, u32)> = words
             .iter()
             .filter_map(|&word| index.get(&word).map(|lines| (lines.len(), word)))
@@ -717,6 +718,14 @@ fn pair_by_similarity(olds: &[&str], news: &[&str]) -> Vec<(usize, usize)> {
                 .collect();
             lines.sort_unstable();
             lines.dedup();
+            // The bound counts candidates that can pair at all: a line
+            // whose block marker differs is no pair. Cutting the list
+            // before that kept lines that can never pair and dropped the
+            // one that could, which is how a long list of repeated
+            // boilerplate left its one odd line deleted whole. Equal
+            // lines all stay: pairs keep the old order, so a later new
+            // line may need the second of two.
+            lines.retain(|&i| old_shape[i] == new_shape[j]);
             lines.truncate(MAX_CANDIDATES);
         }
         candidates.push(lines);
@@ -1808,6 +1817,23 @@ mod tests {
         round_trip("a\n", "a");
     }
 
+    /// A substitution's trailing break belongs to the side that has
+    /// it: the old side ends at `~>`, the new side at `~~}`. Putting
+    /// the old side's break after `~>` handed it to the insertion, so
+    /// the documents came back with a break each had not.
+    #[test]
+    fn a_substitutions_trailing_break_stays_on_the_side_that_has_it() {
+        assert_eq!(diff_markdown("a\nb\n", "a\nc"), "a\n{~~b\n~>c~~}");
+        round_trip("a\nb\n", "a\nc");
+        // The new side's break lands at the end of the new side.
+        assert_eq!(diff_markdown("a\nb", "a\nc\n"), "a\n{~~b~>c\n~~}");
+        round_trip("a\nb", "a\nc\n");
+        // A substitution that already ends in its own break keeps it on
+        // its side.
+        assert_eq!(diff_markdown("a\nb\nc", "a\nb\nd"), "a\nb\n{~~c~>d~~}");
+        round_trip("a\nb\nc", "a\nb\nd");
+    }
+
     #[test]
     fn a_deleted_table_row_takes_its_line_with_it() {
         assert_eq!(
@@ -1993,6 +2019,44 @@ mod tests {
         let diff = diff_markdown(&old, &new);
         assert!(diff.contains("row0 w0"), "{}", &diff[..diff.len().min(200)]);
         round_trip(&old, &new);
+    }
+
+    /// A hunk's candidate list must not lose the one line that can
+    /// pair to its old index: 71 identical list lines and one plain
+    /// line, against a new plain line whose every word the old lines
+    /// carry. The plain line is the only candidate with the new line's
+    /// shape, and it sat past the bound, so the hunk gave up and
+    /// deleted all 72 lines for one insertion.
+    #[test]
+    fn the_only_pairable_candidate_survives_the_candidate_bound() {
+        let mut old = String::new();
+        for _ in 0..MAX_CANDIDATES + 7 {
+            old.push_str("- alpha beta gamma\n");
+        }
+        old.push_str("alpha beta gamma\n");
+        let new = "alpha beta gamma zeta\n";
+        let diff = diff_markdown(&old, new);
+        // The plain line pairs with the new one, so only the words that
+        // were added are marked.
+        assert!(diff.contains("alpha beta gamma{++ zeta++}"), "{diff}");
+        assert!(
+            !diff.contains("{--\nalpha beta gamma--}"),
+            "the plain line was deleted whole\n{diff}"
+        );
+        round_trip(&old, new);
+    }
+
+    /// Identical old lines are not interchangeable candidates: pairs must
+    /// keep the old order, so the second of two equal lines is the only
+    /// partner a later new line can take once the first is spent.
+    #[test]
+    fn each_of_two_identical_old_lines_still_pairs_in_order() {
+        let old = "- alpha beta gamma delta\n- alpha beta gamma delta\n";
+        let new = "- alpha beta gamma delta one\n- alpha beta gamma delta two\n";
+        let diff = diff_markdown(old, new);
+        assert!(diff.contains("alpha beta gamma delta{++ one++}"), "{diff}");
+        assert!(diff.contains("alpha beta gamma delta{++ two++}"), "{diff}");
+        round_trip(old, new);
     }
 
     #[test]

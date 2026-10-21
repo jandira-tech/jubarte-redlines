@@ -1970,8 +1970,34 @@ pub(super) fn math_crosses_boundary(latex: &str) -> bool {
 /// back are the joined form's. CommonMark would otherwise read the
 /// touching delimiters as one run holding the inner ones as text.
 pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
-    let merged = merge_across_marks(markdown, accept);
+    let merged = merge_seam_levels(markdown, accept);
     resolve_with_policy(&merged, accept, false)
+}
+
+/// How many times [`merge_seam_levels`] re-reads its own output. Every
+/// pass that changes the text folds at least one pair of spans into one
+/// or drops at least one mark, so a document's inline nesting settles
+/// far below this; the bound only stops a hand-made input from spinning.
+const SEAM_PASSES: usize = 32;
+
+/// [`merge_across_marks`] until the text stops changing.
+///
+/// One pass joins the spans at a level, but a group's replacement is
+/// written from its members' raw source: where the group spans a
+/// container, the joins that container's own level made fall inside it
+/// and go unused, so the inner spans come out still touching and
+/// CommonMark fuses them. Re-reading the text the pass left picks those
+/// joins up, because the pass before it wrote them out.
+fn merge_seam_levels(markdown: &str, accept: bool) -> String {
+    let mut merged = merge_across_marks(markdown, accept);
+    for _ in 0..SEAM_PASSES {
+        let next = merge_across_marks(&merged, accept);
+        if next == merged {
+            break;
+        }
+        merged = next;
+    }
+    merged
 }
 
 /// Whether `note` names, after ` re `, a change the one it follows sits
@@ -2235,9 +2261,16 @@ fn contribution_span(source: &str, region: &ChangeRegion, accept: bool) -> Optio
     if span.range != (0..kept.len()) {
         return None;
     }
+    // A complete tag right after the closer names this change, and
+    // resolve drops it with the change. Covering it keeps the splice
+    // from leaving it standing in front of the joined run, where it
+    // would read as text; an escaped brace is literal text, not a tag.
+    let tagged = attribution_tag(&source[region.close..])
+        .filter(|_| !escaped(source, region.close))
+        .map_or(region.close, |(_, width)| region.close + width);
     Some(SeamSpan {
         kind: span.kind,
-        cover: region.open..region.close,
+        cover: region.open..tagged,
         content: span_content(&kept, span),
         marker: span_marker(&kept, span),
         flipped: false,
@@ -2433,7 +2466,14 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
             });
             if touching {
                 let &last = pending.last().unwrap_or(&0);
-                if members[last].kind == members[i].kind {
+                // A code span rejoins under one fence whatever its
+                // members' fences were; any other kind joins only under
+                // the first member's own run, or the shorter member's
+                // text would come back carrying emphasis it never had.
+                if members[last].kind == members[i].kind
+                    && (members[i].kind == InlineKind::Code
+                        || members[last].marker == members[i].marker)
+                {
                     pending.push(i);
                     continue;
                 }
@@ -3471,6 +3511,76 @@ mod tests {
         assert_eq!(joined, "Use ~~ab~~ here.");
         // Controls: marks between plain text do nothing.
         assert_eq!(resolve("Say *a*{--x--}b* now.", false), "Say *a*xb* now.");
+    }
+
+    /// Two spans of the same kind whose delimiter runs differ must not
+    /// fold into one: joined under the first member's run, the shorter
+    /// span's text comes back from the docx path strong, which neither
+    /// document said. `***a***` and `*b*` are an italic `a` that is also
+    /// bold and a plain italic `b`, so `***ab***` is not the joined form
+    /// — it reads as one bold italic run. The later member's run is
+    /// rewritten to the other flavour (`_`), which keeps the two spans
+    /// apart with no run left to fuse.
+    #[test]
+    fn resolve_keeps_a_shorter_emphasis_run_out_of_a_triple_star_join() {
+        let joined = resolve("***a***{--x--}*b*", true);
+        assert_eq!(joined, "***a***_b_", "{joined:?}");
+        // `b` must come back plain italic: no strong span reaches it.
+        let bolded = collect_inline_spans(&joined)
+            .into_iter()
+            .any(|span| span.kind == InlineKind::Strong && span.range.end > 7);
+        assert!(!bolded, "the second span came back bold: {joined:?}");
+        // The same holds the other way round, and for the runs that do
+        // fuse: `**a**` next to `*b*` shares one delimiter character, so
+        // the short one takes the other flavour and stays its own span.
+        let joined = resolve("**a**{--x--}*b*", true);
+        assert_eq!(joined, "**a**_b_", "{joined:?}");
+    }
+
+    /// A join that spans a container must not lose the joins the
+    /// container's own spans made: a group's replacement is written
+    /// from its members' raw source, so the splices those members'
+    /// inner level produced fall inside it and are dropped as covered —
+    /// the inner spans come out still touching and CommonMark fuses
+    /// them. Both levels must therefore be walked: the inner join
+    /// first, the outer one on the text it left.
+    #[test]
+    fn resolve_keeps_an_inner_join_inside_a_joined_container() {
+        // The two code spans inside the strong join into `bc`, and the
+        // two strong spans around the deleted `y` into one.
+        let joined = resolve("**A `b`{--x--}`c` D**{--y--}**E**", true);
+        assert_eq!(joined, "**A `bc` DE**", "{joined:?}");
+        // The same for emphasis, whose touching runs fuse as readily.
+        let joined = resolve("**A *b*{--x--}*c* D**{--y--}**E**", true);
+        assert_eq!(joined, "**A *bc* DE**", "{joined:?}");
+        // A container that joins with nothing keeps its inner join:
+        // it was already the only splice on the pass.
+        let joined = resolve("*`a`{--x--}`b`*", true);
+        assert_eq!(joined, "*`ab`*", "{joined:?}");
+    }
+
+    /// The attribution tag after a change is that change's metadata: it
+    /// resolves away with the change it names. A joined span's splice
+    /// ends at the closer, so a tag left outside the cover stands in
+    /// front of the joined run, where resolve reads it as text — the
+    /// reader then carries a literal `{r5 @AC}` into the document.
+    #[test]
+    fn resolve_does_not_leave_an_attribution_tag_in_front_of_a_joined_span() {
+        // The tag goes with the insertion it names: the two spans join
+        // and nothing of the tag survives.
+        let joined = resolve("*a*{++*b*++}{r5 @AC}", true);
+        assert_eq!(joined, "*ab*", "{joined:?}");
+        // The tag between two joined spans does the same, so the third
+        // span joins as well.
+        let joined = resolve("*a*{++*b*++}{r5 @AC}*c*", true);
+        assert_eq!(joined, "*abc*", "{joined:?}");
+        // Rejecting keeps the two original spans and drops the tag with
+        // the insertion it named.
+        let kept = resolve("*a*{++*b*++}{r5 @AC}", false);
+        assert_eq!(kept, "*a*", "{kept:?}");
+        // An escaped brace is text, not a tag: it stays.
+        let literal = resolve("*a*{++*b*++}\\{r5 @AC}", true);
+        assert_eq!(literal, "*ab*\\{r5 @AC}", "{literal:?}");
     }
 
     /// Marks next to a link do not merge it with another link: the byte
