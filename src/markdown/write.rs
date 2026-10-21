@@ -863,8 +863,9 @@ struct TablePlan {
     columns: Option<usize>,
     align: Option<&'static str>,
     rows: Vec<RowPlan>,
-    /// The cell paragraphs' mark changes, by paragraph number.
-    marks: HashMap<usize, (bool, view_notes::Tag)>,
+    /// The cell paragraphs' mark changes, by paragraph number, each
+    /// paragraph's in clause order.
+    marks: HashMap<usize, Vec<(bool, view_notes::Tag)>>,
     /// Cell paragraphs aligned against their column, by paragraph number.
     aligns: HashMap<usize, &'static str>,
     /// The style the table's line names (`style Ledger`).
@@ -2833,8 +2834,14 @@ impl<'o, 'a> Writer<'o, 'a> {
             let styled = line.style.is_some();
             if let Some(style) = line.style {
                 paragraph.style = Some(style.into());
-                // `# Text` under its own style: the level goes with it.
-                paragraph.outline = self.heading.map(|level| level - 1);
+                // `# Text` under its own style: the level goes with it,
+                // unless the line states one of its own, which the style
+                // does not carry.
+                paragraph.outline = line
+                    .outline
+                    .and_then(|level| level.checked_sub(1))
+                    .map(|level| level as usize)
+                    .or_else(|| self.heading.map(|level| level - 1));
             } else if let Some(outline) = line.outline {
                 // `# Text` that states its own level, with no style: the
                 // writer's `HeadingN` must not step in where the document
@@ -2888,10 +2895,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
             if !self.resolved {
                 let mut unshown = Vec::new();
-                for tag in &line.rev {
-                    let inserted = !line.rev_del.contains(tag);
+                for (inserted, tag) in &line.rev {
                     let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                    unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 paragraph.unshown = unshown;
             }
@@ -2956,12 +2962,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
             }
             let mark = self.table_plan.as_ref().and_then(|plan| {
-                let (inserted, tag) = plan.marks.get(&at)?;
-                let kind = if *inserted {
-                    Kind::Insert
-                } else {
-                    Kind::Delete
-                };
+                let (inserted, tag) = view_notes::paragraph_mark(plan.marks.get(&at)?)?;
+                let kind = if inserted { Kind::Insert } else { Kind::Delete };
                 Some((kind, tag.clone()))
             });
             self.fix_mark(&mut paragraph, mark);
@@ -5366,12 +5368,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             // in reading order (`rev footnotes.r32+31`: text, then mark,
             // #1261); Word's shape names them apart, the mark first.
             let own: Vec<view_notes::Tag> = if clauses.rev.len() == paragraphs(&items)
-                && clauses.rev.iter().all(|tag| tag.ids.len() > 1)
+                && clauses.rev.iter().all(|(_, tag)| tag.ids.len() > 1)
             {
                 clauses
                     .rev
                     .iter()
-                    .flat_map(|tag| {
+                    .flat_map(|(_, tag)| {
                         let (text, mark) = tag.ids.split_at(tag.ids.len() - 1);
                         [mark, text].map(|ids| view_notes::Tag {
                             ids: ids.to_vec(),
@@ -5380,7 +5382,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     })
                     .collect()
             } else {
-                clauses.rev.clone()
+                clauses.rev.iter().map(|(_, tag)| tag.clone()).collect()
             };
             if let Some((kind, _)) = change
                 && !self.resolved
@@ -5431,10 +5433,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .find(|item| matches!(item, Item::Paragraph(_)))
             {
                 let mut unshown = Vec::new();
-                for tag in &clauses.rev {
-                    let inserted = !clauses.rev_del.contains(tag);
+                for (inserted, tag) in &clauses.rev {
                     let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                    unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 last.unshown = unshown;
             }

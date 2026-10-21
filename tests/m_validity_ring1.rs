@@ -816,6 +816,39 @@ fn probe_style_name_with_a_comma_fails() {
     assert!(named[0].message.contains("List,Para"), "{named:?}");
 }
 
+/// `w:pPr` takes no `w:pPr` of its own: `CT_PPr`'s children are
+/// `CT_PPrBase`'s, then `w:rPr`, `w:sectPr` and `w:pPrChange`
+/// (`Sch_InvalidElementContentExpectingComplex` from `tools/validate-docx`).
+/// The previous properties of a `w:pPrChange` sit under the change, and are
+/// Word's own shape.
+#[test]
+fn probe_ppr_inside_a_ppr_fails() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/>
+    <w:pPr><w:keepNext/><w:pPr><w:pPrChange w:id="9" w:author="Ana"><w:pPr/></w:pPrChange></w:pPr>
+    <w:rPr><w:i/></w:rPr></w:pPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Fine"><w:name w:val="Fine"/>
+    <w:pPr><w:keepNext/><w:pPrChange w:id="10" w:author="Ana"><w:pPr><w:keepNext/></w:pPr></w:pPrChange></w:pPr>
+  </w:style>
+</w:styles>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/styles.xml", styles),
+    ]);
+    let nested: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "NESTED_PPR")
+        .collect();
+    assert_eq!(nested.len(), 1, "{nested:?}");
+    let finding = &nested[0];
+    assert_eq!(finding.part, "word/styles.xml");
+    assert_eq!(finding.r#ref, finding.location);
+    // OOXML-invalid, but no Word probe is recorded: a lead, not Word-fatal.
+    assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+}
+
 #[test]
 fn probe_paraid_overflow_is_a_repairable_lead() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

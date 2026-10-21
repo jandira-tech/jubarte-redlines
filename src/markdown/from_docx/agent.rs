@@ -880,7 +880,7 @@ pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
 /// The children of `e` the view renders: of an `mc:AlternateContent`, only
 /// the `mc:Choice` (else the `mc:Fallback`), so a text box Word stores twice
 /// counts once.
-fn shown_children(e: &Element) -> Vec<&Element> {
+pub(super) fn shown_children(e: &Element) -> Vec<&Element> {
     if e.is("AlternateContent") {
         e.child("Choice")
             .or_else(|| e.child("Fallback"))
@@ -2841,18 +2841,11 @@ pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
             if let Some((ins, tag)) = &p.page_break_change {
                 add(&[tag], if *ins { "ins" } else { "del" });
             }
-            for tag in &p.rev {
-                add(
-                    &[tag],
-                    if p.rev_del.contains(tag) {
-                        "del"
-                    } else {
-                        "ins"
-                    },
-                );
+            for (inserted, tag) in &p.rev {
+                add(&[tag], if *inserted { "ins" } else { "del" });
             }
         } else if let Some(t) = view_notes::table_line(line) {
-            for (inserted, tag) in t.marks.values() {
+            for (inserted, tag) in t.marks.values().flatten() {
                 add(
                     &[tag],
                     if *inserted {
@@ -3544,6 +3537,25 @@ mod tests {
         all_tables(&body, &mut all);
         let numbered: Vec<Option<&str>> = all.iter().map(|t| t.attr(TABLE)).collect();
         assert_eq!(numbered, [Some("0"), None, Some("1")]);
+    }
+
+    /// A cell paragraph's mark names an insertion and a deletion at once
+    /// (`w:pPr/w:rPr` holds both `w:ins` and `w:del`), and the header
+    /// counts each mark the change list names.
+    #[test]
+    fn a_cell_paragraph_mark_named_twice_counts_twice() {
+        let line = "<!-- t0 1x1, cells p1-p1 by row, break-ins r3 @AC in p1, \
+                    break-del r4 @AC in p1 -->";
+        assert_eq!(collect_revisions(line), ["mark", "mark"]);
+    }
+
+    /// A mark with no `w:id` prints `noid`, so one author's inserted and
+    /// deleted unshown marks are the same tag: each keeps the kind its own
+    /// clause gave it, as two changes the header lists as one of each.
+    #[test]
+    fn anonymous_unshown_marks_keep_the_kind_their_clause_gave_them() {
+        let body = "<!-- p1 rev noid @AC, rev-del noid @AC -->";
+        assert_eq!(collect_revisions(body), ["ins", "del"]);
     }
 
     #[test]

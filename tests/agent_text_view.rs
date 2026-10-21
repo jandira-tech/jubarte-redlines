@@ -420,6 +420,46 @@ fn id_line_shows_direct_alignment_indent_style_and_number() {
     );
 }
 
+/// A paragraph states its own outline level in its `w:pPr`, whatever
+/// style it carries; a style that gives no level (`Body`) must not swallow
+/// it, or the level is lost on write-back (#1524 review). One the `#` count
+/// already gives needs no clause.
+#[test]
+fn a_styled_paragraph_keeps_the_outline_level_it_states() {
+    let body_xml = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:outlineLvl w:val="8"/></w:pPr><w:r><w:t>Deep body</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Shallow body</w:t></w:r></w:p>"#,
+    );
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: STYLES_CT,
+        rel_type: STYLES_REL,
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body Text"/></w:style></w:styles>"#
+        ),
+    };
+    let full = agent(&common::docx::docx_with(body_xml, &[styles]));
+    let out = body(&full).to_string();
+    assert!(
+        out.contains("<!-- p0 Body outline 9 -->\nDeep body"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p1 Body -->\n## Shallow body"), "{out}");
+    // The level comes back beside the style the line names.
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let document = common::docx::part_string(&back, "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"<w:pStyle w:val="Body"/><w:outlineLvl w:val="8"/>"#),
+        "{document}"
+    );
+    assert!(
+        document.contains(r#"<w:pStyle w:val="Body"/><w:outlineLvl w:val="1"/>"#),
+        "{document}"
+    );
+}
+
 #[test]
 fn paragraph_marks_print_inline_and_formatting_changes_on_the_id_line() {
     let body_xml = concat!(
@@ -828,6 +868,42 @@ fn changes_without_text_name_their_ids() {
             assert!(!resolved.contains(tag), "{tag} in {resolved}");
         }
     }
+}
+
+/// The legend's own order governs `style_changes:`: `docDefaults` leads,
+/// then the default style. `usize::MIN` is zero, so a part that lists the
+/// default style before its defaults used to win the tie (#1521 review).
+#[test]
+fn the_style_changes_legend_leads_with_the_document_defaults() {
+    let rpr_change = |id: u32| {
+        format!(
+            r#"<w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr>"#
+        )
+    };
+    // Word writes `w:docDefaults` first; a part that lists the styles
+    // before it is read the same way, and the legend order still holds.
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>{}</w:style><w:docDefaults><w:rPrDefault>{}</w:rPrDefault></w:docDefaults></w:styles>"#,
+        rpr_change(9),
+        rpr_change(11)
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+        r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    assert!(
+        header_lines(&out).iter().any(|l| {
+            l.starts_with(r#"style_changes: {docDefaults: styles.r11 @AC, Normal: styles.r9 @AC}"#)
+        }),
+        "{out}"
+    );
 }
 
 /// Task 5b, from Word redlines: an empty row's deletion has no text to tag,

@@ -199,10 +199,11 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 28] = [
+const RING1_CODES: [&str; 29] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
+    "NESTED_PPR",
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
     "MALFORMED_XML",
@@ -1177,6 +1178,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_runs_inside_paragraphs(pkg, &mut out);
     check_style_names(pkg, &mut out);
     check_nested_text_boxes(pkg, &mut out);
+    check_nested_ppr(pkg, &mut out);
     check_move_range_counts(pkg, &mut out);
     check_data_bindings_have_stores(pkg, &mut out);
     out
@@ -1257,6 +1259,31 @@ fn check_move_range_counts(pkg: &PartFs, out: &mut Vec<Finding>) {
                     &part,
                     element_path(&dom, start),
                     format!("{name}: {source} source ranges, {destination} destination ranges; Word opens it but Reject All can duplicate moved text (#1214)"),
+                ));
+            }
+        }
+    }
+}
+
+/// A `w:pPr` inside a `w:pPr`: `CT_PPr`'s children are `CT_PPrBase`'s, then
+/// `w:rPr`, `w:sectPr` and `w:pPrChange`, so it takes none of their own (the
+/// previous properties of a `w:pPrChange` sit one level down, under the
+/// change, and are Word's own shape). `tools/validate-docx` refuses the part
+/// with `Sch_InvalidElementContentExpectingComplex`, so it is OOXML-invalid
+/// whatever Word does with it; no Word probe is recorded, so it is a lead
+/// and not Word-fatal (#1595 review).
+fn check_nested_ppr(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for part in xml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        for ppr in dom.descendants(root, Some(&W::name("pPr"))) {
+            for inner in dom.elements(ppr, Some(&W::name("pPr"))) {
+                out.push(Finding::new(
+                    "NESTED_PPR",
+                    &part,
+                    element_path(&dom, inner),
+                    format!("a w:pPr sits inside another ({})", element_path(&dom, ppr)),
                 ));
             }
         }

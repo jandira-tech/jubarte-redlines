@@ -1614,30 +1614,33 @@ fn part_two(out: &mut String, f: &Facts) {
         ),
     }
     if !changes.is_empty() {
-        // Legend order: the default style first, then the styles the body
-        // uses, then the ones only a change names; `docDefaults` leads.
-        let order = |id: &str| {
+        // Legend order: `docDefaults` leads, then the default style, then the
+        // styles the body uses, then the ones only a change names. The key
+        // is a pair of tiers, because `usize::MIN` is zero: one number
+        // cannot put `docDefaults` ahead of the default style, which is
+        // keyed 0 (#1521 review).
+        let order = |id: &str| -> (u8, usize) {
             if id == "docDefaults" {
-                return usize::MIN;
+                return (0, 0);
             }
             if id == default {
-                return 0;
+                return (1, 0);
             }
             f.heading_styles
                 .iter()
                 .position(|(_, h)| h == id)
-                .map(|i| i + 1)
+                .map(|i| (1, i + 1))
                 .or_else(|| {
                     f.other_styles
                         .iter()
                         .position(|o| o == id)
-                        .map(|i| i + 1 + f.heading_styles.len())
+                        .map(|i| (1, i + 1 + f.heading_styles.len()))
                 })
                 .unwrap_or_else(|| {
                     changes
                         .iter()
                         .position(|(holder, _)| holder == id)
-                        .map_or(usize::MAX, |i| i + usize::MAX / 2)
+                        .map_or((2, 0), |i| (2, i))
                 })
         };
         let mut ordered = changes.clone();
