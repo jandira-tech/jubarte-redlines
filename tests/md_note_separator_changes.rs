@@ -151,10 +151,16 @@ fn separator_formatting_changes_come_back_on_their_separators() {
     assert!(footnotes.contains(r#"w:author="A Smith""#), "{footnotes}");
     // Each change comes back on its own separator: the first on the
     // separator note, the second on the continuation.
-    assert_eq!(separator_pairs(&footnotes, "footnote"), (vec!["0".into()], vec!["1".into()]));
+    assert_eq!(
+        separator_pairs(&footnotes, "footnote"),
+        (vec!["0".into()], vec!["1".into()])
+    );
     let endnotes = part(&again, "word/endnotes.xml");
     assert_eq!(format_change_ids(&endnotes), ["2", "3"], "{endnotes}");
-    assert_eq!(separator_pairs(&endnotes, "endnote"), (vec!["2".into()], vec!["3".into()]));
+    assert_eq!(
+        separator_pairs(&endnotes, "endnote"),
+        (vec!["2".into()], vec!["3".into()])
+    );
     assert_eq!(second, first);
 }
 
@@ -284,8 +290,7 @@ fn a_reference_separators_changes_follow_the_edited_view() {
         let (separator, continuation) = separator_pairs(&xml, "footnote");
         assert_eq!(continuation, Vec::<String>::new(), "{xml}");
         assert_eq!(
-            separator,
-            expected,
+            separator, expected,
             "the change did not land on the separator note\n{xml}"
         );
         common::validity::assert_word_valid_package(&written.docx);
@@ -312,5 +317,3 @@ fn fresh_separator_ids_stay_in_words_integer_range() {
     assert_ne!(ids[0], ids[1]);
     assert!(ids.iter().all(|id| id.parse::<i32>().is_ok()), "{xml}");
 }
-
-

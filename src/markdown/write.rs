@@ -6784,7 +6784,7 @@ mod tests {
             vec![Token::InsertEnd]
         );
     }
-/// A `¶{…}` paragraph mark is one span: `¶{` opens it and the same
+    /// A `¶{…}` paragraph mark is one span: `¶{` opens it and the same
     /// `}` an attribution closes. The table of closers knew only
     /// `AttributionStart`, so the pair never closed and both tokens
     /// crossed a drop: a paragraph mark whole inside an image's alt
