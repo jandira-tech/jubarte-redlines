@@ -293,10 +293,8 @@ pub fn source_sha256(docx: &[u8]) -> String {
 }
 
 /// The inspection snapshot as JSON: `schema_version`, `source_sha256`,
-/// `summary`, `paragraphs` (ids, text, style, formatting spans,
-/// limitations) and top-level `tables` with recursive `nested` entries.
-/// Snapshot schema 2 counts top-level tables; nested entries have `parent`
-/// cell paths and no `index`. Oversized or malformed packages are refused before parsing.
+/// `summary` and `paragraphs` (ids, text, style, formatting spans,
+/// limitations). Oversized or malformed packages are refused before parsing.
 ///
 /// Mirrors `jubarte::inspect::inspect_json`.
 #[wasm_bindgen(js_name = inspectDocument)]
@@ -399,9 +397,8 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
 }
 
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
-/// top-level body table, then a line per row of `ids=text` cells; nested
-/// tables follow their cell row, indented two spaces per level and labelled
-/// `nested in CELL_PATH`. `no tables` prints when there are none.
+/// body table, then a line per row of `ids=text` cells; `no tables` when
+/// there are none.
 ///
 /// Mirrors `jubarte::inspect::tables_text`.
 #[wasm_bindgen(js_name = tablesText)]
@@ -938,15 +935,7 @@ pub fn diff_documents_critic(
             Ok(jubarte::markdown::diff_markdown(old, next))
         }
         _ => jubarte::markdown::redline(old, next, &options)
-            .and_then(|docx| {
-                jubarte::markdown::docx_to_markdown(
-                    &docx,
-                    &jubarte::markdown::MarkdownOptions {
-                        input_limits: options.settings.input_limits,
-                        ..Default::default()
-                    },
-                )
-            })
+            .and_then(|docx| jubarte::markdown::docx_to_markdown(&docx, &Default::default()))
             .map(|read| read.markdown)
             .map_err(js_err),
     }
@@ -974,9 +963,7 @@ pub fn redline_documents(
 /// The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 /// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 /// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
-/// `pN` id in a Word document or `line:N` in Markdown. When a side is a
-/// Word document, a replacement inside a paragraph reads insertion first,
-/// `{+new+}[-old-]`, as Word Compare writes it.
+/// `pN` id in a Word document or `line:N` in Markdown.
 ///
 /// Each side is a `.docx` package or UTF-8 Markdown
 /// (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -1232,22 +1219,6 @@ fn manifest() -> jubarte::capabilities::Capabilities {
 #[wasm_bindgen]
 pub fn capabilities() -> Result<String, JsValue> {
     serde_json::to_string_pretty(&manifest()).map_err(js_err)
-}
-
-/// Focused edit discovery; no filters returns this runtime's edit support matrix.
-#[wasm_bindgen(js_name = capabilityQuery)]
-pub fn capability_query(operation: Option<String>, field: Option<String>) -> String {
-    jubarte::capabilities::discovery("wasm", operation.as_deref(), field.as_deref()).to_string()
-}
-
-/// Render a focused query in the same text form as the native CLI.
-#[wasm_bindgen(js_name = capabilityQueryText)]
-pub fn capability_query_text(operation: Option<String>, field: Option<String>) -> String {
-    jubarte::capabilities::discovery_text(&jubarte::capabilities::discovery(
-        "wasm",
-        operation.as_deref(),
-        field.as_deref(),
-    ))
 }
 
 /// [`capabilities`] as the text summary `jubarte capabilities` prints; of
@@ -1573,9 +1544,8 @@ mod tests {
             Some(r#"{"oldFormat":"docx","newFormat":"docx"}"#),
         )
         .unwrap();
-        // The writer uses Word typing order: deletion before insertion.
-        // The snapshot preserves that document order.
-        assert!(marked.contains("{--30--}{++45++}") && marked.contains("{--60--}{++45++}"));
+        // The writer emits a substitution insertion-first (document order).
+        assert!(marked.contains("{++45++}{--30--}") && marked.contains("{++45++}{--60--}"));
         for options in [r#"{"acceptChanges":true}"#, r#"{"format":"word"}"#] {
             assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
         }
@@ -1732,9 +1702,7 @@ mod tests {
     fn refused_input_and_plan_error_are_the_binary_lines() {
         assert_eq!(
             refused_input("fake.docx", b"hello", true).as_deref(),
-            Some(
-                "INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record"
-            )
+            Some("INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record")
         );
         // Markdown is no ZIP and is read.
         assert_eq!(refused_input("a.md", b"# Title", false), None);
@@ -1843,10 +1811,8 @@ mod tests {
         let out = diffed(&word(OLD), NEW.as_bytes(), None);
         let text = out["text"].as_str().unwrap();
         assert!(text.starts_with("--- a/old.docx\n+++ b/new.md\t"), "{text}");
-        // Compare keeps its insertion-first order, unlike typed replacements
-        // and the Markdown-only diff above. The patch follows its XML.
         assert!(
-            text.contains("@@ [p1] @@\nPayment is due in {+45+}[-30-] days.\n"),
+            text.contains("@@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"),
             "{text}"
         );
         let json = diff_documents(
@@ -2136,10 +2102,9 @@ mod tests {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
         let changes = changes_text(&docx).unwrap();
         assert!(
-            // Word typing order: the deletion precedes the insertion, and
-            // the listing assigns revision ids in that document order.
+            // A substitution is written as Word writes one: insertion first.
             changes.starts_with(
-                "r1\tdeletion\ttext\tRedline\tp0\t\"30\"\nr2\tinsertion\ttext\tRedline\tp0\t\"45\"\n"
+                "r1\tinsertion\ttext\tRedline\tp0\t\"45\"\nr2\tdeletion\ttext\tRedline\tp0\t\"30\"\n"
             ),
             "{changes}"
         );

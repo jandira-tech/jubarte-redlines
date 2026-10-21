@@ -21,10 +21,10 @@ A paragraph whose alignment changed.
 Bold **after a bold change.**
 
 <!-- p2 -->
-Whitespace inserted:{++ ++}{r13 @AL}unshown.
+Whitespace inserted:{++ ++}{>>r13 @AL<<}unshown.
 
-<!-- p3 -->
-A paragraph mark inserted.¶{r12 @AL}
+<!-- p3 break-ins r12 @AL -->
+A paragraph mark inserted.
 
 <!-- p4 in c0 -->
 {==First paragraph of a comment range.==}

@@ -42,7 +42,7 @@ def letter() -> Document:
 def test_inspect_returns_typed_snapshot_with_ids_spans_and_summary() -> None:
     snap = letter().inspect()
     assert isinstance(snap, Snapshot)
-    assert snap.schema_version == 2
+    assert snap.schema_version == 1
     assert len(snap.source_sha256) == 64
     assert snap.summary.paragraphs == 4
     assert snap.summary.tables == 0
@@ -334,31 +334,6 @@ def test_capabilities_manifest_reports_python_runtime() -> None:
     assert "insert_paragraph" in caps["edit_operations"]
     assert "insert_table" in caps["edit_operations"]
     assert "list" in caps["edit_operations"]
-
-
-def test_capability_query_matrix_and_focused_answers_reach_the_engine() -> None:
-    matrix = jubarte.capabilities(matrix=True)
-    assert matrix["runtime"] == "python"
-    assert matrix["edit_plan_versions"] == [1]
-    advertised = matrix["edit_operations"]
-    assert len(advertised) == 24
-    # Every kind the matrix advertises answers a focused query as a
-    # dispatched v1 operation: the wrapper routes to the engine's table.
-    for kind in advertised:
-        answer = jubarte.capabilities(operation=kind)
-        assert answer["supported"] is True, kind
-        v1 = next(p for p in answer["profiles"] if p["plan_version"] == 1)
-        assert v1["dispatched"] is True, kind
-    # A name the dispatcher refuses is not advertised, and the query says so.
-    assert "definitely_not_an_operation" not in advertised
-    refused = jubarte.capabilities(operation="definitely_not_an_operation")
-    assert refused["supported"] is False
-    assert refused["reason"] == "unsupported operation"
-    # Field queries narrow within an operation and suggest the nearest name.
-    near = jubarte.capabilities(operation="reply_comment", field="tex")
-    assert near["supported"] is False
-    assert near["nearest"][0] == "text"
-    assert jubarte.capabilities(operation="reply_comment", field="text")["supported"] is True
 
 
 def test_plan_builder_validates_selectors_runs_and_options() -> None:

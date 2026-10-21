@@ -30,7 +30,7 @@ fn with_explicit_closes(docx: &[u8]) -> Vec<u8> {
     let mut out = ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).expect("entry");
-        let name = file.name().expect("decode ZIP fixture name").into_owned();
+        let name = file.name().to_string();
         let mut data = Vec::new();
         file.read_to_end(&mut data).expect("read");
         if name.ends_with(".rels") || name == "[Content_Types].xml" {
