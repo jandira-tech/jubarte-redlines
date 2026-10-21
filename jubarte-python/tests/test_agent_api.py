@@ -341,7 +341,8 @@ def test_capability_query_matrix_and_focused_answers_reach_the_engine() -> None:
     assert matrix["runtime"] == "python"
     assert matrix["edit_plan_versions"] == [1]
     advertised = matrix["edit_operations"]
-    assert len(advertised) == 24
+    # 26 with #1252's strike and restore.
+    assert len(advertised) == 26
     # Every kind the matrix advertises answers a focused query as a
     # dispatched v1 operation: the wrapper routes to the engine's table.
     for kind in advertised:

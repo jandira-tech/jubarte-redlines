@@ -132,6 +132,10 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
                     )
                 } else if existing == "keep" && !crate::edit::operation_supports_keep(kind) {
                     Some("the legacy emitter cannot preserve existing revisions for this operation")
+                } else if existing != "keep" && crate::edit::operation_needs_keep(kind) {
+                    Some(
+                        "the revision it answers stays beside our change, so it needs existing_revisions keep",
+                    )
                 } else {
                     None
                 };
@@ -421,6 +425,34 @@ mod tests {
             assert!(rows.iter().any(|r| r["track"] == "on"
                 && r["existing_revisions"] == "accept"
                 && r["status"] == "conditional"));
+        }
+    }
+
+    #[test]
+    fn strike_and_restore_are_offered_under_keep_only() {
+        for kind in ["strike", "restore"] {
+            let answer = discovery("cli", Some(kind), None);
+            let rows: Vec<&Value> = answer["profiles"][0]["support"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["track"] == "on")
+                .collect();
+            assert!(!rows.is_empty(), "{kind}: {answer}");
+            for row in rows {
+                let keep = row["existing_revisions"] == "keep";
+                let want = if keep { "conditional" } else { "unsupported" };
+                assert_eq!(row["status"], want, "{kind}: {row}");
+                if !keep {
+                    assert!(
+                        row["conditions"]
+                            .as_str()
+                            .unwrap()
+                            .contains("existing_revisions keep"),
+                        "{kind}: {row}"
+                    );
+                }
+            }
         }
     }
 

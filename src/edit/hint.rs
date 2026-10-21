@@ -129,6 +129,9 @@ pub(super) struct Holder<'a> {
     /// What the refused edit touched, up to the revision's id: `the text is
     /// inside`, `…cannot be merged: that mark is`.
     pub(super) lead: &'a str,
+    /// Whether restore takes the revision, another author's deletion, as
+    /// [`super::visible::restorable`] decides.
+    pub(super) restorable: bool,
 }
 
 /// The `w:del` or `w:moveFrom` of `paragraph` whose text `find` reaches
@@ -206,24 +209,23 @@ const QUOTED: usize = 60;
 /// The refusal for an edit on text `holder` holds: what holds it, then
 /// accept, reject and a comment, each a fragment the caller can paste.
 pub(super) fn settle_hint(holder: &Holder<'_>, syntax: PlanSyntax) -> String {
-    let id = holder.id;
-    let text = if holder.text.is_empty() {
-        String::new()
-    } else {
-        format!("{} ", quoted(holder.text))
-    };
-    let mut lines = vec![format!(
-        "{} {id}, {text}{} by {:?}.",
-        holder.lead,
-        holder.held.verb(),
-        holder.author
-    )];
+    let mut lines = vec![format!("{}.", named(holder))];
     let [accept, reject] = holder.held.settles();
-    let routes = [
-        (accept.0, settle(syntax, "accept", holder), Some(accept.1)),
-        (reject.0, settle(syntax, "reject", holder), Some(reject.1)),
-        ("or comment on it", comment(syntax, holder.paragraph), None),
-    ];
+    let visible = restore(syntax, holder).map(|quote| {
+        (
+            "put it back visibly",
+            quote,
+            Some("their deletion stays, your insertion shows"),
+        )
+    });
+    let routes: Vec<_> = visible
+        .into_iter()
+        .chain([
+            (accept.0, settle(syntax, "accept", holder), Some(accept.1)),
+            (reject.0, settle(syntax, "reject", holder), Some(reject.1)),
+            ("or comment on it", comment(syntax, holder.paragraph), None),
+        ])
+        .collect();
     let width = routes.iter().map(|r| r.0.len()).max().unwrap_or(0) + 1;
     let fragment = routes
         .iter()
@@ -244,6 +246,31 @@ pub(super) fn settle_hint(holder: &Holder<'_>, syntax: PlanSyntax) -> String {
     lines.join("\n")
 }
 
+/// The refusal of an edit inside a deletion the same command restores:
+/// the restore lands first, and the edit goes in a later command.
+pub(super) fn restored_here_hint(holder: &Holder<'_>) -> String {
+    format!(
+        "{}, which this command restores: edit the restored words in a command of their own, after the restore.",
+        named(holder)
+    )
+}
+
+/// The lead with the revision named: its id, text, what it did, by whom.
+fn named(holder: &Holder<'_>) -> String {
+    let text = if holder.text.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", quoted(holder.text))
+    };
+    format!(
+        "{} {}, {text}{} by {:?}",
+        holder.lead,
+        holder.id,
+        holder.held.verb(),
+        holder.author
+    )
+}
+
 /// The target a v2 comment route names until [`super::v2_apply`] writes in
 /// the refused operation's own: valid JSON, left to fill in like `find`.
 pub(super) const OPERATION_TARGET: &str = r#"{"short_id":"…","long_id":"…"}"#;
@@ -251,6 +278,23 @@ pub(super) const OPERATION_TARGET: &str = r#"{"short_id":"…","long_id":"…"}"
 /// `text` as a JSON string, quotes and backslashes escaped.
 fn json(text: &str) -> String {
     serde_json::Value::from(text).to_string()
+}
+
+/// The restore of the revision, as `syntax` spells it: offered for a
+/// deletion with words restore takes, in a syntax that has it.
+fn restore(syntax: PlanSyntax, holder: &Holder<'_>) -> Option<String> {
+    if holder.held != Held::Deleted || !holder.restorable || holder.text.is_empty() {
+        return None;
+    }
+    match syntax {
+        PlanSyntax::V1 => Some(format!(
+            r#"{{"kind":"restore","revision":{}}}"#,
+            json(holder.id)
+        )),
+        PlanSyntax::Flags => Some(format!("-p {} --restore", holder.id)),
+        // A v2 plan and the typed commands have no restore yet.
+        PlanSyntax::V2 | PlanSyntax::Typed => None,
+    }
 }
 
 /// `verb` (`accept` or `reject`) of the revision, as `syntax` spells it.
@@ -327,15 +371,17 @@ mod tests {
             text: "the bankers",
             paragraph: "p3",
             lead: "the text is inside",
+            restorable: held == Held::Deleted,
         }
     }
 
     #[test]
-    fn a_deletion_offers_both_settles_and_a_comment_with_their_cost() {
+    fn a_deletion_offers_restore_first_then_both_settles_then_comment() {
         assert_eq!(
             settle_hint(&holder(Held::Deleted), PlanSyntax::V1),
             [
                 r#"the text is inside r12, "the bankers" deleted by "Bob Lee"."#,
+                r#"  put it back visibly:  {"kind":"restore","revision":"r12"}            (their deletion stays, your insertion shows)"#,
                 r#"  let it go:            "resolve_revisions":{"accept":{"ids":["r12"]}} (their words leave the document for good)"#,
                 r#"  put it back silently: "resolve_revisions":{"reject":{"ids":["r12"]}} (their deletion disappears, no trace)"#,
                 r#"  or comment on it:     {"kind":"comment","paragraph":"p3","find":"…","text":"…"}"#,
@@ -350,11 +396,20 @@ mod tests {
             let hint = settle_hint(&holder(Held::Deleted), syntax);
             let (wanted, foreign): (&[&str], &[&str]) = match syntax {
                 PlanSyntax::V1 => (
-                    &[r#"{"ids":["r12"]}"#, r#""paragraph":"p3""#],
+                    &[
+                        r#"{"ids":["r12"]}"#,
+                        r#""paragraph":"p3""#,
+                        r#"{"kind":"restore","revision":"r12"}"#,
+                    ],
                     &["--accept", "short_id"],
                 ),
                 PlanSyntax::Flags => (
-                    &["-p r12 --accept", "-p r12 --reject", "add -p p3 --anchor"],
+                    &[
+                        "-p r12 --restore",
+                        "-p r12 --accept",
+                        "-p r12 --reject",
+                        "add -p p3 --anchor",
+                    ],
                     &["resolve_revisions"],
                 ),
                 PlanSyntax::V2 => (
@@ -362,7 +417,8 @@ mod tests {
                         r#""accept":[{"short_id":"r12","long_id":"document.w:del.w:id.12"}]"#,
                         r#""target":"#,
                     ],
-                    &[r#""ids""#, "--accept", r#""paragraph""#],
+                    // A v2 plan has no restore yet.
+                    &[r#""ids""#, "--accept", r#""paragraph""#, "restore"],
                 ),
                 PlanSyntax::Typed => (
                     &[
@@ -386,7 +442,7 @@ mod tests {
     fn every_kind_names_what_the_revision_did() {
         for (held, says, first) in [
             (Held::Inserted, "inserted by", "keep it:"),
-            (Held::Deleted, "deleted by", "let it go:"),
+            (Held::Deleted, "deleted by", "put it back visibly:"),
             (Held::MovedHere, "moved here by", "keep the move:"),
             (Held::MovedAway, "moved away by", "keep the move:"),
             (Held::Formatted, "reformatted by", "keep their formatting:"),
@@ -399,6 +455,35 @@ mod tests {
             );
             assert!(!hint.contains("settle it first"), "{hint}");
         }
+    }
+
+    #[test]
+    fn a_deletion_restore_cannot_take_offers_no_visible_route() {
+        let hint = settle_hint(
+            &Holder {
+                restorable: false,
+                ..holder(Held::Deleted)
+            },
+            PlanSyntax::V1,
+        );
+        assert_eq!(hint.lines().count(), 4, "{hint}");
+        assert!(!hint.contains("restore"), "{hint}");
+    }
+
+    #[test]
+    fn the_restore_route_parses_whatever_the_id_holds() {
+        let odd = Holder {
+            id: r#"r"1\2"#,
+            ..holder(Held::Deleted)
+        };
+        let hint = settle_hint(&odd, PlanSyntax::V1);
+        let line = hint.lines().nth(1).unwrap();
+        let route: serde_json::Value = serde_json::from_str(fragment(line))
+            .unwrap_or_else(|e| panic!("not JSON ({e}): {hint}"));
+        assert_eq!(
+            route,
+            serde_json::json!({"kind":"restore","revision": odd.id})
+        );
     }
 
     #[test]
@@ -423,9 +508,11 @@ mod tests {
         rest.rsplit_once(" (").map_or(rest, |(f, _)| f.trim_end())
     }
 
-    /// The route lines of `hint` as JSON: accept, reject, comment.
+    /// The route lines of `hint` as JSON: accept, reject, comment (the
+    /// last three, after any visible route).
     fn routes(hint: &str) -> [serde_json::Value; 3] {
-        let lines: Vec<&str> = hint.lines().collect();
+        let all: Vec<&str> = hint.lines().collect();
+        let lines = &all[all.len() - 4..];
         let parse = |s: String| {
             serde_json::from_str(&s).unwrap_or_else(|e| panic!("{s} is not JSON ({e}): {hint}"))
         };
