@@ -311,6 +311,8 @@ pub(super) fn assemble(
     if package.content_type_for(&format!("/{main}")).is_none() {
         package.add_content_type_override(&format!("/{main}"), MAIN_CT);
     }
+    // A bound content control a drawing kept needs its store (#1427).
+    super::data_stores::write_missing(&mut package, &main, warnings);
     // Revision attributes are assembled as XML strings. Bind the extension
     // before parsing, then reuse the comparer's Word compatibility contract.
     for part in package.parts() {

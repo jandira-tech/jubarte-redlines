@@ -38,6 +38,7 @@
 mod anchor;
 pub(crate) mod borders;
 mod critic;
+pub(crate) mod data_stores;
 mod diff;
 pub(crate) mod frames;
 mod from_docx;

@@ -2148,3 +2148,185 @@ fn a_text_box_s_paragraph_style_is_defined_in_the_written_docx() {
     assert!(no_spacing.contains("w:after=\"0\""), "{no_spacing}");
     assert!(part(&out, "word/document.xml").contains("<w:pStyle w:val=\"NoSpacing\"/>"));
 }
+
+/// The cover page's Abstract: a content control bound to the custom XML
+/// store `{55AF091B-…}` (CoverPageProperties).
+const ABSTRACT_STORE: &str = "{55AF091B-3C7A-41E3-B477-F2FDAA23CFDA}";
+const COVER_NS: &str = "http://schemas.microsoft.com/office/2006/coverPageProps";
+
+/// [`text_box_docx`] whose box holds a content control bound to the cover
+/// page's Abstract, reading `My abstract`, with its custom XML store.
+fn bound_text_box_docx() -> Vec<u8> {
+    bound_text_box_docx_with("/ns0:CoverPageProperties[1]/ns0:Abstract[1]", "<w:text/>")
+}
+
+/// [`bound_text_box_docx`] whose control binds `xpath` and is of the type
+/// `control` names (`<w:text/>`, a check box, …).
+fn bound_text_box_docx_with(xpath: &str, control: &str) -> Vec<u8> {
+    let sdt = format!(
+        "<w:sdt><w:sdtPr><w:alias w:val=\"Abstract\"/><w:id w:val=\"7\"/>\
+         <w:dataBinding w:prefixMappings=\"xmlns:ns0='{COVER_NS}'\" \
+         w:xpath=\"{xpath}\" w:storeItemID=\"{ABSTRACT_STORE}\"/>\
+         {control}</w:sdtPr><w:sdtContent><w:r><w:t>My abstract</w:t></w:r></w:sdtContent></w:sdt>"
+    );
+    let item = format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><CoverPageProperties xmlns=\"{COVER_NS}\"><PublishDate/><Abstract>My abstract</Abstract></CoverPageProperties>"
+    );
+    let props = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><ds:datastoreItem ds:itemID=\"{ABSTRACT_STORE}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs><ds:schemaRef ds:uri=\"{COVER_NS}\"/></ds:schemaRefs></ds:datastoreItem>"
+    );
+    let item_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{R_NS}/customXmlProps\" Target=\"itemProps1.xml\"/></Relationships>"
+    );
+    let docx = text_box_docx_with(
+        "",
+        &[
+            Part {
+                name: "customXml/item1.xml",
+                content_type: "application/xml",
+                rel_type: "",
+                xml: &item,
+            },
+            Part {
+                name: "customXml/itemProps1.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.customXmlProperties+xml",
+                rel_type: "",
+                xml: &props,
+            },
+            Part {
+                name: "customXml/_rels/item1.xml.rels",
+                content_type: "application/vnd.openxmlformats-package.relationships+xml",
+                rel_type: "",
+                xml: &item_rels,
+            },
+        ],
+    );
+    let document = part(&docx, "word/document.xml").replace(
+        "<w:r><w:t xml:space=\"preserve\">Added box</w:t></w:r>",
+        &sdt,
+    );
+    assert!(document.contains(ABSTRACT_STORE), "{document}");
+    let docx = replace_entry(&docx, "word/document.xml", document.as_bytes());
+    let rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rIdC1\" Type=\"{R_NS}/customXml\" Target=\"../customXml/item1.xml\"/></Relationships>"
+    );
+    replace_entry(&docx, "word/_rels/document.xml.rels", rels.as_bytes())
+}
+
+/// A content control in a text box bound to a custom XML store keeps its
+/// text in Word: Word fills a bound control from its store when it opens
+/// the file, so the docx written back holds the store, the bound node
+/// reading what the control shows (#1427).
+#[test]
+fn a_bound_content_control_s_store_is_written_back() {
+    let original = bound_text_box_docx();
+    let (view, out) = docx_round_trip(&original);
+    assert!(view.contains("My abstract"), "{view}");
+    let document = part(&out, "word/document.xml");
+    assert!(
+        document.contains(ABSTRACT_STORE),
+        "the binding is kept: {document}"
+    );
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+    let names: Vec<String> = (0..zip.len())
+        .map(|i| zip.by_index(i).unwrap().name().unwrap().to_string())
+        .collect();
+    let mut read = |name: &str| {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name(name).unwrap(), &mut text).unwrap();
+        text
+    };
+    let props: Vec<String> = names
+        .iter()
+        .filter(|n| n.starts_with("customXml/itemProps"))
+        .map(|n| read(n))
+        .collect();
+    assert!(
+        props
+            .iter()
+            .any(|p| p.contains(&format!("ds:itemID=\"{ABSTRACT_STORE}\""))),
+        "no store {ABSTRACT_STORE} among {names:?}: {props:?}"
+    );
+    let items: Vec<String> = names
+        .iter()
+        .filter(|n| n.starts_with("customXml/item") && !n.contains("Props") && n.ends_with(".xml"))
+        .map(|n| read(n))
+        .collect();
+    assert!(
+        items
+            .iter()
+            .any(|i| i.contains(COVER_NS) && i.contains(">My abstract</")),
+        "{items:?}"
+    );
+    let rels = read("word/_rels/document.xml.rels");
+    assert!(rels.contains("relationships/customXml\""), "{rels}");
+    let types = read("[Content_Types].xml");
+    assert!(types.contains("customXmlProperties+xml"), "{types}");
+    common::validity::assert_word_valid_package(&out);
+}
+
+/// A binding no store can be built for (a path to an attribute, a check
+/// box, whose store value is not its text) loses its `w:dataBinding`, so
+/// Word keeps the text the control shows instead of emptying it for a
+/// store the package lacks (#1427).
+#[test]
+fn a_binding_with_no_store_to_build_leaves_its_control_s_text() {
+    for (xpath, control) in [
+        ("/ns0:CoverPageProperties[1]/@ns0:Abstract", "<w:text/>"),
+        (
+            "/ns0:CoverPageProperties[1]/ns0:Abstract[1]",
+            "<w14:checkbox xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">\
+             <w14:checked w14:val=\"0\"/></w14:checkbox>",
+        ),
+    ] {
+        let (view, out) = docx_round_trip(&bound_text_box_docx_with(xpath, control));
+        assert!(view.contains("My abstract"), "{view}");
+        let document = part(&out, "word/document.xml");
+        assert!(!document.contains("dataBinding"), "{xpath}: {document}");
+        assert!(
+            xml_element(&document, "w:txbxContent").contains("My abstract"),
+            "{document}"
+        );
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+        let names: Vec<String> = (0..zip.len())
+            .map(|i| zip.by_index(i).unwrap().name().unwrap().to_string())
+            .collect();
+        assert!(
+            names.iter().all(|n| !n.starts_with("customXml/")),
+            "{xpath}: {names:?}"
+        );
+        common::validity::assert_word_valid_package(&out);
+    }
+}
+
+/// An edit of a bound control's text in the view shows in Word: the box
+/// is written with the edited words (#1101 A), and no store is left
+/// holding the old text for Word to fill a control with (#1427).
+#[test]
+fn an_edited_bound_control_shows_its_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), bound_text_box_docx()).unwrap();
+    let view = jubarte(dir.path(), &["read", "in.docx", "--no-page-markers"]);
+    let edited = view.replace("My abstract", "Edited abstract");
+    assert_ne!(edited, view);
+    std::fs::write(dir.path().join("edit.md"), edited).unwrap();
+    jubarte(dir.path(), &["convert", "edit.md", "-o", "out.docx"]);
+    let out = std::fs::read(dir.path().join("out.docx")).unwrap();
+    let document = part(&out, "word/document.xml");
+    let boxed = xml_element(&document, "w:txbxContent");
+    assert!(boxed.contains("Edited abstract"), "{document}");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).unwrap();
+        let mut text = String::new();
+        if std::io::Read::read_to_string(&mut entry, &mut text).is_ok() {
+            assert!(
+                !text.contains("My abstract"),
+                "{}: {text}",
+                entry.name().unwrap()
+            );
+        }
+    }
+    drop(zip);
+    common::validity::assert_word_valid_package(&out);
+}
