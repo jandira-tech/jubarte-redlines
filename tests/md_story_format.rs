@@ -207,3 +207,89 @@ fn a_stated_left_or_justified_paragraph_keeps_its_alignment() {
     assert!(paragraphs[2].contains(r#"<w:jc w:val="center"/>"#), "{xml}");
     assert_eq!(view(&again), first);
 }
+
+/// Word's page-number frame: a header paragraph holding `PAGE` in a
+/// `w:framePr` on the margin's right edge (#526).
+const PAGE_FRAME: &str = r#"<w:p><w:pPr><w:framePr w:wrap="none" w:vAnchor="text" w:hAnchor="margin" w:xAlign="right" w:y="1"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:t>Odd page header</w:t></w:r></w:p>"#;
+
+/// A framed paragraph prints the frame in its `pN:` entry, in the schema's
+/// attribute order, and the writer puts it back on the paragraph (#526).
+#[test]
+fn a_framed_page_number_keeps_its_frame() {
+    let first = view(&with_header(PAGE_FRAME));
+    let block = headers_block(&first);
+    assert!(
+        block.contains("frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}"),
+        "{first}"
+    );
+    assert!(block.contains("p1: {text: Odd page header}"), "{first}");
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(
+            r#"<w:pPr><w:framePr w:wrap="none" w:hAnchor="margin" w:vAnchor="text" w:xAlign="right" w:y="1"/>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("<w:framePr").count(), 1, "{xml}");
+    assert_eq!(view(&again), first);
+}
+
+/// The frame a paragraph lays out in is its style's under its own: the
+/// view prints that one, and the writer writes it on the paragraph, which
+/// keeps no style's frame (#526).
+#[test]
+fn a_style_s_frame_under_the_paragraph_s_own_is_the_one_printed() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="PageBox"><w:name w:val="Page Box"/><w:basedOn w:val="Normal"/><w:pPr><w:framePr w:h="363" w:wrap="around" w:hAnchor="page"/></w:pPr></w:style></w:styles>"#
+    );
+    let paragraphs = r#"<w:p><w:pPr><w:pStyle w:val="PageBox"/><w:framePr w:wrap="none" w:x="-20"/></w:pPr><w:r><w:t>7</w:t></w:r></w:p>"#;
+    let xml = header(paragraphs);
+    let docx = docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER,
+                rel_type: HEADER_REL,
+                xml: &xml,
+            },
+            Part {
+                name: "word/styles.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                xml: &styles,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let first = view(&docx);
+    assert!(
+        headers_block(&first).contains("frame: {h: 363, wrap: none, hAnchor: page, x: -20}"),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/header1.xml").expect("a header part");
+    assert!(
+        xml.contains(r#"<w:framePr w:h="363" w:wrap="none" w:hAnchor="page" w:x="-20"/>"#),
+        "{xml}"
+    );
+    assert_eq!(view(&again), first);
+}
+
+/// A frame the schema does not allow is no frame the writer writes: the
+/// story entry does not read, as a border that does not read (#526).
+#[test]
+fn a_frame_value_the_schema_forbids_is_not_written() {
+    let first = view(&with_header(PAGE_FRAME));
+    for bad in ["wrap: sideways", "colour: red", "y: high"] {
+        let edited = first.replace("wrap: none", bad);
+        assert_ne!(edited, first);
+        let docx = write(&edited);
+        let xml = part_string(&docx, "word/header1.xml").unwrap_or_default();
+        assert!(
+            !xml.contains("sideways") && !xml.contains("colour") && !xml.contains("high"),
+            "{bad}: {xml}"
+        );
+    }
+}

@@ -990,6 +990,11 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                                         &crate::markdown::borders::PARAGRAPH_SIDES,
                                     )
                                 }),
+                                frame: story_frame(
+                                    p,
+                                    styles_root.as_ref(),
+                                    default_style.as_deref(),
+                                ),
                             };
                             (
                                 i,
@@ -4673,6 +4678,42 @@ fn bookmark_targets<'e>(
 
 /// The colour every text run of a header or footer paragraph `p` sets
 /// itself (`w:rPr/w:color`), when they all set the same one.
+/// The frame story paragraph `p` lays out in: the `w:framePr` of its
+/// style chain (`default` when it names no style), base first, under its
+/// own, as the view prints it.
+fn story_frame(p: &Element, styles: Option<&Element>, default: Option<&str>) -> Option<String> {
+    let mut chain: Vec<&[(String, String)]> = Vec::new();
+    if let Some(styles) = styles {
+        let mut id = p
+            .path(&["pPr", "pStyle"])
+            .and_then(|s| s.attr("val"))
+            .or(default)
+            .map(str::to_string);
+        let mut seen = HashSet::new();
+        while let Some(sid) = id.take() {
+            if !seen.insert(sid.clone()) {
+                break;
+            }
+            let Some(style) = styles.children_named("style").find(|s| {
+                s.attr("styleId") == Some(sid.as_str()) && s.attr("type") == Some("paragraph")
+            }) else {
+                break;
+            };
+            if let Some(frame) = style.path(&["pPr", "framePr"]) {
+                chain.push(frame.attrs.as_slice());
+            }
+            id = style
+                .child("basedOn")
+                .and_then(|b| b.attr("val"))
+                .map(str::to_string);
+        }
+        chain.reverse();
+    }
+    let own = p.path(&["pPr", "framePr"]).map(|f| f.attrs.as_slice());
+    crate::markdown::frames::merged(chain, own)
+        .map(|frame| crate::markdown::frames::describe(&frame))
+}
+
 fn story_color(p: &Element) -> Option<String> {
     let mut runs = Vec::new();
     p.find_all("r", &mut runs);

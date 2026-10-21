@@ -961,15 +961,23 @@ near reporting adds no new successful match.
   blocks: when one holds a change `--changed` selects, the `range:` line
   says to read those lines (with no block left when only they changed).
   A story whose paragraphs carry their own text colour (`w:color`, when
-  every text run sets the same one) or borders (`w:pBdr`, in the table
-  border grammar), or differ in alignment, prints paragraph by paragraph:
+  every text run sets the same one), borders (`w:pBdr`, in the table
+  border grammar) or frame, or differ in alignment, prints paragraph by
+  paragraph:
   `id: header1`, then `p0: {text: …, center, color: "595959", border:
   bottom single 0.5pt 8496B0 space 4pt}` for each, as a block in the first
   section and as a flow map in `sections:`. A colour that opens with a
   digit is quoted, since YAML reads `000000` as the number 0. Alignment is
   `center`, `right`, or `left`/`justify` when the paragraph states it
   (`w:jc`), so a centred Header style does not centre it; no word means the
-  paragraph names none.
+  paragraph names none. A framed paragraph (Word's page-number frame)
+  adds `frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right,
+  y: 1}`: the attributes of `w:framePr` (CT_FramePr) and their values,
+  lengths in twips, in the schema's order. It is the frame the paragraph
+  lays out in, its style's under its own, and the writer puts it on the
+  paragraph; `frame: {}` is an empty `w:framePr`. A frame naming another
+  attribute, or a value the schema does not allow, does not read, and the
+  story entry with it.
 - Page markers need the layout pass; `--no-page-markers` skips it. With
   `--json`, `--tables`, `--for-edit` or `-o FILE.json`, it is dropped with a
   warning (`warning: --no-page-markers dropped: no page markers in JSON,

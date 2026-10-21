@@ -73,11 +73,14 @@ pub(super) struct ParaFormat {
     pub color: Option<String>,
     /// Its borders (`w:pBdr`).
     pub border: Option<super::borders::Sides>,
+    /// Its frame (`w:framePr`): each attribute and its value, as
+    /// `frame: {wrap: none, y: 1}` names them.
+    pub frame: Option<Vec<(String, String)>>,
 }
 
 impl ParaFormat {
-    /// The `center`/`right`, `color:` and `border:` of a `pN: {…}` entry;
-    /// `None` when its border does not read.
+    /// The `center`/`right`, `color:`, `border:` and `frame:` of a `pN:
+    /// {…}` entry; `None` when its border or frame does not read.
     fn read(entries: &[(String, Value)]) -> Option<Self> {
         let text_of = |key: &str| {
             entries.iter().find_map(|(k, v)| match v {
@@ -93,12 +96,30 @@ impl ParaFormat {
             )?),
             None => None,
         };
+        // A frame names only the schema's attributes, with values it
+        // allows: anything else would be a `w:framePr` Word refuses.
+        let frame = match entries.iter().find(|(k, _)| k == "frame") {
+            Some((_, Value::Map(items))) => Some(
+                items
+                    .iter()
+                    .map(|(name, value)| match value {
+                        Value::Text(value) if super::frames::valid(name, value) => {
+                            Some((name.clone(), value.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            Some(_) => return None,
+            None => None,
+        };
         Some(Self {
             align: align_of(flag),
             color: text_of("color")
                 .filter(|c| c.chars().all(|c| c.is_ascii_alphanumeric()))
                 .map(str::to_string),
             border,
+            frame,
         })
     }
 }
@@ -1552,6 +1573,10 @@ fn story_part(
         let own = index
             .checked_sub(story.paragraph)
             .and_then(|k| story.formats.get(k));
+        // `w:framePr` follows `w:pStyle` in `w:pPr`, before `w:pBdr`.
+        if let Some(frame) = own.and_then(|f| f.frame.as_ref()) {
+            base.push_str(&super::frames::xml(frame));
+        }
         if let Some(sides) = own.and_then(|f| f.border.as_ref()) {
             let _ = write!(base, "<w:pBdr>{}</w:pBdr>", super::borders::xml(sides));
         }

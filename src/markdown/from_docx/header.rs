@@ -77,6 +77,9 @@ pub(crate) struct ParaFact {
     /// Its own borders (`w:pBdr`), as a border prints them (`bottom single
     /// 0.5pt 8496B0 space 4pt`).
     pub border: Option<String>,
+    /// The frame it lays out in (`w:framePr`, its style's under its own),
+    /// as [`crate::markdown::frames::describe`] prints it.
+    pub frame: Option<String>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -1113,15 +1116,15 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
 }
 
 /// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
-/// one carries its own colour or borders, or their alignments differ.
+/// one carries its own colour, borders or frame, or their alignments differ.
 fn by_paragraph(s: &StoryFact) -> bool {
     s.paras
         .iter()
-        .any(|p| p.color.is_some() || p.border.is_some() || p.align != s.align)
+        .any(|p| p.color.is_some() || p.border.is_some() || p.frame.is_some() || p.align != s.align)
 }
 
-/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt}`,
-/// one per paragraph.
+/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt,
+/// frame: {wrap: none, y: 1}}`, one per paragraph.
 fn paragraph_entries(s: &StoryFact) -> Vec<String> {
     std::iter::once(&s.text)
         .chain(&s.more)
@@ -1137,6 +1140,9 @@ fn paragraph_entries(s: &StoryFact) -> Vec<String> {
             }
             if let Some(border) = &p.border {
                 inner.push_str(&format!(", border: {}", scalar(border, true)));
+            }
+            if let Some(frame) = &p.frame {
+                inner.push_str(&format!(", frame: {frame}"));
             }
             format!("p{}: {{{inner}}}", s.first + k)
         })
