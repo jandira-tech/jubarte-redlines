@@ -291,9 +291,25 @@ fn restore(syntax: PlanSyntax, holder: &Holder<'_>) -> Option<String> {
             r#"{{"kind":"restore","revision":{}}}"#,
             json(holder.id)
         )),
-        PlanSyntax::Flags => Some(format!("-p {} --restore", holder.id)),
+        PlanSyntax::Flags => Some(format!("-p {} --restore", shell_word(holder.id))),
         // A v2 plan and the typed commands have no restore yet.
         PlanSyntax::V2 | PlanSyntax::Typed => None,
+    }
+}
+
+/// `id` as one shell word. A short id prints bare; a colon id carries the
+/// document's `w:id` verbatim (`body:rev:1;x`), so it is single-quoted when
+/// a shell would read anything in it.
+fn shell_word(id: &str) -> std::borrow::Cow<'_, str> {
+    let bare = !id.is_empty()
+        && !id.starts_with(['#', '=', '~', '-'])
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._%:+-".contains(&b));
+    if bare {
+        id.into()
+    } else {
+        format!("'{}'", id.replace('\'', r"'\''")).into()
     }
 }
 
@@ -305,9 +321,9 @@ fn settle(syntax: PlanSyntax, verb: &str, holder: &Holder<'_>) -> String {
             r#""resolve_revisions":{{"{verb}":{{"ids":[{}]}}}}"#,
             json(id)
         ),
-        PlanSyntax::Flags => format!("-p {id} --{verb}"),
+        PlanSyntax::Flags => format!("-p {} --{verb}", shell_word(id)),
         // Added to the refused command itself, which settles before it edits.
-        PlanSyntax::Typed => format!("--{verb}-change {id}"),
+        PlanSyntax::Typed => format!("--{verb}-change {}", shell_word(id)),
         // A v2 plan's resolve_revisions names both lists.
         PlanSyntax::V2 => {
             let target = format!(
@@ -388,6 +404,40 @@ mod tests {
             ]
             .join("\n")
         );
+    }
+
+    /// A colon id carries the document's `w:id` verbatim (`body:rev:1;x`), so
+    /// the command fragments quote it for the shell (review gid=54).
+    #[test]
+    fn a_colon_id_with_shell_syntax_is_quoted_in_command_fragments() {
+        let mut odd = holder(Held::Deleted);
+        odd.id = "body:rev:1;touch x";
+        let flags = settle_hint(&odd, PlanSyntax::Flags);
+        assert!(
+            flags.contains("-p 'body:rev:1;touch x' --restore"),
+            "{flags}"
+        );
+        assert!(
+            flags.contains("-p 'body:rev:1;touch x' --accept"),
+            "{flags}"
+        );
+        assert!(
+            flags.contains("-p 'body:rev:1;touch x' --reject"),
+            "{flags}"
+        );
+        let typed = settle_hint(&odd, PlanSyntax::Typed);
+        assert!(
+            typed.contains("--accept-change 'body:rev:1;touch x'"),
+            "{typed}"
+        );
+        odd.id = "body:rev:it's";
+        let flags = settle_hint(&odd, PlanSyntax::Flags);
+        assert!(
+            flags.contains(r#"-p 'body:rev:it'\''s' --accept"#),
+            "{flags}"
+        );
+        // A shell-safe id prints bare, as before.
+        assert!(settle_hint(&holder(Held::Deleted), PlanSyntax::Flags).contains("-p r12 --accept"));
     }
 
     #[test]

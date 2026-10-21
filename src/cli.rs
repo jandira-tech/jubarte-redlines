@@ -2080,9 +2080,14 @@ pub fn success_block(before_name: &str, before: &str, after_name: &str, after: &
             )
             .to_string()
     };
+    // CommonMark closes a tilde fence with up to three leading spaces, and a
+    // context line puts one before the document's text.
     let longest = body
         .lines()
-        .map(|line| line.bytes().take_while(|b| *b == b'~').count())
+        .map(|line| {
+            let indent = line.bytes().take(3).take_while(|b| *b == b' ').count();
+            line.bytes().skip(indent).take_while(|b| *b == b'~').count()
+        })
         .max()
         .unwrap_or(0);
     let fence = "~".repeat(4.max(longest + 1));
@@ -2121,6 +2126,20 @@ mod success_tests {
         assert!(block.ends_with("~~~~~~\n"), "{block}");
         // Tildes after a diff marker do not begin the line.
         assert!(success_block("a", "~~~~~~\n", "b", "x\n").starts_with("SUCCESS:\n~~~~diff\n"));
+    }
+
+    /// A context line keeps the document's text after one space, and
+    /// CommonMark lets up to three spaces precede a closing fence, so ` ~~~~`
+    /// would close a four-tilde fence early (review gid=48).
+    #[test]
+    fn a_context_line_of_tildes_cannot_close_the_fence() {
+        let block = success_block("a", "~~~~\nkeep\n", "b", "~~~~\nchanged\n");
+        assert!(block.contains("\n ~~~~\n"), "{block}");
+        let fence = block["SUCCESS:\n".len()..]
+            .bytes()
+            .take_while(|b| *b == b'~')
+            .count();
+        assert!(fence > 4, "{block}");
     }
 
     #[test]

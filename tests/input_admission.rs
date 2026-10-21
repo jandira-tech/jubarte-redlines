@@ -1724,3 +1724,49 @@ fn issue650_markdown_honors_explicit_tighter_budgets() {
         assert!(result.unwrap_err().to_string().contains("INVALID_XML"));
     }
 }
+
+/// Inputs that differ only by tracked changes become one package after the
+/// comparer accepts them; that path must still read under the caller's
+/// limits, not the compare defaults (review gid=53).
+#[test]
+fn inputs_equal_after_accepting_keep_the_callers_limits() {
+    let crowd = |extra: usize| {
+        move |writer: &mut ZipWriter<Cursor<Vec<u8>>>, options: SimpleFileOptions| {
+            for i in 0..extra {
+                writer
+                    .start_file(format!("word/media/x{i}.bin"), options)
+                    .unwrap();
+            }
+        }
+    };
+    let entries = InputLimits::compare().max_entries + 50;
+    let tracked = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:body><w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>hello</w:t></w:r></w:ins></w:p><w:sectPr/></w:body></w:document>";
+    let with_document = |document: &str| {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for (name, body) in [
+            ("[Content_Types].xml", CONTENT_TYPES),
+            ("_rels/.rels", PACKAGE_RELS),
+            ("word/document.xml", document),
+        ] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(body.as_bytes()).unwrap();
+        }
+        crowd(entries)(&mut writer, options);
+        writer.finish().unwrap().into_inner()
+    };
+    let original = with_document(tracked);
+    let modified = with_document(DOCUMENT);
+    let settings = WmlComparerSettings {
+        input_limits: InputLimits {
+            max_entries: 2 * entries,
+            ..InputLimits::compare()
+        },
+        ..WmlComparerSettings::default()
+    };
+    assert!(settings.merge_replaced_paragraphs);
+    compare_documents_with_settings(&original, &modified, &settings)
+        .expect("the caller's entry budget admits both inputs, through every path");
+}
