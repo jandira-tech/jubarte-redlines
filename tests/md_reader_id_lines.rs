@@ -2625,3 +2625,226 @@ fn an_empty_paragraph_keeps_its_own_outline_level() {
     );
     assert_eq!(view, once);
 }
+
+/// A paragraph's own spacing (#1473) is on its id line in the legend's
+/// words (`before 6pt`, `after 0pt`, `line 1.5`, `line 8.65pt exact`), and
+/// reads back to the same `w:spacing`, an odd twip or line included.
+#[test]
+fn id_line_spacing_comes_back() {
+    let md = "<!-- p0 before 6pt, after 0pt, line 1.5 -->\nOne\n\n\
+              <!-- p1 center, line 8.65pt exact -->\nTwo\n\n\
+              <!-- p2 after 10.05pt, line 12pt atLeast -->\nThree\n\n\
+              <!-- p3 line 1.038 -->\nFour\n";
+    assert_eq!(round_trip(md), md.trim());
+}
+
+/// Each paragraph's own `w:spacing` in `document.xml`, in document order:
+/// its attributes, sorted, with a missing `w:lineRule` read as Word reads
+/// it when `w:line` is set (`auto`). A paragraph without one is empty.
+fn own_spacings(document: &str) -> Vec<Vec<(String, String)>> {
+    document
+        .split("<w:p>")
+        .flat_map(|chunk| chunk.split("<w:p "))
+        .skip(1)
+        .map(|p| {
+            let ppr = p
+                .split_once("<w:pPr>")
+                .and_then(|(_, rest)| rest.split_once("</w:pPr>"))
+                .map_or("", |(ppr, _)| ppr);
+            // A formatting change's earlier spacing is not the paragraph's.
+            let ppr = ppr.split("<w:pPrChange").next().unwrap_or_default();
+            let Some((_, rest)) = ppr.split_once("<w:spacing ") else {
+                return Vec::new();
+            };
+            let attrs = rest.split_once("/>").map_or(rest, |(a, _)| a);
+            let mut out: Vec<(String, String)> = attrs
+                .split_whitespace()
+                .filter_map(|attr| attr.split_once("=\""))
+                .map(|(name, value)| {
+                    (
+                        name.trim_start_matches("w:").to_string(),
+                        value.trim_end_matches('"').to_string(),
+                    )
+                })
+                .collect();
+            if out.iter().any(|(n, _)| n == "line") && !out.iter().any(|(n, _)| n == "lineRule") {
+                out.push(("lineRule".to_string(), "auto".to_string()));
+            }
+            out.sort();
+            out
+        })
+        .collect()
+}
+
+#[test]
+fn a_paragraphs_own_spacing_survives_docx_to_markdown_and_back() {
+    let body = r#"<w:p><w:pPr><w:spacing w:before="120" w:after="0" w:line="360" w:lineRule="auto"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="173" w:lineRule="exact"/><w:jc w:val="center"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:after="201" w:line="240" w:lineRule="atLeast"/></w:pPr><w:r><w:t>Three</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="249"/></w:pPr><w:r><w:t>Four</w:t></w:r></w:p><w:p><w:r><w:t>Five</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:line="173" w:lineRule="exact"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:before="40" w:after="40"/></w:pPr><w:r><w:t>Next</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+    let source = common::docx::docx(body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let want = own_spacings(&part_string(&source, "word/document.xml").unwrap());
+    let got = own_spacings(&part_string(&written, "word/document.xml").unwrap());
+    assert_eq!(got, want, "the view:\n{view}");
+}
+
+/// The style ids that name each paragraph, in document order (`None` for a
+/// paragraph that states none).
+fn stated_styles(document: &str) -> Vec<Option<String>> {
+    document
+        .split("<w:p>")
+        .flat_map(|chunk| chunk.split("<w:p "))
+        .skip(1)
+        .map(|p| {
+            let ppr = p
+                .split_once("<w:pPr>")
+                .and_then(|(_, rest)| rest.split_once("</w:pPr>"))
+                .map_or("", |(ppr, _)| ppr);
+            ppr.split_once("<w:pStyle w:val=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(val, _)| val.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn a_style_named_like_a_spacing_word_is_not_read_as_spacing() {
+    // `line`, `after` and `before` are clause words now (#1473): a style
+    // with one of them as its id prints quoted, on the id line and on the
+    // table line, so the view reads it back as the style, beside the
+    // paragraph's own spacing.
+    let body = r#"<w:p><w:pPr><w:pStyle w:val="line"/><w:spacing w:after="0"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="after"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="line"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="before"/></w:pPr><w:r><w:t>Next</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+    let source = common::docx::docx(body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert!(view.contains(r#"<!-- p0 "line" after 0pt -->"#), "{view}");
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let source_xml = part_string(&source, "word/document.xml").unwrap();
+    let written_xml = part_string(&written, "word/document.xml").unwrap();
+    assert_eq!(
+        stated_styles(&written_xml),
+        stated_styles(&source_xml),
+        "the view:\n{view}"
+    );
+    assert_eq!(
+        own_spacings(&written_xml),
+        own_spacings(&source_xml),
+        "the view:\n{view}"
+    );
+}
+
+#[test]
+fn spacing_past_words_ui_range_comes_back() {
+    // Word's dialogs stop at 1584pt, but the file may hold more; the view
+    // prints what the paragraph holds, and the reader takes it back (#1479
+    // review): a clause it refused left no `w:spacing` at all.
+    let body = r#"<w:p><w:pPr><w:spacing w:before="32000"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="32000" w:lineRule="auto"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="32000" w:lineRule="exact"/></w:pPr><w:r><w:t>Three</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="40000"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+    let source = common::docx::docx(body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let want = own_spacings(&part_string(&source, "word/document.xml").unwrap());
+    let got = own_spacings(&part_string(&written, "word/document.xml").unwrap());
+    assert_eq!(got, want, "the view:\n{view}");
+}
+
+#[test]
+fn auto_spacing_comes_back_as_before_auto() {
+    // `w:beforeAutospacing` (HTML paste writes it) puts Word's automatic
+    // space before the paragraph, whatever `w:before` says: `before auto`.
+    let body = r#"<w:p><w:pPr><w:spacing w:before="100" w:beforeAutospacing="1" w:after="100" w:afterAutospacing="1"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:after="120" w:afterAutospacing="0"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:beforeAutospacing="true" w:line="276" w:lineRule="auto"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+    let source = common::docx::docx(body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert!(
+        view.contains("<!-- p0 before auto, after auto -->"),
+        "{view}"
+    );
+    assert!(view.contains("<!-- p1 after 6pt -->"), "{view}");
+    assert!(view.contains("p2 before auto line 1.15"), "{view}");
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let spacings = own_spacings(&part_string(&written, "word/document.xml").unwrap());
+    let pair = |a: &str, v: &str| (a.to_string(), v.to_string());
+    assert_eq!(
+        spacings[..3],
+        [
+            vec![
+                pair("afterAutospacing", "1"),
+                pair("beforeAutospacing", "1")
+            ],
+            vec![pair("after", "120")],
+            vec![
+                pair("beforeAutospacing", "1"),
+                pair("line", "276"),
+                pair("lineRule", "auto")
+            ],
+        ],
+        "the view:\n{view}"
+    );
+}
+
+#[test]
+fn the_last_spacing_clause_for_a_side_wins_over_auto() {
+    // `w:beforeAutospacing` puts Word's automatic space in place of
+    // `w:before`, so a hand edit that adds `before 6pt` after `before auto`
+    // must clear the auto, or Word ignores the 6pt (#1479 review). And the
+    // other way round: `auto` last drops the number.
+    let markdown = "---\nview: tracked\n---\n\n<!-- p0 before auto, before 6pt, after 3pt, after auto -->\nOne\n\n<!-- p1 before 12pt, line 1.5, before auto -->\nTwo\n";
+    let written = markdown_to_docx(markdown, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let spacings = own_spacings(&part_string(&written, "word/document.xml").unwrap());
+    let pair = |a: &str, v: &str| (a.to_string(), v.to_string());
+    assert_eq!(
+        spacings[..2],
+        [
+            vec![pair("afterAutospacing", "1"), pair("before", "120")],
+            vec![
+                pair("beforeAutospacing", "1"),
+                pair("line", "360"),
+                pair("lineRule", "auto")
+            ],
+        ]
+    );
+}

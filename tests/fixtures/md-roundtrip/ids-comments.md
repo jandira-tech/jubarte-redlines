@@ -18,7 +18,7 @@ styles:
   table: TableNormal
 ---
 
-<!-- p0 left, hanging 0in, left 0in -->
+<!-- p0 left, hanging 0in, left 0in, before 12pt, after 6pt -->
 # Heavy on everything
 
 <!-- p1 Normal left -->

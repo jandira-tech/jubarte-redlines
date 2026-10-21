@@ -2485,7 +2485,12 @@ impl Writer<'_> {
                             self.tables_differ
                                 .then(|| view_table_style(child, self.custom_grid))
                                 .flatten(),
-                            &[self.column_alignments(child).1, self.cell_styles(child)].concat(),
+                            &[
+                                self.column_alignments(child).1,
+                                self.cell_styles(child),
+                                self.cell_spacings(child),
+                            ]
+                            .concat(),
                             self.resolved,
                             (!self.comments_inline).then_some(&self.comments),
                             &spans,
@@ -2731,10 +2736,16 @@ impl Writer<'_> {
                         .map(|l| l + 1)
                 })
                 .flatten();
+            // An empty paragraph's own spacing is a line of the page
+            // (#1473): it keeps an id line of its own to say it.
+            let spaced = ppr
+                .and_then(|pr| pr.child("spacing"))
+                .is_some_and(|sp| !agent::spacing_clauses(sp).is_empty());
             if empty
                 && !numbered
                 && style.is_none()
                 && own_outline.is_none()
+                && !spaced
                 && comments.is_empty()
                 && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
@@ -3682,6 +3693,48 @@ impl Writer<'_> {
                     format!("p{first} {style}")
                 } else {
                     format!("p{first}-p{last} {style}")
+                }
+            })
+            .collect()
+    }
+
+    /// `p8-p38 line 8.65pt exact`: the cell paragraphs' own spacing
+    /// (#1473), consecutive ones that say the same as one range.
+    fn cell_spacings(&self, table: &Element) -> Vec<String> {
+        let mut runs: Vec<(usize, usize, String)> = Vec::new();
+        for tr in table_rows(table) {
+            for tc in row_cells(tr) {
+                // As the cells range numbers them: a nested table's too.
+                let mut ps = Vec::new();
+                tc.find_all("p", &mut ps);
+                for p in ps {
+                    let Some(index) = p.attr(agent::INDEX).and_then(|i| i.parse::<usize>().ok())
+                    else {
+                        continue;
+                    };
+                    let said = p
+                        .path(&["pPr", "spacing"])
+                        .map(agent::spacing_clauses)
+                        .unwrap_or_default()
+                        .join(" ");
+                    if said.is_empty() {
+                        continue;
+                    }
+                    match runs.last_mut() {
+                        Some((_, last, same)) if *last + 1 == index && *same == said => {
+                            *last = index;
+                        }
+                        _ => runs.push((index, index, said)),
+                    }
+                }
+            }
+        }
+        runs.into_iter()
+            .map(|(first, last, said)| {
+                if first == last {
+                    format!("p{first} {said}")
+                } else {
+                    format!("p{first}-p{last} {said}")
                 }
             })
             .collect()

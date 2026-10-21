@@ -16,7 +16,7 @@ styles:
   "#": Heading1, Liberation Sans bold 18pt, before 12pt, after 6pt, keep-next, named Heading 1
 ---
 
-<!-- p0 left, hanging 0in, left 0in -->
+<!-- p0 left, hanging 0in, left 0in, before 12pt, after 6pt -->
 # Adjacent and spanning changes
 
 <!-- p1 Normal left -->

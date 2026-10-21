@@ -88,6 +88,8 @@ pub(super) struct Paragraph {
     /// The indents an id line names, in twips (`first-line 0.5in`); its
     /// `left` wins over `indent`.
     pub ind: Indent,
+    /// The spacing an id line names (`before 6pt, line 1.5`).
+    pub spacing: Spacing,
     pub align: Option<&'static str>,
     /// A heading level (`w:outlineLvl`, 0 for `#`) the paragraph carries
     /// itself, when its style is one an id line names.
@@ -177,6 +179,67 @@ pub(super) struct Indent {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+}
+
+/// A paragraph's own `w:spacing` (#1473): the space before and after it in
+/// twips, Word's automatic space in their place (`w:beforeAutospacing`,
+/// `w:afterAutospacing`, which HTML paste writes), and its line as Word
+/// stores it, a height in 240ths of a line for `auto` or in twips for
+/// `exact` and `atLeast`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Spacing {
+    pub before: Option<u32>,
+    pub after: Option<u32>,
+    pub before_auto: bool,
+    pub after_auto: bool,
+    pub line: Option<(u32, &'static str)>,
+}
+
+impl Spacing {
+    pub(super) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// One `before 6pt`, `before auto`, `after 0pt`, `line 1.5` or `line
+    /// 8.65pt exact` clause into `self`; `None` when it is none of these or
+    /// its value is negative or past what a twip count holds. Word's dialogs
+    /// stop at 1584pt, but a file may say more, and the view prints what the
+    /// file says (#1479 review).
+    pub(super) fn clause(&mut self, word: &str, value: &str) -> Option<()> {
+        let most = f64::from(u32::MAX);
+        let points = |value: &str| -> Option<u32> {
+            let n: f64 = value.strip_suffix("pt")?.parse().ok()?;
+            let twips = (n * 20.0).round();
+            // `as` cannot overflow: the bound is checked first.
+            (n.is_finite() && (0.0..=most).contains(&twips)).then_some(twips as u32)
+        };
+        // Word puts `w:beforeAutospacing` in place of `w:before`, so a side
+        // keeps one of the two: the clause said last (#1479 review).
+        match (word, value) {
+            ("before", "auto") => (self.before, self.before_auto) = (None, true),
+            ("after", "auto") => (self.after, self.after_auto) = (None, true),
+            ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
+            ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
+            ("line", _) => {
+                self.line = Some(match value.split_once(' ') {
+                    Some((height, "exact")) => (points(height)?, "exact"),
+                    Some((height, "atLeast")) => (points(height)?, "atLeast"),
+                    Some(_) => return None,
+                    None => {
+                        let ratio: f64 = value.parse().ok()?;
+                        let line = (ratio * 240.0).round();
+                        if !(ratio.is_finite() && (0.0..=most).contains(&line)) {
+                            return None;
+                        }
+                        // `as` cannot overflow: the bound is checked first.
+                        (line as u32, "auto")
+                    }
+                });
+            }
+            _ => return None,
+        }
+        Some(())
+    }
 }
 
 /// A hyperlink's target.
@@ -1871,6 +1934,26 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         properties.push_str(
             "<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>",
         );
+    }
+    // Before `w:ind`, as the schema orders `w:pPr`.
+    let spacing = paragraph.spacing;
+    if !spacing.is_empty() {
+        properties.push_str("<w:spacing");
+        for (name, value, auto) in [
+            ("before", spacing.before, spacing.before_auto),
+            ("after", spacing.after, spacing.after_auto),
+        ] {
+            if let Some(value) = value {
+                let _ = write!(properties, " w:{name}=\"{value}\"");
+            }
+            if auto {
+                let _ = write!(properties, " w:{name}Autospacing=\"1\"");
+            }
+        }
+        if let Some((line, rule)) = spacing.line {
+            let _ = write!(properties, " w:line=\"{line}\" w:lineRule=\"{rule}\"");
+        }
+        properties.push_str("/>");
     }
     let ind = paragraph.ind;
     let left = ind.left.or(paragraph.indent.map(i64::from));

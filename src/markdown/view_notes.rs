@@ -611,6 +611,9 @@ pub(super) struct TableLine {
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`,
     /// `p6-p9 Caption`), by paragraph.
     pub styles: HashMap<usize, String>,
+    /// Cell paragraphs' own spacing (`p8-p38 line 8.65pt exact`), by
+    /// paragraph (#1473).
+    pub spacings: HashMap<usize, super::xml::Spacing>,
     /// The table's style (`style Ledger`) when tables differ in theirs.
     pub style: Option<String>,
     /// The table's own borders (`borders single 0.5pt 000000`).
@@ -783,6 +786,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         merges: HashMap::new(),
         aligns: HashMap::new(),
         styles: HashMap::new(),
+        spacings: HashMap::new(),
         style: None,
         borders: None,
         cell_borders: Vec::new(),
@@ -810,6 +814,17 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             }
         {
             parsed.aligns.insert(at, jc);
+            continue;
+        }
+        // `p8-p38 line 8.65pt exact`, `p5 before 2pt after 2pt`: cell
+        // paragraphs' own spacing.
+        if let Some((at, tail)) = clause.split_once(' ')
+            && let Some((first, count)) = paragraph_range(at)
+            && let Some(spacing) = spacing_words(tail)
+        {
+            for n in first..first + count {
+                parsed.spacings.insert(n, spacing);
+            }
             continue;
         }
         // `p5 ListParagraph`, `p6-p9 Caption`, `p7 "My Style"`: cell
@@ -1151,7 +1166,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 21] = [
+const CLAUSE_WORDS: [&str; 24] = [
     "empty",
     "outline",
     "center",
@@ -1160,6 +1175,9 @@ const CLAUSE_WORDS: [&str; 21] = [
     "left",
     "first-line",
     "hanging",
+    "before",
+    "after",
+    "line",
     "bullet",
     "num",
     "level",
@@ -1302,6 +1320,9 @@ pub(super) struct IdLine {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+    /// Its own spacing (`before 6pt`, `after 0pt`, `line 1.5`, `line
+    /// 8.65pt exact`), #1473.
+    pub spacing: super::xml::Spacing,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
     /// The page break's tracked change, `true` for an insertion
@@ -1396,6 +1417,13 @@ impl IdLine {
             Some(("hanging", v)) => self.hanging = twips(v),
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
+            Some((word @ ("before" | "after" | "line"), v)) => {
+                // A value out of range leaves what an earlier clause said.
+                let mut spacing = self.spacing;
+                if spacing.clause(word, v).is_some() {
+                    self.spacing = spacing;
+                }
+            }
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
             Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
@@ -1415,6 +1443,24 @@ impl IdLine {
             Some(_) => {}
         }
     }
+}
+
+/// `before 2pt after 2pt line 8.65pt exact`: a cell paragraph's spacing
+/// on the table line, the id line's clauses joined by spaces. `None` unless
+/// every word is one of them.
+fn spacing_words(text: &str) -> Option<super::xml::Spacing> {
+    let mut spacing = super::xml::Spacing::default();
+    let mut words = text.split(' ').peekable();
+    while let Some(word) = words.next() {
+        let mut value = words.next()?.to_string();
+        if word == "line"
+            && let Some(rule) = words.next_if(|w| matches!(*w, "exact" | "atLeast"))
+        {
+            value = format!("{value} {rule}");
+        }
+        spacing.clause(word, &value)?;
+    }
+    (!spacing.is_empty()).then_some(spacing)
 }
 
 /// `c5 c6`: the comment numbers of an `in` clause.
