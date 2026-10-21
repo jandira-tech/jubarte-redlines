@@ -655,7 +655,7 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     // this view intentionally tolerates parts it can skip (such as a broken
     // styles part), so use the bounded OPC constructor here instead.
     crate::opc::PartFs::open_within(docx, options.input_limits)
-        .map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
+        .map_err(|refused| MarkdownError::Docx(crate::opc::refusal_message(docx, &refused)))?;
     let revisions = match options.track_changes {
         TrackChanges::All => from_docx::Revisions::Markup,
         TrackChanges::Accept => from_docx::Revisions::Accept,

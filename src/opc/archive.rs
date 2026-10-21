@@ -40,9 +40,23 @@ pub(crate) fn open_archive_unchecked<R: Read + Seek + Clone>(
 /// [`crate::admission::AdmissionError`] as its source, so the refusal
 /// code reads the same whichever route met the file.
 pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipArchive<R>> {
+    open_archive_within(reader, true)
+}
+
+/// [`open_archive`] without the duplicate-part refusal: [`PartFs`] refuses
+/// the same identity itself, with the typed `OpcError::DuplicatePartName`
+/// its callers match on (ZIP-15/#600); every other defect still refuses
+/// here.
+pub(crate) fn open_archive_within<R: Read + Seek + Clone>(
+    reader: R,
+    refuse_duplicates: bool,
+) -> ZipResult<ZipArchive<R>> {
     let mut headers = reader.clone();
     let archive = open_archive_unchecked(reader)?;
-    if let Some(defect) = zip_defects(&archive, &mut headers).into_iter().next() {
+    if let Some(defect) = zip_defects(&archive, &mut headers)
+        .into_iter()
+        .find(|defect| refuse_duplicates || defect.kind != ZipDefectKind::DuplicatePart)
+    {
         return Err(ZipError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             defect.refusal(),
@@ -69,6 +83,8 @@ struct HeaderShape {
     name_length: usize,
     extra_length: usize,
     external_attributes: Option<usize>,
+    /// The central record's file-comment length; a local header has none.
+    comment_length: Option<usize>,
     name: usize,
 }
 
@@ -83,6 +99,7 @@ const CENTRAL_HEADER: HeaderShape = HeaderShape {
     name_length: 28,
     extra_length: 30,
     external_attributes: Some(38),
+    comment_length: Some(32),
     name: 46,
 };
 const LOCAL_HEADER: HeaderShape = HeaderShape {
@@ -96,6 +113,7 @@ const LOCAL_HEADER: HeaderShape = HeaderShape {
     name_length: 26,
     extra_length: 28,
     external_attributes: None,
+    comment_length: None,
     name: 30,
 };
 
@@ -111,6 +129,7 @@ struct HeaderFields {
     name_length: u16,
     extra_length: u16,
     external_attributes: Option<u32>,
+    comment_length: u16,
     name: Vec<u8>,
     extra: Vec<u8>,
 }
@@ -170,6 +189,10 @@ fn header_fields<R: Read + Seek>(
         name_length: read_u16(&head, shape.name_length)?,
         extra_length: read_u16(&head, shape.extra_length)?,
         external_attributes: shape.external_attributes.and_then(|at| read_u32(&head, at)),
+        comment_length: shape
+            .comment_length
+            .and_then(|at| read_u16(&head, at))
+            .unwrap_or(0),
         name,
         extra,
     })
@@ -332,6 +355,10 @@ pub(crate) enum ZipDefectKind {
     /// only): a `debug` report keeps going where a reading route
     /// refuses, so the failure is named for the entry instead (#644).
     EntryRead,
+    /// Two central records name one OPC part — byte-equal or under
+    /// ASCII case (ZIP-15/#600) — which the reader's name index would
+    /// collapse, silently keeping the second copy.
+    DuplicatePart,
 }
 
 impl ZipDefect {
@@ -352,6 +379,9 @@ impl ZipDefect {
             ZipDefectKind::SpecialEntry => {
                 AdmissionError::new(K::UnsupportedPackage, self.detail.clone())
             }
+            ZipDefectKind::DuplicatePart => {
+                AdmissionError::new(K::DuplicatePart, self.detail.clone())
+            }
         }
     }
 
@@ -364,6 +394,7 @@ impl ZipDefect {
             ZipDefectKind::SpecialEntry => "zip-special-entry",
             ZipDefectKind::DirectoryPayload => "zip-directory-payload",
             ZipDefectKind::EntryRead => "zip-entry-read",
+            ZipDefectKind::DuplicatePart => "zip-duplicate-part",
         }
     }
 }
@@ -634,10 +665,9 @@ pub(crate) fn zip_defects<R: Read + Seek>(
             });
         }
     }
-    for pair in extents.windows(2) {
-        let [(index, name, _, end), (_, other, other_start, _)] = pair else {
-            continue;
-        };
+    for (&(index, ref name, _, end), &(_, ref other, other_start, _)) in
+        extents.iter().zip(extents.iter().skip(1))
+    {
         if end > other_start {
             defects.push(ZipDefect {
                 kind: ZipDefectKind::Extent,
@@ -645,6 +675,129 @@ pub(crate) fn zip_defects<R: Read + Seek>(
                     "entry {index} ('{name}') ends at {end}, inside entry '{other}' starting at {other_start}"
                 ),
             });
+        }
+    }
+    defects.extend(
+        duplicate_parts(reader, archive.central_directory_start())
+            .into_iter()
+            .map(|(_, defect)| defect),
+    );
+    defects
+}
+
+/// The number of central records the end of central directory declares —
+/// its ZIP64 record's when the 16-bit field is saturated (APPNOTE 4.3.16,
+/// 4.3.14) — read from at most the 64 KiB tail an end record can sit in
+/// and the 56-byte ZIP64 record, so it never touches entry data. `None`
+/// when neither parses.
+fn declared_records<R: Read + Seek>(reader: &mut R) -> Option<u64> {
+    const EOCD: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    const LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07];
+    const EOCD64: [u8; 4] = [0x50, 0x4b, 0x06, 0x06];
+    let len = reader.seek(SeekFrom::End(0)).ok()?;
+    let window = len.min(22 + u64::from(u16::MAX));
+    reader
+        .seek(SeekFrom::Start(len.checked_sub(window)?))
+        .ok()?;
+    let mut tail = vec![0; usize::try_from(window).ok()?];
+    reader.read_exact(&mut tail).ok()?;
+    let at = (0..=tail.len().checked_sub(22)?)
+        .rev()
+        .find(|&i| tail.get(i..).is_some_and(|rest| rest.starts_with(&EOCD)))?;
+    let total = u16::from_le_bytes(*tail.get(at..)?.get(10..12)?.first_chunk::<2>()?);
+    if total != u16::MAX {
+        return Some(u64::from(total));
+    }
+    let locator = tail.get(at.checked_sub(20)?..at)?;
+    if !locator.starts_with(&LOCATOR) {
+        return None;
+    }
+    let offset = u64::from_le_bytes(*locator.get(8..16)?.first_chunk::<8>()?);
+    reader.seek(SeekFrom::Start(offset)).ok()?;
+    let mut record = [0u8; 56];
+    reader.read_exact(&mut record).ok()?;
+    if !record.starts_with(&EOCD64) {
+        return None;
+    }
+    Some(u64::from_le_bytes(*record.get(32..40)?.first_chunk::<8>()?))
+}
+
+/// Two central records naming one OPC part (`DUPLICATE_PART`, ZIP-15/#600,
+/// ECMA-376 Part 2 §6.2.2.3 M1.12). The reader's name index collapses a
+/// byte-equal duplicate (and Word refuses the file either way — probes
+/// p1/p2/p6/p7/p9), so the check walks the raw central records instead of
+/// the index: each record's name decodes exactly as `zip_entry_name`
+/// resolves it for the readers, and two decoded names with one OPC
+/// identity (`super::identity`: resolved like a relationship target, so
+/// `/word/x.xml` and `word/./x.xml` are `word/x.xml`, and compared under
+/// ASCII case) are one part — the key the part index stores them under.
+/// A directory entry (`word/`) is not a part and never collides with a
+/// file. The walk reads the records the end of central directory
+/// declares (`declared_records`) — the records zip's index reads before
+/// it collapses byte-equal names, and no more, so records padded in past
+/// that count cost nothing and collide with nothing — and stops early at
+/// the first record that is not a central header, so a comment or
+/// trailing data cannot desynchronize it. Each defect pairs with the
+/// second entry's decoded name — the spelling `PartFs`'s typed refusal
+/// names.
+pub(crate) fn duplicate_parts<R: Read + Seek>(
+    reader: &mut R,
+    mut at: u64,
+) -> Vec<(String, ZipDefect)> {
+    // No end record parses only for a stream the open refuses on its
+    // own; walking to the first non-central header then loses nothing.
+    let records = declared_records(reader).unwrap_or(u64::MAX);
+    let mut defects = Vec::new();
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for index in (0..records).map_while(|index| usize::try_from(index).ok()) {
+        let Some(central) = header_fields(reader, at, &CENTRAL_HEADER) else {
+            break;
+        };
+        let step = u64::from(central.name_length)
+            .saturating_add(u64::from(central.extra_length))
+            .saturating_add(u64::from(central.comment_length));
+        // Overflow pins `at` at u64::MAX: the next header read fails and
+        // the walk stops, the same end a checked add would give.
+        at = at
+            .saturating_add(CENTRAL_HEADER.name as u64)
+            .saturating_add(step);
+        if central.name.ends_with(b"/") {
+            continue;
+        }
+        // The per-entry read refuses an archive whose name fails to decode
+        // with the same error; it needs no second finding here.
+        let Ok(name) =
+            crate::admission::zip_entry_name_raw(&central.name, central.flags, &central.extra)
+        else {
+            continue;
+        };
+        let identity = super::identity(&name);
+        match seen.get(&identity) {
+            None => {
+                seen.insert(identity, name);
+            }
+            Some(first) if *first == name => {
+                defects.push((
+                    name.clone(),
+                    ZipDefect {
+                        kind: ZipDefectKind::DuplicatePart,
+                        detail: format!(
+                            "two ZIP entries have the same name '{name}' (entry {index})"
+                        ),
+                    },
+                ));
+            }
+            Some(first) => {
+                defects.push((
+                    name.clone(),
+                    ZipDefect {
+                        kind: ZipDefectKind::DuplicatePart,
+                        detail: format!(
+                            "'{first}' and '{name}' name the same part (entry {index}; part names resolve `.` and `..` and ignore case)"
+                        ),
+                    },
+                ));
+            }
         }
     }
     defects

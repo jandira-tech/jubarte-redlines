@@ -52,7 +52,10 @@ pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
             }
         }
         Err(e) => ValidityReport {
-            errors: vec![format!("not a readable package: {e}")],
+            errors: vec![format!(
+                "not a readable package: {}",
+                jubarte::opc::refusal_message(bytes, &e)
+            )],
             findings: Vec::new(),
         },
     }

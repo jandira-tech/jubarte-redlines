@@ -2092,6 +2092,78 @@ fn issue650_distinct_attribute_namespaces_are_valid() {
     }
 }
 
+/// Two ZIP entries naming one OPC part — byte-equal or an ASCII-case
+/// alias (ECMA-376 Part 2 §6.2.2.3 M1.12 makes them one part) — is the
+/// package Word refused in probes p1, p2, p6, p7 and p9 (#600). The
+/// invariant lives at the package open, not in `ring1`: a `PartFs`
+/// cannot hold two parts of one identity, so the refusal precedes it —
+/// the same place the admission-level invariants of #594/#644/#639
+/// live. `jubarte validate` reports it through the typed
+/// `DUPLICATE_PART` refusal, and `debug::findings` reports the
+/// structural defect for triage.
+#[test]
+fn probe_duplicate_zip_part_identity_fails() {
+    let document = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Carol Diaz</w:t></w:r></w:p></w:body></w:document>";
+    for (what, bytes) in [
+        (
+            "case-aliased main part",
+            zip_with_parts(&[
+                ("word/document.xml", document),
+                ("word/Document.xml", "<w:document/>"),
+            ]),
+        ),
+        (
+            "upper-case main part",
+            zip_with_parts(&[
+                ("word/document.xml", document),
+                ("WORD/document.xml", "<w:document/>"),
+            ]),
+        ),
+        (
+            "case-aliased content types",
+            zip_with_parts(&[
+                ("word/document.xml", document),
+                ("[content_types].xml", "<Types/>"),
+            ]),
+        ),
+        (
+            "case-aliased package rels",
+            zip_with_parts(&[("word/document.xml", document), ("_RELS/.RELS", "<R/>")]),
+        ),
+    ] {
+        let err = jubarte::validate::validate(&bytes)
+            .expect_err("Word refuses a package with two entries of one part");
+        assert!(err.to_string().contains("DUPLICATE_PART"), "{what}: {err}");
+        assert!(
+            check_word_valid_package(&bytes)
+                .errors
+                .iter()
+                .any(|e| e.contains("DUPLICATE_PART")),
+            "{what}: the Ring-1 wrapper reports the refusal"
+        );
+    }
+    // An exact duplicate is the same shape; the writer will not emit it
+    // twice under one name, so the fixture renames the entry in place.
+    let mut bytes = zip_with_parts(&[
+        ("word/document.xm0", "<w:document/>"),
+        ("word/document.xml", document),
+    ]);
+    let (local_at, central_at) = {
+        let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+        let entry = archive.by_name("word/document.xm0").unwrap();
+        (
+            usize::try_from(entry.header_start()).unwrap(),
+            usize::try_from(entry.central_header_start()).unwrap(),
+        )
+    };
+    // Both headers take the alias, as a hostile writer emits it.
+    bytes[local_at + 30..local_at + 47].copy_from_slice(b"word/document.xml");
+    bytes[central_at + 46..central_at + 63].copy_from_slice(b"word/document.xml");
+    let err = jubarte::validate::validate(&bytes)
+        .expect_err("Word refuses two entries with the same name");
+    assert!(err.to_string().contains("DUPLICATE_PART"), "{err}");
+}
+
 /// A bound content control (#1427): Word fills it from the custom XML
 /// store its `w:storeItemID` names, and shows it empty when the main part
 /// reaches no such store. Word opens the file, so it is a lead.
