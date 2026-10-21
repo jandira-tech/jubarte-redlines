@@ -38,9 +38,7 @@
 mod anchor;
 pub(crate) mod borders;
 mod critic;
-pub(crate) mod data_stores;
 mod diff;
-pub(crate) mod frames;
 mod from_docx;
 mod math;
 pub(crate) mod package;
@@ -63,7 +61,7 @@ pub use unified::{
     Attribution, Change, Comment, DEFAULT_COLUMNS, Hunk, Locator, Patch, PatchOptions,
     patch_critic, patch_documents, patch_markdown, patch_own_changes, patch_redline,
 };
-pub use write::{image_targets, markdown_to_docx};
+pub use write::markdown_to_docx;
 
 pub(crate) use package::{ensure_footnotes_part, max_drawing_id};
 pub(crate) use write::read_picture;
@@ -306,8 +304,6 @@ impl std::fmt::Debug for DocxOptions<'_> {
 /// lines from Word's cached breaks come only with `ids` (the agent view).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkdownOptions {
-    /// Active XML tag and attribute budgets, checked before tree construction.
-    pub input_limits: crate::admission::InputLimits,
     /// `All` writes tracked changes and comments as CriticMarkup; `Accept`
     /// and `Reject` write the text after Word's Accept All or Reject All,
     /// without comments.
@@ -333,9 +329,8 @@ pub struct MarkdownOptions {
     /// Word's cached breaks (`true`, the default), or no page lines at all;
     /// the header's page count is unaffected.
     pub page_markers: bool,
-    /// With `ids`: timestamps inline on notes when an author's marks and
-    /// comments have different recorded date forms, including local offsets.
-    /// An author with undated marks always gets explicit dated notes.
+    /// With `ids`: timestamps inline on the notes of an author whose marks
+    /// and comments do not all share one timestamp.
     pub dates: bool,
     /// With `ids`: which blocks of the body to print.
     pub select: Option<Select>,
@@ -344,7 +339,6 @@ pub struct MarkdownOptions {
 impl Default for MarkdownOptions {
     fn default() -> Self {
         Self {
-            input_limits: crate::admission::InputLimits::default(),
             track_changes: TrackChanges::All,
             extract_media: None,
             ids: false,
@@ -632,9 +626,7 @@ pub struct ReadDocx {
 ///
 /// [`MarkdownError::Docx`] when the bytes are not a `.docx` (a `.doc`,
 /// an encrypted document, or RTF is named for what it is rather than
-/// read as a bad ZIP), when the package exceeds the input budget
-/// (`INPUT_LIMIT` for compressed size, entry count, per-part or total
-/// inflation), or when the document cannot be read by
+/// read as a bad ZIP), or when the document cannot be read by
 /// `from_docx` (an OPC read failure, a malformed part, or a missing
 /// main document part).
 ///
@@ -650,12 +642,6 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     // A `.doc`, an encrypted document or RTF is named for what it is
     // (`LEGACY_DOC`, `UNSUPPORTED_PACKAGE`), not reported as a bad ZIP.
     crate::admission::sniff(docx).map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
-    // Bound the whole package before the converter or its tolerant change
-    // listing can inflate it. Full admission also checks all XML syntax;
-    // this view intentionally tolerates parts it can skip (such as a broken
-    // styles part), so use the bounded OPC constructor here instead.
-    crate::opc::PartFs::open_within(docx, options.input_limits)
-        .map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
     let revisions = match options.track_changes {
         TrackChanges::All => from_docx::Revisions::Markup,
         TrackChanges::Accept => from_docx::Revisions::Accept,
@@ -664,7 +650,6 @@ pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDo
     let converted = from_docx::convert(
         docx,
         &from_docx::Options {
-            input_limits: options.input_limits,
             revisions,
             media_dir: options.extract_media.clone(),
             ids: options.ids,
@@ -697,7 +682,6 @@ pub struct ReadOptions {
     /// Comments inline (`true`), or hidden with their ids on the id lines.
     pub comments: bool,
     /// Timestamps inline on the notes of an author with several.
-    /// An author with undated marks always gets explicit dated notes.
     pub dates: bool,
     /// `<!-- page N of M -->` lines from the layout pass (`true`), or none.
     pub page_markers: bool,
@@ -759,7 +743,7 @@ pub struct ReadView {
 ///
 /// let docx = markdown_to_docx("Due in {~~30~>45~~} days.", &DocxOptions::default())?.docx;
 /// let view = read(&docx, &ReadOptions { page_markers: false, ..ReadOptions::default() })?;
-/// assert!(view.markdown.contains("<!-- p0 -->\nDue in {~~30~>45~~}{r"), "{}", view.markdown);
+/// assert!(view.markdown.contains("<!-- p0 -->\nDue in {~~30~>45~~}{>>r"), "{}", view.markdown);
 /// # Ok::<(), jubarte::markdown::MarkdownError>(())
 /// ```
 pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownError> {
@@ -794,7 +778,6 @@ pub fn read(docx: &[u8], options: &ReadOptions) -> Result<ReadView, MarkdownErro
             page_markers: options.page_markers,
             dates: options.dates,
             select: options.select.clone(),
-            ..MarkdownOptions::default()
         },
     )?;
     Ok(ReadView {
@@ -1016,7 +999,7 @@ impl std::fmt::Display for MarkdownError {
 impl std::error::Error for MarkdownError {}
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

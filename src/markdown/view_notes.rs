@@ -12,14 +12,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::xml::Label;
 
-/// An author of the `authors:` table and its timestamps.
+/// An author of the `authors:` table: the full name, and the timestamp
+/// every one of their changes and comments shares, when they share one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Author {
     pub name: String,
-    /// The timestamp every change and comment shares, when they share one.
     pub date: Option<String>,
-    /// The latest timestamp of marks with several timestamps (`latest X`).
-    pub latest: Option<String>,
     /// The first and last days of an author whose marks have several
     /// timestamps (`# 2 revisions, 2026-03-02..2026-03-04`).
     pub range: Option<(String, String)>,
@@ -64,18 +62,12 @@ pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
                 super::write::is_date(&midnight).then_some(midnight)
             }
         });
-        let latest = last
-            .and_then(|d| d.strip_prefix("latest "))
-            .map(str::trim)
-            .filter(|d| super::write::is_date(d))
-            .map(str::to_string);
         let range = last.and_then(day_range);
         table.insert(
             handle.to_string(),
             Author {
                 name: value,
                 date,
-                latest,
                 range,
             },
         );
@@ -411,7 +403,7 @@ pub(super) struct PlainRevision {
     pub date: String,
 }
 
-/// The tags of a nested revision note, its own change first: `r3 @BO re
+/// The tags of a nested revision note, its own change first: `r3 @BO on
 /// r1 @AL` is Ben's deletion inside Ana's insertion, each tag with its
 /// own date as [`revision_tags`] reads it. `None` for any other comment
 /// text.
@@ -420,7 +412,7 @@ pub(super) fn nested_revision_tags(text: &str) -> Option<Vec<Tag>> {
     (tags.len() > 1).then_some(tags)
 }
 
-/// One tag, exactly: a note names one change per ` re ` part.
+/// One tag, exactly: a note names one change per ` on ` part.
 fn one_tag(part: &str) -> Option<Tag> {
     match revision_tags(part)?.as_slice() {
         [tag] => Some(tag.clone()),
@@ -429,7 +421,7 @@ fn one_tag(part: &str) -> Option<Tag> {
 }
 
 /// The parts of a plain nested revision note, its own change first: `r3
-/// Ben Ode (2026-…) re r1 Ana Lima (2026-…)`. `None` for any other
+/// Ben Ode (2026-…) on r1 Ana Lima (2026-…)`. `None` for any other
 /// comment text.
 pub(super) fn nested_plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
     let parts = nested_parts(text, plain_part)?;
@@ -487,19 +479,19 @@ pub(super) fn trailing_bare_group(text: &str) -> Option<usize> {
     None
 }
 
-/// The parts of a note joined by ` re `, each parsed by `one`: the first
+/// The parts of a note joined by ` on `, each parsed by `one`: the first
 /// part is the note's own change, and each part after it names the change
-/// the one before sits inside. The last ` re ` that splits the note wins:
-/// the left side must parse as one part — its author may hold ` re ` of
-/// its own (`Bo re r1 Kim`) — and the right side all the way down.
+/// the one before sits inside. The last ` on ` that splits the note wins:
+/// the left side must parse as one part — its author may hold ` on ` of
+/// its own (`Bo on r1 Kim`) — and the right side all the way down.
 /// Earlier boundaries are tried only when these fail.
 fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
     let text = text.trim();
     let mut from = text.len();
-    while let Some(at) = text[..from].rfind(" re ") {
+    while let Some(at) = text[..from].rfind(" on ") {
         from = at;
         if let Some(head) = one(text[..at].trim())
-            && let Some(rest) = nested_parts(&text[at + " re ".len()..], one)
+            && let Some(rest) = nested_parts(&text[at + " on ".len()..], one)
         {
             return Some([head].into_iter().chain(rest).collect());
         }
@@ -537,15 +529,6 @@ pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
         })
         .unwrap_or_default();
     Some(PlainRevision { ids, author, date })
-}
-
-/// Plain attributions of a substitution whose sides retain distinct dates.
-/// A semicolon separates complete revision parts, as in the handle grammar.
-pub(super) fn plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
-    text.split("; ")
-        .map(plain_revision)
-        .collect::<Option<Vec<_>>>()
-        .or_else(|| plain_revision(text).map(|part| vec![part]))
 }
 
 /// The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a
@@ -1703,36 +1686,6 @@ mod tests {
     }
 
     #[test]
-    fn latest_is_not_a_shared_date_or_a_range() {
-        let yaml = "authors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n";
-        let table = authors(yaml);
-        assert_eq!(table["AL"].date, None);
-        assert_eq!(table["AL"].range, None);
-        assert_eq!(table["AL"].latest.as_deref(), Some("2026-10-17T16:59:00Z"));
-        assert!(reversed_ranges(yaml).is_empty());
-        for invalid in ["", "2026-02-30T16:59:00Z", "2026-10-17", "yesterday"] {
-            let yaml = format!("authors:\n  AL: Ann Lee  # 2 revisions, latest {invalid}\n");
-            let table = authors(&yaml);
-            assert_eq!(table["AL"].date, None);
-            assert_eq!(table["AL"].latest, None);
-            assert_eq!(table["AL"].range, None);
-        }
-    }
-
-    #[test]
-    fn old_author_ranges_keep_their_days_and_reversed_warning() {
-        let yaml = "authors:\n  AL: Ann Lee  # 2 revisions, 2026-03-02..2026-03-04\n  BC: Bo Chen  # 2 revisions, 2026-03-04..2026-03-02\n";
-        let table = authors(yaml);
-        assert_eq!(table["AL"].date, None);
-        assert_eq!(
-            table["AL"].range,
-            Some(("2026-03-02".into(), "2026-03-04".into()))
-        );
-        assert_eq!(table["BC"].range, None);
-        assert_eq!(reversed_ranges(yaml), ["BC"]);
-    }
-
-    #[test]
     fn the_authors_table_names_each_handle() {
         let yaml = "source: r.docx\nauthors:\n  document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy\n  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z\n  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z\n  JD: \"Jo #1 Doe\"  # 2 revisions, 2026-10-01..2026-10-02\n  R: Redline\nbody: p0-p20\n  XX: not an author\n";
         let table = authors(yaml);
@@ -1742,7 +1695,6 @@ mod tests {
             Author {
                 name: "Ann Counsel".into(),
                 date: Some("2026-10-01T09:00:00Z".into()),
-                latest: None,
                 range: None,
             }
         );
@@ -1752,7 +1704,6 @@ mod tests {
             Author {
                 name: "Jo #1 Doe".into(),
                 date: None,
-                latest: None,
                 range: Some(("2026-10-01".into(), "2026-10-02".into())),
             }
         );
@@ -1810,11 +1761,11 @@ mod tests {
             })
         };
         assert_eq!(
-            nested_revision_tags("r3 @BO re r1 @AL"),
+            nested_revision_tags("r3 @BO on r1 @AL"),
             Some(vec![tag("BO", None, &[3]), tag("AL", None, &[1])])
         );
         assert_eq!(
-            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z re r1 @AL"),
+            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z on r1 @AL"),
             Some(vec![
                 tag("BO", Some("2026-01-02T10:00:00Z"), &[3]),
                 tag("AL", None, &[1])
@@ -1822,7 +1773,7 @@ mod tests {
         );
         // Deeper nests chain the same way, innermost first.
         assert_eq!(
-            nested_revision_tags("r5 @CD re r3 @BO re r1 @AL"),
+            nested_revision_tags("r5 @CD on r3 @BO on r1 @AL"),
             Some(vec![
                 tag("CD", None, &[5]),
                 tag("BO", None, &[3]),
@@ -1831,18 +1782,18 @@ mod tests {
         );
         assert_eq!(
             nested_plain_revisions(
-                "r3 Ben Ode (2026-01-02T10:00:00Z) re r1 Ana Lima (2026-01-01T09:00:00Z)"
+                "r3 Ben Ode (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
             ),
             Some(vec![
                 plain(&[3], "Ben Ode", "2026-01-02T10:00:00Z").unwrap(),
                 plain(&[1], "Ana Lima", "2026-01-01T09:00:00Z").unwrap()
             ])
         );
-        // An author's own name may hold ` re `: the ids still part the
+        // An author's own name may hold ` on `: the ids still part the
         // changes only where both sides parse.
         assert_eq!(
             nested_plain_revisions(
-                "r3 Ben Ode on High (2026-01-02T10:00:00Z) re r1 Ana Lima (2026-01-01T09:00:00Z)"
+                "r3 Ben Ode on High (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
             ),
             Some(vec![
                 plain(&[3], "Ben Ode on High", "2026-01-02T10:00:00Z").unwrap(),

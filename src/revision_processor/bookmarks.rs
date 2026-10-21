@@ -22,39 +22,11 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// only deleted characters.
 pub(super) fn drop_wholly_deleted_bookmarks(dom: &mut Dom, root: NodeId) {
     let (start, end) = (W::name("bookmarkStart"), W::name("bookmarkEnd"));
-    let dropped = wholly_deleted_endpoints(dom, root, &start, &end);
-    for endpoint in dropped {
-        dom.remove(endpoint);
-    }
-}
-
-/// Comments also need the id to prune their separate reference and definition.
-pub(super) fn wholly_deleted_ranges(
-    dom: &Dom,
-    root: NodeId,
-    start: &XName,
-    end: &XName,
-) -> HashSet<String> {
-    wholly_deleted_endpoints(dom, root, start, end)
-        .into_iter()
-        .filter_map(|node| dom.attribute(node, &W::id()).map(str::to_string))
-        .collect()
-}
-
-/// Nonempty annotation ranges whose characters all disappear when accepting.
-/// Reject uses this same scan after reversing its revisions. Paragraph marks
-/// and inline objects count, while originally empty ranges have nothing to lose.
-pub(super) fn wholly_deleted_endpoints(
-    dom: &Dom,
-    root: NodeId,
-    start: &XName,
-    end: &XName,
-) -> HashSet<NodeId> {
     if dom
-        .find_descendant_element(root, Some(start), |_| true)
+        .find_descendant_element(root, Some(&start), |_| true)
         .is_none()
     {
-        return HashSet::new();
+        return;
     }
     let range_deleted = super::move_from_range_deleted_elements(dom, root);
     let removed_by_range = |node| {
@@ -65,10 +37,9 @@ pub(super) fn wholly_deleted_endpoints(
                 .any(|a| range_deleted.contains(&a))
     };
     let id = W::id();
-    // A repeated id can open sequential or nested occurrences. Each end
-    // closes the nearest start of its id; counters belong to that occurrence.
-    let mut open: HashMap<String, Vec<(NodeId, usize, usize)>> = HashMap::new();
-    let mut dropped = HashSet::new();
+    // Open bookmark id → (characters, deleted characters).
+    let mut open: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut dropped: HashSet<String> = HashSet::new();
     for tag in descendant_and_self_tags(dom, root) {
         let e = tag.element;
         let Some(name) = dom.name(e) else {
@@ -81,18 +52,18 @@ pub(super) fn wholly_deleted_endpoints(
             paragraph_mark_is_deleted_or_moved_from(dom, e)
                 || in_deleted_row(dom, e)
                 || removed_by_range(e)
-        } else if name == *start {
+        } else if name == start {
             if let Some(b) = dom.attribute(e, &id) {
-                open.entry(b.to_string()).or_default().push((e, 0, 0));
+                open.insert(b.to_string(), (0, 0));
             }
             continue;
-        } else if name == *end {
+        } else if name == end {
             if let Some(b) = dom.attribute(e, &id)
-                && let Some((first, chars, gone)) = open.get_mut(b).and_then(Vec::pop)
+                && let Some((chars, gone)) = open.remove(b)
                 && chars > 0
                 && gone == chars
             {
-                dropped.extend([first, e]);
+                dropped.insert(b.to_string());
             }
             continue;
         } else if is_character(dom, e, &name) {
@@ -100,16 +71,25 @@ pub(super) fn wholly_deleted_endpoints(
         } else {
             continue;
         };
-        for (_, chars, gone) in open.values_mut().flatten() {
+        for (chars, gone) in open.values_mut() {
             *chars += 1;
             *gone += usize::from(deleted);
         }
     }
-    dropped
+    if dropped.is_empty() {
+        return;
+    }
+    for marker in [start, end] {
+        for b in dom.descendants(root, Some(&marker)) {
+            if dom.attribute(b, &id).is_some_and(|v| dropped.contains(v)) {
+                dom.remove(b);
+            }
+        }
+    }
 }
 
 /// Does `e` stand for at least one character of the story?
-pub(super) fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
+fn is_character(dom: &Dom, e: NodeId, name: &XName) -> bool {
     if name.namespace_name() == M::URI {
         return name.local_name() == "t" && !dom.value_str(e).is_empty();
     }
@@ -172,7 +152,7 @@ pub(super) fn drop_unpaired_bookmarks(dom: &mut Dom, root: NodeId) {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod move_range_bookmark_regressions {
     use crate::namespaces::W;
     use crate::revision_processor::accept_revisions_document;

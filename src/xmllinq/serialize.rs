@@ -533,15 +533,9 @@ fn write_qname(out: &mut impl XmlBuf, prefix: &str, local: &str) {
 }
 
 /// SER-01: escape attribute values into `out`. Fast path when no special chars.
-/// XML 1.0 §3.3.3: attribute-value normalization turns a literal TAB, CR or
-/// LF into a space on every read, so whitespace must be a character
-/// reference to survive.
 #[inline]
 fn write_escape_attr(out: &mut impl XmlBuf, s: &str) {
-    if !s
-        .bytes()
-        .any(|b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\t' | b'\n' | b'\r'))
-    {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
         out.push_str(s);
         return;
     }
@@ -551,20 +545,15 @@ fn write_escape_attr(out: &mut impl XmlBuf, s: &str) {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
-            '\t' => out.push_str("&#x9;"),
-            '\n' => out.push_str("&#xA;"),
-            '\r' => out.push_str("&#xD;"),
             _ => out.push(c),
         }
     }
 }
 
 /// SER-01: escape text content into `out`. Fast path when no special chars.
-/// XML 1.0 §2.11: a reader normalizes a literal CR to LF, so a bare CR in
-/// text must be a character reference; TAB and LF in text are kept.
 #[inline]
 fn write_escape_text(out: &mut impl XmlBuf, s: &str) {
-    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'\r')) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
         out.push_str(s);
         return;
     }
@@ -573,7 +562,6 @@ fn write_escape_text(out: &mut impl XmlBuf, s: &str) {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
-            '\r' => out.push_str("&#xD;"),
             _ => out.push(c),
         }
     }
@@ -848,7 +836,7 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::xmllinq::{Dom, XNamespace};
@@ -1013,29 +1001,6 @@ mod tests {
         }
     }
 
-    /// XML 1.0 §3.3.3: attribute-value normalization turns a literal TAB,
-    /// CR or LF in an attribute value into a space on every read, so the
-    /// DOM's whitespace must be written back as character references.
-    /// §2.11: a bare CR in text reads back as LF; TAB and LF in text are
-    /// kept as they are.
-    #[test]
-    fn attribute_and_text_whitespace_survive_serialization_round_trips() {
-        let mut dom = Dom::new();
-        let document = dom.parse_xdocument("<root a=\"x&#13;&#10;y&#9;z\">t&#13;u</root>");
-        let root = dom.root(document).unwrap();
-        let xml = serialize_element(&dom, root);
-        assert!(xml.contains("x&#xD;&#xA;y&#x9;z"), "{xml}");
-        assert!(xml.contains("t&#xD;u"), "{xml}");
-        let mut back = Dom::new();
-        let parsed = back.parse_xdocument(&xml);
-        let r = back.root(parsed).unwrap();
-        assert_eq!(
-            back.attribute(r, &XNamespace::none().name("a")),
-            Some("x\r\ny\tz")
-        );
-        assert_eq!(back.value(r), "t\ru");
-    }
-
     #[test]
     fn reserved_namespace_rebindings_cannot_corrupt_xml_attributes() {
         for (prefix, uri) in [
@@ -1062,7 +1027,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod xml_structure_namespace_boundary_tests {
     use super::*;
 
