@@ -4014,7 +4014,7 @@ impl<'p> Transaction<'p> {
         &self,
         deleted: &[usize],
     ) -> Result<EditRanges, EditError> {
-        let mut ranges: EditRanges = BTreeMap::new();
+        let mut ranges: EditRanges = std::collections::BTreeMap::new();
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
                 Resolved::Text {
@@ -4107,10 +4107,9 @@ impl<'p> Transaction<'p> {
             else {
                 continue;
             };
-            let cuts =
-                ranges.get(para).into_iter().flatten().any(|&(s, e, _)| {
-                    e > s && ((*start > s && *start < e) || (*end > s && *end < e))
-                });
+            let cuts = ranges.get(para).into_iter().flatten().any(|&(s, e, _)| {
+                e > s && ((*start > s && *start < e) || (*end > s && *end < e))
+            });
             if cuts {
                 return Err(self.conflict(*i, "comment range cuts through an edited range"));
             }
