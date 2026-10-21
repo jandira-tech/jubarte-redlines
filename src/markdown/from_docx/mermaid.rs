@@ -283,7 +283,9 @@ fn pt(prefix: &str, idx: usize, v: &str) -> Element {
             name: format!("{prefix}v"),
             attrs: Vec::new(),
             children: vec![Node::Text(v.to_string())],
+            ..Element::default()
         })],
+        ..Element::default()
     }
 }
 
