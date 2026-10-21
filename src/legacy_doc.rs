@@ -1726,6 +1726,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn is_compound_file_returns_true_for_ole_magic() {
+        let mut bytes = OLE_MAGIC.to_vec();
+        bytes.push(0x42);
+        assert!(is_compound_file(&bytes));
+    }
+
+    #[test]
+    fn is_compound_file_returns_false_for_invalid_magic() {
+        let bytes = b"PK\x03\x04\x14\x00\x06\x00";
+        assert!(!is_compound_file(bytes));
+    }
+
+    #[test]
+    fn is_compound_file_handles_short_input() {
+        let bytes = b"\xD0\xCF\x11";
+        assert!(!is_compound_file(bytes));
+    }
+
+    #[test]
     fn escapes_markdown_significant_text() {
         assert_eq!(escape_line("1. not a list"), "1\\. not a list");
         assert_eq!(escape_line("- not a bullet"), "\\- not a bullet");
