@@ -234,6 +234,169 @@ def test_claim_accuracy_missing_when_no_marker() -> None:
     assert accuracy == "missing"
 
 
+def _grade_run(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    task: Task,
+    validate_result,
+    validate_findings: list | None = None,
+    source_file: bool = True,
+):
+    """Grade one run with the binary swapped for stubs.
+
+    Returns (grade, validate_calls): each call is the kwargs `grade_one`
+    handed `harness.snapshot.validate`, so a test can pin whether the
+    baseline-relative audit ran with the source and required author.
+    """
+    from harness import grading
+
+    binary = tmp_path / "j"
+    binary.write_bytes(b"fake binary")
+    if source_file:
+        (tmp_path / "x.docx").write_bytes(b"source")
+    calls = []
+
+    def fake_validate(binary, artifact, **kwargs):
+        calls.append(kwargs)
+        return validate_result, validate_findings or []
+
+    monkeypatch.setattr(grading, "read_snapshot", lambda *a, **kw: _empty_snap())
+    monkeypatch.setattr(grading, "_source_snapshot", lambda *a, **kw: _empty_snap())
+    monkeypatch.setattr(grading, "validate", fake_validate)
+    run = _empty_run(artifact_exists=True)
+    return grading.grade_one(run, task, binary, repo_root=tmp_path), calls
+
+
+def test_tracked_task_runs_the_baseline_relative_audit(tmp_path, monkeypatch):
+    # #1431 review: a tracked run could score full tool correctness with
+    # the desired text written directly instead of through revisions —
+    # `validate` ran without `--original`/`--author`, so the `edits`
+    # rule never ran. For a tracked task the grader must run the audit
+    # and fail tool correctness on its findings (UNTRACKED_EDIT,
+    # FOREIGN_AUTHOR, ...).
+    from types import SimpleNamespace
+
+    grade, calls = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=_empty_task(),
+        validate_result=SimpleNamespace(return_code=2),
+    )
+    assert calls == [{"original": tmp_path / "x.docx", "author": "PilotBot"}]
+    by_name = {r.name: r for r in grade.tool_correctness}
+    assert by_name["artifact-valid"].status == "fail"
+    assert not grade.tool_correctness_overall
+
+
+def test_tracked_task_audit_pass_leaves_tool_correctness(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    grade, calls = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=_empty_task(),
+        validate_result=SimpleNamespace(return_code=0),
+    )
+    assert calls == [{"original": tmp_path / "x.docx", "author": "PilotBot"}]
+    by_name = {r.name: r for r in grade.tool_correctness}
+    assert by_name["artifact-valid"].status == "pass"
+
+
+def test_untracked_task_keeps_the_default_validity_check(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    task = _empty_task().model_copy(update={"tracked": False})
+    grade, calls = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=task,
+        validate_result=SimpleNamespace(return_code=0),
+    )
+    assert calls == [{"original": None, "author": None}]
+
+
+def test_tracked_audit_without_a_source_is_reported_unassessed(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    grade, calls = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=_empty_task(),
+        validate_result=SimpleNamespace(return_code=0),
+        source_file=False,
+    )
+    assert calls == [{"original": None, "author": None}]
+    assert "tracked-edit audit" in grade.unassessed
+
+
+def test_settlement_task_tolerates_only_the_licensed_gone_revision(
+    tmp_path, monkeypatch
+):
+    # The edits audit has no licence for a settlement task's declared
+    # removals: `jubarte validate --original --author` reports a settled
+    # foreign revision as FOREIGN_AUTHOR "gone". The grader tolerates
+    # exactly the `settled_revisions` entries and still fails on
+    # anything else.
+    from types import SimpleNamespace
+
+    task = _empty_task().model_copy(
+        update={"settlement": True, "settled_revisions": ["r0"]}
+    )
+    gone = {
+        "code": "FOREIGN_AUTHOR",
+        "set": "edits",
+        "severity": "error",
+        "part": "word/document.xml",
+        "location": "",
+        "ref": "",
+        "message": "sara.k's r0 in the original is gone",
+    }
+    grade, _ = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=task,
+        validate_result=SimpleNamespace(return_code=2),
+        validate_findings=[gone],
+    )
+    by_name = {r.name: r for r in grade.tool_correctness}
+    assert by_name["artifact-valid"].status == "pass"
+
+    grade, _ = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=task,
+        validate_result=SimpleNamespace(return_code=2),
+        validate_findings=[
+            {**gone, "message": "sara.k's r7 in the original is gone"}
+        ],
+    )
+    by_name = {r.name: r for r in grade.tool_correctness}
+    assert by_name["artifact-valid"].status == "fail"
+
+    grade, _ = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=task,
+        validate_result=SimpleNamespace(return_code=2),
+        validate_findings=[
+            {
+                "code": "UNTRACKED_EDIT",
+                "set": "edits",
+                "severity": "error",
+                "part": "word/document.xml",
+                "location": "p6",
+                "ref": "p6",
+                "message": "p6 differs after rejecting PilotBot's changes",
+            }
+        ],
+    )
+    by_name = {r.name: r for r in grade.tool_correctness}
+    assert by_name["artifact-valid"].status == "fail"
+
+
 def test_tool_correctness_for_a_refused_run() -> None:
     from harness.grading import tool_correctness
 

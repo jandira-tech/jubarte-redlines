@@ -649,14 +649,52 @@ def grade_one(
     errors = []
     snap = empty_snapshot()
     snapshot_ok, validate_rc, validate_findings = False, 2, []
+    tracked_audit = False
     if run.artifact_exists:
         try:
             snap = read_snapshot(grader_binary, Path(run.artifact_path))
             snapshot_ok = snap.ok
             if not snap.ok:
                 errors.append(snap.error or "artifact snapshot failed")
-            result, validate_findings = validate(grader_binary, Path(run.artifact_path))
+            # A tracked task is audited against its source under the
+            # required author (`jubarte validate --original --author`,
+            # the `edits` rule): a desired text written directly, or a
+            # change under another author, is a finding, not a passing
+            # validity check.
+            audit_source = None
+            if task.tracked and repo_root is not None:
+                candidate = repo_root / task.source.path
+                if candidate.is_file():
+                    audit_source = candidate
+                    tracked_audit = True
+            result, validate_findings = validate(
+                grader_binary,
+                Path(run.artifact_path),
+                original=audit_source,
+                author=task.required_author if audit_source is not None else None,
+            )
             validate_rc = result.return_code
+            if validate_rc != 0 and tracked_audit and task.settlement:
+                # The edits audit cannot mark what a settlement task
+                # licenses: removing a `settled_revisions` entry reports
+                # FOREIGN_AUTHOR "gone", which is the declared effect,
+                # not foreign damage. Anything else still fails.
+                failing = [
+                    f
+                    for f in validate_findings
+                    if f.get("set") in ("word", "edits")
+                    or f.get("severity") == "error"
+                ]
+                licensed = (
+                    f.get("code") == "FOREIGN_AUTHOR"
+                    and any(
+                        f"{ref} in the original is gone" in (f.get("message") or "")
+                        for ref in task.settled_revisions
+                    )
+                    for f in failing
+                )
+                if failing and all(licensed):
+                    validate_rc = 0
         except (
             OSError,
             TimeoutError,
@@ -749,6 +787,8 @@ def grade_one(
     ]
     if not assessed:
         unassessed += ["unintended edits", "exposed structure/comments/revisions"]
+    if task.tracked and run.artifact_exists and not tracked_audit:
+        unassessed.append("tracked-edit audit")
     if any(e.adjudication_required for e in unintended_edits):
         unassessed.append("ambiguous paragraph alignment requires adjudication")
     return GradeRecord(
