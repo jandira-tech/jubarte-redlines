@@ -2261,9 +2261,16 @@ fn contribution_span(source: &str, region: &ChangeRegion, accept: bool) -> Optio
     if span.range != (0..kept.len()) {
         return None;
     }
+    // A complete tag right after the closer names this change, and
+    // resolve drops it with the change. Covering it keeps the splice
+    // from leaving it standing in front of the joined run, where it
+    // would read as text; an escaped brace is literal text, not a tag.
+    let tagged = attribution_tag(&source[region.close..])
+        .filter(|_| !escaped(source, region.close))
+        .map_or(region.close, |(_, width)| region.close + width);
     Some(SeamSpan {
         kind: span.kind,
-        cover: region.open..region.close,
+        cover: region.open..tagged,
         content: span_content(&kept, span),
         marker: span_marker(&kept, span),
         flipped: false,
@@ -3550,6 +3557,30 @@ mod tests {
         // it was already the only splice on the pass.
         let joined = resolve("*`a`{--x--}`b`*", true);
         assert_eq!(joined, "*`ab`*", "{joined:?}");
+    }
+
+    /// The attribution tag after a change is that change's metadata: it
+    /// resolves away with the change it names. A joined span's splice
+    /// ends at the closer, so a tag left outside the cover stands in
+    /// front of the joined run, where resolve reads it as text — the
+    /// reader then carries a literal `{r5 @AC}` into the document.
+    #[test]
+    fn resolve_does_not_leave_an_attribution_tag_in_front_of_a_joined_span() {
+        // The tag goes with the insertion it names: the two spans join
+        // and nothing of the tag survives.
+        let joined = resolve("*a*{++*b*++}{r5 @AC}", true);
+        assert_eq!(joined, "*ab*", "{joined:?}");
+        // The tag between two joined spans does the same, so the third
+        // span joins as well.
+        let joined = resolve("*a*{++*b*++}{r5 @AC}*c*", true);
+        assert_eq!(joined, "*abc*", "{joined:?}");
+        // Rejecting keeps the two original spans and drops the tag with
+        // the insertion it named.
+        let kept = resolve("*a*{++*b*++}{r5 @AC}", false);
+        assert_eq!(kept, "*a*", "{kept:?}");
+        // An escaped brace is text, not a tag: it stays.
+        let literal = resolve("*a*{++*b*++}\\{r5 @AC}", true);
+        assert_eq!(literal, "*ab*\\{r5 @AC}", "{literal:?}");
     }
 
     /// Marks next to a link do not merge it with another link: the byte
