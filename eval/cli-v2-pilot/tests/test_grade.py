@@ -242,6 +242,7 @@ def _grade_run(
     validate_result,
     validate_findings: list | None = None,
     source_file: bool = True,
+    source_snapshot: Snapshot | None = None,
 ):
     """Grade one run with the binary swapped for stubs.
 
@@ -262,7 +263,11 @@ def _grade_run(
         return validate_result, validate_findings or []
 
     monkeypatch.setattr(grading, "read_snapshot", lambda *a, **kw: _empty_snap())
-    monkeypatch.setattr(grading, "_source_snapshot", lambda *a, **kw: _empty_snap())
+    monkeypatch.setattr(
+        grading,
+        "_source_snapshot",
+        lambda *a, **kw: source_snapshot or _empty_snap(),
+    )
     monkeypatch.setattr(grading, "validate", fake_validate)
     run = _empty_run(artifact_exists=True)
     return grading.grade_one(run, task, binary, repo_root=tmp_path), calls
@@ -392,6 +397,95 @@ def test_settlement_task_tolerates_only_the_licensed_gone_revision(
                 "message": "p6 differs after rejecting PilotBot's changes",
             }
         ],
+    )
+    by_name = {r.name: r for r in grade.tool_correctness}
+    assert by_name["artifact-valid"].status == "fail"
+
+
+def test_settlement_task_licenses_untracked_edit_at_a_settled_paragraph(
+    tmp_path, monkeypatch
+):
+    # Settling a revision leaves residue the same audit also reports as
+    # UNTRACKED_EDIT at the revision's paragraph: rejecting a foreign
+    # insertion removes its text with no tracked mark of ours. The
+    # licence reaches that paragraph through the source snapshot; an
+    # untracked edit anywhere else still fails.
+    from types import SimpleNamespace
+
+    source = Snapshot(
+        ok=True,
+        paragraphs=[
+            {"id": "p0", "text": "alpha and beta", "runs": [], "limitations": []},
+            {"id": "p1", "text": "unrelated", "runs": [], "limitations": []},
+        ],
+        revisions=[
+            {
+                "id": "r0+1",
+                "ref": "r0+1",
+                "kind": "replacement",
+                "author": "sara.k",
+                "text": "beta → alpha",
+                "paragraph": "p0",
+                  "members": [
+                      {"id": "r0", "kind": "deletion", "text": "beta"},
+                    {"id": "r1", "kind": "insertion", "text": "alpha"},
+                ],
+            },
+        ],
+        comments=[],
+    )
+    task = _empty_task().model_copy(
+        update={"settlement": True, "settled_revisions": ["r0"]}
+    )
+    findings = [
+        {
+            "code": "FOREIGN_AUTHOR",
+            "set": "edits",
+            "severity": "error",
+            "part": "word/document.xml",
+            "location": "",
+            "ref": "",
+            "message": "sara.k's r0 in the original is gone",
+        },
+        {
+            "code": "UNTRACKED_EDIT",
+            "set": "edits",
+            "severity": "error",
+            "part": "word/document.xml",
+            "location": "p0",
+            "ref": "p0",
+            "message": "p0 differs after rejecting PilotBot's changes",
+        },
+    ]
+    grade, _ = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=task,
+        validate_result=SimpleNamespace(return_code=2),
+        validate_findings=findings,
+        source_snapshot=source,
+    )
+    by_name = {r.name: r for r in grade.tool_correctness}
+    assert by_name["artifact-valid"].status == "pass"
+
+    grade, _ = _grade_run(
+        tmp_path,
+        monkeypatch,
+        task=task,
+        validate_result=SimpleNamespace(return_code=2),
+        validate_findings=[
+            *findings,
+            {
+                "code": "UNTRACKED_EDIT",
+                "set": "edits",
+                "severity": "error",
+                "part": "word/document.xml",
+                "location": "p9",
+                "ref": "p9",
+                "message": "p9 differs after rejecting PilotBot's changes",
+            },
+        ],
+        source_snapshot=source,
     )
     by_name = {r.name: r for r in grade.tool_correctness}
     assert by_name["artifact-valid"].status == "fail"
