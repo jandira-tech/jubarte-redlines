@@ -24,16 +24,12 @@ use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
 mod tables;
-pub(crate) use tables::top_level_table_nodes;
 
-pub use tables::{NestedTable, Table, TableCell};
+pub use tables::{Table, TableCell};
 
-/// Wire schema version of legacy [`crate::edit`] plans and reports.
+/// Wire schema version of [`inspect_json`] and of the [`crate::edit`]
+/// plan that consumes it.
 pub const SCHEMA_VERSION: u32 = 1;
-
-/// Snapshot wire schema. Version 2 numbers top-level tables only and nests
-/// cell tables recursively, with a parent cell path rather than an index.
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 
 /// The story every document has; its paragraph ids are `pN`, and a
 /// selector without a `story` searches it.
@@ -98,7 +94,7 @@ pub struct Span {
 pub struct Summary {
     /// Body paragraphs, table cells included.
     pub paragraphs: usize,
-    /// Top-level body tables, numbered as the view's `tN`.
+    /// Body tables, nested included.
     pub tables: usize,
     /// `w:fldSimple` plus complex-field `begin` markers in the body.
     pub fields: usize,
@@ -140,7 +136,7 @@ pub struct Snapshot {
     pub paragraphs: Vec<Paragraph>,
     /// Header, footer and note stories, each with its own paragraphs.
     pub stories: Vec<Story>,
-    /// Top-level body tables as grids, with nested tables under their cells.
+    /// Body tables as grids of cells, nested tables included.
     pub tables: Vec<Table>,
     /// Content controls (`w:sdt`) in the body, in document order.
     pub controls: Vec<ContentControl>,
@@ -290,19 +286,6 @@ pub fn paragraphs(docx: &[u8]) -> Result<Vec<Paragraph>, InspectError> {
     Ok(body_paragraphs(&opened.dom, opened.body))
 }
 
-/// Paragraph locations for a comparison rendered under its active budget.
-/// One admitted open serves both the body and its related stories.
-pub(crate) fn paragraphs_and_stories_within(
-    docx: &[u8],
-    limits: crate::admission::InputLimits,
-) -> Result<(Vec<Paragraph>, Vec<Story>), InspectError> {
-    let opened = Opened::open_within(docx, limits)?;
-    Ok((
-        body_paragraphs(&opened.dom, opened.body),
-        opened.stories_within(limits)?,
-    ))
-}
-
 /// Package facts, following OPC relationships for related parts.
 ///
 /// # Errors
@@ -391,7 +374,7 @@ pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
         crate::comments::CommentError::Package(m) => InspectError::Package(m),
     })?;
     Ok(Snapshot {
-        schema_version: SNAPSHOT_SCHEMA_VERSION,
+        schema_version: SCHEMA_VERSION,
         source_sha256: source_sha256(docx),
         summary,
         paragraphs,
@@ -419,88 +402,49 @@ pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
 /// tabs escaped), or `no tables`. Cell ids are short paragraph ids (`p1`),
 /// via [`crate::ids::short_paragraph`]; a cell of several paragraphs joins
 /// them with commas (`p3,p4`), a spelling only this listing prints. Every line
-/// ends with a newline. Nested tables follow their containing cell row,
-/// indented two spaces per level and labelled `nested in CELL_PATH`.
+/// ends with a newline.
 pub fn tables_text(tables: &[Table]) -> String {
+    use std::fmt::Write as _;
     let mut out = String::new();
     if tables.is_empty() {
         out.push_str("no tables\n");
     }
     for table in tables {
-        render_grid(
-            &mut out,
-            &format!("table {}", table.index),
-            &table.rows,
+        let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
+        let widths: Vec<String> = table.widths_dxa.iter().map(u32::to_string).collect();
+        let _ = writeln!(
+            out,
+            "table {}: {}x{columns} header_rows={} widths={}",
+            table.index,
+            table.rows.len(),
             table.header_rows,
-            &table.widths_dxa,
-            &table.nested,
-            0,
+            widths.join(",")
         );
-    }
-    out
-}
-
-fn render_grid(
-    out: &mut String,
-    label: &str,
-    rows: &[Vec<TableCell>],
-    header_rows: usize,
-    widths_dxa: &[u32],
-    nested: &[NestedTable],
-    depth: usize,
-) {
-    use std::fmt::Write as _;
-    let indent = "  ".repeat(depth);
-    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
-    let widths: Vec<String> = widths_dxa.iter().map(u32::to_string).collect();
-    let _ = writeln!(
-        out,
-        "{indent}{label}: {}x{columns} header_rows={header_rows} widths={}",
-        rows.len(),
-        widths.join(",")
-    );
-    for (r, row) in rows.iter().enumerate() {
-        let cells: Vec<String> = row
-            .iter()
-            .map(|cell| {
-                let ids = if cell.paragraph_ids.is_empty() {
-                    "-".to_string()
-                } else {
-                    cell.paragraph_ids
-                        .iter()
-                        .map(|id| crate::ids::short_paragraph(id))
-                        .collect::<Vec<_>>()
-                        .join(",")
-                };
-                let text = cell
-                    .text
-                    .replace('\\', "\\\\")
-                    .replace('\n', "\\n")
-                    .replace('\t', "\\t");
-                format!("{ids}={text}")
-            })
-            .collect();
-        let _ = writeln!(out, "{indent}{}", cells.join("\t"));
-        // The final row/cell segment is this table's own cell, even at
-        // several nesting levels. Emit its children directly below the row.
-        let row_prefix = format!("{r}.cell");
-        for child in nested.iter().filter(|child| {
-            child
-                .parent
-                .rsplit_once(".row")
-                .is_some_and(|(_, tail)| tail.starts_with(&row_prefix))
-        }) {
-            render_grid(
-                out,
-                &format!("nested in {}", child.parent),
-                &child.rows,
-                child.header_rows,
-                &child.widths_dxa,
-                &child.nested,
-                depth + 1,
-            );
+        for row in &table.rows {
+            let cells: Vec<String> = row
+                .iter()
+                .map(|cell| {
+                    let ids = if cell.paragraph_ids.is_empty() {
+                        "-".to_string()
+                    } else {
+                        cell.paragraph_ids
+                            .iter()
+                            .map(|id| crate::ids::short_paragraph(id))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    };
+                    let text = cell
+                        .text
+                        .replace('\\', "\\\\")
+                        .replace('\n', "\\n")
+                        .replace('\t', "\\t");
+                    format!("{ids}={text}")
+                })
+                .collect();
+            let _ = writeln!(out, "{}", cells.join("\t"));
         }
     }
+    out
 }
 
 /// Markdown rendering of already inspected paragraphs.
@@ -568,30 +512,6 @@ fn emphasize(piece: &str, span: &Span) -> String {
     format!("{lead}{open}{core}{close}{trail}")
 }
 
-// Documents this thread has reopened through `Opened::open` since the last
-// `reset_reopened_packages`. Tests that must not pay for a reparse of bytes
-// they already hold reset the counter, run the phase under test, and read
-// it back.
-#[cfg(test)]
-thread_local! {
-    pub(crate) static REOPENED_PACKAGES: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
-}
-
-/// Add one to this thread's [`REOPENED_PACKAGES`].
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-fn bump_reopened_packages() {
-    REOPENED_PACKAGES.with(|count| count.set(count.get() + 1));
-}
-
-/// Zero this thread's [`REOPENED_PACKAGES`].
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-pub(crate) fn reset_reopened_packages() {
-    REOPENED_PACKAGES.with(|count| count.set(0));
-}
-
 /// A parsed main document part plus its package.
 pub(crate) struct Opened {
     pub(crate) pkg: PartFs,
@@ -603,23 +523,13 @@ pub(crate) struct Opened {
 
 impl Opened {
     pub(crate) fn open(bytes: &[u8]) -> Result<Self, InspectError> {
-        Self::open_within(bytes, crate::admission::InputLimits::default())
-    }
-
-    fn open_within(
-        bytes: &[u8],
-        limits: crate::admission::InputLimits,
-    ) -> Result<Self, InspectError> {
-        #[cfg(test)]
-        bump_reopened_packages();
-        crate::admission::admit(bytes, limits).map_err(InspectError::Admission)?;
-        let normalized =
-            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits)
-                .map_err(|error| InspectError::Package(error.to_string()))?;
-        let pkg = PartFs::open_within(&normalized, limits)
-            .map_err(|error| InspectError::Package(error.to_string()))?;
+        crate::admission::admit(bytes, crate::admission::InputLimits::default())
+            .map_err(InspectError::Admission)?;
+        let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);
+        let pkg =
+            PartFs::open(&normalized).map_err(|error| InspectError::Package(error.to_string()))?;
         let main = main_part(&pkg)?;
-        let (dom, document, root) = parse_part_within(&pkg, &main, limits)?;
+        let (dom, document, root) = parse_part(&pkg, &main)?;
         let body = dom
             .element(root, &W::body())
             .ok_or(InspectError::MissingDocument)?;
@@ -636,7 +546,7 @@ impl Opened {
         let (dom, body, pkg) = (&self.dom, self.body, &self.pkg);
         let mut summary = Summary {
             paragraphs: body_paragraphs(dom, body).len(),
-            tables: tables::top_level_table_nodes(dom, body).len(),
+            tables: dom.descendants(body, Some(&W::tbl())).len(),
             fields: dom.descendants(body, Some(&W::fld_simple())).len()
                 + dom
                     .descendants(body, Some(&W::fld_char()))
@@ -741,17 +651,10 @@ impl Opened {
     }
 
     fn stories(&self) -> Result<Vec<Story>, InspectError> {
-        self.stories_within(crate::admission::InputLimits::default())
-    }
-
-    fn stories_within(
-        &self,
-        limits: crate::admission::InputLimits,
-    ) -> Result<Vec<Story>, InspectError> {
         self.story_parts()
             .into_iter()
             .map(|(id, kind, part)| {
-                let (dom, _, root) = parse_part_within(&self.pkg, &part, limits)?;
+                let (dom, _, root) = parse_part(&self.pkg, &part)?;
                 let paragraphs = paragraphs_of(&dom, story_paragraph_nodes(&dom, root), &id);
                 Ok(Story {
                     id,
@@ -788,20 +691,12 @@ fn main_part(pkg: &PartFs) -> Result<String, InspectError> {
 
 /// Parse one XML part through the checked reader: `(dom, document, root)`.
 pub(crate) fn parse_part(pkg: &PartFs, name: &str) -> Result<(Dom, NodeId, NodeId), InspectError> {
-    parse_part_within(pkg, name, crate::admission::InputLimits::default())
-}
-
-fn parse_part_within(
-    pkg: &PartFs,
-    name: &str,
-    limits: crate::admission::InputLimits,
-) -> Result<(Dom, NodeId, NodeId), InspectError> {
     let bytes = pkg
         .part_bytes(name)
         .ok_or_else(|| InspectError::Invalid(format!("missing related part {name}")))?;
     let xml = std::str::from_utf8(bytes)
         .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
-    crate::xmllinq::parse::validate_xml_with_limits(xml, limits)
+    crate::xmllinq::parse::validate_xml(xml)
         .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
     let mut dom = Dom::new();
     let document = dom.parse_xdocument(xml);
@@ -1398,7 +1293,7 @@ fn merge_spans(text: &str, formats: Vec<(usize, usize, Format)>) -> Vec<Span> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

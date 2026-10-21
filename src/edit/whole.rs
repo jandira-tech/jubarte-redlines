@@ -163,7 +163,12 @@ pub(super) fn rewrite(
             parts.push((part.clone(), document, root));
         }
     }
-    let mut next_id = crate::revision_processor::RevisionIds::new(&opened.pkg);
+    let mut next_id = parts
+        .iter()
+        .flat_map(|&(_, _, root)| opened.dom.descendants(root, None))
+        .filter_map(|n| opened.dom.attribute(n, &W::id())?.parse::<u64>().ok())
+        .max()
+        .map_or(1, |max| max + 1);
     let mut fallbacks = Vec::new();
     for mark in marks {
         let stamp = Stamp {
@@ -195,13 +200,14 @@ pub(super) fn rewrite(
 struct Stamp<'a> {
     author: &'a str,
     date: &'a str,
-    next_id: &'a mut crate::revision_processor::RevisionIds,
+    next_id: &'a mut u64,
 }
 
 impl Stamp<'_> {
     fn container(&mut self, dom: &mut Dom, name: crate::xmllinq::XName) -> NodeId {
         let node = dom.new_element(name);
-        dom.set_attribute_value(node, &W::id(), Some(&self.next_id.allocate().to_string()));
+        dom.set_attribute_value(node, &W::id(), Some(&self.next_id.to_string()));
+        *self.next_id += 1;
         dom.set_attribute_value(node, &W::author(), Some(self.author));
         dom.set_attribute_value(node, &W::date(), Some(self.date));
         node
@@ -286,11 +292,7 @@ fn rewrite_one(
         }
         match item.kind {
             Kind::Kept => {
-                let copy = crate::revision_processor::clone_with_fresh_property_ids(
-                    dom,
-                    item.node,
-                    stamp.next_id,
-                );
+                let copy = dom.clone_subtree(item.node);
                 for t in dom.descendants(copy, Some(&W::t())) {
                     dom.set_name(t, W::del_text());
                 }
@@ -348,11 +350,8 @@ fn rewrite_one(
                     for (name, value) in dom.attributes(original) {
                         dom.set_attribute_value(copy, &name, Some(&value));
                     }
-                    dom.set_attribute_value(
-                        copy,
-                        &W::id(),
-                        Some(&stamp.next_id.allocate().to_string()),
-                    );
+                    dom.set_attribute_value(copy, &W::id(), Some(&stamp.next_id.to_string()));
+                    *stamp.next_id += 1;
                     copy
                 };
                 dom.add(p, target);
@@ -440,7 +439,7 @@ fn side_text(dom: &Dom, items: &[Item], side: Kind) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -467,7 +466,7 @@ mod tests {
     }
 
     fn run(dom: &mut Dom, body: NodeId, m: &Mark) -> Result<(), String> {
-        let mut next_id = crate::revision_processor::RevisionIds::from_used(HashSet::from([99]));
+        let mut next_id = 100;
         let stamp = Stamp {
             author: "A",
             date: "2026-09-28T00:00:00Z",
