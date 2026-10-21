@@ -10,9 +10,9 @@ body: p0-p196, 1 table, 2 pages    # pages from Word's cached layout
 page: A4 landscape, margins 0.5in, header/footer 0.492in; fmt r360 @SW
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri Light 16pt, before 12pt, keep-next, keep-lines
-  "##": Heading2, Calibri Light 13pt, before 2pt, keep-next, keep-lines
-  NoSpacing: Calibri 11pt, named No Spacing
+  "#": Heading1, Calibri Light 16pt, before 12pt, after 0pt, keep-next, keep-lines
+  "##": Heading2, Calibri Light 13pt, before 2pt, after 0pt, keep-next, keep-lines
+  NoSpacing: Calibri 11pt, after 0pt, line 1, named No Spacing
 ---
 
 <!-- p0 -->

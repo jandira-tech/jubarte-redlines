@@ -757,3 +757,69 @@ fn table_style_names_with_commas_quote_and_sanitize() {
         );
     }
 }
+
+/// A table style of the document's own whose borders are not one single
+/// line all round names each side it sets (`Ledger, borders bottom double
+/// 0.75pt`), in Word's order, with a colour other than `auto` and a
+/// spacing other than zero, and the writer writes exactly those sides
+/// back: the view is a fixed point, where `borders vary` lost them
+/// (#1419). Word's own styles keep `borders vary`: the writer writes
+/// them as Word defines them.
+#[test]
+fn a_table_style_whose_borders_vary_names_each_side() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:bottom w:val="double" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="table" w:styleId="Coloured"><w:name w:val="Coloured"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:insideH w:val="nil"/><w:top w:val="single" w:sz="12" w:space="2" w:color="FF0000"/></w:tblBorders></w:tblPr></w:style><w:style w:type="table" w:styleId="GridTable2"><w:name w:val="Grid Table 2"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="8"/></w:tblBorders></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:top w:val="double" w:sz="24" w:space="0" w:color="auto"/><w:bottom w:val="double" w:sz="24" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style></w:styles>"#,
+        jubarte::namespaces::W::URI
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let body = format!(
+        "{}<w:p/>{}<w:p/>{}<w:p/>{}",
+        table(r#"<w:tblStyle w:val="Ledger"/>"#),
+        table(r#"<w:tblStyle w:val="Coloured"/>"#),
+        table(r#"<w:tblStyle w:val="GridTable2"/>"#),
+        table(r#"<w:tblStyle w:val="TableGrid"/>"#)
+    );
+    let docx = common::docx::docx_with(&body, &parts);
+    let (first, again, second) = round_trip(&docx);
+    // A colour's `#` would start a YAML comment: the value is quoted.
+    assert!(
+        first.contains(
+            "tables: \"Ledger, borders bottom double 0.75pt, Coloured, borders top single 1.5pt #FF0000 space 2pt insideH nil, GridTable2, borders vary, TableGrid, borders top double 3pt bottom double 3pt\""
+        ),
+        "{first}"
+    );
+    let written = part(&again, "word/styles.xml");
+    let definition = |id: &str| {
+        written
+            .split("<w:style ")
+            .find(|s| s.contains(&format!("w:styleId=\"{id}\"")))
+            .unwrap_or_else(|| panic!("no style {id}: {written}"))
+            .to_string()
+    };
+    assert!(
+        definition("Ledger").contains(
+            r#"<w:tblBorders><w:bottom w:val="double" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders>"#
+        ),
+        "{written}"
+    );
+    assert!(
+        definition("Coloured").contains(
+            r#"<w:tblBorders><w:top w:val="single" w:sz="12" w:space="2" w:color="FF0000"/><w:insideH w:val="nil"/></w:tblBorders>"#
+        ),
+        "{written}"
+    );
+    // A Table Grid other than Word's thin one is the document's own too.
+    assert!(
+        definition("TableGrid").contains(
+            r#"<w:tblBorders><w:top w:val="double" w:sz="24" w:space="0" w:color="auto"/><w:bottom w:val="double" w:sz="24" w:space="0" w:color="auto"/></w:tblBorders>"#
+        ),
+        "{written}"
+    );
+    assert_eq!(second, first);
+}
