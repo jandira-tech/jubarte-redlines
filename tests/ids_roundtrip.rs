@@ -169,8 +169,8 @@ fn long_body() -> &'static [u8] {
                 inner.push_str(&ins(w, A, &format!("added{i}")));
             }
             if i == 7 {
-                // Word Compare's order, the insertion then the deletion:
-                // one substitution, `r3+4`.
+                // Word Compare's insertion-then-deletion order stays two
+                // separate marks; `r3+4` still selects both ids.
                 inner.push_str(&ins("4", A, "new"));
                 inner.push_str(&del("3", A, "old"));
             }
@@ -461,7 +461,10 @@ struct Patterns {
 fn patterns() -> &'static Patterns {
     static P: OnceLock<Patterns> = OnceLock::new();
     P.get_or_init(|| Patterns {
-        note: Regex::new(r"\{>>(.*?)<<\}").unwrap(),
+        note: Regex::new(
+            r"\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b[^{}]*?)(?:<<)?\}",
+        )
+        .unwrap(),
         // `r12 @AC`, `header1.r1+2 @AC`, `Header_1:rev:4 @AC`, with a date.
         tag: Regex::new(r"^(\S+) @[A-Za-z0-9?]+(?: \S+)?$").unwrap(),
         comment_head: Regex::new(
@@ -532,7 +535,7 @@ fn printed(view: &str) -> Printed {
             }
             continue;
         }
-        for one in note.split("; ") {
+        for one in note.split("; ").flat_map(|one| one.split(" re ")) {
             match pat.tag.captures(one) {
                 Some(tag) => {
                     out.changes.insert(tag[1].to_string());
@@ -556,7 +559,7 @@ fn printed(view: &str) -> Printed {
     let mut current: Option<usize> = None;
     for line in body.lines() {
         // A note definition's own changes: `[^1]: text <!-- fmt footnotes.r7 @AC -->`,
-        // also when the definition is wrapped: `{--[^1]: text--}{>>r18 @C<<} <!-- … -->`.
+        // also when the definition is wrapped: `{--[^1]: text--}{r18 @C} <!-- … -->`.
         if line.contains("[^")
             && !line.starts_with("<!-- ")
             && line.ends_with(" -->")
@@ -663,7 +666,16 @@ fn view_text(block: &str) -> String {
     let images = Regex::new(r"!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
     // `<mailto:a@b>` shows the address the document holds.
-    let text = plain_anchor(block).replace("<mailto:", "<");
+    let box_markers =
+        Regex::new(r"(?P<escape>\\)?<!-- (?:text-box d\d+\.\d+|/text-box) -->").unwrap();
+    let text = box_markers.replace_all(block, |caps: &regex::Captures<'_>| {
+        if caps.name("escape").is_some() {
+            caps[0].to_string()
+        } else {
+            String::new()
+        }
+    });
+    let text = plain_anchor(&text).replace("<mailto:", "<");
     let text = refs.replace_all(&text, "");
     let text = images.replace_all(&text, "");
     let tags = Regex::new(r#"</?[a-z]+(?:\s[^>]*)?>"#).unwrap();
@@ -672,6 +684,19 @@ fn view_text(block: &str) -> String {
     let fields = Regex::new(r#"\{[A-Z]+(?:\s(?:[^{}"]|"[^"]*")*)?\}|\{/\}"#).unwrap();
     let text = fields.replace_all(&text, "");
     letters(&links.replace_all(&text, "]"))
+}
+
+#[test]
+fn box_boundary_metadata_is_not_document_text() {
+    let deleted = "<!-- text-box d1.0 -->\n{--hello--}{r0 @C}\n<!-- /text-box -->";
+    assert_eq!(view_text(deleted), "");
+    assert_eq!(
+        view_text("|Cell<br><!-- text-box d1.0 --><br>Visible box words<br><!-- /text-box -->|"),
+        "CellVisibleboxwords"
+    );
+    let visible = "<!-- text-box d1.0 -->\nVisible box words\n<!-- /text-box -->";
+    assert_eq!(view_text(visible), "Visibleboxwords");
+    assert_eq!(view_text(r"\<!-- text-box d1.0 -->"), "textboxd10");
 }
 
 // ---------------------------------------------------------------- checks
@@ -1033,12 +1058,12 @@ fn the_long_body_round_trips_every_id_width() {
         assert!(view.contains(id), "{id}");
     }
     for tag in [
-        "{>>r51000 @AC<<}",
-        "{>>r9 @AC<<}",
-        "{>>r10000 @AC<<}",
-        "{>>r0 @AC<<}",
-        "{>>r51199 @AC<<}",
-        "{~~old~>new~~}{>>r3+4 @AC<<}",
+        "{r51000 @AC}",
+        "{r9 @AC}",
+        "{r10000 @AC}",
+        "{r0 @AC}",
+        "{r51199 @AC}",
+        "{++new++}{r4 @AC}{--old--}{r3 @AC}",
         "{>>c51000 @AC: Far away.<<}",
         "{>>c10 @JD re c9: Reply to nine.<<}",
         "{>>c99 @JD resolved: Settled.<<}",
@@ -1091,10 +1116,10 @@ fn every_story_and_every_collision_round_trips() {
         "footnotes.r5 @AC",
         "footnotes.r51000 @JD",
         "endnotes.r12 @AC",
-        "{++body five++}{>>r5 @AC<<}",
+        "{++body five++}{r5 @AC}",
         "{>>c5 @AC: Five.<<}",
         "<!-- p5 -->",
-        "{++Boxed++}{>>r40 @AC<<}",
+        "{++Boxed++}{r40 @AC}",
     ] {
         assert!(view.contains(printed), "{printed}:\n{view}");
     }

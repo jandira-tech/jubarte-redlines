@@ -985,11 +985,14 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_capabilities(args: argparse.Namespace) -> int:
     if args.json:
-        print(json.dumps(capabilities(), indent=2))
+        print(json.dumps(
+            capabilities(operation=args.operation, field=args.field, matrix=args.matrix),
+            indent=2,
+        ))
         return EXIT_OK
     from . import _native
 
-    sys.stdout.write(_native.capabilities_text())
+    sys.stdout.write(_native.capabilities_text(args.operation, args.field, args.matrix))
     return EXIT_OK
 
 
