@@ -1405,6 +1405,21 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
     loose
 }
 
+/// The destinations `markdown`'s `![…](dest)` images name, as the
+/// writer's image loader sees them: `drawing:` and `data:` payloads
+/// included, `%XX` escapes still encoded, in document order. A caller
+/// that reports or audits the images a document would load (the `diff`
+/// text patch, which never runs a loader) names them this way rather
+/// than by scanning the text itself (#617).
+pub fn image_targets(markdown: &str) -> Vec<String> {
+    Parser::new_ext(markdown, parser_options())
+        .filter_map(|event| match event {
+            Event::Start(Tag::Image { dest_url, .. }) => Some(critic::decode(&dest_url)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The Markdown extensions jubarte reads, for the writer and for
 /// [`super::pages`].
 pub(super) fn parser_options() -> Options {
