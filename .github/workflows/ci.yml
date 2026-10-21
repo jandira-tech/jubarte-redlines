@@ -290,6 +290,7 @@ jobs:
       - run: python3 scripts/test_release_sh.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
+      - run: python3 scripts/test_table_styles_asset.py
       # The committed npm packages name no builder's home (#1480): the
       # library's artifacts and the CLI package's modules.
       - run: python3 scripts/check_npm_paths.py jubarte-wasm/npm jubarte-wasm/cli

@@ -108,10 +108,14 @@ def templated(style: str, colours: dict[str, str]) -> str:
     return re.sub(r"<w:\w+ [^>]*/>", tag, style)
 
 
+def sources(argv: list[str]) -> list[Path]:
+    """The Grid-and-List source and then the extra sources named on the command line."""
+    return [SOURCE, *(Path(a) for a in argv if Path(a) != SOURCE)]
+
+
 def main() -> None:
-    sources = [Path(a) for a in sys.argv[1:]] or [SOURCE]
     families: dict[str, dict[str, str]] = {}
-    for source in sources:
+    for source in sources(sys.argv[1:]):
         package = zipfile.ZipFile(source)
         colours = theme(package)
         styles = package.read("word/styles.xml").decode()
