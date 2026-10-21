@@ -862,7 +862,9 @@ fn strip_box_words(element: &mut Element, stories: &[String]) -> Vec<BoxFrame> {
                 hash: box_hash(markdown),
                 ..BoxFrame::default()
             };
-            frame.opaque = !owned_drawings(element).is_empty();
+            // Blank stories have no visible words to refill whitespace slots
+            // from. Keep their controls and formatting intact until edited.
+            frame.opaque = !owned_drawings(element).is_empty() || element.text().trim().is_empty();
             if frame.opaque {
                 boxes.push(frame);
                 return;
@@ -2093,6 +2095,40 @@ mod tests {
         assert!(at("![a][dx]").is_none());
         assert!(at("![a][other]").is_none());
         assert!(at("![a][d1").is_none());
+    }
+
+    #[test]
+    fn unchanged_blank_box_keeps_controls_and_remains_editable() {
+        let mut root = element(
+            r#"<w:drawing><w:txbxContent><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t xml:space="preserve">     </w:t></w:r></w:p></w:sdtContent></w:sdt></w:txbxContent></w:drawing>"#,
+        );
+        let original = serialize(&root);
+        let boxes = strip_box_words(&mut root, &[String::new()]);
+        let drawing = Drawing {
+            xml: serialize(&root),
+            boxes,
+            ..Drawing::default()
+        };
+        let mut next = 1;
+        let unchanged = fill_boxes(
+            &drawing.xml,
+            &drawing,
+            &[(String::new(), "<w:p/>".into())],
+            &mut next,
+        );
+        assert_eq!(unchanged, original);
+
+        let edited = fill_boxes(
+            &drawing.xml,
+            &drawing,
+            &[(
+                "Added".into(),
+                "<w:p><w:r><w:t>Added</w:t></w:r></w:p>".into(),
+            )],
+            &mut next,
+        );
+        assert!(edited.contains("<w:t>Added</w:t>"), "{edited}");
+        assert!(!edited.contains("<w:sdt>"), "{edited}");
     }
 
     #[test]

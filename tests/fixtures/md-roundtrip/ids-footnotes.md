@@ -12,7 +12,7 @@ styles:
   Normal: Aptos 12pt, after 8pt, line 1.16, left  # default; unannotated paragraphs use it
   "#": Heading1, Aptos Display 20pt, before 18pt, after 4pt, keep-next, keep-lines
   "##": Heading2, Aptos Display 16pt, before 8pt, after 4pt, keep-next, keep-lines
-  Title: Aptos Display 28pt, after 4pt, contextual spacing
+  Title: Aptos Display 28pt, after 4pt, line 1, contextual spacing
   Subtitle: Aptos 14pt
   ListBullet: Aptos 12pt, contextual spacing, named List Bullet
   ListNumber: Aptos 12pt, contextual spacing, named List Number

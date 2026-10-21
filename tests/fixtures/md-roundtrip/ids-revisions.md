@@ -19,21 +19,21 @@ headers:
 footers:
   first:                           # defined, but different first page is off
     id: footer3
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer3.r1664 @AB}¶{footer3.r1663 @AB}", center}
-    p1: {text: "{++ ++}{footer3.r1666 @AB}", left}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer3.r1664 @AB}¶{footer3.r1663 @AB}", center, indent: {first-line: 0in, left: 0in}}
+    p1: {text: "{++ ++}{footer3.r1666 @AB}", left, indent: {first-line: 0in, left: 0in}}
     style: Normal
     inactive: true
     fmt: footer3.r1665 @AB in footer3.p1
   default:
     id: footer2
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer2.r1660 @AB}¶{footer2.r1659 @AB}", center}
-    p1: {text: "{++ ++}{footer2.r1662 @AB}", left}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer2.r1660 @AB}¶{footer2.r1659 @AB}", center, indent: {first-line: 0in, left: 0in}}
+    p1: {text: "{++ ++}{footer2.r1662 @AB}", left, indent: {first-line: 0in, left: 0in}}
     style: Normal
     fmt: footer2.r1661 @AB in footer2.p1
   even:                            # defined, but even/odd headers are off
     id: footer1
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer1.r1656 @AB}¶{footer1.r1655 @AB}", center}
-    p1: {text: "{++ ++}{footer1.r1658 @AB}", left}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer1.r1656 @AB}¶{footer1.r1655 @AB}", center, indent: {first-line: 0in, left: 0in}}
+    p1: {text: "{++ ++}{footer1.r1658 @AB}", left, indent: {first-line: 0in, left: 0in}}
     style: Normal
     inactive: true
     fmt: footer1.r1657 @AB in footer1.p1

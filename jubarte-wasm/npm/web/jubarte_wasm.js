@@ -949,7 +949,9 @@ export function convertMarkdown(docx, track_changes, page_markers, revisions, re
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
- * `pN` id in a Word document or `line:N` in Markdown.
+ * `pN` id in a Word document or `line:N` in Markdown. When a side is a
+ * Word document, a replacement inside a paragraph reads insertion first,
+ * `{+new+}[-old-]`, as Word Compare writes it.
  *
  * Each side is a `.docx` package or UTF-8 Markdown
  * (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -1411,8 +1413,10 @@ export function initPanicHook() {
 
 /**
  * The inspection snapshot as JSON: `schema_version`, `source_sha256`,
- * `summary` and `paragraphs` (ids, text, style, formatting spans,
- * limitations). Oversized or malformed packages are refused before parsing.
+ * `summary`, `paragraphs` (ids, text, style, formatting spans,
+ * limitations) and top-level `tables` with recursive `nested` entries.
+ * Snapshot schema 2 counts top-level tables; nested entries have `parent`
+ * cell paths and no `index`. Oversized or malformed packages are refused before parsing.
  *
  * Mirrors `jubarte::inspect::inspect_json`.
  * @param {Uint8Array} docx
@@ -2131,8 +2135,9 @@ export function sourceSha256(docx) {
 
 /**
  * The grids `jubarte read --tables` prints: a `table N: RxC …` line per
- * body table, then a line per row of `ids=text` cells; `no tables` when
- * there are none.
+ * top-level body table, then a line per row of `ids=text` cells; nested
+ * tables follow their cell row, indented two spaces per level and labelled
+ * `nested in CELL_PATH`. `no tables` prints when there are none.
  *
  * Mirrors `jubarte::inspect::tables_text`.
  * @param {Uint8Array} docx

@@ -2239,14 +2239,17 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .table_style
                         .as_ref()
                         .filter(|(legend, ..)| legend == id)
-                        .map(|(_, border, name)| (*border, name.clone()))
+                        .map(|(_, border, name)| (border.clone(), name.clone()))
                         .or_else(|| self.document.table_legend.get(id).cloned());
-                    let border = legend.as_ref().and_then(|(border, _)| *border);
+                    let border = legend.as_ref().and_then(|(border, _)| border.clone());
                     // Word's thin Table Grid, unless the legend gives it a
                     // border or a name of its own (`TableGrid, all borders
                     // 1.5pt`, `TableGrid, named …`).
                     let name = legend.and_then(|(_, name)| name);
-                    if id == "TableGrid" && border.is_none_or(|sz| sz == 4) && name.is_none() {
+                    if id == "TableGrid"
+                        && matches!(border, None | Some(view_styles::TableBorders::All(4)))
+                        && name.is_none()
+                    {
                         self.document.styles.insert("TableGrid");
                     } else {
                         self.document

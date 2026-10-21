@@ -1409,6 +1409,12 @@ fn issue_1137_convert_reports_renamed_revision_and_source_line() {
     assert_eq!(xml.matches("<w:ins ").count(), 2, "{xml}");
     assert_eq!(xml.matches("w:id=\"1\"").count(), 1, "{xml}");
     assert_eq!(xml.matches("w:id=\"2\"").count(), 1, "{xml}");
+    // Reading the docx back names the new id, so the second read is a
+    // fixed point (#1414).
+    let read = jubarte(&["read", "changes.docx", "--no-page-markers"], dir.path());
+    ok(&read);
+    let view = String::from_utf8_lossy(&read.stdout);
+    assert!(view.contains("{++a++}{r1 @A} x {++b++}{r2 @A}"), "{view}");
 }
 
 #[test]

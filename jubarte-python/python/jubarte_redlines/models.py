@@ -1569,7 +1569,9 @@ class Diff:
     """The changes between two documents, as ``git diff --word-diff`` shows
     them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
     for the changes and CriticMarkup ``{==highlights==}`` and
-    ``{>>comments<<}``.
+    ``{>>comments<<}``. When a side is a Word document, a replacement
+    inside a paragraph reads insertion first, ``{+new+}[-old-]``, as Word
+    Compare writes it.
 
     ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
     ``hunks`` are the changed paragraphs (none for ``format="critic"``).
