@@ -208,3 +208,90 @@ fn a_size_out_of_range_is_left_out() {
     assert_eq!(got[1].0, ["-"]);
     assert_eq!(got[2].0, ["3276"]);
 }
+
+#[test]
+fn a_style_without_a_type_is_a_paragraph_style() {
+    // ECMA-376 `w:style`: "If this attribute is not specified, then the
+    // default value shall be assumed to be paragraph." A paragraph at its
+    // untyped style's size says no `size`, and an untyped default style
+    // is the one unstyled paragraphs compare against (#1485 review).
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:default="1" w:styleId="Body"><w:name w:val="Body"/><w:rPr><w:sz w:val="24"/></w:rPr></w:style><w:style w:styleId="Quiet"><w:name w:val="Quiet"/><w:basedOn w:val="Body"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style></w:styles>"#,
+        W_NS = common::docx::W_NS
+    );
+    let part = common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    };
+    let source = common::docx::docx_with(
+        r#"<w:p><w:pPr><w:pStyle w:val="Quiet"/></w:pPr><w:r><w:rPr><w:sz w:val="16"/></w:rPr><w:t>Quiet</w:t></w:r></w:p><w:p><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>Body</w:t></w:r></w:p>"#,
+        &[part],
+    );
+    let shown = view(&source);
+    assert!(shown.contains("<!-- p0 Quiet -->"), "{shown}");
+    assert!(shown.contains("<!-- p1 -->"), "{shown}");
+    assert!(!shown.contains("size"), "{shown}");
+}
+
+/// The id line of paragraph `id` (`<!-- p0 … -->`).
+fn id_line<'a>(shown: &'a str, id: &str) -> &'a str {
+    let open = format!("<!-- {id} ");
+    let bare = format!("<!-- {id} -->");
+    shown
+        .lines()
+        .find(|l| l.starts_with(&open) || *l == bare)
+        .unwrap_or_else(|| panic!("no id line for {id}: {shown}"))
+}
+
+#[test]
+fn a_text_box_keeps_its_runs_out_of_the_host_size() {
+    // The box's 12pt runs are its own paragraphs' (#1485 review).
+    let source = docx(concat!(
+        r#"<w:p><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>Host</w:t></w:r>"#,
+        r#"<w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape style="width:100pt;height:40pt"><v:textbox><w:txbxContent>"#,
+        r#"<w:p><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>Box</w:t></w:r></w:p>"#,
+        r#"</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#,
+    ));
+    let shown = view(&source);
+    assert!(id_line(&shown, "p0").contains("size 9pt"), "{shown}");
+}
+
+#[test]
+fn a_hidden_run_does_not_set_the_paragraph_size() {
+    // The view drops a hidden run, so its size cannot stop the clause
+    // the visible runs share (#1485 review).
+    let source = docx(concat!(
+        r#"<w:p><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">Nine </w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:vanish/><w:sz w:val="24"/></w:rPr><w:t>hidden</w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>points</w:t></w:r></w:p>"#,
+    ));
+    let shown = view(&source);
+    assert!(id_line(&shown, "p0").contains("size 9pt"), "{shown}");
+}
+
+#[test]
+fn a_break_of_another_size_stops_the_clause() {
+    // The writer puts the clause's size on every break, and a break's
+    // size sets its blank line's height (#1485 review).
+    let source = docx(concat!(
+        r#"<w:p><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>Nine</w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:br/></w:r>"#,
+        r#"<w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>points</w:t></w:r></w:p>"#,
+    ));
+    let shown = view(&source);
+    assert!(!shown.contains("size"), "{shown}");
+}
+
+#[test]
+fn a_complex_script_size_of_its_own_stops_the_clause() {
+    // The writer gives `w:szCs` the clause's size; a run whose `w:szCs`
+    // differs from its `w:sz` would lose it (#1485 review).
+    let source = docx(
+        r#"<w:p><w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="24"/></w:rPr><w:t>Nine</w:t></w:r></w:p>"#,
+    );
+    let shown = view(&source);
+    assert!(!shown.contains("size"), "{shown}");
+}

@@ -887,6 +887,13 @@ fn resolve(styles: Option<&Element>, theme: Option<&Element>, id: &str) -> Resol
     r
 }
 
+/// Whether `style` is a paragraph style: ECMA-376 `w:style` reads "If
+/// this attribute is not specified, then the default value shall be
+/// assumed to be paragraph" (#1485 review).
+pub(crate) fn is_paragraph_style(style: &Element) -> bool {
+    style.attr("type").is_none_or(|t| t == "paragraph")
+}
+
 /// Each paragraph style's text size through its `basedOn` chain and the
 /// document defaults, in half-points, and the size of a paragraph with no
 /// `w:pStyle` (the default paragraph style's): what a paragraph's own
@@ -907,7 +914,7 @@ pub(crate) fn paragraph_style_sizes(
     let sizes = styles
         .into_iter()
         .flat_map(|root| root.children_named("style"))
-        .filter(|s| s.attr("type") == Some("paragraph"))
+        .filter(|s| is_paragraph_style(s))
         .filter_map(|s| s.attr("styleId"))
         .map(|id| (id.to_string(), size(id)))
         .collect();
