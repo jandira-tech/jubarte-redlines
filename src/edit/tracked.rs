@@ -1100,6 +1100,8 @@ fn emit_text(
     }
     let (start, end) = (edit.start, edit.end);
     let mut replacement = edit.replacement.as_str();
+    // This edit's own deletions, in document order.
+    let mut ours = Vec::new();
     // `None` places the insertion right after `anchor`, `Some(true)` before.
     let (template, anchor, before) = if start < end {
         let runs = isolate_range(dom, paragraph, start, end);
@@ -1149,6 +1151,7 @@ fn emit_text(
                 dom.add(del, run);
                 rename_deleted_text(dom, run);
             }
+            ours.push(del);
             last_del = Some(del);
         }
         (runs.first().copied(), last_del, false)
@@ -1223,12 +1226,29 @@ fn emit_text(
     let (anchor, before) = split.map_or((anchor, before), |(ins, before, _)| (Some(ins), before));
     // New words meet no range they were not typed in: past the openers
     // before them, past the closers after them (#1156). A replacement takes
-    // the place of words its ranges cover, and stays beside its deletion.
+    // the place of words its ranges cover, and stays beside its deletion,
+    // past the end of a comment its deletion holds whole: Accept removes
+    // that comment, and the new words must not be in it.
     let anchor = anchor.map(|anchor| {
         if start == end {
             outside_ranges(dom, anchor, before)
-        } else {
+        } else if before || replacement.is_empty() {
             anchor
+        } else {
+            let (last, references) = past_deleted_comments(dom, anchor, &ours);
+            // Their references go with the deleted text, as deleting the
+            // whole commented text writes them.
+            let mut last = last;
+            for run in references {
+                let del = stamp.container(dom, W::del());
+                dom.add_before_self(run, del);
+                dom.remove(run);
+                dom.add(del, run);
+                if last == run {
+                    last = del;
+                }
+            }
+            last
         }
     });
     let mut last = anchor;
@@ -1377,6 +1397,70 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
         at += 1;
     }
     at
+}
+
+/// The last sibling after deletion `del` that closes a comment opened
+/// inside the deletions `ours` of one edit, after its first deleted word:
+/// its end and the run with its reference (`del` itself when none follows),
+/// and those reference runs. A comment opened on kept text, or on the
+/// edit's first word (the replaced text is the commented text), keeps the
+/// new words, in Word's order.
+fn past_deleted_comments(dom: &Dom, del: NodeId, ours: &[NodeId]) -> (NodeId, Vec<NodeId>) {
+    let Some(parent) = dom.parent(del) else {
+        return (del, Vec::new());
+    };
+    let children = dom.elements(parent, None);
+    let Some(index) = children.iter().position(|&n| n == del) else {
+        return (del, Vec::new());
+    };
+    let opened_in_deletion = |id: &str| {
+        let mut back = children[..index].iter().rev();
+        let found = back.by_ref().find_map(|&c| {
+            if dom.name_is(c, &W::name("commentRangeStart"))
+                && dom.attribute(c, &W::id()) == Some(id)
+            {
+                Some(true)
+            } else if ours.contains(&c) || is_one_of(dom, c, &RANGE_STARTS) {
+                None
+            } else {
+                Some(false)
+            }
+        }) == Some(true);
+        found
+            && back
+                .find(|&&c| !is_one_of(dom, c, &RANGE_STARTS))
+                .is_some_and(|c| ours.contains(c))
+    };
+    let mut closed = BTreeSet::new();
+    let mut last = del;
+    let mut references_passed = Vec::new();
+    for &child in &children[index + 1..] {
+        let is_end = dom.name_is(child, &W::name(COMMENT_RANGE_END));
+        let passes = if is_end {
+            dom.attribute(child, &W::id())
+                .filter(|id| opened_in_deletion(id))
+                .is_some_and(|id| closed.insert(id))
+        } else {
+            let references = dom.elements(child, Some(&W::name("commentReference")));
+            dom.name_is(child, &W::r())
+                && !references.is_empty()
+                && references.iter().all(|&r| {
+                    dom.attribute(r, &W::id())
+                        .is_some_and(|id| closed.contains(id))
+                })
+                && dom.elements(child, None).iter().all(|&e| {
+                    dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::name("commentReference"))
+                })
+        };
+        if !passes {
+            break;
+        }
+        if !is_end {
+            references_passed.push(child);
+        }
+        last = child;
+    }
+    (last, references_passed)
 }
 
 /// Our insertion `ours` right after deletion `del`. A deletion inside an
