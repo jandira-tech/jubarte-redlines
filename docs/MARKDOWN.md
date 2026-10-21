@@ -1150,6 +1150,31 @@ typed straight. A move offers "keep the move" and "undo it silently";
 a formatting change, "keep their formatting" and "undo it silently". A
 field, hyperlink or content control names itself instead.
 
+### Plan errors
+
+A `--plan` that does not read says where and what it takes
+(`INVALID_PLAN`, exit 3). The operation is named by its `id`, else
+`op-N`, then its kind, the field, the nearest field it takes and the list
+of its fields:
+
+```text
+error: INVALID_PLAN (op-2): delete: unknown field "ocurrence"; did you mean "occurrence"? fields: comment, find, occurrence, paragraph
+```
+
+An unknown kind lists the kinds, a missing `schema_version` says which
+this build reads, characters after the plan's object give their line and
+column, a bare number for `paragraph` shows `{"index": N}`, a single
+string for `resolve_revisions.accept.ids` shows it as an array, an `id`
+that is no string shows one, and an alias beside the field it is read as
+says to drop one. A byte order mark before the plan is ignored. Two
+slips apply as meant, each with a `note:` line on stderr and in the
+`summary` event's `notes` (left out when none applies): `anchor` for
+`find` on `replace`, `delete` and `comment`, and `comment` for `text` on
+`comment` and `reply_comment`.
+`delete` and `rewrite` take a `comment` of their own: a deletion's sits
+on the struck words, in the redline only, and a rewrite's covers the
+paragraph. `text` on `replace` stays an error, naming `replacement`.
+
 ### Partial runs
 
 A plan is applied whole or refused whole. `--skip-failed` applies every

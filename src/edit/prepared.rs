@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashSet};
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, StoryPart,
     Transaction, check_update_fields, comment_holds_kept_text, comment_text_of, controls,
-    revision_counts, sections, tracked, whole,
+    lift_deletion_comments, revision_counts, sections, tracked, whole,
 };
 use crate::comparer::WmlComparerSettings;
 use crate::inspect::{body_paragraph_nodes, project_paragraph, source_sha256};
@@ -601,7 +601,10 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
     // A rewrite that resolved to no edits still has a postcondition.
     if exact {
         for (i, op) in tx.plan.operations.iter().enumerate() {
-            let OperationKind::Rewrite { paragraph, text } = &op.kind else {
+            let OperationKind::Rewrite {
+                paragraph, text, ..
+            } = &op.kind
+            else {
                 continue;
             };
             if comment_text_of(paragraph).is_some() {
@@ -980,14 +983,32 @@ fn produce(
         .iter()
         .find(|&&(id, _)| comment_holds_kept_text(&redline, id))
     {
-        let mut error = tx.conflict(
-            op,
-            "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph",
-        );
+        let message = if matches!(plan.operations[op].kind, OperationKind::Delete { .. }) {
+            // Under keep the deletion is written as given, and its comment
+            // wraps the words named.
+            let keep = match tx.syntax {
+                super::PlanSyntax::Flags | super::PlanSyntax::Typed => "--existing-revisions keep",
+                super::PlanSyntax::V1 | super::PlanSyntax::V2 => r#""existing_revisions": "keep""#,
+            };
+            format!(
+                "the comparer deleted the same words elsewhere instead, so the comment would sit on text that stays; pass {keep} to write the deletion as given, or delete without a comment"
+            )
+        } else {
+            "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph".to_string()
+        };
+        let mut error = tx.conflict(op, &message);
         error.code = "UNSUPPORTED_STRUCTURE".into();
         error.outcomes[op].code = Some(error.code.clone());
         return Err(error);
     }
+    // A deleted text's comment wraps its deletion, as a strike's does.
+    let lifted: Vec<u32> = tx
+        .deletion_comments
+        .iter()
+        .filter(|&&(_, op)| matches!(plan.operations[op].kind, OperationKind::Delete { .. }))
+        .map(|&(id, _)| id)
+        .collect();
+    redline = lift_deletion_comments(&redline, &lifted)?;
     // Settings are not revisions: the redline takes them as they are.
     if let Some(request) = &tx.settings {
         redline = crate::settings::apply_settings_to_docx(&redline, request)
@@ -1110,6 +1131,7 @@ pub(crate) mod tests {
                 revisions: Default::default(),
                 fields: Vec::new(),
                 skipped: 0,
+                notes: Vec::new(),
                 output_sha256: None,
             },
         }

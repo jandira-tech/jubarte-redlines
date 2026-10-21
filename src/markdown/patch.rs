@@ -585,6 +585,7 @@ fn operations(
                         kind: OperationKind::Rewrite {
                             paragraph: at(p),
                             text: rewritten(paragraph, block),
+                            comment: None,
                         },
                     });
                     continue;
@@ -620,6 +621,7 @@ fn operations(
                     OperationKind::Rewrite {
                         paragraph: at(p),
                         text: String::new(),
+                        comment: None,
                     }
                 } else {
                     OperationKind::DeleteParagraph {

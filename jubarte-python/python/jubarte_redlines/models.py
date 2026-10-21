@@ -1333,6 +1333,9 @@ class EditReport:
     revisions: RevisionCounts
     resolved_revisions: ResolvedRevisions = ResolvedRevisions()
     fields: tuple[FieldUpdate, ...] = ()
+    notes: tuple[str, ...] = ()
+    """What the plan said that jubarte read another way (field ``anchor``
+    read as ``find``, ...): the CLI prints each as a ``note:`` line."""
     _json: str = field(repr=False, compare=False, default="")
 
     def to_jsonl(self) -> str:
@@ -1382,6 +1385,7 @@ def _decode_report(payload: str) -> EditReport:
             rejected=tuple(data.get("resolved_revisions", {}).get("rejected", ())),
         ),
         fields=_decode_field_updates(data.get("fields", ())),
+        notes=tuple(data.get("notes", ())),
         _json=payload,
     )
 

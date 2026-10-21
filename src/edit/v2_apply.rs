@@ -1477,10 +1477,12 @@ impl SourceModel {
                 paragraph: p()?,
                 find: find.clone(),
                 occurrence: occurrence(*n),
+                comment: None,
             },
             V::Rewrite { text, .. } => OperationKind::Rewrite {
                 paragraph: p()?,
                 text: text.clone(),
+                comment: None,
             },
             V::InsertParagraph {
                 position,

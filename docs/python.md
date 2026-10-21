@@ -2642,6 +2642,7 @@ EditReport(
     revisions: RevisionCounts,
     resolved_revisions: ResolvedRevisions = ResolvedRevisions(accepted=(), rejected=()),
     fields: tuple[FieldUpdate, ...] = (),
+    notes: tuple[str, ...] = (),
     _json: str = '',
 )
 ```

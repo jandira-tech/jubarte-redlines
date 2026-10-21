@@ -504,6 +504,7 @@ impl PlanV2 {
     /// field combinations; `UNSUPPORTED_SCHEMA` for another integer version.
     /// Successful parsing does not verify this request against source bytes.
     pub fn from_json(json: &str) -> Result<Self, EditError> {
+        let json = super::without_byte_order_mark(json);
         let plan: Self = serde_json::from_str(json).map_err(|e| invalid(e.to_string()))?;
         plan.validate()?;
         Ok(plan)

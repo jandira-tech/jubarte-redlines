@@ -814,8 +814,13 @@ pub fn apply_edit_plan(
 /// Mirrors `jubarte::edit::preview_plan`.
 #[wasm_bindgen(js_name = previewEditPlan)]
 pub fn preview_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsValue> {
-    let resolved = jubarte::edit::EditPlan::from_json(plan_json)
-        .and_then(|plan| jubarte::edit::preview_plan(docx, &plan));
+    let resolved =
+        jubarte::edit::EditPlan::from_json_with_notes(plan_json).and_then(|(plan, notes)| {
+            jubarte::edit::preview_plan(docx, &plan).map(|mut report| {
+                report.notes = notes;
+                report
+            })
+        });
     Ok(EditOutput {
         ok: resolved.is_ok(),
         clean: None,
