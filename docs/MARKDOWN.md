@@ -477,7 +477,8 @@ its cells), each heading level's style with what differs from
 it, then every other paragraph style the body uses, keyed by its id
 (`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
 names only what its style sets apart from the style it is based on:
-font and size, `before`/`after`, `line`, alignment, `keep-next`,
+font and size, `before`/`after` (`after 0pt` too, when the base has
+some), `line` (`line 1` for single, when the base is not), alignment, `keep-next`,
 `keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, and
 `contextual spacing` (no space between paragraphs of that style, as List
 Paragraph has). A line ends `, named Text Heading 2` when the style's name

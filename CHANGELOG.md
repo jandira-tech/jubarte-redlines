@@ -43,6 +43,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **A style's zero spacing or single line survives the Markdown legend**
+  (#1421). The `styles:` legend left out a `before`/`after` of 0 and a
+  single line even when the default style has some, so a heading with no
+  space after came back with the body's 10pt after it. The legend now
+  says `after 0pt` and `line 1` whenever they set the style apart from
+  its base.
 - **The document's default spacing stays its default through Markdown**
   (#1420). The writer put the default paragraph style's spacing on
   `Normal` itself. A table style's own spacing (every built-in one sets

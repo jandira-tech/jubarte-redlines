@@ -906,23 +906,37 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     if r.character {
         return format!("character, {}", parts.join(", "));
     }
-    if differs(|x| format!("{:?}", x.before))
-        && let Some(b) = r.before.filter(|&b| b > 0.0)
-    {
-        parts.push(format!("before {}pt", points(b)));
+    // An omitted space is zero and an omitted line single. The default
+    // style names neither; a style based on it names a zero or a single
+    // line its base does not have, or the writer would give it the base's.
+    for (word, pick) in [
+        (
+            "before",
+            (|x: &Resolved| x.before) as fn(&Resolved) -> Option<f64>,
+        ),
+        ("after", |x: &Resolved| x.after),
+    ] {
+        let space = pick(r).unwrap_or(0.0);
+        let shown = match base {
+            None => space > 0.0,
+            Some(b) => space != pick(b).unwrap_or(0.0),
+        };
+        if shown {
+            parts.push(format!("{word} {}pt", points(space)));
+        }
     }
-    if differs(|x| format!("{:?}", x.after))
-        && let Some(a) = r.after.filter(|&a| a > 0.0)
-    {
-        parts.push(format!("after {}pt", points(a)));
-    }
-    if differs(|x| format!("{:?}", x.line))
-        && let Some((line, rule)) = &r.line
-    {
+    let single = (240.0, "auto".to_string());
+    let line = r.line.clone().unwrap_or_else(|| single.clone());
+    let shown = match base {
+        None => line != single,
+        Some(b) => line != b.line.clone().unwrap_or(single),
+    };
+    if shown {
+        let (line, rule) = &line;
         if rule == "auto" {
             let ratio = format!("{:.2}", line / 240.0);
             let ratio = ratio.trim_end_matches('0').trim_end_matches('.');
-            if ratio != "1" {
+            if ratio != "1" || base.is_some() {
                 parts.push(format!("line {ratio}"));
             }
         } else {
@@ -2323,6 +2337,40 @@ mod tests {
     /// A strict style carries its measures as universal measures (`11pt`,
     /// `1in`) and its font size in half-points either way: the legend reads
     /// the same as the transitional integers.
+    #[test]
+    fn a_zero_space_or_a_single_line_apart_from_the_base_is_named() {
+        let xml = format!(
+            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:styleId="Heading1"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="480" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style><w:style w:styleId="Same"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="200"/></w:pPr></w:style><w:style w:styleId="Alone"><w:pPr><w:spacing w:before="120"/></w:pPr></w:style></w:styles>"#
+        );
+        let styles = parse_xml(xml.as_bytes()).unwrap();
+        let base = resolve(Some(&styles), None, "Normal");
+        let line = |id: &str| describe(&resolve(Some(&styles), None, id), Some(&base));
+        assert_eq!(
+            describe(&base, None),
+            "Calibri 11pt, after 10pt, line 1.15, left"
+        );
+        // Written back on a style based on the default, an omitted zero
+        // would take the default's space.
+        assert_eq!(
+            line("Heading1"),
+            "Calibri bold 14pt, before 24pt, after 0pt, line 1"
+        );
+        // A zero the base has too is no deviation.
+        assert_eq!(line("Same"), "Calibri 11pt");
+        assert_eq!(line("Alone"), "Calibri 11pt, before 6pt");
+        // The default style omits them: an omitted space is zero, and an
+        // omitted line single.
+        let flat = Resolved {
+            font: Some("Calibri".to_string()),
+            size_half_points: Some(22.0),
+            before: Some(0.0),
+            after: Some(0.0),
+            line: Some((240.0, "auto".to_string())),
+            ..Resolved::default()
+        };
+        assert_eq!(describe(&flat, None), "Calibri 11pt, left");
+    }
+
     #[test]
     fn a_style_s_universal_measures_read_as_their_integers() {
         let legend = |rpr: &str, ppr: &str| {
