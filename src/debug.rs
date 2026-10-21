@@ -225,13 +225,10 @@ impl Package {
             // structural findings collected above still reach the
             // report (#644). `by_index` borrows `zip` mutably while its
             // result lives, so the central name is resolved first.
-            let shown = zip
-                .name_for_index(i)
-                .and_then(Result::ok)
-                .map_or_else(
-                    || "unnamed".to_string(),
-                    |name| format!("'{}'", name.escape_debug()),
-                );
+            let shown = zip.name_for_index(i).and_then(Result::ok).map_or_else(
+                || "unnamed".to_string(),
+                |name| format!("'{}'", name.escape_debug()),
+            );
             let mut f = match zip.by_index(i) {
                 Ok(f) => f,
                 Err(error) => {

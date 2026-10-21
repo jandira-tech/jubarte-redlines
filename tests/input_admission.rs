@@ -975,10 +975,13 @@ fn unicode_path_field(name: &[u8], content: &[u8]) -> Vec<u8> {
 fn directory_override_probe(version_made_by: u16, external: u32) -> Vec<u8> {
     let mut bytes = package(|writer, _| {
         let mut options: zip::write::FullFileOptions<'_, '_> =
-            zip::write::FileOptions::default()
-                .compression_method(CompressionMethod::Stored);
+            zip::write::FileOptions::default().compression_method(CompressionMethod::Stored);
         options
-            .add_extra_field(0x7075, unicode_path_field(b"word/media/", b"word/media"), true)
+            .add_extra_field(
+                0x7075,
+                unicode_path_field(b"word/media/", b"word/media"),
+                true,
+            )
             .unwrap();
         writer.start_file("word/media/", options).unwrap();
     });
@@ -1286,17 +1289,14 @@ fn a_unicode_path_override_cannot_hide_a_directory_type() {
         let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
             .expect_err("{what}: a directory on a file name must be refused");
         assert_eq!(err.code(), "UNSUPPORTED_PACKAGE", "{what}: {err}");
-        assert!(
-            err.to_string().contains("trailing '/'"),
-            "{what}: {err}"
-        );
+        assert!(err.to_string().contains("trailing '/'"), "{what}: {err}");
         let route = jubarte::opc::PartFs::open(&bytes)
             .map(|_| ())
             .map_err(|e| e.to_string())
             .expect_err("{what}: PartFs must refuse");
         assert!(route.contains("UNSUPPORTED_PACKAGE"), "{what}: {route}");
-        let findings = jubarte::debug::findings(&bytes)
-            .expect("debug opens a package every route refuses");
+        let findings =
+            jubarte::debug::findings(&bytes).expect("debug opens a package every route refuses");
         assert!(
             findings.iter().any(|f| f.code == "ZIP_SPECIAL_ENTRY"),
             "{what}: {findings:?}"
@@ -1315,8 +1315,8 @@ fn entry_names_reach_refusals_and_findings_escaped() {
     let text = err.to_string();
     assert!(!text.contains('\u{1b}'), "{text}");
     assert!(text.contains("\\u{1b}"), "{text}");
-    let findings = jubarte::debug::findings(&bytes)
-        .expect("debug opens a package every route refuses");
+    let findings =
+        jubarte::debug::findings(&bytes).expect("debug opens a package every route refuses");
     for finding in &findings {
         assert!(!finding.message.contains('\u{1b}'), "{finding:?}");
     }

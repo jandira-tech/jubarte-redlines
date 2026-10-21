@@ -523,12 +523,9 @@ pub(crate) fn zip_defects<R: Read + Seek>(
         // 0x7075 Unicode Path field can override the header name, so a
         // slash-terminated raw name may read as a file name. Decode it as
         // `admit` does before testing for the trailing `/`.
-        let decoded = crate::admission::zip_entry_name_raw(
-            &central.name,
-            central.flags,
-            &central.extra,
-        )
-        .unwrap_or_else(|_| String::from_utf8_lossy(&central.name).into_owned());
+        let decoded =
+            crate::admission::zip_entry_name_raw(&central.name, central.flags, &central.extra)
+                .unwrap_or_else(|_| String::from_utf8_lossy(&central.name).into_owned());
         if let Some(defect) = special_entry(i, &decoded.escape_debug().to_string(), &central) {
             defects.push(defect);
         }

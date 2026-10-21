@@ -528,14 +528,9 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         let mut limited = (&mut entry).take(cap.saturating_add(1));
         let read = if is_xml {
             let mut buf = Vec::new();
-            limited
-                .read_to_end(&mut buf)
-                .map_err(|e| {
-                    AdmissionError::new(
-                        K::InvalidPackage,
-                        format!("{}: {e}", name.escape_debug()),
-                    )
-                })?;
+            limited.read_to_end(&mut buf).map_err(|e| {
+                AdmissionError::new(K::InvalidPackage, format!("{}: {e}", name.escape_debug()))
+            })?;
             let n = buf.len() as u64;
             if n <= cap {
                 check_xml_depth(&name, &buf, limits)?;
@@ -545,13 +540,9 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             }
             n
         } else {
-            std::io::copy(&mut limited, &mut std::io::sink())
-                .map_err(|e| {
-                    AdmissionError::new(
-                        K::InvalidPackage,
-                        format!("{}: {e}", name.escape_debug()),
-                    )
-                })?
+            std::io::copy(&mut limited, &mut std::io::sink()).map_err(|e| {
+                AdmissionError::new(K::InvalidPackage, format!("{}: {e}", name.escape_debug()))
+            })?
         };
         tally_inflated(&mut total, read, &name, cap, &limits)?;
     }
@@ -562,7 +553,10 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
     let lower = main_part.to_ascii_lowercase();
     if !(lower.ends_with(".xml") || lower.ends_with(".rels")) {
         let mut entry = archive.by_name(&main_part).map_err(|e| {
-            AdmissionError::new(K::InvalidPackage, format!("{}: {e}", main_part.escape_debug()))
+            AdmissionError::new(
+                K::InvalidPackage,
+                format!("{}: {e}", main_part.escape_debug()),
+            )
         })?;
         let mut buf = Vec::new();
         (&mut entry)
@@ -873,13 +867,12 @@ fn part_text(xml: &[u8]) -> Cow<'_, str> {
 /// reaching the permissive DOM parser can carry pathological attribute or
 /// namespace-declaration widths.
 fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError> {
-    let invalid =
-        |why: String| {
-            AdmissionError::new(
-                AdmissionErrorKind::InvalidXml,
-                format!("{}: {why}", name.escape_debug()),
-            )
-        };
+    let invalid = |why: String| {
+        AdmissionError::new(
+            AdmissionErrorKind::InvalidXml,
+            format!("{}: {why}", name.escape_debug()),
+        )
+    };
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().check_end_names = true;
