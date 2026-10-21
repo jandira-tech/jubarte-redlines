@@ -3747,33 +3747,31 @@ fn run_convert_any(
     }
 }
 
-/// `jubarte debug`: print the report for one package, or two compared.
-fn run_debug(
-    files: &[PathBuf],
-    list: bool,
+/// `jubarte debug`'s report options: the checks asked for, else the
+/// triage.
+fn debug_options(
     checks: Vec<DebugCheck>,
-    part: Option<String>,
-    grep: Option<String>,
-    limit: usize,
-    context: usize,
-) -> Result<(), String> {
+    opts: jubarte::debug::Options,
+) -> jubarte::debug::Options {
+    if checks.is_empty() {
+        opts
+    } else {
+        jubarte::debug::Options {
+            checks: checks.into_iter().map(Into::into).collect(),
+            ..opts
+        }
+    }
+}
+
+/// `jubarte debug`: print the report for one package, or two compared.
+fn run_debug(files: &[PathBuf], list: bool, opts: &jubarte::debug::Options) -> Result<(), String> {
     let read = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let a = read(&files[0])?;
     let b = files.get(1).map(read).transpose()?;
-    let mut opts = jubarte::debug::Options {
-        part,
-        grep,
-        limit,
-        context,
-        ..Default::default()
-    };
-    if !checks.is_empty() {
-        opts.checks = checks.into_iter().map(Into::into).collect();
-    }
     let out = if list {
-        jubarte::debug::list(&a, b.as_deref(), &opts)?
+        jubarte::debug::list(&a, b.as_deref(), opts)?
     } else {
-        jubarte::debug::report(&a, b.as_deref(), &opts)?
+        jubarte::debug::report(&a, b.as_deref(), opts)?
     };
     write_stdout(&out)
 }
@@ -4315,8 +4313,20 @@ fn cli_main() -> ExitCode {
             grep,
             limit,
             context,
+            full_lines,
         }) => {
-            return exit_code(run_debug(&files, list, checks, part, grep, limit, context));
+            let opts = debug_options(
+                checks,
+                jubarte::debug::Options {
+                    part,
+                    grep,
+                    limit,
+                    context,
+                    full_lines,
+                    ..Default::default()
+                },
+            );
+            return exit_code(run_debug(&files, list, &opts));
         }
         Some(Command::Append {
             files,
@@ -4622,7 +4632,7 @@ mod tests {
         package[range].copy_from_slice(b"w0rd/document.xml");
         let file = dir.path().join("cloaked.docx");
         std::fs::write(&file, &package).unwrap();
-        run_debug(&[file], false, Vec::new(), None, None, 5, 0)
+        run_debug(&[file], false, &jubarte::debug::Options::default())
             .expect("debug triages a dual-header package");
     }
 

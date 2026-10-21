@@ -73,11 +73,24 @@ pub(super) struct ParaFormat {
     pub color: Option<String>,
     /// Its borders (`w:pBdr`).
     pub border: Option<super::borders::Sides>,
+    /// Its frame (`w:framePr`): each attribute and its value, as
+    /// `frame: {wrap: none, y: 1}` names them.
+    pub frame: Option<Vec<(String, String)>>,
+    /// Its own indent (`w:ind`), twips: the `first-line`, `hanging`,
+    /// `left` and `right` of `indent: {…}`, as the id lines name them.
+    pub first_line: Option<i64>,
+    pub hanging: Option<i64>,
+    pub left: Option<i64>,
+    pub right: Option<i64>,
 }
 
+/// The sides an `indent:` map names, in [`ParaFormat`]'s order.
+const INDENT_SIDES: [&str; 4] = ["first-line", "hanging", "left", "right"];
+
 impl ParaFormat {
-    /// The `center`/`right`, `color:` and `border:` of a `pN: {…}` entry;
-    /// `None` when its border does not read.
+    /// The `center`/`right`, `indent:`, `color:`, `border:` and `frame:`
+    /// of a `pN: {…}` entry; `None` when its indent, border or frame does
+    /// not read.
     fn read(entries: &[(String, Value)]) -> Option<Self> {
         let text_of = |key: &str| {
             entries.iter().find_map(|(k, v)| match v {
@@ -93,12 +106,61 @@ impl ParaFormat {
             )?),
             None => None,
         };
+        // A frame names only the schema's attributes, with values it
+        // allows: anything else would be a `w:framePr` Word refuses.
+        let frame = match entries.iter().find(|(k, _)| k == "frame") {
+            Some((_, Value::Map(items))) => Some(
+                items
+                    .iter()
+                    .map(|(name, value)| match value {
+                        Value::Text(value) if super::frames::valid(name, value) => {
+                            Some((name.clone(), value.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            Some(_) => return None,
+            None => None,
+        };
+        // An indent, `indent: {first-line: 0.25in, right: 0.25in}`: the id
+        // lines' sides in inches, within Word's 22in, each named once.
+        // Any other side or value does not read.
+        let mut indent = [None; 4];
+        match entries.iter().find(|(k, _)| k == "indent") {
+            Some((_, Value::Map(items))) => {
+                for (side, value) in items {
+                    let slot = INDENT_SIDES.iter().position(|s| s == side)?;
+                    if indent[slot].is_some() {
+                        return None;
+                    }
+                    let Value::Text(value) = value else {
+                        return None;
+                    };
+                    let inches: f64 = value.strip_suffix("in")?.parse().ok()?;
+                    let twips = (inches * 1440.0).round();
+                    if !(twips.is_finite() && twips.abs() <= 31_680.0) {
+                        return None;
+                    }
+                    // `as` cannot overflow: the bound is checked above.
+                    indent[slot] = Some(twips as i64);
+                }
+            }
+            Some(_) => return None,
+            None => {}
+        }
+        let [first_line, hanging, left, right] = indent;
         Some(Self {
             align: align_of(flag),
             color: text_of("color")
                 .filter(|c| c.chars().all(|c| c.is_ascii_alphanumeric()))
                 .map(str::to_string),
             border,
+            frame,
+            first_line,
+            hanging,
+            left,
+            right,
         })
     }
 }
@@ -1552,8 +1614,31 @@ fn story_part(
         let own = index
             .checked_sub(story.paragraph)
             .and_then(|k| story.formats.get(k));
+        // `w:framePr` follows `w:pStyle` in `w:pPr`, before `w:pBdr`.
+        if let Some(frame) = own.and_then(|f| f.frame.as_ref()) {
+            base.push_str(&super::frames::xml(frame));
+        }
         if let Some(sides) = own.and_then(|f| f.border.as_ref()) {
             let _ = write!(base, "<w:pBdr>{}</w:pBdr>", super::borders::xml(sides));
+        }
+        // CT_PPrBase puts `w:ind` after `w:pBdr` (and `w:spacing`, which
+        // a story paragraph does not write) and before `w:jc`.
+        if let Some(format) = own {
+            let sides = [
+                ("left", format.left),
+                ("right", format.right),
+                ("firstLine", format.first_line),
+                ("hanging", format.hanging),
+            ];
+            if sides.iter().any(|(_, value)| value.is_some()) {
+                base.push_str("<w:ind");
+                for (name, value) in sides {
+                    if let Some(value) = value {
+                        let _ = write!(base, " w:{name}=\"{value}\"");
+                    }
+                }
+                base.push_str("/>");
+            }
         }
         let align = match own {
             Some(format) => format.align,
