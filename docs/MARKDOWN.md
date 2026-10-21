@@ -87,7 +87,7 @@ An author the `authors:` table names, and a date a tag carries, come before
 all of these. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output from
 identical inputs. This represents the document, so its own metadata
 counts; `compare`, `edit`, `add` and `diff` change a file instead, and
-sign and date their changes with `--author` (default `Redline`) and
+sign and date their changes with `--author` (default `Jubarte`) and
 `-d/--datetime` (default now) only, never the files' metadata.
 
 Library calls keep that epoch instead of now and read no reference
@@ -1067,7 +1067,7 @@ suggesting mode, the edited document in editing mode. Editing
 the bundle instead, in `<stem>.edit` by default.
 
 The options apply to every operation of the command: `--author NAME`
-(default `Redline`), `--datetime ISO8601` (default now, UTC),
+(default `Jubarte`), `--datetime ISO8601` (default now, UTC),
 `--suggesting-mode` (the default: tracked changes; the bundle holds
 `redline.docx`, `clean.docx`, `patch.diff` and `report.jsonl`) or
 `--editing-mode` (the edits land directly; the bundle holds `clean.docx`
