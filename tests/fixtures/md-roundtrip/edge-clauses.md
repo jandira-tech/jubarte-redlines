@@ -32,7 +32,7 @@ A paragraph mark inserted.¶{r12 @AL}
 <!-- p5 in c0 -->
 {==Second paragraph of the range.==}
 
-<!-- t0 2x3, cells p6-p11 by row, fmt r16 @AL; r14 @AL in t0.row0; r15 @AL in t0.row1.cell0, in c0 -->
+<!-- t0 2x3, cells p6-p11 by row, widths 1.667in 1.667in 1.667in, width auto, fmt r16 @AL; r14 @AL in t0.row0; r15 @AL in t0.row1.cell0, in c0 -->
 |{==a1==}|{==b1==}|{==c1==}|
 |-|-|-|
 |{==a2==}|{==b2==}|{==c2==}|

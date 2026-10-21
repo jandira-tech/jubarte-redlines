@@ -37,7 +37,7 @@ footers:
 
 <!-- p5 empty, after 3pt, break-del r21 @AS, in c16 -->
 
-<!-- t0 1x2, cells p6-p7 by row, borders single 0.5pt, break-del r23 @AS in p6; r25 @AS in p7, rev-del r22 @AS in t0.row0, in c16 -->
+<!-- t0 1x2, cells p6-p7 by row, width 6.5in, indent -0.003in, borders single 0.5pt, break-del r23 @AS in p6; r25 @AS in p7, rev-del r22 @AS in t0.row0, in c16 -->
 |{=={--npm               [<u>` @eigenpal/docx-js-editor                  `</u>](https://www.npmjs.com/package/@eigenpal/docx-js-editor)--}{r24 @AS}==}|{=={--github               [<u>` eigenpal/docx-editor                  `</u>](https://github.com/eigenpal/docx-editor)--}{r26 @AS}==}|
 |-|-|
 
@@ -54,7 +54,7 @@ footers:
 
 <!-- p12 empty, before 4pt, break-del r34 @AS, in c16 -->
 
-<!-- t1 1x1, cells t1.row0 p13-p23, borders single 0.5pt, break-del r36 @AS in p13; r38 @AS in p14; r40 @AS in p15; r41 @AS in p16; r43 @AS in p17; r45 @AS in p18; r47 @AS in p19; r49 @AS in p20; r51 @AS in p21; r53 @AS in p22; r55 @AS in p23, rev-del r35 @AS in t1.row0, in c16 -->
+<!-- t1 1x1, cells t1.row0 p13-p23, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r36 @AS in p13; r38 @AS in p14; r40 @AS in p15; r41 @AS in p16; r43 @AS in p17; r45 @AS in p18; r47 @AS in p19; r49 @AS in p20; r51 @AS in p21; r53 @AS in p22; r55 @AS in p23, rev-del r35 @AS in t1.row0, in c16 -->
 |{=={--` import { DocxEditor } from '@eigenpal/docx-js-editor'                `--}{r37 @AS}==}<br>{=={--` import '@eigenpal/docx-js-editor/styles.css'                `--}{r39 @AS}==}<br><br>{=={--` function App({ file }: { file: ArrayBuffer }) {                `--}{r42 @AS}==}<br>{=={--` return (                `--}{r44 @AS}==}<br>{=={--` <DocxEditor                `--}{r46 @AS}==}<br>{=={--` documentBuffer={file}                `--}{r48 @AS}==}<br>{=={--` onSave={(buffer) => uploadToServer(buffer)}                `--}{r50 @AS}==}<br>{=={--` />                `--}{r52 @AS}==}<br>{=={--` )                `--}{r54 @AS}==}<br>{=={--` }                `--}{r56 @AS}==}|
 |-|
 
@@ -111,7 +111,7 @@ footers:
 
 <!-- p43 empty, before 3pt, break-del r90 @AS -->
 
-<!-- t2 8x4, cells p44-p75 by row, borders single 0.5pt, break-del r92 @AS in p44; r94 @AS in p45; r96 @AS in p46; r98 @AS in p47; r101 @AS in p48; r103 @AS in p49; r105 @AS in p50; r107 @AS in p51; r110 @AS in p52; r112 @AS in p53; r114 @AS in p54; r116 @AS in p55; r119 @AS in p56; r121 @AS in p57; r123 @AS in p58; r125 @AS in p59; r128 @AS in p60; r130 @AS in p61; r132 @AS in p62; r134 @AS in p63; r137 @AS in p64; r139 @AS in p65; r141 @AS in p66; r143 @AS in p67; r146 @AS in p68; r148 @AS in p69; r150 @AS in p70; r152 @AS in p71; r155 @AS in p72; r157 @AS in p73; r159 @AS in p74; r161 @AS in p75, rev-del r91 @AS in t2.row0; r100 @AS in t2.row1; r109 @AS in t2.row2; r118 @AS in t2.row3; r127 @AS in t2.row4; r136 @AS in t2.row5; r145 @AS in t2.row6; r154 @AS in t2.row7 -->
+<!-- t2 8x4, cells p44-p75 by row, widths 1.309in 1.191in 0.67in 3.33in, width 6.5in, indent -0.003in, borders single 0.5pt, break-del r92 @AS in p44; r94 @AS in p45; r96 @AS in p46; r98 @AS in p47; r101 @AS in p48; r103 @AS in p49; r105 @AS in p50; r107 @AS in p51; r110 @AS in p52; r112 @AS in p53; r114 @AS in p54; r116 @AS in p55; r119 @AS in p56; r121 @AS in p57; r123 @AS in p58; r125 @AS in p59; r128 @AS in p60; r130 @AS in p61; r132 @AS in p62; r134 @AS in p63; r137 @AS in p64; r139 @AS in p65; r141 @AS in p66; r143 @AS in p67; r146 @AS in p68; r148 @AS in p69; r150 @AS in p70; r152 @AS in p71; r155 @AS in p72; r157 @AS in p73; r159 @AS in p74; r161 @AS in p75, rev-del r91 @AS in t2.row0; r100 @AS in t2.row1; r109 @AS in t2.row2; r118 @AS in t2.row3; r127 @AS in t2.row4; r136 @AS in t2.row5; r145 @AS in t2.row6; r154 @AS in t2.row7 -->
 |{--**Prop**               --}{r93 @AS}|{--**Type**               --}{r95 @AS}|{--**Default**               --}{r97 @AS}|{--**Description**               --}{r99 @AS}|
 |-|-|-|-|
 |{--` documentBuffer                `--}{r102 @AS}|{--` ArrayBuffer                `--}{r104 @AS}|{--` —                `--}{r106 @AS}|{--.docx file contents to load               --}{r108 @AS}|
@@ -129,7 +129,7 @@ footers:
 <!-- p78 before 9pt, after 2pt, break-del r166 @AS -->
 {--**Ref methods**         --}{r167 @AS}
 
-<!-- t3 1x1, cells t3.row0 p79-p85, borders single 0.5pt, break-del r169 @AS in p79; r171 @AS in p80; r172 @AS in p81; r174 @AS in p82; r176 @AS in p83; r178 @AS in p84; r180 @AS in p85, rev-del r168 @AS in t3.row0 -->
+<!-- t3 1x1, cells t3.row0 p79-p85, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r169 @AS in p79; r171 @AS in p80; r172 @AS in p81; r174 @AS in p82; r176 @AS in p83; r178 @AS in p84; r180 @AS in p85, rev-del r168 @AS in t3.row0 -->
 |{--` const ref = useRef<DocxEditorRef>(null)                `--}{r170 @AS}<br>{--<br>` await ref.current.save() // ArrayBuffer of the .docx                `--}{r173 @AS}{--<br>` ref.current.getDocument() // current document object                `--}{r175 @AS}{--<br>` ref.current.setZoom(1.5) // set zoom to 150%                `--}{r177 @AS}{--<br>` ref.current.scrollToPage(3) // scroll to page 3                `--}{r179 @AS}{--<br>` ref.current.print() // print                `--}{r181 @AS}|
 |-|
 
@@ -163,7 +163,7 @@ footers:
 <!-- p96 before 9pt, after 2pt, break-del r199 @AS -->
 {--**Dev setup**         --}{r200 @AS}
 
-<!-- t4 1x1, cells t4.row0 p97-p98, borders single 0.5pt, break-del r202 @AS in p97; r204 @AS in p98, rev-del r201 @AS in t4.row0 -->
+<!-- t4 1x1, cells t4.row0 p97-p98, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r202 @AS in p97; r204 @AS in p98, rev-del r201 @AS in t4.row0 -->
 |{--` bun install                `--}{r203 @AS}{--<br>` bun run dev // Vite demo on localhost:5173                `--}{r205 @AS}|
 |-|
 
@@ -175,7 +175,7 @@ footers:
 
 <!-- p101 empty, after 3pt, break-del r212 @AS, in c207 -->
 
-<!-- t5 1x2, cells p102-p103 by row, borders single 0.5pt, break-del r214 @AS in p102; r216 @AS in p103, rev-del r213 @AS in t5.row0, in c207 -->
+<!-- t5 1x2, cells p102-p103 by row, width 6.5in, indent -0.003in, borders single 0.5pt, break-del r214 @AS in p102; r216 @AS in p103, rev-del r213 @AS in t5.row0, in c207 -->
 |{=={--npm               [<u>` @eigenpal/docx-js-editor                  `</u>](https://www.npmjs.com/package/@eigenpal/docx-js-editor)--}{r215 @AS}==}|{=={--github               [<u>` eigenpal/docx-editor                  `</u>](https://github.com/eigenpal/docx-editor)--}{r217 @AS}==}|
 |-|-|
 
@@ -192,7 +192,7 @@ footers:
 
 <!-- p108 empty, before 4pt, break-del r225 @AS, in c207 -->
 
-<!-- t6 1x1, cells t6.row0 p109-p119, borders single 0.5pt, break-del r227 @AS in p109; r229 @AS in p110; r231 @AS in p111; r232 @AS in p112; r234 @AS in p113; r236 @AS in p114; r238 @AS in p115; r240 @AS in p116; r242 @AS in p117; r244 @AS in p118; r246 @AS in p119, rev-del r226 @AS in t6.row0, in c207 -->
+<!-- t6 1x1, cells t6.row0 p109-p119, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r227 @AS in p109; r229 @AS in p110; r231 @AS in p111; r232 @AS in p112; r234 @AS in p113; r236 @AS in p114; r238 @AS in p115; r240 @AS in p116; r242 @AS in p117; r244 @AS in p118; r246 @AS in p119, rev-del r226 @AS in t6.row0, in c207 -->
 |{=={--` import { DocxEditor } from '@eigenpal/docx-js-editor'                `--}{r228 @AS}==}<br>{=={--` import '@eigenpal/docx-js-editor/styles.css'                `--}{r230 @AS}==}<br><br>{=={--` function App({ file }: { file: ArrayBuffer }) {                `--}{r233 @AS}==}<br>{=={--` return (                `--}{r235 @AS}==}<br>{=={--` <DocxEditor                `--}{r237 @AS}==}<br>{=={--` documentBuffer={file}                `--}{r239 @AS}==}<br>{=={--` onSave={(buffer) => uploadToServer(buffer)}                `--}{r241 @AS}==}<br>{=={--` />                `--}{r243 @AS}==}<br>{=={--` )                `--}{r245 @AS}==}<br>{=={--` }                `--}{r247 @AS}==}|
 |-|
 
@@ -249,7 +249,7 @@ footers:
 
 <!-- p139 empty, before 3pt, break-del r281 @AS -->
 
-<!-- t7 8x4, cells p140-p171 by row, borders single 0.5pt, break-del r283 @AS in p140; r285 @AS in p141; r287 @AS in p142; r289 @AS in p143; r292 @AS in p144; r294 @AS in p145; r296 @AS in p146; r298 @AS in p147; r301 @AS in p148; r303 @AS in p149; r305 @AS in p150; r307 @AS in p151; r310 @AS in p152; r312 @AS in p153; r314 @AS in p154; r316 @AS in p155; r319 @AS in p156; r321 @AS in p157; r323 @AS in p158; r325 @AS in p159; r328 @AS in p160; r330 @AS in p161; r332 @AS in p162; r334 @AS in p163; r337 @AS in p164; r339 @AS in p165; r341 @AS in p166; r343 @AS in p167; r346 @AS in p168; r348 @AS in p169; r350 @AS in p170; r352 @AS in p171, rev-del r282 @AS in t7.row0; r291 @AS in t7.row1; r300 @AS in t7.row2; r309 @AS in t7.row3; r318 @AS in t7.row4; r327 @AS in t7.row5; r336 @AS in t7.row6; r345 @AS in t7.row7 -->
+<!-- t7 8x4, cells p140-p171 by row, widths 1.309in 1.191in 0.67in 3.33in, width 6.5in, indent -0.003in, borders single 0.5pt, break-del r283 @AS in p140; r285 @AS in p141; r287 @AS in p142; r289 @AS in p143; r292 @AS in p144; r294 @AS in p145; r296 @AS in p146; r298 @AS in p147; r301 @AS in p148; r303 @AS in p149; r305 @AS in p150; r307 @AS in p151; r310 @AS in p152; r312 @AS in p153; r314 @AS in p154; r316 @AS in p155; r319 @AS in p156; r321 @AS in p157; r323 @AS in p158; r325 @AS in p159; r328 @AS in p160; r330 @AS in p161; r332 @AS in p162; r334 @AS in p163; r337 @AS in p164; r339 @AS in p165; r341 @AS in p166; r343 @AS in p167; r346 @AS in p168; r348 @AS in p169; r350 @AS in p170; r352 @AS in p171, rev-del r282 @AS in t7.row0; r291 @AS in t7.row1; r300 @AS in t7.row2; r309 @AS in t7.row3; r318 @AS in t7.row4; r327 @AS in t7.row5; r336 @AS in t7.row6; r345 @AS in t7.row7 -->
 |{--**Prop**               --}{r284 @AS}|{--**Type**               --}{r286 @AS}|{--**Default**               --}{r288 @AS}|{--**Description**               --}{r290 @AS}|
 |-|-|-|-|
 |{--` documentBuffer                `--}{r293 @AS}|{--` ArrayBuffer                `--}{r295 @AS}|{--` —                `--}{r297 @AS}|{--.docx file contents to load               --}{r299 @AS}|
@@ -267,7 +267,7 @@ footers:
 <!-- p174 before 9pt, after 2pt, break-del r357 @AS -->
 {--**Ref methods**         --}{r358 @AS}
 
-<!-- t8 1x1, cells t8.row0 p175-p181, borders single 0.5pt, break-del r360 @AS in p175; r362 @AS in p176; r363 @AS in p177; r365 @AS in p178; r367 @AS in p179; r369 @AS in p180; r371 @AS in p181, rev-del r359 @AS in t8.row0 -->
+<!-- t8 1x1, cells t8.row0 p175-p181, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r360 @AS in p175; r362 @AS in p176; r363 @AS in p177; r365 @AS in p178; r367 @AS in p179; r369 @AS in p180; r371 @AS in p181, rev-del r359 @AS in t8.row0 -->
 |{--` const ref = useRef<DocxEditorRef>(null)                `--}{r361 @AS}<br>{--<br>` await ref.current.save() // ArrayBuffer of the .docx                `--}{r364 @AS}{--<br>` ref.current.getDocument() // current document object                `--}{r366 @AS}{--<br>` ref.current.setZoom(1.5) // set zoom to 150%                `--}{r368 @AS}{--<br>` ref.current.scrollToPage(3) // scroll to page 3                `--}{r370 @AS}{--<br>` ref.current.print() // print                `--}{r372 @AS}|
 |-|
 
@@ -301,7 +301,7 @@ footers:
 <!-- p192 before 9pt, after 2pt, break-del r390 @AS -->
 {--**Dev setup**         --}{r391 @AS}
 
-<!-- t9 1x1, cells t9.row0 p193-p194, borders single 0.5pt, break-del r393 @AS in p193; r395 @AS in p194, rev-del r392 @AS in t9.row0 -->
+<!-- t9 1x1, cells t9.row0 p193-p194, width 6.5in, indent 0.0035in, borders single 0.5pt, break-del r393 @AS in p193; r395 @AS in p194, rev-del r392 @AS in t9.row0 -->
 |{--` bun install                `--}{r394 @AS}{--<br>` bun run dev // Vite demo on localhost:5173                `--}{r396 @AS}|
 |-|
 
@@ -312,7 +312,7 @@ footers:
 
 <!-- p197 empty, before 3pt, break-del r400 @AS -->
 
-<!-- t10 1x2, cells t10.row0 p198-p205, p198 after 0.4pt, p199 after 16pt, p200 after 3pt, p202 after 0.4pt, p203 after 16pt, p204 after 3pt, break-del r402 @AS in p198; r404 @AS in p199; r406 @AS in p200; r407 @AS in p201; r409 @AS in p202; r411 @AS in p203; r413 @AS in p204; r414 @AS in p205, rev-del r401 @AS in t10.row0 -->
+<!-- t10 1x2, cells t10.row0 p198-p205, p198 after 0.4pt, p199 after 16pt, p200 after 3pt, p202 after 0.4pt, p203 after 16pt, p204 after 3pt, width 6.5in, break-del r402 @AS in p198; r404 @AS in p199; r406 @AS in p200; r407 @AS in p201; r409 @AS in p202; r411 @AS in p203; r413 @AS in p204; r414 @AS in p205, rev-del r401 @AS in t10.row0 -->
 |{--**EigenPal**               --}{r403 @AS}{--<br>Maintainer · eigenpal.com               --}{r405 @AS}<br>{--<br>signature · date               --}{r408 @AS}|{--**Contributor**               --}{r410 @AS}{--<br>on behalf of the community               --}{r412 @AS}<br>{--<br>signature · date               --}{r415 @AS}|
 |-|-|
 
@@ -325,7 +325,7 @@ footers:
 
 <!-- p209 empty, before 3pt, break-del r420 @AS -->
 
-<!-- t11 1x2, cells t11.row0 p210-p217, p210 after 0.4pt, p211 after 16pt, p212 after 3pt, p214 after 0.4pt, p215 after 16pt, p216 after 3pt, break-del r422 @AS in p210; r424 @AS in p211; r426 @AS in p212; r427 @AS in p213; r429 @AS in p214; r431 @AS in p215; r433 @AS in p216; r434 @AS in p217, rev-del r421 @AS in t11.row0 -->
+<!-- t11 1x2, cells t11.row0 p210-p217, p210 after 0.4pt, p211 after 16pt, p212 after 3pt, p214 after 0.4pt, p215 after 16pt, p216 after 3pt, width 6.5in, break-del r422 @AS in p210; r424 @AS in p211; r426 @AS in p212; r427 @AS in p213; r429 @AS in p214; r431 @AS in p215; r433 @AS in p216; r434 @AS in p217, rev-del r421 @AS in t11.row0 -->
 |{--**EigenPal**               --}{r423 @AS}{--<br>Maintainer · eigenpal.com               --}{r425 @AS}<br>{--<br>signature · date               --}{r428 @AS}|{--**Contributor**               --}{r430 @AS}{--<br>on behalf of the community               --}{r432 @AS}<br>{--<br>signature · date               --}{r435 @AS}|
 |-|-|
 
