@@ -1692,7 +1692,7 @@ fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &H
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1818,7 +1818,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deeper_boundary_tests {
     use super::*;
 

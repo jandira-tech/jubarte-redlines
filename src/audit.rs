@@ -956,7 +956,7 @@ fn under_fallback(dom: &Dom, node: NodeId) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_spacer_ownership_tests {
     use super::*;
     use crate::opc::PartFs;

@@ -82,74 +82,77 @@ fn again(dir: &Path, markdown: &str, name: &str) -> String {
 /// What the view prints for each probe, and how its `revisions:` line pairs
 /// the same marks.
 const SEEN: &[(&str, &str, &str)] = &[
-    // Nothing printed between the marks: one substitution.
+    // Nothing printed between the marks: preserve insertion then deletion.
     (
         "direct-vanish",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "style-vanish",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "style-basedon",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "style-vanish-tab",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "soft-hyphen",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
-    ("sym", "A {~~old~>new~~}{>>r2+1 @AL<<} Z", "1 substitution"),
+    (
+        "sym",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
+    ),
     (
         "lrp-only",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "empty-run",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "page-br",
-        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
-        "1 substitution",
+        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "t-style-vanish",
-        "|{~~old~>new~~}{>>r2+1 @AL<<}|",
-        "1 substitution",
+        "|{++new++}{r1 @AL}{--old--}{r2 @AL}|",
+        "1 insertion, 1 deletion",
     ),
     // A printed tab keeps them apart.
     (
         "empty-t-tab",
-        "A {++new++}{>>r1 @AL<<}\t{--old--}{>>r2 @AL<<} Z",
+        "A {++new++}{r1 @AL}\t{--old--}{r2 @AL} Z",
         "1 insertion, 1 deletion",
     ),
-    // A comment inside one side stays a substitution; one beside or across
-    // the marks parts them.
+    // Comments inside, beside or across the marks preserve both changes.
     (
         "c-inside",
-        "A {~~old~>{==new==}~~}{>>r2+1 @A<<}{>>c0 @A: note<<} Z",
-        "1 substitution",
+        "A {++{==new==}++}{r1 @A}{--old--}{r2 @A}{>>c0 @A: note<<} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "c-between",
-        "A {++new++}{>>r1 @A<<}{=={--old--}{>>r2 @A<<}==}{>>c0 @A: note<<} Z",
+        "A {++new++}{r1 @A}{=={--old--}{r2 @A}==}{>>c0 @A: note<<} Z",
         "1 insertion, 1 deletion",
     ),
     (
         "c-cross",
-        "A {++{==new==}++}{>>r1 @A<<}{=={--old--}{>>r2 @A<<}==}{>>c0 @A: note<<} Z",
+        "A {++{==new==}++}{r1 @A}{=={--old--}{r2 @A}==}{>>c0 @A: note<<} Z",
         "1 insertion, 1 deletion",
     ),
     // A heading's own slug bookmark prints nothing and parts nothing; a
@@ -157,59 +160,59 @@ const SEEN: &[(&str, &str, &str)] = &[
     // an anchor of its own.
     (
         "h-own-slug",
-        "# {~~Old~>Title~~}{>>r2+1 @AL<<}",
-        "1 substitution",
+        "# {++Title++}{r1 @AL}{--Old--}{r2 @AL}",
+        "1 insertion, 1 deletion",
     ),
     (
         "h-two",
-        "# {~~Old~>Title~~}{>>r2+1 @AL<<}",
-        "1 substitution",
+        "# {++Title++}{r1 @AL}{--Old--}{r2 @AL}",
+        "1 insertion, 1 deletion",
     ),
     (
         "h-suffix-01",
-        "# {++Title++}{>>r1 @AL<<}<a id=\"title-01\"></a>{--Old--}{>>r2 @AL<<}",
+        "# {++Title++}{r1 @AL}<a id=\"title-01\"></a>{--Old--}{r2 @AL}",
         "1 insertion, 1 deletion",
     ),
     (
         "h-suffix-1",
-        "# {++Title++}{>>r1 @AL<<}<a id=\"title-1\"></a>{--Old--}{>>r2 @AL<<}",
+        "# {++Title++}{r1 @AL}<a id=\"title-1\"></a>{--Old--}{r2 @AL}",
         "1 insertion, 1 deletion",
     ),
     (
         "h-suffix-1-1",
-        "# {++Intro 1++}{>>r1 @AL<<}<a id=\"intro-1-1\"></a>{--Old--}{>>r2 @AL<<}",
+        "# {++Intro 1++}{r1 @AL}<a id=\"intro-1-1\"></a>{--Old--}{r2 @AL}",
         "1 insertion, 1 deletion",
     ),
     (
         "h-foreign",
-        "# {++Title++}{>>r1 @AL<<}<a id=\"other\"></a>{--Old--}{>>r2 @AL<<}",
+        "# {++Title++}{r1 @AL}<a id=\"other\"></a>{--Old--}{r2 @AL}",
         "1 insertion, 1 deletion",
     ),
     // A cell writes no heading, so its bookmark is an anchor.
     (
         "t-heading",
-        "|{++Title++}{>>r1 @AL<<}<a id=\"title\"></a>{--Old--}{>>r2 @AL<<}|",
+        "|{++Title++}{r1 @AL}<a id=\"title\"></a>{--Old--}{r2 @AL}|",
         "1 insertion, 1 deletion",
     ),
     // Headers pair as the body does, and print no hidden run.
     (
         "hdr-direct-vanish",
-        "text: \"{~~old~>new~~}{>>header1.r2+1 @AL<<}\"",
+        "text: \"{++new++}{header1.r1 @AL}{--old--}{header1.r2 @AL}\"",
         "2 in header1",
     ),
     (
         "hdr-style-vanish",
-        "text: \"{~~old~>new~~}{>>header1.r2+1 @AL<<}\"",
+        "text: \"{++new++}{header1.r1 @AL}{--old--}{header1.r2 @AL}\"",
         "2 in header1",
     ),
     (
         "fn-style-vanish",
-        "[^1]: {~~old~>new~~}{>>footnotes.r2+1 @AL<<}",
+        "[^1]: {++new++}{footnotes.r1 @AL}{--old--}{footnotes.r2 @AL}",
         "2 in footnotes",
     ),
     (
         "fn-soft",
-        "[^1]: {~~old~>new~~}{>>footnotes.r2+1 @AL<<}",
+        "[^1]: {++new++}{footnotes.r1 @AL}{--old--}{footnotes.r2 @AL}",
         "2 in footnotes",
     ),
 ];
@@ -235,11 +238,11 @@ fn the_text_and_the_count_pair_the_same_marks() {
 
 /// Accepting names the change by the tag the tracked text gives it.
 #[test]
-fn the_accept_id_line_joins_what_the_text_joins() {
+fn the_accept_id_line_preserves_the_texts_distinct_ids() {
     for (name, id_line) in [
-        ("h-own-slug", "<!-- p0 rev r2+1 @AL -->"),
-        ("c-inside", "<!-- p0 rev r2+1 @A -->"),
-        ("style-vanish", "<!-- p0 rev r2+1 @AL -->"),
+        ("h-own-slug", "<!-- p0 rev r1 @AL; r2 @AL -->"),
+        ("c-inside", "<!-- p0 rev r1 @A; r2 @A -->"),
+        ("style-vanish", "<!-- p0 rev r1 @AL; r2 @AL -->"),
     ] {
         let view = read(&probe(name), &["--track-changes", "accept"]);
         assert!(view.contains(id_line), "{name}: no {id_line:?} in\n{view}");
