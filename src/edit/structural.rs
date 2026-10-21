@@ -18,7 +18,7 @@ use super::{RunSpec, build_paragraph, check_text, insert_ppr_child, is_range_mar
 /// Word's column limit.
 const MAX_COLUMNS: usize = 63;
 /// The widest cell Word accepts: 22 inches, in twentieths of a point.
-pub(super) const MAX_WIDTH_DXA: u32 = 31_680;
+const MAX_WIDTH_DXA: u32 = 31_680;
 /// Table styles a document may lack that the engine can add: `(id, name)`.
 const BUILTIN_TABLE_STYLES: &[(&str, &str)] = &[("TableGrid", "Table Grid")];
 
@@ -480,7 +480,7 @@ fn definition(dom: &mut Dom, id: &str) -> Option<NodeId> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -601,7 +601,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod numbering_source_property_boundary_tests {
     use super::*;
     #[test]

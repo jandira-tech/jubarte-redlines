@@ -444,22 +444,17 @@ class TableCell:
 
 @dataclass(frozen=True, slots=True)
 class Table:
-    """A table grid. Top-level ``index`` matches the view's ``tN``.
-
-    Nested tables have ``index=None`` and a ``parent`` cell path, and live
-    recursively in ``nested``. Only top-level tables count in ``Summary.tables``.
+    """A body table as a grid; nested tables are separate entries.
 
     ``rows`` holds the cells as the XML has them (a merged cell is one cell),
     ``header_rows`` the leading rows that repeat as a header, ``widths_dxa``
     the grid column widths in twentieths of a point (0 when unreadable).
     """
 
-    index: int | None
+    index: int
     rows: tuple[tuple[TableCell, ...], ...]
     header_rows: int
     widths_dxa: tuple[int, ...]
-    parent: str | None = None
-    nested: tuple[Table, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -558,20 +553,6 @@ def _decode_paragraph(p: _ParagraphRow) -> Paragraph:
     )
 
 
-def _decode_table(table: dict) -> Table:
-    return Table(
-        index=table.get("index"),
-        rows=tuple(
-            tuple(TableCell(paragraph_ids=tuple(c["paragraph_ids"]), text=c["text"]) for c in row)
-            for row in table["rows"]
-        ),
-        header_rows=table["header_rows"],
-        widths_dxa=tuple(table["widths_dxa"]),
-        parent=table.get("parent"),
-        nested=tuple(_decode_table(child) for child in table.get("nested", ())),
-    )
-
-
 def _decode_snapshot(payload: str) -> Snapshot:
     data = json.loads(payload)
     return Snapshot(
@@ -588,7 +569,18 @@ def _decode_snapshot(payload: str) -> Snapshot:
             )
             for s in data.get("stories", ())
         ),
-        tables=tuple(_decode_table(t) for t in data.get("tables", ())),
+        tables=tuple(
+            Table(
+                index=t["index"],
+                rows=tuple(
+                    tuple(TableCell(paragraph_ids=tuple(c["paragraph_ids"]), text=c["text"]) for c in row)
+                    for row in t["rows"]
+                ),
+                header_rows=t["header_rows"],
+                widths_dxa=tuple(t["widths_dxa"]),
+            )
+            for t in data.get("tables", ())
+        ),
         controls=tuple(
             ContentControl(
                 id=c["id"],
@@ -1559,9 +1551,7 @@ class Diff:
     """The changes between two documents, as ``git diff --word-diff`` shows
     them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
     for the changes and CriticMarkup ``{==highlights==}`` and
-    ``{>>comments<<}``. When a side is a Word document, a replacement
-    inside a paragraph reads insertion first, ``{+new+}[-old-]``, as Word
-    Compare writes it.
+    ``{>>comments<<}``.
 
     ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
     ``hunks`` are the changed paragraphs (none for ``format="critic"``).
