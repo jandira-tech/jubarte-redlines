@@ -63,3 +63,15 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[[advisories.ignore]]
+id = "RUSTSEC-2026-0367"
+reason = "zip is used to parse DOCX files, which are not extracted to disk. SUID/SGID preservation is not an issue."
+
+[[advisories.ignore]]
+id = "RUSTSEC-2026-0368"
+reason = "zip is used to parse DOCX files, which are not extracted to disk. Symlink attacks are not an issue."
+
+[[advisories.ignore]]
+id = "RUSTSEC-2026-0369"
+reason = "zip is used to parse DOCX files, which are not extracted to disk. Symlink attacks are not an issue."
