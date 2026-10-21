@@ -5,7 +5,10 @@
 //! 2026-10-13-ids-and-markdown-roundtrip.md §0: nothing with a short id is
 //! lost). Every `.md` in `tests/fixtures/md-roundtrip` must come back
 //! exactly after md → docx → md, and every docx listed in its `docx.txt`
-//! must print the same Markdown after docx → md → docx → md. Only the
+//! must print the same Markdown after docx → md → docx → md. A manuscript,
+//! Markdown as its author wrote it with no id lines ([`MANUSCRIPTS`]), is
+//! gated as the docx it imports to, since its view adds the header and id
+//! lines it never had. Only the
 //! `source:`/`sha256:` lines, which name the file, and `latest` becoming
 //! a shared timestamp after reconstruction are normalized. Arthur,
 //! 2026-10-13: "Start strict! Fail fail fail until we fix": there is no list
@@ -32,10 +35,19 @@ const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 /// The page count and its source at the end of the `body:` line.
 static PAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r", \d+ pages?\s+#.*$").unwrap());
 
-/// The Markdown fixtures written by hand, in the view's dialect; every other
-/// one is a view of a docx listed in `views.txt`.
-const HAND_WRITTEN: &[&str] = &[
-    "kitchen-sink.md",
+/// The Markdown fixtures written by hand in the view's dialect: they must
+/// come back as written. Every other fixture is a manuscript
+/// ([`MANUSCRIPTS`]) or a view of a docx listed in `views.txt`.
+const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
+
+/// Markdown as its authors wrote it, outside the view's dialect: no id
+/// lines, no YAML header, so the view of the docx it imports to can never
+/// be it. Each is gated as the idless plan's item 6 says
+/// (docs/superpowers/plans/2026-10-14-idless-fixed-point.md): it converts
+/// to B, B reads as C, C converts to D; C must equal read(D) (G1) and D
+/// must render as B (G2: `debug B D --check render`, page count included),
+/// as every docx case is gated (#532).
+const MANUSCRIPTS: &[&str] = &[
     // Pandoc manuscripts, as their authors wrote them (2026-10-14).
     "dolphins.md",
     "eLife.00047.md",
@@ -622,6 +634,32 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
     }
 }
 
+/// A manuscript (A) imports to a docx (B), which is then gated as a docx
+/// case: B's view (C) must come back from the docx it writes (D), and D
+/// must render as B.
+fn manuscript_case(dir: &Path, path: &Path) -> Case {
+    let name = format!("md -> docx -> md -> docx -> md   {}", path.display());
+    // B is written apart from the docx case's own files.
+    let imported = std::fs::read_to_string(path)
+        .map_err(|e| format!("{}: {e}", path.display()))
+        .and_then(|source| {
+            std::fs::create_dir_all(dir.join("import")).map_err(|e| e.to_string())?;
+            to_docx(&dir.join("import"), &source, "imported")
+        });
+    match imported {
+        Ok(docx) => Case {
+            name,
+            ..docx_case(dir, &dir.join("import").join(docx))
+        },
+        Err(e) => Case {
+            name,
+            want: String::new(),
+            got: Err(e),
+            docx: Vec::new(),
+        },
+    }
+}
+
 /// docx → md → docx → md must print the same Markdown twice.
 fn docx_case(dir: &Path, path: &Path) -> Case {
     let name = format!("docx -> md -> docx -> md   {}", path.display());
@@ -884,11 +922,15 @@ fn markdown_and_docx_round_trip_exactly() {
     let unlisted: Vec<String> = markdown
         .iter()
         .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
-        .filter(|f| !sources.contains_key(f) && !HAND_WRITTEN.contains(&f.as_str()))
+        .filter(|f| {
+            !sources.contains_key(f)
+                && !HAND_WRITTEN.contains(&f.as_str())
+                && !MANUSCRIPTS.contains(&f.as_str())
+        })
         .collect();
     assert!(
         unlisted.is_empty(),
-        "every Markdown fixture is a view listed in views.txt or hand-written (HAND_WRITTEN): {unlisted:?}"
+        "every Markdown fixture is a view listed in views.txt, hand-written (HAND_WRITTEN) or a manuscript (MANUSCRIPTS): {unlisted:?}"
     );
     // `MD_FIXED_POINT_ONLY=ids-tables` replays only the fixtures whose path
     // holds that text, for a quick loop on one document; the gate itself
@@ -901,11 +943,11 @@ fn markdown_and_docx_round_trip_exactly() {
     for path in markdown.iter().filter(|p| picked(p)) {
         let dir = tempfile::tempdir().unwrap();
         let file = path.file_name().unwrap().to_string_lossy().to_string();
-        cases.push(markdown_case(
-            dir.path(),
-            path,
-            sources.get(&file).map(PathBuf::as_path),
-        ));
+        cases.push(if MANUSCRIPTS.contains(&file.as_str()) {
+            manuscript_case(dir.path(), path)
+        } else {
+            markdown_case(dir.path(), path, sources.get(&file).map(PathBuf::as_path))
+        });
     }
     let docx = docx_list();
     assert!(!docx.is_empty(), "no docx fixtures in {FIXTURES}/docx.txt");
@@ -1071,4 +1113,26 @@ fn ids_name_blocks_notes_and_yaml_entries() {
         "{:#?}",
         r.lines
     );
+}
+
+/// A manuscript is gated on what it imports to, not on its own bytes: the
+/// view of its docx comes back (G1) and the docx written from that view
+/// renders as the imported one (G2). `list_of_figures.md` imports with its
+/// text unchanged, so it passes both.
+#[test]
+fn a_manuscript_is_gated_on_what_it_imports_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = manuscript_case(
+        dir.path(),
+        Path::new(FIXTURES).join("list_of_figures.md").as_path(),
+    );
+    assert!(case.name.contains("list_of_figures.md"), "{}", case.name);
+    let got = case.got.expect("a view back");
+    assert_eq!(got, case.want);
+    assert!(
+        case.want.starts_with("---\n"),
+        "the view, not the manuscript: {}",
+        case.want
+    );
+    assert!(case.docx.is_empty(), "{:?}", case.docx);
 }
