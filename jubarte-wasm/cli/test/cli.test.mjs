@@ -980,7 +980,7 @@ test("compare reports the bytes a Markdown redline takes (integration)", () => {
   const result = run("compare", a, b, "-d", "1970-01-01T00:00:00Z", "-o", out);
   assert.equal(result.code, 0, result.err);
   const size = fs.statSync(out).size;
-  assert.ok(size > fs.readFileSync(out, "utf8").length);
+  assert.ok(size > fs.readFileSync(fs.realpathSync(out), "utf8").length);
   assert.equal(result.out, "");
   assert.equal(result.err, `wrote ${out} (md, ${size} bytes)\n`);
 });

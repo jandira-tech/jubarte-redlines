@@ -143,7 +143,7 @@ fn all_zip_entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
         if f.is_dir() {
             continue;
         }
-        let name = f.name().unwrap().into_owned();
+        let name = f.name().to_string();
         let mut buf = Vec::new();
         f.read_to_end(&mut buf).expect("read entry");
         out.push((name, buf));

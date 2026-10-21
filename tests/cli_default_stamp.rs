@@ -64,7 +64,7 @@ fn docx(dir: &Path, name: &str, text: &str, creator: Option<&str>, created: Opti
     let mut has_core = false;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).unwrap();
-        let name = entry.name().unwrap().into_owned();
+        let name = entry.name().to_string();
         let mut data = Vec::new();
         entry.read_to_end(&mut data).unwrap();
         if name == "docProps/core.xml" {

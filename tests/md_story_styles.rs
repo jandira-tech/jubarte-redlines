@@ -104,11 +104,9 @@ fn part_styles(docx: &[u8], prefix: &str) -> Vec<String> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
     let name = zip
         .file_names()
-        .find_map(|name| {
-            let name = name.ok()?;
-            (name.starts_with(prefix) && name.ends_with(".xml")).then(|| name.into_owned())
-        })
-        .unwrap_or_else(|| panic!("no {prefix}*.xml part"));
+        .find(|n| n.starts_with(prefix) && n.ends_with(".xml"))
+        .unwrap_or_else(|| panic!("no {prefix}*.xml part"))
+        .to_string();
     let mut xml = String::new();
     zip.by_name(&name)
         .unwrap()

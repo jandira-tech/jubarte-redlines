@@ -61,7 +61,7 @@ pub use unified::{
     Attribution, Change, Comment, DEFAULT_COLUMNS, Hunk, Locator, Patch, PatchOptions,
     patch_critic, patch_documents, patch_markdown, patch_own_changes, patch_redline,
 };
-pub use write::{image_targets, markdown_to_docx};
+pub use write::markdown_to_docx;
 
 pub(crate) use package::{ensure_footnotes_part, max_drawing_id};
 pub(crate) use write::read_picture;

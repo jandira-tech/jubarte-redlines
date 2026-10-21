@@ -1703,25 +1703,15 @@ fn run(job: &Job) -> Result<(), ConvertFailure> {
         } else {
             &job.modified
         };
-        let refusals = ImageRefusals::default();
-        let loader = image_loader(
-            &resource_dir(markdown_side, job.resource_path.as_deref()),
-            std::rc::Rc::clone(&refusals),
-        );
+        let loader = image_loader(resource_dir(markdown_side, job.resource_path.as_deref()));
         let options = jubarte::markdown::RedlineOptions {
             settings,
             reference: reference.as_deref(),
             critic: job.critic,
             images: Some(&loader),
         };
-        let docx = jubarte::markdown::redline(old.source(), new.source(), &options)
-            .map_err(|e| format!("compare failed: {e}"))?;
-        // `redline` drops the writer's warnings; the refusals its loader
-        // recorded become stderr's (#617).
-        for warning in image_refusal_warnings(&refusals) {
-            eprintln!("warning: {warning}");
-        }
-        docx
+        jubarte::markdown::redline(old.source(), new.source(), &options)
+            .map_err(|e| format!("compare failed: {e}"))?
     };
     match &out {
         None => Ok(print_agent_view(&redline, Some(source), &job.read)?),
@@ -1823,154 +1813,39 @@ fn markdown_text(path: &Path, bytes: Vec<u8>) -> Result<String, String> {
         .unwrap_or(text))
 }
 
-/// `(name, reason)` for every image load [`image_loader`] refuses, so the
-/// CLI can say why an image became its alt text: at `convert` the reason
-/// annotates the writer's own warning, and `redline` / `patch_documents`
-/// drop the writer's warnings, so `compare` and `diff` print this
-/// collection themselves (#617).
-type ImageRefusals = std::rc::Rc<std::cell::RefCell<Vec<(String, &'static str)>>>;
-
-/// `path` names a URL (`scheme:…`): a scheme is a letter, then letters,
-/// digits and `+-.`, up to its `:`. A decoded absolute path (`C:\…`) is
-/// not a scheme; the containment check judges it.
-fn url_scheme(path: &str) -> bool {
-    let Some((scheme, _)) = path.split_once(':') else {
-        return false;
-    };
-    scheme
-        .bytes()
-        .next()
-        .is_some_and(|b| b.is_ascii_alphabetic())
-        && scheme
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
-}
-
-/// `name`'s image path, its `%XX` escapes decoded and resolved against
-/// `root`, as the path inside `root` it lands on, or the reason it is
-/// refused. A URL is never fetched; an absolute path, a `..` walk or a
-/// symlink whose target leaves `root` is refused (#617).
-fn image_policy(root: &Path, name: &str) -> Result<PathBuf, &'static str> {
-    let mut decoded = Vec::with_capacity(name.len());
-    let bytes = name.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        let hex = bytes
-            .get(at + 1..at + 3)
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .and_then(|h| u8::from_str_radix(h, 16).ok());
-        match (bytes[at], hex) {
-            (b'%', Some(byte)) => {
-                decoded.push(byte);
-                at += 3;
-            }
-            (byte, _) => {
-                decoded.push(byte);
-                at += 1;
-            }
-        }
-    }
-    let named = std::str::from_utf8(&decoded).map_err(|_| "not found")?;
-    let path = PathBuf::from(named);
-    // Decoded first, so an encoded scheme (`file%3A%2F%2F…`, `DATA%3A`)
-    // is judged as what it names, not as an opaque relative path.
-    if !path.is_absolute() && url_scheme(named) {
-        return Err("a URL scheme");
-    }
-    // Canonicalized, `..` and links resolve to what the name really
-    // names; the prefix check keeps the read inside `root`.
-    let target = root.join(path).canonicalize().map_err(|_| "not found")?;
-    target
-        .strip_prefix(root)
-        .map(Path::to_path_buf)
-        .map_err(|_| "outside the resource root")
-}
-
-/// Reads images a Markdown file names: local paths, relative to `dir`,
-/// with `%XX` escapes decoded first. A decoded target that names a URL is
-/// never fetched, and the path it names must stay inside `dir` once
-/// symlinks are resolved, so a hostile document cannot read files its
-/// folder does not hold (#617). `--resource-path` names the trusted root
-/// the containment is checked against; it may sit anywhere. `None` —
-/// the image written as its alt text — records its reason in `refusals`.
-fn image_loader(dir: &Path, refusals: ImageRefusals) -> impl Fn(&str) -> Option<Vec<u8>> + use<> {
-    // Both sides of the containment check must be canonical: a resource
-    // root reached through a symlink is its target, or no image inside
-    // it would count as inside. The open root is the read's capability:
-    // resolving inside it, a link swapped in after the canonicalization
-    // cannot point the read out of it.
-    let root = dir
-        .canonicalize()
-        .and_then(|root| {
-            cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority())
-                .map(|cap| (root, cap))
-        })
-        .ok();
+/// Reads images a Markdown file names: local paths, relative to `dir`, with
+/// `%XX` escapes decoded. URLs are not fetched.
+fn image_loader(dir: PathBuf) -> impl Fn(&str) -> Option<Vec<u8>> {
     move |name: &str| {
-        let loaded = root.as_ref().ok_or("not found").and_then(|(root, cap)| {
-            image_policy(root, name).and_then(|inside| cap.read(&inside).map_err(|_| "not found"))
-        });
-        match loaded {
-            Ok(bytes) => Some(bytes),
-            Err(reason) => {
-                refusals.borrow_mut().push((name.to_string(), reason));
-                None
+        if name.contains("://") || name.starts_with("data:") {
+            return None;
+        }
+        let mut decoded = Vec::with_capacity(name.len());
+        let bytes = name.as_bytes();
+        let mut at = 0;
+        while at < bytes.len() {
+            let hex = bytes
+                .get(at + 1..at + 3)
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            match (bytes[at], hex) {
+                (b'%', Some(byte)) => {
+                    decoded.push(byte);
+                    at += 3;
+                }
+                (byte, _) => {
+                    decoded.push(byte);
+                    at += 1;
+                }
             }
         }
-    }
-}
-
-/// The image loads `markdown`'s images would be refused under the root
-/// `dir` names, recorded like [`image_loader`]'s. `diff`'s text patch of
-/// two Markdown documents runs no loader — its images are never read —
-/// but it still says which loads its policy would refuse (#617). The
-/// `drawing:` and `data:` payloads the writer resolves inline are left
-/// out, exactly as the loader never sees them.
-fn report_image_refusals(dir: &Path, markdown: &[&str], refusals: &ImageRefusals) {
-    let Some(root) = dir.canonicalize().ok() else {
-        return;
-    };
-    for target in markdown
-        .iter()
-        .flat_map(|text| jubarte::markdown::image_targets(text))
-        .filter(|target| !(target.starts_with("drawing:") || target.starts_with("data:")))
-    {
-        if let Err(reason) = image_policy(&root, &target) {
-            refusals.borrow_mut().push((target, reason));
-        }
-    }
-}
-
-/// The refusals an [`image_loader`] recorded, as the writer phrases its
-/// fallback, for the compare and diff paths whose library calls drop
-/// `written.warnings` (#617).
-fn image_refusal_warnings(refusals: &ImageRefusals) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    refusals
-        .borrow()
-        .iter()
-        .filter(|refusal| seen.insert((*refusal).clone()))
-        .map(|(name, reason)| format!("image '{name}' was written as its alt text ({reason})"))
-        .collect()
-}
-
-/// `warning` with its reason when it is an image written as its alt text
-/// [`image_loader`] refused; `convert` annotates the writer's warnings
-/// rather than printing its collection a second time (#617).
-fn image_warning_reason(warning: &str, refusals: &ImageRefusals) -> String {
-    let reason = warning
-        .strip_prefix("image '")
-        .and_then(|tail| tail.strip_suffix("' was written as its alt text"))
-        .and_then(|name| {
-            refusals
-                .borrow()
-                .iter()
-                .find(|(refused, _)| refused == name)
-                .map(|(_, reason)| *reason)
-        });
-    match reason {
-        Some(reason) => format!("{warning} ({reason})"),
-        None => warning.to_string(),
+        let path = PathBuf::from(String::from_utf8(decoded).ok()?);
+        std::fs::read(if path.is_absolute() {
+            path
+        } else {
+            dir.join(path)
+        })
+        .ok()
     }
 }
 
@@ -2060,17 +1935,6 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
     let render = RenderArgs::default();
     let out = diff_output(job.output, job.old, &render, job.force, job.quiet)?;
     let (old, new) = diff_inputs(job)?;
-    let refusals = ImageRefusals::default();
-    // The patch of two Markdown documents runs no loader — its images
-    // are never read — but it still reports the loads the policy would
-    // refuse; a mixed pair's loader records its own (#617).
-    if let (Some(old_text), Some(new_text)) = (&old.markdown, &new.markdown) {
-        report_image_refusals(
-            &resource_dir(job.old, None),
-            &[old_text.as_str(), new_text.as_str()],
-            &refusals,
-        );
-    }
     let text = match job.patch {
         Some(columns) => {
             // Images of a Markdown side are read next to it.
@@ -2079,10 +1943,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
             } else {
                 job.new
             };
-            let loader = image_loader(
-                &resource_dir(markdown_side, None),
-                std::rc::Rc::clone(&refusals),
-            );
+            let loader = image_loader(resource_dir(markdown_side, None));
             let options = jubarte::markdown::RedlineOptions {
                 settings: job.settings.clone(),
                 reference: None,
@@ -2117,11 +1978,6 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), ConvertFailure> {
             }
         },
     };
-    // `patch_documents` drops the writer's warnings; the refusals its
-    // loader recorded become stderr's (#617).
-    for warning in image_refusal_warnings(&refusals) {
-        eprintln!("warning: {warning}");
-    }
     print_or_write(out.as_ref(), &text)
 }
 
@@ -2365,11 +2221,7 @@ fn run_convert_any(
                 .as_deref()
                 .map(read_document)
                 .transpose()?;
-            let refusals = ImageRefusals::default();
-            let loader = image_loader(
-                &resource_dir(job.file, markdown.resource_path.as_deref()),
-                std::rc::Rc::clone(&refusals),
-            );
+            let loader = image_loader(resource_dir(job.file, markdown.resource_path.as_deref()));
             // The changes and comments that name no author or date take
             // the flag's, else the front matter's, else the reference
             // document's creator and creation time, else Redline and now.
@@ -2403,7 +2255,7 @@ fn run_convert_any(
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;
             for warning in &written.warnings {
-                eprintln!("warning: {}", image_warning_reason(warning, &refusals));
+                eprintln!("warning: {warning}");
             }
             if matches!(to, Format::Pdf | Format::Png) {
                 return pdf_job(Some(&written.docx), to);

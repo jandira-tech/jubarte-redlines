@@ -437,7 +437,7 @@ function runEdit(verb, file, o) {
       throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
     }
     try {
-      consumed = fs.readFileSync(o.plan);
+      consumed = fs.readFileSync(fs.realpathSync(o.plan));
     } catch (e) {
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
     }
