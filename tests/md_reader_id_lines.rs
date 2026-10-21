@@ -2697,3 +2697,58 @@ fn a_paragraphs_own_spacing_survives_docx_to_markdown_and_back() {
     let got = own_spacings(&part_string(&written, "word/document.xml").unwrap());
     assert_eq!(got, want, "the view:\n{view}");
 }
+
+/// The style ids that name each paragraph, in document order (`None` for a
+/// paragraph that states none).
+fn stated_styles(document: &str) -> Vec<Option<String>> {
+    document
+        .split("<w:p>")
+        .flat_map(|chunk| chunk.split("<w:p "))
+        .skip(1)
+        .map(|p| {
+            let ppr = p
+                .split_once("<w:pPr>")
+                .and_then(|(_, rest)| rest.split_once("</w:pPr>"))
+                .map_or("", |(ppr, _)| ppr);
+            ppr.split_once("<w:pStyle w:val=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(val, _)| val.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn a_style_named_like_a_spacing_word_is_not_read_as_spacing() {
+    // `line`, `after` and `before` are clause words now (#1473): a style
+    // with one of them as its id prints quoted, on the id line and on the
+    // table line, so the view reads it back as the style, beside the
+    // paragraph's own spacing.
+    let body = r#"<w:p><w:pPr><w:pStyle w:val="line"/><w:spacing w:after="0"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="after"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="line"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="before"/></w:pPr><w:r><w:t>Next</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>"#;
+    let source = common::docx::docx(body);
+    let view = read(
+        &source,
+        &ReadOptions {
+            page_markers: false,
+            ..ReadOptions::default()
+        },
+    )
+    .expect("the docx reads")
+    .markdown;
+    assert!(view.contains(r#"<!-- p0 "line" after 0pt -->"#), "{view}");
+    let written = markdown_to_docx(&view, &DocxOptions::default())
+        .expect("the view reads")
+        .docx;
+    assert_word_valid_package(&written);
+    let source_xml = part_string(&source, "word/document.xml").unwrap();
+    let written_xml = part_string(&written, "word/document.xml").unwrap();
+    assert_eq!(
+        stated_styles(&written_xml),
+        stated_styles(&source_xml),
+        "the view:\n{view}"
+    );
+    assert_eq!(
+        own_spacings(&written_xml),
+        own_spacings(&source_xml),
+        "the view:\n{view}"
+    );
+}

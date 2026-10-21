@@ -352,7 +352,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}][ outline {n}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · before {x}pt · after {x}pt · line {r} | line {x}pt exact | line {x}pt atLeast · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -373,6 +373,15 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches, with as many decimals (two to four) as it takes to
   read back the same twips (`0.7875in` is 1134).
+- `before`, `after` and `line` come from the paragraph's own `w:spacing`
+  (its style's spacing is the legend's): `before 6pt`, `after 0pt` (a
+  zero the paragraph states still prints: it overrides its style), in
+  points with up to two decimals (a twip is a twentieth of a point).
+  `line 1.15` is an `auto` line, a multiple of single spacing with the
+  fewest decimals (two to four) that read back the same 240ths (`line
+  1.038` is 249); `line 12pt exact` and `line 14pt atLeast` are the other
+  two rules. An empty paragraph with its own spacing keeps its own id
+  line: a range of empty ones would drop it.
 - `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
   in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
   it is escaped with `\`). A level text naming a deeper level (`%3` on
@@ -452,7 +461,10 @@ than the grid has holds an empty cell the view could not tell from padding
 `p10 center` for each cell paragraph aligned against its column (the delimiter row's `:-`, `:-:` or `-:` is the
 alignment most of a column's cell paragraphs have; left and none count
 alike, a tie or justified text prints `-`; the `center` or `right` after
-`t0` places the table itself on the page), then `merged t0.row0.cell1 across 2; t0.row1.cell0
+`t0` places the table itself on the page), then `p8 Quote` for each cell
+paragraph that states a style, then `p8-p10 after 0pt line 1` for cell
+paragraphs with their own spacing (the id line's clauses joined by
+spaces, one range for neighbours that say the same), then `merged t0.row0.cell1 across 2; t0.row1.cell0
 down 3` for a cell spanning grid columns or a vertical merge and the rows
 it covers (the view prints a span's other columns as empty cells, and
 leaves out empty columns at the right; the reader counts both back, and a
