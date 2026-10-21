@@ -1571,3 +1571,47 @@ mod public_lexical_empty_move_boundary_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod split_by_chars_tests {
+    use super::*;
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(split_by_chars("", &[' ', '\t']), vec![""]);
+    }
+
+    #[test]
+    fn empty_separators() {
+        assert_eq!(split_by_chars("hello", &[]), vec!["hello"]);
+    }
+
+    #[test]
+    fn empty_input_and_empty_separators() {
+        assert_eq!(split_by_chars("", &[]), vec![""]);
+    }
+
+    #[test]
+    fn text_containing_only_separators() {
+        assert_eq!(split_by_chars(" \t ", &[' ', '\t']), vec!["", "", "", ""]);
+    }
+
+    #[test]
+    fn text_with_separators_at_edges_and_middle() {
+        assert_eq!(split_by_chars(" hello world ", &[' ']), vec!["", "hello", "world", ""]);
+    }
+
+    #[test]
+    fn text_with_consecutive_separators() {
+        assert_eq!(split_by_chars("hello  world", &[' ']), vec!["hello", "", "world"]);
+    }
+
+    #[test]
+    fn unicode_characters() {
+        assert_eq!(
+            split_by_chars("hello🦀world", &['🦀']),
+            vec!["hello", "world"]
+        );
+    }
+}
