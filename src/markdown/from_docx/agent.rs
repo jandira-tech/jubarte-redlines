@@ -880,7 +880,7 @@ pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
 /// The children of `e` the view renders: of an `mc:AlternateContent`, only
 /// the `mc:Choice` (else the `mc:Fallback`), so a text box Word stores twice
 /// counts once.
-fn shown_children(e: &Element) -> Vec<&Element> {
+pub(super) fn shown_children(e: &Element) -> Vec<&Element> {
     if e.is("AlternateContent") {
         e.child("Choice")
             .or_else(|| e.child("Fallback"))
