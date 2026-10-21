@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Cursor, Write as _};
 
+use super::view_styles::{TABLE_BORDER_SIDES, TableBorders};
 use super::xml::{self, Context, Document, Relate, escape};
 use super::{DocxOptions, MarkdownError, PageSize};
 use crate::comments::CommentFamily;
@@ -310,6 +311,8 @@ pub(super) fn assemble(
     if package.content_type_for(&format!("/{main}")).is_none() {
         package.add_content_type_override(&format!("/{main}"), MAIN_CT);
     }
+    // A bound content control a drawing kept needs its store (#1427).
+    super::data_stores::write_missing(&mut package, &main, warnings);
     // Revision attributes are assembled as XML strings. Bind the extension
     // before parsing, then reuse the comparer's Word compatibility contract.
     for part in package.parts() {
@@ -687,7 +690,7 @@ fn word_name(name: &str) -> String {
 /// with the legend's border all round when it gives one.
 fn with_table_styles(
     styles: &str,
-    wanted: &BTreeMap<String, (Option<u32>, Option<String>)>,
+    wanted: &BTreeMap<String, (Option<TableBorders>, Option<String>)>,
     theme: &str,
 ) -> String {
     let missing: String = wanted
@@ -703,14 +706,11 @@ fn with_table_styles(
                 }
                 return style;
             }
-            let borders = (*border).map_or_else(String::new, |sz| {
-                let sides: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
-                    .iter()
-                    .map(|side| {
-                        format!("<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
-                    })
-                    .collect();
-                format!("<w:tblPr><w:tblBorders>{sides}</w:tblBorders></w:tblPr>")
+            let borders = border.as_ref().map_or_else(String::new, |border| {
+                format!(
+                    "<w:tblPr><w:tblBorders>{}</w:tblBorders></w:tblPr>",
+                    table_border_sides(border)
+                )
             });
             let name = name
                 .clone()
@@ -729,6 +729,41 @@ fn with_table_styles(
             format!("{}{missing}{}", &styles[..at], &styles[at..])
         }
         _ => styles.to_string(),
+    }
+}
+
+/// A table style's `w:tblBorders` children for the legend's borders: one
+/// single line of the size all round, or each side the legend names, in
+/// the order Word's schema puts them.
+fn table_border_sides(border: &TableBorders) -> String {
+    match border {
+        TableBorders::All(sz) => TABLE_BORDER_SIDES
+            .iter()
+            .map(|side| {
+                format!("<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
+            })
+            .collect(),
+        TableBorders::Sides(sides) => TABLE_BORDER_SIDES
+            .iter()
+            .filter_map(|name| sides.iter().find(|s| s.side == *name))
+            .map(|s| {
+                let size = s
+                    .size
+                    .map(|sz| format!(" w:sz=\"{sz}\""))
+                    .unwrap_or_default();
+                if s.size.is_none() && s.color.is_none() && s.space.is_none() {
+                    format!("<w:{} w:val=\"{}\"/>", s.side, escape(&s.val))
+                } else {
+                    format!(
+                        "<w:{} w:val=\"{}\"{size} w:space=\"{}\" w:color=\"{}\"/>",
+                        s.side,
+                        escape(&s.val),
+                        s.space.unwrap_or(0),
+                        s.color.as_deref().unwrap_or("auto")
+                    )
+                }
+            })
+            .collect(),
     }
 }
 

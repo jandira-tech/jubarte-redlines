@@ -97,16 +97,6 @@ cutover and retires the transitional spellings — `noid`, colon ids
 (`t0.row1.cell2.p1`), open ranges (`p17-`, `-p3`). It is not implemented:
 the fields the wire carries today are the ones named above.
 
-> **Stale-artifact note (2026-10-19).** The generated sections below —
-> this API reference and the CLI `--help` block at the end — quote the
-> committed 0.12.x artifacts, which were built before the short-id
-> migration: the `.d.ts`'s `body:rev:1`, `body:p:N` and `[body:p:N]`
-> examples and the `-p` help's `p17-`/`-p3` describe spellings the current
-> engine refuses on input, accepts only transitionally, or no longer
-> advertises (`src/cli.rs`). The source comments the next package build
-> will carry already say `pN`, `[pN]` and "settled spelling"
-> (`jubarte-wasm/src/lib.rs:181-186`, `:304-306`, `:965-966`).
-
 <!-- gen:wasm-api:start -->
 Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the slim entry points drop `docxToPdf` and `pdfPageCount`).
 
@@ -492,7 +482,9 @@ diffDocuments(old: Uint8Array, next: Uint8Array, author: string, date: string, c
 The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 with `[-old-]{+new+}` changes and CriticMarkup comments, at its
-`pN` id in a Word document or `line:N` in Markdown.
+`pN` id in a Word document or `line:N` in Markdown. When a side is a
+Word document, a replacement inside a paragraph reads insertion first,
+`{+new+}[-old-]`, as Word Compare writes it.
 
 Each side is a `.docx` package or UTF-8 Markdown
 (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -938,6 +930,22 @@ The line a writing task prints on stderr for the file it wrote:
 
 Mirrors `jubarte::cli::wrote_line`.
 <!-- gen:wasm-api:end -->
+
+### Auditing existing revision history
+
+`auditTracked`: Existing foreign revisions may remain: `FOREIGN_AUTHOR` reports
+foreign history added, changed or removed against `original`. Paragraphs
+align by full text, including deleted text, within each story. An untracked
+paragraph merge or split around another author's revisions reports those
+revisions as new and gone alongside `UNTRACKED_EDIT`. Groups with
+the same author, kind, target, date and move side are compared in document
+order within the aligned paragraph or non-paragraph owner (for example, a
+style id). Revision ids do not define identity. Split carriers combine only
+when they touch, with no visible content or still-present revision between
+them. A boundary explained solely by a missing separator revision adds no
+finding beyond that separator. Changed revisions say `differs from the
+original`; new revisions say `is new`. These messages name ids and authors,
+never revision text.
 
 ## CLI usage
 

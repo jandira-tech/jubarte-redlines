@@ -859,7 +859,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
             receipt.error.as_ref().expect("error").message
         )
     };
-    if !(quiet && !delivery.json && !delivery.jsonl && code == 0)
+    if (!quiet || delivery.json || delivery.jsonl || code != 0)
         && let Err(error) = write_stdout(rendered)
     {
         eprintln!(

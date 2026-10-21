@@ -1,16 +1,16 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 67                      # 67 marks shown as 67 changes: 53 insertions, 14 deletions
+revisions: 65                      # 65 marks shown as 65 changes: 52 insertions, 13 deletions
 comments: 0
 authors:
   document_owner: html-to-docx     # dc:creator
-  ASR: Arthur Souza Rodrigues      # 67 revisions, latest 2026-05-02T10:42:00Z
+  ASR: Arthur Souza Rodrigues      # 65 revisions, 2026-05-02T10:42:00Z
 body: p0-p131, 2 tables, 5 pages   # pages from layout
 page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in
 styles:
   Normal: Times New Roman 11pt, after 6pt, line 12pt atLeast, left, named normal  # default; unannotated paragraphs use it
-  "#": Heading1, Times New Roman bold 24pt, before 24pt, keep-next, keep-lines
+  "#": Heading1, Times New Roman bold 24pt, before 24pt, after 0pt, keep-next, keep-lines
   "##": Heading2, Times New Roman bold 18pt, before 18pt, after 4pt, keep-next, keep-lines
   table: TableNormal
 ---
@@ -113,7 +113,7 @@ _— end of sample —_
 {++A Sampler Document for Extraction Testing++}{r2 @ASR}
 
 <!-- p50 -->
-{++This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on.++}{r3 @ASR} **Emphasis lives here. See note.**{++<sup>[\[3\]](#footnote-3)</sup>++}{r3 @ASR}﻿
+{++This document is intentionally varied. It mixes headings, body copy, inline formatting, colors, lists, a table, footnotes, a hyperlink, and a block quote so an extraction tool has plenty to chew on.++}{r3 @ASR} **Emphasis lives here. See note.**{++<sup>[\[3\]](#footnote-3)</sup>++}{r63 @ASR}﻿
 
 <!-- p51 -->
 # {++1. Typography Samples++}{r4 @ASR}
@@ -122,7 +122,7 @@ _— end of sample —_
 {++Below are inline runs with mixed formatting. Each run is a separate span so an extractor can detect boundaries.++}{r5 @ASR}
 
 <!-- p53 -->
-{++**Bold blue,** ++}{r6 @ASR}**italic red, underlined green, yellow-highlighted,** {++**strikethrough, monospace.**++}{r6 @ASR}
+{++**Bold blue,** ++}{r6 @ASR}**italic red, underlined green, yellow-highlighted,** {++**strikethrough, monospace.**++}{r64 @ASR}
 
 <!-- p54 -->
 # {++2. Lists++}{r7 @ASR}
@@ -183,10 +183,10 @@ _— end of sample —_
 {++“Not all those who wander are lost.” — a line often quoted to test block-quote handling.++}{r41 @ASR}
 
 <!-- p91 -->
-{++More information available at our ++}{r42 @ASR}[reference page](https://example.com/reference){++.++}{r42 @ASR}
+{++More information available at our ++}{r42 @ASR}[reference page](https://example.com/reference){++.++}{r65 @ASR}
 
 <!-- p92 -->
-{++This sentence carries a second footnote for testing multi-note extraction. †++}{r43 @ASR}{++<sup>[\[4\]](#footnote-4)</sup>++}{r43 @ASR}﻿
+{++This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[4\]](#footnote-4)</sup>++}{r43 @ASR}﻿
 
 <!-- p93 -->
 # {++5. Color Callouts++}{r44 @ASR}
@@ -273,7 +273,7 @@ Add a pinch of salt.
 {--More information available at our reference page.--}{r54 @ASR}
 
 <!-- p121 -->
-{--This sentence carries a second footnote for testing multi-note extraction. †--}{r55 @ASR}{--<sup>[\[6\]](#footnote-6)</sup>--}{r55 @ASR}﻿
+{--This sentence carries a second footnote for testing multi-note extraction. †<sup>[\[6\]](#footnote-6)</sup>--}{r55 @ASR}﻿
 
 <!-- p122 -->
 # {--5. Color Callouts--}{r56 @ASR}

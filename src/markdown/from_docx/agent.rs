@@ -1259,6 +1259,29 @@ pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
     out
 }
 
+/// A paragraph's own indent (`w:ind`), one clause per side in the id
+/// lines' order: `first-line`, `hanging`, `left`, `right`, each in inches.
+/// The strict `start`/`end` count only when the transitional `left`/`right`
+/// is absent, as the layout reads them.
+pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
+    [
+        (&["firstLine"][..], "first-line"),
+        (&["hanging"][..], "hanging"),
+        (&["left", "start"][..], "left"),
+        (&["right", "end"][..], "right"),
+    ]
+    .into_iter()
+    .filter_map(|(attrs, name)| {
+        let v = attrs.iter().find_map(|attr| ind.attr(attr))?;
+        let twips = v
+            .parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))?;
+        Some((name, inches(twips)))
+    })
+    .collect()
+}
+
 /// Twips as inches with the fewest decimals (two at least, four at most)
 /// that read back to the same twips: `720` → `0.5in`, `1440` → `1in`,
 /// `1134` (2cm) → `0.7875in`. Four decimals are always enough: they are off
@@ -1520,6 +1543,22 @@ pub(crate) fn paragraphs(e: &Element) -> Vec<&Element> {
     out
 }
 
+/// Every paragraph under `e` in document order, a text box's too: a
+/// paragraph, then the paragraphs of the boxes it anchors.
+pub(crate) fn paragraphs_and_boxes(e: &Element) -> Vec<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+        for c in e.elements() {
+            if c.is("p") {
+                out.push(c);
+            }
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
 /// Indices of the paragraphs whose section break starts a new page: the
 /// section after them is not `continuous` or `nextColumn` (a section's
 /// `w:type` says how that section starts).
@@ -1608,21 +1647,8 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         );
     }
     if let Some(ind) = ppr.and_then(|pr| pr.child("ind")) {
-        // One clause per side: the strict `start`/`end` only when the
-        // transitional `left`/`right` is absent, as the layout reads them.
-        for (attrs, name) in [
-            (&["firstLine"][..], "first-line"),
-            (&["hanging"][..], "hanging"),
-            (&["left", "start"][..], "left"),
-            (&["right", "end"][..], "right"),
-        ] {
-            if let Some(v) = attrs.iter().find_map(|attr| ind.attr(attr)).and_then(|v| {
-                v.parse::<f64>()
-                    .ok()
-                    .or_else(|| crate::util::universal_measure_twips(v))
-            }) {
-                clauses.push(format!("{name} {}", inches(v)));
-            }
+        for (name, value) in indent_clauses(ind) {
+            clauses.push(format!("{name} {value}"));
         }
     }
     match f.marker {
