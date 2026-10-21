@@ -1000,8 +1000,10 @@ pub enum Side {
 /// Ids, short ids and indexes name the source's paragraphs, the ones the
 /// plan's author read, even when `resolve_revisions` or `existing_revisions`
 /// settles changes first; the text forms search the settled text. An edit
-/// anchored on text follows a paragraph into the one it merged with; a
-/// whole-paragraph edit of a merged or vanished paragraph is refused.
+/// anchored on text follows a paragraph into the one it merged with, and so
+/// does a whole-paragraph edit when that paragraph has no other source; a
+/// whole-paragraph edit of a paragraph merged with others, or of a vanished
+/// one, is refused.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
@@ -4690,9 +4692,43 @@ impl<'p> Transaction<'p> {
         }
     }
 
+    /// A plan's selector that reaches paragraph `global` by its text: its
+    /// first words, or all of it, as `{"contains": …}` (with its story
+    /// outside the body), when no other paragraph of its story holds them.
+    /// Only a JSON plan of the first version has one.
+    fn text_selector(&self, global: usize) -> Option<String> {
+        if self.syntax != PlanSyntax::V1 {
+            return None;
+        }
+        let text = &self.projections[global].text;
+        let story = self.paragraph_story[global].0;
+        let unique = |wanted: &str| {
+            !wanted.trim().is_empty()
+                && (0..self.paragraph_nodes.len())
+                    .filter(|&g| self.paragraph_story[g].0 == story)
+                    .filter(|&g| self.projections[g].text.contains(wanted))
+                    .count()
+                    == 1
+        };
+        let first: String = text.chars().take(SELECTOR_CHARS).collect();
+        let first = match first.rfind(char::is_whitespace) {
+            Some(at) if first.len() < text.len() => first[..at].trim_end(),
+            _ => first.as_str(),
+        };
+        let contains = [first, text.as_str()]
+            .into_iter()
+            .find(|wanted| unique(wanted))?
+            .to_string();
+        let selector = Selector::Contains {
+            contains,
+            story: (story != 0).then(|| self.stories[story].id.clone()),
+        };
+        serde_json::to_string(&selector).ok()
+    }
+
     /// The paragraph `selector` names. Positional ids name the source's
     /// paragraphs, as its author read them, even when settling revisions
-    /// moved them; a paragraph merged with another is only followed when
+    /// moved them; a paragraph merged with others is only followed when
     /// `merged_ok` (an edit that finds its text there). Text selectors read
     /// the settled text.
     fn select(&self, selector: &Selector, merged_ok: bool) -> Result<usize, origin::Miss> {
@@ -4702,7 +4738,12 @@ impl<'p> Transaction<'p> {
         let story_index = match &self.origin {
             Some(origin) => match origin.ids().position(selector)? {
                 Ok(source) => {
-                    return origin.follow(source, merged_ok, |p| self.paragraph_id(p));
+                    return origin.follow(
+                        source,
+                        merged_ok,
+                        |p| self.paragraph_id(p),
+                        |p| self.text_selector(p),
+                    );
                 }
                 // The text selector's story, by name in the settled document.
                 Err(_) => self.ids().position(selector)?,
@@ -6938,6 +6979,10 @@ fn attach_segment(
             .or_else(|| segs.iter().rev().find(|s| s.end == pos))
     }
 }
+
+/// How many characters of a paragraph's text a suggested `contains`
+/// selector quotes at most.
+const SELECTOR_CHARS: usize = 60;
 
 /// The byte span of the words of `text` that `[start, end)` touches: out
 /// to the nearest whitespace or comparer word separator on each side, so
