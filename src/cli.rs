@@ -3778,6 +3778,165 @@ fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap:
 /// Aliases follow their canonical command. Unsupported commands are absent
 /// from help and rejected. Success contains `{exit_code, command, args,
 /// notes}`: `args.quiet` is the global `-q`, and `notes` holds the
+fn parse_subcommand_json(
+    command: &mut clap::Command,
+    matches: &clap::ArgMatches,
+    arguments: &[String],
+    accepts: &dyn Fn(&str) -> bool,
+) -> Result<serde_json::Value, clap::Error> {
+    let mut task = Command::from_arg_matches(matches)?;
+    fill_flag_operations(&mut task, matches, command)?;
+    resolve_plan(&mut task);
+    apply_retired(
+        &mut task,
+        &retired_spellings(arguments.iter().map(String::as_str)),
+    );
+    fill_task_date(&mut task);
+    let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
+    if let Command::Compare(compare) = &mut task {
+        if let Some((_, args)) = matches.subcommand() {
+            compare.view_given = view_given(args);
+        }
+        value["args"] = compare_json(compare);
+        if view_is_output(&value["args"]) && !accepts("read") {
+            return Err(view_not_supported(command));
+        }
+    }
+    if let Command::Diff {
+        old,
+        new,
+        output,
+        to,
+        from,
+        ..
+    } = &task
+    {
+        let input_format = |path: &std::path::Path| {
+            from.or_else(|| {
+                Format::of_path(path).filter(|f| matches!(f, Format::Docx | Format::Md))
+            })
+        };
+        value["args"]["old_format"] = serde_json::to_value(input_format(old)).expect("format");
+        value["args"]["new_format"] = serde_json::to_value(input_format(new)).expect("format");
+        value["args"]["output_format"] = serde_json::to_value(
+            output_format(Task::Diff, output.as_deref(), *to)
+                .ok()
+                .flatten(),
+        )
+        .expect("format");
+    }
+    if let Command::Convert {
+        output,
+        markdown,
+        pdf,
+        png,
+        ..
+    } = &task
+    {
+        let alias = pdf
+            .then_some(Format::Pdf)
+            .or_else(|| png.then_some(Format::Png));
+        value["args"]["output_format"] = serde_json::to_value(
+            output_format(Task::Convert, output.as_deref(), markdown.to.or(alias))
+                .ok()
+                .flatten(),
+        )
+        .expect("format");
+    }
+    if let Command::Edit {
+        file,
+        options,
+        plan,
+        operations,
+        ..
+    }
+    | Command::Add {
+        file,
+        options,
+        plan,
+        operations,
+        ..
+    } = &task
+    {
+        let recording = plan.is_some() && !operations.is_empty();
+        let (output, out_dir) = match options.target(file) {
+            _ if recording => (None, None),
+            EditTarget::Single(path) => (Some(path), None),
+            EditTarget::Bundle(dir) => (None, Some(dir)),
+        };
+        let slashed = |path: Option<&std::path::PathBuf>| {
+            path.map(|p| serde_json::Value::String(slash_path(p)))
+                .unwrap_or(serde_json::Value::Null)
+        };
+        value["args"]["plan"] = slashed(plan.as_ref());
+        value["args"]["output"] = slashed(output.as_ref());
+        value["args"]["out_dir"] = slashed(out_dir.as_ref());
+    }
+    let written = match &task {
+        Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),
+        Command::Reject { output, .. } => Some((Task::Reject, Some(output.as_path()))),
+        Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
+        Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
+        Command::Read { output, .. } => Some((Task::Read, output.as_deref())),
+        _ => None,
+    };
+    if let Some((writer, output)) = written {
+        value["args"]["output_format"] =
+            serde_json::to_value(output_format(writer, output, None).ok().flatten())
+                .expect("format");
+    }
+    value["exit_code"] = 0.into();
+    Ok(value)
+}
+
+fn parse_implicit_compare_json(
+    command: &mut clap::Command,
+    matches: &clap::ArgMatches,
+    model: &clap::Command,
+    program: &str,
+    accepts: &dyn Fn(&str) -> bool,
+) -> Result<serde_json::Value, clap::Error> {
+    let mut compare = CompareArgs::from_arg_matches(matches)?;
+    fill_date(&mut compare.datetime);
+    if let Some(name) = compare
+        .original_pos
+        .as_ref()
+        .and_then(|p| p.to_str())
+        .and_then(|name| model.find_subcommand(name))
+        .map(|task| task.get_name().to_string())
+        .filter(|name| !accepts(name))
+    {
+        return Err(missing_task(command, program, &name));
+    }
+    if compare.modified.is_none() && compare.modified_pos.is_none() {
+        if !accepts("read") {
+            return Err(command.error(
+                clap::error::ErrorKind::InvalidSubcommand,
+                "this task is not supported by this adapter",
+            ));
+        }
+        let mut args = serde_json::to_value(&compare.read).expect("UTF-8 CLI arguments");
+        args["file"] =
+            serde_json::to_value(compare.original.as_ref().or(compare.original_pos.as_ref()))
+                .expect("UTF-8 path");
+        args["output"] = serde_json::to_value(&compare.output).expect("UTF-8 path");
+        args["force"] = compare.force.into();
+        args["output_format"] = serde_json::to_value(
+            output_format(Task::Read, compare.output.as_deref(), None)
+                .ok()
+                .flatten(),
+        )
+        .expect("format");
+        return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
+    }
+    compare.view_given = view_given(matches);
+    let args = compare_json(&compare);
+    if view_is_output(&args) && !accepts("read") {
+        return Err(view_not_supported(command));
+    }
+    Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))
+}
+
 /// [`retired_note`] of each retired spelling used. `args` has
 /// native snake_case field names, flattened Args groups, canonical enum strings,
 /// string paths, defaults and null optional fields. Nested subcommands use
@@ -3866,159 +4025,9 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         validate_matches(&matches, &mut command)?;
         quiet = matches.get_flag("quiet");
         if matches.subcommand().is_some() {
-            let mut task = Command::from_arg_matches(&matches)?;
-            fill_flag_operations(&mut task, &matches, &mut command)?;
-            resolve_plan(&mut task);
-            apply_retired(
-                &mut task,
-                &retired_spellings(arguments.iter().map(String::as_str)),
-            );
-            fill_task_date(&mut task);
-            let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
-            if let Command::Compare(compare) = &mut task {
-                if let Some((_, args)) = matches.subcommand() {
-                    compare.view_given = view_given(args);
-                }
-                value["args"] = compare_json(compare);
-                if view_is_output(&value["args"]) && !accepts("read") {
-                    return Err(view_not_supported(&mut command));
-                }
-            }
-            if let Command::Diff {
-                old,
-                new,
-                output,
-                to,
-                from,
-                ..
-            } = &task
-            {
-                let input_format = |path: &Path| {
-                    from.or_else(|| {
-                        Format::of_path(path).filter(|f| matches!(f, Format::Docx | Format::Md))
-                    })
-                };
-                value["args"]["old_format"] =
-                    serde_json::to_value(input_format(old)).expect("format");
-                value["args"]["new_format"] =
-                    serde_json::to_value(input_format(new)).expect("format");
-                value["args"]["output_format"] = serde_json::to_value(
-                    output_format(Task::Diff, output.as_deref(), *to)
-                        .ok()
-                        .flatten(),
-                )
-                .expect("format");
-            }
-            if let Command::Convert {
-                output,
-                markdown,
-                pdf,
-                png,
-                ..
-            } = &task
-            {
-                // validate_matches refused a disagreement, so the rule holds.
-                let alias = pdf
-                    .then_some(Format::Pdf)
-                    .or_else(|| png.then_some(Format::Png));
-                value["args"]["output_format"] = serde_json::to_value(
-                    output_format(Task::Convert, output.as_deref(), markdown.to.or(alias))
-                        .ok()
-                        .flatten(),
-                )
-                .expect("format");
-            }
-            // edit and add: the one document or the bundle, resolved, so a
-            // host never rebuilds the default names.
-            if let Command::Edit {
-                file,
-                options,
-                plan,
-                operations,
-                ..
-            }
-            | Command::Add {
-                file,
-                options,
-                plan,
-                operations,
-                ..
-            } = &task
-            {
-                // Recording writes the plan only.
-                let recording = plan.is_some() && !operations.is_empty();
-                let (output, out_dir) = match options.target(file) {
-                    _ if recording => (None, None),
-                    EditTarget::Single(path) => (Some(path), None),
-                    EditTarget::Bundle(dir) => (None, Some(dir)),
-                };
-                // Resolved paths are identifiers: `/` on every OS (#568).
-                let slashed = |path: Option<&PathBuf>| {
-                    path.map(|p| serde_json::Value::String(slash_path(p)))
-                        .unwrap_or(serde_json::Value::Null)
-                };
-                value["args"]["plan"] = slashed(plan.as_ref());
-                value["args"]["output"] = slashed(output.as_ref());
-                value["args"]["out_dir"] = slashed(out_dir.as_ref());
-            }
-            let written = match &task {
-                Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),
-                Command::Reject { output, .. } => Some((Task::Reject, Some(output.as_path()))),
-                Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
-                Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
-                Command::Read { output, .. } => Some((Task::Read, output.as_deref())),
-                _ => None,
-            };
-            if let Some((writer, output)) = written {
-                // validate_matches refused a format the task cannot write.
-                value["args"]["output_format"] =
-                    serde_json::to_value(output_format(writer, output, None).ok().flatten())
-                        .expect("format");
-            }
-            value["exit_code"] = 0.into();
-            Ok(value)
+            parse_subcommand_json(&mut command, &matches, arguments, &accepts)
         } else {
-            let mut compare = CompareArgs::from_arg_matches(&matches)?;
-            fill_date(&mut compare.datetime);
-            if let Some(name) = compare
-                .original_pos
-                .as_ref()
-                .and_then(|p| p.to_str())
-                .and_then(|name| model.find_subcommand(name))
-                .map(|task| task.get_name().to_string())
-                .filter(|name| !accepts(name))
-            {
-                return Err(missing_task(&mut command, program, &name));
-            }
-            if compare.modified.is_none() && compare.modified_pos.is_none() {
-                if !accepts("read") {
-                    return Err(command.error(
-                        clap::error::ErrorKind::InvalidSubcommand,
-                        "this task is not supported by this adapter",
-                    ));
-                }
-                let mut args = serde_json::to_value(&compare.read).expect("UTF-8 CLI arguments");
-                args["file"] = serde_json::to_value(
-                    compare.original.as_ref().or(compare.original_pos.as_ref()),
-                )
-                .expect("UTF-8 path");
-                // As `read FILE -o …` has them.
-                args["output"] = serde_json::to_value(&compare.output).expect("UTF-8 path");
-                args["force"] = compare.force.into();
-                args["output_format"] = serde_json::to_value(
-                    output_format(Task::Read, compare.output.as_deref(), None)
-                        .ok()
-                        .flatten(),
-                )
-                .expect("format");
-                return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
-            }
-            compare.view_given = view_given(&matches);
-            let args = compare_json(&compare);
-            if view_is_output(&args) && !accepts("read") {
-                return Err(view_not_supported(&mut command));
-            }
-            Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))
+            parse_implicit_compare_json(&mut command, &matches, &model, program, &accepts)
         }
     })();
     match result {

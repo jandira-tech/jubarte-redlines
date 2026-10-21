@@ -679,6 +679,40 @@ impl<'a> CompoundFile<'a> {
         let difat_sectors = u32_at(bytes, 0x48).ok_or_else(bad)?;
 
         let max_sectors = bytes.len().checked_div(sector_size).unwrap_or(0);
+        let fat = Self::read_fat(
+            bytes,
+            sector_size,
+            fat_sectors,
+            first_difat,
+            difat_sectors,
+            max_sectors,
+        )?;
+
+        let mut file = Self {
+            bytes,
+            sector_size,
+            mini_sector_size,
+            mini_cutoff,
+            fat,
+            mini_fat: Vec::new(),
+            entries: Vec::new(),
+            mini_stream: Vec::new(),
+        };
+        file.load_directory(first_dir, max_sectors, v4)?;
+        file.load_mini_fat(first_mini_fat, max_sectors)?;
+        file.load_mini_stream(max_sectors)?;
+        Ok(file)
+    }
+
+    fn read_fat(
+        bytes: &[u8],
+        sector_size: usize,
+        fat_sectors: u32,
+        first_difat: u32,
+        difat_sectors: u32,
+        max_sectors: usize,
+    ) -> Result<Vec<u32>> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
         let mut fat_locations: Vec<u32> = (0..109)
             .filter_map(|i: usize| u32_at(bytes, 0x4C_usize.checked_add(i.checked_mul(4)?)?))
             .filter(|&s| s != NO_STREAM)
@@ -720,46 +754,50 @@ impl<'a> CompoundFile<'a> {
                     .map(|c| u32::from_le_bytes(*c)),
             );
         }
+        Ok(fat)
+    }
 
-        let mut file = Self {
-            bytes,
-            sector_size,
-            mini_sector_size,
-            mini_cutoff,
-            fat,
-            mini_fat: Vec::new(),
-            entries: Vec::new(),
-            mini_stream: Vec::new(),
-        };
-        let directory = file.chain(first_dir, None, max_sectors).ok_or_else(bad)?;
-        file.entries = directory
+    fn load_directory(&mut self, first_dir: u32, max_sectors: usize, v4: bool) -> Result<()> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
+        let directory = self.chain(first_dir, None, max_sectors).ok_or_else(bad)?;
+        self.entries = directory
             .as_chunks::<128>()
             .0
             .iter()
             .filter_map(|raw| DirEntry::parse(raw, v4))
             .collect();
+        Ok(())
+    }
+
+    fn load_mini_fat(&mut self, first_mini_fat: u32, max_sectors: usize) -> Result<()> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
         if first_mini_fat != END_OF_CHAIN && first_mini_fat != NO_STREAM {
-            let table = file
+            let table = self
                 .chain(first_mini_fat, None, max_sectors)
                 .ok_or_else(bad)?;
-            file.mini_fat = table
+            self.mini_fat = table
                 .as_chunks::<4>()
                 .0
                 .iter()
                 .map(|c| u32::from_le_bytes(*c))
                 .collect();
         }
-        let root = file.entries.first().ok_or_else(bad)?;
+        Ok(())
+    }
+
+    fn load_mini_stream(&mut self, max_sectors: usize) -> Result<()> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
+        let root = self.entries.first().ok_or_else(bad)?;
         if root.kind != 5 {
             return Err(bad());
         }
         let (root_start, root_size) = (root.start, root.size);
         if root_start != END_OF_CHAIN && root_start != NO_STREAM {
-            file.mini_stream = file
+            self.mini_stream = self
                 .chain(root_start, Some(root_size), max_sectors)
                 .ok_or_else(bad)?;
         }
-        Ok(file)
+        Ok(())
     }
 
     /// Follow a regular-sector chain, stopping after `limit` sectors (a

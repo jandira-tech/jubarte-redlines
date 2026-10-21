@@ -5879,7 +5879,7 @@ impl<'p> Transaction<'p> {
     }
 
     /// Mutate the copy. Resolution succeeded, so every step here is total.
-    fn apply(&mut self) -> Result<(), EditError> {
+    fn apply_comments(&mut self) -> BTreeMap<usize, u32> {
         // 0. Comment ids follow plan order, whatever paragraph they land in.
         let mut ids: BTreeMap<usize, u32> = BTreeMap::new();
         let comments: Vec<(usize, String)> =
@@ -5934,6 +5934,10 @@ impl<'p> Transaction<'p> {
                 self.reply_parents.insert(ids[i], *parent);
             }
         }
+        ids
+    }
+
+    fn apply_text_edits(&mut self, ids: &BTreeMap<usize, u32>) -> Result<(), EditError> {
         // 1. Text edits and their comments, paragraph by paragraph.
         let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
@@ -6162,6 +6166,10 @@ impl<'p> Transaction<'p> {
                 visible::comment_around(&mut self.opened.dom, first, last, id);
             }
         }
+        Ok(())
+    }
+
+    fn apply_comment_spans(&mut self, ids: &BTreeMap<usize, u32>) {
         // 1b. Comments over several paragraphs, in their edited text.
         for (i, r) in &self.resolved {
             if let Resolved::CommentSpan { para, last, .. } = r {
@@ -6173,8 +6181,9 @@ impl<'p> Transaction<'p> {
                 );
             }
         }
-        // 1c. Content control fills (text edits never reach control content).
-        self.apply_fills();
+    }
+
+    fn apply_insertions(&mut self, ids: &BTreeMap<usize, u32>) -> Vec<NodeId> {
         // 2. Paragraph and table insertions (anchors are source paragraphs,
         // untouched by 1).
         let inserts: Vec<(usize, Resolved)> = self
@@ -6267,6 +6276,10 @@ impl<'p> Transaction<'p> {
                 anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
             }
         }
+        tables
+    }
+
+    fn apply_paragraph_formatting(&mut self) {
         // 3. Paragraph formatting.
         for (_, r) in &self.resolved {
             if let Resolved::FormatParagraph {
@@ -6285,6 +6298,9 @@ impl<'p> Transaction<'p> {
                 );
             }
         }
+    }
+
+    fn apply_lists(&mut self) {
         // 3b. Lists: new numbering instances take ids after the source's.
         let (mut next_abstract, mut next_num) = structural::next_numbering_ids(&self.opened);
         for (_, r) in &self.resolved {
@@ -6326,6 +6342,9 @@ impl<'p> Transaction<'p> {
                 }
             }
         }
+    }
+
+    fn apply_merges(&mut self) {
         // 4. Merges, first first, so a chain folds into its last paragraph.
         let mut merges: Vec<(usize, usize, String)> = self
             .resolved
@@ -6348,12 +6367,18 @@ impl<'p> Transaction<'p> {
                 &separator,
             );
         }
+    }
+
+    fn apply_paragraph_deletions(&mut self) {
         // 5. Paragraph deletions.
         for (_, r) in &self.resolved {
             if let Resolved::DeleteParagraph { para } = r {
                 self.opened.dom.remove(self.paragraph_nodes[*para]);
             }
         }
+    }
+
+    fn apply_reply_markers(&mut self, ids: &BTreeMap<usize, u32>) {
         // 6. Reply markers beside their comment's; deleted comments' markers.
         let roots: Vec<NodeId> = self.stories.iter().map(|s| s.root).collect();
         for (i, r) in &self.resolved {
@@ -6376,11 +6401,17 @@ impl<'p> Transaction<'p> {
                 ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => {}
             }
         }
+    }
+
+    fn apply_table_separations(&mut self, tables: Vec<NodeId>) {
         // 7. A paragraph after each new table, and between it and a table
         // before it, once the deletions have settled its neighbours.
         for table in tables {
             structural::separate(&mut self.opened.dom, table);
         }
+    }
+
+    fn apply_page_setups(&mut self) {
         // 8. Page setup.
         let setups: Vec<sections::Targets> = self
             .resolved
@@ -6393,9 +6424,25 @@ impl<'p> Transaction<'p> {
         for targets in &setups {
             self.apply_page_setup(targets);
         }
-        Ok(())
     }
 
+    /// Mutate the copy. Resolution succeeded, so every step here is total.
+    fn apply(&mut self) -> Result<(), EditError> {
+        let ids = self.apply_comments();
+        self.apply_text_edits(&ids)?;
+        self.apply_comment_spans(&ids);
+        // 1c. Content control fills (text edits never reach control content).
+        self.apply_fills();
+        let tables = self.apply_insertions(&ids);
+        self.apply_paragraph_formatting();
+        self.apply_lists();
+        self.apply_merges();
+        self.apply_paragraph_deletions();
+        self.apply_reply_markers(&ids);
+        self.apply_table_separations(tables);
+        self.apply_page_setups();
+        Ok(())
+    }
     fn new_comment(&mut self, text: String) -> u32 {
         let id = self.reserve_comment_id();
         self.comments.push((id, text));
