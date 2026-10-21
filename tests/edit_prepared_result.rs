@@ -23,18 +23,21 @@ const DEFAULT: PrepareOptions = PrepareOptions {
     exact_text: false,
     role: PrimaryRole::Clean,
     syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 const REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
     require_change: true,
     exact_text: false,
     role: PrimaryRole::Clean,
     syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 const EXACT: PrepareOptions = PrepareOptions {
     require_change: false,
     exact_text: true,
     role: PrimaryRole::Clean,
     syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 
 fn plan(json: &str) -> EditPlan {
@@ -229,6 +232,7 @@ fn unchanged_copy_and_require_change_are_distinct() {
             exact_text: true,
             role: PrimaryRole::Clean,
             syntax: PlanSyntax::V1,
+            skip_failed: false,
         },
     )
     .unwrap_err();
@@ -468,6 +472,7 @@ const REDLINE_REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
     exact_text: false,
     role: PrimaryRole::Redline,
     syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 
 /// For a changed v1 typed apply, the receipt digest names the bytes that

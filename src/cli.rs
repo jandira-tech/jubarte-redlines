@@ -1176,7 +1176,8 @@ pub enum Command {
         #[arg(skip)]
         plan_default: bool,
         /// Delete PLAN.json once it has been applied and the outputs are
-        /// written (with --plan and no operation flags).
+        /// written (with --plan and no operation flags). Kept when
+        /// --skip-failed left operations out.
         #[arg(long, requires = "plan")]
         consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment),
@@ -1232,9 +1233,16 @@ pub enum Command {
         #[command(flatten)]
         #[serde(flatten)]
         options: EditOptions,
-        /// Resolve and report only; write nothing.
+        /// Resolve and report only; write nothing. When every operation
+        /// passes, stderr ends with the command that applies it (`next:`).
         #[arg(long)]
         dry_run: bool,
+        /// Apply every operation that passes; leave out the ones that fail
+        /// and every operation of their "group". Exit 0 when one landed.
+        /// The failed ones go to PLAN.failed.json (FILE_plan.failed.json for
+        /// operation flags): a plan to fix and run on the output.
+        #[arg(long)]
+        skip_failed: bool,
         /// Refuse when the edit would change nothing in the document
         /// (NO_CHANGES_REQUESTED); reports, renders and bundles do not
         /// count as a change.
@@ -2255,9 +2263,11 @@ pub const REMOVED: &[Retired] = &[
 ];
 
 /// One option as `argv` spells it: `-p`, `--location` (a long's `=value`
-/// split off). The value it takes is skipped, not kept.
+/// split off), and the index of its token. The value it takes is skipped,
+/// not kept.
 struct Spelled {
     name: String,
+    at: usize,
 }
 
 /// How many values `arg` takes after it: `None` for a flag (an option `cmd`
@@ -2319,20 +2329,22 @@ fn spelled_options(cmd: &clap::Command, tokens: &[&str]) -> (Vec<Spelled>, usize
             }
             found.push(Spelled {
                 name: format!("--{name}"),
+                at: i - 1,
             });
         } else if let Some(cluster) = token.strip_prefix('-').filter(|c| !c.is_empty()) {
-            for (at, short) in cluster.char_indices() {
+            let at = i - 1;
+            for (offset, short) in cluster.char_indices() {
                 let name = format!("-{short}");
                 let Some(optional) = value_taken(short_arg(cmd, short)) else {
-                    found.push(Spelled { name });
+                    found.push(Spelled { name, at });
                     continue;
                 };
                 // The rest of the cluster is the value (`-pt0`, `-p=t0`),
                 // else the next token is.
-                if cluster[at + short.len_utf8()..].is_empty() {
+                if cluster[offset + short.len_utf8()..].is_empty() {
                     skip_value(&mut i, optional);
                 }
-                found.push(Spelled { name });
+                found.push(Spelled { name, at });
                 break;
             }
         } else {
@@ -3379,6 +3391,76 @@ pub fn typed_edit_protocol(
         rest = rest.get(next + 1..).unwrap_or_default();
     }
     (json || jsonl).then(|| (action.to_string(), jsonl, file))
+}
+
+/// `argv` (the arguments after the program name) as a dry run's `next:`
+/// command: without its `--dry-run` flag, and with `--force` before any
+/// `--` when `force`. A `--dry-run` that is no flag stays: a FILE after
+/// `--`, or an option's value (`--text --dry-run`). Pure: no I/O.
+pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
+    let model = top_level_command();
+    let arguments: Vec<std::ffi::OsString> = std::iter::once("jubarte".into())
+        .chain(argv.iter().map(Into::into))
+        .collect();
+    // Read as the parser reads it (the typed edit forms routed), then
+    // matched back to `argv` by count: routing moves no `--dry-run`.
+    let routed = edit_arguments(&model, &arguments);
+    let tokens: Vec<&str> = routed
+        .iter()
+        .skip(1)
+        .filter_map(|a| a.to_str())
+        .take_while(|a| *a != "--")
+        .collect();
+    let mut flags = std::collections::BTreeSet::new();
+    let mut command = &model;
+    let mut start = 0;
+    loop {
+        let (options, next) = spelled_options(command, &tokens[start..]);
+        flags.extend(
+            options
+                .iter()
+                .filter(|option| option.name == "--dry-run")
+                .map(|option| start + option.at),
+        );
+        let Some(word) = tokens.get(start + next) else {
+            break;
+        };
+        if let Some(task) = command.find_subcommand(word) {
+            command = task;
+        }
+        start += next + 1;
+    }
+    // Which of the tokens spelled `--dry-run`, in order, are the flag.
+    let dropped: std::collections::BTreeSet<usize> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| **token == "--dry-run")
+        .enumerate()
+        .filter(|(_, (at, _))| flags.contains(at))
+        .map(|(nth, _)| nth)
+        .collect();
+    let mut next = Vec::with_capacity(argv.len() + 1);
+    let mut spelled = 0;
+    let mut delimited = false;
+    for arg in argv {
+        if !delimited && arg == "--" {
+            delimited = true;
+            if force {
+                next.push("--force".to_string());
+            }
+        }
+        if !delimited && arg == "--dry-run" {
+            spelled += 1;
+            if dropped.contains(&(spelled - 1)) {
+                continue;
+            }
+        }
+        next.push(arg.clone());
+    }
+    if force && !delimited {
+        next.push("--force".to_string());
+    }
+    next
 }
 
 /// The first positional operand the tokens name for `cmd`, when they carry

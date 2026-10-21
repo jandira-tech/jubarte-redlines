@@ -1303,6 +1303,8 @@ struct EditJob<'a> {
     target: &'a EditTarget,
     mode: Mode,
     dry_run: bool,
+    /// `--skip-failed`: where the plan of the failed operations goes.
+    skip_failed: Option<PathBuf>,
     /// `--require-change`: refuse when the primary has no document effect.
     require_change: bool,
     force: bool,
@@ -1348,12 +1350,15 @@ fn edit_plan(
     Ok((built.plan, built.notes))
 }
 
+/// Prepare `plan` on `source` and publish it as `job` says. The number of
+/// operations `--skip-failed` left out of what was written (none on a dry
+/// run).
 fn run_edit(
     job: &EditJob<'_>,
     plan: &jubarte::edit::EditPlan,
     source: &[u8],
     notes: &[String],
-) -> Result<(), (u8, String)> {
+) -> Result<usize, (u8, String)> {
     let fail = |m: String| (1u8, m);
     // Dry run and apply share one preparation path (V2-08): the dry run
     // prepares and checks the same serialized candidate and stops before
@@ -1366,6 +1371,7 @@ fn run_edit(
         } else {
             jubarte::edit::PlanSyntax::Flags
         },
+        skip_failed: job.skip_failed.is_some(),
         ..jubarte::edit::PrepareOptions::default()
     };
     let refuse = |e: jubarte::edit::EditError| {
@@ -1378,15 +1384,85 @@ fn run_edit(
     };
     if job.dry_run {
         let report = jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
-        return write_stdout(report.to_jsonl()).map_err(fail);
+        write_stdout(report.to_jsonl()).map_err(fail)?;
+        // A clean dry run says how to apply it: the same command, with the
+        // --force an output already there needs. An output --force cannot
+        // replace gets no command, only what to do.
+        if report.ok && !job.quiet {
+            match taken_edit_output(job) {
+                Some(Taken::Blocked(why)) => edit_status(format_args!("note: {why}")),
+                Some(Taken::Replaceable(taken)) if !job.force => {
+                    edit_status(format_args!(
+                        "note: {} exists; the next command replaces it (--force)",
+                        slash_path(&taken)
+                    ));
+                    edit_status(format_args!("next: {}", next_command(true)));
+                }
+                _ => edit_status(format_args!("next: {}", next_command(false))),
+            }
+        }
+        return Ok(0);
     }
     // The plan first: a refused plan prints its whole report, whatever the
     // outputs (D15).
-    let result = jubarte::edit::prepare(source, plan, &options)
-        .map_err(refuse)?
-        .result;
+    let prepared = jubarte::edit::prepare(source, plan, &options).map_err(refuse)?;
+    let skipped = prepared.skipped.len();
+    publish_edit(job, plan, source, notes, prepared).map(|()| skipped)
+}
+
+/// Write what `prepared` holds where `job` says, with its status lines.
+fn publish_edit(
+    job: &EditJob<'_>,
+    plan: &jubarte::edit::EditPlan,
+    source: &[u8],
+    notes: &[String],
+    prepared: jubarte::edit::PreparedEdit,
+) -> Result<(), (u8, String)> {
+    let fail = |m: String| (1u8, m);
+    let mut result = prepared.result;
+    let primary = match job.mode {
+        Mode::Suggesting => &result.redline,
+        Mode::Editing => &result.clean,
+    };
+    let digest = jubarte::inspect::source_sha256(primary);
+    result.report.output_sha256 = Some(digest.clone());
+    // The failed operations, as a plan bound to the document written:
+    // under suggesting mode that is a redline, whose tracked changes are
+    // the plan's own, so the plan keeps them.
+    let failed = job
+        .skip_failed
+        .as_ref()
+        .filter(|_| !prepared.skipped.is_empty())
+        .map(|path| {
+            let revisions = fixes_revisions(job, plan);
+            let json = jubarte::edit::failed_plan_json(
+                source,
+                plan,
+                &prepared.skipped,
+                &result.report.date,
+                &digest,
+                revisions,
+                job.mode == Mode::Suggesting,
+            );
+            // What the fixes cannot do on the output, on the skip line.
+            let mut notes = Vec::new();
+            if plan.update_fields && revisions == jubarte::edit::ExistingRevisions::Keep {
+                notes.push(
+                    "update_fields left out: it cannot go with existing_revisions keep".to_string(),
+                );
+            }
+            notes.extend(jubarte::edit::keep_notes(&prepared.skipped, revisions));
+            FailedPlan {
+                path: path.clone(),
+                json: json.into_bytes(),
+                notes,
+            }
+        });
+    let result = result;
     let dir = match job.target {
-        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source),
+        EditTarget::Single(path) => {
+            return write_edited(job, path, &result, failed.as_ref(), notes, source);
+        }
         EditTarget::Bundle(dir) => dir,
     };
     let input_dir = job
@@ -1470,6 +1546,15 @@ fn run_edit(
         ],
         Mode::Editing => vec![("clean.docx".into(), result.clean.clone())],
     };
+    // The failed plan goes with the document it binds to.
+    let failed = failed.map(|failed| {
+        let name = failed.path.file_name().map_or_else(
+            || "plan.failed.json".into(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        outputs.push((name.clone(), failed.json));
+        (out_dir.join(name), failed.notes)
+    });
     for (name, rendered) in renders {
         if let Some(pdf) = rendered.pdf {
             outputs.push((format!("{name}.pdf"), pdf));
@@ -1534,7 +1619,11 @@ fn run_edit(
             outputs.len()
         ))
     };
+    let failed = failed
+        .as_ref()
+        .map(|(path, notes)| (path.as_path(), notes.as_slice()));
     if job.quiet {
+        skipped_status(&result, failed);
         return Ok(());
     }
     // Preserve the existing summary contract for ordinary edits.
@@ -1553,6 +1642,7 @@ fn run_edit(
         Mode::Suggesting => &result.redline,
         Mode::Editing => &result.clean,
     };
+    written_status(&result, failed);
     for note in edit_notes(notes, &result, primary) {
         edit_status(format_args!("{note}"));
     }
@@ -1837,8 +1927,29 @@ fn publish_files(
 /// in it (a user's file, an input under a subdirectory) would be deleted by
 /// the replacement, so the publication refuses before staging.
 fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let foreign = foreign_bundle_entries(dir);
+    if foreign.is_empty() {
         return Ok(());
+    }
+    Err((
+        EXIT_USAGE,
+        format!(
+            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); {FORCE_BUNDLE_ONLY}",
+            dir.display(),
+            foreign.join(", ")
+        ),
+    ))
+}
+
+/// What to do about a bundle directory --force will not replace.
+const FORCE_BUNDLE_ONLY: &str =
+    "--force replaces only a jubarte bundle, so move those files or name another --out-dir";
+
+/// The entries of `dir` no earlier bundle's `report.jsonl` names, sorted,
+/// a directory with a trailing `/`; none when `dir` cannot be read.
+fn foreign_bundle_entries(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
     };
     let mut ours: std::collections::BTreeSet<String> = ["report.jsonl".to_string()].into();
     if let Ok(report) = std::fs::read_to_string(dir.join("report.jsonl")) {
@@ -1863,18 +1974,8 @@ fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| format!("{}/", e.file_name().to_string_lossy())),
     );
-    if foreign.is_empty() {
-        return Ok(());
-    }
     foreign.sort();
-    Err((
-        EXIT_USAGE,
-        format!(
-            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); --force replaces only a jubarte bundle, so move those files or name another --out-dir",
-            dir.display(),
-            foreign.join(", ")
-        ),
-    ))
+    foreign
 }
 
 /// The sibling temp directory a bundle is staged in (V2-05). Its parent
@@ -2114,6 +2215,7 @@ fn write_edited(
     job: &EditJob<'_>,
     path: &Path,
     result: &jubarte::edit::EditResult,
+    failed: Option<&FailedPlan>,
     notes: &[String],
     source: &[u8],
 ) -> Result<(), (u8, String)> {
@@ -2123,6 +2225,11 @@ fn write_edited(
         Mode::Editing => &result.clean,
     };
     let mut outputs: Vec<(PathBuf, &[u8])> = vec![(path.to_path_buf(), document)];
+    // `--skip-failed`: the plan of what was left out, published with the
+    // document it binds to.
+    if let Some(failed) = failed {
+        outputs.push((failed.path.clone(), &failed.json));
+    }
     // Render before writing, so a failed render writes nothing.
     let rendered = if job.pdf || job.png {
         let options = jubarte::convert::PdfOptions {
@@ -2190,7 +2297,9 @@ fn write_edited(
             source: &|| recheck_edit_source(job.file, source),
         },
     )?;
+    let failed = failed.map(|f| (f.path.as_path(), f.notes.as_slice()));
     if job.quiet {
+        skipped_status(result, failed);
         return Ok(());
     }
     edit_status(format_args!(
@@ -2215,6 +2324,7 @@ fn write_edited(
             wrote_png_line(&pattern, png_count, job.dpi)
         ));
     }
+    written_status(result, failed);
     for note in edit_notes(notes, result, document) {
         edit_status(format_args!("{note}"));
     }
@@ -2237,6 +2347,150 @@ fn write_edited(
     })
 }
 
+/// The plan of what `--skip-failed` left out: where it goes, its JSON,
+/// and what it cannot do on the document written (the skip line's notes).
+struct FailedPlan {
+    path: PathBuf,
+    json: Vec<u8>,
+    notes: Vec<String>,
+}
+
+/// The status lines after a write: the written document's SHA-256, then
+/// what `--skip-failed` left out and where its plan went.
+fn written_status(result: &jubarte::edit::EditResult, failed: Option<(&Path, &[String])>) {
+    if let Some(digest) = &result.report.output_sha256 {
+        edit_status(format_args!("sha256: {digest}"));
+    }
+    skipped_status(result, failed);
+}
+
+/// The skip line of `--skip-failed`, a warning even under `-q`: operations
+/// asked for are not in the document. Its notes say what the plan of the
+/// fixes, which keeps the output's revisions, cannot do.
+fn skipped_status(result: &jubarte::edit::EditResult, failed: Option<(&Path, &[String])>) {
+    if let Some((path, notes)) = failed {
+        let notes = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", notes.join("; "))
+        };
+        edit_status(format_args!(
+            "skipped {} of {} operations; the fixes are in {}{notes}",
+            result.report.skipped,
+            result.report.operations.len(),
+            slash_path(path),
+        ));
+    }
+}
+
+/// The `existing_revisions` of the fixes plan: under suggesting mode the
+/// document written is a redline, whose tracked changes are the plan's
+/// own, so the fixes keep them.
+fn fixes_revisions(
+    job: &EditJob<'_>,
+    plan: &jubarte::edit::EditPlan,
+) -> jubarte::edit::ExistingRevisions {
+    match job.mode {
+        Mode::Suggesting => jubarte::edit::ExistingRevisions::Keep,
+        Mode::Editing => plan.existing_revisions,
+    }
+}
+
+/// An output of `edit` already on disk.
+enum Taken {
+    /// One --force replaces.
+    Replaceable(PathBuf),
+    /// One --force is refused over too: why, and what to do instead.
+    Blocked(String),
+}
+
+/// The output of `job` already on disk, if any: the document or its PDF,
+/// or the bundle directory, empty or not (an existing --out-dir is refused
+/// without --force). A directory where the document goes, a file where the
+/// bundle goes, or a bundle directory holding what no bundle wrote is
+/// refused under --force as well. The PNG names are known only once
+/// rendered, so a dry run does not look for them.
+fn taken_edit_output(job: &EditJob<'_>) -> Option<Taken> {
+    match job.target {
+        EditTarget::Single(path) => {
+            let taken: Vec<PathBuf> = [
+                Some(path.clone()),
+                job.pdf.then(|| path.with_extension("pdf")),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|p| p.symlink_metadata().is_ok())
+            .collect();
+            match taken
+                .iter()
+                .find(|p| p.symlink_metadata().is_ok_and(|m| m.is_dir()))
+            {
+                Some(dir) => Some(Taken::Blocked(format!(
+                    "{} is a directory; name another output",
+                    slash_path(dir)
+                ))),
+                None => taken.into_iter().next().map(Taken::Replaceable),
+            }
+        }
+        EditTarget::Bundle(dir) => {
+            dir.symlink_metadata().ok()?;
+            let foreign = foreign_bundle_entries(dir);
+            Some(if !dir.is_dir() {
+                Taken::Blocked(format!(
+                    "{} is an existing file, not a directory; name another --out-dir",
+                    slash_path(dir)
+                ))
+            } else if foreign.is_empty() {
+                Taken::Replaceable(dir.clone())
+            } else {
+                Taken::Blocked(format!(
+                    "{} holds what no earlier bundle wrote ({}); {FORCE_BUNDLE_ONLY}",
+                    slash_path(dir),
+                    foreign.join(", ")
+                ))
+            })
+        }
+    }
+}
+
+/// Where `--skip-failed` writes the failed operations: beside the plan as
+/// `PLAN.failed.json`, or beside FILE as `FILE_plan.failed.json` (the name
+/// `--plan` records under, D16) when operation flags made the plan.
+fn failed_plan_path(plan: Option<&Path>, file: &Path) -> PathBuf {
+    let stem = |path: &Path| {
+        path.file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned())
+    };
+    match plan {
+        Some(plan) => plan.with_file_name(format!("{}.failed.json", stem(plan))),
+        None => file.with_file_name(format!("{}_plan.failed.json", stem(file))),
+    }
+}
+
+/// This invocation without its `--dry-run` flag (`--force` added when
+/// `force`), quoted for a POSIX shell: what a clean dry run prints as its
+/// `next:` command.
+fn next_command(force: bool) -> String {
+    let mut args = std::env::args_os().map(|arg| arg.to_string_lossy().into_owned());
+    let program = args.next().unwrap_or_default();
+    let rest: Vec<String> = args.collect();
+    std::iter::once(program)
+        .chain(jubarte::cli::next_command(&rest, force))
+        .map(|arg| shell_quoted(&arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `arg` as a POSIX shell reads it back: bare when it holds only safe
+/// characters, else single-quoted.
+fn shell_quoted(arg: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
+    if !arg.is_empty() && arg.chars().all(safe) {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
 /// One `edit` or `add` invocation, parsed.
 struct EditFlags<'a> {
     verb: jubarte::edit::flags::Verb,
@@ -2248,6 +2502,8 @@ struct EditFlags<'a> {
     operations: &'a [FlagOp],
     options: &'a EditOptions,
     dry_run: bool,
+    /// `--skip-failed` (`edit` only; `add` passes false).
+    skip_failed: bool,
     /// `--require-change` (`edit` only; `add` passes false).
     require_change: bool,
     pdf: bool,
@@ -2269,6 +2525,12 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
+        if flags.skip_failed {
+            return Err((
+                EXIT_USAGE,
+                "--skip-failed applies a plan, and with --plan the operation flags record into it: drop --plan to apply them with --skip-failed, or drop --skip-failed to record".into(),
+            ));
+        }
         return record_plan(flags, path, &source);
     }
     // What --consume deletes once the edit is written: the plan file as it
@@ -2314,6 +2576,9 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
             Mode::Suggesting
         },
         dry_run: flags.dry_run,
+        skip_failed: flags
+            .skip_failed
+            .then(|| failed_plan_path(flags.plan, flags.file)),
         require_change: flags.require_change,
         force: flags.options.force,
         pdf: flags.pdf,
@@ -2322,7 +2587,17 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         revisions: flags.revisions,
         quiet: flags.quiet,
     };
-    run_edit(&job, &plan, &source, &notes)?;
+    let skipped = run_edit(&job, &plan, &source, &notes)?;
+    if let Some((path, _)) = consumed.as_ref().filter(|_| skipped > 0) {
+        // Even under -q: the caller asked for the plan gone. The skip line
+        // can send them back to it.
+        edit_status(format_args!(
+            "note: --consume kept {}: {skipped} of its {} operations did not land",
+            slash_path(path),
+            plan.operations.len()
+        ));
+        return Ok(());
+    }
     if let Some((path, held)) = consumed {
         let kept = |why: String| {
             (
@@ -3805,6 +4080,7 @@ fn cli_main() -> ExitCode {
             consume,
             options,
             dry_run,
+            skip_failed,
             require_change,
             pdf,
             png,
@@ -3827,6 +4103,7 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run,
+                skip_failed,
                 require_change,
                 pdf,
                 png,
@@ -3854,6 +4131,7 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run: false,
+                skip_failed: false,
                 require_change: false,
                 pdf: false,
                 png: false,

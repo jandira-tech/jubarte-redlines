@@ -117,7 +117,11 @@ pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, 
     for id in ids {
         if listed.iter().any(|c| c.id == id) {
             let kind = reject_kind(&listed, id, None);
-            lowered.operations.push(super::Operation { id: None, kind });
+            lowered.operations.push(super::Operation {
+                id: None,
+                group: None,
+                kind,
+            });
         }
     }
     Ok(Some(lowered))

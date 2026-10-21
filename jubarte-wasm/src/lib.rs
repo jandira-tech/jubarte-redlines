@@ -1704,6 +1704,8 @@ mod tests {
         assert_eq!(manifest["operations"]["png"], false);
         assert_eq!(manifest["operations"]["pdf"], cfg!(feature = "pdf"));
         assert_eq!(manifest["operations"]["edit"], true);
+        // `apply_plan` here takes no --skip-failed.
+        assert_eq!(manifest["operations"]["edit_skip_failed"], false);
         assert_eq!(manifest["operations"]["fields"], cfg!(feature = "pdf"));
         let yes = |on: bool| if on { "yes" } else { "no" };
         let text = capabilities_text(None).unwrap();

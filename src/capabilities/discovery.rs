@@ -233,9 +233,12 @@ pub fn discovery(runtime: &str, operation: Option<&str>, field: Option<&str>) ->
             "reason": "unsupported operation",
             "nearest": nearest(operation.unwrap_or_default(), kinds)});
     }
+    // `why` is an annotation `--skip-failed` writes and the parser ignores:
+    // never the field a misspelled name meant.
     let fields = selected
         .iter()
         .flat_map(|p| p["fields"].as_object().expect("fields").keys().cloned())
+        .filter(|f| f != "why")
         .collect();
     let mut selected: Vec<_> = selected
         .into_iter()

@@ -43,6 +43,12 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **`edit::PrepareOptions` has a `syntax` field** (`PlanSyntax`: `V1`,
   `Flags`, `V2`), the request syntax a refusal quotes. A struct literal adds
   `..PrepareOptions::default()`.
+- **`--skip-failed` adds library fields (#1253).** `edit::PrepareOptions`
+  has `skip_failed`, `edit::Operation` an optional `group`,
+  `edit::EditReport` `skipped` and `output_sha256`, `edit::PreparedEdit`
+  `skipped`, and `capabilities::Operations` `edit_skip_failed`. A struct
+  literal adds the field (`skip_failed: false`, `group: None`) or
+  `..Default::default()`.
 
 ### Fixed
 
@@ -191,6 +197,36 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Added
 
+- **`edit --skip-failed` applies what passes (#1253).** Every operation
+  that passes is applied and the failed ones are left out: the output is
+  the bytes the plan without them writes, exit 0. stderr says `skipped 2 of
+  14 operations; the fixes are in PLAN.failed.json`, a plan of the failed
+  operations to fix and run on the output (its `source_sha256`, the run's
+  `date`, a `why` on each operation that the parser ignores). A
+  positional paragraph (`p3`, `{"index": 3}`, `t0.row1.cell2`), or a
+  control named through one (`p3.cc0`), that the applied operations moved
+  is renamed to its id in the output, and `why` says `p3 is p4 in the
+  output` in the plan's own spelling. One with no one-to-one counterpart in
+  the output (deleted, merged, split) becomes `source:p3`, which no
+  document resolves, so it runs only once given again; a skipped operation
+  `existing_revisions` keep refuses
+  (`insert_footnote`, `insert_image`, `page_setup`, `fill_control`) says,
+  on the skip line and in `why`, to fix it in the original plan. Operations
+  sharing a `"group"` stand or fall together (`GROUP_FAILED`). The report's
+  `summary` says `"status":"partial"` with `ops.skipped`. `STALE_SOURCE`, a
+  failing `resolve_revisions`, a failing strike or restore that
+  `--reject --visible` added, and a plan whose every operation fails are
+  never skipped; those strikes and restores keep the names the whole plan
+  gives them. `--consume` keeps a plan that did not land whole, and says
+  so. The manifest's `operations.edit_skip_failed` says whether a runtime
+  has it (the CLI and Rust; not yet the Python and WASM bindings), whichever
+  runtime asks.
+- **Every edit write prints `sha256: <hex>`** of the primary output, also
+  the `summary` event's `output_sha256`, and a `--dry-run` that passes
+  whole ends with `next:`, the command that writes it: the same arguments
+  without the `--dry-run` flag (a FILE named `--dry-run` after `--` stays),
+  and `--force` before any `--` when the output, or an `--out-dir` empty
+  or not, is already there (#1253). `cli::next_command` builds it.
 - **Visible rejects: `strike` and `restore` (#1252).** `edit FILE -p r12
   --strike` deletes another author's insertion with your tracked deletion
   inside it; `-p r12 --restore` leaves their deletion and inserts a copy of

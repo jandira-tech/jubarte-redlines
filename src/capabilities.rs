@@ -196,6 +196,12 @@ pub struct Operations {
     /// a11y,style,structure`).
     #[serde(default)]
     pub audit: bool,
+    /// Edit plans run with `--skip-failed`
+    /// ([`crate::edit::PrepareOptions::skip_failed`]): the operations that
+    /// pass are applied, and the failed ones are written as a plan of
+    /// their own.
+    #[serde(default)]
+    pub edit_skip_failed: bool,
 }
 
 impl Operations {
@@ -228,6 +234,7 @@ impl Operations {
             fields,
             scrub,
             audit,
+            edit_skip_failed,
         } = self;
         vec![
             ("compare", *compare),
@@ -255,6 +262,7 @@ impl Operations {
             ("fields", *fields),
             ("scrub", *scrub),
             ("audit", *audit),
+            ("edit_skip_failed", *edit_skip_failed),
         ]
     }
 }
@@ -365,6 +373,13 @@ fn dispatches_v2(runtime: &str) -> bool {
     matches!(runtime, "cli" | "rust")
 }
 
+/// Whether `runtime` runs an edit plan with `--skip-failed`: the CLI and a
+/// Rust embedder ([`crate::edit::PrepareOptions::skip_failed`]). The Python
+/// and WASM bindings take no such option.
+fn skips_failed(runtime: &str) -> bool {
+    matches!(runtime, "cli" | "rust")
+}
+
 /// The plan versions `runtime` dispatches, ascending: the manifest's
 /// `edit_plan_versions` and the focused matrix agree on it.
 fn dispatched_plan_versions(runtime: &str) -> Vec<u32> {
@@ -377,8 +392,9 @@ fn dispatched_plan_versions(runtime: &str) -> Vec<u32> {
 
 /// Builds a [`Capabilities`] manifest for `runtime` (typically `cli`,
 /// `python`, `rust`, `wasm`). Every operation in the default build is
-/// `true`; a wrapper overrides fields in its own manifest when it
-/// compiles an operation out.
+/// `true`, but what a runtime has no entry point for (`edit_skip_failed`,
+/// the plan versions); a wrapper overrides fields in its own manifest when
+/// it compiles an operation out.
 #[must_use]
 pub fn capabilities(runtime: &str) -> Capabilities {
     Capabilities {
@@ -411,6 +427,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             fields: true,
             scrub: true,
             audit: true,
+            edit_skip_failed: skips_failed(runtime),
         },
         edit_plan_versions: dispatched_plan_versions(runtime),
         edit_operations: crate::edit::dispatched_operation_kinds(),
