@@ -13,7 +13,7 @@
 //! The default paragraph style's line gives its whole look: font, bold and
 //! italic, size, spacing before and after (none printed is none), line
 //! spacing (none printed is single), keep-next, keep-lines, a paragraph
-//! indent (`indent 0.5in`, and `first-line` or `hanging` when set),
+//! indent (`indent 0.5in`, and `first-line`, `hanging` or `right` when set),
 //! contextual spacing and alignment. A heading's line names its style, its
 //! font, size, bold and italic, and only the spacing, keep-next, keep-lines,
 //! indent, contextual spacing and alignment that differ from the default
@@ -206,6 +206,8 @@ pub(super) struct StyleSpec {
     pub keep_lines: bool,
     /// Left indent, twips.
     pub left: Option<i64>,
+    /// Right indent, twips.
+    pub right: Option<i64>,
     /// First-line indent, twips.
     pub first_line: Option<i64>,
     /// Hanging indent, twips.
@@ -279,6 +281,7 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
         keep_next: false,
         keep_lines: false,
         left: None,
+        right: None,
         first_line: None,
         hanging: None,
         contextual_spacing: false,
@@ -289,6 +292,8 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
             Some(("before", v)) => spec.before = Some(points(v, 20.0)?),
             Some(("after", v)) => spec.after = Some(points(v, 20.0)?),
             Some(("indent", v)) => spec.left = Some(twips_in(v)?),
+            // `right` alone is the alignment; with a value, the indent.
+            Some(("right", v)) => spec.right = Some(twips_in(v)?),
             Some(("first-line", v)) => spec.first_line = Some(twips_in(v)?),
             Some(("hanging", v)) => spec.hanging = Some(twips_in(v)?),
             Some(("contextual", "spacing")) => spec.contextual_spacing = true,
@@ -755,6 +760,7 @@ struct Given {
     keep_lines: bool,
     contextual: bool,
     left: Option<i64>,
+    right: Option<i64>,
     first_line: Option<i64>,
     hanging: Option<i64>,
 }
@@ -776,6 +782,7 @@ impl Given {
             keep_lines: false,
             contextual: false,
             left: None,
+            right: None,
             first_line: None,
             hanging: None,
         }
@@ -800,6 +807,7 @@ fn effective(spec: &StyleSpec) -> Given {
         keep_lines: spec.keep_lines,
         contextual: spec.contextual_spacing,
         left: spec.left,
+        right: spec.right,
         first_line: spec.first_line,
         hanging: spec.hanging,
     }
@@ -866,6 +874,9 @@ fn document_defaults(styles: &str) -> Given {
         if let Some(ind) = ppr.child("ind") {
             if let Some(left) = signed(ind, "left").or_else(|| signed(ind, "start")) {
                 given.left = Some(left);
+            }
+            if let Some(right) = signed(ind, "right").or_else(|| signed(ind, "end")) {
+                given.right = Some(right);
             }
             if let Some(first) = signed(ind, "firstLine") {
                 given.first_line = Some(first);
@@ -1005,12 +1016,16 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
         ppr.push_str("/>");
     }
     let left = indent_attr(spec.left, inherited.left);
+    let right = indent_attr(spec.right, inherited.right);
     let first = indent_attr(spec.first_line, inherited.first_line);
     let hanging = indent_attr(spec.hanging, inherited.hanging);
-    if left.is_some() || first.is_some() || hanging.is_some() {
+    if left.is_some() || right.is_some() || first.is_some() || hanging.is_some() {
         ppr.push_str("<w:ind");
         if let Some(value) = left {
             ppr.push_str(&format!(" w:left=\"{value}\""));
+        }
+        if let Some(value) = right {
+            ppr.push_str(&format!(" w:right=\"{value}\""));
         }
         if let Some(value) = first {
             ppr.push_str(&format!(" w:firstLine=\"{value}\""));
@@ -1384,6 +1399,35 @@ mod tests {
             normal.contains("<w:ind w:left=\"-5\" w:hanging=\"10\"/>"),
             "{normal}"
         );
+    }
+
+    #[test]
+    fn a_right_indent_is_written_and_a_bare_right_still_aligns() {
+        // `right 0.5in` is the style's right indent (#1489); `right` alone
+        // is still its alignment, as on id lines.
+        let specs = legend(
+            "styles:\n  \
+             Normal: Times New Roman 11pt, left\n  \
+             Quote: Times New Roman 11pt, indent 0.5in, right 0.5in, named Quote Text\n  \
+             Flush: Times New Roman 11pt, right\n  \
+             Back: Times New Roman 11pt, right 0in\n",
+        );
+        assert_eq!(specs[1].right, Some(720));
+        assert_eq!(specs[2].right, None);
+        assert_eq!(specs[2].align, Some("right"));
+        assert_eq!(specs[3].right, Some(0));
+        let out = apply("<w:styles></w:styles>", &specs);
+        let quote = style_element(&out, "Quote");
+        assert!(
+            quote.contains("<w:ind w:left=\"720\" w:right=\"720\"/>"),
+            "{quote}"
+        );
+        let flush = style_element(&out, "Flush");
+        assert!(flush.contains("<w:jc w:val=\"right\"/>"), "{flush}");
+        assert!(!flush.contains("<w:ind"), "{flush}");
+        // An explicit zero is kept, as `indent 0in` is: the source said it.
+        let back = style_element(&out, "Back");
+        assert!(back.contains("<w:ind w:right=\"0\"/>"), "{back}");
     }
 
     #[test]

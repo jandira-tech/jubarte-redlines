@@ -755,6 +755,8 @@ struct Resolved {
     contextual_spacing: bool,
     /// Twips.
     left: Option<f64>,
+    /// Twips.
+    right: Option<f64>,
     first_line: Option<f64>,
     hanging: Option<f64>,
     align: Option<String>,
@@ -830,6 +832,9 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
         if let Some(ind) = ppr.child("ind") {
             if r.left.is_none() {
                 r.left = twips(ind, "left").or_else(|| twips(ind, "start"));
+            }
+            if r.right.is_none() {
+                r.right = twips(ind, "right").or_else(|| twips(ind, "end"));
             }
             if r.first_line.is_none() {
                 r.first_line = twips(ind, "firstLine");
@@ -995,7 +1000,8 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     if r.keep_lines && differs(|x| x.keep_lines.to_string()) {
         parts.push("keep-lines".to_string());
     }
-    // Left, then first-line, then hanging: the order the writer reads back.
+    // Left, then first-line, hanging and right (#1489): the order the
+    // writer reads back.
     if differs(|x| format!("{:?}", x.left))
         && let Some(left) = r.left
         && (base.is_some() || left != 0.0)
@@ -1013,6 +1019,12 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
         && (base.is_some() || hanging != 0.0)
     {
         parts.push(format!("hanging {}", super::agent::inches(hanging)));
+    }
+    if differs(|x| format!("{:?}", x.right))
+        && let Some(right) = r.right
+        && (base.is_some() || right != 0.0)
+    {
+        parts.push(format!("right {}", super::agent::inches(right)));
     }
     if r.contextual_spacing && differs(|x| x.contextual_spacing.to_string()) {
         parts.push("contextual spacing".to_string());
@@ -2391,6 +2403,36 @@ mod tests {
             font: Some("Calibri".to_string()),
             size_half_points: Some(22.0),
             left: Some(0.0),
+            ..Resolved::default()
+        };
+        assert_eq!(describe(&flat, None), "Calibri 11pt, left");
+    }
+
+    /// A style's right indent is named, as `right 0.5in` (the id line's
+    /// word): the legend dropped it, and the written text ran wider (#1489).
+    /// It inherits through `basedOn` as the left indent does, and Strict's
+    /// `w:end` reads as `w:right`.
+    #[test]
+    fn the_legend_names_a_right_indent() {
+        let xml = format!(
+            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:styleId="Quote"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:styleId="Inherits"><w:basedOn w:val="Quote"/></w:style><w:style w:styleId="Reset"><w:basedOn w:val="Quote"/><w:pPr><w:ind w:right="0"/></w:pPr></w:style><w:style w:styleId="End"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:end="1440"/></w:pPr></w:style><w:style w:styleId="Hang"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="2520" w:right="720" w:hanging="2520"/></w:pPr></w:style></w:styles>"#
+        );
+        let styles = parse_xml(xml.as_bytes()).unwrap();
+        let base = resolve(Some(&styles), None, "Normal");
+        let line = |id: &str| describe(&resolve(Some(&styles), None, id), Some(&base));
+        assert_eq!(describe(&base, None), "Calibri 11pt, left");
+        assert_eq!(line("Quote"), "Calibri 11pt, indent 0.5in, right 0.5in");
+        assert_eq!(line("Inherits"), "Calibri 11pt, indent 0.5in, right 0.5in");
+        assert_eq!(line("Reset"), "Calibri 11pt, indent 0.5in, right 0in");
+        assert_eq!(line("End"), "Calibri 11pt, right 1in");
+        assert_eq!(
+            line("Hang"),
+            "Calibri 11pt, indent 1.75in, hanging 1.75in, right 0.5in"
+        );
+        let flat = Resolved {
+            font: Some("Calibri".to_string()),
+            size_half_points: Some(22.0),
+            right: Some(0.0),
             ..Resolved::default()
         };
         assert_eq!(describe(&flat, None), "Calibri 11pt, left");

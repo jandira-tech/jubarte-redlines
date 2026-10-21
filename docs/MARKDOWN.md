@@ -529,9 +529,10 @@ paragraphs included, keyed by its id
 names only what its style sets apart from the style it is based on:
 font and size, `before`/`after` (`after 0pt` too, when the base has
 some), `line` (`line 1` for single, when the base is not), alignment, `keep-next`,
-`keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, and
-`contextual spacing` (no space between paragraphs of that style, as List
-Paragraph has). A line ends `, named Text Heading 2` when the style's name
+`keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, `right Xin`
+for the right indent (the id line's word; `right` alone is the alignment),
+and `contextual spacing` (no space between paragraphs of that style, as
+List Paragraph has). A line ends `, named Text Heading 2` when the style's name
 is not its id (for a `HeadingN` heading, not `heading N`). The `table:`
 line of the legend ends `, named Normal Table` the same way when the
 style's name is not the one the writer would give its id; a style the

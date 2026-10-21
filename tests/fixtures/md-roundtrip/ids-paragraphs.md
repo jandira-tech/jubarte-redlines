@@ -12,17 +12,17 @@ styles:
   Normal: Times New Roman 12pt, left  # default; unannotated paragraphs use it
   "#": Heading1, Arial bold 16pt, after 18pt, line 20pt exact, keep-next, keep-lines, center
   "##": Heading2, Arial bold 12pt, before 12pt, after 6pt, keep-next, keep-lines
-  "###": Heading3, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines
-  "####": Heading4, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines
+  "###": Heading3, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines, right 0.5in
+  "####": Heading4, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines, right 1in
   DocumentTitle: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Document Title
   TitlePage: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Title Page
   TitleDocument: Arial bold 18pt, line 20pt exact, center, named Title Document
   DocumentTOC: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Document TOC
-  TOC1: Arial bold 12pt, before 18pt, after 3pt, keep-next, indent 1.75in, hanging 1.75in, named toc 1
-  TOC2: Times New Roman 12pt, indent 1.75in, hanging 1.75in, named toc 2
+  TOC1: Arial bold 12pt, before 18pt, after 3pt, keep-next, indent 1.75in, hanging 1.75in, right 0.5in, named toc 1
+  TOC2: Times New Roman 12pt, indent 1.75in, hanging 1.75in, right 0.5in, named toc 2
   TextHeading2: Times New Roman 12pt, before 6pt, after 6pt, justify, named Text Heading 2
-  TextHeading3: Times New Roman 12pt, before 6pt, after 6pt, indent 0.5in, justify, named Text Heading 3
-  TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, indent 1in, justify, named Text Heading 4
+  TextHeading3: Times New Roman 12pt, before 6pt, after 6pt, indent 0.5in, right 0.5in, justify, named Text Heading 3
+  TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, indent 1in, right 1in, justify, named Text Heading 4
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 sections:
   2: {p11-p147, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer1.p1, text: [Smith Family Trust, "{PAGE}i{/}"], center}}}
