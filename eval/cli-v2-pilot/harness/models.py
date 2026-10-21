@@ -406,7 +406,7 @@ class GradeRecord(StrictModel):
     task_checks: list[CheckResult]
     task_completion_overall: bool
     rubric: list[RubricAssessment]
-    claim_value: ClaimValue | None
+    claim_value: ClaimValue | None = None
     claim_expected: ClaimValue
     claim_accuracy: Literal["accurate", "inaccurate", "missing"]
     claim_detail: str

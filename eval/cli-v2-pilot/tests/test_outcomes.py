@@ -315,6 +315,61 @@ def test_preservation_defect_skips_settlement_targets() -> None:
     assert defects == []
 
 
+def test_preservation_partial_settlement_keeps_the_surviving_member() -> None:
+    """`jubarte read --json` groups a substitution as r0+1 with members;
+    settling one member must license only that member — the surviving
+    half is still a preservation target, under its own ref."""
+
+    from harness.grading import compute_preservation_defects
+
+    group = {
+        "id": "r0+1",
+        "ref": "r0+1",
+        "kind": "replacement",
+        "author": "sara.k",
+        "target": "text",
+        "text": "zero backend required → no backend required",
+        "paragraph": "p0",
+        "members": [
+            {"id": "r0", "kind": "deletion", "target": "text", "text": "zero backend required"},
+            {"id": "r1", "kind": "insertion", "target": "text", "text": "no backend required"},
+        ],
+    }
+    surviving = {
+        "id": "r1",
+        "ref": "r1",
+        "kind": "insertion",
+        "author": "sara.k",
+        "target": "text",
+        "text": "no backend required",
+        "paragraph": "p0",
+    }
+    src = Snapshot(
+        ok=True,
+        paragraphs=[{"id": "p0", "text": "x", "runs": [], "limitations": []}],
+        revisions=[group],
+        comments=[],
+    )
+    kept = Snapshot(
+        ok=True,
+        paragraphs=[{"id": "p0", "text": "x", "runs": [], "limitations": []}],
+        revisions=[surviving],
+        comments=[],
+    )
+    assert compute_preservation_defects(src, kept, settlement_targets={"r0"}) == []
+
+    lost = Snapshot(
+        ok=True,
+        paragraphs=[{"id": "p0", "text": "x", "runs": [], "limitations": []}],
+        revisions=[],
+        comments=[],
+    )
+    defects = compute_preservation_defects(src, lost, settlement_targets={"r0"})
+    assert len(defects) == 1
+    assert defects[0].kind == "revision"
+    assert defects[0].id == "r1"
+
+
 # ---------------------------------------------------------------------------
 # refusal classes
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ contract is exit code plus a JSONL findings stream.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,10 +36,37 @@ def test_read_snapshot_round_trips_paragraphs_changes_comments(
 
 
 def test_validate_returns_findings_on_tracked_change_origin(
-    jubarte_binary: Path, repo_root: Path
+    jubarte_binary: Path, tmp_path: Path, repo_root: Path
 ) -> None:
+    """`--original --author` audits the differences against the original:
+    a file validated against itself has none, so the artifact here is
+    built with `jubarte edit` under a foreign author."""
     original = repo_root / "tests/fixtures/f4/original.docx"
-    artifact = repo_root / "tests/fixtures/f4/original.docx"
+    source = tmp_path / "input.docx"
+    source.write_bytes(original.read_bytes())
+    artifact = tmp_path / "out.docx"
+    edit = subprocess.run(
+        [
+            str(jubarte_binary),
+            "edit",
+            str(source),
+            "-p",
+            "p6",
+            "--anchor",
+            "backend",
+            "--content",
+            "server",
+            "--author",
+            "Mallory",
+            "-o",
+            str(artifact),
+            "-q",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert edit.returncode == 0, edit.stderr
     result, findings = validate(
         jubarte_binary, artifact, original=original, author="PilotBot"
     )

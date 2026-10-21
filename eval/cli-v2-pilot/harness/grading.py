@@ -179,8 +179,28 @@ def compute_preservation_defects(
     """
     allowed = set(settlement_targets or ())
     defects = []
+
+    def entities(kind: str, rows: Iterable[dict]) -> Iterable[dict]:
+        """`jubarte read --json` groups a substitution as one row whose
+        `members` carry the per-change ids the task files name. Compare
+        member by member so settling r0 of r0+1 licenses only r0."""
+        for row in rows:
+            members = row.get("members") if kind == "revision" else None
+            if not members:
+                yield row
+                continue
+            for member in members:
+                merged = {k: v for k, v in row.items() if k != "members"}
+                merged.update(member)
+                merged.pop("ref", None)
+                yield merged
+
     for kind, src, art in (
-        ("revision", source_snap.revisions, artifact_snap.revisions),
+        (
+            "revision",
+            entities("revision", source_snap.revisions),
+            entities("revision", artifact_snap.revisions),
+        ),
         ("comment", source_snap.comments, artifact_snap.comments),
     ):
         by_ref = {entity_ref(row, kind): row for row in art}
@@ -247,14 +267,14 @@ def compute_preservation_defects(
 
     def table_structure(table):
         return {
-            **{
-                k: v
-                for k, v in table.items()
-                if k not in ("index", "rows", "nested")
-            },
+            **{k: v for k, v in table.items() if k not in ("index", "rows", "nested")},
             "rows": [
                 [
-                    {k: v for k, v in cell.items() if k not in ("text", "paragraph_ids")}
+                    {
+                        k: v
+                        for k, v in cell.items()
+                        if k not in ("text", "paragraph_ids")
+                    }
                     for cell in row
                 ]
                 for row in table.get("rows", [])
@@ -677,19 +697,46 @@ def grade_one(
             if validate_rc != 0 and tracked_audit and task.settlement:
                 # The edits audit cannot mark what a settlement task
                 # licenses: removing a `settled_revisions` entry reports
-                # FOREIGN_AUTHOR "gone", which is the declared effect,
-                # not foreign damage. Anything else still fails.
+                # FOREIGN_AUTHOR "gone", and rejecting a foreign
+                # insertion leaves no tracked mark, so the same removal
+                # also shows as UNTRACKED_EDIT at the revision's
+                # paragraph. Both are the declared effect, not foreign
+                # damage. Anything else still fails.
+                settled_locations: set[str] = set()
+                try:
+                    src_snap = _source_snapshot(grader_binary, audit_source)
+                    if src_snap.ok:
+                        settled_locations = {
+                            str(row.get("paragraph") or rev.get("paragraph"))
+                            for rev in src_snap.revisions
+                            for row in (rev, *rev.get("members", []))
+                            if entity_ref(row, "revision") in task.settled_revisions
+                            and (row.get("paragraph") or rev.get("paragraph"))
+                        }
+                except (
+                    OSError,
+                    TimeoutError,
+                    subprocess.TimeoutExpired,
+                    ValueError,
+                ) as exc:
+                    errors.append(f"settlement licence inspection: {exc}")
                 failing = [
                     f
                     for f in validate_findings
-                    if f.get("set") in ("word", "edits")
-                    or f.get("severity") == "error"
+                    if f.get("set") in ("word", "edits") or f.get("severity") == "error"
                 ]
                 licensed = (
-                    f.get("code") == "FOREIGN_AUTHOR"
-                    and any(
-                        f"{ref} in the original is gone" in (f.get("message") or "")
-                        for ref in task.settled_revisions
+                    (
+                        f.get("code") == "FOREIGN_AUTHOR"
+                        and any(
+                            f"{ref} in the original is gone" in (f.get("message") or "")
+                            for ref in task.settled_revisions
+                        )
+                    )
+                    or (
+                        f.get("code") == "UNTRACKED_EDIT"
+                        and bool(f.get("location"))
+                        and f.get("location") in settled_locations
                     )
                     for f in failing
                 )
