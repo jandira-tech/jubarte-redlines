@@ -76,3 +76,17 @@ impl ComparisonLog {
             .count()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_warning() {
+        let mut log = ComparisonLog::new();
+        log.warning("test warning");
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].code, ComparisonLogCode::Warning);
+        assert_eq!(log.entries[0].message, "test warning");
+    }
+}
