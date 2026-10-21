@@ -754,7 +754,7 @@ fn macro_packages_are_refused() {
         let mut data = Vec::new();
         std::io::Read::read_to_end(&mut f, &mut data).unwrap();
         out.start_file(
-            f.name().to_string(),
+            f.name().expect("decode ZIP fixture name").into_owned(),
             zip::write::SimpleFileOptions::default(),
         )
         .unwrap();
@@ -1758,28 +1758,90 @@ fn whole_replace_across_runs_keeps_formatting_and_comment() {
     let source = docx(&format!(
         "<w:p>{}{}</w:p>",
         run("Notices. Send notices by ", false, false, None),
-        run("email to legal@acme.example", true, false, None)
-            + &run(" within two days.", false, false, None)
+        run("email to Alice", true, false, None) + &run(" within two days.", false, false, None)
     ));
     let result = apply_plan(
         &source,
         &plan(
             &source,
-            r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to legal","replacement":"by courier to legal","whole":true,"comment":"Courier only."}]"#,
+            r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to","replacement":"by courier to","whole":true,"comment":"Courier only."}]"#,
         ),
     )
     .unwrap();
     assert_eq!(
         marked_paragraphs(&result.redline),
-        [
-            "Notices. Send notices [-by email to legal-]{+by courier to legal+}@acme.example within two days."
-        ]
+        ["Notices. Send notices [-by email to-]{+by courier to+} Alice within two days."]
     );
     let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let root = dom.root(document).unwrap();
+    let mut seen = std::collections::HashSet::new();
+    let mut count = 0;
+    for node in dom.descendants(root, None) {
+        let Some(name) = dom.name(node) else { continue };
+        if name.namespace_name() == W::URI && matches!(name.local_name(), "rPrChange" | "pPrChange")
+        {
+            let id = dom.attribute(node, &W::id()).unwrap();
+            assert!(
+                seen.insert((name.local_name().to_string(), id.to_string())),
+                "duplicate {}:{id} in word/document.xml",
+                name.local_name()
+            );
+            count += 1;
+        }
+    }
+    assert!(count >= 2, "both sides retain their formatting history");
     assert_eq!(xml.matches("<w:commentReference ").count(), 1);
-    // "email to legal" was bold in the source; its deleted copy stays bold.
+    // "email to" was bold in the source; its deleted copy stays bold.
     let del = &xml[xml.find("<w:del ").unwrap()..xml.find("</w:del>").unwrap()];
     assert!(del.contains("<w:b/>") || del.contains("<w:b />"), "{del}");
+    assert_word_valid_package(&result.redline);
+}
+
+/// Annotation ids are independent of the revision-record allocator.
+#[test]
+fn whole_replace_ignores_div_and_bookmark_ids() {
+    let source = docx_with(
+        r#"<w:p><w:bookmarkStart w:id="900000" w:name="Alice"/><w:ins w:id="10" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Send notices by email to Alice.</w:t></w:r></w:ins><w:bookmarkEnd w:id="900000"/></w:p>"#,
+        &[Part {
+            name: "word/webSettings.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings",
+            xml: r#"<w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:divs><w:div w:id="2147483647"/></w:divs></w:webSettings>"#,
+        }],
+    );
+    let mut edit = plan(
+        &source,
+        r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to","replacement":"by courier to","whole":true}]"#,
+    );
+    edit.existing_revisions = jubarte::edit::ExistingRevisions::Accept;
+    let result = apply_plan(&source, &edit).unwrap();
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let ids: Vec<u64> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter_map(|n| {
+            let name = dom.name(n)?;
+            (name.namespace_name() == W::URI
+                && matches!(name.local_name(), "ins" | "del" | "rPrChange" | "pPrChange"))
+            .then(|| dom.attribute(n, &W::id()).unwrap().parse().unwrap())
+        })
+        .collect();
+    assert!(ids.len() >= 2, "both replacement sides must be tracked");
+    let bound = 10 + ids.len() as u64;
+    assert!(
+        ids.iter().all(|&id| id <= bound && id <= 2147483647),
+        "revision ids {ids:?} exceed input revision max 10 + {} records (bound {bound}) or signed 32-bit range",
+        ids.len()
+    );
+    assert_eq!(
+        marked_paragraphs(&result.redline),
+        ["Send notices [-by email to-]{+by courier to+} Alice."]
+    );
     assert_word_valid_package(&result.redline);
 }
 

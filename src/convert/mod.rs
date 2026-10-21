@@ -321,7 +321,7 @@ fn with_options<T>(options: PdfOptions, f: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod with_options_tests {
     use super::*;
 
@@ -772,7 +772,8 @@ fn with_layout<T>(
 ) -> Result<T, ConvertError> {
     crate::document_comparer::admit_package(docx)
         .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
     let main = pkg
@@ -5327,7 +5328,7 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod default_tab_tests {
     use super::*;
 
@@ -5343,7 +5344,7 @@ mod default_tab_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod pg_border_tests {
     use super::*;
 
@@ -7350,7 +7351,7 @@ fn settings_ul_trail_space(pkg: &PartFs) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod settings_tests {
     use super::*;
 
@@ -12312,7 +12313,7 @@ fn iso8601(CivilDateTime { y, m, d, h, min, s }: CivilDateTime) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod iso8601_tests {
     use super::*;
 
@@ -12421,6 +12422,41 @@ fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
     Some(civil_from_unix_secs(local - offset_min * 60))
 }
 
+/// A revision timestamp ordered by UTC seconds and fractional digits.
+/// As with W3CDTF fields, a missing offset is UTC.
+pub(crate) fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
+    crate::util::datetime::parse_datetime(raw).ok()?;
+    let time = parse_w3cdtf(raw)?;
+    let seconds = unix_days_from_civil(time.y, time.m, time.d) * 86_400
+        + i64::from(time.h * 3600 + time.min * 60 + time.s);
+    let fraction = raw[19..]
+        .strip_prefix('.')
+        .unwrap_or_default()
+        .split(['Z', '+', '-'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('0');
+    Some((seconds, fraction))
+}
+
+/// Format an instant in a fixed offset, retaining its fractional seconds.
+pub(crate) fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -> String {
+    let mut value = iso8601(civil_from_unix_secs(seconds + offset));
+    value.pop();
+    if !fraction.is_empty() {
+        value.push('.');
+        value.push_str(fraction);
+    }
+    if offset == 0 {
+        value.push('Z');
+    } else {
+        let sign = if offset < 0 { '-' } else { '+' };
+        let minutes = offset.abs() / 60;
+        value.push_str(&format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60));
+    }
+    value
+}
+
 /// `docProps/core.xml` dates, read as elements (a title that merely
 /// contains "created" is text, not a tag).
 fn core_dates_from_xml(xml: &str) -> CoreDates {
@@ -12474,7 +12510,7 @@ fn weekday_sun0(y: i32, m: u32, d: u32) -> usize {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn format_date_picture(pic: &str, y: i32, m: u32, d: u32) -> String {
     format_datetime_picture(
         pic,
@@ -15809,7 +15845,7 @@ impl MathAlphanumerics {
     }
 
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     fn only<const N: usize>(drawn: [char; N]) -> Self {
         Self::set(MathFace::Only(drawn.into_iter().collect()))
     }
@@ -16258,7 +16294,7 @@ fn collapse_ws(text: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn collect_textboxes(
     src: Option<(&PartFs, &str)>,
     dom: &Dom,
@@ -17838,7 +17874,7 @@ fn chart_ser_color(dom: &Dom, ser: NodeId, idx: usize, theme: &ThemeFonts) -> [f
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn parse_chart(xml: &str) -> Option<ChartData> {
     parse_chart_with(xml, &ThemeFonts::default())
 }
@@ -33524,7 +33560,7 @@ fn wrap_runs_segment(
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn layout(
     fonts: &Fonts,
     page: &PageSetup,
@@ -36338,7 +36374,7 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod page_num_fmt_labels {
     use super::{
         NumFmt, chicago_label, decimal_fullwidth_label, format_num, ideograph_digital_label,
@@ -36684,7 +36720,7 @@ mod page_num_fmt_labels {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod page_count_tests {
     use super::pdf_page_count;
 
@@ -36696,7 +36732,7 @@ mod page_count_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod theme_slot_tests {
     use super::*;
 
@@ -37252,7 +37288,7 @@ mod theme_slot_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod field_tests {
     use super::*;
 
@@ -38372,7 +38408,7 @@ mod field_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod drawing_tests {
     use super::*;
 
@@ -44349,7 +44385,7 @@ mod drawing_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod numbering_tests {
     use super::*;
 
@@ -44732,7 +44768,7 @@ mod numbering_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod table_tests {
     use super::*;
 
@@ -45268,7 +45304,7 @@ mod table_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod comments_spacing_tests {
     use super::*;
 
@@ -45306,7 +45342,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45358,7 +45394,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let sheet = load_stylesheet(&pkg);
         let bullet = sheet.by_id.get("ListBullet").expect("ListBullet style");
@@ -45374,7 +45410,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45457,7 +45493,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45515,7 +45551,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45703,7 +45739,7 @@ mod comments_spacing_tests {
         };
         let pdf = crate::convert::docx_to_pdf(&bytes).expect("pdf");
         let n = super::pdf_page_count(&pdf);
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg.main_document_part().expect("main");
         let xml = pkg.part_string(&main).expect("xml");
@@ -45731,7 +45767,7 @@ mod comments_spacing_tests {
     #[test]
     fn strict01_section_break_census() {
         let bytes = std::fs::read("tests/fixtures/strict/Strict01.docx").expect("strict");
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45825,7 +45861,7 @@ mod comments_spacing_tests {
     }
 
     fn listbullet_marked(docx: &[u8]) -> Marked {
-        let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(docx).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45867,7 +45903,7 @@ mod comments_spacing_tests {
     }
 
     fn listbullet_marker_family(docx: &[u8]) -> Option<String> {
-        let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(docx).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -46004,7 +46040,7 @@ mod comments_spacing_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod regression_tests {
     use super::*;
 
@@ -46435,7 +46471,7 @@ mod regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod comment_listing_review_tests {
     use super::*;
 
@@ -46698,7 +46734,7 @@ mod comment_listing_review_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_boundary_tests {
     use super::*;
 
@@ -48447,7 +48483,7 @@ mod coverage_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_two_tests {
     use super::*;
 
@@ -49397,7 +49433,7 @@ mod coverage_round_two_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_three_tests {
     use super::*;
 
@@ -52324,7 +52360,7 @@ mod coverage_round_three_tests {
     }
 
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     mod coverage_deep_layout_tests {
         use super::*;
 
@@ -55862,7 +55898,7 @@ mod coverage_round_three_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod converter_semantic_boundary_tests {
     use super::*;
 
@@ -56221,7 +56257,7 @@ mod converter_semantic_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod rendering_uncovered_contract_tests {
     use super::*;
 
@@ -62227,7 +62263,7 @@ mod rendering_uncovered_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_coordinate_layout_contract_tests {
     use super::*;
 
@@ -62617,7 +62653,7 @@ mod complete_coordinate_layout_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_coordinate_vml_owner_contract_tests {
     use super::*;
 
@@ -62719,7 +62755,7 @@ mod complete_coordinate_vml_owner_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod field_group_coordinate_contract_tests {
     use super::*;
 
@@ -63218,7 +63254,7 @@ mod field_group_coordinate_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chart_cache_and_diagram_threshold_contract_tests {
     use super::*;
 
@@ -63428,7 +63464,7 @@ mod chart_cache_and_diagram_threshold_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chart_series_cache_owner_regression_tests {
     use super::*;
 
@@ -63460,7 +63496,7 @@ mod chart_series_cache_owner_regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod cell_picture_owned_room_contract_tests {
     use super::*;
 
@@ -63775,7 +63811,7 @@ mod cell_picture_owned_room_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod style_hit_and_following_line_contract_tests {
     use super::*;
     fn fonts() -> Fonts<'static> {
@@ -64003,7 +64039,7 @@ mod style_hit_and_following_line_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod encoded_picture_effect_contract_tests {
     use super::*;
     fn package() -> PartFs {
@@ -64150,7 +64186,7 @@ mod encoded_picture_effect_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chart_admitted_series_owner_boundaries {
     use super::*;
 
@@ -64250,7 +64286,7 @@ mod chart_admitted_series_owner_boundaries {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod automatic_column_source_matrix_tests {
     use super::*;
     fn fonts() -> Fonts<'static> {
@@ -65724,7 +65760,7 @@ mod automatic_column_source_matrix_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chrome_collector_source_boundary_tests {
     use super::*;
 
