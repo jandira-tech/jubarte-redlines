@@ -352,7 +352,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}][ outline {n}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · before {x}pt · after {x}pt · line {r} | line {x}pt exact | line {x}pt atLeast · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · before {x}pt | before auto · after {x}pt | after auto · line {r} | line {x}pt exact | line {x}pt atLeast · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -376,12 +376,20 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
 - `before`, `after` and `line` come from the paragraph's own `w:spacing`
   (its style's spacing is the legend's): `before 6pt`, `after 0pt` (a
   zero the paragraph states still prints: it overrides its style), in
-  points with up to two decimals (a twip is a twentieth of a point).
+  points with up to two decimals (a twip is a twentieth of a point; a
+  Strict file's `12.945pt` reads as the nearest twip, as Word keeps it).
+  Values past Word's 1584pt print and read back as the file has them.
+  `before auto` and `after auto` are Word's automatic space
+  (`w:beforeAutospacing`, which HTML paste writes): Word puts it in place
+  of the value, so the view prints no value beside it.
   `line 1.15` is an `auto` line, a multiple of single spacing with the
   fewest decimals (two to four) that read back the same 240ths (`line
   1.038` is 249); `line 12pt exact` and `line 14pt atLeast` are the other
   two rules. An empty paragraph with its own spacing keeps its own id
-  line: a range of empty ones would drop it.
+  line: a range of empty ones would drop it. Body and table-cell
+  paragraphs keep their spacing this way; a note's, a comment's or a text
+  box's paragraph keeps only its style's for now, and spacing in lines
+  (`w:beforeLines`, `w:afterLines`, for East Asian layout) is not kept.
 - `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
   in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
   it is escaped with `\`). A level text naming a deeper level (`%3` on
