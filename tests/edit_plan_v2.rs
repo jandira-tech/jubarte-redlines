@@ -609,6 +609,7 @@ fn review_v2_01_schema_walk_pins_every_declared_property() {
         }));
     }
     mixed["removed_anchor_comments"] = json!("keep");
+    mixed["rewrite_others_comments"] = json!(true);
     corpus.push(mixed);
 
     let pairs: &[(&str, &str)] = &[
@@ -617,6 +618,7 @@ fn review_v2_01_schema_walk_pins_every_declared_property() {
         ("", "policy"),
         ("", "resolve_revisions"),
         ("", "removed_anchor_comments"),
+        ("", "rewrite_others_comments"),
         ("", "author"),
         ("", "date"),
         ("", "scope"),

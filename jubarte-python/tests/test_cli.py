@@ -531,6 +531,20 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     assert "\nRecitals\n" in out and "{++" not in out, out
 
 
+def test_edit_refuses_another_authors_comment_unless_rewrite_others_comments(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # #1264: a comment speaks for its author; another author replies, or asks to rewrite it.
+    assert main(["add", str(letter), "-p", "p2", "--anchor", "survive", "--content", "Which?", "--author", "Ann Counsel", "-o", str(tmp_path / "c.docx")]) == 0
+    capsys.readouterr()
+    edit = ["edit", str(tmp_path / "c.docx"), "-p", "c0", "--content", "All three?", "--author", "Bob Lee", "-o", str(tmp_path / "e.docx")]
+    assert main(edit) == 3
+    assert 'COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead' in capsys.readouterr().err
+    assert not (tmp_path / "e.docx").exists()
+    assert main([*edit, "--rewrite-others-comments"]) == 0
+    captured = capsys.readouterr()
+    assert 'note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name' in captured.err, captured.err
+    assert "{>>c0 @AC: All three?<<}" in captured.out, captured.out
+
+
 def test_edit_and_add_write_one_document_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     edit = ["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an"]
     written = tmp_path / "letter_modified.docx"

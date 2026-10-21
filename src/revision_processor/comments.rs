@@ -10,9 +10,10 @@
 //! stay. A comment whose reference goes is also gone: its range markers, its `comments.xml`
 //! entry and its `commentsExtended` / `commentsIds` / `commentsExtensible`
 //! entries; with none left, the comment parts are not written. The comments
-//! left are renumbered with the bookmarks ([`super::annotation_ids`]). `people.xml` keeps the
-//! authors of the comments left (no revision survives Accept or Reject All),
-//! and goes when it keeps nobody.
+//! left keep their ids, as their bookmarks do: Word's save numbers them
+//! afresh, but an id is what a later reply or edit names (#1264).
+//! `people.xml` keeps the authors of the comments left (no revision
+//! survives Accept or Reject All), and goes when it keeps nobody.
 
 use std::collections::HashSet;
 
@@ -268,8 +269,8 @@ fn remove_marker(dom: &mut Dom, marker: NodeId) {
 }
 
 /// Drop the comments Accept / Reject All left without a reference, prune the
-/// comment family and `people.xml` (module docs). Return their original ids,
-/// before annotation renumbering, so callers can report precisely what went.
+/// comment family and `people.xml` (module docs). Return their ids, so
+/// callers can report precisely what went.
 pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) -> Vec<String> {
     let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
         return Vec::new();
@@ -277,7 +278,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
     // The comments part itself is not an anchor story: a `commentReference`
     // inside a comment body keeps no comment alive, and pruning this Parsed
     // copy would race the `comments` one. Marker fix-ups reach it through
-    // `word_save::tidy` and `annotation_ids::renumber` instead.
+    // `word_save::tidy` instead.
     let stories: Vec<Parsed> = story_parts
         .iter()
         .filter(|p| p.as_str() != FAMILY[0].0)

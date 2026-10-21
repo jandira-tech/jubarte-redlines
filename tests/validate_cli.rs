@@ -485,3 +485,53 @@ fn foreign_swapped_deletions_exit_two() {
         "{out}"
     );
 }
+
+/// Settling keeps every id (#1264); `--repair` is where ids still change,
+/// and only the duplicated ones: two insertions sharing w:id 5 come apart,
+/// while the comment and bookmark beside them keep theirs.
+#[test]
+fn repair_still_renumbers_duplicates() {
+    use common::docx::{Part, W_NS, docx_with};
+    let dir = tempfile::tempdir().unwrap();
+    let body = format!(
+        r#"{SAME_ID}<w:p><w:commentRangeStart w:id="7"/><w:bookmarkStart w:id="42" w:name="kept"/><w:r><w:t>Noted.</w:t></w:r><w:bookmarkEnd w:id="42"/><w:commentRangeEnd w:id="7"/><w:r><w:commentReference w:id="7"/></w:r></w:p>"#
+    );
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="7" w:author="Bob" w:date="2026-10-18T12:00:00Z" w:initials="B"><w:p><w:r><w:t>Note.</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let source = docx_with(
+        &body,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    std::fs::write(dir.path().join("same.docx"), source).unwrap();
+    let (code, out, _) = run(
+        dir.path(),
+        &["validate", "same.docx", "--repair", "fixed.docx", "-q"],
+    );
+    assert_eq!(code, 0, "{out}");
+    let fixed = std::fs::read(dir.path().join("fixed.docx")).unwrap();
+    let xml = common::docx::part_string(&fixed, "word/document.xml").unwrap();
+    let ins: Vec<&str> = xml
+        .match_indices("<w:ins w:id=\"")
+        .map(|(at, m)| {
+            let id = &xml[at + m.len()..];
+            &id[..id.find('"').unwrap()]
+        })
+        .collect();
+    assert_eq!(ins.len(), 2, "{xml}");
+    assert_ne!(ins[0], ins[1], "{xml}");
+    for marker in [
+        r#"<w:commentRangeStart w:id="7""#,
+        r#"<w:commentReference w:id="7""#,
+        r#"<w:bookmarkStart w:id="42""#,
+    ] {
+        assert!(xml.contains(marker), "{marker} in {xml}");
+    }
+    let comments = common::docx::part_string(&fixed, "word/comments.xml").unwrap();
+    assert!(comments.contains(r#"w:id="7""#), "{comments}");
+}

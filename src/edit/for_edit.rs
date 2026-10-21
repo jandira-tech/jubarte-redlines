@@ -1606,6 +1606,7 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         existing_revisions: request.existing_revisions,
         operations: Vec::new(),
         update_fields: false,
+        rewrite_others_comments: false,
     };
     let Settled {
         base,

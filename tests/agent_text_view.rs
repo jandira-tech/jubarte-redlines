@@ -3518,6 +3518,8 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
             "--resolve",
             "--author",
             "Cy Young",
+            // c1 is Bob's: Cy rewrites it under Bob's name only on request (#1264).
+            "--rewrite-others-comments",
             "--out-dir",
             "three",
         ],

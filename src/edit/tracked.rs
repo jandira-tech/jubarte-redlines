@@ -230,12 +230,10 @@ pub(super) struct TrackedParagraphs {
 /// (see [`TrackedParagraphs`]).
 pub(super) fn result_v2_with_paragraphs(
     tx: &Transaction<'_>,
-    mut clean: Vec<u8>,
+    clean: Vec<u8>,
 ) -> Result<(EditResult, TrackedParagraphs), EditError> {
-    let mut ids = super::comment_settlement::renumber_working(&mut clean, tx.origin.is_some())?;
-    let (redline, floor, paragraphs) = redline(tx, true, true, &mut ids)?;
+    let (redline, floor, paragraphs) = redline(tx, true, true)?;
     let mut report = tx.report(true);
-    super::comment_settlement::remap_report(&mut report, ids.as_ref());
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
@@ -253,13 +251,11 @@ pub(super) fn result_v2_with_paragraphs(
 
 fn result_with_order(
     tx: &Transaction<'_>,
-    mut clean: Vec<u8>,
+    clean: Vec<u8>,
     array_order: bool,
 ) -> Result<EditResult, EditError> {
-    let mut ids = super::comment_settlement::renumber_working(&mut clean, tx.origin.is_some())?;
-    let (redline, floor, paragraphs) = redline(tx, array_order, false, &mut ids)?;
+    let (redline, floor, paragraphs) = redline(tx, array_order, false)?;
     let mut report = tx.report(true);
-    super::comment_settlement::remap_report(&mut report, ids.as_ref());
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
@@ -288,7 +284,6 @@ fn redline(
     tx: &Transaction<'_>,
     array_order: bool,
     final_views: bool,
-    ids: &mut Option<crate::revision_processor::AnnotationIds>,
 ) -> Result<(Vec<u8>, u64, TrackedParagraphs), EditError> {
     let plan = EditPlan {
         source_sha256: None,
@@ -359,16 +354,7 @@ fn redline(
             .collect()
     });
     let insertion_origins = stamp.insertion_origins(&t.opened.dom);
-    let (mut redline, _) = t.finish()?;
-    if let Some(ids) = ids {
-        let mut pkg = crate::opc::PartFs::open(&redline)
-            .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
-        ids.include(&pkg);
-        ids.apply(&mut pkg);
-        redline = pkg
-            .to_zip()
-            .map_err(|e| super::err("PACKAGE_WRITE", None, e.to_string()))?;
-    }
+    let (redline, _) = t.finish()?;
     Ok((
         redline,
         floor,

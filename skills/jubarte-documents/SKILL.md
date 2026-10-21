@@ -169,7 +169,7 @@ matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `AMBIGUOUS_CHANGE`,
-`PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `UNSUPPORTED`,
+`PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `COMMENT_NOT_YOURS`, `REDACTION_LEAK`, `UNSUPPORTED`,
 `INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
@@ -179,7 +179,9 @@ Operation kinds: `replace`, `insert` (one of `after`, `before`,
 paragraph; `through` instead of `find` covers every paragraph from
 `paragraph` to that one), `reply_comment` (`comment_id`, `text`),
 `resolve_comment` (`comment_id`, `done` default true; false reopens),
-`edit_comment` (`comment_id`, `text`), `delete_comment` (`comment_id`;
+`edit_comment` (`comment_id`, `text`; another author's comment is refused
+unless the plan sets `"rewrite_others_comments": true`, and it keeps their
+name: answer them with `reply_comment` instead), `delete_comment` (`comment_id`;
 replies and anchors go with it), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
 `highlight`; copies the anchor's paragraph properties, or those of the
 paragraph `like` selects), `delete_paragraph` (optional `comment`),

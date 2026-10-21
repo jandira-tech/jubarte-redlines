@@ -1370,7 +1370,7 @@ fn run_edit(
     if job.dry_run {
         let mut report =
             jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
-        report.notes = plan_notes.to_vec();
+        report.notes.splice(0..0, plan_notes.iter().cloned());
         write_stdout(report.to_jsonl()).map_err(fail)?;
         // A clean dry run says how to apply it: the same command, with the
         // --force an output already there needs. An output --force cannot
@@ -1408,7 +1408,7 @@ fn publish_edit(
 ) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
     let mut result = prepared.result;
-    result.report.notes = plan_notes.to_vec();
+    result.report.notes.splice(0..0, plan_notes.iter().cloned());
     let primary = match job.mode {
         Mode::Suggesting => &result.redline,
         Mode::Editing => &result.clean,
@@ -2147,10 +2147,7 @@ fn settlement_notes(
     for c in kept {
         let paragraph = comments
             .iter()
-            .find(|r| {
-                c.written_id
-                    .map_or_else(|| format!("c{}", r.id) == c.id, |id| r.id == id)
-            })
+            .find(|r| format!("c{}", r.id) == c.id)
             .and_then(|r| r.paragraph.as_deref())
             .unwrap_or("the document");
         lines.push(format!(
@@ -2500,6 +2497,8 @@ struct EditFlags<'a> {
     png: bool,
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
+    /// `--rewrite-others-comments` (`edit` only; `add` passes false).
+    rewrite_others_comments: bool,
     /// The global `-q`.
     quiet: bool,
 }
@@ -2543,7 +2542,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         None => None,
     };
     let PlanInput {
-        plan,
+        mut plan,
         notes,
         plan_notes,
     } = edit_plan(
@@ -2553,6 +2552,7 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         flags.options,
         &source,
     )?;
+    plan.rewrite_others_comments |= flags.rewrite_others_comments;
     if flags.options.editing_mode
         && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan, &source)
     {
@@ -2625,7 +2625,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err((1, format!("reading {}: {e}", path.display()))),
     };
-    let recorded = record(
+    let mut recorded = record(
         flags.verb,
         flags.operations,
         &options.author,
@@ -2638,6 +2638,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Usage(m) => (EXIT_USAGE, m),
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
+    recorded.plan.rewrite_others_comments |= flags.rewrite_others_comments;
     jubarte::edit::check_plan_quoting(source, &recorded.plan, jubarte::edit::PlanSyntax::Flags)
         .map_err(|e| {
             refused(
@@ -4173,6 +4174,7 @@ fn cli_main() -> ExitCode {
             dpi,
             revisions,
             revision_palette,
+            rewrite_others_comments,
             operations,
             ..
         }) => {
@@ -4195,6 +4197,7 @@ fn cli_main() -> ExitCode {
                 png,
                 dpi,
                 revisions: style,
+                rewrite_others_comments,
                 quiet,
             };
             return edit_exit(run_flags(&flags));
@@ -4223,6 +4226,7 @@ fn cli_main() -> ExitCode {
                 png: false,
                 dpi: 96.0,
                 revisions: jubarte::convert::RevisionStyle::Conventional,
+                rewrite_others_comments: false,
                 quiet,
             };
             return edit_exit(run_flags(&flags));

@@ -543,7 +543,7 @@ pub struct ResolvedChanges {
     /// The document after resolving the selected changes.
     pub document: Vec<u8>,
     /// Removed comments, including replies, with their original ids and text.
-    /// Surviving comments may be renumbered in `document`.
+    /// Surviving comments keep their ids in `document` (#1264).
     pub removed_comments: Vec<crate::comments::CommentRecord>,
     /// Why each of `removed_comments` went, in its order: `anchor removed
     /// by accepting r13`, naming the change that held its mark, or its

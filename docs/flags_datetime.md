@@ -481,6 +481,7 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--delete` |  |  |  |  | append | Delete the anchor, or the whole paragraph (or comment) without one |
 | `--resolve` |  |  |  |  | append | Resolve comment c5 (with -p c5) |
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5), as `add -p c5 --content` |
+| `--rewrite-others-comments` |  |  | false |  |  | Let `-p c5 --content` change a comment another author wrote; it keeps their name. Without it that is refused (COMMENT_NOT_YOURS): one author answers another with --reply |
 | `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
 | `--strike` |  |  |  |  | append | Strike another author's insertion r12 (with -p r12): our tracked deletion inside it, so the decision shows. --content is a comment on the struck words |
@@ -794,6 +795,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--restore` | edit | `default= values=` |
 | `--revision-palette` | (shorthand), compare, accept, reject, convert, edit, append, scrub | `<SPEC> default= values=` |
 | `--revisions` | (shorthand), compare, accept, reject, convert, edit, append, scrub | `<REVISIONS> default=conventional values=conventional, word, custom` |
+| `--rewrite-others-comments` | edit | `default=false values=` |
 | `--rsids` | scrub | `default=false values=` |
 | `--rules` | validate | `<RULES> default= values=` |
 | `--save-plan` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete | `<FILE> default= values=` |

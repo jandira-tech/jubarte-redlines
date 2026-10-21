@@ -547,6 +547,31 @@ test("edit and add by flags print the changed blocks, as the binary does", () =>
   assert.ok(!editing.out.includes("{++"), editing.out);
 });
 
+// An engine built before #1264 refuses the plan field the flag sets.
+const ownershipShipped = binding.planError(JSON.stringify({
+  schema_version: 1, author: "A", rewrite_others_comments: false,
+  operations: [{ kind: "delete", paragraph: "p0", find: "x" }],
+})) === undefined;
+test("edit refuses another author's comment unless --rewrite-others-comments (#1264)", {
+  skip: !ownershipShipped && "the checked-in engine predates #1264; it ships with the next release",
+}, () => {
+  const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  const word = para.text.split(" ")[0];
+  const commented = path.join(tmp, "ownership-commented.docx");
+  const added = run("add", untracked, "-p", `p${para.index}`, "--anchor", word, "--content", "Why?", "--author", "Ann Counsel", "-o", commented);
+  assert.equal(added.code, 0, added.err);
+  const out = path.join(tmp, "ownership-edited.docx");
+  const edit = ["edit", commented, "-p", "c0", "--content", "Why not?", "--author", "Bob Lee", "-o", out];
+  const refused = run(...edit);
+  assert.equal(refused.code, 3, refused.err);
+  assert.ok(refused.err.includes('COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead'), refused.err);
+  assert.ok(!fs.existsSync(out));
+  const rewritten = run(...edit, "--rewrite-others-comments");
+  assert.equal(rewritten.code, 0, rewritten.err);
+  assert.ok(rewritten.err.includes('note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name'), rewritten.err);
+  assert.ok(rewritten.out.includes("{>>c0 @AC: Why not?<<}"), rewritten.out);
+});
+
 test("edit and add write FILE_modified.docx, as the binary does (D15)", () => {
   const para = JSON.parse(run("read", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
   const word = para.text.split(" ")[0];

@@ -722,12 +722,18 @@ class EditPlan:
     operations: tuple[dict[str, object], ...] = ()
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None
     update_fields: bool = False
+    #: Let ``edit_comment`` change another author's comment; it keeps their
+    #: name. Without it that is refused (``COMMENT_NOT_YOURS``): one author
+    #: answers another with ``reply_comment``.
+    rewrite_others_comments: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
             raise ValueError("author must be a nonempty string")
         if not isinstance(self.update_fields, bool):
             raise TypeError("update_fields must be a bool")
+        if not isinstance(self.rewrite_others_comments, bool):
+            raise TypeError("rewrite_others_comments must be a bool")
         if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
             raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
@@ -1003,7 +1009,11 @@ class EditPlan:
         return self._with(_with_optional(op, id=id))
 
     def edit_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
-        """Replace the text of comment ``comment_id``; its author, date and thread stay."""
+        """Replace the text of comment ``comment_id``; its author, date and thread stay.
+
+        Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
+        plan sets ``rewrite_others_comments``.
+        """
         op: dict[str, object] = {"kind": "edit_comment", "comment_id": comment_id, "text": text}
         return self._with(_with_optional(op, id=id))
 
@@ -1227,6 +1237,8 @@ class EditPlan:
         wire["operations"] = [dict(op) for op in self.operations]
         if self.update_fields:
             wire["update_fields"] = True
+        if self.rewrite_others_comments:
+            wire["rewrite_others_comments"] = True
         return wire
 
     def to_json(self) -> str:

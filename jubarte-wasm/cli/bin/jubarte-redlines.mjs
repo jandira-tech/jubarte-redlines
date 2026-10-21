@@ -405,8 +405,23 @@ function readPlanText(plan, missing = false) {
   }
 }
 
-/** `--plan`'s text, or the plan the operation flags describe, and its notes. */
+/** `--plan`'s text, or the plan the operation flags describe, and its
+ * notes; `--rewrite-others-comments` sets the plan's field. */
 function editPlan(verb, docx, o) {
+  const given = editPlanAsGiven(verb, docx, o);
+  if (!o.rewrite_others_comments) return given;
+  let parsed;
+  try {
+    parsed = JSON.parse(given.plan);
+  } catch {
+    return given; // reported as INVALID_PLAN when applied
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return given;
+  parsed.rewrite_others_comments = true;
+  return { plan: JSON.stringify(parsed), notes: given.notes };
+}
+
+function editPlanAsGiven(verb, docx, o) {
   if (o.plan != null) return { plan: readPlanText(o.plan), notes: [] };
   try {
     const options = { author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions };
@@ -441,6 +456,7 @@ function recordPlan(verb, file, docx, o) {
   const options = {
     author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
     file, plan: o.plan, defaultPlan: Boolean(o.plan_default), dryRun: Boolean(o.dry_run),
+    rewriteOthersComments: Boolean(o.rewrite_others_comments),
   };
   const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
   if (!answer.ok) {

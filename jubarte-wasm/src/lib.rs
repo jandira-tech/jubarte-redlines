@@ -670,7 +670,7 @@ fn record_plan_json(
 /// On failure `{ok: false, usage, message}`: a usage error (exit 2), or
 /// `held` is not a plan (exit 3). Options (JSON): `author`, `date`,
 /// `existingRevisions`, `file`, `plan`, `defaultPlan` (a bare `--plan`),
-/// `dryRun`.
+/// `dryRun`, `rewriteOthersComments`.
 ///
 /// Mirrors `jubarte::edit::record::record`.
 #[wasm_bindgen(js_name = recordPlan)]

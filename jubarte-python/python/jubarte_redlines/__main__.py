@@ -332,7 +332,21 @@ _DOCX_NEEDS_MARKDOWN = "--to docx requires Markdown input in the Python CLI"
 
 
 def _edit_plan(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str, list[str]]:
-    """``--plan``'s text, or the plan the operation flags describe, and its notes."""
+    """``--plan``'s text, or the plan the operation flags describe, and its
+    notes; ``--rewrite-others-comments`` sets the plan's field."""
+    plan, notes = _edit_plan_as_given(args, verb, source)
+    if getattr(args, "rewrite_others_comments", False):
+        try:
+            parsed = json.loads(plan)
+        except ValueError:
+            return plan, notes  # reported as INVALID_PLAN when applied
+        if isinstance(parsed, dict):
+            parsed["rewrite_others_comments"] = True
+            plan = json.dumps(parsed, ensure_ascii=False)
+    return plan, notes
+
+
+def _edit_plan_as_given(args: argparse.Namespace, verb: str, source: bytes) -> tuple[str, list[str]]:
     from . import _native
 
     if getattr(args, "plan", None) is not None:
@@ -444,6 +458,7 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
         "plan": plan,
         "defaultPlan": bool(getattr(args, "plan_default", False)),
         "dryRun": dry_run,
+        "rewriteOthersComments": bool(getattr(args, "rewrite_others_comments", False)),
     }
     try:
         recorded = json.loads(

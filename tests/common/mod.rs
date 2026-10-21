@@ -23,6 +23,7 @@
 // `expect` would go unfulfilled in some binaries; `allow` is the right level.
 #![allow(dead_code)]
 
+pub mod comment_ids;
 pub mod docx;
 pub mod markdown_pairs;
 pub mod revision_summary;

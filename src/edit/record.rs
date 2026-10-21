@@ -250,6 +250,9 @@ pub struct RecordOptions {
     pub default_plan: bool,
     /// `--dry-run`: the summary says "would record".
     pub dry_run: bool,
+    /// `--rewrite-others-comments`: the plan may edit another author's
+    /// comment.
+    pub rewrite_others_comments: bool,
 }
 
 /// [`record`] over JSON, for the Python and npm CLIs: `verb` is `edit` or
@@ -301,7 +304,8 @@ pub fn record_json(
         }
     };
     let author = options.author.as_deref().unwrap_or("Redline");
-    let recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
+    let mut recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
+    recorded.plan.rewrite_others_comments |= options.rewrite_others_comments;
     Ok(serde_json::json!({
         "plan": serde_json::to_string(&recorded.plan).expect("a plan serializes"),
         "json": recorded.json(),

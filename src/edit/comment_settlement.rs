@@ -33,9 +33,6 @@ pub struct KeptComment {
     pub replies: Vec<String>,
     /// The new anchor kind (`empty`).
     pub anchor: String,
-    /// Published comment id, for resolving the anchor through the shared map.
-    #[serde(skip)]
-    pub written_id: Option<u32>,
 }
 
 use crate::revision_processor::Resolution;
@@ -167,52 +164,8 @@ impl AnchorChanges {
                 id: format!("c{}", c.id),
                 replies,
                 anchor: "empty".into(),
-                written_id: None,
             })
             .collect();
         Ok((removed, kept))
-    }
-}
-
-/// Renumber the revision-free working document once, before deriving outputs.
-/// Replay uses this allocation, never its own annotation walk.
-pub(super) fn renumber_working(
-    clean: &mut Vec<u8>,
-    settled: bool,
-) -> Result<Option<crate::revision_processor::AnnotationIds>, super::EditError> {
-    if !settled {
-        return Ok(None);
-    }
-    let mut pkg = crate::opc::PartFs::open(clean)
-        .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
-    let Some(ids) = crate::revision_processor::renumber_settled_annotations(&mut pkg) else {
-        return Ok(None);
-    };
-    *clean = pkg
-        .to_zip()
-        .map_err(|e| super::err("PACKAGE_WRITE", None, e.to_string()))?;
-    Ok(Some(ids))
-}
-
-pub(super) fn remap_report(
-    report: &mut super::EditReport,
-    ids: Option<&crate::revision_processor::AnnotationIds>,
-) {
-    let Some(ids) = ids else {
-        return;
-    };
-    for outcome in &mut report.operations {
-        if let Some(id) = outcome.comment_id
-            && let Some(new) = ids.comments.get(&id.to_string())
-        {
-            outcome.comment_id = new.parse().ok();
-        }
-    }
-    for kept in &mut report.kept_comments {
-        kept.written_id = kept
-            .id
-            .strip_prefix('c')
-            .and_then(|id| ids.comments.get(id))
-            .and_then(|id| id.parse().ok());
     }
 }

@@ -965,7 +965,7 @@ jubarte edit FILE -p WHERE --anchor FIND --content WITH        replace FIND (an 
 jubarte edit FILE -p WHERE --content TEXT                      rewrite the paragraph
 jubarte edit FILE -p WHERE [--anchor FIND] --delete            delete FIND, or the paragraph
 jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or set the paragraph style
-jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment
+jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment (another author's: --rewrite-others-comments)
 jubarte edit FILE -p c5 --reply TEXT                           a reply
 jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
 jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change (prints SUCCESS and a fenced diff containing the resolved text)

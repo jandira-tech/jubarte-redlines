@@ -224,6 +224,7 @@ fn apply_bound(
     execution.operations = mapped.iter().map(|m| m.legacy.clone()).collect();
     // Always use the preserving engine path. Tracking controls only the new edits.
     let mut tx = Transaction::start(&working, &execution)?;
+    tx.skip_comment_ids_of(source)?;
     tx.syntax = syntax;
     if selected_report.is_empty() && remaining_revisions.is_empty() {
         tx.origin = None;
@@ -266,10 +267,7 @@ fn apply_bound(
             paragraphs.output_states,
         )
     } else {
-        let mut clean = clean;
-        let ids = super::comment_settlement::renumber_working(&mut clean, tx.origin.is_some())?;
-        let mut report = tx.report(true);
-        super::comment_settlement::remap_report(&mut report, ids.as_ref());
+        let report = tx.report(true);
         let base = tx.paragraph_nodes.clone();
         let output = tx.paragraph_walk();
         (
@@ -640,6 +638,7 @@ fn legacy(plan: &PlanV2) -> EditPlan {
         existing_revisions: ExistingRevisions::Keep,
         operations: Vec::new(),
         update_fields: false,
+        rewrite_others_comments: plan.rewrite_others_comments.unwrap_or(false),
     }
 }
 fn changes(bytes: &[u8]) -> Result<Vec<Change>, EditError> {
@@ -1735,6 +1734,7 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
                 ));
             }
         }
+        tx.note_rewrites(tx.outcomes.len(), &resolved);
         tx.resolved.extend(resolved.into_iter().map(|r| (i, r)));
         tx.outcomes.push(o);
     }

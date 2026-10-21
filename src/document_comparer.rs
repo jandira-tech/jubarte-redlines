@@ -4965,16 +4965,16 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
-/// [`accept_revisions`] keeping bookmark and comment ids: a redline names
-/// its comments by the ids the documents gave them, as `edit` reports them.
-/// Opened under the caller's admission budget, which the compare flow
-/// already checked (#645).
+/// [`accept_revisions`] under the caller's admission budget, which the
+/// compare flow already checked (#645). Bookmark and comment ids stay, so a
+/// redline names its comments by the ids the documents gave them, as
+/// `edit` reports them.
 fn accept_source_revisions(
     docx: &[u8],
     limits: crate::admission::InputLimits,
 ) -> Result<Vec<u8>, OpcError> {
     let mut pkg = PartFs::open_within(docx, limits)?;
-    crate::revision_processor::accept_revisions_package_keeping_ids(&mut pkg);
+    crate::revision_processor::accept_revisions_package(&mut pkg);
     pkg.to_zip()
 }
 

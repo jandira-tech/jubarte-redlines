@@ -52,6 +52,31 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **`inspect::Snapshot` has a `track_changes` field (#1255)**
   (`Option<Settle>`), the choice `inspect::settled_snapshot` read the text
   under. A struct literal adds `track_changes: None`.
+- **Comment and bookmark ids survive accept and reject (#1264, plan 14).**
+  `jubarte accept`/`reject` (all or some), `convert --track-changes`,
+  `accept_revisions`/`reject_revisions` in every host, and an edit plan that
+  settles revisions keep the ids of the comments and bookmarks that stay:
+  a reply to `c5` after a bare `jubarte accept` lands in c5's thread.
+  Before, a document left with no revision was renumbered 0, 1, … as Word's
+  save does (`docs/WORD_DIFFERENCES.md`, A17). A comment a plan adds takes
+  an id above every id its source held, never one the plan's settling
+  removed. An edit's redline still numbers its bookmarks as the comparer
+  does; its clean copy keeps them.
+  `revision_processor::accept_revisions_package_keeping_ids` is gone
+  (`accept_revisions_package` now keeps ids), and so is
+  `KeptComment.written_id` (a kept thread's id is its source id).
+- **`edit_comment` on another author's comment is refused (#1264, plan
+  14):** `COMMENT_NOT_YOURS: c0 is by "Bob"; reply instead
+  (reply_comment), or pass "rewrite_others_comments": true to change their
+  words under their name`. Only a comment that names the plan's author is
+  its own: one that names no author is refused too (`c0 names no author;
+  …`). A plan field `rewrite_others_comments` (v1, v2 and Python's
+  `EditPlan`) and the `edit --rewrite-others-comments` flag allow it; the
+  comment keeps its author and the report notes each rewrite (`op-1
+  (edit_comment): c0 is by "Bob"; their words were changed under their
+  name`). An `EditPlan` struct literal adds `rewrite_others_comments:
+  false`; a `PlanV2` one, `rewrite_others_comments: None`. The discovery
+  matrix names the condition on `edit_comment`.
 
 ### Fixed
 
