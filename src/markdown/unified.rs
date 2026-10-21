@@ -535,7 +535,7 @@ fn build_with(
     known: Option<&HashSet<String>>,
 ) -> (Patch, Vec<Paragraphs>) {
     let critic = critic.replace("\r\n", "\n");
-    let blocks = blocks(detach_breaks(attribute(segments(&critic))));
+    let blocks = blocks(detach_breaks(join_marks(attribute(segments(&critic)))));
     let owner = &options.owner;
     let mut hunks = Vec::new();
     let mut texts = Vec::new();
@@ -805,6 +805,57 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
         }
         if matches!(segment, Segment::Edit(_)) {
             named_edit = false;
+        }
+        out.push(segment);
+    }
+    out
+}
+
+/// The side a one-sided change is on, and whether it is only paragraph
+/// marks.
+fn one_side(edit: &Edit) -> Option<(Side, bool)> {
+    match (edit.old.is_empty(), edit.new.is_empty()) {
+        (false, true) => Some((Side::Old, edit.old.trim().is_empty())),
+        (true, false) => Some((Side::New, edit.new.trim().is_empty())),
+        _ => None,
+    }
+}
+
+/// The view writes a paragraph mark's change apart from the text beside
+/// it, each with its own id (#1135). Word made them as one, so the patch
+/// reads them as one: a change on the same side by the same author, with
+/// only comments between, joins the change before it when either is the
+/// mark. A paragraph deleted whole is then one change ending in its mark,
+/// and a deletion across paragraphs one change through the mark.
+fn join_marks(segments: Vec<Segment>) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
+    for segment in segments {
+        if let Segment::Edit(edit) = &segment
+            && let Some((side, mark)) = one_side(edit)
+            && let Some(Segment::Edit(before)) = out
+                .iter_mut()
+                .rev()
+                .find(|s| !matches!(s, Segment::Note(..)))
+            && let Some((before_side, _)) = one_side(before)
+            && before_side == side
+            && before.by == edit.by
+            && (mark
+                || match side {
+                    Side::Old => before.old.ends_with('\n'),
+                    Side::New => before.new.ends_with('\n'),
+                })
+        {
+            match side {
+                Side::Old => {
+                    before.old.push_str(&edit.old);
+                    before.old_marked.push_str(&edit.old_marked);
+                }
+                Side::New => {
+                    before.new.push_str(&edit.new);
+                    before.new_marked.push_str(&edit.new_marked);
+                }
+            }
+            continue;
         }
         out.push(segment);
     }
