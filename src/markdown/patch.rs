@@ -178,6 +178,7 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
             author: "jubarte".to_string(),
             date: None,
             initials: None,
+            removed_anchor_comments: Default::default(),
             existing_revisions: ExistingRevisions::Accept,
             resolve_revisions: None,
             operations,
@@ -808,7 +809,7 @@ fn push_run(block: &mut Block, text: &str, bold: bool, italic: bool) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -886,7 +887,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod markdown_pairing_boundary_tests {
     use super::*;
 
