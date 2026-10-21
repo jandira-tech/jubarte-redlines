@@ -782,9 +782,10 @@ pub(super) fn story(
     let mut run_formats: Vec<FormatMark> = Vec::new();
     // The open tables' formatting changes, and the row and cell each is in.
     let mut tables: Vec<(TableFormats, usize, usize)> = Vec::new();
-    // Each open table's grid column widths in twips, and the grid column
-    // the next cell of its current row starts at.
-    let mut grids: Vec<(Vec<u32>, usize)> = Vec::new();
+    // Each open table's grid column widths in twips, the grid column the
+    // next cell of its current row starts at, and the even split a cell
+    // past the grid takes per column.
+    let mut grids: Vec<(Vec<u32>, usize, u32)> = Vec::new();
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
     // (`{--plain _italic_--}{r43+44 @AL}` is two marks).
@@ -1352,7 +1353,7 @@ pub(super) fn story(
                 for width in &widths {
                     let _ = write!(grid, "<w:gridCol w:w=\"{width}\"/>");
                 }
-                grids.push((widths, 0));
+                grids.push((widths, 0, context.text_width / count));
                 out.push_str(&grid);
                 // The grid's change keeps the grid as it is, and names no
                 // author: Word's `w:tblGridChange` has none.
@@ -1374,7 +1375,7 @@ pub(super) fn story(
             } => {
                 out.push_str("<w:tr>");
                 // The row's first cell starts past its `before` gap.
-                if let Some((_, at)) = grids.last_mut() {
+                if let Some((_, at, _)) = grids.last_mut() {
                     *at = *before;
                 }
                 row_change = *change;
@@ -1409,7 +1410,7 @@ pub(super) fn story(
                     let mut base = String::new();
                     // The grid columns a gap leaves out, at the row's start
                     // or its end.
-                    let widths = grids.last().map(|(w, _)| w.as_slice()).unwrap_or_default();
+                    let widths = grids.last().map(|(w, ..)| w.as_slice()).unwrap_or_default();
                     let before_width: u32 = widths.iter().take(*before).sum();
                     let after_width: u32 = widths.iter().rev().take(*after).sum();
                     if *before > 0 {
@@ -1454,8 +1455,10 @@ pub(super) fn story(
                 let spans = (*across).max(1);
                 let width: u32 = grids
                     .last_mut()
-                    .map(|(widths, at)| {
-                        let width = widths.iter().skip(*at).take(spans).sum();
+                    .map(|(widths, at, even)| {
+                        let width = (*at..*at + spans)
+                            .map(|column| widths.get(column).copied().unwrap_or(*even))
+                            .sum();
                         *at += spans;
                         width
                     })
