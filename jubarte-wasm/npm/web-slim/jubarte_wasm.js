@@ -411,9 +411,10 @@ export function auditDocument(docx, rules) {
 }
 
 /**
- * Every text change from `original` to `edited` must be a revision by
- * `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
- * array.
+ * Check that every text change from `original` to `edited` is a revision
+ * by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
+ * and `PERMISSION_RANGE_DROPPED` for a permission endpoint of `original`
+ * that `edited` lost) as a JSON array.
  *
  * Mirrors `jubarte::validate::audit_tracked`.
  * @param {Uint8Array} original
