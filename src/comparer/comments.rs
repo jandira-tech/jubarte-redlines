@@ -1665,7 +1665,13 @@ pub fn carry_comments(
     // Also strip body anchors for dropped ids so they don't linger orphan-free
     // as range markers without a comments.xml entry (Ring-1).
     strip_unanchored_comment_markers(dom, result_root, &anchored);
-    drop_orphans(out, out_main, &anchored);
+    if anchored.is_empty() {
+        for (part, _, rel_type) in FAMILY {
+            remove_family_part(out, out_main, part, rel_type);
+        }
+    } else {
+        drop_orphans(out, out_main, &anchored);
+    }
 }
 
 /// Remove commentRangeStart/End/commentReference whose id is not in `keep`.
