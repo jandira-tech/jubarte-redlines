@@ -52,7 +52,9 @@ pub struct CommentRecord {
     /// `w:initials`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initials: Option<String>,
-    /// `w:date`.
+    /// The linked UTC instant, written in the author's local offset when both
+    /// times record a whole-minute difference within ±14:00; otherwise `Z`.
+    /// Without a valid `w16cex:dateUtc`, `w:date` as stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     /// Comment text, paragraphs (and line breaks) joined by `\n`.
@@ -212,7 +214,15 @@ pub fn select_comments(
         let root = root_of(record.id);
         match threads.iter_mut().find(|(r, _)| *r == root) {
             Some((_, best)) => {
-                if record.date >= best.date {
+                if record
+                    .date
+                    .as_deref()
+                    .and_then(crate::convert::timestamp_order_key)
+                    >= best
+                        .date
+                        .as_deref()
+                        .and_then(crate::convert::timestamp_order_key)
+                {
                     *best = record;
                 }
             }
@@ -346,9 +356,27 @@ impl Anchors {
         let paragraph_id =
             |story: usize, para: usize| crate::ids::paragraph_id(&self.stories[story].0, para);
         match (start, end) {
-            (Some((story, first, s)), Some((end_story, last, e)))
-                if story == end_story && (first, s) <= (last, e) =>
-            {
+            (Some((story, first, s)), Some((end_story, last, e))) if story != end_story => {
+                // A range cannot cross parts in OOXML, so this malformed
+                // input is still recorded as a range: both endpoints are
+                // real marks and neither may be dropped.
+                record.paragraph = Some(paragraph_id(story, first));
+                record.last_paragraph = Some(paragraph_id(end_story, last));
+                record.anchor_text = self.stories[story].1[first][s..].to_string();
+                record.before = tail(&self.stories[story].1[first][..s], CONTEXT);
+                record.after = self.stories[end_story].1[last][e..]
+                    .chars()
+                    .take(CONTEXT)
+                    .collect();
+            }
+            (Some((story, first, s)), Some((end_story, last, e))) if story == end_story => {
+                // A malformed input may name the end before the start; the
+                // range still spans its paragraphs, start to end.
+                let (first, s, last, e) = if (first, s) <= (last, e) {
+                    (first, s, last, e)
+                } else {
+                    (last, e, first, s)
+                };
                 let texts = &self.stories[story].1;
                 record.paragraph = Some(paragraph_id(story, first));
                 record.last_paragraph = (last > first).then(|| paragraph_id(story, last));
@@ -587,7 +615,7 @@ impl CommentFamily {
             r#ref: format!("c{id}"),
             author: attr("author").unwrap_or_default(),
             initials: attr("initials"),
-            date: attr("date"),
+            date: self.reported_date(id),
             text: comment_text(&self.dom, meta.node),
             parent: meta.parent,
             done: meta.done,
@@ -597,6 +625,16 @@ impl CommentFamily {
             before: String::new(),
             after: String::new(),
         }
+    }
+
+    /// The comment instant, sharing the revision reader's offset and fallback rule.
+    pub(crate) fn reported_date(&self, id: u32) -> Option<String> {
+        let meta = self.meta.get(&id)?;
+        crate::changes::reported_date(
+            self.dom.attribute(meta.node, &W::date()),
+            meta.cex_row
+                .and_then(|row| self.dom.attribute(row, &XName::get("dateUtc", CEX))),
+        )
     }
 
     /// Add a comment; a reply goes right after the last comment of its
@@ -676,6 +714,18 @@ impl CommentFamily {
             .and_then(|row| self.dom.attribute(row, &XName::get("dateUtc", CEX)))
             .map(str::to_string);
         Some((meta.parent, meta.done, date))
+    }
+
+    /// Set a linked UTC date before storing the existing comment family.
+    pub(crate) fn set_date_utc(&mut self, id: u32, date: &str) {
+        let Some(meta) = self.meta.get_mut(&id) else {
+            return;
+        };
+        let row = *meta
+            .cex_row
+            .get_or_insert_with(|| self.dom.new_element(XName::get("commentExtensible", CEX)));
+        self.dom
+            .set_attribute_value(row, &XName::get("dateUtc", CEX), Some(date));
     }
 
     /// Add a comment copied whole from another package (its formatting,
@@ -1161,7 +1211,7 @@ fn declare_ignorable(dom: &mut Dom, root: NodeId, prefix: &str, uri: &str) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1196,7 +1246,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod people_and_text_boundary_tests {
     use super::*;
 
@@ -1340,7 +1390,7 @@ mod people_and_text_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_anchor_boundary_tests {
     use super::*;
 
@@ -1457,6 +1507,31 @@ mod public_memory_anchor_boundary_tests {
         }
     }
     #[test]
+    fn reversed_ranges_record_both_endpoints() {
+        let body = format!(
+            "<w:p><w:r><w:t>AA</w:t></w:r><w:commentRangeEnd w:id='7'/><w:r><w:t>BB</w:t></w:r></w:p>{}<w:p><w:r><w:t>CC</w:t></w:r><w:commentRangeStart w:id='7'/><w:r><w:t>DD</w:t></w:r></w:p>",
+            paragraph("middle")
+        );
+        let mut pkg = package(&body);
+        pkg.set_part("word/comments.xml",format!("<w:comments xmlns:w='{}'><w:comment w:id='7' w:author='Source reviewer' w:initials='SR' w:date='2025-02-03T04:05:06Z'><w:p><w:r><w:t>Review</w:t></w:r></w:p></w:comment></w:comments>",W::URI).into_bytes());
+        pkg.add_content_type_override(
+            "/word/comments.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        );
+        pkg.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            "comments.xml",
+        );
+        let bytes = pkg.to_zip().unwrap();
+        let record = &list_comments(&bytes).unwrap()[0];
+        assert_eq!(record.paragraph.as_deref(), Some("p0"));
+        assert_eq!(record.last_paragraph.as_deref(), Some("p2"));
+        assert_eq!(record.anchor_text, "BB\nmiddle\nCC");
+        assert_eq!(record.before, "AA");
+        assert_eq!(record.after, "DD");
+    }
+    #[test]
     fn latest_thread_selection_preserves_complete_winning_source_records_and_thread_order() {
         let record = |id, parent, author: &str, date: &str| CommentRecord {
             id,
@@ -1497,7 +1572,7 @@ mod public_memory_anchor_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod authored_thread_reference_contract_tests {
     use super::*;
 

@@ -62,7 +62,7 @@ fn convert_update_fields_reports_the_written_cache_and_refuses_clobbering() {
     let xml = part_string(&saved, "word/document.xml").unwrap();
     assert!(xml.contains("NUMPAGES") && xml.contains(">1</w:t>"));
     let refused = run(dir.path(), &args);
-    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(refused.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&refused.stderr).contains("already exists"));
     assert_eq!(
         std::fs::read(dir.path().join("updated.docx")).unwrap(),
@@ -171,7 +171,7 @@ fn convert_update_fields_refuses_an_existing_report_without_force() {
         "fields.json",
     ];
     let refused = run(dir.path(), &args);
-    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
     assert!(String::from_utf8_lossy(&refused.stderr).contains("already exists"));
     assert_eq!(
         std::fs::read(dir.path().join("fields.json")).unwrap(),
@@ -365,7 +365,7 @@ fn convert_update_fields_refuses_a_report_on_the_input_or_the_output() {
         dir.path(),
         &[update.as_slice(), &["--report", "fields.json"]].concat(),
     );
-    assert_eq!(kept.status.code(), Some(1), "{kept:?}");
+    assert_eq!(kept.status.code(), Some(2), "{kept:?}");
     assert!(String::from_utf8_lossy(&kept.stderr).contains("already exists"));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("fields.json")).unwrap(),
@@ -903,4 +903,244 @@ fn a_word_input_that_is_not_a_zip_reads_the_same_on_every_task() {
         assert_eq!(String::from_utf8_lossy(&out.stderr), expected, "{args:?}");
         assert!(out.stdout.is_empty(), "{args:?}");
     }
+}
+
+/// V2-05 (plan §5): a reporting failure after a successful commit says
+/// which files were committed, and the commit stands on disk. stdout is a
+/// full nonblocking socket, so the post-commit report write fails with
+/// EAGAIN (a read-only fd would not work: Rust's stdout swallows EBADF).
+#[cfg(unix)]
+#[test]
+fn publication_failure_reports_actual_commit_state() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.docx"), docx(&para("One."))).unwrap();
+    let (_reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+    writer.set_nonblocking(true).unwrap();
+    let junk = [b'x'; 65536];
+    loop {
+        match writer.write(&junk) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(e) => panic!("{e}"),
+        }
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+        .current_dir(dir.path())
+        .args(["edit", "a.docx", "-p", "p0", "--content", "Two."])
+        .stdout(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+            writer,
+        )))
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("committed"), "{err}");
+    assert!(err.contains("a_modified.docx"), "{err}");
+    // The commit is not rolled back: the output is a readable docx.
+    let committed = std::fs::read(dir.path().join("a_modified.docx")).unwrap();
+    assert!(committed.starts_with(b"PK"), "{committed:?}");
+}
+
+/// I7: status writes after publication must not panic on a closed stderr.
+#[test]
+fn broken_stderr_keeps_the_committed_result_on_stdout() {
+    for bundle in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.docx"), docx(&para("One."))).unwrap();
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jubarte"));
+        cmd.current_dir(dir.path())
+            .args(["edit", "a.docx", "-p", "p0", "--content", "Two."]);
+        if bundle {
+            cmd.args(["--out-dir", "r"]);
+        }
+        let out = cmd.stderr(writer).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{out:?}");
+        let primary = if bundle {
+            "r/redline.docx"
+        } else {
+            "a_modified.docx"
+        };
+        assert!(dir.path().join(primary).is_file());
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(primary),
+            "{out:?}"
+        );
+    }
+}
+
+#[test]
+fn whitespace_near_cli_json_refuses_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = docx(&para("Alice services.  Such Bob"));
+    std::fs::write(dir.path().join("input.docx"), &source).unwrap();
+    for extra in [
+        vec!["--at", "p0"],
+        vec![],
+        vec!["--at", "p0", "--all-matches", "--expect-count", "1"],
+    ] {
+        let args = [
+            vec![
+                "edit",
+                "replace",
+                "input.docx",
+                "--find",
+                "services. Such",
+                "--text",
+                "Carol Diaz",
+                "-o",
+                "output.docx",
+                "--json",
+            ],
+            extra,
+        ]
+        .concat();
+        let out = run(dir.path(), &args);
+        assert_eq!(
+            out.status.code(),
+            Some(3),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["error"]["code"], "ANCHOR_NOT_FOUND");
+        assert_eq!(value["error"]["near"]["total"], 1, "{value}");
+        assert_eq!(
+            value["error"]["near"]["occurrences"][0]["text"],
+            "services.  Such"
+        );
+        assert_eq!(
+            value["error"]["near"]["occurrences"][0]["shown"],
+            r#""services.  Such""#
+        );
+        assert_eq!(value["error"]["near"]["occurrences"][0]["offset"], 6);
+        assert!(!dir.path().join("output.docx").exists());
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("input.docx")).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn whitespace_near_cli_text_and_legacy_flags_show_the_copy_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        docx(&para("Alice services.  Such Bob")),
+    )
+    .unwrap();
+    for args in [
+        vec![
+            "edit",
+            "replace",
+            "input.docx",
+            "--at",
+            "p0",
+            "--find",
+            "services. Such",
+            "--text",
+            "Carol Diaz",
+            "-o",
+            "output.docx",
+        ],
+        vec![
+            "edit",
+            "input.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "services. Such",
+            "--content",
+            "Carol Diaz",
+        ],
+    ] {
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(3));
+        let text = String::from_utf8(out.stderr).unwrap();
+        assert!(text.contains("ANCHOR_NOT_FOUND"), "{text}");
+        assert!(text.contains("near: \"services.  Such\""), "{text}");
+        assert!(text.contains("copy the text exactly"), "{text}");
+        assert!(!dir.path().join("output.docx").exists());
+        assert!(!dir.path().join("input_modified.docx").exists());
+    }
+}
+
+#[test]
+fn whitespace_near_legacy_operation_jsonl_carries_exact_text() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        docx(&para("Alice services.  Such Bob")),
+    )
+    .unwrap();
+    let out = run(
+        dir.path(),
+        &[
+            "edit",
+            "input.docx",
+            "-p",
+            "p0",
+            "--anchor",
+            "services. Such",
+            "--content",
+            "Carol Diaz",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let first = String::from_utf8(out.stdout).unwrap();
+    let value: serde_json::Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
+    assert_eq!(value["near"]["occurrences"][0]["text"], "services.  Such");
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("near: \"services.  Such\"")
+    );
+}
+
+#[test]
+fn whitespace_near_global_and_all_matches_refuse_with_report() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.docx"),
+        docx(&para("Alice services.  Such Bob")),
+    )
+    .unwrap();
+    let mut failures = Vec::new();
+    for extra in [
+        vec![],
+        vec!["--at", "p0", "--all-matches", "--expect-count", "1"],
+        vec!["--all-matches", "--expect-count", "1"],
+    ] {
+        let args = [
+            vec![
+                "edit",
+                "replace",
+                "input.docx",
+                "--find",
+                "services. Such",
+                "--text",
+                "Carol Diaz",
+                "-o",
+                "output.docx",
+                "--json",
+            ],
+            extra,
+        ]
+        .concat();
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(3));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        if value["error"]["near"]["total"] != 1 {
+            failures.push(value);
+        }
+    }
+    assert!(failures.is_empty(), "missing reports: {failures:?}");
 }
