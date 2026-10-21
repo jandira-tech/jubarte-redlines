@@ -1936,10 +1936,14 @@ const FORCE_BUNDLE_ONLY: &str =
     "--force replaces only a jubarte bundle, so move those files or name another --out-dir";
 
 /// The entries of `dir` no earlier bundle's `report.jsonl` names, sorted,
-/// a directory with a trailing `/`; none when `dir` cannot be read.
+/// a directory with a trailing `/`; none when `dir` does not exist. A
+/// directory that cannot be read is no bundle `--force` may replace: it
+/// reads as one foreign `(unreadable: …)` entry (#1431 review).
 fn foreign_bundle_entries(dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => return vec![format!("(unreadable: {e})")],
     };
     let mut ours: std::collections::BTreeSet<String> = ["report.jsonl".to_string()].into();
     if let Ok(report) = std::fs::read_to_string(dir.join("report.jsonl")) {
@@ -4481,6 +4485,29 @@ fn refresh_fields(bytes: &[u8]) -> Result<(jubarte::fields::Updated, String), St
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
+
+    /// A bundle directory `--force` cannot read is no earlier bundle it may
+    /// replace: an unreadable one blocks (#1431 review), a missing one is
+    /// nothing to replace.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_bundle_is_foreign() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("bundle");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), "mine").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = std::fs::read_dir(&dir).is_ok();
+        let foreign = foreign_bundle_entries(&dir);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if readable {
+            return; // root reads any directory
+        }
+        assert_eq!(foreign.len(), 1, "{foreign:?}");
+        assert!(foreign[0].starts_with("(unreadable: "), "{foreign:?}");
+        assert!(foreign_bundle_entries(&root.path().join("missing")).is_empty());
+    }
 
     #[test]
     fn publication_cleanup_warnings_reach_stderr_for_both_outcomes() {
