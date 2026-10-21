@@ -22,6 +22,17 @@ fn golden(name: &str) -> String {
     std::fs::read_to_string(fixture(name)).unwrap()
 }
 
+fn assert_golden(name: &str, actual: &str) {
+    if std::env::var_os("JUBARTE_BLESS").is_some() {
+        std::fs::write(fixture(name), actual).unwrap();
+    }
+    assert_eq!(
+        actual,
+        golden(name),
+        "{name}: regenerate with JUBARTE_BLESS=1 and received_docx_*_view*_match*"
+    );
+}
+
 fn agent(docx: &[u8]) -> String {
     agent_with(docx, TrackChanges::All, true)
 }
@@ -410,16 +421,13 @@ fn id_line_shows_direct_alignment_indent_style_and_number() {
 }
 
 #[test]
-fn id_line_names_tracked_paragraph_marks_and_formatting_changes() {
+fn paragraph_marks_print_inline_and_formatting_changes_on_the_id_line() {
     let body_xml = concat!(
         r#"<w:p><w:pPr><w:rPr><w:ins w:id="4" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:rPr></w:pPr><w:r><w:t>Split here</w:t></w:r></w:p>"#,
         r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>Now bold</w:t></w:r></w:p>"#,
     );
     let out = body(&agent(&docx(body_xml))).to_string();
-    assert!(
-        out.contains("<!-- p0 break-ins r4 @AC -->\nSplit here"),
-        "{out}"
-    );
+    assert!(out.contains("<!-- p0 -->\nSplit here¶{r4 @AC}"), "{out}");
     assert!(
         out.contains("<!-- p1 fmt r5 @AC -->\n**Now bold**"),
         "{out}"
@@ -537,12 +545,12 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days, {++quarterly++}{>>r5 @AC<<} reports{--, nothing else--}{>>r6 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {++forty-five++}{r4 @AC}{--thirty--}{r3 @AC} days, {++quarterly++}{r5 @AC} reports{--, nothing else--}{r6 @AC}\n"
     );
 }
 
 #[test]
-fn neighbouring_marks_by_one_author_share_one_note_and_keep_their_text() {
+fn neighbouring_marks_by_one_author_keep_each_id_and_their_text() {
     let p = format!(
         "<w:p>{}{}{}</w:p>",
         run("a "),
@@ -551,12 +559,12 @@ fn neighbouring_marks_by_one_author_share_one_note_and_keep_their_text() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold words++}{>>r7+8 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold++}{r7 @AC}{++ words++}{r8 @AC}\n"
     );
 }
 
 #[test]
-fn a_substitution_by_two_authors_gets_two_notes_deleted_side_first() {
+fn a_replacement_pairs_only_the_deletion_and_following_insertion_by_one_author() {
     let p = format!(
         "<w:p>{}{}{}{}</w:p>",
         run("x "),
@@ -566,7 +574,7 @@ fn a_substitution_by_two_authors_gets_two_notes_deleted_side_first() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nx {~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}{++!++}{>>r3 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nx {++new++}{r2 @JD}{~~old~>!~~}{r1+3 @AC}\n"
     );
 }
 
@@ -581,7 +589,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
     );
     let bytes = docx(&p);
     assert!(
-        body(&agent(&bytes)).contains("{++b++}{>>r1 @AC<<} c {++d++}{>>r2 @AC<<}"),
+        body(&agent(&bytes)).contains("{++b++}{r1 @AC} c {++d++}{r2 @AC}"),
         "{}",
         agent(&bytes)
     );
@@ -594,7 +602,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
     );
     assert!(
         body(&dated).contains(
-            "{++b++}{>>r1 @AC 2026-10-01T09:00:00Z<<} c {++d++}{>>r2 @AC 2026-10-03T14:05:00Z<<}"
+            "{++b++}{r1 @AC 2026-10-01T09:00:00Z} c {++d++}{r2 @AC 2026-10-03T14:05:00Z}"
         ),
         "{dated}"
     );
@@ -610,7 +618,7 @@ fn dates_go_inline_only_when_asked_and_only_for_an_author_with_several() {
             ..agent_defaults()
         },
     );
-    assert!(body(&dated).contains("{++b++}{>>r1 @AC<<}"), "{dated}");
+    assert!(body(&dated).contains("{++b++}{r1 @AC}"), "{dated}");
 }
 
 #[test]
@@ -619,10 +627,7 @@ fn legacy_output_keeps_author_notes() {
     let legacy = docx_to_markdown(&docx(&p), &MarkdownOptions::default())
         .unwrap()
         .markdown;
-    assert_eq!(
-        legacy,
-        "a {++b++}{>>r7 Ann Counsel (2026-10-01T09:00:00Z)<<}\n"
-    );
+    assert_eq!(legacy, "a {++b++}{r7 Ann Counsel (2026-10-01T09:00:00Z)}\n");
 }
 
 #[test]
@@ -632,7 +637,7 @@ fn an_author_cannot_forge_an_agent_tag_in_the_plain_view() {
         .unwrap()
         .markdown;
     // The id comes first, so the name never reads as a tag.
-    assert_eq!(legacy, "{++b++}{>>r7 0@JD (2026-10-01T09:00:00Z)<<}\n");
+    assert_eq!(legacy, "{++b++}{r7 0@JD (2026-10-01T09:00:00Z)}\n");
 }
 
 #[test]
@@ -651,7 +656,7 @@ fn a_tracked_mark_inside_a_footnote_carries_its_agent_tag() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("[^1]: First{++<br>++}{>>footnotes.r4 @AC<<}second"),
+        out.contains("[^1]: First{++<br>++}{footnotes.r4 @AC}second"),
         "{out}"
     );
     assert!(!out.contains("Ann Counsel ("), "{out}");
@@ -677,7 +682,7 @@ fn a_footnote_change_names_its_story() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("[^1]: Source{++ x++}{>>footnotes.r3 @AC<<}"),
+        out.contains("[^1]: Source{++ x++}{footnotes.r3 @AC}"),
         "{out}"
     );
     assert!(
@@ -711,7 +716,7 @@ fn a_header_change_is_visible_on_the_headers_line() {
     let lines = header_lines(&out);
     assert!(
         lines.contains(
-            &"  default: {id: header1, text: \"{++DRAFT++}{>>header1.r1 @AC<<}\", style: Normal}"
+            &"  default: {id: header1, text: \"{++DRAFT++}{header1.r1 @AC}\", style: Normal}"
         ),
         "{out}"
     );
@@ -727,10 +732,7 @@ fn a_header_change_is_visible_on_the_headers_line() {
     );
     // --changed --by AC finds no body block but still shows the change.
     let changed = changed_by(&bytes, Some("AC"), true);
-    assert!(
-        changed.contains("{++DRAFT++}{>>header1.r1 @AC<<}"),
-        "{changed}"
-    );
+    assert!(changed.contains("{++DRAFT++}{header1.r1 @AC}"), "{changed}");
     // The resolved views print the plain text, without tags.
     let accepted = agent_with(&bytes, TrackChanges::Accept, true);
     assert!(
@@ -798,17 +800,18 @@ fn changes_without_text_name_their_ids() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("style_changes: {Normal: styles.r9 @AC}")),
+            .any(|l| l
+                .starts_with(r#"style_changes: {Normal: "styles.r9 @AC 2026-01-01T00:00:00Z"}"#)),
         "{out}"
     );
     assert!(
         lines.contains(
-            &"  default: {id: header1, text: Title, style: Normal, fmt: header1.r4 @AC in header1}"
+            &r#"  default: {id: header1, text: Title, style: Normal, fmt: "header1.r4 @AC 2026-01-01T00:00:00Z in header1"}"#
         ),
         "{out}"
     );
     assert!(
-        out.contains("[^1]: **Source** <!-- fmt footnotes.r7 @AC -->"),
+        out.contains("[^1]: **Source** <!-- fmt footnotes.r7 @AC 2026-01-01T00:00:00Z -->"),
         "{out}"
     );
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
@@ -1008,12 +1011,15 @@ fn changes_printed_nowhere_else_are_unplaced() {
         .find(|l| l.starts_with("unplaced: "))
         .unwrap_or_else(|| panic!("no unplaced line in {out}"));
     assert!(unplaced.contains("r3 @AC in p0"), "{out}");
-    assert!(unplaced.contains("r21 @AC in p0"), "{out}");
-    // The shown branch's text box prints its content as comment lines
-    // beside the drawing, so the Choice branch's own insertion is placed
-    // there (`<!-- Box{++Choice++}{>>r20 @AC<<} -->`), not unplaced.
     assert!(
-        out.contains("<!-- Box{++Choice++}{>>r20 @AC<<} -->"),
+        unplaced.contains("r21 @AC 2026-10-01T09:00:00Z in p0"),
+        "{out}"
+    );
+    // The shown branch's text box prints its content as the paragraph
+    // after the drawing, so the Choice branch's own insertion is placed
+    // there (`Box{++Choice++}{r20 @AC 2026-10-01T09:00:00Z}`), not unplaced.
+    assert!(
+        out.contains("\nBox{++Choice++}{r20 @AC 2026-10-01T09:00:00Z}\n"),
         "{out}"
     );
     assert!(!unplaced.contains("r20"), "{out}");
@@ -1043,15 +1049,18 @@ fn changes_printed_nowhere_else_are_unplaced() {
 #[test]
 fn a_textless_change_in_a_printed_row_prints_its_own_tag() {
     let body_xml = format!(
-        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:ins w:id="1" w:author="Ann Counsel"/></w:trPr><w:tc><w:p><w:del w:id="2" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"><w:r><w:drawing/></w:r></w:del>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
         ins(3, "Ann Counsel", "Cell")
     );
     let out = agent(&docx(&body_xml));
-    // The deleted drawing is carried whole, so its own mark and tag sit in
-    // the cell: not the row's tag, not the cell text's.
-    assert!(body(&out).contains("{--![][d1]--}{>>r2 @AC<<}"), "{out}");
+    // The deleted drawing and the following insertion by the same author/date
+    // form a substitution whose tag preserves both ids.
+    assert!(
+        body(&out).contains("{~~![][d1]~>Cell~~}{r2+3 @AC 2026-10-01T09:00:00Z}"),
+        "{out}"
+    );
     assert!(out.contains("rev r1 @AC in t0.row0"), "{out}");
-    assert!(body(&out).contains("{++Cell++}{>>r3 @AC<<}"), "{out}");
+    assert!(!body(&out).contains("{r1 @AC}"), "{out}");
     // Every change prints, so none lands on the `unplaced:` line.
     assert!(!out.contains("unplaced:"), "{out}");
 }
@@ -1143,8 +1152,8 @@ fn numbering_and_styles_authors_get_handles_after_comment_authors() {
 
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own
 /// way, moves included, and the tracked view escapes document text that
-/// reads like a mark. An insertion directly followed by a deletion is one
-/// substitution, as in the body.
+/// reads like a mark. An insertion followed by a deletion keeps both tags,
+/// as in the body.
 #[test]
 fn header_text_follows_each_view() {
     let header = format!(
@@ -1173,7 +1182,7 @@ fn header_text_follows_each_view() {
     };
     assert_eq!(
         text(&agent(&bytes)),
-        r#"  default: {id: header1, text: "Status: {~~FINAL~>DRAFT~~}{>>header1.r2+1 @AC<<} {\\>>x<<\\} Page {~~7~>2~~}{>>header1.r8+9 @AC<<} of 3", style: Normal}"#
+        r#"  default: {id: header1, text: "Status: {++DRAFT++}{header1.r1 @AC 2026-10-01T09:00:00Z}{--FINAL--}{header1.r2 @AC 2026-10-01T09:00:00Z} {\\>>x<<\\} Page {++2++}{header1.r9 @AC}{--7--}{header1.r8 @AC} of 3", style: Normal}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Accept, true)),
@@ -1450,7 +1459,7 @@ fn an_inserted_empty_paragraph_keeps_its_line_for_the_mark() {
     );
     assert_eq!(
         body(&agent(&docx(&body_xml))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 empty, break-ins r3 @AC -->\n\n<!-- p2 empty -->\n\n<!-- p3 -->\nAfter\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- p1 -->\n¶{r3 @AC}\n\n<!-- p2 empty -->\n\n<!-- p3 -->\nAfter\n"
     );
 }
 
@@ -1472,11 +1481,11 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
     let bytes = docx(&format!("{p0}{p1}"));
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Accept, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r3+4 @AC -->\nWithin forty-five\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r4 @AC; r3 @AC -->\nWithin forty-five\n"
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Reject, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r3+4 @AC -->\nWithin thirty\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r4 @AC; r3 @AC -->\nWithin thirty\n"
     );
 }
 
@@ -1520,7 +1529,9 @@ fn rev_counts_revisions_inside_links_content_controls_and_fields() {
     );
     let out = agent_with(&docx(&body_xml), TrackChanges::Accept, true);
     assert!(
-        body(&out).starts_with("<!-- page 1 of 1 -->\n\n<!-- p0 rev r7+8+9+10 @AC -->\n"),
+        body(&out).starts_with(
+            "<!-- page 1 of 1 -->\n\n<!-- p0 rev r7 @AC; r8 @AC; r9 @AC; r10 @AC -->\n"
+        ),
         "{out}"
     );
 }
@@ -1748,7 +1759,7 @@ fn tracked_changes_inside_a_code_block_still_round_trip() {
     let full = agent(&bytes);
     let view = body(&full);
     assert!(
-        view.contains("keep {++new {\\++x++\\}++}{>>r7 @A<<} old"),
+        view.contains("keep {++new {\\++x++\\}++}{r7 @A} old"),
         "{view}"
     );
     let back = markdown_to_docx(&full, &DocxOptions::default())
@@ -2041,7 +2052,7 @@ fn header_counts_revisions_comments_and_authors() {
     );
     assert_eq!(
         lines[4],
-        "revisions: 3                       # 3 marks shown as 2 changes: 1 insertion, 1 substitution"
+        "revisions: 3                       # 3 marks shown as 3 changes: 2 insertions, 1 deletion"
     );
     assert_eq!(lines[5], "comments: 0");
     assert_eq!(lines[6], "authors:");
@@ -2105,21 +2116,43 @@ fn header_view_lines_for_hidden_comments_accept_and_reject() {
 }
 
 #[test]
-fn header_prints_a_day_range_for_an_author_with_several_timestamps() {
-    let p = format!(
-        "<w:p>{}{}{}{}</w:p>",
-        run("a "),
-        ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "b"),
-        run(" c "),
-        ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "d")
-    );
-    let out = agent(&docx(&p));
-    let lines = header_lines(&out);
-    // lines[7] is the owner line, which every header prints.
-    assert_eq!(
-        lines[8],
-        "  AC: Ann Counsel                  # 2 revisions, 2026-10-01..2026-10-03"
-    );
+fn header_prints_latest_for_several_timestamps_and_bare_for_one() {
+    for (comment_date, latest) in [
+        ("2026-10-17T16:59:00Z", "2026-10-17T16:59:00Z"),
+        ("2026-10-02T11:00:00Z", "2026-10-03T14:05:00Z"),
+    ] {
+        let p = format!(
+            "<w:p>{} {} {}{}</w:p>",
+            ins_at(1, "Ann Counsel", "2026-10-01T09:00:00Z", "one"),
+            ins_at(2, "Ann Counsel", "2026-10-03T14:05:00Z", "two"),
+            ins_at(3, "Bo Chen", "2026-10-17T04:56:00Z", "once"),
+            reference(5),
+        );
+        let comments = format!(
+            r#"<w:comments xmlns:w="{W_NS}" {W14}>{}</w:comments>"#,
+            comment(5, "Ann Counsel", "AC", comment_date, "11A5D0F2", "Check.")
+        );
+        let bytes = common::docx::docx_with(
+            &p,
+            &[Part {
+                name: "word/comments.xml",
+                content_type: COMMENTS_CT,
+                rel_type: COMMENTS_REL,
+                xml: &comments,
+            }],
+        );
+        let out = agent(&bytes);
+        let lines = header_lines(&out);
+        assert_eq!(
+            lines[8],
+            format!("  AC: Ann Counsel                  # 2 revisions, 1 comment, latest {latest}")
+        );
+        assert_eq!(
+            lines[9],
+            "  BC: Bo Chen                      # 1 revision, 2026-10-17T04:56:00Z"
+        );
+        assert!(!lines.iter().any(|line| line.contains("..")), "{out}");
+    }
 }
 
 const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
@@ -2406,7 +2439,7 @@ fn cli_read_prints_the_agent_view_with_flags() {
     let picked = ok(&["read", "received.docx", "-p", "p5,t0"], dir.path());
     assert!(picked.contains("\nrange: p5, t0 of p0-p20\n"), "{picked}");
     let dated = ok(&["read", "received.docx", "--dates"], dir.path());
-    assert!(dated.contains("{>>r0 @AC<<}"), "{dated}");
+    assert!(dated.contains("{r0 @AC}"), "{dated}");
     let bad = jubarte(&["read", "received.docx", "-p", "p99"], dir.path());
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("p99 is past the last paragraph p20"));
@@ -2421,9 +2454,9 @@ fn cli_read_prints_the_agent_view_with_flags() {
 fn received_docx_tracked_view_matches_the_golden() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
-    assert_eq!(
-        ok(&["read", "received.docx"], dir.path()),
-        golden("received.tracked.md")
+    assert_golden(
+        "received.tracked.md",
+        &ok(&["read", "received.docx"], dir.path()),
     );
 }
 
@@ -2431,23 +2464,23 @@ fn received_docx_tracked_view_matches_the_golden() {
 fn received_docx_other_views_match_their_goldens() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(fixture("received.docx"), dir.path().join("received.docx")).unwrap();
-    assert_eq!(
-        ok(&["read", "received.docx", "--comments", "none"], dir.path()),
-        golden("received.no-comments.md")
+    assert_golden(
+        "received.no-comments.md",
+        &ok(&["read", "received.docx", "--comments", "none"], dir.path()),
     );
-    assert_eq!(
-        ok(
+    assert_golden(
+        "received.accept.md",
+        &ok(
             &["read", "received.docx", "--track-changes", "accept"],
-            dir.path()
+            dir.path(),
         ),
-        golden("received.accept.md")
     );
-    assert_eq!(
-        ok(
+    assert_golden(
+        "received.reject.md",
+        &ok(
             &["read", "received.docx", "--track-changes", "reject"],
-            dir.path()
+            dir.path(),
         ),
-        golden("received.reject.md")
     );
 }
 
@@ -2485,7 +2518,7 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
     let text = edited(dir.path(), plan, "review");
     let ids = captures(
         &text,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r(\d+)\+(\d+) @AC<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r(\d+)\+(\d+) @AC\} days of receipt\.\n",
     );
     let (del_id, ins_id) = (ids[0], ids[1]);
     assert!(text.contains("<!-- p2 -->\nLate amounts accrue interest at {==one percent==}{>>c0 @AC: Is one percent the statutory cap?<<} per month.\n"), "{text}");
@@ -2665,11 +2698,11 @@ fn a_second_author_editing_a_redline_gets_their_own_notes() {
     let text = edited(dir.path(), second, "two");
     captures(
         &text,
-        r"\{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @AC<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
+        r"\{~~thirty~>forty-five~~\}\{r\d+\+\d+ @AC\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
     );
     assert!(
         text.contains(
-            "revisions: 4                       # 4 marks shown as 3 changes: 1 insertion, 1 deletion, 1 substitution"
+            "revisions: 4                       # 4 marks shown as 2 changes: 2 substitutions"
         ),
         "{text}"
     );
@@ -2704,7 +2737,7 @@ fn changed_keeps_the_blocks_with_marks_by_anyone_or_by_one_author() {
     );
     assert_eq!(
         body(&all),
-        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{>>r0 @AC<<} days.\n\n<!-- p3 -->\nFee: {--waived--}{>>r1 @BL<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nPay in {++ten++}{r0 @AC} days.\n\n<!-- p3 -->\nFee: {--waived--}{r1 @BL}\n"
     );
     let bob = agent_options(&bytes, &changed(Some("Bob Lee")));
     assert!(
@@ -2713,7 +2746,7 @@ fn changed_keeps_the_blocks_with_marks_by_anyone_or_by_one_author() {
     );
     assert_eq!(
         body(&bob),
-        "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{>>r1 @BL<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p3 -->\nFee: {--waived--}{r1 @BL}\n"
     );
     for handle in ["BL", "@BL"] {
         let by_handle = agent_options(&bytes, &changed(Some(handle)));
@@ -3139,6 +3172,35 @@ fn escaped_text_reads_back_as_the_characters() {
     );
 }
 
+/// Assert the publication protocol, then inspect only the after-side lines
+/// (added or retained context). Removed text must not satisfy content checks.
+fn confirmation_after(stdout: &str) -> String {
+    assert!(stdout.contains("SUCCESS:\n~~~~diff\n"), "{stdout}");
+    assert!(
+        stdout.contains("\n--- before ") && stdout.contains("\n+++ after "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\n@@ ") && stdout.ends_with("~~~~\n"),
+        "{stdout}"
+    );
+    let mut after = String::new();
+    for line in stdout.lines() {
+        if line.starts_with("+++") {
+            continue;
+        }
+        if let Some(line) = line.strip_prefix('+').or_else(|| line.strip_prefix(' ')) {
+            after.push_str(line);
+            after.push('\n');
+        }
+    }
+    after
+}
+
+fn confirmed(args: &[&str], dir: &Path) -> String {
+    confirmation_after(&ok(args, dir))
+}
+
 #[test]
 fn cli_edit_says_when_an_anchor_was_read_without_its_marks() {
     let dir = tempfile::tempdir().unwrap();
@@ -3169,7 +3231,7 @@ fn cli_edit_says_when_an_anchor_was_read_without_its_marks() {
 fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "base.docx",
@@ -3200,9 +3262,9 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
             "--out-dir's default holds {name}"
         );
     }
-    assert!(out.contains("\nsource: base.edit/redline.docx\n"), "{out}");
+    assert!(out.contains("\nsource: redline.docx\n"), "{out}");
     assert!(
-        out.contains("\nrange: changed by @R (p0, p1, p2) of p0-p2\n"),
+        out.contains("<!-- p0 -->") && out.contains("<!-- p1 -->") && out.contains("<!-- p2 -->"),
         "{out}"
     );
     assert!(
@@ -3211,17 +3273,17 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
     );
     captures(
         &out,
-        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{>>r\d+ @R<<\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{r\d+ @R\}\n",
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r\d+\+\d+ @R\} days of receipt\.\n",
     );
     captures(
         &out,
-        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{>>r\d+ @R<<\} ?\.\n",
+        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{r\d+ @R\} ?\.\n",
     );
-    assert!(!out.contains("\n@@ "), "the patch is not printed: {out}");
+    // confirmation_after already asserted unified hunks on the raw stdout.
     let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
     assert!(
         report.contains(r#""op":"replace""#)
@@ -3312,7 +3374,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         "--datetime",
         "2026-10-01T09:00:00Z",
     ];
-    let out = ok(
+    let out = confirmed(
         &[
             &[
                 "edit",
@@ -3337,18 +3399,15 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         .concat(),
         dir.path(),
     );
+    captures(&out, r"within thirty\{\+\+ \(30\)\+\+\}\{r\d+ @R\} days");
     captures(
         &out,
-        r"within thirty\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days",
-    );
-    captures(
-        &out,
-        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{>>r\d+ @R<<\}Late amounts",
+        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{r\d+ @R\}Late amounts",
     );
     let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
     assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
 
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "one/redline.docx",
@@ -3368,12 +3427,12 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         dir.path(),
     );
     assert!(
-        out.contains("\nrange: changed by @JD (p1) of p0-p2\n"),
+        out.contains("source: redline.docx") && out.contains("<!-- p1 -->"),
         "{out}"
     );
     captures(
         &out,
-        r"\{\+\+ \(30\)\+\+\}\{>>r\d+ @R<<\} days of \{--receipt--\}\{>>r\d+ @JD<<\}\{\+\+the invoice\+\+\}\{>>r\d+ @JD<<\}\.",
+        r"\{\+\+ \(30\)\+\+\}\{r\d+ @R\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
     );
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(
@@ -3404,7 +3463,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
 fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("base.docx"), docx(BASE)).unwrap();
-    let out = ok(
+    let out = confirmed(
         &[
             "add",
             "base.docx",
@@ -3424,7 +3483,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(out.contains("{==one percent==}{>>c0 @AC: Cap?<<}"), "{out}");
-    let out = ok(
+    let out = confirmed(
         &[
             "add",
             "one/redline.docx",
@@ -3445,7 +3504,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         out.contains("{>>c0 @AC: Cap?<<}{>>c1 @BL re c0: Yes, in Delaware.<<}"),
         "{out}"
     );
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "two/redline.docx",
@@ -3464,8 +3523,8 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        out.contains("\nrange: changed (p2) of p0-p2\n"),
-        "nothing is by Cy Young, so the view falls back to every changed block: {out}"
+        out.contains("source: redline.docx") && out.contains("<!-- p2 -->"),
+        "the diff confirms the changed thread: {out}"
     );
     assert!(
         out.contains(
@@ -3473,7 +3532,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         ),
         "{out}"
     );
-    let out = ok(
+    let out = confirmed(
         &[
             "add",
             "three/redline.docx",
@@ -3491,7 +3550,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
         "{out}"
     );
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "four/redline.docx",
@@ -3507,8 +3566,21 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     let gone = regex::Regex::new(r"\bc[01]\b").unwrap();
     assert!(!gone.is_match(&out), "the thread is gone: {out}");
     assert!(
-        out.contains("\nrange: changed by @R (p0) of p0-p2\n") && out.contains("c2 @R"),
+        out.contains("source: redline.docx")
+            && out.contains("<!-- p2 -->")
+            && out.contains("1 comment: c2"),
         "{out}"
+    );
+    // The surviving p0 note is unchanged and outside the three context
+    // lines of the p2 deletion hunk; retain its content check via read.
+    let remaining = ok(&["read", "five/redline.docx"], dir.path());
+    assert!(
+        remaining.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
+        "{remaining}"
+    );
+    assert!(
+        !gone.is_match(&remaining),
+        "the thread is gone: {remaining}"
     );
     for bad in [
         &["add", "base.docx", "-p", "p1"][..],
@@ -3548,7 +3620,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         common::docx::docx_with(BASE, &[styles]),
     )
     .unwrap();
-    let after = ok(
+    let after = confirmed(
         &[
             "add",
             "base.docx",
@@ -3562,14 +3634,14 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         dir.path(),
     );
     assert!(
-        after.contains("range: changed by @R (") && after.contains("p2"),
+        after.contains("source: redline.docx") && after.contains("<!-- p2"),
         "{after}"
     );
     captures(
         &after,
-        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{>>r\d+ @R<<\}\n",
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
     );
-    let before = ok(
+    let before = confirmed(
         &[
             "add",
             "base.docx",
@@ -3589,7 +3661,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{>>r\d+ @R<<\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
@@ -3603,7 +3675,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         "{xml}"
     );
 
-    let out = ok(
+    let out = confirmed(
         &[
             "edit",
             "base.docx",
@@ -3627,12 +3699,12 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
         "editing mode writes no redline"
     );
     assert!(
-        out.contains("\nrange: changed by @R (p1) of p0-p2\n"),
+        out.contains("source: clean.docx") && out.contains("<!-- p1 -->"),
         "{out}"
     );
     captures(
         &out,
-        r"<!-- p1 rev r\d+\+\d+ @R -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within forty-five days of receipt\.\n",
     );
 
     let (noted, noted_err) = ok_both(
@@ -3652,8 +3724,8 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     assert!(noted_err.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted_err}");
     captures(
-        &noted,
-        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{>>r\d+ @R<<\}\n",
+        &confirmation_after(&noted),
+        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{r\d+ @R\}\n",
     );
     let (_, marks) = ok_both(
         &[
@@ -3711,7 +3783,7 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{>>r\d+\+\d+ @R<<\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{r\d+ @R\}\{--thirty--\}\{r\d+ @R\} days of receipt\.\n",
     );
     assert!(out.contains("R: Redline"), "{out}");
     // The digest is the in-memory redline's, neither input's.
@@ -3736,7 +3808,21 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         dir.path(),
     );
     assert!(written.status.success());
-    assert!(written.stdout.is_empty());
+    let confirmation = String::from_utf8_lossy(&written.stdout);
+    assert!(
+        confirmation.starts_with("SUCCESS:\n~~~~diff\n"),
+        "{confirmation}"
+    );
+    assert!(
+        confirmation.contains("+++ after r.docx\n"),
+        "{confirmation}"
+    );
+    assert!(
+        confirmation
+            .lines()
+            .any(|line| line.starts_with('+') && line.contains("forty-five")),
+        "{confirmation}"
+    );
     let stderr = String::from_utf8_lossy(&written.stderr);
     assert!(stderr.starts_with("wrote r.docx (docx, "), "{stderr}");
     assert!(dir.path().join("r.docx").is_file());
@@ -3996,12 +4082,12 @@ fn changed_by(docx: &[u8], by: Option<&str>, comments: bool) -> String {
 fn literal_critic_markup_in_the_text_is_escaped_and_not_a_change() {
     let doc = docx(&format!(
         "{}{}",
-        para("Use {++bold++} and {>>r0 @AC<<} marks"),
+        para("Use {++bold++} and {r0 @AC} marks"),
         para("quiet")
     ));
     let view = agent(&doc);
     assert!(
-        view.contains("Use {\\++bold++\\} and {\\>>r0 @AC<<\\} marks"),
+        view.contains("Use {\\++bold++\\} and \\{r0 @AC} marks"),
         "{view}"
     );
     let changed = changed_by(&doc, None, true);
@@ -4290,19 +4376,25 @@ fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
 }
 
 /// pi review av2 F10: `w:bdo`/`w:dir` are transparent to revisions as they
-/// are to the text: an insertion then a deletion across one pairs as the
-/// substitution the tracked view shows, and the resolved `rev` agrees.
+/// are to the text: an insertion then a deletion keeps document order,
+/// and the resolved `rev` agrees.
 #[test]
-fn a_bidi_wrapper_does_not_split_a_substitution() {
+fn a_bidi_wrapper_keeps_insertion_then_deletion_in_document_order() {
     let doc = docx(&format!(
         r#"<w:p>{}<w:bdo w:val="rtl">{}</w:bdo></w:p>"#,
         ins(2, "Ann Counsel", "b"),
         del(1, "Ann Counsel", "a")
     ));
     let tracked = agent(&doc);
-    assert!(tracked.contains("{~~a~>b~~}{>>r1+2 @AC<<}"), "{tracked}");
+    assert!(
+        tracked.contains("{++b++}{r2 @AC}{--a--}{r1 @AC}"),
+        "{tracked}"
+    );
     let accepted = agent_with(&doc, TrackChanges::Accept, true);
-    assert!(accepted.contains("<!-- p0 rev r1+2 @AC -->"), "{accepted}");
+    assert!(
+        accepted.contains("<!-- p0 rev r2 @AC; r1 @AC -->"),
+        "{accepted}"
+    );
 }
 
 /// pi review av2 F19: `read --dates` reaches the view through the CLI; an
@@ -4318,13 +4410,13 @@ fn the_dates_flag_reaches_the_cli_view() {
     );
     std::fs::write(dir.path().join("dated.docx"), docx(&p)).unwrap();
     let plain = ok(&["read", "dated.docx", "--no-page-markers"], dir.path());
-    assert!(plain.contains("{++b++}{>>r1 @AC<<}"), "{plain}");
+    assert!(plain.contains("{++b++}{r1 @AC}"), "{plain}");
     let dated = ok(
         &["read", "dated.docx", "--no-page-markers", "--dates"],
         dir.path(),
     );
     assert!(
-        dated.contains("{++b++}{>>r1 @AC 2026-10-01T09:00:00Z<<}"),
+        dated.contains("{++b++}{r1 @AC 2026-10-01T09:00:00Z}"),
         "{dated}"
     );
 }
@@ -4393,7 +4485,7 @@ fn a_header_only_change_points_at_the_headers_line() {
         "{view}"
     );
     assert!(
-        view.contains("text: \"{++NEW HEADER++}{>>header1.r5 @AC<<}\""),
+        view.contains("text: \"{++NEW HEADER++}{header1.r5 @AC}\""),
         "{view}"
     );
 }
@@ -4851,7 +4943,7 @@ fn a_selection_keeps_the_definition_of_an_inserted_note() {
             xml: &footnotes,
         }],
     );
-    let definition = "{++[^1]: Added note++}{>>r5 @AC<<}";
+    let definition = "{++[^1]: Added note++}{r5 @AC}";
     let full = agent(&bytes);
     assert!(full.contains(definition), "{full}");
     let picked = agent_options(
@@ -5186,7 +5278,7 @@ fn agent_preserves_spaces_across_runs_while_plain_conversion_collapses_them() {
 }
 
 #[test]
-fn insertion_before_deletion_still_attributes_the_deleted_side_first() {
+fn insertion_before_deletion_keeps_each_author_in_document_order() {
     let bytes = docx(&format!(
         "<w:p>{}{}</w:p>",
         ins(2, "John Doe", "new"),
@@ -5194,7 +5286,7 @@ fn insertion_before_deletion_still_attributes_the_deleted_side_first() {
     ));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{~~old~>new~~}{>>r1 @AC<<}{>>r2 @JD<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{r2 @JD}{--old--}{r1 @AC}\n"
     );
 }
 
@@ -5208,7 +5300,7 @@ fn a_plain_run_prevents_adjacent_revision_tags_from_merging() {
     ));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>r1 @AC<<} / {++two++}{>>r2 @AC<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{r1 @AC} / {++two++}{r2 @AC}\n"
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Accept, true)),
@@ -5226,7 +5318,7 @@ fn three_colliding_author_initials_stay_distinct_in_revision_notes() {
     ));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{>>r1 @AC<<}{++two++}{>>r2 @AC2<<}{++three++}{>>r3 @AC3<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++one++}{r1 @AC}{++two++}{r2 @AC2}{++three++}{r3 @AC3}\n"
     );
 }
 
@@ -5235,7 +5327,7 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
     let bytes = docx("<w:p><w:ins><w:r><w:t>new</w:t></w:r></w:ins></w:p>");
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{>>noid @??<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++new++}{noid @??}\n"
     );
 }
 
@@ -5251,7 +5343,7 @@ fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers()
         assert_eq!(
             body(&agent_with(&bytes, mode, true)),
             format!(
-                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, rev r1+2 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
+                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, rev r2 @AC in p0; r1 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
             )
         );
     }
@@ -5333,11 +5425,11 @@ fn comment_dates_include_revision_dates_when_deciding_whether_to_print_inline() 
     );
     assert_eq!(
         body(&dated),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>r1 @AC 2026-10-01T09:00:00Z<<}{>>c5 @AC 2026-10-03T14:05:00Z: Check this.<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{r1 @AC 2026-10-01T09:00:00Z}{>>c5 @AC 2026-10-03T14:05:00Z: Check this.<<}\n"
     );
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{>>r1 @AC<<}{>>c5 @AC: Check this.<<}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\n{++New text++}{r1 @AC}{>>c5 @AC: Check this.<<}\n"
     );
 }
 
@@ -5641,7 +5733,7 @@ fn pr392_changed_filter_does_not_treat_literal_critic_forms_as_revisions() {
         "{--old--}",
         "{~~old~>new~~}",
         "{==highlight==}",
-        "{>>r7 @AC: note<<}",
+        "{r7 @AC: note}",
     ] {
         let bytes = docx(&format!(
             "{}<w:p>{}</w:p>",
@@ -6027,8 +6119,33 @@ fn a_revision_id_holding_a_plus_prints_as_one_change() {
         .collect();
     assert!(listed.contains(&"body:rev:1+2".to_string()), "{listed:?}");
     let out = agent(&bytes);
-    assert!(out.contains("{>>body:rev:1+2 @AC<<}"), "{out}");
-    assert!(out.contains("{>>r1 @AC<<}"), "{out}");
+    assert!(out.contains("{body:rev:1+2 @AC}"), "{out}");
+    assert!(out.contains("{r1 @AC 2026-10-01T09:00:00Z}"), "{out}");
     assert!(!out.contains("r1+2 @AC"), "{out}");
     assert!(!out.contains("unplaced:"), "{out}");
+}
+
+#[test]
+fn undated_peer_keeps_a_dated_unplaced_change_timestamp() {
+    let alternate = format!(
+        r#"<mc:AlternateContent><mc:Choice Requires="wps">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent>"#,
+        drawing_box(&run("Choice")),
+        pict_box(&ins(3, "Alice", "Fallback")),
+    );
+    let source = docx(&format!(
+        r#"<w:p><w:r>{alternate}</w:r><w:ins w:id="2" w:author="Alice"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#
+    ));
+    let view = agent(&source);
+    assert!(
+        view.contains("ins r3 @A 2026-10-01T09:00:00Z in p0"),
+        "{view}"
+    );
+    let back = markdown_to_docx(&view, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let changes = jubarte::changes::list_changes(&back).unwrap();
+    assert!(
+        changes.iter().any(|c| c.text == "new" && c.date.is_none()),
+        "{changes:?}"
+    );
 }
