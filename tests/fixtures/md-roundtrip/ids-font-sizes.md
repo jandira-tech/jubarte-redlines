@@ -28,14 +28,16 @@ headers:
 
 <!-- p3 empty, before 0.4pt -->
 
-<!-- p4-p5 empty -->
+<!-- p4 empty, left 0.0694in, size 10pt -->
 
-<!-- p6 outline 2, left 0.37in, before 3pt -->
+<!-- p5 empty, size 10pt -->
+
+<!-- p6 outline 2, left 0.37in, before 3pt, size 9pt -->
 ## 1.- Datos de identificación:
 
-<!-- p7 empty, before 0.1pt -->
+<!-- p7 empty, before 0.1pt, size 8.5pt -->
 
-<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, p8-p19 line 8.65pt exact, p23 line 8.65pt exact, p27 line 8.65pt exact, p31 line 8.65pt exact, p35 line 8.65pt exact, widths 1.3465in 1.3465in 1.3465in 1.3465in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
+<!-- t0 10x4, cells p8-p38 by row, p14 center, p15 center, p8-p19 line 8.65pt exact size 8.5pt, p20-p22 size 6pt, p23 line 8.65pt exact size 8.5pt, p24-p26 size 6pt, p27 line 8.65pt exact size 8.5pt, p28-p30 size 6pt, p31 line 8.65pt exact size 8.5pt, p32-p34 size 6pt, p35 line 8.65pt exact size 8.5pt, p36-p38 size 6pt, widths 1.3465in 1.3465in 1.3465in 1.3465in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all, merged t0.row0.cell0 across 2; t0.row0.cell1 across 2; t0.row1.cell0 across 2; t0.row1.cell1 across 2; t0.row2.cell0 across 2; t0.row2.cell1 across 2; t0.row3.cell0 across 4 -->
 |Centro:||Código de Centro:||
 |-|-|-|-|
 |Dirección:||Provincia:||
@@ -48,92 +50,92 @@ headers:
 |Bachillerato||||
 |FP||||
 
-<!-- p39 empty, before 0.15pt -->
+<!-- p39 empty, before 0.15pt, size 8.5pt -->
 
-<!-- p40 left 0.37in -->
+<!-- p40 left 0.37in, size 9pt -->
 2.- Participación:
 
-<!-- p41 empty, before 0.1pt -->
+<!-- p41 empty, before 0.1pt, size 8.5pt -->
 
-<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center, p45 before 0.1pt line 9.6pt exact, p47 before 0.1pt line 9.6pt exact, p48 before 0.45pt, p50 before 4.85pt line 0.988, p52 before 0.1pt line 9.6pt exact, p53 line 8.55pt exact, p59 line 8.65pt exact, p65 line 8.75pt exact, widths 0.758in 1.2896in 0.989in 0.768in 0.889in 0.6924in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
+<!-- t1 4x6, cells t1.row0 p42-p52 t1.row1 p53-p58 t1.row2 p59-p64 t1.row3 p65-p70, p44 center, p45 center, p46 center, p47 center, p49 center, p50 center, p51 center, p52 center, p42 size 9pt, p43-p44 size 8.5pt, p45 before 0.1pt line 9.6pt exact size 8.5pt, p46 size 8.5pt, p47 before 0.1pt line 9.6pt exact size 8.5pt, p48 before 0.45pt size 8pt, p49 size 8.5pt, p50 before 4.85pt line 0.988 size 8.5pt, p51 size 8.5pt, p52 before 0.1pt line 9.6pt exact size 8.5pt, p53 line 8.55pt exact size 8.5pt, p54-p58 size 6pt, p59 line 8.65pt exact size 8.5pt, p60-p64 size 6pt, p65 line 8.75pt exact size 8.5pt, p66-p70 size 6pt, widths 0.758in 1.2896in 0.989in 0.768in 0.889in 0.6924in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
 |<br>Enseñanza|% de Alumnado participante en grupos específicos en<br>relación al total del alumnado|% de Profesorado participante en<br>relación al total del profesorado|<br>Nº de Grupos específicos\*|Nº de Grupos clase que han desarrollado experiencias|% Tiempo semanal dedicado<br>al   proyecto|
 |-|-|-|-|-|-|
 |Ed Primaria||||||
 |E.S.O||||||
 |Otras||||||
 
-<!-- p71 empty, left 0.37in, right 0.251in, before 0.1pt, line 1.05 -->
+<!-- p71 empty, left 0.37in, right 0.251in, before 0.1pt, line 1.05, size 6.5pt -->
 
-<!-- p72 left 0.37in, right 0.251in, before 0.1pt, line 1.05 -->
+<!-- p72 left 0.37in, right 0.251in, before 0.1pt, line 1.05, size 6.5pt -->
 (\*) Grupo específico: agrupamiento diferente al grupo-clase en el que se desarrollan las actuaciones del programa con estabilidad de sus participantes y planificación durante un periodo de tiempo determinado.
 
-<!-- p73 empty, before 0.25pt -->
+<!-- p73 empty, before 0.25pt, size 8pt -->
 
-<!-- t2 4x2, cells t2.row0 p74-p75 t2.row1 p76-p77 t2.row2 p78-p80 t2.row3 p81-p82, p74-p75 line 8.65pt exact, p76 before 0.2pt line 9.6pt exact, p78 line 9.55pt exact, p79 line 8.75pt exact, p81 before 0.1pt line 9.7pt exact, widths 4.4806in 0.906in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
+<!-- t2 4x2, cells t2.row0 p74-p75 t2.row1 p76-p77 t2.row2 p78-p80 t2.row3 p81-p82, p74-p75 line 8.65pt exact size 8.5pt, p76 before 0.2pt line 9.6pt exact size 8.5pt, p77 size 8pt, p78 line 9.55pt exact size 8.5pt, p79 line 8.75pt exact size 8.5pt, p80 size 8pt, p81 before 0.1pt line 9.7pt exact size 8.5pt, p82 size 8pt, widths 4.4806in 0.906in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
 |En relación a las familias del alumnado participantes en el programa|2019 / 2020|
 |-|-|
 |Porcentaje de familias que ha participado en actividades de tipo informativo (entrevistas; reuniones)||
 |Porcentaje de familias que ha participado en el diseño y planificación en alguna<br>actividad del programa.||
 |Porcentaje de familias que ha participado realizando actividades directamente con el alumnado.||
 
-<!-- p83 empty, before 0.5pt, after 0.05pt -->
+<!-- p83 empty, before 0.5pt, after 0.05pt, size 8pt -->
 
-<!-- t3 3x2, cells t3.row0 p84-p85 t3.row1 p86-p87 t3.row2 p88-p90, p84-p85 line 8.65pt exact, p86 before 0.1pt line 9.7pt exact, p88 line 9.55pt exact, p89 line 8.75pt exact, widths 4.4806in 0.906in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
+<!-- t3 3x2, cells t3.row0 p84-p85 t3.row1 p86-p87 t3.row2 p88-p90, p84-p85 line 8.65pt exact size 8.5pt, p86 before 0.1pt line 9.7pt exact size 8.5pt, p87 size 8pt, p88 line 9.55pt exact size 8.5pt, p89 line 8.75pt exact size 8.5pt, p90 size 8pt, widths 4.4806in 0.906in, width auto, indent 0.3674in, layout fixed, style TableNormal, cell-borders top,left,bottom,right single 0.5pt 000000 in all -->
 |En relación a la colaboración con otras entidades|2019 / 2020|
 |-|-|
 |Número de centros educativos con los que se han realizado actividades en el marco del proyecto.||
 |Número de entidades externas al centro con las que se han realizado actividades<br>en el marco del proyecto.||
 
-<!-- p91 empty, before 0.05pt -->
+<!-- p91 empty, before 0.05pt, size 7.5pt -->
 
-<!-- p92 left 0.37in, right 0.251in -->
+<!-- p92 left 0.37in, right 0.251in, size 8.5pt -->
 3.- Descripción de las actividades o trabajos por proyectos realizados tanto en los grupos específicos como en los grupos-clase, con indicación de las metodologías utilizadas.
 
-<!-- p93 empty, before 0.4pt -->
+<!-- p93 empty, before 0.4pt, size 8pt -->
 
-<!-- p94 left 0.37in -->
+<!-- p94 left 0.37in, size 8.5pt -->
 4.- Valoración del desarrollo del proyecto, propuestas de mejora y propuestas de transferencia de las actividades y metodologías a los grupos-clase del centro.
 
-<!-- p95 empty -->
+<!-- p95 empty, left 0.37in, size 8.5pt -->
 
-<!-- p96 left 0.37in -->
+<!-- p96 left 0.37in, size 8.5pt -->
 TENER EN CUENTA LAS CIRCUNSTANCIAS RELATIVAS AL CESE DE LA ACTIVIDAD PRESENCIAL CON EL ALUMNADO POR EL COVID19.
 
-<!-- p97 hanging 0.662in, left 2.264in, right 1.509in, before 1.2pt, line 19.4pt exact -->
+<!-- p97 hanging 0.662in, left 2.264in, right 1.509in, before 1.2pt, line 19.4pt exact, size 8.5pt -->
 En a<u>&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;</u>de<u>&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;&#32;</u>de 2020
 
-<!-- p98 hanging 0.662in, left 2.264in, right 1.509in, before 1.2pt, line 19.4pt exact -->
+<!-- p98 hanging 0.662in, left 2.264in, right 1.509in, before 1.2pt, line 19.4pt exact, size 8.5pt -->
 &#32;EL DIRECTOR/A  DEL CENTRO
 
-<!-- p99 center, left 2.073in, right 1.981in, line 7.65pt exact -->
+<!-- p99 center, left 2.073in, right 1.981in, line 7.65pt exact, size 8.5pt -->
 (Sello)
 
-<!-- p100 empty -->
+<!-- p100 empty, size 9pt -->
 
-<!-- p101 center, left 2.073in, right 1.981in, before 0.05pt -->
+<!-- p101 center, left 2.073in, right 1.981in, before 0.05pt, size 8.5pt -->
 Fdo.
 
-<!-- p102 empty, center, left 2.073in, right 1.981in, before 0.05pt -->
+<!-- p102 empty, center, left 2.073in, right 1.981in, before 0.05pt, size 8.5pt -->
 
-<!-- p103 empty, center, left 2.073in, right 1.981in, before 0.05pt -->
+<!-- p103 empty, center, left 2.073in, right 1.981in, before 0.05pt, size 8.5pt -->
 
-<!-- p104 empty, center, left 2.073in, right 1.981in, before 0.05pt -->
+<!-- p104 empty, center, left 2.073in, right 1.981in, before 0.05pt, size 8.5pt -->
 
-<!-- p105 empty, left 2.073in, right 1.981in, before 0.05pt -->
+<!-- p105 empty, left 2.073in, right 1.981in, before 0.05pt, size 8.5pt -->
 
-<!-- p106 BodyText center, left 1.3785in, right 1.281in, before 0.3pt, line 1.038 -->
+<!-- p106 BodyText center, left 1.3785in, right 1.281in, before 0.3pt, line 1.038, size 14pt -->
 **Anexo VI**
 
-<!-- p107 BodyText center, left 1.3785in, right 1.281in, before 0.3pt, line 1.038 -->
+<!-- p107 BodyText center, left 1.3785in, right 1.281in, before 0.3pt, line 1.038, size 14pt -->
 **Solicitud de reconocimiento**
 
-<!-- p108 BodyText center, left 1.3785in, right 1.281in, before 0.3pt, line 1.038 -->
+<!-- p108 BodyText center, left 1.3785in, right 1.281in, before 0.3pt, line 1.038, size 14pt -->
 **Programa “Desarrollo de capacidades”**
 
-<!-- p109 BodyText center, first-line 0.34in, left 1.3785in, right 1.281in, before 0.3pt, line 1.038 -->
+<!-- p109 BodyText center, first-line 0.34in, left 1.3785in, right 1.281in, before 0.3pt, line 1.038, size 14pt -->
 **CURSO 2019/ 2020**
 
-<!-- p110 BodyText empty, center, first-line 0.34in, left 0.027in, right 1.281in, before 0.3pt, line 1.038 -->
+<!-- p110 BodyText empty, center, first-line 0.34in, left 0.027in, right 1.281in, before 0.3pt, line 1.038, size 14pt -->
 
 <!-- p111 BodyText justify, before 6.25pt -->
 D./Dª. ……………………………………………………………………………………………
@@ -148,7 +150,7 @@ Director/a del …….…………………………………………………�
 
 <!-- p115 BodyText empty, justify, right 0.925in, before 2.75pt, line 1.038 -->
 
-<!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText, widths 0.981in 1.4764in 1.3785in 2.3625in, width auto -->
+<!-- t4 6x4, cells p116-p139 by row, p116-p139 BodyText, p116-p139 size 10pt, widths 0.981in 1.4764in 1.3785in 2.3625in, width auto -->
 |NOMBRE|APELLIDOS|NIF|COORDINADOR/ PARTICIPANTE|
 |-|-|-|-|
 |||||
@@ -171,7 +173,7 @@ Director/a del …….…………………………………………………�
 <!-- p145 BodyText left 2.419in, before 6.25pt -->
 Sello del centro ………a …de ………….de 2020
 
-<!-- p146 BodyText empty -->
+<!-- p146 BodyText empty, size 10pt -->
 
 <!-- p147 BodyText first-line 0.3535in, left 0.138in, before 0.05pt -->
 El coordinador/a  del proyecto

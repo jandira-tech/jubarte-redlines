@@ -69,10 +69,10 @@ sections:
 <!-- p8 center, before 2pt, after 2pt -->
 sit dolore, adipiscing eiusmod ut
 
-<!-- p9 center, before 2pt, after 2pt -->
+<!-- p9 center, before 2pt, after 2pt, size 6pt -->
 do labore eiusmod
 
-<!-- p10 center, line 12pt atLeast, section-break -->
+<!-- p10 center, line 12pt atLeast, size 8pt, section-break -->
 1363 ipsum eiusmod, magna 8\
 eiusmod, dolor 93003
 
@@ -3176,7 +3176,7 @@ dolor aliqua elit, dolor incididunt sed
 <!-- p1053 left 2.75in, after 24pt -->
 tempor lorem elit, aliqua., dolor incididunt sed
 
-<!-- p1054 TextHeading2 left 0.125in, right 0.125in -->
+<!-- p1054 TextHeading2 left 0.125in, right 0.125in, size 10pt -->
 adipiscing labore do lorem ipsum ut dolor ipsum eiusmod labore amet ipsum sit elit ipsum lorem elit elit ipsum eiusmod do lorem ipsum eiusmod aliqua tempor, incididunt lorem ipsum sit, et, lorem ut elit consectetur eiusmod.
 
 <!-- p1055 TextHeading2 after 0pt -->
@@ -3200,7 +3200,7 @@ tempor adipiscing incididunt incididunt tempor magna.
 
 <!-- p1063 section-break -->
 
-<!-- p1064 center, after 18pt -->
+<!-- p1064 center, after 18pt, size 18pt -->
 **et dolore**\
 **tempor adipiscing**
 
@@ -3233,7 +3233,7 @@ tempor adipiscing incididunt incididunt tempor magna.
 
 <!-- p1078 justify, before 6pt, after 6pt, section-break -->
 
-<!-- p1079 center, after 18pt -->
+<!-- p1079 center, after 18pt, size 18pt -->
 **et tempor-1**\
 **dolor aliqua elit’et elit adipiscing**
 
@@ -3259,7 +3259,7 @@ tempor adipiscing incididunt incididunt tempor magna.
 
 <!-- p1090 justify, before 6pt, after 6pt, section-break -->
 
-<!-- p1091 center, after 18pt -->
+<!-- p1091 center, after 18pt, size 18pt -->
 **et tempor-2**\
 **tempor lorem elit, aliqua.’et elit adipiscing**
 
@@ -3285,7 +3285,7 @@ tempor adipiscing incididunt incididunt tempor magna.
 
 <!-- p1102 section-break -->
 
-<!-- p1103 TextHeading2 left 0.125in, right 0.125in -->
+<!-- p1103 TextHeading2 left 0.125in, right 0.125in, size 10pt -->
 adipiscing labore do lorem ipsum ut dolor ipsum eiusmod labore amet ipsum sit elit ipsum lorem elit elit ipsum eiusmod do lorem ipsum eiusmod aliqua tempor, incididunt lorem ipsum sit, et, lorem ut elit consectetur eiusmod.
 
 <!-- p1104 TextHeading2 after 0pt -->

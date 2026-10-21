@@ -25,12 +25,12 @@ styles:
 |{++**Core texts**++}{r103 @SW}|{++**The colour monster goes to school**++}{r105 @SW}{++<br>**Barry the fish with fingers**++}{r107 @SW}{++<br>**Our class is a family**++}{r109 @SW}{++<br>**Peace at last** ++}{r111 @SW}|{++**Rama and Sita**++}{r113 @SW}{++<br>**P.B Birthday party** ++}{r115 @SW}{++<br>**Room on a broom**++}{r117 @SW}{++<br>**Non-fiction autumn texts**++}{r119 @SW}{++<br>**Non-fiction Bonfire night texts**++}{r121 @SW}{++<br>**The first Christmas** ++}{r123 @SW}|{++**Goldilocks and the 3 bears**++}{r125 @SW}{++<br>**Brown bear, Brown bear what do you see?**++}{r127 @SW}{++<br>**Polar bear, polar bear what do you hear?** ++}{r129 @SW}{++<br>**Non-fiction bear texts** ++}{r131 @SW}|{++**Three little pigs**++}{r133 @SW}{++<br>**Non-fiction buildings text** ++}{r135 @SW}{++<br>**The pet shop** ++}{r137 @SW}{++<br>**The runaway pea** ++}{r139 @SW}|{++**Whatever next**++}{r141 @SW}{++<br>**The train ride**++}{r143 @SW}{++<br>**Class three all at sea**++}{r145 @SW}{++<br>**The pirate shop** ++}{r147 @SW}|{++**Bug chant**++}{r149 @SW}{++<br>**What the ladybird heard**++}{r151 @SW}{++<br>**The bad-tempered lady**++}{r153 @SW}{++<br>**The very hungry caterpillar**++}{r155 @SW}<br>|
 |{++**WOW moments** ++}{r159 @SW}|{++**Specialist week-book week across the school.** ++}{r161 @SW}{++<br>**Harvest Festival celebrations**++}{r163 @SW}<br>|{++**Tiggywinkles animal hospital visit**++}{r166 @SW}{++<br>**Autumn walk**++}{r168 @SW}{++<br>**Leo the Lions birthday** ++}{r170 @SW}{++<br>**Nativity performance** ++}{r172 @SW}|{++**Making porridge**++}{r174 @SW}{++<br>**Bring in own teddy bear**++}{r176 @SW}{++<br>**Specialist week** ++}{r178 @SW}{++<br>**Chinese New year celebrations** ++}{r180 @SW}<br>|{++**Melrose shop visit**++}{r183 @SW}{++<br>**St Mary’s church visit**++}{r185 @SW}{++<br>**School nurse visit** ++}{r187 @SW}{++<br>**Mother’s day assembly** ++}{r189 @SW}|{++**Own bikes and scooters**++}{r191 @SW}{++<br>**Pirate golf visit**++}{r193 @SW}{++<br>**Pirate day** ++}{r195 @SW}{++<br>**Father’s day assembly** ++}{r197 @SW}|{++**Zoo lab**++}{r199 @SW}{++<br>**Chrysalises – butterfly** ++}{r201 @SW}{++<br>**Snail race**++}{r203 @SW}{++<br>**Bug ball** ++}{r205 @SW}<br>|
 
-<!-- p105 break-del r207 @SW -->
+<!-- p105 size 11pt, break-del r207 @SW -->
 # {--Diversity, Inclusion & Social Justice: Colonial history and present-day legacies | Summer 2024--}{r208 @SW}
 
 <!-- p106 NoSpacing empty, break-del r209 @SW -->
 
-<!-- p107 bullet, break-del r210 @SW -->
+<!-- p107 size 11pt, bullet, break-del r210 @SW -->
 ## - {--Economics & business--}{r211 @SW}
 
 <!-- p108 NoSpacing break-del r212 @SW -->
@@ -43,7 +43,7 @@ styles:
 
 <!-- p111 NoSpacing empty, break-del r217 @SW -->
 
-<!-- p112 bullet, break-del r218 @SW -->
+<!-- p112 size 11pt, bullet, break-del r218 @SW -->
 ## - {--History, culture & communication--}{r219 @SW}
 
 <!-- p113 NoSpacing break-del r220 @SW -->
@@ -80,7 +80,7 @@ styles:
 
 <!-- p125 NoSpacing empty, break-del r240 @SW -->
 
-<!-- p126 bullet, break-del r241 @SW -->
+<!-- p126 size 11pt, bullet, break-del r241 @SW -->
 ## - {--Law & criminology--}{r242 @SW}
 
 <!-- p127 NoSpacing break-del r243 @SW -->
@@ -93,7 +93,7 @@ styles:
 
 <!-- p130 NoSpacing empty, break-del r248 @SW -->
 
-<!-- p131 bullet, break-del r249 @SW -->
+<!-- p131 size 11pt, bullet, break-del r249 @SW -->
 ## - {--Psychology--}{r250 @SW}
 
 <!-- p132 NoSpacing break-del r251 @SW -->
@@ -106,7 +106,7 @@ styles:
 
 <!-- p135 NoSpacing empty, break-del r256 @SW -->
 
-<!-- p136 bullet, break-del r257 @SW -->
+<!-- p136 size 11pt, bullet, break-del r257 @SW -->
 ## - {--Sociology & public administration--}{r258 @SW}
 
 <!-- p137 NoSpacing break-del r259 @SW -->
@@ -127,7 +127,7 @@ styles:
 
 <!-- p143 NoSpacing empty, break-del r269 @SW -->
 
-<!-- p144 bullet, break-del r270 @SW -->
+<!-- p144 size 11pt, bullet, break-del r270 @SW -->
 ## - {--Other--}{r271 @SW}
 
 <!-- p145 NoSpacing break-del r272 @SW -->
@@ -146,12 +146,12 @@ styles:
 
 <!-- p150 page-break-del r282 @SW, break-del r281 @SW -->
 
-<!-- p151 break-del r283 @SW -->
+<!-- p151 size 11pt, break-del r283 @SW -->
 # {--Diversity, Inclusion & Social Justice: Othering versus belonging | Summer 2024--}{r284 @SW}
 
 <!-- p152 NoSpacing empty, break-del r285 @SW -->
 
-<!-- p153 bullet, break-del r286 @SW -->
+<!-- p153 size 11pt, bullet, break-del r286 @SW -->
 ## - {--Economics & business--}{r287 @SW}
 
 <!-- p154 NoSpacing break-del r288 @SW -->
@@ -164,7 +164,7 @@ styles:
 
 <!-- p157 NoSpacing empty, break-del r293 @SW -->
 
-<!-- p158 bullet, break-del r294 @SW -->
+<!-- p158 size 11pt, bullet, break-del r294 @SW -->
 ## - {--History, culture, & communication--}{r295 @SW}
 
 <!-- p159 NoSpacing break-del r296 @SW -->
@@ -193,7 +193,7 @@ styles:
 
 <!-- p168 NoSpacing empty, break-del r311 @SW -->
 
-<!-- p169 bullet, break-del r312 @SW -->
+<!-- p169 size 11pt, bullet, break-del r312 @SW -->
 ## - {--Pedagogy & Education--}{r313 @SW}
 
 <!-- p170 NoSpacing break-del r314 @SW -->
@@ -222,7 +222,7 @@ styles:
 
 <!-- p179 NoSpacing empty, break-del r329 @SW -->
 
-<!-- p180 bullet, break-del r330 @SW -->
+<!-- p180 size 11pt, bullet, break-del r330 @SW -->
 ## - {--Sociology & public administration--}{r331 @SW}
 
 <!-- p181 NoSpacing break-del r332 @SW -->
@@ -243,7 +243,7 @@ styles:
 
 <!-- p187 NoSpacing empty, break-del r342 @SW -->
 
-<!-- p188 bullet, break-del r343 @SW -->
+<!-- p188 size 11pt, bullet, break-del r343 @SW -->
 ## - {--Other--}{r344 @SW}
 
 <!-- p189 NoSpacing break-del r345 @SW -->
