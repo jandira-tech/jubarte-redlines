@@ -1145,7 +1145,7 @@ Options:
   -a, --author <NAME>
           Author name recorded on the revisions
 
-          [default: Redline]
+          [default: Jubarte]
 
   -d, --datetime <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
@@ -1659,7 +1659,7 @@ Options:
   -a, --author <NAME>
           Markdown to Word: author of the tracked changes and comments that name none
           [default: the front matter's `author:`, else the --reference-doc's creator,
-          else Redline]
+          else Jubarte]
 
   -d, --datetime <ISO8601>
           Markdown to Word: timestamp (ISO 8601) of the tracked changes and comments
@@ -1877,7 +1877,7 @@ Paragraph patch:
   -a, --author <NAME>
           Who made the changes: the patch's owner
 
-          [default: Redline]
+          [default: Jubarte]
 
   -d, --datetime <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
@@ -2164,7 +2164,7 @@ Options:
   -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: Redline]
+          [default: Jubarte]
 
   -d, --datetime <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
@@ -2336,7 +2336,7 @@ Options:
   -a, --author <NAME>
           Author of the changes and comments (operation flags; a plan names its own)
 
-          [default: Redline]
+          [default: Jubarte]
 
   -d, --datetime <ISO8601>
           Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible
