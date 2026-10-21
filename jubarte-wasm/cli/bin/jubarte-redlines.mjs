@@ -433,20 +433,13 @@ function runEdit(verb, file, o) {
   // was read, never a link to it or an output written over it.
   let consumed;
   if (o.consume && !o.dry_run) {
-    let fd;
+    if (fs.lstatSync(o.plan, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+    }
     try {
-      fd = fs.openSync(o.plan, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      if (fs.fstatSync(fd).isSymbolicLink()) {
-        throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
-      }
-      consumed = fs.readFileSync(fd);
+      consumed = fs.readFileSync(o.plan);
     } catch (e) {
-      if (e.code === 'ELOOP') {
-        throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
-      }
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
-    } finally {
-      if (fd !== undefined) fs.closeSync(fd);
     }
   }
   const code = applyEdit(verb, file, docx, o);
