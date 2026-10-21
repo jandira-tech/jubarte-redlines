@@ -623,7 +623,7 @@ fn flag_plan_json(
 /// notes}`: `plan` is the plan's JSON for [`applyEditPlan`](apply_edit_plan),
 /// `notes` the `op-N: …` lines to print. `verb` is `edit` or `add`;
 /// `operationsJson` the parsed command's `operations` array. Options (JSON,
-/// all optional): `author` (default `Jubarte`), `date`,
+/// all optional): `author` (default `Redline`), `date`,
 /// `existingRevisions` (auto, keep, accept, reject, refuse; default auto).
 /// An error is a usage error.
 ///
