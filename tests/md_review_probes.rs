@@ -5,7 +5,7 @@
 //! (`tests/fixtures/md-roundtrip/review`): table rows wider than their grid,
 //! an author's date range, the document owner; and the author and date a
 //! change or comment that names none takes (flag, front matter, the
-//! reference document's creator and creation time, else Redline and
+//! reference document's creator and creation time, else Jubarte and
 //! now).
 
 use std::path::{Path, PathBuf};
@@ -356,11 +356,11 @@ fn date_of(ins: &str) -> String {
 }
 
 #[test]
-fn an_unnamed_change_is_signed_redline_and_dated_now() {
+fn an_unnamed_change_is_signed_jubarte_and_dated_now() {
     let before = jubarte::convert::utc_now_iso8601();
     let ins = stamped("", &[]);
     let after = jubarte::convert::utc_now_iso8601();
-    assert!(ins.contains("w:author=\"Redline\""), "{ins}");
+    assert!(ins.contains("w:author=\"Jubarte\""), "{ins}");
     // The same format sorts by time.
     let date = date_of(&ins);
     assert!(
@@ -432,7 +432,7 @@ fn the_date_flag_is_gone_for_datetime() {
 /// null or comment-only `author:`, keys after a thematic break that opens
 /// no front matter (round-7 defaults review, findings 1, 4 and 5).
 #[test]
-fn front_matter_that_names_no_one_or_no_real_date_leaves_redline_and_now() {
+fn front_matter_that_names_no_one_or_no_real_date_leaves_jubarte_and_now() {
     for front in [
         "---\ndate: 2026-02-30\n---\n\n",
         "---\nlast_modified: 2026-99-99T99:99:99Z\n---\n\n",
@@ -444,7 +444,7 @@ fn front_matter_that_names_no_one_or_no_real_date_leaves_redline_and_now() {
         let before = jubarte::convert::utc_now_iso8601();
         let ins = stamped(front, &[]);
         let after = jubarte::convert::utc_now_iso8601();
-        assert!(ins.contains("w:author=\"Redline\""), "{front:?}: {ins}");
+        assert!(ins.contains("w:author=\"Jubarte\""), "{front:?}: {ins}");
         let date = date_of(&ins);
         assert!(before <= date && date <= after, "{front:?}: {ins}");
     }

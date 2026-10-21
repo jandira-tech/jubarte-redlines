@@ -1013,7 +1013,7 @@ fn delimiters_read(
 /// The backticks around a code span's text: one more than its longest run
 /// of backticks, padded when an edge backtick or space needs protecting.
 /// CommonMark removes one space at both ends except in an all-space span.
-fn code_fence(text: &str) -> (String, String) {
+pub(crate) fn code_fence(text: &str) -> (String, String) {
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest + 1);
     let pad = if text.starts_with('`')

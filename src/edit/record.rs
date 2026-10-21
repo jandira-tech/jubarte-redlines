@@ -235,7 +235,7 @@ pub fn record(
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecordOptions {
-    /// `--author` (default `Redline`).
+    /// `--author` (default `Jubarte`).
     pub author: Option<String>,
     /// `--datetime`.
     pub date: Option<String>,
@@ -303,7 +303,7 @@ pub fn record_json(
             )));
         }
     };
-    let author = options.author.as_deref().unwrap_or("Redline");
+    let author = options.author.as_deref().unwrap_or("Jubarte");
     let mut recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
     recorded.plan.rewrite_others_comments |= options.rewrite_others_comments;
     Ok(serde_json::json!({

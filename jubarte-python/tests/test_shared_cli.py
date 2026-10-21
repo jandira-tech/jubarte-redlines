@@ -18,7 +18,7 @@ def test_shared_aliases_defaults_and_selection_mapping():
         args = parser.parse_args([command, "a.docx", "b.docx"])
         assert args.command == "compare"
         assert args.original == Path("a.docx") and args.modified == Path("b.docx")
-        assert args.author == "Redline"
+        assert args.author == "Jubarte"
     args = parser.parse_args(["a.docx", "b.docx"])
     assert args.command == "compare"
     args = parser.parse_args(["accept", "a.docx", "-o", "b.docx", "--id", "r1", "--author", "A"])
