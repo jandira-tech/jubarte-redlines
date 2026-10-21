@@ -1570,4 +1570,41 @@ mod public_lexical_empty_move_boundary_tests {
             }
         }
     }
+
+    #[test]
+    fn public_jaccard_similarity_edge_cases() {
+        let settings = WmlComparerSettings::default();
+
+        // 0. Empty strings
+        assert_eq!(jaccard("", "", &settings), 0.0);
+        assert_eq!(jaccard("hello", "", &settings), 0.0);
+        assert_eq!(jaccard("", "world", &settings), 0.0);
+
+        // 1. Order invariance: {hello, world} vs {world, hello} -> 1.0
+        assert_eq!(jaccard("hello world", "world hello", &settings), 1.0);
+
+        // 2. Set uniqueness / duplication invariance: {hello, world} vs {world, hello} -> 1.0
+        assert_eq!(jaccard("hello hello world", "world hello", &settings), 1.0);
+        assert_eq!(jaccard("hello world", "world hello hello", &settings), 1.0);
+
+        // 3. Disjoint sets: {hello, world} vs {foo, bar} -> 0.0
+        assert_eq!(jaccard("hello world", "foo bar", &settings), 0.0);
+
+        // 4. Partial overlap: {hello, world} vs {hello, foo}
+        // Intersection = {hello} (1)
+        // Union = {hello, world, foo} (3)
+        // Jaccard = 1 / 3
+        assert_eq!(jaccard("hello world", "hello foo", &settings), 1.0 / 3.0);
+
+        // 5. Whitespace independence
+        assert_eq!(
+            jaccard(
+                "hello    world",
+                "hello
+world",
+                &settings
+            ),
+            1.0
+        );
+    }
 }
