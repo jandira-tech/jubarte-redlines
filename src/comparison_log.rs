@@ -76,3 +76,14 @@ impl ComparisonLog {
             .count()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_is_empty() {
+        let log = ComparisonLog::new();
+        assert!(log.entries.is_empty());
+    }
+}
