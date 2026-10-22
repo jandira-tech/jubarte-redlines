@@ -2507,12 +2507,16 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     }
     // A joined group's splice already accounts for every mark and span
     // inside it: inner splices found there are covered, so drop them.
+    // Splices can also partially overlap (a span opens inside a mark's
+    // range and closes outside it): the earlier splice wins and the
+    // later region resolves untouched, or applying both would move the
+    // later one's end off the byte the first one wrote.
     splices.sort_by_key(|s| (s.0, std::cmp::Reverse(s.1)));
     let mut kept: Vec<(usize, usize, String)> = Vec::new();
     for splice in splices {
         if kept
             .iter()
-            .any(|&(start, end, _)| start <= splice.0 && splice.1 <= end)
+            .any(|&(start, end, _)| splice.0 < end && start < splice.1)
         {
             continue;
         }
@@ -3596,6 +3600,22 @@ mod tests {
         // Accept: body dropped; the two adjacent links stay two.
         let dropped = resolve("[a](u){--x--}[b](u)", true);
         assert_eq!(dropped, "[a](u)[b](u)");
+    }
+
+    /// Two splices can partially overlap: a span opens inside a mark's
+    /// range and closes outside it. Applying both would move the later
+    /// one's end off the byte the first one wrote, so the earlier splice
+    /// wins and the later region resolves untouched (#1240). The case
+    /// is the property test's 772nd tree; it used to panic on a byte
+    /// index past the end of the spliced text.
+    #[test]
+    fn resolve_tolerates_a_partially_overlapping_seam() {
+        let source = "Say ___yd[ch](u)_____**u**[dsa](u)__t~~unv~~__{~~[`q`~~pkf~~g](u)*k*``sjg``~>__`k`**l**__~~} now.\n";
+        for accept in [true, false] {
+            let resolved = resolve(source, accept);
+            assert!(!resolved.is_empty(), "accept={accept}");
+            assert!(resolved.contains('S'), "{resolved:?}");
+        }
     }
 
     #[test]
