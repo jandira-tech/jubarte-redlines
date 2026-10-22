@@ -63,7 +63,7 @@ mod visible;
 mod watermark;
 mod whole;
 
-mod comment_settlement;
+pub(crate) mod comment_settlement;
 #[cfg(feature = "cli")]
 /// Compile typed inline CLI actions into the same source-bound PlanV2 contract.
 pub mod inline;

@@ -24,7 +24,7 @@ mod sections;
 pub(crate) mod style_records;
 mod word_save;
 
-pub(crate) use comments::prune_orphan_comments;
+pub(crate) use comments::{prune_orphan_comments, renumber_rescued_comments};
 pub(crate) use sections::Resolution;
 pub(crate) use word_save::drop_unreferenced_headers_footers;
 
