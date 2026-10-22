@@ -117,6 +117,15 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Cell borders that two groups name keep both.** The Markdown writer
+  gave a cell only the first `cell-borders` group that named it. Every
+  group that holds the cell now gives its sides, and a later group's
+  side replaces an earlier one's. Found by the old-branch test harvest
+  (#1558, #1617).
+- **Border shadow and frame survive the Markdown round trip.** A border's
+  `w:shadow` and `w:frame` print after its colour (`single 1pt 2F5496
+  shadow frame`) and are written back. Before, the view dropped them
+  (#1558).
 - **Text goes into an empty paragraph (#1263).** `edit FILE -p p9
   --content "text"`, an `insert` at `position` `start` or `end`, and a
   `rewrite` (in a first-version `--plan` and in `edit apply`) were refused

@@ -887,3 +887,29 @@ fn a_later_cell_border_group_overrides_an_earlier_side() {
         ]
     );
 }
+
+#[test]
+fn border_shadow_and_frame_come_back() {
+    // `w:shadow` and `w:frame` are border effects Word draws; the view
+    // names them after the colour and the round trip keeps them.
+    let border = "w:val=\"single\" w:sz=\"8\" w:space=\"0\" w:color=\"2F5496\" \
+                  w:themeColor=\"accent1\" w:shadow=\"1\" w:frame=\"1\"";
+    let props = format!("<w:tblBorders>{}</w:tblBorders>", sides(&ALL, border));
+    let cell = "<w:tcBorders><w:bottom w:val=\"double\" w:sz=\"4\" w:space=\"0\" w:shadow=\"1\"/></w:tcBorders>";
+    let (first, again, second) = round_trip(&docx(&table_with(&props, &[cell, "", "", ""])));
+    assert!(
+        first.contains(", borders single 1pt 2F5496 theme accent1 shadow frame"),
+        "{first}"
+    );
+    assert!(
+        first.contains(", cell-borders bottom double 0.5pt shadow in t0.row0.cell0"),
+        "{first}"
+    );
+    let document = part(&again, "word/document.xml");
+    assert_eq!(table_borders(&document), [Some(sides(&ALL, border))]);
+    assert_eq!(
+        cell_borders(&document)[0].as_deref(),
+        Some("<w:bottom w:val=\"double\" w:sz=\"4\" w:space=\"0\" w:shadow=\"1\"/>")
+    );
+    assert_eq!(second, first);
+}
