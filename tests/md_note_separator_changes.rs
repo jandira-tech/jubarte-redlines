@@ -317,3 +317,19 @@ fn fresh_separator_ids_stay_in_words_integer_range() {
     assert_ne!(ids[0], ids[1]);
     assert!(ids.iter().all(|id| id.parse::<i32>().is_ok()), "{xml}");
 }
+
+#[test]
+fn separator_insertions_and_deletions_warn() {
+    // pi on #504, F7: `rev:` was dropped without a word.
+    let view = "---\nview: tracked\nnotes: {rev: footnotes.r4 @AS, empty: [footnotes]}\n\
+                ---\n\n<!-- p0 -->\nBody.\n";
+    let written = markdown_to_docx(view, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("rev: footnotes.r4 @AS") && w.contains("not written")),
+        "{:?}",
+        written.warnings
+    );
+}

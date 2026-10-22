@@ -769,6 +769,13 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
     Ok(kinds)
 }
 
+/// The header's `notes: {rev: footnotes.r4 @AS, …}`: the insertions and
+/// deletions tracked on a separator, which the writer does not write (a
+/// warning names them); none without the clause.
+pub(super) fn note_revisions(value: &str) -> Option<String> {
+    super::view_stories::flow_text(value, "rev").filter(|tags| !tags.is_empty())
+}
+
 /// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
 /// each formatting change on a notes part's separators, with its part's
 /// kind (`footnote`, `endnote`), in the order the view lists them; none

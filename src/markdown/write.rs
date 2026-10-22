@@ -4575,6 +4575,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                             "notes: {why}, so the notes parts it names are not made"
                         )),
                     }
+                    if let Some(tags) = view_notes::note_revisions(text) {
+                        self.document.warnings.push(format!(
+                            "notes: rev: {tags}: insertions and deletions in the \
+                             separators are not written"
+                        ));
+                    }
                     let formats = view_notes::note_formats(text);
                     for kind in ["footnote", "endnote"] {
                         let count = formats.iter().filter(|(k, _)| *k == kind).count();
