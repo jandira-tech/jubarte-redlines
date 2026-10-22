@@ -4989,6 +4989,30 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
+/// Accept every revision through the processor, rescuing wholly removed
+/// comment threads onto empty anchors (#1279). The CLI's
+/// `--keep-nested-comment` opt-in on `convert --track-changes accept`.
+///
+/// # Errors
+/// Refused input, an unreadable package or unreadable comment records.
+pub fn accept_revisions_keeping_comments(
+    docx: &[u8],
+) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
+    crate::changes::accept_changes_keeping_comments(docx, &crate::changes::ChangeFilter::default())
+}
+
+/// Reject every revision through the processor, rescuing wholly removed
+/// comment threads onto empty anchors (#1279). The CLI's
+/// `--keep-nested-comment` opt-in on `convert --track-changes reject`.
+///
+/// # Errors
+/// As [`accept_revisions_keeping_comments`].
+pub fn reject_revisions_keeping_comments(
+    docx: &[u8],
+) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
+    crate::changes::reject_changes_keeping_comments(docx, &crate::changes::ChangeFilter::default())
+}
+
 /// Collision-proof target name for copying `want` (with `bytes`) into `out`:
 /// free name or byte-identical existing part → `want` unchanged; an existing
 /// part with DIFFERENT content → the first free or identical candidate: a

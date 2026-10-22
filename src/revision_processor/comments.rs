@@ -15,7 +15,7 @@
 //! `people.xml` keeps the authors of the comments left (no revision
 //! survives Accept or Reject All), and goes when it keeps nobody.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::comparer::comments::FAMILY;
 use crate::namespaces::{W, W14, W15};
@@ -134,6 +134,32 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
                 break;
             }
             boundary = parent;
+        }
+        // A matched move range later discards plain runs between its markers.
+        // Put the rescued range before that range too, so the same empty
+        // anchor survives both the wrapper deletion (`moveFrom`) and the
+        // plain-run deletion the range marks. (#1279)
+        let character_at = order
+            .iter()
+            .position(|&n| n == boundary)
+            .expect("character in story");
+        if let Some(range_start) = order[..character_at]
+            .iter()
+            .enumerate()
+            .find_map(|(i, &n)| {
+                if dom.name(n) != Some(W::move_from_range_start()) {
+                    return None;
+                }
+                let id = dom.attribute(n, &W::id())?;
+                let end = order[i + 1..].iter().position(|&e| {
+                    dom.name(e) == Some(W::move_from_range_end())
+                        && dom.attribute(e, &W::id()) == Some(id)
+                })? + i
+                    + 1;
+                (end > character_at).then_some(n)
+            })
+        {
+            boundary = range_start;
         }
         let Some(paragraph) = dom.parent(boundary) else {
             continue;
@@ -265,6 +291,128 @@ fn remove_marker(dom: &mut Dom, marker: NodeId) {
             .all(|e| dom.name(e) == Some(W::r_pr()))
     {
         dom.remove(run);
+    }
+}
+
+/// Publish the rescued threads (`kept`, source `w:id`s) on the lowest free
+/// comment ids, so a `kept c8` receipt's document shows `c0` (#1279).
+/// Survivors keep their ids, as every settlement keeps them (#1264); a
+/// rescued thread keeps its source id only when it is still the lowest
+/// free one. Skipped while any revision is pending: surviving annotations
+/// still name the changes that hold them.
+pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
+    if kept.is_empty() {
+        return;
+    }
+    let kept_ids: HashSet<String> = kept.iter().cloned().collect();
+    let mut story_parts: Vec<String> = super::revision_bearing_parts(pkg)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+    story_parts.sort();
+    story_parts.dedup();
+    // Story order decides: the first-seen rescued id gets the lowest free
+    // published id, so a thread's root keeps a lower id than its reply.
+    let mut used: HashSet<u32> = HashSet::new();
+    let mut story_order: Vec<u32> = Vec::new();
+    for part in &story_parts {
+        let Some(story) = Parsed::load(pkg, part) else {
+            continue;
+        };
+        if super::element_has_tracked_revisions(&story.dom, story.root) {
+            return;
+        }
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for m in story.w(local) {
+                let Some(id_str) = story.dom.attribute(m, &W::id()) else {
+                    continue;
+                };
+                let Ok(id) = id_str.parse::<u32>() else {
+                    continue;
+                };
+                used.insert(id);
+                if kept_ids.contains(id_str) && !story_order.contains(&id) {
+                    story_order.push(id);
+                }
+            }
+        }
+    }
+    if story_order.is_empty() {
+        return;
+    }
+    let Some(mut comments_xml) = Parsed::load(pkg, FAMILY[0].0) else {
+        return;
+    };
+    for c in comments_xml.w("comment") {
+        let Some(id_str) = comments_xml.dom.attribute(c, &W::id()) else {
+            continue;
+        };
+        let Ok(id) = id_str.parse::<u32>() else {
+            continue;
+        };
+        if !story_order.contains(&id) {
+            used.insert(id);
+        }
+    }
+    // A rescued thread may keep its own source id even though `used` holds
+    // it; every other id in `used` is reserved.
+    let mut rename: HashMap<u32, u32> = HashMap::new();
+    for source in &story_order {
+        let mut next = 0u32;
+        while next != *source && used.contains(&next) {
+            next += 1;
+        }
+        if next != *source {
+            rename.insert(*source, next);
+        }
+        used.insert(next);
+    }
+    if rename.is_empty() {
+        return;
+    }
+    // Apply the rename to stories and comments.xml.
+    for part in &story_parts {
+        let Some(mut story) = Parsed::load(pkg, part) else {
+            continue;
+        };
+        let mut changed = false;
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for m in story.w(local) {
+                let Some(value) = story.dom.attribute(m, &W::id()) else {
+                    continue;
+                };
+                let Ok(value) = value.parse::<u32>() else {
+                    continue;
+                };
+                if let Some(&new) = rename.get(&value) {
+                    story
+                        .dom
+                        .set_attribute_value(m, &W::id(), Some(&new.to_string()));
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            story.store(pkg);
+        }
+    }
+    let mut comments_changed = false;
+    for c in comments_xml.w("comment") {
+        let Some(value) = comments_xml.dom.attribute(c, &W::id()) else {
+            continue;
+        };
+        let Ok(value) = value.parse::<u32>() else {
+            continue;
+        };
+        if let Some(&new) = rename.get(&value) {
+            comments_xml
+                .dom
+                .set_attribute_value(c, &W::id(), Some(&new.to_string()));
+            comments_changed = true;
+        }
+    }
+    if comments_changed {
+        comments_xml.store(pkg);
     }
 }
 

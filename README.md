@@ -495,6 +495,13 @@ Filters are repeatable. Categories combine, so a change must satisfy each
 category you supplied. `jubarte edit FILE -p r12 --accept` (or `--reject`)
 resolves one change and writes `FILE_modified.docx`.
 
+Add `--keep-nested-comment` to `accept` or `reject` to preserve a comment
+and its replies when settlement removes their whole anchor. Their markers
+move together to an empty, untracked anchor where the removed text was;
+the command reports, for example, `kept c0 and its reply c1 on an empty anchor
+in p1`. Partial overlaps keep the existing behavior. The default removes
+wholly removed threads, as Word does.
+
 ### Convert to PDF / PNG
 
 ```sh
@@ -507,6 +514,7 @@ jubarte convert FILE.docx [OPTIONS]
 | `--dpi DPI` | PNG resolution; default 96 |
 | `--compress` | Deflate PDF content streams |
 | `--revisions conventional|word|custom` | Tracked-change visualization |
+| `--keep-nested-comment` | With `--track-changes accept` or `reject`, keep comment threads whose whole anchor is removed, on an empty anchor; off by default |
 | `--revision-palette SPEC` | Custom change colors/lines |
 | `--font-report FILE` | Write font-resolution JSON |
 | `--report FILE` | Write page/render report |

@@ -38,6 +38,11 @@ Python or Rust build.
 
 Inputs are `.docx`: save a Word 97-2003 `.doc` as `.docx` first.
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
 ## Text comparisons
 
 ```sh

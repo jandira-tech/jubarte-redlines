@@ -985,6 +985,9 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        /// Keep comments and replies whose whole anchor is removed, on an empty anchor.
+        #[arg(long)]
+        keep_nested_comment: bool,
         /// Revisions to accept or reject; empty selects all.
         #[command(flatten)]
         #[serde(flatten)]
@@ -1012,6 +1015,9 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        /// Keep comments and replies whose whole anchor is removed, on an empty anchor.
+        #[arg(long)]
+        keep_nested_comment: bool,
         /// Revisions to accept or reject; empty selects all.
         #[command(flatten)]
         #[serde(flatten)]
@@ -2686,6 +2692,9 @@ pub struct MarkdownArgs {
     /// revisions in a .docx. With --to md, the Markdown itself is resolved.
     #[arg(long, value_enum, value_name = "CHOICE", default_value_t = TrackChanges::All)]
     pub track_changes: TrackChanges,
+    /// Keep comments and replies whose whole anchor is removed; requires --track-changes accept or reject.
+    #[arg(long)]
+    pub keep_nested_comment: bool,
     /// Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as
     /// text.
     #[arg(long)]
@@ -3354,6 +3363,14 @@ fn validate_matches(
         }
     }
     if name == "convert" {
+        if args.get_flag("keep_nested_comment")
+            && args.get_one::<TrackChanges>("track_changes") == Some(&TrackChanges::All)
+        {
+            return Err(error(
+                &mut task,
+                "--keep-nested-comment requires --track-changes accept or reject",
+            ));
+        }
         // The retired --pdf and --png name a format, as --to does.
         let alias = match (args.get_flag("pdf"), args.get_flag("png")) {
             (true, true) => return Err(error(&mut task, "--pdf and --png name two formats")),
