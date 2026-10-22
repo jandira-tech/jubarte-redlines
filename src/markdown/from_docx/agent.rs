@@ -2191,7 +2191,8 @@ pub(super) fn own_borders(
                 side.attr("themeColor"),
                 side.attr("themeTint"),
                 side.attr("themeShade"),
-            );
+            )
+            .with_effects(side.attr("shadow"), side.attr("frame"));
             Some((name, border))
         })
         .collect();
