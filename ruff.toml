@@ -7,6 +7,9 @@
 # answer. No [format] section: the formatter's defaults (double quotes)
 # are the repository's style.
 line-length = 119
+# Preview rules change between releases; 0.17 is the first whose preview
+# set this config was checked against (CI installs the latest ruff).
+required-version = ">=0.17"
 
 [lint]
 preview = true
@@ -30,7 +33,10 @@ select = [
   "W293",
   "UP039",
 ]
-ignore = ["RUF012", "E722"]
+# RUF105 and RUF201 (0.17 preview) want `ruff: ignore` comments and rule
+# names over codes: a style choice ruff itself calls opinionated. The
+# repository keeps codes, which every ruff release and the user config read.
+ignore = ["RUF012", "E722", "RUF105", "RUF201"]
 
 [lint.per-file-ignores]
 # Developer tools written compactly, one statement group per line.
