@@ -1655,12 +1655,14 @@ test("read --for-edit prints the binary's working-document JSON", () => {
   const written = run("read", "received-for-edit.docx", "--for-edit", "-o", "fe.json");
   assert.equal(written.code, 0, written.err);
   assert.equal(written.out, "");
+  // One read: the size the wrote line names and the JSON are the same bytes.
+  const bytes = fs.readFileSync(out);
   assert.equal(
     written.err,
     `input has 2 validity warnings; jubarte validate received-for-edit.docx lists them\n` +
-      `wrote fe.json (json, ${fs.statSync(out).size} bytes)\n`,
+      `wrote fe.json (json, ${bytes.length} bytes)\n`,
   );
-  assert.deepEqual(JSON.parse(fs.readFileSync(out, "utf8")), result);
+  assert.deepEqual(JSON.parse(bytes.toString("utf8")), result);
   void src;
 });
 
