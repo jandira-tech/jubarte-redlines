@@ -44,6 +44,11 @@ error, 2 usage (and `validate` findings), 3 edit plan refused, 5
 Generated from the real `--help` output of the wheel's `jubarte-redlines`
 entry point — flags and defaults cannot drift from the shipped code.
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
 <!-- gen:cli-python:start -->
 #### `jubarte-redlines`
 
@@ -421,6 +426,9 @@ Options:
       --force
           Overwrite the output file if it already exists
 
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
+
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
           `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
@@ -512,6 +520,9 @@ Options:
 
       --force
           Overwrite the output file if it already exists
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
@@ -627,6 +638,10 @@ Options:
           - reject: Reject every change
 
           [default: all]
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed; requires
+          --track-changes accept or reject
 
       --no-critic
           Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text

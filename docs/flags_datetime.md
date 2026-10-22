@@ -338,6 +338,7 @@ Accept all tracked changes, or select by ID, author or kind
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to accept |
 | `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
+| `--keep-nested-comment` |  |  | false |  |  | Keep comments and replies whose whole anchor is removed, on an empty anchor |
 | `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
@@ -359,6 +360,7 @@ Reject all tracked changes, or select by ID, author or kind
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose revisions to reject |
 | `-o, --output` |  | <FILE> |  |  | required | Output path; its extension picks the format: .docx (also any other), .md (the agent view), .pdf, .png (one file per page) or .json (the snapshot) |
 | `--force` |  |  | false |  |  | Overwrite the output file if it already exists |
+| `--keep-nested-comment` |  |  | false |  |  | Keep comments and replies whose whole anchor is removed, on an empty anchor |
 | `--id` |  | <ID> |  |  | append | Only this change: `r12` (as the view and `jubarte changes` print it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids and stay tracked |
 | `--author` |  | <NAME> |  |  | append | Only changes by this author. Repeatable |
 | `--kind` |  | <KIND> |  | insertion, deletion, move, formatting | append | Only changes of this kind. Repeatable |
@@ -388,6 +390,7 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `-f, --from` |  | <FORMAT> |  | docx, md, markdown | under "Formats" | Input format [default: from the file: .md and .markdown are Markdown, a zip is Word] |
 | `-t, --to` |  | <FORMAT> |  | docx, md=markdown, pdf, png, json | under "Formats" | Output format [default: from --output, else pdf for Word and docx for Markdown] |
 | `--track-changes` |  | <CHOICE> | all | all, accept=accepted, reject=rejected |  | Keep tracked changes (all), or write the document with every change accepted or rejected (pandoc's flag): CriticMarkup in Markdown, Word's revisions in a .docx. With --to md, the Markdown itself is resolved |
+| `--keep-nested-comment` |  |  | false |  |  | Keep comments and replies whose whole anchor is removed; requires --track-changes accept or reject |
 | `--no-critic` |  |  | false |  |  | Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text |
 | `--reference-doc` |  | <FILE> |  |  |  | Markdown to Word: take styles, numbering, page setup, headers and footers from this .docx (pandoc's --reference-doc) |
 | `--resource-path` |  | <DIR> |  |  |  | Markdown to Word: where images are found [default: the Markdown file's directory]. Only images that resolve inside that directory are read, symlinks resolved; a URL or a path out of it is written as its alt text, with a warning that says why |
@@ -750,6 +753,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--ignore-case` | (shorthand), __edit-template template, compare, read | `default=false values=` |
 | `--json` | (shorthand), __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template, compare, changes, read, capabilities, visual-diff, comments, validate, check | `default=false values=` |
 | `--jsonl` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, __edit-v2 delete, __edit-v2 apply, __edit-template template | `default=false values=` |
+| `--keep-nested-comment` | accept, reject, convert | `default=false values=` |
 | `--keep-sections` | append | `default=false values=` |
 | `--kind` | __edit-v2 insert, accept, reject | **differs**: `<KIND> default= values=insertion, deletion, move, formatting` on accept, reject; `<KIND> default= values=text, paragraph` on __edit-v2 insert |
 | `--latest` | comments | `default=false values=` |
