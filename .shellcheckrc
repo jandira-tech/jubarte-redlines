@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The Word probe scripts (scripts/redline-sweep.sh, word-open-probe.sh,
+# word-probe-sweep.sh) are zsh, which ShellCheck cannot parse; it says so
+# (SC1071) and checks nothing else in them.
+disable=SC1071

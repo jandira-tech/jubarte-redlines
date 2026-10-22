@@ -32,4 +32,4 @@ fi
   echo "python3: $(python3 --version)"
 } > versions.txt
 
-echo "done: $(ls -1 | tr '\n' ' ')"
+echo "done: $(printf '%s ' *)"

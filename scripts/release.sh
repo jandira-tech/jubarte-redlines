@@ -261,8 +261,8 @@ while [ $# -gt 0 ]; do
     --how-readme-and-other-docs-were-updated) need "$@"; DOCS_UPDATED=$2; shift ;;
     -h|--help)    usage; exit 0 ;;
     -*)           echo "unknown flag: $1" >&2; usage; exit 2 ;;
-    *)            [ -z "$VER" ] && VER="$1" \
-                  || { echo "unexpected arg: $1" >&2; exit 2; } ;;
+    *)            if [ -z "$VER" ]; then VER="$1"
+                  else echo "unexpected arg: $1" >&2; exit 2; fi ;;
   esac
   shift
 done
@@ -813,7 +813,7 @@ fi
 rm -rf target/release-check
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
-sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
+sdist=$(find target/release-check -maxdepth 1 -name '*.tar.gz' 2>/dev/null | head -1)
 [ -n "$sdist" ] || die "maturin produced no sdist"
 member=$(tar -tzf "$sdist" | grep '/pyproject.toml$' | head -1)
 [ -n "$member" ] || die "sdist has no pyproject.toml"
