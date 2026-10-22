@@ -227,7 +227,17 @@ jobs:
       - if: ${{ !cancelled() }}
         run: cargo fuzz run relationships -- -max_total_time=60
       # Exercise the shipped native allocator with C instrumentation and
-      # mimalloc's ASan allocation hooks as well as Rust ASan.
+      # mimalloc's ASan allocation hooks as well as Rust ASan. That needs
+      # upstream clang, which the self-hosted Linux image does not carry
+      # (the native runs exited 127 once the build stopped timing out).
+      - if: ${{ !cancelled() }}
+        run: |
+          if ! command -v clang >/dev/null || ! command -v clang++ >/dev/null; then
+            SUDO=$([ "$(id -u)" = 0 ] || echo sudo)
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq --no-install-recommends clang
+          fi
+          clang --version | head -1
       - if: ${{ !cancelled() }}
         run: bash scripts/fuzz-native.sh compare -max_total_time=60
       - if: ${{ !cancelled() }}

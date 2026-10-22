@@ -2387,10 +2387,11 @@ mod tests {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
         let changes = changes_text(&docx).unwrap();
         // Word typing order writes the deletion, then the insertion; the
-        // listing is the binary's: one logical change of both marks.
+        // listing is the binary's: one logical change of both marks, by the
+        // neutral default author (#916).
         assert_eq!(
             changes,
-            "r1+2\treplacement\ttext\tRedline\tp0\t\"30 \u{2192} 45\"\t(2 elements)\n1 change(s)\n"
+            "r1+2\treplacement\ttext\tJubarte\tp0\t\"30 \u{2192} 45\"\t(2 elements)\n1 change(s)\n"
         );
         let tables = tables_text(&docx, None).unwrap();
         assert!(tables.starts_with("table 0: 2x2"), "{tables}");
