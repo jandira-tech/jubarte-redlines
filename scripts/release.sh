@@ -1040,21 +1040,19 @@ check_now 11
 # with a note naming the binaries it lacks.
 release_from_artifacts() {
   local run_id=$1 a missing=""
-  rm -rf dist/release dist/release-art dist/release-src
-  mkdir -p dist/release dist/release-src
+  rm -rf dist/release dist/release-art
+  mkdir -p dist/release
+  # The run's sdist artifact is the one publish-pypi uploads: the release
+  # takes it as is, never a second maturin build with other bytes.
   gh run download "$run_id" -D dist/release-art
   find dist/release-art -type f -exec mv {} dist/release/ \;
   rm -rf dist/release-art
-  git archive "$TAG" | tar -x -C dist/release-src
-  (cd dist/release-src \
-    && uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out ../release)
-  rm -rf dist/release-src
-  # A run that lost a wheel job never becomes a public release: step 11's
-  # own wheel check would fire only after the release is out, and a rerun
-  # would then meet a release that already exists. A missing binary is
-  # named in the notes below; a missing wheel stops here.
-  python3 scripts/check_release_artifacts.py dist/release --version "$VER" \
-    || die "release.yml run $run_id lacks wheels — no GitHub release was created; fix the release jobs, rerun the workflow on $TAG, then rerun this script"
+  # A run that lost a wheel job (or the sdist) never becomes a public
+  # release: step 11's own wheel check would fire only after the release is
+  # out, and a rerun would then meet a release that already exists. A
+  # missing binary is named in the notes below; a missing wheel stops here.
+  python3 scripts/check_release_artifacts.py dist/release --version "$VER" --sdist \
+    || die "release.yml run $run_id lacks wheels or the sdist — no GitHub release was created; fix the release jobs, rerun the workflow on $TAG, then rerun this script"
   (cd dist/release && shasum -a 256 -- * > SHA256SUMS.txt)
   for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64; do
     ls dist/release/jubarte-"$VER"-"$a".* >/dev/null 2>&1 || missing="$missing $a"

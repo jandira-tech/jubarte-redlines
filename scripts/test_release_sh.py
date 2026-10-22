@@ -1257,6 +1257,14 @@ class CiPublishing(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("--no-wait needs --local-publish", r.stderr)
 
+    def test_a_fallback_release_ships_the_sdist_pypi_got(self) -> None:
+        # The run's sdist artifact is the one publish-pypi uploads; a second
+        # maturin build would give the GitHub release different bytes.
+        body = shell_functions("release_from_artifacts")
+        self.assertIn("gh run download", body)
+        self.assertNotIn("maturin sdist", body)
+        self.assertRegex(body, r'check_release_artifacts.py dist/release --version "\$VER" --sdist')
+
     def test_local_publish_is_a_documented_flag(self) -> None:
         self.assertIn("--local-publish", RELEASE_SH.read_text().split("set -euo pipefail")[0])
 
