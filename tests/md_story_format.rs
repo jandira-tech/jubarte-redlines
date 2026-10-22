@@ -23,6 +23,9 @@ use jubarte::markdown::{DocxOptions, ReadOptions, TrackChanges, markdown_to_docx
 const HEADER: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
 const HEADER_REL: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+const FOOTER: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+const FOOTER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
 
 fn view(docx: &[u8]) -> String {
     let options = ReadOptions {
@@ -68,11 +71,41 @@ fn with_header(paragraphs: &str) -> Vec<u8> {
     )
 }
 
+fn footer(paragraphs: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="{W_NS}" xmlns:r="{R_NS}">{paragraphs}</w:ftr>"#
+    )
+}
+
+/// A one-section docx whose default footer is `paragraphs`.
+fn with_footer(paragraphs: &str) -> Vec<u8> {
+    let xml = footer(paragraphs);
+    docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[Part {
+            name: "word/footer1.xml",
+            content_type: FOOTER,
+            rel_type: FOOTER_REL,
+            xml: &xml,
+        }],
+        r#"<w:footerReference w:type="default" r:id="rIdX0"/>"#,
+    )
+}
+
 /// The `headers:` block of a view, through the line before the next key.
 fn headers_block(view: &str) -> String {
     view.lines()
         .skip_while(|l| *l != "headers:")
         .take_while(|l| *l == "headers:" || l.starts_with(' '))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The `footers:` block of a view, through the line before the next key.
+fn footers_block(view: &str) -> String {
+    view.lines()
+        .skip_while(|l| *l != "footers:")
+        .take_while(|l| *l == "footers:" || l.starts_with(' '))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -275,6 +308,133 @@ fn a_style_s_frame_under_the_paragraph_s_own_is_the_one_printed() {
         "{xml}"
     );
     assert_eq!(view(&again), first);
+}
+
+/// Word's page-number footer (#526): the number in a frame on the
+/// margin's right edge, the story's empty second paragraph under it.
+const FOOTER_PAGE_FRAME: &str = r#"<w:p><w:pPr><w:pStyle w:val="Footer"/><w:framePr w:wrap="none" w:vAnchor="text" w:hAnchor="margin" w:xAlign="right" w:y="1"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr></w:p>"#;
+
+/// A footer's framed page number prints its frame in its `pN:` entry and
+/// comes back on the paragraph after `w:pStyle`, as the header's does
+/// (#526).
+#[test]
+fn a_framed_page_number_in_a_footer_comes_back() {
+    let first = view(&with_footer(FOOTER_PAGE_FRAME));
+    let block = footers_block(&first);
+    assert!(
+        block.contains(
+            r#"p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}"#
+        ),
+        "{block}"
+    );
+    assert!(block.contains(r#"p1: {text: ""}"#), "{block}");
+    let again = write(&first);
+    let xml = part_string(&again, "word/footer1.xml").expect("a footer part");
+    // The element follows `w:pStyle`, as `w:pPr`'s schema order has it.
+    assert!(
+        xml.contains(
+            r#"<w:pPr><w:pStyle w:val="Footer"/><w:framePr w:wrap="none" w:hAnchor="margin" w:vAnchor="text" w:xAlign="right" w:y="1"/>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(xml.matches("<w:framePr").count(), 1, "{xml}");
+    assert_eq!(view(&again), first);
+}
+
+/// A frame at the margin's left states no `xAlign`, so neither the
+/// view's `frame:` nor the element writes one (#526).
+#[test]
+fn a_left_anchored_page_frame_names_no_xalign() {
+    let first = view(&with_footer(
+        r#"<w:p><w:pPr><w:pStyle w:val="Footer"/><w:framePr w:wrap="none" w:vAnchor="text" w:hAnchor="margin" w:y="1"/></w:pPr><w:r><w:t>2</w:t></w:r></w:p>"#,
+    ));
+    let block = footers_block(&first);
+    assert!(
+        block.contains(
+            r#"p0: {text: "2", frame: {wrap: none, hAnchor: margin, vAnchor: text, y: 1}}"#
+        ),
+        "{block}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/footer1.xml").expect("a footer part");
+    assert!(
+        xml.contains(r#"<w:framePr w:wrap="none" w:hAnchor="margin" w:vAnchor="text" w:y="1"/>"#),
+        "{xml}"
+    );
+    assert!(!xml.contains("xAlign"), "{xml}");
+    assert_eq!(view(&again), first);
+}
+
+/// The frame a paragraph lays out in is its style chain's under its own,
+/// attribute by attribute, as Word merges them: the Footer style's `w:h`
+/// joins the paragraph's own attributes (#526).
+#[test]
+fn a_style_s_frame_merges_with_the_paragraph_s_own_in_a_footer() {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/><w:pPr><w:framePr w:h="334"/></w:pPr></w:style></w:styles>"#
+    );
+    let xml = footer(
+        r#"<w:p><w:pPr><w:pStyle w:val="Footer"/><w:framePr w:wrap="none" w:vAnchor="text" w:hAnchor="margin" w:y="1"/></w:pPr><w:r><w:t>2</w:t></w:r></w:p>"#,
+    );
+    let docx = docx_with_sect(
+        "<w:p><w:r><w:t>Body</w:t></w:r></w:p>",
+        &[
+            Part {
+                name: "word/styles.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                xml: &styles,
+            },
+            Part {
+                name: "word/footer1.xml",
+                content_type: FOOTER,
+                rel_type: FOOTER_REL,
+                xml: &xml,
+            },
+        ],
+        r#"<w:footerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let first = view(&docx);
+    assert!(
+        footers_block(&first).contains(
+            r#"p0: {text: "2", frame: {h: 334, wrap: none, hAnchor: margin, vAnchor: text, y: 1}}"#
+        ),
+        "{first}"
+    );
+    let again = write(&first);
+    let xml = part_string(&again, "word/footer1.xml").expect("a footer part");
+    assert!(
+        xml.contains(
+            r#"<w:framePr w:h="334" w:wrap="none" w:hAnchor="margin" w:vAnchor="text" w:y="1"/>"#
+        ),
+        "{xml}"
+    );
+    assert_eq!(view(&again), first);
+}
+
+/// A `frame:` that does not read drops the whole story entry, as a
+/// `border:` that does not read, and the warning names it (#526).
+#[test]
+fn a_frame_that_does_not_read_drops_the_story_entry() {
+    for bad in ["frame: (hAnchor=margin)", "frame: {hAnchor}", "frame: none"] {
+        let markdown = format!(
+            "---\nview: tracked\nfooters:\n  default:\n    id: footer2\n    p0: {{text: \"1\", {bad}}}\n---\n\nBody\n"
+        );
+        let written =
+            markdown_to_docx(&markdown, &DocxOptions::default()).expect("the Markdown reads");
+        assert!(
+            written
+                .warnings
+                .iter()
+                .any(|w| w.contains("front matter footers: default does not read")),
+            "{bad}: {:?}",
+            written.warnings
+        );
+        assert!(
+            part_string(&written.docx, "word/footer2.xml").is_none(),
+            "{bad}: a dropped story writes no footer"
+        );
+    }
 }
 
 /// A frame the schema does not allow is no frame the writer writes: the
