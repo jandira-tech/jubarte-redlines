@@ -486,6 +486,25 @@ fn count_closer_steps(steps: usize) {
 #[inline]
 fn count_closer_steps(_steps: usize) {}
 
+#[cfg(test)]
+thread_local! {
+    static EDGE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count the bytes [`resolved_edge`] resolves. Test-only; an empty inline
+/// function in production builds, so the runtime cost is zero.
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_edge_bytes(bytes: usize) {
+    EDGE_BYTES.with(|count| count.set(count.get() + bytes));
+}
+
+#[cfg(not(test))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_edge_bytes(_bytes: usize) {}
+
 /// Where every unescaped closer and separator sits in the source, found once
 /// so that an opener without its closer does not scan the rest of the text,
 /// and the parts Markdown reads literally.
@@ -2342,10 +2361,47 @@ fn contribution_span(source: &str, region: &ChangeRegion, accept: bool) -> Optio
     })
 }
 
+/// The blank lines of `source` an `_` seam's edge window may stop at
+/// (the byte where each `\n\n` starts), sorted: none inside a change, a
+/// fenced or indented code block, or a code span. Resolving never
+/// carries anything across one, so the text between two of them
+/// resolves the same alone as inside the whole source.
+fn seam_breaks(source: &str, regions: &[ChangeRegion]) -> Vec<usize> {
+    let literal = Literal::new(source);
+    let mut regions = regions.iter().peekable();
+    let mut breaks = Vec::new();
+    for (at, _) in source.match_indices("\n\n") {
+        while regions.next_if(|r| r.close <= at).is_some() {}
+        let in_change = regions.peek().is_some_and(|r| r.open < at);
+        if !in_change && !literal.in_fence(at) && literal.verbatim_end(at).is_none() {
+            breaks.push(at);
+        }
+    }
+    breaks
+}
+
+/// The text an `_` seam's edges are read from: the source between the
+/// blank line before `start` and the one after `end` (either end of the
+/// source when there is none). Outside that window the edge is a line
+/// break, which is no letter either way.
+fn edge_windows<'a>(
+    source: &'a str,
+    breaks: &[usize],
+    start: usize,
+    end: usize,
+) -> (&'a str, &'a str) {
+    let before = breaks.partition_point(|&b| b + 2 <= start);
+    let from = before.checked_sub(1).map_or(0, |i| breaks[i] + 2);
+    let after = breaks.partition_point(|&b| b < end);
+    let to = breaks.get(after).copied().unwrap_or(source.len());
+    (&source[from..start], &source[end..to])
+}
+
 /// The last (or first) character of `text` resolved under `accept`:
 /// what lands next to a member's edge once the marks inside `text`
 /// resolve. An unclosed delimiter stays text, which is conservative.
 fn resolved_edge(text: &str, accept: bool, last: bool) -> Option<char> {
+    count_edge_bytes(text.len());
     let resolved = resolve_with_policy(text, accept, false);
     if last {
         resolved.chars().last()
@@ -2376,6 +2432,7 @@ fn other_flavour(delimiter: char) -> Option<char> {
 /// alike: underscores cannot open or close emphasis inside a word.
 fn flush_seam_spans(
     source: &str,
+    breaks: &[usize],
     accept: bool,
     members: &mut [SeamSpan],
     pending: &mut Vec<usize>,
@@ -2390,8 +2447,9 @@ fn flush_seam_spans(
     let mut marker = members[group[0]].marker.clone();
     let mut flipped = group.iter().any(|&i| members[i].flipped);
     if marker.starts_with('_') {
-        let left = resolved_edge(&source[..start], accept, true);
-        let right = resolved_edge(&source[end..], accept, false);
+        let (before, after) = edge_windows(source, breaks, start, end);
+        let left = resolved_edge(before, accept, true);
+        let right = resolved_edge(after, accept, false);
         if left.is_some_and(|c| c.is_alphanumeric()) || right.is_some_and(|c| c.is_alphanumeric()) {
             marker = "*".repeat(marker.chars().count());
             flipped = true;
@@ -2448,6 +2506,7 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     if regions.is_empty() {
         return source.to_string();
     }
+    let breaks = seam_breaks(source, &regions);
     let mut members: Vec<SeamSpan> = Vec::new();
     for span in member_spans(source) {
         // A span inside a change belongs to the change: resolving keeps
@@ -2508,6 +2567,7 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     // kind, so chains join transitively.
     fn seam_level(
         source: &str,
+        breaks: &[usize],
         accept: bool,
         members: &mut [SeamSpan],
         level: &[usize],
@@ -2553,19 +2613,19 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
                     members[i].flipped = true;
                 }
             }
-            flush_seam_spans(source, accept, members, &mut pending, splices);
+            flush_seam_spans(source, breaks, accept, members, &mut pending, splices);
             pending.push(i);
         }
-        flush_seam_spans(source, accept, members, &mut pending, splices);
+        flush_seam_spans(source, breaks, accept, members, &mut pending, splices);
     }
 
     let mut splices: Vec<(usize, usize, String)> = Vec::new();
     for level in &children {
         if level.len() > 1 {
-            seam_level(source, accept, &mut members, level, &mut splices);
+            seam_level(source, &breaks, accept, &mut members, level, &mut splices);
         }
     }
-    seam_level(source, accept, &mut members, &top, &mut splices);
+    seam_level(source, &breaks, accept, &mut members, &top, &mut splices);
 
     if splices.is_empty() {
         return source.to_string();
@@ -2853,6 +2913,33 @@ pub(super) fn resolve_with_policy(
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    /// An `_` seam's edges are read from its own paragraph, not the whole
+    /// document: N paragraphs each holding one cost N paragraphs of
+    /// resolving, not N documents (CodeRabbit on #1564).
+    #[test]
+    fn underscore_seam_edges_resolve_only_their_own_paragraph() {
+        let para = "word _a_{++_b_++} tail\n\n";
+        let source = para.repeat(300);
+        EDGE_BYTES.with(|count| count.set(0));
+        let resolved = resolve(&source, true);
+        assert_eq!(resolved, "word _ab_ tail\n\n".repeat(300));
+        let bytes = EDGE_BYTES.with(std::cell::Cell::get);
+        assert!(
+            bytes < 4 * source.len(),
+            "{bytes} bytes resolved for a {}-byte source",
+            source.len()
+        );
+    }
+
+    /// The window stops at a blank line, never inside a change that holds
+    /// one: the edge after a change spanning paragraphs is still read
+    /// whole, and an intraword `_` still turns into `*`.
+    #[test]
+    fn an_underscore_seam_edge_is_read_across_a_change_holding_a_blank_line() {
+        let source = "{++x\n\ny++}_a_{++_b_++}z\n\nnext";
+        assert_eq!(resolve(source, true), "x\n\ny*ab*z\n\nnext");
+    }
 
     fn pieces(encoded: &str) -> Vec<String> {
         let mut out = Vec::new();
