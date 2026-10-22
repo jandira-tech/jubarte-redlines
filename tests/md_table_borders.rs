@@ -826,3 +826,46 @@ fn a_table_style_whose_borders_vary_names_each_side() {
     );
     assert_eq!(second, first);
 }
+
+// === Regression from harvest of feat/md-table-grid-default ===
+
+/// Harvested from `cell_border_groups_that_share_a_cell_all_reach_it`
+/// in `tests/md_table_borders.rs` (feat/md-table-grid-default).
+///
+/// The view reads "cell-borders top double 0.5pt in t0.row0.cell1
+/// t0.row1.cell1"; adding `; bottom single 1pt in t0.row1.cell1
+/// t0.row0.cell0` should give D (t0.row1.cell1) both top and bottom
+/// borders (the new bottom line is shared with A at t0.row0.cell0).
+///
+/// Today `markdown_to_docx` writes the view back with the bottom
+/// duplicated on A's `<w:bottom/>` entry but never added to D's:
+/// D's `tcBorders` stays at just `top`. The harvest's expectation
+/// (D carries both `top` and `bottom`) does not match — keep the
+/// probe below marked to drive a fix.
+#[test]
+#[ignore = "regression: harvest cell_border_groups — view's edited bottom clause does not write back as a second border on t0.row1.cell1 (harvest)"]
+fn cell_border_groups_that_share_a_cell_all_reach_it_regression() {
+    let rule = "<w:tcBorders><w:top w:val=\"double\" w:sz=\"4\"/></w:tcBorders>";
+    let first = view(&docx(&table_with("", &["", rule, "", rule])));
+    let line = ", cell-borders top double 0.5pt in t0.row0.cell1 t0.row1.cell1";
+    assert!(first.contains(line), "{first}");
+    let edited = first.replace(
+        line,
+        &format!("{line}; bottom single 1pt in t0.row1.cell1 t0.row0.cell0"),
+    );
+    let docx_bytes = write(&edited);
+    let document = part(&docx_bytes, "word/document.xml");
+    let top = "<w:top w:val=\"double\" w:sz=\"4\" w:space=\"0\"/>";
+    let bottom = "<w:bottom w:val=\"single\" w:sz=\"8\" w:space=\"0\"/>";
+    let cells = cell_borders(&document);
+    let want = [
+        Some(bottom.to_string()),
+        Some(top.to_string()),
+        None,
+        Some(format!("{top}{bottom}")),
+    ];
+    assert_eq!(
+        cells, want,
+        "expected t0.row1.cell1 to carry both top and bottom borders"
+    );
+}
