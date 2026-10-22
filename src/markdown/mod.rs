@@ -47,6 +47,7 @@ pub(crate) mod package;
 mod pages;
 mod patch;
 mod redline;
+mod repair;
 mod unified;
 mod view_notes;
 mod view_stories;

@@ -1964,14 +1964,62 @@ pub(super) fn math_crosses_boundary(latex: &str) -> bool {
 /// deletions dropped (`accept`), or the other way round; highlights keep
 /// their text and comments go.
 ///
+/// The splice is not compositional under CommonMark's delimiter rules,
+/// so the spliced bytes are verified against the md→docx reader's own
+/// run model ([`super::repair`]): a candidate that already reads like
+/// the model stays byte-identical, a seam that does not is re-emitted
+/// from it, and a document the reader cannot model keeps the splice.
+///
 /// Where a removed (or kept-as-a-span) mark lies between two same-kind
 /// inline spans (code, emphasis, strong, strikethrough), the spans are
 /// folded into one before resolving, so the bytes the docx path reads
 /// back are the joined form's. CommonMark would otherwise read the
 /// touching delimiters as one run holding the inner ones as text.
 pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
+    let candidate = resolved_slice(markdown, accept);
+    super::repair::repair(markdown, &candidate, accept)
+}
+
+/// [`resolve`] on a part of a document, without the seam repair: the
+/// spliced bytes a candidate check re-reads.
+pub(super) fn resolved_slice(markdown: &str, accept: bool) -> String {
     let merged = merge_seam_levels(markdown, accept);
     resolve_with_policy(&merged, accept, false)
+}
+
+/// Every inline span `source` parses to (nested ones too), as byte
+/// ranges: the seams [`super::repair`] can re-emit around.
+pub(super) fn member_span_ranges(source: &str) -> Vec<Range<usize>> {
+    member_spans(source)
+        .iter()
+        .map(|span| span.range.clone())
+        .collect()
+}
+
+/// The ranges a resolution touches: every change region (its `¶{…}` or
+/// `{…}` attribution included), complete comment and complete
+/// highlight. Everything else resolves to itself, so only blocks
+/// holding one of these need verifying.
+pub(super) fn resolved_regions(source: &str) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = change_regions(source)
+        .iter()
+        .map(|region| {
+            let mut end = region.close;
+            if source[end..].starts_with('¶') {
+                end += '¶'.len_utf8();
+            }
+            if let Some((_, width)) = attribution_tag(&source[end..]) {
+                end += width;
+            }
+            region.open..end
+        })
+        .collect();
+    let closers = Closers::new(source);
+    for &(start, end) in closers.comments.iter().chain(&closers.highlights) {
+        ranges.push(start..end);
+    }
+    ranges.sort_by_key(|range| range.start);
+    ranges
 }
 
 /// How many times [`merge_seam_levels`] re-reads its own output. Every
@@ -2007,6 +2055,23 @@ fn merge_seam_levels(markdown: &str, accept: bool) -> String {
 fn names_outer(note: &str) -> bool {
     super::view_notes::nested_revision_tags(note).is_some_and(|tags| tags.len() > 1)
         || super::view_notes::nested_plain_revisions(note).is_some_and(|parts| parts.len() > 1)
+}
+
+/// The changes a resolution drops on either decision because they name
+/// the change they sit inside (`{~~old~>new~~}{r4+5 Bob re r3 Alice}`).
+/// The md→docx reader's run model holds no such rule — it keeps the
+/// inner old side — so [`super::repair`] must keep the splice for the
+/// blocks that carry one.
+pub(super) fn nested_change_regions(source: &str) -> Vec<Range<usize>> {
+    change_regions(source)
+        .iter()
+        .filter(|region| {
+            !escaped(source, region.close)
+                && attribution_tag(&source[region.close..])
+                    .is_some_and(|(note, _)| names_outer(note))
+        })
+        .map(|region| region.open..region.close)
+        .collect()
 }
 
 /// Accepted document clauses omit a wholly deleted paragraph's line break.
@@ -2507,12 +2572,16 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     }
     // A joined group's splice already accounts for every mark and span
     // inside it: inner splices found there are covered, so drop them.
+    // Splices can also partially overlap (a span opens inside a mark's
+    // range and closes outside it): the earlier splice wins and the
+    // later region resolves untouched, or applying both would move the
+    // later one's end off the byte the first one wrote.
     splices.sort_by_key(|s| (s.0, std::cmp::Reverse(s.1)));
     let mut kept: Vec<(usize, usize, String)> = Vec::new();
     for splice in splices {
         if kept
             .iter()
-            .any(|&(start, end, _)| start <= splice.0 && splice.1 <= end)
+            .any(|&(start, end, _)| splice.0 < end && start < splice.1)
         {
             continue;
         }
@@ -2526,7 +2595,11 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     result
 }
 
-fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool) -> String {
+pub(super) fn resolve_with_policy(
+    markdown: &str,
+    accept: bool,
+    remove_deleted_lines: bool,
+) -> String {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum In {
         Text,
@@ -3462,10 +3535,13 @@ mod tests {
         );
         // A kept body that is not one inline span — a bare backtick
         // run reads as a code fence, not a span — keeps its literal
-        // text next to the span it cannot join.
+        // text next to the span it cannot join. Raw, `` `alpha``` ``
+        // would re-read as one literal run (a one-backtick opener never
+        // closes a four-backtick run), so the seam is re-emitted with
+        // the backticks escaped (#1240).
         assert_eq!(
             resolve("Use `alpha`{++```++} here.", true),
-            "Use `alpha```` here.",
+            "Use `alpha`\\`\\`\\` here.",
         );
         // Marks between plain text stay plain text; their body joins
         // with neither span because neither span touches the mark.
@@ -3596,6 +3672,22 @@ mod tests {
         // Accept: body dropped; the two adjacent links stay two.
         let dropped = resolve("[a](u){--x--}[b](u)", true);
         assert_eq!(dropped, "[a](u)[b](u)");
+    }
+
+    /// Two splices can partially overlap: a span opens inside a mark's
+    /// range and closes outside it. Applying both would move the later
+    /// one's end off the byte the first one wrote, so the earlier splice
+    /// wins and the later region resolves untouched (#1240). The case
+    /// is the property test's 772nd tree; it used to panic on a byte
+    /// index past the end of the spliced text.
+    #[test]
+    fn resolve_tolerates_a_partially_overlapping_seam() {
+        let source = "Say ___yd[ch](u)_____**u**[dsa](u)__t~~unv~~__{~~[`q`~~pkf~~g](u)*k*``sjg``~>__`k`**l**__~~} now.\n";
+        for accept in [true, false] {
+            let resolved = resolve(source, accept);
+            assert!(!resolved.is_empty(), "accept={accept}");
+            assert!(resolved.contains('S'), "{resolved:?}");
+        }
     }
 
     #[test]

@@ -280,6 +280,23 @@ refuses the keep flag with exit 2.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
 (`\{++`) or without its partner is text too, and says so in a warning.
 
+Resolving the Markdown splices the kept side of every mark back into the
+source and lets Markdown re-read it, which CommonMark's delimiter rules
+do not always give back the same document: a kept `_b_` inside `*a…c*`
+reads as literal underscores and `*a{++*b*++}c*` reads as a bare `b`,
+while the same input written to Word and accepted there reads as one
+italic `abc`. Every block holding a mark is therefore verified against
+the md→docx reader's own runs. A block that already reads like them is
+left byte-for-byte as it is; one that does not has the smallest inline
+span holding the mark re-emitted from those runs — bold+italic `a`/`b`/`c`
+as `**a*b*c**`, in the flavour the document already used — with the
+block's own syntax (a heading marker, a list bullet, a table cell) and
+its neighbours kept. The text a Markdown reader cannot model is never
+re-emitted: a comment or a highlight inside a change, a change named as
+nested inside another (`{~~old~>new~~}{r4+5 Bob re r3 Alice}`), an
+anchor, a malformed delimiter and a mark holding a line break all keep
+the resolved splice.
+
 A comment or highlight whole inside a change is text to the change's
 own delimiters: `{~~a{>>x ~> y<<} b~>c~~}` substitutes `a b` for `c` and
 keeps the comment's `~>`, `{++a{>>b++}c++}` inserts `ac` around a
