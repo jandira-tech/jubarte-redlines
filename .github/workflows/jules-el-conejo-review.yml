@@ -153,29 +153,38 @@ jobs:
         uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
         with:
           tool: cargo-deny
-      # 🥕 Pinned: ruff.toml sets preview = true, and each ruff release adds
-      # preview rules (0.17 added RUF105/RUF201). Bump together with ruff.toml.
-      - name: 🐇 Install ruff
-        run: pipx install ruff==0.17.2
+      - name: 🐇 Install the linters
+        # 🥕 Pinned. ruff.toml sets preview = true and each ruff release adds
+        # preview rules (0.17 added RUF105/RUF201): bump it with ruff.toml.
+        run: |
+          pipx install ruff==0.17.2
+          pipx install zizmor==1.31.1
+          pipx install actionlint-py==1.7.12.25
 
-      # 🥕 Stage 2: the repository's own gates, with the same flags as ci.yml.
-      - name: 🥕 Run static analysis
+      # 🥕 Stage 2: five checks over what the PR changes, each with its own
+      # status. ruff, shellcheck, the parsers and the workflow tools read only
+      # the changed files: a repository-wide run reported the same old
+      # findings on every PR. clippy, cargo fmt and cargo deny stay crate-wide
+      # (a crate is their unit). Flags match ci.yml.
+      - name: 🥕 Run static analysis, syntax, security and workflow checks
         id: static_analysis
         env:
           RUST_CHANGED: ${{ steps.skills.outputs.rust_changed }}
           CHANGED_FILES: ${{ steps.skills.outputs.changed_files }}
         run: |
           REPORT_FILE="$(mktemp)"
-          STATUS="passed"
+          declare -A STATUS=([lint]=skipped [syntax]=skipped [security]=skipped [workflows]=skipped)
 
+          # run_tool AREA LABEL CMD...: one report section; a failure marks AREA.
           run_tool() {
-            local label="$1" out
-            shift
-            echo "### 🛠️ ${label}" >> "$REPORT_FILE"
+            local area="$1" label="$2" out
+            shift 2
+            [ "${STATUS[$area]}" = skipped ] && STATUS[$area]=passed
+            echo "#### 🛠️ ${label}" >> "$REPORT_FILE"
             if out="$("$@" 2>&1)"; then
               echo "- **Status:** ✅ Passed" >> "$REPORT_FILE"
             else
-              STATUS="failed"
+              STATUS[$area]=failed
               {
                 echo "- **Status:** ❌ Findings detected"
                 echo '```text'
@@ -185,38 +194,83 @@ jobs:
             fi
             echo "" >> "$REPORT_FILE"
           }
+          changed() { printf '%s\n' "$CHANGED_FILES" | grep -E "$1" || true; }
 
+          mapfile -t PY_FILES < <(changed '\.pyi?$')
+          mapfile -t SHELL_FILES < <(changed '\.(sh|bash)$')
+          mapfile -t WORKFLOWS < <(changed '^\.github/workflows/.*\.ya?ml$')
+          mapfile -t TOML_FILES < <(changed '\.toml$')
+          mapfile -t JSON_FILES < <(changed '\.json$')
+          mapfile -t YAML_FILES < <(changed '\.ya?ml$')
+
+          echo "### 🧹 Lint" >> "$REPORT_FILE"
           if [ "$RUST_CHANGED" = true ]; then
-            run_tool "cargo clippy (all targets, all features)" cargo clippy --all-targets --all-features -- -D warnings
-            run_tool "cargo deny (advisories, bans, licenses, sources)" cargo deny check
-          else
-            {
-              echo "### 🛠️ Rust gates"
-              echo "- ⏭️ Skipped: no .rs or Cargo files changed."
-              echo ""
-            } >> "$REPORT_FILE"
+            run_tool lint "cargo clippy (all targets, all features)" cargo clippy --all-targets --all-features -- -D warnings
           fi
-
-          # 🐇 ruff and shellcheck read only the files this PR changes: a
-          # repository-wide run reported the same old findings on every PR.
-          # clippy and cargo deny stay crate-wide (a crate is their unit).
-          mapfile -t PY_FILES < <(printf '%s\n' "$CHANGED_FILES" | grep -E '\.pyi?$' || true)
           if [ "${#PY_FILES[@]}" -gt 0 ]; then
-            run_tool "ruff (${#PY_FILES[@]} changed Python files, repository config)" \
+            run_tool lint "ruff (${#PY_FILES[@]} changed Python files, repository config)" \
               ruff check --force-exclude --output-format=concise -- "${PY_FILES[@]}"
           fi
-
-          mapfile -t SHELL_FILES < <(printf '%s\n' "$CHANGED_FILES" | grep -E '\.(sh|bash)$' || true)
           if [ "${#SHELL_FILES[@]}" -gt 0 ]; then
-            run_tool "shellcheck (${#SHELL_FILES[@]} changed shell scripts)" shellcheck --format=gcc "${SHELL_FILES[@]}"
+            run_tool lint "shellcheck (${#SHELL_FILES[@]} changed shell scripts)" shellcheck --format=gcc "${SHELL_FILES[@]}"
           fi
 
-          if [ "$RUST_CHANGED" != true ] && [ "${#PY_FILES[@]}" -eq 0 ] && [ "${#SHELL_FILES[@]}" -eq 0 ]; then
-            echo "- ⏭️ No Rust, Python or shell file changed." >> "$REPORT_FILE"
+          echo "### 🔤 Syntax and format" >> "$REPORT_FILE"
+          if [ "$RUST_CHANGED" = true ]; then
+            run_tool syntax "cargo fmt --check" cargo fmt --check
+          fi
+          if [ "${#PY_FILES[@]}" -gt 0 ]; then
+            # The repository's Python floor is 3.12 (ubuntu-latest's python3).
+            run_tool syntax "Python 3.12 compiles (${#PY_FILES[@]} files)" python3 -m py_compile "${PY_FILES[@]}"
+          fi
+          if [ "${#SHELL_FILES[@]}" -gt 0 ]; then
+            # shellcheck disable=SC2016 # "$f" expands in the inner bash, not here
+            run_tool syntax "bash -n (${#SHELL_FILES[@]} files)" bash -c 'for f; do bash -n "$f" || exit 1; done' _ "${SHELL_FILES[@]}"
+          fi
+          if [ "${#TOML_FILES[@]}" -gt 0 ]; then
+            run_tool syntax "TOML parses (${#TOML_FILES[@]} files)" \
+              python3 -c 'import sys, tomllib; [tomllib.load(open(f, "rb")) for f in sys.argv[1:]]' "${TOML_FILES[@]}"
+          fi
+          if [ "${#JSON_FILES[@]}" -gt 0 ]; then
+            run_tool syntax "JSON parses (${#JSON_FILES[@]} files)" \
+              python3 -c 'import json, sys; [json.load(open(f, encoding="utf-8")) for f in sys.argv[1:]]' "${JSON_FILES[@]}"
+          fi
+          if [ "${#YAML_FILES[@]}" -gt 0 ]; then
+            run_tool syntax "YAML parses (${#YAML_FILES[@]} files)" \
+              ruby -ryaml -e 'ARGV.each { |f| YAML.safe_load(File.read(f), aliases: true) }' "${YAML_FILES[@]}"
           fi
 
+          echo "### 🔒 Security" >> "$REPORT_FILE"
+          if [ "$RUST_CHANGED" = true ]; then
+            run_tool security "cargo deny (advisories, bans, licenses, sources)" cargo deny check
+          fi
+          if [ "${#PY_FILES[@]}" -gt 0 ]; then
+            # flake8-bandit's rules, on top of the repository's selection.
+            run_tool security "ruff bandit rules (S) on ${#PY_FILES[@]} changed Python files" \
+              ruff check --force-exclude --output-format=concise --select S --ignore S101,S404,S603,S607 -- "${PY_FILES[@]}"
+          fi
+          if [ "${#WORKFLOWS[@]}" -gt 0 ]; then
+            run_tool security "zizmor (${#WORKFLOWS[@]} changed workflows, medium and up)" \
+              zizmor --offline --format plain --min-severity medium "${WORKFLOWS[@]}"
+          fi
+
+          echo "### ⚙️ Workflows" >> "$REPORT_FILE"
+          if [ "${#WORKFLOWS[@]}" -gt 0 ]; then
+            run_tool workflows "actionlint (${#WORKFLOWS[@]} changed workflows)" actionlint "${WORKFLOWS[@]}"
+          fi
+
+          for area in lint syntax security workflows; do
+            if [ "${STATUS[$area]}" = skipped ]; then
+              echo "- ⏭️ ${area}: nothing in this PR for it to read." >> "$REPORT_FILE"
+            fi
+          done
+          OVERALL=passed
+          for area in lint syntax security workflows; do
+            [ "${STATUS[$area]}" = failed ] && OVERALL=failed
+          done
           {
-            echo "status=${STATUS}"
+            echo "status=${OVERALL}"
+            for area in lint syntax security workflows; do echo "${area}=${STATUS[$area]}"; done
             echo "report<<__JULES_STATIC_EOF__"
             cat "$REPORT_FILE"
             echo "__JULES_STATIC_EOF__"
@@ -230,14 +284,18 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           PR_BODY: ${{ steps.pr.outputs.body }}
-          STATIC_STATUS: ${{ steps.static_analysis.outputs.status }}
+          LINT_STATUS: ${{ steps.static_analysis.outputs.lint }}
+          SYNTAX_STATUS: ${{ steps.static_analysis.outputs.syntax }}
+          SECURITY_STATUS: ${{ steps.static_analysis.outputs.security }}
+          WORKFLOWS_STATUS: ${{ steps.static_analysis.outputs.workflows }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           STATIC_REPORT: ${{ steps.static_analysis.outputs.report }}
           CHANGED_FILES: ${{ steps.skills.outputs.changed_files }}
         with:
           script: |
             const body = process.env.PR_BODY || '';
             const has = (heading) => new RegExp(`^## ${heading}`, 'm').test(body);
-            const staticStatus = process.env.STATIC_STATUS === 'passed' ? '✅ Passed' : '❌ Action Required';
+            const mark = (s) => ({ passed: '✅ Passed', failed: '❌ Action required', skipped: '⏭️ Nothing to check' })[s] || '❔ Unknown';
             const files = (process.env.CHANGED_FILES || '').split('\n').filter(Boolean);
             const listed = files.slice(0, 25).map((f) => `- \`${f}\``).join('\n') || '- *(no changed files)*';
             const more = files.length > 25 ? `\n- …and ${files.length - 25} more` : '';
@@ -251,14 +309,18 @@ jobs:
                 '',
                 `| Stage | Status |`,
                 '| :--- | :--- |',
-                `| **Static analysis** (clippy, cargo deny, ruff, shellcheck) | ${staticStatus} |`,
+                `| 🧹 **Lint** (clippy, ruff, shellcheck) | ${mark(process.env.LINT_STATUS)} |`,
+                `| 🔤 **Syntax and format** (cargo fmt, Python 3.12, bash -n, TOML/JSON/YAML) | ${mark(process.env.SYNTAX_STATUS)} |`,
+                `| 🔒 **Security** (cargo deny, ruff bandit rules, zizmor) | ${mark(process.env.SECURITY_STATUS)} |`,
+                `| ⚙️ **Workflows** (actionlint) | ${mark(process.env.WORKFLOWS_STATUS)} |`,
+                '| 🧠 **Review**: correctness, security, performance, improvements, best practices | The **Jules PR Review** check: inline comments on this PR, rules in `.github/jules-review-rules.md` |',
                 `| **PR body** (\`skills/jules-el-conejo/pr-body-visualizer.md\`) | ${has('Summary') && has('Evidence') && has('Merge Danger') ? '✅ Compliant' : '⚠️ Missing sections'} |`,
                 '',
                 `### 📂 Reviewed files (${files.length})`,
                 listed + more,
                 '',
-                '### 🛠️ Static analysis',
                 process.env.STATIC_REPORT || 'No findings.',
+                `_[Run log](${process.env.RUN_URL})_`,
                 '',
                 '### 🖼️ PR description contract',
                 `- ${has('Summary') ? '✅' : '⚠️'} \`## Summary\``,

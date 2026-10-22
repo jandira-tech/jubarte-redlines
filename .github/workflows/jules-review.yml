@@ -48,6 +48,9 @@ jobs:
           fail_on: never
           # An LLM verdict must never count as a human approval.
           enable_approve: "false"
+          # Correctness, security, performance, best practices and syntax,
+          # with this repository's own rules (Word parity first).
+          rules_file: .github/jules-review-rules.md
           extra_instructions: |
             Be exhaustive. Check every changed hunk for: correctness and edge cases; security
             (secrets in code or logs, injection, authz, unsafe deserialization, SSRF, path traversal);
