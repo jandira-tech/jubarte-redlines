@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Type checking for the repository's Python: `pyrefly check` from the root,
+# in an environment holding the dev dependencies (see the comment on
+# `ignore-missing-imports`).
+project-includes = ["**/*.py"]
+project-excludes = ["**/target/**", "**/.venv/**", "**/node_modules/**", "**/__pycache__/**"]
+
+# Directories whose modules are imported by bare name: the package's
+# source, test helpers beside their tests, and script siblings.
+search-path = [
+  "jubarte-python/python",
+  "jubarte-python/tests",
+  "eval/cli-v2-pilot",
+  "eval/cli-v2-pilot/harness",
+  "eval/cli-v2-pilot/tests",
+  "scripts",
+  "tools",
+]
+
+# Modules no development environment installs: LibreOffice's Python-UNO
+# bridge and the sibling benchmark repository.
+ignore-missing-imports = ["uno", "com.sun.star.*", "neurotic_docx_bench", "neurotic_docx_bench.*"]
+
+[errors]
+# Conversions at the boundary with JSON rows and caller input (`bool(row[…])`,
+# `bytes(image)` of a bytearray) are deliberate, whatever the hint says.
+unnecessary-type-conversion = false
+# jsonschema ships no stubs; its untyped use is fine in a docs check.
+untyped-import = false
+# `n` is counted by a nested function; the condition is not constant.
+redundant-condition = false
+
+# Tests index the JSON the bindings return (typed `object`), set frozen
+# fields and pass wrong types on purpose to prove they are refused. Those
+# are what the tests are for, not defects; the rest of a test is checked.
+[[sub-config]]
+matches = "**/test_*.py"
+
+[sub-config.errors]
+bad-index = false
+not-iterable = false
+read-only = false
+bad-argument-type = false
+bad-assignment = false
+unsupported-operation = false
+missing-attribute = false
+no-matching-overload = false
+bad-return = false

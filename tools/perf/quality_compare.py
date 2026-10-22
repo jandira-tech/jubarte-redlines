@@ -35,7 +35,7 @@ import math
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence
 
 
 def median(xs: Sequence[float]) -> float:

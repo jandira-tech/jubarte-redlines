@@ -18,7 +18,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import stack1m  # noqa: E402
+import stack1m
 
 # A stand-in binary: records its stack limit, fails `convert`.
 FAKE = """#!/bin/sh

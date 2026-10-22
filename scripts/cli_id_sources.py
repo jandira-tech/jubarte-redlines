@@ -318,7 +318,7 @@ def id_flags(root: Path) -> list[Flag]:
                         Flag(
                             owner,
                             name,
-                            short.group(1) if hasattr(short, "group") else short or None,
+                            short.group(1) if isinstance(short, re.Match) else short or None,
                             long.group(1) if long else name.replace("_", "-"),
                             vn,
                             value_parser.group(1) if value_parser else "",

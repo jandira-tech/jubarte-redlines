@@ -8,6 +8,7 @@ bindings) uses. This script finds those by name, using docs/symbols/symbols.json
 import json, re, sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(sys.argv[1]).resolve()
 OUT = ROOT / "docs" / "analysis" / "UNUSED_PUBLIC_API.md"
@@ -61,7 +62,7 @@ for s in sym:
     for t in set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", s["signature"])):
         sig_names[t].add(s["qualified"])
 
-rows = []
+rows: list[dict[str, Any]] = []
 for s in sym:
     if s["test"] or s["kind"] not in ("function", "method", "struct", "enum", "union", "trait", "const", "static", "type alias", "macro"):
         continue

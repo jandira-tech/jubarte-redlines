@@ -21,8 +21,8 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import cli_id_sources  # noqa: E402
-import cli_locations  # noqa: E402
+import cli_id_sources
+import cli_locations
 
 
 class Timeout(unittest.TestCase):

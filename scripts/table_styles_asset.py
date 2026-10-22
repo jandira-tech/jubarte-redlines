@@ -61,6 +61,8 @@ def theme(package: zipfile.ZipFile) -> dict[str, str]:
     for slot in ("dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4",
                  "accent5", "accent6", "hlink", "folHlink"):
         found = re.search(rf"<a:{slot}>.*?(?:srgbClr val|lastClr)=\"([0-9A-Fa-f]{{6}})\"", xml, re.S)
+        if found is None:
+            raise ValueError(f"theme has no {slot} colour")
         colours[slot] = found.group(1).upper()
     return colours
 
@@ -121,7 +123,10 @@ def main() -> None:
         styles = package.read("word/styles.xml").decode()
         for match in re.finditer(r'<w:style [^>]*w:type="table"[^>]*>.*?</w:style>', styles, re.S):
             style = match.group(0)
-            style_id = re.search(r'w:styleId="([^"]+)"', style).group(1)
+            found_id = re.search(r'w:styleId="([^"]+)"', style)
+            if found_id is None:
+                raise ValueError("a table style has no w:styleId")
+            style_id = found_id.group(1)
             found = FAMILY.match(style_id) or OLD_FAMILY.match(style_id)
             if not found:
                 continue

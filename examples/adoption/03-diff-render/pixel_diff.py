@@ -32,6 +32,8 @@ def read_png(path):
             idat += payload
         elif chunk == b"IEND":
             break
+    if width is None or height is None:
+        raise ValueError("PNG has no IHDR chunk")
     if bit_depth != 8 or color_type not in (0, 2, 6):
         raise ValueError(f"unsupported PNG: depth={bit_depth} color={color_type}")
     channels = {0: 1, 2: 3, 6: 4}[color_type]

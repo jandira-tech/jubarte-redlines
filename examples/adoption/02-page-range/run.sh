@@ -21,7 +21,7 @@ if command -v soffice >/dev/null && command -v pdftoppm >/dev/null && command -v
   # Out-of-range behaviour, measured here: pdftoppm clamps silently.
   rm -rf clamp && mkdir clamp
   pdftoppm -png -r 20 -f 2 -l 4 input.pdf clamp/over
-  echo "pdftoppm -f 2 -l 4 exit=$? pages_written=$(ls clamp/over-*.png | wc -l | tr -d ' ')" \
+  echo "pdftoppm -f 2 -l 4 exit=$? pages_written=$(find clamp -name 'over-*.png' | wc -l | tr -d ' ')" \
     >> out_of_range.txt
   rm -rf clamp input.pdf
 else

@@ -93,15 +93,8 @@ def package(name, body, *, sect_refs="", parts=None, rels=None, types=None, styl
     parts["word/settings.xml"] = (
         f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:settings {W}>{settings}</w:settings>'
     )
-    rels = [
-        ("rIdStyles", f"{REL}/styles", "styles.xml"),
-        ("rIdSettings", f"{REL}/settings", "settings.xml"),
-    ] + rels
-    types = [
-        ("/word/document.xml", f"{CT}.document.main+xml"),
-        ("/word/styles.xml", f"{CT}.styles+xml"),
-        ("/word/settings.xml", f"{CT}.settings+xml"),
-    ] + types
+    rels = [("rIdStyles", f"{REL}/styles", "styles.xml"), ("rIdSettings", f"{REL}/settings", "settings.xml"), *rels]
+    types = [("/word/document.xml", f"{CT}.document.main+xml"), ("/word/styles.xml", f"{CT}.styles+xml"), ("/word/settings.xml", f"{CT}.settings+xml"), *types]
     package_rels = [("rId1", f"{REL}/officeDocument", "word/document.xml")]
     overrides = "".join(f'<Override PartName="{n}" ContentType="{t}"/>' for n, t in types)
     parts["[Content_Types].xml"] = (
@@ -122,9 +115,7 @@ def package(name, body, *, sect_refs="", parts=None, rels=None, types=None, styl
         )
         + "</Relationships>"
     )
-    order = ["[Content_Types].xml", "_rels/.rels"] + sorted(
-        k for k in parts if k not in ("[Content_Types].xml", "_rels/.rels")
-    )
+    order = ["[Content_Types].xml", "_rels/.rels", *sorted(k for k in parts if k not in ("[Content_Types].xml", "_rels/.rels"))]
     with zipfile.ZipFile(HERE / name, "w", zipfile.ZIP_DEFLATED) as z:
         for part in order:
             info = zipfile.ZipInfo(part, date_time=(1980, 1, 1, 0, 0, 0))

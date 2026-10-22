@@ -102,7 +102,7 @@ class CommandLine(unittest.TestCase):
         self.assertNotIn("macosx", err)
 
     def test_a_complete_dist_exits_0(self) -> None:
-        for name in complete_set("0.11.0") + ["jubarte_redlines-0.11.0.tar.gz", "SHA256SUMS.txt"]:
+        for name in [*complete_set("0.11.0"), "jubarte_redlines-0.11.0.tar.gz", "SHA256SUMS.txt"]:
             (self.dist / name).write_bytes(b"")
         code, out, err = self.run_main(str(self.dist), "--version", "0.11.0")
         self.assertEqual(code, 0, err)
@@ -128,11 +128,11 @@ class CommandLine(unittest.TestCase):
         self.assertIn(REQUIRED_WHEEL_TAGS[0], err)
 
     def test_sdist_requires_the_versions_sdist(self) -> None:
-        names = complete_set("0.11.2") + ["jubarte_redlines-0.11.1.tar.gz"]
+        names = [*complete_set("0.11.2"), "jubarte_redlines-0.11.1.tar.gz"]
         code, _out, err = self.run_stdin(names, "--version", "0.11.2", "--sdist")
         self.assertEqual(code, 1)
         self.assertIn("jubarte_redlines-0.11.2.tar.gz", err)
-        code, _out, err = self.run_stdin(names + ["jubarte_redlines-0.11.2.tar.gz"],
+        code, _out, err = self.run_stdin([*names, "jubarte_redlines-0.11.2.tar.gz"],
                                          "--version", "0.11.2", "--sdist")
         self.assertEqual(code, 0, err)
 

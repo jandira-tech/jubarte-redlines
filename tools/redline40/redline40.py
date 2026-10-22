@@ -125,7 +125,7 @@ def soffice_version() -> str:
 
 def run(args) -> int:
     sys.path.insert(0, str(BENCH / "src"))
-    from neurotic_docx_bench.pipeline import score_pdf_pair  # noqa: PLC0415
+    from neurotic_docx_bench.pipeline import score_pdf_pair
 
     jubarte = Path(args.bin).resolve()
     if not jubarte.is_file():

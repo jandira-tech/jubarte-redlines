@@ -53,8 +53,7 @@ if command -v soffice >/dev/null && command -v pdftoppm >/dev/null; then
   soffice --version | head -1 > tool_versions_soffice.txt
   pdftoppm -v 2>&1 | head -1 > tool_versions_poppler.txt
   for pair in "tables_pydocx.docx pydocx" "review/redline.docx jubarte"; do
-    set -- $pair
-    src="$1"; tag="$2"
+    read -r src tag <<<"$pair"
     rm -f "${src%.docx}.pdf"
     soffice -env:UserInstallation=file:///tmp/lo_adopt_15 \
       --headless --convert-to pdf --outdir "$(dirname "$src")" "$src" >/dev/null
@@ -65,8 +64,7 @@ else
   echo "skip: soffice not installed"
 fi
 for pair in "tables_pydocx.docx pydocx" "review/redline.docx jubarte"; do
-  set -- $pair
-  src="$1"; tag="$2"
+  read -r src tag <<<"$pair"
   rm -f "${src%.docx}-page-01.png"
   "$JUBARTE" convert "$src" -o "${src%.docx}.png" --dpi 72 --pages 1 --force >/dev/null
   mv "${src%.docx}-page-01.png" "edit_page_1_${tag}_jubarte.png"
