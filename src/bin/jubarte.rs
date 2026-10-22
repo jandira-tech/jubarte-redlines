@@ -965,35 +965,8 @@ fn run_for_edit(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
-    use jubarte::cli::{ExistingArg, TrackArg};
-    use jubarte::edit::ExistingRevisions;
-    use jubarte::edit::for_edit::{ForEditRequest, for_edit};
-    let request = ForEditRequest {
-        select: args.paragraphs.clone(),
-        story: None,
-        head: args.head,
-        tail: args.tail,
-        find: args.find.clone(),
-        regex: args.regex.clone(),
-        ignore_case: args.ignore_case,
-        changed: args.changed,
-        by: args.by.clone(),
-        by_any: Vec::new(),
-        context: args.context.unwrap_or(0),
-        limit: args.limit,
-        max_chars: args.max_chars,
-        all: args.all,
-        cursor: args.cursor.clone(),
-        accept: args.accept_change.clone(),
-        reject: args.reject_change.clone(),
-        existing_revisions: args
-            .existing_revisions
-            .and_then(ExistingArg::plan_value)
-            .unwrap_or(ExistingRevisions::Keep),
-        track: args.track.unwrap_or(TrackArg::On) == TrackArg::On,
-        // `read --for-edit` keeps the open-ended spellings its help documents.
-        closed_ranges_only: false,
-    };
+    use jubarte::edit::for_edit::for_edit_json;
+    let request = args.for_edit_request();
     let refused = |e: jubarte::edit::EditError| {
         let code = if e.code == "USAGE" {
             EXIT_USAGE
@@ -1015,10 +988,7 @@ fn run_for_edit(
         eprintln!("{line}");
     }
     warn_nested_text_boxes(&bytes);
-    let mut result = for_edit(&bytes, &request).map_err(refused)?;
-    result.input_validity = Some(validity);
-    let json =
-        serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
+    let json = for_edit_json(&bytes, &request, Some(validity)).map_err(refused)?;
     if let Some(path) = output {
         ensure_writable(path, force)?;
         publish_file(path, json.as_bytes(), force).map_err(ConvertFailure::from)?;

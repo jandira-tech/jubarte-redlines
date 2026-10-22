@@ -276,6 +276,39 @@ pub struct ReadArgs {
     pub all: bool,
 }
 
+impl ReadArgs {
+    /// The `read --for-edit` request these flags describe (V2-10): the
+    /// working basis template and apply derive — `auto` (and the absence
+    /// of the flag) keeps the remaining revisions, `on` tracks new edits.
+    /// `read --for-edit` keeps the open-ended range spellings its help
+    /// documents; the bindings build the same request through this.
+    pub fn for_edit_request(&self) -> crate::edit::for_edit::ForEditRequest {
+        crate::edit::for_edit::ForEditRequest {
+            select: self.paragraphs.clone(),
+            head: self.head,
+            tail: self.tail,
+            find: self.find.clone(),
+            regex: self.regex.clone(),
+            ignore_case: self.ignore_case,
+            changed: self.changed,
+            by: self.by.clone(),
+            context: self.context.unwrap_or(0),
+            limit: self.limit,
+            max_chars: self.max_chars,
+            all: self.all,
+            cursor: self.cursor.clone(),
+            accept: self.accept_change.clone(),
+            reject: self.reject_change.clone(),
+            existing_revisions: self
+                .existing_revisions
+                .and_then(ExistingArg::plan_value)
+                .unwrap_or(crate::edit::ExistingRevisions::Keep),
+            track: self.track.unwrap_or_default() == TrackArg::On,
+            ..Default::default()
+        }
+    }
+}
+
 /// `--comments` of `read`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -296,6 +329,17 @@ pub enum TrackArg {
     On,
     /// The new edits land directly.
     Off,
+}
+
+impl TrackArg {
+    /// `--track`'s spelling (`on`, `off`); `None` for anything else.
+    pub fn from_choice(choice: &str) -> Option<Self> {
+        match choice {
+            "on" => Some(Self::On),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
 }
 
 /// Options `edit` and `add` share.
@@ -394,6 +438,19 @@ pub enum ExistingArg {
 }
 
 impl ExistingArg {
+    /// `--existing-revisions`'s spelling (`auto`, `keep`, `accept`,
+    /// `reject`, `refuse`); `None` for anything else.
+    pub fn from_choice(choice: &str) -> Option<Self> {
+        match choice {
+            "auto" => Some(Self::Auto),
+            "keep" => Some(Self::Keep),
+            "accept" => Some(Self::Accept),
+            "reject" => Some(Self::Reject),
+            "refuse" => Some(Self::Refuse),
+            _ => None,
+        }
+    }
+
     /// The plan's `existing_revisions`; `None` for `auto`.
     pub fn plan_value(self) -> Option<crate::edit::ExistingRevisions> {
         use crate::edit::ExistingRevisions as E;

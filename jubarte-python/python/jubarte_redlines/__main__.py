@@ -281,9 +281,58 @@ def _not_written(args: argparse.Namespace) -> str:
     return f"{stem}.docx (not written)"
 
 
+def _for_edit_json(args: argparse.Namespace, docx: bytes) -> str | None:
+    """``read --for-edit``'s JSON, from the flags the shared parser stored;
+    ``None`` after its refusal was printed (exit 3)."""
+    from . import _native
+
+    try:
+        return _native.for_edit_json(
+            docx,
+            paragraphs=args.paragraphs,
+            head=args.head,
+            tail=args.tail,
+            find=args.find,
+            regex=args.regex,
+            ignore_case=bool(args.ignore_case),
+            changed=bool(args.changed),
+            by=args.by,
+            context=args.context,
+            limit=args.limit,
+            max_chars=args.max_chars,
+            all=bool(args.all),
+            cursor=args.cursor,
+            accept_change=args.accept_change or None,
+            reject_change=args.reject_change or None,
+            existing_revisions=args.existing_revisions,
+            track=args.track,
+            validity_file=_spelled(args, "file"),
+        )
+    except _native.JubarteError as exc:
+        message = str(exc)
+        usage = message.removeprefix("USAGE: ")
+        if usage != message:
+            _error(usage, EXIT_USAGE)
+            raise SystemExit(EXIT_USAGE) from exc
+        _error(message, EXIT_PLAN_REFUSED)
+        return None
+
+
 def cmd_read(args: argparse.Namespace) -> int:
     from . import _native
 
+    if args.for_edit:
+        # A JSON read: the result carries the input's findings; a file
+        # leaves stdout free, so the notice stays, as at `read -o FILE.json`.
+        result = _for_edit_json(args, _input(args, notice=args.output is not None))
+        if result is None:
+            return EXIT_PLAN_REFUSED
+        if args.output is not None:
+            _ensure_writable(args.output, args.force)
+            _wrote(args, args.output, "json", _write(args.output, result))
+            return EXIT_OK
+        sys.stdout.write(result)
+        return EXIT_OK
     if args.tables:
         # With -p, the grids of the tables it reaches, then its view; a
         # pick that reaches no table is a usage error.

@@ -243,7 +243,7 @@ test("errors read as the binary's: bad ids are usage, I/O as Rust words it, sort
 });
 
 test("read (alias text), inspect, capabilities and convert", () => {
-  assert.equal(JSON.parse(run("read", untracked, "--json").out).schema_version, 2);
+  assert.equal(JSON.parse(run("read", untracked, "--json").out).schema_version, 3);
   // `read` prints the agent view, as the binary and the Python CLI do.
   for (const command of ["read", "text"]) {
     const view = run(command, untracked, "--no-page-markers");
@@ -279,7 +279,7 @@ test("read (alias text), inspect, capabilities and convert", () => {
   assert.equal(retired.out, run("read", untracked).out);
   assert.equal(retired.err, "note: inspect is now read; inspect is removed in 0.14\n");
   const snapshot = JSON.parse(run("inspect", untracked, "--json").out);
-  assert.equal(snapshot.schema_version, 2);
+  assert.equal(snapshot.schema_version, 3);
   assert.ok(Array.isArray(snapshot.changes) && Array.isArray(snapshot.comments));
   assert.deepEqual(JSON.parse(run("read", untracked, "--json").out), snapshot);
   const wasm = createRequire(bin)("jubarte-wasm");
@@ -297,7 +297,7 @@ test("read (alias text), inspect, capabilities and convert", () => {
     [["reject", tracked, "-o", path.join(tmp, "s.md")], "md", (bytes) => bytes.toString().startsWith(`---\nsource: ${path.join(tmp, "s.docx")} (not written)\n`)],
     [["read", untracked, "-o", path.join(tmp, "v.md")], "md", (bytes) => bytes.toString().startsWith(`---\nsource: ${path.basename(untracked)}\n`)],
     [[untracked, "-o", path.join(tmp, "v.json"), "-p", "p0"], "json", (bytes) => JSON.parse(bytes).paragraphs.length === 1],
-    [["convert", tracked, "-o", path.join(tmp, "c.json")], "json", (bytes) => JSON.parse(bytes).changes.length === 8],
+    [["convert", tracked, "-o", path.join(tmp, "c.json")], "json", (bytes) => JSON.parse(bytes).changes.length === 5],
     [["accept", tracked, "-o", path.join(tmp, "writer-a.docx")], "docx", (bytes) => bytes.subarray(0, 2).toString() === "PK"],
   ]) {
     const written = run(...args);
@@ -371,7 +371,7 @@ test("an invalid plan prints the binary's one line and no report (#454)", () => 
   const r = run("edit", untracked, "--plan", bad, "--out-dir", path.join(tmp, "never"));
   assert.equal(r.code, 3, r.err);
   assert.equal(r.out, "");
-  assert.match(r.err, /^error: INVALID_PLAN: unknown field `edits`/);
+  assert.match(r.err, /^error: INVALID_PLAN: schema_version is required \(1 for this build\)/);
   assert.ok(!fs.existsSync(path.join(tmp, "never")));
 });
 
@@ -648,7 +648,7 @@ test("edit takes the text a comment covers (c0.text), and read names note paragr
   const view = run("read", out);
   assert.equal(view.code, 0, view.err);
   // edit writes the deletion before the insertion; read pairs only insertion-first, so two changes.
-  assert.match(view.out, /\{==\{~~Last~>Final~~\}\{r\d+\+\d+ @R\}==\}/);
+  assert.match(view.out, /\{==\{~~Last~>Final~~\}\{r\d+\+\d+ @J\}==\}/);
   assert.match(view.out, /<!-- footnotes\.p0 -->\n\[\^1\]: The note text\./);
   const outside = run("edit", commented, "-p", "c0.text", "--anchor", "paragraph", "--content", "x", "-o", path.join(tmp, "covered-no.docx"));
   assert.equal(outside.code, 3, outside.err);
@@ -681,7 +681,7 @@ test("edit and add --plan record into one plan that --consume deletes once appli
   assert.match(author.err, /--author belongs to recorded operations/);
   const bob = run("edit", file, "--plan", plan, "-p", "p1", "--content", "x", "--author", "Bob");
   assert.equal(bob.code, 2);
-  assert.match(bob.err, /the plan's author is "Redline"/);
+  assert.match(bob.err, /the plan's author is "Jubarte"/);
   const missing = run("edit", file, "--plan", plan, "-p", `p${para.index}`, "--anchor", "nowhere at all", "--content", "x");
   assert.equal(missing.code, 3, missing.out);
   assert.match(missing.out, /"status":"failed"/);
@@ -971,12 +971,12 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.equal(shown.code, 0, shown.err);
   assert.ok(shown.out.startsWith(`---\nsource: ${word} (not written; -o keeps it)\n`), shown.out);
   // Word comparison keeps insertion before deletion, as the native view does.
-  const replacement = (handle) => new RegExp(`\\{\\+\\+45\\+\\+\\}\\{r\\d+ @${handle}\\}\\{--30--\\}\\{r\\d+ @${handle}\\}`);
-  assert.match(shown.out, replacement("R"));
+  const replacement = (handle) => new RegExp(`\\{\\+\\+45\\+\\+\\}\\{r\\d+\\+\\d+ @${handle}\\}\\{--30--\\}\\{r\\d+\\+\\d+ @${handle}\\}`);
+  assert.match(shown.out, replacement("J"));
   assert.ok(!fs.existsSync(word));
   // The view is the output, so --quiet does not hide it (pi review av5 F6);
   // read options apply to it.
-  assert.match(run(a, b, "--quiet", "-d", "1970-01-01T00:00:00Z").out, replacement("R"));
+  assert.match(run(a, b, "--quiet", "-d", "1970-01-01T00:00:00Z").out, replacement("J"));
   const acceptedView = run(a, b, "--track-changes", "accept", "-d", "1970-01-01T00:00:00Z");
   assert.equal(acceptedView.code, 0, acceptedView.err);
   assert.ok(!acceptedView.out.includes("{~~") && acceptedView.out.includes("<!-- p0 rev r"), acceptedView.out);
@@ -1610,5 +1610,69 @@ test("read and changes name the input's validity findings once; -q drops it (#12
     const r = run(...args);
     assert.equal(r.code, 0, r.err);
     assert.equal(r.err, "", args.join(" "));
+  }
+});
+
+// `read --for-edit` (V2-10): the working-document JSON the binary prints,
+// decisions and refusals with its exit codes.
+test("read --for-edit prints the binary's working-document JSON", () => {
+  const src = copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-for-edit.docx");
+  const plain = run("read", "received-for-edit.docx", "--for-edit");
+  assert.equal(plain.code, 0, plain.err);
+  const result = JSON.parse(plain.out);
+  assert.equal(result.schema, "jubarte-read-for-edit-v1");
+  assert.deepEqual(result.settled, { changed: false });
+  assert.equal(result.basis.existing_revisions, "keep");
+  assert.equal(result.basis.track, "on");
+  assert.equal(result.paragraphs.length, 28);
+  assert.deepEqual(result.input_validity, {
+    errors: 0, warnings: 2, next: "jubarte validate received-for-edit.docx",
+  });
+  const p3 = result.paragraphs.find((p) => p.target.short_id === "p3");
+  assert.match(p3.original.text, /^Consultant will deliver/);
+
+  // --reject-change r0 settles the insertion out of the working text.
+  const decided = run("read", "received-for-edit.docx", "--for-edit", "--reject-change", "r0");
+  assert.equal(decided.code, 0, decided.err);
+  const rejected = JSON.parse(decided.out);
+  assert.deepEqual(rejected.basis.reject, ["r0"]);
+  assert.deepEqual(rejected.settled, { changed: true, rejected: ["r0"] });
+  const rejectedP3 = rejected.paragraphs.find((p) => p.target.short_id === "p3");
+  assert.equal(
+    rejectedP3.working.text,
+    "Consultant will deliver the services in each Statement of Work, including  route-cost reports and a monthly review call.",
+  );
+
+  // An unknown change id is a plan refusal (exit 3), as the binary's.
+  const unknown = run("read", "received-for-edit.docx", "--for-edit", "--accept-change", "r99");
+  assert.equal(unknown.code, 3, unknown.err);
+  assert.equal(unknown.out, "");
+  assert.match(unknown.err, /error: UNKNOWN_CHANGE: resolve_revisions: no tracked change r99/);
+
+  // -o writes the same JSON; stdout is free, so the input's validity
+  // notice and the wrote line stay on stderr.
+  const out = path.join(tmp, "fe.json");
+  const written = run("read", "received-for-edit.docx", "--for-edit", "-o", "fe.json");
+  assert.equal(written.code, 0, written.err);
+  assert.equal(written.out, "");
+  assert.equal(
+    written.err,
+    `input has 2 validity warnings; jubarte validate received-for-edit.docx lists them\n` +
+      `wrote fe.json (json, ${fs.statSync(out).size} bytes)\n`,
+  );
+  assert.deepEqual(JSON.parse(fs.readFileSync(out, "utf8")), result);
+  void src;
+});
+
+test("read --for-edit usage errors as the binary", () => {
+  copy(path.join(repo, "tests/fixtures/agent-view/received.docx"), "received-for-edit-usage.docx");
+  for (const args of [
+    ["read", "received-for-edit-usage.docx", "--accept-change", "r0"],
+    ["read", "received-for-edit-usage.docx", "--for-edit", "-o", "fe.md"],
+    ["read", "received-for-edit-usage.docx", "--for-edit", "--json"],
+  ]) {
+    const r = run(...args);
+    assert.equal(r.code, 2, `${args}: ${r.out} ${r.err}`);
+    assert.match(r.err, /error:/);
   }
 });

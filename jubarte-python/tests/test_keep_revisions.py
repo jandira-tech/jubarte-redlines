@@ -33,10 +33,9 @@ def test_keep_adds_my_changes_beside_theirs() -> None:
     assert result.report.existing_revisions == "keep"
     assert result.report.base_sha256 == result.report.source_sha256 == source.sha256()
     changes = result.redline.changes()
-    assert [c.id for c in changes if c.author == "Other"] == ["r7", "r8"]
+    assert [c.id for c in changes if c.author == "Other"] == ["r7+8"]
     assert [(c.kind, c.text) for c in changes if c.author == "Me"] == [
-        ("deletion", "Delaware"),
-        ("insertion", "New York"),
+        ("replacement", "Delaware → New York"),
     ]
     assert texts(result.redline.accept(authors=["Me"])) == texts(result.clean)
     assert texts(result.redline.reject(authors=["Me"])) == texts(source)

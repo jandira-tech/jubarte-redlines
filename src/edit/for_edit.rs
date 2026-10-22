@@ -1803,6 +1803,26 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
     })
 }
 
+/// [`for_edit`]'s result as `read --for-edit` prints it: the document
+/// carries `validity` (the input's findings, `None` when the caller read
+/// none — #1340), serialized to the one JSON line the binary writes to
+/// stdout or a `.json` file. The native binary, the Python module and the
+/// WASM binding all print this string.
+///
+/// # Errors
+///
+/// [`for_edit`]'s.
+pub fn for_edit_json(
+    source: &[u8],
+    request: &ForEditRequest,
+    validity: Option<crate::validate::InputValidity>,
+) -> Result<String, EditError> {
+    let mut result = for_edit(source, request)?;
+    result.input_validity = validity;
+    let json = serde_json::to_string(&result).expect("ForEdit serializes");
+    Ok(format!("{json}\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -48,6 +48,28 @@ def read_json(
     source: str | None = None,
     validity_file: str | None = None,
 ) -> str: ...
+def for_edit_json(
+    docx: bytes,
+    *,
+    paragraphs: str | None = None,
+    head: int | None = None,
+    tail: int | None = None,
+    find: str | None = None,
+    regex: str | None = None,
+    ignore_case: bool = False,
+    changed: bool = False,
+    by: str | None = None,
+    context: int | None = None,
+    limit: int | None = None,
+    max_chars: int | None = None,
+    all: bool = False,
+    cursor: str | None = None,
+    accept_change: list[str] | None = None,
+    reject_change: list[str] | None = None,
+    existing_revisions: str | None = None,
+    track: str | None = None,
+    validity_file: str | None = None,
+) -> str: ...
 def wrote_line(path: str | os.PathLike[str], format: str, size: int, pages: int | None = None) -> str: ...
 def wrote_png_line(pattern: str | os.PathLike[str], pages: int, dpi: float) -> str: ...
 def refused_input(path: str | os.PathLike[str], data: bytes, word: bool) -> str | None: ...

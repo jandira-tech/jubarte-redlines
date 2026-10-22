@@ -32,6 +32,9 @@ class CliError extends Error {}
 /** A host capability mismatch; rejected before file I/O, exit 2. */
 class UsageError extends Error {}
 
+/** An engine refusal that exits 3, as `read --for-edit`'s. */
+class RefusalError extends Error {}
+
 // strerror's text for the errors a file task meets, so an I/O error reads
 // as the binary's: `No such file or directory (os error 2)`.
 const STRERROR = {
@@ -155,6 +158,29 @@ function selection(o = {}) {
   return { trackChanges: o.track_changes ?? undefined, paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
 }
 
+/** `read --for-edit`'s working-document JSON, from the flags the shared
+ * parser stored; `validityFile` is FILE as typed. Usage failures are
+ * `jubarte-wasm: USAGE: …`, refusals `jubarte-wasm: CODE: …`. */
+function forEditJson(docx, o, validityFile) {
+  try {
+    return wasm.forEdit(docx, JSON.stringify({
+      paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined,
+      find: o.find ?? undefined, regex: o.regex ?? undefined, ignoreCase: Boolean(o.ignore_case),
+      changed: Boolean(o.changed), by: o.by ?? undefined,
+      context: o.context ?? undefined, limit: o.limit ?? undefined, maxChars: o.max_chars ?? undefined,
+      all: Boolean(o.all), cursor: o.cursor ?? undefined,
+      acceptChange: o.accept_change?.length ? o.accept_change : undefined,
+      rejectChange: o.reject_change?.length ? o.reject_change : undefined,
+      existingRevisions: o.existing_revisions ?? undefined, track: o.track ?? undefined,
+      validityFile,
+    }));
+  } catch (e) {
+    const usage = messageOf(e);
+    if (usage.startsWith("USAGE: ")) throw new UsageError(usage.slice("USAGE: ".length));
+    throw new RefusalError(usage);
+  }
+}
+
 /** `-o` in the format its extension names, as the binary's writer: the Word
  * package, its agent view (.md, headed `source`), its snapshot (.json) or
  * its PDF. `view` is read's options; the defaults elsewhere. `validityFile`
@@ -165,6 +191,7 @@ function writeResult(o, docx, source, view, validityFile) {
   if (kind === "pdf") return renderTo(o, docx, output);
   ensureWritable(output, o.force);
   const data = kind === "md" ? viewText(docx, view ?? {}, source)
+    : kind === "json" && view?.for_edit ? forEditJson(docx, view, validityFile)
     : kind === "json" ? `${wasm.readJson(docx, JSON.stringify({ ...selection(view), ...validity(validityFile) }))}\n`
     : docx;
   write(output, data);
@@ -255,7 +282,11 @@ const COMMANDS = {
   reject: resolution(false),
   read: {
     run(_, [file], o) {
-      const docx = readInput(file, o, o.json && o.output == null);
+      const docx = readInput(file, o, (o.json || o.for_edit) && o.output == null);
+      if (o.for_edit) {
+        if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
+        return void process.stdout.write(forEditJson(docx, o, file));
+      }
       if (o.tables) {
         // (A binding older than #1255 has no tablesView; its parser
         // refuses -p and --track-changes here.)
@@ -835,7 +866,7 @@ function main(argv) {
     const positionals = name === "compare" ? [o.original, o.modified] : name === "diff" ? [o.old, o.new] : o.file == null ? [] : [o.file];
     return COMMANDS[name].run(name, positionals, o) ?? EXIT_OK;
   } catch (e) {
-    const code = e instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
+    const code = e instanceof UsageError ? EXIT_USAGE : e instanceof RefusalError ? EXIT_PLAN_REFUSED : EXIT_ERROR;
     // A binding older than #1255 has no runtimeJsonError: stdout stays empty.
     if (wasm.runtimeJsonError && wasm.wantsJson(argv)) process.stdout.write(wasm.runtimeJsonError(messageOf(e), code));
     console.error(`error: ${messageOf(e)}`);
